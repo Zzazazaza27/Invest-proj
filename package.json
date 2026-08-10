@@ -14,13 +14,13 @@
     "e2e"
   ],
   "scripts": {
-    "build": "npm run build --workspaces --if-present",
+    "build": "npm run build:packages && npm run build -w apps/core --if-present && npm run build -w apps/web-public --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,md,yml,yaml}\"",
-    "test": "npm run test --workspaces --if-present",
+    "test": "npm run build:packages && npm run test --workspaces --if-present",
     "infra:up": "docker compose -f infra/docker-compose.yml up -d",
     "infra:down": "docker compose -f infra/docker-compose.yml down",
     "infra:reset": "docker compose -f infra/docker-compose.yml down -v",
@@ -30,7 +30,8 @@
     "gate:deps": "npm audit --audit-level=high",
     "gate:net": "node scripts/network-audit.mjs",
     "gate": "npm run lint && npm run typecheck && npm run test && npm run gate:boundary && npm run gate:deps && npm run gate:net",
-    "gate:boundary": "node scripts/check-frontend-boundary.mjs"
+    "gate:boundary": "node scripts/check-frontend-boundary.mjs",
+    "build:packages": "npm run build -w packages/contracts && npm run build -w packages/api-client"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
