@@ -64,3 +64,11 @@ graphify-out/
 
 # Артефакты браузерных прогонов Playwright
 .playwright-mcp/
+
+# Состояние fablize (цели сессии) — инструмент, не содержимое проекта
+.fablize/
+
+# Python-кеш AI-шлюза
+__pycache__/
+*.pyc
+.pytest_cache/

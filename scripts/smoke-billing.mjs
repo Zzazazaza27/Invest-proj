@@ -128,7 +128,14 @@ async function register(role, tag) {
   const password = `Pw-${crypto.randomUUID()}`;
   const { response, json } = await client.call('/v1/auth/register', {
     method: 'POST',
-    body: { email, password, displayName: `Тест ${tag}`, role, locale: 'ru-RU', consents: CONSENTS },
+    body: {
+      email,
+      password,
+      displayName: `Тест ${tag}`,
+      role,
+      locale: 'ru-RU',
+      consents: CONSENTS,
+    },
   });
   if (response.status >= 400) {
     throw new Error(`регистрация ${tag}: ${response.status} ${JSON.stringify(json)}`);
@@ -469,8 +476,9 @@ let subscriptionId;
   const [flag] = await sql(
     `SELECT key FROM audit.feature_flags WHERE key NOT LIKE 'investments%' ORDER BY key LIMIT 1`,
   );
-  const before = (await sql('SELECT enabled FROM audit.feature_flags WHERE key = $1', [flag.key]))[0]
-    .enabled;
+  const before = (
+    await sql('SELECT enabled FROM audit.feature_flags WHERE key = $1', [flag.key])
+  )[0].enabled;
   const { response, json } = await admin.call(`/v1/admin/feature-flags/${flag.key}`, {
     method: 'PATCH',
     body: { enabled: !before, reason: 'проверка переключателя' },
@@ -535,7 +543,10 @@ let subscriptionId;
   check('отмена объявления в журнале', verbs.includes('billing.plan.schedule_canceled'));
   check('закрытие тарифа в журнале', verbs.includes('billing.plan.closed'));
   check('оформление подписки в журнале', verbs.includes('billing.subscription.created'));
-  check('согласование персональной цены в журнале', verbs.includes('billing.custom_price.approved'));
+  check(
+    'согласование персональной цены в журнале',
+    verbs.includes('billing.custom_price.approved'),
+  );
 
   const broken = await sql('SELECT * FROM audit.verify_event_chain(NULL)');
   check('цепочка журнала цела', broken.length === 0, `разрывов ${broken.length}`);

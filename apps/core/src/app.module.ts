@@ -4,6 +4,9 @@ import { AdminController } from './admin/admin.controller';
 import { AdminService } from './admin/admin.service';
 import { AuthGuard } from './auth/guards';
 import { TokenVerifier } from './auth/token.verifier';
+import { AiGatewayClient } from './ai/ai-gateway.client';
+import { AnalysisController } from './ai/analysis.controller';
+import { AnalysisService } from './ai/analysis.service';
 import { AuditRepository } from './audit/audit.repository';
 import { BillingController } from './billing/billing.controller';
 import { BillingService } from './billing/billing.service';
@@ -46,6 +49,7 @@ import { S3Service } from './storage/s3.service';
     BillingController,
     AdminController,
     InvestmentsController,
+    AnalysisController,
   ],
   providers: [
     Database,
@@ -61,6 +65,8 @@ import { S3Service } from './storage/s3.service';
     BillingService,
     AdminService,
     InvestmentsService,
+    AiGatewayClient,
+    AnalysisService,
     PartitionMaintenanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],

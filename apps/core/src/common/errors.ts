@@ -103,6 +103,25 @@ export const errors = {
   stateTransition: (publicDetail: string) =>
     new AppError(ErrorCode.STATE_TRANSITION_NOT_ALLOWED, { publicDetail }),
 
+  /**
+   * Внешняя зависимость недоступна. Наружу — без имени и адреса зависимости в
+   * тексте: это подсказка о внутреннем устройстве.
+   */
+  upstreamUnavailable: (dependency: string) =>
+    new AppError(ErrorCode.DEPENDENCY_UNAVAILABLE, {
+      publicDetail: 'Сервис временно недоступен, попробуйте позже',
+      internal: { dependency },
+    }),
+
+  /**
+   * Данные нельзя передать за пределы разрешённых юрисдикций. Повтор запроса
+   * бессмысленен: это запрет, а не сбой, и клиент обязан их различать.
+   */
+  residencyViolation: () =>
+    new AppError(ErrorCode.RESIDENCY_VIOLATION, {
+      publicDetail: 'Обработка этих данных за пределами разрешённого контура запрещена',
+    }),
+
   featureDisabled: (flag: string) =>
     new AppError(ErrorCode.FEATURE_DISABLED, {
       publicDetail: 'Функция пока недоступна',

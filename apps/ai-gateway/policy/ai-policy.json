@@ -1,0 +1,62 @@
+{
+  "$comment": [
+    "Юрисдикционная политика AI-шлюза. Единственный источник правды о том,",
+    "какому провайдеру какой класс данных можно отдать.",
+    "",
+    "data_classes:",
+    "  public            — опубликованный тизер, открытые тексты",
+    "  pseudonymous      — данные проекта без прямых идентификаторов лиц",
+    "  pdn               — персональные данные (152-ФЗ)",
+    "  commercial_secret — финансы, договоры, непубличные метрики",
+    "",
+    "Провайдер вне jurisdiction=RU не получает pdn и commercial_secret никогда.",
+    "Это не настройка по умолчанию, а инвариант: запрос отклоняется целиком."
+  ],
+  "version": "1.0.0",
+  "default_provider": "local_deterministic",
+  "residency": {
+    "restricted_classes": ["pdn", "commercial_secret"],
+    "allowed_jurisdictions": ["RU"]
+  },
+  "providers": [
+    {
+      "name": "local_deterministic",
+      "jurisdiction": "RU",
+      "kind": "deterministic",
+      "is_llm": false,
+      "endpoint": null,
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
+      "note": "Воспроизводимая эвристика внутри контура. Данные никуда не уходят."
+    },
+    {
+      "name": "yandex_gpt",
+      "jurisdiction": "RU",
+      "kind": "llm",
+      "is_llm": true,
+      "endpoint": "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
+      "enabled": false,
+      "note": "Включается вместе с ключом и eval-гейтом. Без ключа не выбирается."
+    },
+    {
+      "name": "gigachat",
+      "jurisdiction": "RU",
+      "kind": "llm",
+      "is_llm": true,
+      "endpoint": "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
+      "enabled": false,
+      "note": "Включается вместе с ключом и eval-гейтом."
+    },
+    {
+      "name": "anthropic",
+      "jurisdiction": "US",
+      "kind": "llm",
+      "is_llm": true,
+      "endpoint": "https://api.anthropic.com/v1/messages",
+      "data_classes": ["public"],
+      "enabled": false,
+      "note": "Вне РФ. Допустим только для публичных текстов и только по явному гранту."
+    }
+  ]
+}

@@ -136,7 +136,14 @@ async function register(role, tag) {
   const password = `Pw-${crypto.randomUUID()}`;
   const { response, json } = await client.call('/v1/auth/register', {
     method: 'POST',
-    body: { email, password, displayName: `Тест ${tag}`, role, locale: 'ru-RU', consents: CONSENTS },
+    body: {
+      email,
+      password,
+      displayName: `Тест ${tag}`,
+      role,
+      locale: 'ru-RU',
+      consents: CONSENTS,
+    },
   });
   if (response.status >= 400) {
     throw new Error(`регистрация ${tag} не удалась: ${response.status} ${JSON.stringify(json)}`);
@@ -191,7 +198,11 @@ console.warn('\n=== ЖИВОЙ ПРОГОН: KYC, ПРОЕКТЫ, КАТАЛОГ
 }
 {
   const { response } = await raw('/v1/kyc/verifications');
-  check('контур комплаенса закрыт без токена', response.status === 401, `статус ${response.status}`);
+  check(
+    'контур комплаенса закрыт без токена',
+    response.status === 401,
+    `статус ${response.status}`,
+  );
 }
 
 // ------------------------------------------------------------- основатель A
@@ -214,7 +225,11 @@ const adminClient = makeClient();
     method: 'POST',
     body: { email: adminUser.email, password: adminUser.password },
   });
-  check('роль администратора попадает в сессию после повторного входа', json?.roles?.includes('admin'), `роли ${json?.roles}`);
+  check(
+    'роль администратора попадает в сессию после повторного входа',
+    json?.roles?.includes('admin'),
+    `роли ${json?.roles}`,
+  );
 }
 
 let projectId = null;
@@ -226,16 +241,24 @@ let projectId = null;
       tagline: 'Быстрая диагностика без очередей',
       description: 'Внутренняя метрика: маржинальность 42 процента и удержание когорт.',
       stage: 'mvp',
-      taxonomyId: (await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'healthtech'`))[0].id,
+      taxonomyId: (await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'healthtech'`))[0]
+        .id,
       investmentAsk: '5000000.00',
       askCurrency: 'RUB',
       geoCountry: 'RU',
     },
   });
   projectId = json?.id ?? null;
-  check('проект создан', response.status === 201 || response.status === 200, `статус ${response.status}`);
+  check(
+    'проект создан',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
   check('тариф резолвлен сервером', Boolean(json?.requiredPlanId), json?.requiredPlanId ?? 'нет');
-  check('проект создан как черновик', json?.status === 'draft' && json?.listingStatus === 'not_listed');
+  check(
+    'проект создан как черновик',
+    json?.status === 'draft' && json?.listingStatus === 'not_listed',
+  );
 
   const [plan] = await sql('SELECT code FROM billing.subscription_plans WHERE id = $1', [
     json?.requiredPlanId,
@@ -251,7 +274,9 @@ let projectId = null;
       taxonomyId: (await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'ai'`))[0].id,
       investmentAsk: '900000000.00',
       askCurrency: 'RUB',
-      requiredPlanId: (await sql(`SELECT id FROM billing.subscription_plans WHERE code='founder_t1'`))[0].id,
+      requiredPlanId: (
+        await sql(`SELECT id FROM billing.subscription_plans WHERE code='founder_t1'`)
+      )[0].id,
     },
   });
   check(
@@ -339,20 +364,36 @@ let seasonId;
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
     method: 'POST',
   });
-  check('заявка подана', response.status === 201 || response.status === 200, `статус ${response.status}`);
+  check(
+    'заявка подана',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
   check('создана первая версия', json?.versionNo === 1, `версия ${json?.versionNo}`);
 }
 {
-  const { json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, { method: 'POST' });
-  check('повторная подача создаёт новую версию', json?.versionNo === 2, `версия ${json?.versionNo}`);
+  const { json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
+    method: 'POST',
+  });
+  check(
+    'повторная подача создаёт новую версию',
+    json?.versionNo === 2,
+    `версия ${json?.versionNo}`,
+  );
 
-  const versions = await sql('SELECT id FROM lab.project_versions WHERE project_id = $1', [projectId]);
+  const versions = await sql('SELECT id FROM lab.project_versions WHERE project_id = $1', [
+    projectId,
+  ]);
   check('снимки заявок накапливаются', versions.length === 2, `версий ${versions.length}`);
   const failedUpdate = await pool
     .query('UPDATE lab.project_versions SET version_no = 99 WHERE project_id = $1', [projectId])
     .then(() => null)
     .catch((error) => error);
-  check('снимок заявки неизменяем', failedUpdate !== null, failedUpdate?.message?.slice(0, 60) ?? '');
+  check(
+    'снимок заявки неизменяем',
+    failedUpdate !== null,
+    failedUpdate?.message?.slice(0, 60) ?? '',
+  );
 }
 
 // ------------------------------------------------------------------ листинг
@@ -375,7 +416,11 @@ let verificationId = null;
     body: { kind: 'identity', docType: 'passport', docCountry: 'RU' },
   });
   verificationId = json?.id ?? null;
-  check('заявка на верификацию создана', response.status === 201 || response.status === 200, `статус ${response.status}`);
+  check(
+    'заявка на верификацию создана',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
   check('заявка в статусе pending', json?.status === 'pending', json?.status ?? '');
 }
 {
@@ -386,26 +431,44 @@ let verificationId = null;
   check('повторная подача не плодит заявки', json?.id === verificationId);
 }
 {
-  const { response } = await founderA.client.call(`/v1/kyc/verifications/${verificationId}/decision`, {
-    method: 'POST',
-    body: { decision: 'approved' },
-  });
-  check('пользователь не может одобрить себя сам', response.status === 403, `статус ${response.status}`);
+  const { response } = await founderA.client.call(
+    `/v1/kyc/verifications/${verificationId}/decision`,
+    {
+      method: 'POST',
+      body: { decision: 'approved' },
+    },
+  );
+  check(
+    'пользователь не может одобрить себя сам',
+    response.status === 403,
+    `статус ${response.status}`,
+  );
 }
 {
   const { response, json } = await adminClient.call('/v1/kyc/queue');
-  check('очередь комплаенса доступна администратору', response.status === 200, `статус ${response.status}`);
+  check(
+    'очередь комплаенса доступна администратору',
+    response.status === 200,
+    `статус ${response.status}`,
+  );
   check(
     'заявка основателя в очереди',
     (json?.items ?? []).some((v) => v.id === verificationId),
   );
 }
 {
-  const { response, json } = await adminClient.call(`/v1/kyc/verifications/${verificationId}/decision`, {
-    method: 'POST',
-    body: { decision: 'approved', riskLevel: 'low' },
-  });
-  check('комплаенс одобрил верификацию', response.status === 201 || response.status === 200, `статус ${response.status}`);
+  const { response, json } = await adminClient.call(
+    `/v1/kyc/verifications/${verificationId}/decision`,
+    {
+      method: 'POST',
+      body: { decision: 'approved', riskLevel: 'low' },
+    },
+  );
+  check(
+    'комплаенс одобрил верификацию',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
   check('статус стал approved', json?.status === 'approved', json?.status ?? '');
 }
 {
@@ -425,10 +488,13 @@ let verificationId = null;
   );
 }
 {
-  const { response, json } = await adminClient.call(`/v1/kyc/verifications/${verificationId}/decision`, {
-    method: 'POST',
-    body: { decision: 'rejected', reason: 'повторное решение' },
-  });
+  const { response, json } = await adminClient.call(
+    `/v1/kyc/verifications/${verificationId}/decision`,
+    {
+      method: 'POST',
+      body: { decision: 'rejected', reason: 'повторное решение' },
+    },
+  );
   check(
     'повторное решение по закрытой заявке отвергнуто',
     response.status === 409,
@@ -450,11 +516,17 @@ let entityId = null;
     },
   });
   entityId = json?.id ?? null;
-  check('юрлицо заведено', response.status === 201 || response.status === 200, `статус ${response.status}`);
+  check(
+    'юрлицо заведено',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
   check('ИНН маскируется', /^\*+\d{4}$/.test(json?.innMasked ?? ''), json?.innMasked ?? '');
   check('KYB ещё не пройден', json?.kybApproved === false);
 
-  const [row] = await sql('SELECT inn_ciphertext FROM kyc.business_entities WHERE id = $1', [entityId]);
+  const [row] = await sql('SELECT inn_ciphertext FROM kyc.business_entities WHERE id = $1', [
+    entityId,
+  ]);
   check(
     'ИНН в базе хранится зашифрованным',
     Buffer.isBuffer(row?.inn_ciphertext) && !row.inn_ciphertext.toString('utf8').includes(TEST_INN),
@@ -477,7 +549,11 @@ let entityId = null;
     method: 'POST',
     body: { kind: 'registry_check' },
   });
-  check('посторонний не подаёт чужое юрлицо на проверку', response.status === 404, `статус ${response.status}`);
+  check(
+    'посторонний не подаёт чужое юрлицо на проверку',
+    response.status === 404,
+    `статус ${response.status}`,
+  );
 }
 let kybId;
 {
@@ -486,7 +562,11 @@ let kybId;
     body: { kind: 'registry_check' },
   });
   kybId = json?.id ?? null;
-  check('проверка юрлица запрошена', response.status === 201 || response.status === 200, `статус ${response.status}`);
+  check(
+    'проверка юрлица запрошена',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
 }
 {
   const { response, json } = await adminClient.call(`/v1/kyc/kyb/${kybId}/decision`, {
@@ -532,7 +612,11 @@ await grantFounderSubscription(founderA.userId, projectId);
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/listing`, {
     method: 'POST',
   });
-  check('листинг опубликован', response.status === 201 || response.status === 200, `статус ${response.status}`);
+  check(
+    'листинг опубликован',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
   check('статус листинга — listed', json?.listingStatus === 'listed', json?.listingStatus ?? '');
   check('дата публикации проставлена', Boolean(json?.listedAt));
 }
@@ -548,7 +632,9 @@ await grantFounderSubscription(founderA.userId, projectId);
     `статус ${response.status} ${json?.code ?? ''}`,
   );
 
-  const [row] = await sql('SELECT investment_ask::text AS ask FROM lab.projects WHERE id = $1', [projectId]);
+  const [row] = await sql('SELECT investment_ask::text AS ask FROM lab.projects WHERE id = $1', [
+    projectId,
+  ]);
   check('сумма запроса не изменилась после отката', row?.ask === '5000000.00', row?.ask ?? '');
 }
 
@@ -578,10 +664,7 @@ await grantFounderSubscription(founderA.userId, projectId);
 }
 {
   const { json } = await raw('/v1/catalog?askMin=100000000');
-  check(
-    'фильтр по сумме отсекает листинг',
-    !(json?.items ?? []).some((i) => i.id === projectId),
-  );
+  check('фильтр по сумме отсекает листинг', !(json?.items ?? []).some((i) => i.id === projectId));
 }
 {
   const { response, json } = await raw(`/v1/catalog/${projectId}`);
@@ -608,11 +691,20 @@ let secondProjectId;
   await founderA.client.call(`/v1/projects/${secondProjectId}/listing`, { method: 'POST' });
 
   const first = await raw('/v1/catalog?limit=1');
-  check('страница ограничена лимитом', first.json?.items?.length === 1, `элементов ${first.json?.items?.length}`);
+  check(
+    'страница ограничена лимитом',
+    first.json?.items?.length === 1,
+    `элементов ${first.json?.items?.length}`,
+  );
   check('курсор следующей страницы выдан', typeof first.json?.nextCursor === 'string');
 
-  const second = await raw(`/v1/catalog?limit=1&cursor=${encodeURIComponent(first.json.nextCursor)}`);
-  check('вторая страница не повторяет первую', second.json?.items?.[0]?.id !== first.json?.items?.[0]?.id);
+  const second = await raw(
+    `/v1/catalog?limit=1&cursor=${encodeURIComponent(first.json.nextCursor)}`,
+  );
+  check(
+    'вторая страница не повторяет первую',
+    second.json?.items?.[0]?.id !== first.json?.items?.[0]?.id,
+  );
 }
 
 // ---------------------------------------------------- инвестор с подпиской
@@ -626,7 +718,11 @@ let secondProjectId;
     [investor.userId],
   );
   const { response, json } = await investor.client.call(`/v1/projects/${projectId}`);
-  check('инвестор с подпиской видит полную карточку', response.status === 200, `статус ${response.status}`);
+  check(
+    'инвестор с подпиской видит полную карточку',
+    response.status === 200,
+    `статус ${response.status}`,
+  );
   check('полная карточка содержит описание', typeof json?.description === 'string');
   check('IRS честно отсутствует до скоринга', json?.irs === null);
 }
@@ -635,7 +731,11 @@ let secondProjectId;
     method: 'PATCH',
     body: { title: 'Инвестор правит чужое' },
   });
-  check('инвестор не может править чужой проект', response.status === 403 || response.status === 404, `статус ${response.status}`);
+  check(
+    'инвестор не может править чужой проект',
+    response.status === 403 || response.status === 404,
+    `статус ${response.status}`,
+  );
 }
 
 // ---------------------------------------------------------------- материалы
@@ -651,39 +751,68 @@ let secondProjectId;
     method: 'POST',
     body: { url: 'https://169.254.169.254/latest/meta-data' },
   });
-  check('ссылка на адрес метаданных отклонена', response.status === 400, `статус ${response.status}`);
+  check(
+    'ссылка на адрес метаданных отклонена',
+    response.status === 400,
+    `статус ${response.status}`,
+  );
 }
 {
-  const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/materials/link`, {
-    method: 'POST',
-    body: { url: 'https://ortocentrix.example/product' },
-  });
-  check('ссылка на продукт добавлена', response.status === 201 || response.status === 200, `статус ${response.status}`);
+  const { response, json } = await founderA.client.call(
+    `/v1/projects/${projectId}/materials/link`,
+    {
+      method: 'POST',
+      body: { url: 'https://ortocentrix.example/product' },
+    },
+  );
+  check(
+    'ссылка на продукт добавлена',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
   check('материал не раскрывает путь в хранилище', !('s3Key' in (json ?? {})));
 }
 
 let ticket;
 {
-  const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/materials/upload`, {
-    method: 'POST',
-    body: {
-      type: 'deck',
-      fileName: 'deck.pdf',
-      contentType: 'application/pdf',
-      sizeBytes: 2048,
+  const { response, json } = await founderA.client.call(
+    `/v1/projects/${projectId}/materials/upload`,
+    {
+      method: 'POST',
+      body: {
+        type: 'deck',
+        fileName: 'deck.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: 2048,
+      },
     },
-  });
+  );
   ticket = json;
-  check('билет на загрузку выдан', response.status === 201 || response.status === 200, `статус ${response.status}`);
+  check(
+    'билет на загрузку выдан',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
   check('подписан лимит размера', typeof json?.maxSizeBytes === 'number' && json.maxSizeBytes > 0);
-  check('секрет хранилища не утёк в билет', !JSON.stringify(json ?? {}).includes(process.env.S3_SECRET_ACCESS_KEY ?? 'нет-ключа'));
+  check(
+    'секрет хранилища не утёк в билет',
+    !JSON.stringify(json ?? {}).includes(process.env.S3_SECRET_ACCESS_KEY ?? 'нет-ключа'),
+  );
 }
 {
   const form = new FormData();
   for (const [key, value] of Object.entries(ticket.formFields)) form.append(key, value);
   form.append('file', new Blob([Buffer.from('%PDF-1.4 тестовая презентация')]), 'deck.pdf');
-  const upload = await fetch(ticket.uploadUrl, { method: 'POST', body: form, signal: AbortSignal.timeout(15_000) });
-  check('файл принят хранилищем по подписанной форме', upload.status === 204 || upload.status === 200, `статус ${upload.status}`);
+  const upload = await fetch(ticket.uploadUrl, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(15_000),
+  });
+  check(
+    'файл принят хранилищем по подписанной форме',
+    upload.status === 204 || upload.status === 200,
+    `статус ${upload.status}`,
+  );
 }
 {
   // Подпись покрывает Content-Type: подмена обязана быть отвергнута хранилищем.
@@ -692,7 +821,11 @@ let ticket;
     form.append(key, key === 'Content-Type' ? 'text/html' : value);
   }
   form.append('file', new Blob([Buffer.from('<script>alert(1)</script>')]), 'x.html');
-  const upload = await fetch(ticket.uploadUrl, { method: 'POST', body: form, signal: AbortSignal.timeout(15_000) });
+  const upload = await fetch(ticket.uploadUrl, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(15_000),
+  });
   check('подмена типа содержимого отвергнута', upload.status >= 400, `статус ${upload.status}`);
 }
 {
@@ -700,7 +833,11 @@ let ticket;
     method: 'POST',
     body: { type: 'deck', fileName: 'чужой.pdf', contentType: 'application/pdf', sizeBytes: 1024 },
   });
-  check('посторонний не получает билет на чужой проект', response.status === 404, `статус ${response.status}`);
+  check(
+    'посторонний не получает билет на чужой проект',
+    response.status === 404,
+    `статус ${response.status}`,
+  );
 }
 
 // ------------------------------------------------------------- снятие листинга
@@ -712,7 +849,10 @@ let ticket;
   check('статус стал unlisted', json?.listingStatus === 'unlisted', json?.listingStatus ?? '');
 
   const { json: catalog } = await raw('/v1/catalog');
-  check('снятый листинг исчез из каталога', !(catalog?.items ?? []).some((i) => i.id === projectId));
+  check(
+    'снятый листинг исчез из каталога',
+    !(catalog?.items ?? []).some((i) => i.id === projectId),
+  );
 
   const [row] = await sql('SELECT title FROM lab.projects WHERE id = $1', [projectId]);
   check('данные проекта при снятии сохраняются', Boolean(row?.title));
@@ -755,7 +895,11 @@ let ticket;
   );
   // Плановое обслуживание создаёт предыдущий, текущий и PARTITION_MONTHS_AHEAD
   // будущих месяцев: минимум пять партиций при значении по умолчанию.
-  check('партиции журнала созданы плановой задачей', (parts[0]?.n ?? 0) >= 5, `партиций ${parts[0]?.n}`);
+  check(
+    'партиции журнала созданы плановой задачей',
+    (parts[0]?.n ?? 0) >= 5,
+    `партиций ${parts[0]?.n}`,
+  );
 }
 
 console.warn(`\nИтог: ${passed} проверок пройдено, ${failed} провалено.\n`);

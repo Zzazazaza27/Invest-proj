@@ -325,7 +325,110 @@ async function checkLiveApi(apiBase) {
 }
 
 // ---------------------------------------------------------------------------
-// 6. Секреты в инфраструктурных манифестах.
+// 6. AI-шлюз — новый слушатель периметра (ADR-007).
+//    Он единственный ходит к внешним моделям, поэтому проверяется отдельно:
+//    привязка к loopback, обязательная аутентификация, отсутствие схемы API и
+//    баннера стека наружу.
+// ---------------------------------------------------------------------------
+async function checkAiGateway(gatewayBase) {
+  let health;
+  try {
+    health = await fetch(`${gatewayBase}/healthz`, { signal: AbortSignal.timeout(3000) });
+  } catch {
+    fail(
+      'LOW',
+      'ai-gateway',
+      `шлюз ${gatewayBase} не отвечает — живая проверка периметра НЕ выполнена ` +
+        '(ограничение прогона, а не зелёный статус)',
+    );
+    return;
+  }
+
+  // Привязка: слушатель шлюза обязан быть на loopback. Проверяется фактическим
+  // выводом netstat, а не строкой запуска.
+  const listeners = sh('netstat', ['-ano']) ?? '';
+  const port = new URL(gatewayBase).port || '8100';
+  // Разбор по столбцам, а не поиском подстроки: в строке netstat есть ещё и
+  // удалённый адрес `0.0.0.0:0`, и наивная проверка объявляет любой слушатель
+  // выставленным наружу — находка, которой нет.
+  const external = listeners
+    .split('\n')
+    .map((l) => l.trim().split(/\s+/))
+    .filter((cols) => cols.length >= 4 && cols[3] === 'LISTENING')
+    .filter((cols) => cols[1]?.endsWith(`:${port}`))
+    .filter((cols) => /^(0\.0\.0\.0|\[::\]):/.test(cols[1] ?? ''))
+    .map((cols) => cols.join(' '));
+  if (external.length > 0) {
+    fail('HIGH', 'ai-gateway', `шлюз слушает не только loopback: ${external[0].trim()}`);
+  } else {
+    ok('ai-gateway', `порт ${port} слушается только на loopback`);
+  }
+
+  // Аутентификация: рабочий маршрут без токена обязан отвечать 401.
+  try {
+    const anon = await fetch(`${gatewayBase}/v1/analyze`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(3000),
+    });
+    if (anon.status !== 401) {
+      fail('CRITICAL', 'ai-gateway-auth', `анализ без токена ответил ${anon.status}, ожидался 401`);
+    } else {
+      ok('ai-gateway-auth', 'анализ без сервисного токена отвергается (401)');
+    }
+  } catch {
+    fail('MEDIUM', 'ai-gateway-auth', 'проверка аутентификации шлюза не выполнена');
+  }
+
+  // Схема API наружу: /docs мало выключить — /openapi.json отдаёт то же самое.
+  const exposed = [];
+  for (const path of ['/docs', '/redoc', '/openapi.json']) {
+    try {
+      const r = await fetch(`${gatewayBase}${path}`, { signal: AbortSignal.timeout(3000) });
+      if (r.status === 200) exposed.push(path);
+    } catch {
+      /* недоступен — это и требуется */
+    }
+  }
+  if (exposed.length > 0) {
+    fail(
+      'MEDIUM',
+      'ai-gateway-docs',
+      `схема API открыта без аутентификации: ${exposed.join(', ')}`,
+    );
+  } else {
+    ok('ai-gateway-docs', 'схема API и интерактивные доки наружу не отдаются');
+  }
+
+  // Баннер стека.
+  const banner = health.headers.get('server');
+  if (banner) {
+    fail('LOW', 'ai-gateway-banner', `заголовок server раскрывает стек: ${banner}`);
+  } else {
+    ok('ai-gateway-banner', 'заголовок server не выставляется');
+  }
+
+  for (const [header, expected] of [
+    ['x-content-type-options', 'nosniff'],
+    ['referrer-policy', 'no-referrer'],
+  ]) {
+    const value = health.headers.get(header);
+    if (value !== expected) {
+      fail(
+        'LOW',
+        'ai-gateway-headers',
+        `${header}=${value ?? 'отсутствует'}, ожидалось ${expected}`,
+      );
+    }
+  }
+  if (!findings.some((f) => f.check === 'ai-gateway-headers')) {
+    ok('ai-gateway-headers', 'заголовки безопасности шлюза на месте');
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 7. Секреты в инфраструктурных манифестах.
 // ---------------------------------------------------------------------------
 function checkInfraCredentials() {
   const PLACEHOLDER = /(CHANGE_ME|local_dev_only|ci_only_password|\$\{[A-Z_]+)/;
@@ -354,6 +457,9 @@ function checkInfraCredentials() {
 // ---------------------------------------------------------------------------
 const apiArgIndex = process.argv.indexOf('--api');
 const apiBase = apiArgIndex >= 0 ? process.argv[apiArgIndex + 1] : 'http://localhost:4300';
+const gatewayArgIndex = process.argv.indexOf('--gateway');
+const gatewayBase =
+  gatewayArgIndex >= 0 ? process.argv[gatewayArgIndex + 1] : 'http://127.0.0.1:8100';
 
 checkContainerPortBindings();
 checkComposeManifests();
@@ -361,6 +467,7 @@ checkInsecureTransport();
 checkCorsConfiguration();
 checkInfraCredentials();
 await checkLiveApi(apiBase);
+await checkAiGateway(gatewayBase);
 
 findings.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
 

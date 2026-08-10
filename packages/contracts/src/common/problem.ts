@@ -39,6 +39,12 @@ export const ErrorCode = {
   LIMIT_EXCEEDED: 'limit_exceeded',
   SELF_DEAL_FORBIDDEN: 'self_deal_forbidden',
   PLAN_UPGRADE_REQUIRED: 'plan_upgrade_required',
+  /**
+   * Операция потребовала бы передачи ограниченных данных за пределы
+   * разрешённых юрисдикций (152-ФЗ, ADR-007). Отдельный код нужен, чтобы
+   * клиент НЕ повторял запрос: это не сбой, а запрет.
+   */
+  RESIDENCY_VIOLATION: 'residency_violation',
 
   // 429 / 5xx
   RATE_LIMITED: 'rate_limited',
@@ -114,6 +120,7 @@ export const ERROR_STATUS: Record<ErrorCodeValue, number> = {
   [ErrorCode.LIMIT_EXCEEDED]: 422,
   [ErrorCode.SELF_DEAL_FORBIDDEN]: 422,
   [ErrorCode.PLAN_UPGRADE_REQUIRED]: 422,
+  [ErrorCode.RESIDENCY_VIOLATION]: 403,
   [ErrorCode.RATE_LIMITED]: 429,
   [ErrorCode.INTERNAL_ERROR]: 500,
   [ErrorCode.DEPENDENCY_UNAVAILABLE]: 503,

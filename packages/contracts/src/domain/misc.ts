@@ -175,6 +175,72 @@ export const InvestmentPassportSchema = z.object({
 });
 export type InvestmentPassport = z.infer<typeof InvestmentPassportSchema>;
 
+export const ReadinessDimensionSchema = z.enum([
+  'problem',
+  'solution',
+  'product',
+  'tech',
+  'team',
+  'market',
+  'competition',
+  'business_model',
+  'unit_economics',
+  'legal',
+  'finance',
+  'pitch',
+  'data_room',
+]);
+export type ReadinessDimension = z.infer<typeof ReadinessDimensionSchema>;
+
+export const ReadinessEntrySchema = z.object({
+  dimension: ReadinessDimensionSchema,
+  level: z.enum(['low', 'medium', 'high']),
+  recommendations: z.array(z.string()),
+  updatedAt: IsoDateTimeSchema,
+});
+export type ReadinessEntry = z.infer<typeof ReadinessEntrySchema>;
+
+export const RoadmapStepSchema = z.object({
+  id: UuidSchema,
+  title: z.string(),
+  description: z.string().nullable(),
+  dimension: z.string().nullable(),
+  status: z.enum(['pending', 'in_progress', 'completed', 'skipped']),
+  priority: z.number().int(),
+  orderIndex: z.number().int(),
+});
+export type RoadmapStep = z.infer<typeof RoadmapStepSchema>;
+
+export const RoadmapSchema = z.object({
+  id: UuidSchema,
+  projectId: UuidSchema,
+  generatedBy: z.enum(['ai', 'expert']),
+  isActive: z.boolean(),
+  createdAt: IsoDateTimeSchema,
+  steps: z.array(RoadmapStepSchema),
+});
+export type Roadmap = z.infer<typeof RoadmapSchema>;
+
+/**
+ * Результат прогона анализа.
+ *
+ * `isLlm` возвращается наружу намеренно: пользователь имеет право знать, что
+ * оценку посчитала воспроизводимая эвристика, а не языковая модель. Выдавать
+ * одно за другое — то же самое, что выдавать сгенерированное за подтверждённое.
+ */
+export const AnalysisRunSchema = z.object({
+  runId: UuidSchema,
+  projectId: UuidSchema,
+  status: z.enum(['succeeded', 'failed']),
+  provider: z.string(),
+  isLlm: z.boolean(),
+  modelVersion: z.string(),
+  passportVersion: z.number().int().positive(),
+  irs: z.number().min(0).max(100),
+  irsDelta: z.number().nullable(),
+});
+export type AnalysisRun = z.infer<typeof AnalysisRunSchema>;
+
 /**
  * Ответ AI Mentor. `sources` непуст по контракту: ответ без источника из
  * passport_facts не выдаётся (Architect_Launch.md §4.5).

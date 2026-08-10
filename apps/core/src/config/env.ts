@@ -81,6 +81,13 @@ const RawEnvSchema = z.object({
   NATS_URL: z.string().default(''),
   NATS_STREAM: z.string().default('LAUNCH'),
 
+  // --- AI-контур ----------------------------------------------------------
+  // Шлюз — единственный выход к моделям (ADR-007). Адрес и токен приходят из
+  // конфигурации: часть URL из пользовательского ввода была бы SSRF.
+  AI_GATEWAY_URL: z.string().default(''),
+  AI_GATEWAY_TOKEN: z.string().default(''),
+  AI_GATEWAY_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120_000).default(30_000),
+
   // --- Объектное хранилище (материалы проектов) ---------------------------
   // Файл идёт в S3 напрямую по presigned URL: через API он не проходит, чтобы
   // недоверенный контент не касался прикладного процесса.
@@ -228,6 +235,24 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
       code: 'custom',
       path: ['S3_ENDPOINT'],
       message: 'в production обращение к хранилищу — только по https',
+    });
+  }
+
+  // ---- AI-контур ----------------------------------------------------------
+  // Адрес и токен идут парой: адрес без токена означает запросы к шлюзу без
+  // аутентификации, токен без адреса — секрет в конфигурации без применения.
+  if (Boolean(env.AI_GATEWAY_URL) !== Boolean(env.AI_GATEWAY_TOKEN)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['AI_GATEWAY_URL'],
+      message: 'AI_GATEWAY_URL и AI_GATEWAY_TOKEN задаются вместе либо не задаются вовсе',
+    });
+  }
+  if (isProd && env.AI_GATEWAY_URL && !env.AI_GATEWAY_URL.startsWith('https://')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['AI_GATEWAY_URL'],
+      message: 'в production обращение к шлюзу — только по https',
     });
   }
 

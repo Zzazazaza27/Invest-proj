@@ -125,7 +125,12 @@ if (userId) {
      VALUES (public.uuid_generate_v7(), $1, $2, $3, $4,
              'Тестовый пользователь (ssurgut)', 'founder', 'pending_consents', 'ru-RU')
      RETURNING id`,
-    [contact.ciphertext, contact.wrappedDek, blindIndex(EMAIL), await argon2.hash(PASSWORD, ARGON2_OPTIONS)],
+    [
+      contact.ciphertext,
+      contact.wrappedDek,
+      blindIndex(EMAIL),
+      await argon2.hash(PASSWORD, ARGON2_OPTIONS),
+    ],
   );
   userId = created.rows[0].id;
 
