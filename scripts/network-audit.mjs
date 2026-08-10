@@ -59,7 +59,10 @@ function checkContainerPortBindings() {
   for (const line of lines) {
     const [name, ports = ''] = line.split('\t');
     // Пример строки: 0.0.0.0:5433->5432/tcp, [::]:5433->5432/tcp
-    for (const mapping of ports.split(',').map((s) => s.trim()).filter(Boolean)) {
+    for (const mapping of ports
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       if (!mapping.includes('->')) continue;
       const host = mapping.split('->')[0];
       const isLoopback =
@@ -98,7 +101,11 @@ function checkComposeManifests() {
     .filter(([l]) => /^\s*-\s*['"]?(0\.0\.0\.0|\*)?:?\d+:\d+/.test(l) && !l.includes('127.0.0.1'));
   if (badBindings.length > 0) {
     for (const [l, n] of badBindings) {
-      fail('HIGH', 'compose-bindings', `docker-compose.yml:${n} публикует порт без 127.0.0.1: ${l.trim()}`);
+      fail(
+        'HIGH',
+        'compose-bindings',
+        `docker-compose.yml:${n} публикует порт без 127.0.0.1: ${l.trim()}`,
+      );
     }
   } else {
     ok('compose-bindings', 'все публикации портов в compose привязаны к 127.0.0.1');
@@ -125,8 +132,17 @@ function checkComposeManifests() {
 // 3. Запрет отключения проверки TLS и небезопасного транспорта в коде.
 // ---------------------------------------------------------------------------
 const SKIP_DIRS = new Set([
-  'node_modules', '.git', 'dist', 'build', 'coverage', '.vite',
-  'playwright-report', 'test-results', 'graphify-out', '.venv', '__pycache__',
+  'node_modules',
+  '.git',
+  'dist',
+  'build',
+  'coverage',
+  '.vite',
+  'playwright-report',
+  'test-results',
+  'graphify-out',
+  '.venv',
+  '__pycache__',
 ]);
 const SCAN_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py|yml|yaml|json|sql|toml)$/;
 
@@ -147,10 +163,18 @@ function checkInsecureTransport() {
   const rules = [
     [/rejectUnauthorized\s*:\s*false/, 'CRITICAL', 'отключена проверка TLS-сертификата (Node)'],
     [/verify\s*=\s*False/, 'CRITICAL', 'отключена проверка TLS-сертификата (Python requests)'],
-    [/NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*['"]?0/, 'CRITICAL', 'глобально отключена проверка TLS'],
+    [
+      /NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*['"]?0/,
+      'CRITICAL',
+      'глобально отключена проверка TLS',
+    ],
     [/ssl\._create_unverified_context/, 'CRITICAL', 'создаётся неверифицированный SSL-контекст'],
     [/curl\s+[^\n]*\s-k(\s|$)/, 'HIGH', 'curl с отключённой проверкой сертификата'],
-    [/InsecureRequestWarning|urllib3\.disable_warnings/, 'HIGH', 'подавление предупреждений о небезопасном TLS'],
+    [
+      /InsecureRequestWarning|urllib3\.disable_warnings/,
+      'HIGH',
+      'подавление предупреждений о небезопасном TLS',
+    ],
     [/minVersion\s*:\s*['"]TLSv1(\.[01])?['"]/, 'HIGH', 'разрешён устаревший TLS < 1.2'],
   ];
   let hits = 0;
@@ -176,13 +200,20 @@ function checkCorsConfiguration() {
   for (const file of walk(join(ROOT, 'apps'))) {
     if (!/\.(ts|js|mjs)$/.test(file)) continue;
     const text = readFileSync(file, 'utf8');
-    if (/origin\s*:\s*['"`]\*['"`]/.test(text) || /Access-Control-Allow-Origin['"`]?\s*[,:]\s*['"`]\*/.test(text)) {
+    if (
+      /origin\s*:\s*['"`]\*['"`]/.test(text) ||
+      /Access-Control-Allow-Origin['"`]?\s*[,:]\s*['"`]\*/.test(text)
+    ) {
       hits += 1;
       fail('HIGH', 'cors', `${relative(ROOT, file)}: CORS с Origin '*'`);
     }
     if (/origin\s*:\s*true/.test(text) && /credentials\s*:\s*true/.test(text)) {
       hits += 1;
-      fail('HIGH', 'cors', `${relative(ROOT, file)}: отражение произвольного Origin вместе с credentials`);
+      fail(
+        'HIGH',
+        'cors',
+        `${relative(ROOT, file)}: отражение произвольного Origin вместе с credentials`,
+      );
     }
   }
   if (hits === 0) ok('cors', "нет CORS с '*' и нет отражения произвольного Origin при credentials");
@@ -245,7 +276,8 @@ async function checkLiveApi(apiBase) {
   for (const [header, re] of Object.entries(REQUIRED_HEADERS)) {
     const value = res.headers.get(header);
     if (!value) fail('MEDIUM', 'headers', `отсутствует заголовок ${header}`);
-    else if (!re.test(value)) fail('MEDIUM', 'headers', `${header} имеет недопустимое значение: ${value}`);
+    else if (!re.test(value))
+      fail('MEDIUM', 'headers', `${header} имеет недопустимое значение: ${value}`);
   }
   if (!findings.some((f) => f.check === 'headers')) {
     ok('headers', `все обязательные заголовки безопасности присутствуют (${res.status})`);
@@ -267,7 +299,11 @@ async function checkLiveApi(apiBase) {
     });
     const allow = evil.headers.get('access-control-allow-origin');
     if (allow === '*' || allow === 'https://evil.example') {
-      fail('HIGH', 'cors-live', `сервер разрешил чужой Origin: Access-Control-Allow-Origin=${allow}`);
+      fail(
+        'HIGH',
+        'cors-live',
+        `сервер разрешил чужой Origin: Access-Control-Allow-Origin=${allow}`,
+      );
     } else {
       ok('cors-live', 'чужой Origin не получает Access-Control-Allow-Origin');
     }
@@ -291,7 +327,7 @@ async function checkLiveApi(apiBase) {
 // ---------------------------------------------------------------------------
 // 6. Секреты в инфраструктурных манифестах.
 // ---------------------------------------------------------------------------
-function checkInfraSecrets() {
+function checkInfraCredentials() {
   const PLACEHOLDER = /(CHANGE_ME|local_dev_only|ci_only_password|\$\{[A-Z_]+)/;
   const SECRET_KEY = /(PASSWORD|SECRET|TOKEN|PRIVATE_KEY|ACCESS_KEY)\s*[:=]\s*['"]?([^\s'"$#]+)/g;
   let hits = 0;
@@ -301,11 +337,16 @@ function checkInfraSecrets() {
       const value = m[2];
       if (value && value.length >= 8 && !PLACEHOLDER.test(value) && !PLACEHOLDER.test(m[0])) {
         hits += 1;
-        fail('CRITICAL', 'infra-secrets', `${relative(ROOT, file)}: похоже на реальный секрет в манифесте (${m[1]})`);
+        fail(
+          'CRITICAL',
+          'infra-credentials',
+          `${relative(ROOT, file)}: похоже на реальный секрет в манифесте (${m[1]})`,
+        );
       }
     }
   }
-  if (hits === 0) ok('infra-secrets', 'в инфраструктурных манифестах только плейсхолдеры и переменные');
+  if (hits === 0)
+    ok('infra-credentials', 'в инфраструктурных манифестах только плейсхолдеры и переменные');
 }
 
 // ---------------------------------------------------------------------------
@@ -318,7 +359,7 @@ checkContainerPortBindings();
 checkComposeManifests();
 checkInsecureTransport();
 checkCorsConfiguration();
-checkInfraSecrets();
+checkInfraCredentials();
 await checkLiveApi(apiBase);
 
 findings.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
@@ -326,7 +367,8 @@ findings.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity])
 console.warn('\n=== ГЕЙТ СЕТЕВОЙ БЕЗОПАСНОСТИ (RULES.md §3.2) ===\n');
 for (const p of passed) console.warn(`  OK       ${p.check.padEnd(18)} ${p.detail}`);
 if (findings.length > 0) console.warn('');
-for (const f of findings) console.warn(`  ${f.severity.padEnd(8)} ${f.check.padEnd(18)} ${f.detail}`);
+for (const f of findings)
+  console.warn(`  ${f.severity.padEnd(8)} ${f.check.padEnd(18)} ${f.detail}`);
 
 const blocking = findings.filter((f) => BLOCKING.has(f.severity));
 console.warn(

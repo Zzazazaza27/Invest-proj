@@ -56,18 +56,18 @@ node scripts/network-audit.mjs --api https://api.stage.unicorn.vc
 
 Скрипт проверяет **фактическое состояние**, а не конфиг:
 
-| Проверка           | Что делает                                                                           |
-| ------------------ | ------------------------------------------------------------------------------------ |
-| `container-ports`  | Реальные привязки портов из `docker ps`. Всё вне loopback — HIGH                     |
-| `compose-bindings` | Публикации портов в манифесте без `127.0.0.1` — HIGH                                 |
-| `compose-anon`     | Анонимный вход, `trust`-аутентификация PostgreSQL — CRITICAL                         |
-| `tls`              | `rejectUnauthorized:false`, `verify=False`, `curl -k`, TLS < 1.2 — CRITICAL/HIGH     |
-| `cors`             | `origin:'*'` и отражение произвольного Origin при credentials — HIGH                 |
-| `infra-secrets`    | Похожее на реальный секрет в манифестах — CRITICAL                                   |
-| `headers`          | Живой ответ API: CSP, X-Content-Type-Options, Referrer-Policy, COOP, X-Frame-Options |
-| `cors-live`        | Запрос с `Origin: https://evil.example` не должен получить разрешение                |
-| `cookie`           | HttpOnly, Secure, SameSite на всех выставляемых cookie                               |
-| `banner`           | Раскрытие стека в `Server` / `X-Powered-By`                                          |
+| Проверка            | Что делает                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------ |
+| `container-ports`   | Реальные привязки портов из `docker ps`. Всё вне loopback — HIGH                     |
+| `compose-bindings`  | Публикации портов в манифесте без `127.0.0.1` — HIGH                                 |
+| `compose-anon`      | Анонимный вход, `trust`-аутентификация PostgreSQL — CRITICAL                         |
+| `tls`               | `rejectUnauthorized:false`, `verify=False`, `curl -k`, TLS < 1.2 — CRITICAL/HIGH     |
+| `cors`              | `origin:'*'` и отражение произвольного Origin при credentials — HIGH                 |
+| `infra-credentials` | Похожее на реальный секрет в манифестах — CRITICAL                                   |
+| `headers`           | Живой ответ API: CSP, X-Content-Type-Options, Referrer-Policy, COOP, X-Frame-Options |
+| `cors-live`         | Запрос с `Origin: https://evil.example` не должен получить разрешение                |
+| `cookie`            | HttpOnly, Secure, SameSite на всех выставляемых cookie                               |
+| `banner`            | Раскрытие стека в `Server` / `X-Powered-By`                                          |
 
 Скрипт различает «наш core не запущен» и «на порту чужой сервис»: живая
 проверка засчитывается только если `/v1/health` возвращает

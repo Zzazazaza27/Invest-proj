@@ -44,11 +44,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      # Прямой запуск контейнера вместо gitleaks-action: action ожидает
+      # results.sarif и лицензию для организаций, из-за чего падает на
+      # приватном репозитории даже при отсутствии находок.
       - name: gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITLEAKS_CONFIG: .gitleaks.toml
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          docker run --rm -v "$PWD:/repo" -w /repo \
+            zricethezav/gitleaks:latest detect \
+              --source=/repo --config=/repo/.gitleaks.toml \
+              --no-banner --redact --exit-code 1
 
   # ---------------------------------------------------------------- гейт 3
   sast:
@@ -89,10 +93,16 @@ jobs:
       - run: npm ci
       - name: npm audit (high и выше — блокирующе)
         run: npm audit --audit-level=high
+      # AI-контур появляется в фазе Ф7. Пока файла нет — шаг пропускается явно
+      # и с сообщением, а не «зеленеет» молча.
       - name: Python-зависимости AI-контура
         run: |
-          python -m pip install --quiet pip-audit
-          pip-audit -r apps/ai-gateway/requirements.txt --strict || exit 1
+          if [ -f apps/ai-gateway/requirements.txt ]; then
+            python -m pip install --quiet pip-audit
+            pip-audit -r apps/ai-gateway/requirements.txt --strict
+          else
+            echo "::notice::apps/ai-gateway/requirements.txt отсутствует — AI-контур ещё не реализован (фаза Ф7). Проверка НЕ выполнялась."
+          fi
 
   # ---------------------------------------------------------------- гейт 5
   database:
@@ -164,7 +174,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run migrate -w database
-      - run: npm run test -w apps/core
+      # apps/core появляется в фазе Ф3.
+      - name: Тесты core
+        run: |
+          if [ -f apps/core/package.json ]; then
+            npm run test -w apps/core
+          else
+            echo "::notice::apps/core ещё не реализован (фаза Ф3). Тесты НЕ выполнялись."
+          fi
 
   # ---------------------------------------------------------------- гейт 7
   build:
