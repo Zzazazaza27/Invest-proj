@@ -1,0 +1,22 @@
+# Единые переводы строк в репозитории: LF в git, нативные в рабочей копии.
+# Без этого Windows-машины добавляют CR в каждый файл и диффы становятся нечитаемыми.
+* text=auto eol=lf
+
+# Скрипты, исполняемые в контейнерах Linux, обязаны иметь LF всегда.
+*.sh text eol=lf
+*.sql text eol=lf
+Dockerfile text eol=lf
+
+# Бинарные файлы не трогать.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+
+# Сгенерированные файлы не участвуют в статистике языков и сворачиваются в диффе.
+package-lock.json linguist-generated=true -diff

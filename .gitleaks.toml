@@ -1,0 +1,37 @@
+# Конфигурация секрет-скана. Гейт CI: 0 находок (RULES.md §3).
+title = "UNICORN LAUNCH gitleaks"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "unicorn-kek-material"
+description = "Ключевой материал KEK/DEK в открытом виде"
+regex = '''(?i)(KEK_[A-Z_]+|wrapped_dek|dek_plain)\s*[:=]\s*['"]?[A-Za-z0-9+/]{40,}={0,2}['"]?'''
+tags = ["key", "crypto"]
+
+[[rules]]
+id = "unicorn-db-url-with-password"
+description = "Строка подключения к БД с непустым паролем"
+regex = '''postgres(ql)?:\/\/[a-z_][a-z0-9_]*:(?!CHANGE_ME|local_dev_only)[^\s:@\/]{8,}@'''
+tags = ["database"]
+
+[[rules]]
+id = "unicorn-webhook-secret"
+description = "Секрет вебхука в коде"
+regex = '''(?i)(webhook_secret|hmac_secret|signing_secret)\s*[:=]\s*['"][^'"\s]{16,}['"]'''
+tags = ["secret"]
+
+[allowlist]
+description = "Плейсхолдеры, тестовые фикстуры и локальный контур"
+paths = [
+  '''(^|/)node_modules/''',
+  '''(^|/)package-lock\.json$''',
+  '''(^|/)dist/''',
+  '''(^|/)coverage/''',
+]
+regexes = [
+  '''CHANGE_ME''',
+  '''local_dev_only_change_me''',
+  '''test[-_]?fixture''',
+]

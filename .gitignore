@@ -1,0 +1,60 @@
+# --- dependencies ---
+node_modules/
+.pnp/
+.pnp.js
+
+# --- build output ---
+dist/
+build/
+out/
+.next/
+.vite/
+*.tsbuildinfo
+
+# --- python ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- environment & secrets (НИКОГДА не коммитим) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+!infra/**/dev-only-*.pem
+secrets/
+.secrets/
+
+# --- test & coverage ---
+coverage/
+.nyc_output/
+playwright-report/
+test-results/
+blob-report/
+.playwright-mcp/
+
+# --- logs & temp ---
+*.log
+npm-debug.log*
+yarn-error.log*
+.tmp/
+tmp/
+*.bak
+*.orig
+
+# --- editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- local infra volumes ---
+.docker-data/
+
+# --- generated artifacts ---
+graphify-out/cache/

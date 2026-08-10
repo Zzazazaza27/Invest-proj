@@ -1,0 +1,22 @@
+node_modules
+dist
+build
+coverage
+.vite
+package-lock.json
+graphify-out
+playwright-report
+test-results
+apps/web-public/public/assets
+
+# Документы владельца — источники правды. Их форматирование не наше дело:
+# автоформат создал бы шум в диффе и затруднил сверку со спецификацией.
+Architect.md
+Architect_Launch.md
+Database.md
+Database_Launch.md
+RULES.md
+ROADMAP.md
+
+# Унаследованный лендинг: конвертируется в TS в фазе Ф10, тогда и форматируется.
+apps/web-public/src

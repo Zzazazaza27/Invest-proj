@@ -1,0 +1,344 @@
+#!/usr/bin/env node
+/**
+ * Гейт сетевой безопасности (RULES.md §3.2).
+ *
+ * Прогоняется по завершении КАЖДОЙ фазы. Проверяет фактическое состояние, а не
+ * намерение в конфиге: реальные привязки портов контейнеров, реальные заголовки
+ * ответа API, реальное поведение CORS с чужим Origin.
+ *
+ * Выход: 0 — гейт пройден; 1 — есть находки уровня CRITICAL/HIGH/MEDIUM,
+ * которые обязаны быть исправлены в этой же фазе, до коммита.
+ *
+ * Запуск:  node scripts/network-audit.mjs [--api http://localhost:4300]
+ */
+import { execFileSync } from 'node:child_process';
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
+
+/** @type {{severity:string, check:string, detail:string}[]} */
+const findings = [];
+const passed = [];
+
+const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
+const BLOCKING = new Set(['CRITICAL', 'HIGH', 'MEDIUM']);
+
+function fail(severity, check, detail) {
+  findings.push({ severity, check, detail });
+}
+function ok(check, detail) {
+  passed.push({ check, detail });
+}
+
+function sh(cmd, args) {
+  try {
+    return execFileSync(cmd, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch {
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 1. Фактические привязки портов контейнеров.
+//    Служебные порты (БД, брокер, кеш, хранилище, IdP) не должны слушать 0.0.0.0.
+// ---------------------------------------------------------------------------
+function checkContainerPortBindings() {
+  const out = sh('docker', ['ps', '--format', '{{.Names}}\t{{.Ports}}']);
+  if (out === null) {
+    fail('LOW', 'container-ports', 'docker недоступен — проверка привязок портов не выполнена');
+    return;
+  }
+  const lines = out.split('\n').filter((l) => l.trim() && l.includes('unicorn-'));
+  if (lines.length === 0) {
+    fail('LOW', 'container-ports', 'контейнеры проекта не запущены — проверка не выполнена');
+    return;
+  }
+  let exposed = 0;
+  for (const line of lines) {
+    const [name, ports = ''] = line.split('\t');
+    // Пример строки: 0.0.0.0:5433->5432/tcp, [::]:5433->5432/tcp
+    for (const mapping of ports.split(',').map((s) => s.trim()).filter(Boolean)) {
+      if (!mapping.includes('->')) continue;
+      const host = mapping.split('->')[0];
+      const isLoopback =
+        host.startsWith('127.0.0.1:') || host.startsWith('[::1]:') || host.startsWith('localhost:');
+      if (!isLoopback) {
+        exposed += 1;
+        fail(
+          'HIGH',
+          'container-ports',
+          `${name}: порт опубликован вне loopback — ${mapping}. ` +
+            'Служебные порты биндятся на 127.0.0.1 (RULES.md §3.2).',
+        );
+      }
+    }
+  }
+  if (exposed === 0) {
+    ok('container-ports', `${lines.length} контейнеров, все опубликованные порты — на loopback`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 2. Инфраструктурные манифесты: запрет 0.0.0.0 в публикации портов,
+//    запрет анонимного доступа, дефолтных кредов и реальных секретов.
+// ---------------------------------------------------------------------------
+function checkComposeManifests() {
+  const composePath = join(ROOT, 'infra', 'docker-compose.yml');
+  if (!existsSync(composePath)) {
+    fail('MEDIUM', 'compose', 'infra/docker-compose.yml не найден');
+    return;
+  }
+  const text = readFileSync(composePath, 'utf8');
+
+  const badBindings = text
+    .split('\n')
+    .map((l, i) => [l, i + 1])
+    .filter(([l]) => /^\s*-\s*['"]?(0\.0\.0\.0|\*)?:?\d+:\d+/.test(l) && !l.includes('127.0.0.1'));
+  if (badBindings.length > 0) {
+    for (const [l, n] of badBindings) {
+      fail('HIGH', 'compose-bindings', `docker-compose.yml:${n} публикует порт без 127.0.0.1: ${l.trim()}`);
+    }
+  } else {
+    ok('compose-bindings', 'все публикации портов в compose привязаны к 127.0.0.1');
+  }
+
+  // Явно опасные включения анонимного доступа.
+  const anonPatterns = [
+    [/ALLOW_ANONYMOUS_LOGIN\s*[:=]\s*['"]?(yes|true)/i, 'включён анонимный вход'],
+    [/POSTGRES_HOST_AUTH_METHOD\s*[:=]\s*['"]?trust/i, 'PostgreSQL с auth-method=trust'],
+    [/--auth-host=trust/i, 'PostgreSQL инициализируется с trust-аутентификацией'],
+    [/allow_anonymous/i, 'разрешён анонимный доступ'],
+  ];
+  let anonHits = 0;
+  for (const [re, msg] of anonPatterns) {
+    if (re.test(text)) {
+      anonHits += 1;
+      fail('CRITICAL', 'compose-anon', `${msg} в infra/docker-compose.yml`);
+    }
+  }
+  if (anonHits === 0) ok('compose-anon', 'анонимный доступ к инфраструктуре не включён');
+}
+
+// ---------------------------------------------------------------------------
+// 3. Запрет отключения проверки TLS и небезопасного транспорта в коде.
+// ---------------------------------------------------------------------------
+const SKIP_DIRS = new Set([
+  'node_modules', '.git', 'dist', 'build', 'coverage', '.vite',
+  'playwright-report', 'test-results', 'graphify-out', '.venv', '__pycache__',
+]);
+const SCAN_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py|yml|yaml|json|sql|toml)$/;
+
+function* walk(dir) {
+  for (const entry of readdirSync(dir)) {
+    if (SKIP_DIRS.has(entry)) continue;
+    const full = join(dir, entry);
+    const st = statSync(full);
+    if (st.isDirectory()) yield* walk(full);
+    else if (SCAN_EXT.test(entry)) yield full;
+  }
+}
+
+function checkInsecureTransport() {
+  // Правило и его описание не должны сами по себе считаться находкой,
+  // поэтому файлы политик исключены из скана.
+  const POLICY_FILES = new Set(['RULES.md', 'network-audit.mjs', 'guardian.yml']);
+  const rules = [
+    [/rejectUnauthorized\s*:\s*false/, 'CRITICAL', 'отключена проверка TLS-сертификата (Node)'],
+    [/verify\s*=\s*False/, 'CRITICAL', 'отключена проверка TLS-сертификата (Python requests)'],
+    [/NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*['"]?0/, 'CRITICAL', 'глобально отключена проверка TLS'],
+    [/ssl\._create_unverified_context/, 'CRITICAL', 'создаётся неверифицированный SSL-контекст'],
+    [/curl\s+[^\n]*\s-k(\s|$)/, 'HIGH', 'curl с отключённой проверкой сертификата'],
+    [/InsecureRequestWarning|urllib3\.disable_warnings/, 'HIGH', 'подавление предупреждений о небезопасном TLS'],
+    [/minVersion\s*:\s*['"]TLSv1(\.[01])?['"]/, 'HIGH', 'разрешён устаревший TLS < 1.2'],
+  ];
+  let hits = 0;
+  for (const file of walk(ROOT)) {
+    const base = file.split(/[\\/]/).pop();
+    if (POLICY_FILES.has(base)) continue;
+    const text = readFileSync(file, 'utf8');
+    for (const [re, sev, msg] of rules) {
+      if (re.test(text)) {
+        hits += 1;
+        fail(sev, 'tls', `${relative(ROOT, file)}: ${msg}`);
+      }
+    }
+  }
+  if (hits === 0) ok('tls', 'проверка TLS-сертификатов нигде не отключается');
+}
+
+// ---------------------------------------------------------------------------
+// 4. CORS: запрет '*' и отражения произвольного Origin вместе с credentials.
+// ---------------------------------------------------------------------------
+function checkCorsConfiguration() {
+  let hits = 0;
+  for (const file of walk(join(ROOT, 'apps'))) {
+    if (!/\.(ts|js|mjs)$/.test(file)) continue;
+    const text = readFileSync(file, 'utf8');
+    if (/origin\s*:\s*['"`]\*['"`]/.test(text) || /Access-Control-Allow-Origin['"`]?\s*[,:]\s*['"`]\*/.test(text)) {
+      hits += 1;
+      fail('HIGH', 'cors', `${relative(ROOT, file)}: CORS с Origin '*'`);
+    }
+    if (/origin\s*:\s*true/.test(text) && /credentials\s*:\s*true/.test(text)) {
+      hits += 1;
+      fail('HIGH', 'cors', `${relative(ROOT, file)}: отражение произвольного Origin вместе с credentials`);
+    }
+  }
+  if (hits === 0) ok('cors', "нет CORS с '*' и нет отражения произвольного Origin при credentials");
+}
+
+// ---------------------------------------------------------------------------
+// 5. Живая проверка API: заголовки безопасности, CORS с чужим Origin, cookie.
+//    Выполняется, только если API отвечает. Иначе — честно фиксируется пропуск.
+// ---------------------------------------------------------------------------
+const REQUIRED_HEADERS = {
+  'x-content-type-options': /^nosniff$/i,
+  'referrer-policy': /no-referrer|same-origin|strict-origin/i,
+  'content-security-policy': /default-src/i,
+  'cross-origin-opener-policy': /same-origin/i,
+  'x-frame-options': /deny|sameorigin/i,
+};
+
+/**
+ * Отвечает ли на этом адресе ИМЕННО наш core.
+ * Чужой сервис на том же порту (частая ситуация на машине разработчика) не
+ * должен превращаться ни в зелёный статус, ни в ложную находку по нашему коду.
+ */
+async function identifyApi(res) {
+  if (!res.ok) return false;
+  try {
+    const body = await res.clone().json();
+    return body?.service === 'unicorn-launch-core';
+  } catch {
+    return false;
+  }
+}
+
+async function checkLiveApi(apiBase) {
+  let res;
+  try {
+    res = await fetch(`${apiBase}/v1/health`, {
+      signal: AbortSignal.timeout(3000),
+      redirect: 'manual',
+    });
+  } catch {
+    fail(
+      'LOW',
+      'live-api',
+      `API ${apiBase} не отвечает — живая проверка заголовков, CORS и rate-limit НЕ выполнена ` +
+        '(это ограничение фазы, а не зелёный статус)',
+    );
+    return;
+  }
+
+  if (!(await identifyApi(res))) {
+    fail(
+      'MEDIUM',
+      'live-api',
+      `На ${apiBase} отвечает ПОСТОРОННИЙ сервис (HTTP ${res.status}), не unicorn-launch-core. ` +
+        'Живая проверка не выполнена; проверь занятость порта перед запуском core.',
+    );
+    return;
+  }
+
+  for (const [header, re] of Object.entries(REQUIRED_HEADERS)) {
+    const value = res.headers.get(header);
+    if (!value) fail('MEDIUM', 'headers', `отсутствует заголовок ${header}`);
+    else if (!re.test(value)) fail('MEDIUM', 'headers', `${header} имеет недопустимое значение: ${value}`);
+  }
+  if (!findings.some((f) => f.check === 'headers')) {
+    ok('headers', `все обязательные заголовки безопасности присутствуют (${res.status})`);
+  }
+
+  // Раскрытие стека.
+  for (const leaky of ['x-powered-by', 'server']) {
+    const v = res.headers.get(leaky);
+    if (v && !/^(nginx|cloudflare)$/i.test(v)) {
+      fail('LOW', 'banner', `заголовок ${leaky} раскрывает стек: ${v}`);
+    }
+  }
+
+  // CORS с заведомо чужим Origin не должен разрешаться.
+  try {
+    const evil = await fetch(`${apiBase}/v1/health`, {
+      headers: { Origin: 'https://evil.example' },
+      signal: AbortSignal.timeout(3000),
+    });
+    const allow = evil.headers.get('access-control-allow-origin');
+    if (allow === '*' || allow === 'https://evil.example') {
+      fail('HIGH', 'cors-live', `сервер разрешил чужой Origin: Access-Control-Allow-Origin=${allow}`);
+    } else {
+      ok('cors-live', 'чужой Origin не получает Access-Control-Allow-Origin');
+    }
+  } catch {
+    fail('LOW', 'cors-live', 'живая проверка CORS не выполнена');
+  }
+
+  // Cookie-флаги, если сервер их ставит.
+  const setCookie = res.headers.getSetCookie?.() ?? [];
+  for (const c of setCookie) {
+    const name = c.split('=')[0];
+    if (!/HttpOnly/i.test(c)) fail('HIGH', 'cookie', `${name}: нет HttpOnly`);
+    if (!/Secure/i.test(c)) fail('HIGH', 'cookie', `${name}: нет Secure`);
+    if (!/SameSite=(Strict|Lax)/i.test(c)) fail('MEDIUM', 'cookie', `${name}: нет SameSite`);
+  }
+  if (setCookie.length > 0 && !findings.some((f) => f.check === 'cookie')) {
+    ok('cookie', `${setCookie.length} cookie — все с HttpOnly/Secure/SameSite`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 6. Секреты в инфраструктурных манифестах.
+// ---------------------------------------------------------------------------
+function checkInfraSecrets() {
+  const PLACEHOLDER = /(CHANGE_ME|local_dev_only|ci_only_password|\$\{[A-Z_]+)/;
+  const SECRET_KEY = /(PASSWORD|SECRET|TOKEN|PRIVATE_KEY|ACCESS_KEY)\s*[:=]\s*['"]?([^\s'"$#]+)/g;
+  let hits = 0;
+  for (const file of walk(join(ROOT, 'infra'))) {
+    const text = readFileSync(file, 'utf8');
+    for (const m of text.matchAll(SECRET_KEY)) {
+      const value = m[2];
+      if (value && value.length >= 8 && !PLACEHOLDER.test(value) && !PLACEHOLDER.test(m[0])) {
+        hits += 1;
+        fail('CRITICAL', 'infra-secrets', `${relative(ROOT, file)}: похоже на реальный секрет в манифесте (${m[1]})`);
+      }
+    }
+  }
+  if (hits === 0) ok('infra-secrets', 'в инфраструктурных манифестах только плейсхолдеры и переменные');
+}
+
+// ---------------------------------------------------------------------------
+// Прогон и отчёт
+// ---------------------------------------------------------------------------
+const apiArgIndex = process.argv.indexOf('--api');
+const apiBase = apiArgIndex >= 0 ? process.argv[apiArgIndex + 1] : 'http://localhost:4300';
+
+checkContainerPortBindings();
+checkComposeManifests();
+checkInsecureTransport();
+checkCorsConfiguration();
+checkInfraSecrets();
+await checkLiveApi(apiBase);
+
+findings.sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+
+console.warn('\n=== ГЕЙТ СЕТЕВОЙ БЕЗОПАСНОСТИ (RULES.md §3.2) ===\n');
+for (const p of passed) console.warn(`  OK       ${p.check.padEnd(18)} ${p.detail}`);
+if (findings.length > 0) console.warn('');
+for (const f of findings) console.warn(`  ${f.severity.padEnd(8)} ${f.check.padEnd(18)} ${f.detail}`);
+
+const blocking = findings.filter((f) => BLOCKING.has(f.severity));
+console.warn(
+  `\nИтог: ${passed.length} проверок пройдено, ${findings.length} находок ` +
+    `(блокирующих CRITICAL/HIGH/MEDIUM: ${blocking.length}).`,
+);
+
+if (blocking.length > 0) {
+  console.warn('Гейт НЕ пройден. Находки чинятся в этой же фазе, до коммита.\n');
+  // exitCode вместо process.exit(): принудительный выход при незакрытых
+  // сокетах fetch роняет libuv на Windows (UV_HANDLE_CLOSING assertion).
+  process.exitCode = 1;
+} else {
+  console.warn('Гейт пройден.\n');
+}

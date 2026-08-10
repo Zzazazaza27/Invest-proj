@@ -1,0 +1,155 @@
+# Проектные SAST-правила UNICORN LAUNCH.
+# Прогоняются в дополнение к p/typescript, p/nodejsscan, p/owasp-top-ten.
+# Гейт CI: 0 находок уровня ERROR (RULES.md §3.3).
+#
+# ВАЖНО: паттерны semgrep содержат фигурные скобки, поэтому в YAML они обязаны
+# быть строками в кавычках — иначе парсер увидит flow mapping и файл не читается.
+rules:
+  - id: unicorn-no-string-sql-interpolation
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      SQL собирается конкатенацией или интерполяцией. Разрешены только
+      параметризованные запросы: client.query(text, params).
+    patterns:
+      - pattern-either:
+          - pattern: '$CLIENT.query("..." + $X, ...)'
+          - pattern: "$CLIENT.query('...' + $X, ...)"
+          - pattern: '$CLIENT.unsafe(...)'
+
+  - id: unicorn-no-secret-comparison-with-equals
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Сравнение секрета через ===/!== уязвимо к timing-атаке.
+      Используй crypto.timingSafeEqual (RULES.md §3.1, §4).
+    patterns:
+      - pattern-either:
+          - pattern: '$A.secret === $B'
+          - pattern: '$A.token === $B'
+          - pattern: '$A.signature === $B'
+          - pattern: '$A.hmac === $B'
+          - pattern: '$A.clientSecret === $B'
+          - pattern: '$A.apiKey === $B'
+          - pattern: '$A.secret !== $B'
+          - pattern: '$A.signature !== $B'
+          - pattern: '$A.hmac !== $B'
+
+  - id: unicorn-no-pii-in-logs
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      В лог попадают персональные данные или ключевой материал.
+      Логируй только идентификаторы и хеши (RULES.md §3.1).
+    patterns:
+      - pattern-either:
+          - pattern: '$LOG.$M({..., email: $X, ...})'
+          - pattern: '$LOG.$M({..., phone: $X, ...})'
+          - pattern: '$LOG.$M({..., password: $X, ...})'
+          - pattern: '$LOG.$M({..., inn: $X, ...})'
+          - pattern: '$LOG.$M({..., passportNumber: $X, ...})'
+          - pattern: '$LOG.$M({..., wrappedDek: $X, ...})'
+          - pattern: '$LOG.$M({..., dek: $X, ...})'
+          - pattern: '$LOG.$M({..., accessToken: $X, ...})'
+      - metavariable-regex:
+          metavariable: $M
+          regex: '^(log|info|warn|error|debug|trace|fatal)$'
+
+  - id: unicorn-external-call-requires-timeout
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Внешний вызов без таймаута. Каждому fetch нужен signal: AbortSignal.timeout(...)
+      (RULES.md §3.1, раздел «Внешние вызовы»).
+    patterns:
+      - pattern: 'fetch($URL, {...})'
+      - pattern-not: 'fetch($URL, {..., signal: ...})'
+
+  - id: unicorn-no-math-random-for-security
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Math.random() не криптостойкий. Для токенов, nonce, id и соли —
+      crypto.randomBytes / crypto.randomUUID.
+    pattern: 'Math.random()'
+    paths:
+      exclude:
+        - '**/*.test.ts'
+        - '**/*.spec.ts'
+        - '**/e2e/'
+
+  - id: unicorn-frontend-must-not-touch-infrastructure
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Фронтенд обращается к БД, кешу или шине напрямую. Фронт общается ТОЛЬКО
+      через HTTP /v1 (@unicorn/api-client). Это ломает заменяемость фронтенда
+      (ADR-002).
+    paths:
+      include:
+        - '**/apps/web-public/'
+        - '**/apps/lab/'
+        - '**/apps/investor/'
+        - '**/apps/expert/'
+        - '**/apps/admin/'
+    pattern-either:
+      - pattern: "require('pg')"
+      - pattern: "import $X from 'pg'"
+      - pattern: "import $X from 'ioredis'"
+      - pattern: "import $X from 'nats'"
+      - pattern: "import $X from 'bullmq'"
+      - pattern: "import $X from '@aws-sdk/client-s3'"
+
+  - id: unicorn-no-token-in-web-storage
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      Токен в localStorage/sessionStorage доступен любому XSS.
+      Сессия живёт в httpOnly-cookie (ADR-002, docs/frontend-replacement-guide.md).
+    pattern-either:
+      - pattern: 'localStorage.setItem("$K", ...)'
+      - pattern: 'sessionStorage.setItem("$K", ...)'
+    metavariable-regex:
+      metavariable: $K
+      regex: '(?i).*(token|jwt|secret|password|session|credential).*'
+
+  - id: unicorn-no-dangerously-set-inner-html
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: dangerouslySetInnerHTML — XSS-поверхность. Рендерь текстом.
+    pattern: 'dangerouslySetInnerHTML={...}'
+
+  - id: unicorn-no-bypass-rls
+    languages: [generic]
+    severity: ERROR
+    message: >-
+      BYPASSRLS у роли приложения запрещён (Database_Launch.md §1).
+      RLS обязателен и для сервисных ролей.
+    pattern-regex: '(?i)(^|\s)(ALTER|CREATE)\s+ROLE\s+\S+[^;]*\bBYPASSRLS\b'
+    paths:
+      include:
+        - '**/database/'
+        - '**/infra/'
+
+  - id: unicorn-no-tls-verification-disabled
+    languages: [typescript, javascript, python]
+    severity: ERROR
+    message: >-
+      Отключение проверки TLS-сертификата разрешает MITM.
+      Запрещено везде, включая dev и тесты (RULES.md §4).
+    pattern-either:
+      - pattern: 'rejectUnauthorized: false'
+      - pattern: 'verify=False'
+      - pattern: 'ssl._create_unverified_context()'
+
+  - id: unicorn-cors-must-not-be-wildcard
+    languages: [typescript, javascript]
+    severity: ERROR
+    message: >-
+      CORS с '*' или отражением произвольного Origin. Нужен строгий allowlist
+      из CORS_ALLOWED_ORIGINS (RULES.md §3.2).
+    pattern-either:
+      - pattern: 'origin: "*"'
+      - pattern: "origin: '*'"
+      - pattern: '$RES.header("Access-Control-Allow-Origin", "*")'
+      - pattern: '$RES.setHeader("Access-Control-Allow-Origin", "*")'

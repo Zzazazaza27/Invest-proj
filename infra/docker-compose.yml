@@ -1,0 +1,167 @@
+# Локальный/CI контур UNICORN LAUNCH.
+#
+# ВНИМАНИЕ: это конфигурация для разработки и CI. Пароли здесь — заведомо
+# нерабочие плейсхолдеры для локального окружения, они не используются нигде,
+# кроме контейнеров на 127.0.0.1. Production разворачивается через infra/terraform
+# с секретами из Vault/KMS (External Secrets), а не из этого файла.
+#
+# Все порты биндятся ТОЛЬКО на 127.0.0.1 — контейнеры не торчат в сеть.
+
+name: unicorn-launch
+
+services:
+  postgres:
+    build:
+      context: ./postgres
+      dockerfile: Dockerfile
+    image: unicorn/postgres:16
+    container_name: unicorn-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: unicorn_launch
+      POSTGRES_USER: unicorn_owner
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_only_change_me}
+      # scram-sha-256 вместо md5 — обязательный минимум
+      POSTGRES_INITDB_ARGS: '--auth-host=scram-sha-256 --auth-local=scram-sha-256'
+      TZ: UTC
+      PGTZ: UTC
+    command:
+      - postgres
+      - -c
+      - shared_preload_libraries=pg_stat_statements
+      - -c
+      - password_encryption=scram-sha-256
+      - -c
+      - log_min_duration_statement=500
+      - -c
+      - log_connections=on
+      - -c
+      - log_disconnections=on
+      - -c
+      - log_lock_waits=on
+      - -c
+      - max_connections=120
+      - -c
+      - timezone=UTC
+    ports:
+      - '127.0.0.1:5433:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U unicorn_owner -d unicorn_launch']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: unicorn-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD:-local_dev_only_change_me}
+      - --appendonly
+      - 'yes'
+      - --maxmemory-policy
+      - noeviction
+    ports:
+      - '127.0.0.1:6380:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'redis-cli -a "$$REDIS_PASSWORD" ping | grep PONG || redis-cli ping | grep PONG',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-local_dev_only_change_me}
+
+  nats:
+    image: nats:2.10-alpine
+    container_name: unicorn-nats
+    restart: unless-stopped
+    command:
+      - '-js'
+      - '-sd'
+      - '/data'
+      - '-m'
+      - '8222'
+      - '--user'
+      - 'unicorn'
+      - '--pass'
+      - '${NATS_PASSWORD:-local_dev_only_change_me}'
+    ports:
+      - '127.0.0.1:4222:4222'
+      - '127.0.0.1:8222:8222'
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:8222/healthz || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  minio:
+    image: minio/minio:RELEASE.2024-12-18T13-15-44Z
+    container_name: unicorn-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-unicorn_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-local_dev_only_change_me}
+    ports:
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001'
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'mc ready local || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  # Проверенный IdP. Launch НЕ реализует протокол OIDC самостоятельно
+  # (Database_Launch.md §2): сессии, refresh-токены, WebAuthn, MFA и ключи
+  # подписи живут в БД Keycloak, а не в unicorn_launch.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: unicorn-keycloak
+    restart: unless-stopped
+    command: ['start-dev', '--import-realm', '--http-port=8080']
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-kcadmin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-local_dev_only_change_me}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: unicorn_owner
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_only_change_me}
+      KC_HEALTH_ENABLED: 'true'
+      KC_HOSTNAME_STRICT: 'false'
+    ports:
+      - '127.0.0.1:8081:8080'
+    volumes:
+      - ./keycloak/realm-launch.json:/opt/keycloak/data/import/realm-launch.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles: ['idp']
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    container_name: unicorn-mailpit
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:1025:1025'
+      - '127.0.0.1:8025:8025'
+    profiles: ['idp', 'full']
+
+volumes:
+  pgdata:
+  redisdata:
+  natsdata:
+  miniodata:
