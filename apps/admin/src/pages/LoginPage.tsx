@@ -8,6 +8,21 @@ import { ApiError, api } from '../api';
  * «такого пользователя нет» значит помогать перебирать адреса. Сервер уже
  * отвечает одинаково — интерфейс не должен это различие изобретать.
  */
+/**
+ * Внутренний домен для коротких логинов.
+ *
+ * Идентификатор пользователя в системе — адрес; отдельного поля «логин» в
+ * схеме нет и заводить его ради удобства входа не стоит. Поэтому короткое имя
+ * дополняется доменом здесь, на границе интерфейса, а сервер по-прежнему
+ * получает адрес и ничего не знает про эту подстановку.
+ */
+const INTERNAL_DOMAIN = 'unicorn.local';
+
+function toAddress(input: string): string {
+  const value = input.trim();
+  return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
+}
+
 export function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,7 +34,7 @@ export function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
     setBusy(true);
     setError(null);
     try {
-      await api.login(email.trim(), password);
+      await api.login(toAddress(email), password);
       onLoggedIn();
     } catch (err) {
       setError(
@@ -44,15 +59,18 @@ export function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
         {error && <div className="alert alert--error">{error}</div>}
 
         <div className="field">
-          <label htmlFor="email">Электронная почта</label>
+          <label htmlFor="email">Логин или электронная почта</label>
           <input
             id="email"
-            type="email"
+            type="text"
             autoComplete="username"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
           />
+          <div className="field__hint">
+            Короткий логин дополняется внутренним доменом автоматически.
+          </div>
         </div>
 
         <div className="field">
