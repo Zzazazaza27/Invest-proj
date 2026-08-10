@@ -188,21 +188,37 @@ export async function createEntity(
     [id, ownerUserId],
   );
   if (opts.approvedKyb !== false) {
+    // Проверяющий — посторонний администратор: с M013 решение по юрлицу,
+    // принятое его владельцем или участником, отвергается триггером.
+    const reviewer = await createUser(client, { role: 'admin' });
     await client.query(
-      `INSERT INTO kyc.kyb_verifications (id, entity_id, kind, status, decided_at)
-       VALUES (public.uuid_generate_v7(), $1, 'registry_check', 'approved', now())`,
-      [id],
+      `INSERT INTO kyc.kyb_verifications (id, entity_id, kind, status, reviewed_by, decided_at)
+       VALUES (public.uuid_generate_v7(), $1, 'registry_check', 'approved', $2, now())`,
+      [id, reviewer.id],
     );
   }
   return id;
 }
 
-export async function approveKyc(client: Client, userId: string): Promise<void> {
+/**
+ * Одобренная верификация личности.
+ *
+ * Проверяющий создаётся отдельным пользователем осознанно: с миграции M013
+ * решение по верификации без указанного проверяющего и решение «сам себе»
+ * запрещены триггером. Фикстура обязана идти тем же путём, что и приложение,
+ * иначе тесты доказывали бы работу схемы, которой не существует.
+ */
+export async function approveKyc(
+  client: Client,
+  userId: string,
+  reviewerId?: string,
+): Promise<void> {
+  const reviewer = reviewerId ?? (await createUser(client, { role: 'admin' })).id;
   await client.query(
     `INSERT INTO kyc.kyc_verifications (id, user_id, kind, status, risk_level,
-                                        sanctions_status, decided_at)
-     VALUES (public.uuid_generate_v7(), $1, 'identity', 'approved', 'low', 'clear', now())`,
-    [userId],
+                                        sanctions_status, reviewed_by, decided_at)
+     VALUES (public.uuid_generate_v7(), $1, 'identity', 'approved', 'low', 'clear', $2, now())`,
+    [userId, reviewer],
   );
 }
 

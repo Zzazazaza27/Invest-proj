@@ -58,3 +58,6 @@ Thumbs.db
 
 # --- generated artifacts ---
 graphify-out/cache/
+
+# Граф проекта — производный артефакт, перегенерируется командой /graphify
+graphify-out/

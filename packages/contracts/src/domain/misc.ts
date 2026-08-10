@@ -61,6 +61,67 @@ export const BusinessEntitySchema = z.object({
 });
 export type BusinessEntity = z.infer<typeof BusinessEntitySchema>;
 
+/**
+ * Решение комплаенса по верификации. Принимается ТОЛЬКО ролью admin и только
+ * над чужой заявкой: самоодобрение закрыто и политикой RLS, и сервисным слоем.
+ */
+export const KycDecisionRequestSchema = z
+  .object({
+    decision: z.enum(['approved', 'rejected']),
+    /** Причина обязательна при отказе — это требование аудита, не UX. */
+    reason: boundedString(3, 500).optional(),
+    riskLevel: z.enum(['low', 'medium', 'high', 'prohibited']).optional(),
+    /** Срок действия проверки: без него ежегодный пересмотр невозможен. */
+    expiresAt: IsoDateTimeSchema.optional(),
+  })
+  .refine((v) => v.decision !== 'rejected' || Boolean(v.reason), {
+    message: 'при отказе причина обязательна',
+    path: ['reason'],
+  });
+export type KycDecisionRequest = z.infer<typeof KycDecisionRequestSchema>;
+
+export const StartKybRequestSchema = z.object({
+  kind: z.enum(['registry_check', 'beneficial_owners', 'accreditation', 'annual_review']),
+});
+export type StartKybRequest = z.infer<typeof StartKybRequestSchema>;
+
+export const KybVerificationSchema = z.object({
+  id: UuidSchema,
+  entityId: UuidSchema,
+  kind: z.string(),
+  status: KycStatusSchema,
+  rejectionSummary: z.string().nullable(),
+  expiresAt: IsoDateTimeSchema.nullable(),
+  createdAt: IsoDateTimeSchema,
+});
+export type KybVerification = z.infer<typeof KybVerificationSchema>;
+
+export const EntityMemberRoleSchema = z.enum(['signatory', 'beneficial_owner', 'representative']);
+
+export const AddEntityMemberRequestSchema = z
+  .object({
+    userId: UuidSchema,
+    memberRole: EntityMemberRoleSchema,
+    sharePct: z
+      .string()
+      .regex(/^\d{1,3}(\.\d{1,2})?$/, 'доля: до 100 с двумя знаками')
+      .optional(),
+  })
+  .refine((v) => v.memberRole !== 'beneficial_owner' || Boolean(v.sharePct), {
+    message: 'для бенефициара доля обязательна',
+    path: ['sharePct'],
+  });
+export type AddEntityMemberRequest = z.infer<typeof AddEntityMemberRequestSchema>;
+
+export const EntityMemberSchema = z.object({
+  entityId: UuidSchema,
+  userId: UuidSchema,
+  memberRole: EntityMemberRoleSchema,
+  sharePct: z.string().nullable(),
+  verifiedAt: IsoDateTimeSchema.nullable(),
+});
+export type EntityMember = z.infer<typeof EntityMemberSchema>;
+
 // ------------------------------------------------------------------- scoring
 
 export const ScoreAxisSchema = z.enum([
@@ -196,6 +257,29 @@ export const SeasonSchema = z.object({
   endsAt: IsoDateTimeSchema,
 });
 export type Season = z.infer<typeof SeasonSchema>;
+
+/**
+ * Перевод сезона по статусной машине. Клиент называет ЦЕЛЕВОЙ статус, а
+ * допустимость перехода решает сервер: список разрешённых переходов — не
+ * предмет договорённости с фронтендом.
+ */
+export const UpdateSeasonStatusRequestSchema = z.object({
+  status: SeasonStatusSchema,
+});
+export type UpdateSeasonStatusRequest = z.infer<typeof UpdateSeasonStatusRequestSchema>;
+
+/** Разрешённые переходы. Обратного хода нет: сезон — метроном, а не тумблер. */
+export const SEASON_TRANSITIONS: Record<
+  z.infer<typeof SeasonStatusSchema>,
+  readonly z.infer<typeof SeasonStatusSchema>[]
+> = {
+  draft: ['applications_open'],
+  applications_open: ['review', 'closed'],
+  review: ['bootcamp', 'closed'],
+  bootcamp: ['final', 'closed'],
+  final: ['closed'],
+  closed: [],
+};
 
 export const RatingEntrySchema = z.object({
   rank: z.number().int().positive(),

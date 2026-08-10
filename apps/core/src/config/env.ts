@@ -59,6 +59,22 @@ const RawEnvSchema = z.object({
 
   NATS_URL: z.string().default(''),
   NATS_STREAM: z.string().default('LAUNCH'),
+
+  // --- Объектное хранилище (материалы проектов) ---------------------------
+  // Файл идёт в S3 напрямую по presigned URL: через API он не проходит, чтобы
+  // недоверенный контент не касался прикладного процесса.
+  S3_ENDPOINT: z.string().default(''),
+  S3_REGION: z.string().default('ru-central1'),
+  S3_BUCKET: z.string().default(''),
+  S3_ACCESS_KEY_ID: z.string().default(''),
+  S3_SECRET_ACCESS_KEY: z.string().default(''),
+  S3_FORCE_PATH_STYLE: z.enum(['true', 'false']).default('true'),
+  S3_PRESIGN_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
+  S3_PRESIGN_TTL_SENSITIVE_SECONDS: z.coerce.number().int().min(60).max(1800).default(300),
+
+  /** Плановое обслуживание партиций журнала: интервал прогона. */
+  PARTITION_MAINTENANCE_INTERVAL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
+  PARTITION_MONTHS_AHEAD: z.coerce.number().int().min(1).max(12).default(3),
 });
 
 export type RawEnv = z.infer<typeof RawEnvSchema>;
@@ -165,6 +181,33 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
         message: 'в production публичный URL обязан быть https',
       });
     }
+  }
+
+  // ---- Объектное хранилище ------------------------------------------------
+  // Настройка либо полная, либо отсутствует: половина конфигурации — это
+  // выдача presigned URL, который никуда не ведёт.
+  const s3Parts = [env.S3_ENDPOINT, env.S3_BUCKET, env.S3_ACCESS_KEY_ID, env.S3_SECRET_ACCESS_KEY];
+  const s3Filled = s3Parts.filter(Boolean).length;
+  if (s3Filled > 0 && s3Filled < s3Parts.length) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['S3_ENDPOINT'],
+      message:
+        'конфигурация S3 неполна: нужны endpoint, bucket и пара ключей одновременно ' +
+        'либо ничего (загрузка материалов будет отключена)',
+    });
+  }
+  const endpointScheme =
+    env.S3_ENDPOINT.startsWith('http://') || env.S3_ENDPOINT.startsWith('https://');
+  if (env.S3_ENDPOINT && !endpointScheme) {
+    ctx.addIssue({ code: 'custom', path: ['S3_ENDPOINT'], message: 'ожидается http(s) URL' });
+  }
+  if (isProd && env.S3_ENDPOINT && !env.S3_ENDPOINT.startsWith('https://')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['S3_ENDPOINT'],
+      message: 'в production обращение к хранилищу — только по https',
+    });
   }
 
   // ---- Cookie -------------------------------------------------------------

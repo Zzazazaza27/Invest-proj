@@ -640,3 +640,100 @@ describe('Прочие доменные инварианты', () => {
     expect(rows.every((r) => r.enabled === false)).toBe(true);
   });
 });
+
+describe('Комплаенс: барьеры самоодобрения (M013)', () => {
+  it('решение по верификации без проверяющего отвергается', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c);
+      await expect(
+        c.query(
+          `INSERT INTO kyc.kyc_verifications (id, user_id, kind, status, decided_at)
+           VALUES (public.uuid_generate_v7(), $1, 'identity', 'approved', now())`,
+          [user.id],
+        ),
+      ).rejects.toThrow(/проверяющего/);
+    });
+  });
+
+  it('администратор не может одобрить СВОЮ верификацию', async () => {
+    await inRollbackTx(async (c) => {
+      const admin = await createUser(c, { role: 'admin' });
+      await expect(
+        c.query(
+          `INSERT INTO kyc.kyc_verifications (id, user_id, kind, status, reviewed_by, decided_at)
+           VALUES (public.uuid_generate_v7(), $1, 'identity', 'approved', $1, now())`,
+          [admin.id],
+        ),
+      ).rejects.toThrow(/самоодобрение/);
+    });
+  });
+
+  it('заявка в статусе pending проверяющего не требует', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c);
+      await c.query(
+        `INSERT INTO kyc.kyc_verifications (id, user_id, kind, status)
+         VALUES (public.uuid_generate_v7(), $1, 'identity', 'pending')`,
+        [user.id],
+      );
+      const { rows } = await c.query(
+        'SELECT status FROM kyc.kyc_verifications WHERE user_id = $1',
+        [user.id],
+      );
+      expect(rows[0]?.status).toBe('pending');
+    });
+  });
+
+  it('владелец юрлица не может одобрить его проверку', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c);
+      const entityId = await createEntity(c, owner.id, { approvedKyb: false });
+      await expect(
+        c.query(
+          `INSERT INTO kyc.kyb_verifications (id, entity_id, kind, status, reviewed_by, decided_at)
+           VALUES (public.uuid_generate_v7(), $1, 'registry_check', 'approved', $2, now())`,
+          [entityId, owner.id],
+        ),
+      ).rejects.toThrow(/связан с юрлицом/);
+    });
+  });
+});
+
+describe('Публичный поиск не раскрывает непубличные поля (M013)', () => {
+  it('описание проекта в публичный поисковый вектор не попадает', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c);
+      const project = await createProject(c, founder.id);
+      await c.query(
+        `UPDATE lab.projects
+            SET title = 'Публичный заголовок', tagline = 'Публичный слоган',
+                description = 'Секретнаяметрика выручки'
+          WHERE id = $1`,
+        [project],
+      );
+
+      const { rows } = await c.query<{ public_hit: boolean; private_hit: boolean }>(
+        `SELECT public_search_tsv @@ plainto_tsquery('russian', 'секретнаяметрика') AS public_hit,
+                search_tsv        @@ plainto_tsquery('russian', 'секретнаяметрика') AS private_hit
+           FROM lab.projects WHERE id = $1`,
+        [project],
+      );
+      expect(rows[0]?.private_hit).toBe(true);
+      expect(rows[0]?.public_hit).toBe(false);
+    });
+  });
+
+  it('публичной роли выданы права ровно на allowlist колонок каталога', async () => {
+    const { rows } = await getPool().query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.column_privileges
+        WHERE grantee = 'app_public_read' AND table_schema = 'lab' AND table_name = 'projects'
+        ORDER BY column_name`,
+    );
+    const granted = rows.map((r) => r.column_name);
+    expect(granted).toContain('public_search_tsv');
+    // Описание и свободный teaser_jsonb публичной роли недоступны.
+    expect(granted).not.toContain('description');
+    expect(granted).not.toContain('teaser_jsonb');
+    expect(granted).not.toContain('search_tsv');
+  });
+});

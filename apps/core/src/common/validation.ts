@@ -1,4 +1,4 @@
-import { type z } from 'zod';
+import { z } from 'zod';
 import { errors } from './errors';
 
 /**
@@ -9,10 +9,15 @@ import { errors } from './errors';
  *    отбрасывание скрывает и опечатки клиента, и попытку протащить лишнее;
  *  - сообщения об ошибках описывают ПОЛЯ ЗАПРОСА, а не внутреннюю модель;
  *  - результат — типизированное значение, дальше по коду `unknown` не ходит.
+ *
+ * Строгость применяется ЗДЕСЬ, а не в самих контрактах: пакет контрактов
+ * используют и клиенты, которым полезно принимать ответ сервера с полями из
+ * более новой версии API. Жёсткость нужна на входе сервера, и только на нём.
  */
 export function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
-  const result = schema.safeParse(input);
-  if (result.success) return result.data;
+  const effective = schema instanceof z.ZodObject ? strict(schema) : schema;
+  const result = effective.safeParse(input);
+  if (result.success) return result.data as T;
 
   throw errors.validation(
     result.error.issues.map((issue) => ({

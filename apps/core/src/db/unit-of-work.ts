@@ -133,6 +133,34 @@ export class Database implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Транзакция от имени публичной роли — для анонимного каталога.
+   *
+   * Роль `app_public_read` имеет GRANT только на allowlist колонок тизера, а её
+   * RLS-политика отдаёт исключительно строки `listing_status='listed'`. Даже
+   * ошибка в SQL каталога не сможет вытащить чужой черновик: прав на остальные
+   * колонки у роли просто нет.
+   */
+  async asPublicRole<T>(traceId: string, work: (tx: Tx) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN READ ONLY');
+      await client.query('SET LOCAL ROLE app_public_read');
+      await client.query(`SET LOCAL statement_timeout = ${this.statementTimeoutMs}`);
+      await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', '']);
+      await client.query('SELECT set_config($1, $2, true)', ['app.current_roles', '']);
+      await client.query('SELECT set_config($1, $2, true)', ['app.trace_id', traceId]);
+      const result = await work(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined);
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   private async applyContext(client: pg.PoolClient, ctx: RequestContext): Promise<void> {
     await client.query(`SET LOCAL statement_timeout = ${this.statementTimeoutMs}`);
     await client.query('SELECT set_config($1, $2, true)', [

@@ -147,6 +147,18 @@ async function main(): Promise<void> {
       console.warn(`  ok  ${loginId} -> ${groupId}`);
     }
 
+    // Публичный каталог обслуживается тем же процессом, но под ролью
+    // app_public_read: у неё GRANT только на колонки тизера, поэтому даже
+    // ошибка в SQL каталога не достанет непубличные поля. Чтобы переключиться,
+    // логин-роль приложения обязана состоять в этой группе.
+    //
+    // Эскалации это не даёт: набор прав app_public_read строго уже, чем у
+    // app_backend, — переключение идёт ВНИЗ по привилегиям, а не вверх.
+    await client.query(
+      await buildStatement(client, 'GRANT %I TO %I', ['app_public_read', 'app_backend_user']),
+    );
+    console.warn('  ok  app_backend_user -> app_public_read (переключение вниз для каталога)');
+
     // Контрольная проверка: ни у кого нет BYPASSRLS или SUPERUSER.
     const { rows } = await client.query<{ rolname: string }>(
       `SELECT rolname FROM pg_roles WHERE rolname LIKE 'app\\_%' AND (rolbypassrls OR rolsuper)`,

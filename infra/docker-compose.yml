@@ -125,6 +125,33 @@ services:
       timeout: 5s
       retries: 20
 
+  # Бакет материалов. Отдельный одноразовый контейнер вместо ручного шага:
+  # окружение, которое нужно «донастроить руками», рано или поздно окажется
+  # донастроенным по-разному у разных разработчиков и в CI.
+  #
+  # Публичного доступа у бакета нет: объекты отдаются только по подписанным
+  # ссылкам, а загрузка — по подписанной policy с ограничением размера и типа.
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    container_name: unicorn-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-unicorn_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-local_dev_only_change_me}
+      S3_BUCKET: ${S3_BUCKET:-unicorn-launch}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        mc alias set local http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"
+        mc mb --ignore-existing "local/$$S3_BUCKET"
+        mc anonymous set none "local/$$S3_BUCKET"
+        echo "бакет $$S3_BUCKET готов"
+    restart: 'no'
+
   # Проверенный IdP. Launch НЕ реализует протокол OIDC самостоятельно
   # (Database_Launch.md §2): сессии, refresh-токены, WebAuthn, MFA и ключи
   # подписи живут в БД Keycloak, а не в unicorn_launch.

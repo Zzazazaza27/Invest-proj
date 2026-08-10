@@ -131,11 +131,20 @@ export const RequestUploadSchema = z.object({
 });
 export type RequestUpload = z.infer<typeof RequestUploadSchema>;
 
+/**
+ * Билет на загрузку: подписанная ФОРМА, а не голый URL.
+ *
+ * Хранилище проверяет условия подписи само — точный ключ, точный Content-Type и
+ * диапазон размера. Поэтому лимит здесь настоящий: клиент, заявивший 10 МБ и
+ * отправивший 5 ГБ, получит отказ от хранилища, а не запись в БД.
+ */
 export const UploadTicketSchema = z.object({
   materialId: UuidSchema,
   uploadUrl: z.url(),
-  /** Заголовки, обязательные к отправке вместе с файлом. */
-  requiredHeaders: z.record(z.string(), z.string()),
+  method: z.literal('POST'),
+  /** Поля multipart/form-data. Файл добавляется последним, под именем `file`. */
+  formFields: z.record(z.string(), z.string()),
+  maxSizeBytes: z.number().int().positive(),
   expiresAt: IsoDateTimeSchema,
 });
 export type UploadTicket = z.infer<typeof UploadTicketSchema>;
@@ -159,3 +168,59 @@ export type AddProductLink = z.infer<typeof AddProductLinkSchema>;
 export const PublishListingRequestSchema = z.object({
   projectId: UuidSchema,
 });
+
+/** Материал проекта. Ни `s3Key`, ни presigned-URL наружу не отдаются. */
+export const ProjectMaterialSchema = z.object({
+  id: UuidSchema,
+  projectId: UuidSchema,
+  type: MaterialTypeSchema,
+  version: z.number().int().positive(),
+  /** Внешняя ссылка — только для `product_link`, иначе null. */
+  url: z.url().nullable(),
+  parseStatus: z.enum(['queued', 'running', 'succeeded', 'failed', 'not_required']),
+  createdAt: IsoDateTimeSchema,
+});
+export type ProjectMaterial = z.infer<typeof ProjectMaterialSchema>;
+
+/**
+ * Неизменяемый снимок заявки. Именно на него ссылаются AI-скоринг и эксперты,
+ * поэтому наружу отдаются только метаданные версии, а не право её изменить.
+ */
+export const ProjectVersionSchema = z.object({
+  id: UuidSchema,
+  projectId: UuidSchema,
+  seasonId: UuidSchema,
+  versionNo: z.number().int().positive(),
+  submittedAt: IsoDateTimeSchema,
+});
+export type ProjectVersion = z.infer<typeof ProjectVersionSchema>;
+
+/** Карточка проекта в кабинете основателя: без описания, для списка. */
+export const ProjectSummarySchema = z.object({
+  id: UuidSchema,
+  title: z.string(),
+  stage: ProjectStageSchema,
+  status: ProjectStatusSchema,
+  listingStatus: ListingStatusSchema,
+  investmentAsk: z.string(),
+  askCurrency: CurrencySchema,
+  requiredPlanId: UuidSchema.nullable(),
+  requiredPlanCode: z.string().nullable(),
+  role: z.enum(['owner', 'cofounder']),
+  createdAt: IsoDateTimeSchema,
+});
+export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
+
+/**
+ * Запрос каталога. Сортировка и фильтры — строгий allowlist: произвольное поле
+ * сортировки означало бы, что клиент управляет планом запроса.
+ *
+ * `irs_desc` объявлен в контракте пагинации, но каталогом пока не принимается:
+ * скоринга нет, и «сортировка по IRS» была бы сортировкой по пустоте.
+ */
+export const CatalogQuerySchema = CatalogFilterSchema.extend({
+  sort: z.enum(['listed_at_desc', 'ask_asc', 'ask_desc', 'relevance']).default('listed_at_desc'),
+  cursor: z.string().min(1).max(512).optional(),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+export type CatalogQuery = z.infer<typeof CatalogQuerySchema>;
