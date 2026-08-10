@@ -37,29 +37,69 @@ export class Database implements OnModuleDestroy {
   private readonly logger = new Logger(Database.name);
   private readonly pool: pg.Pool;
   private readonly statementTimeoutMs: number;
+  /** Пулы сервисных ролей: у каждой свой логин-пользователь и свои права. */
+  private readonly servicePools = new Map<ServiceRole, pg.Pool>();
 
   constructor() {
     const env = getEnv();
     this.statementTimeoutMs = env.DATABASE_STATEMENT_TIMEOUT_MS;
-    this.pool = new pg.Pool({
-      connectionString: env.DATABASE_URL,
+    this.pool = this.createPool(env.DATABASE_URL, 'unicorn-launch-core', env.DATABASE_POOL_MAX);
+  }
+
+  private createPool(connectionString: string, applicationName: string, max: number): pg.Pool {
+    const env = getEnv();
+    const pool = new pg.Pool({
+      connectionString,
       ssl: env.DATABASE_SSL === 'true' ? { rejectUnauthorized: true } : false,
-      max: env.DATABASE_POOL_MAX,
-      application_name: 'unicorn-launch-core',
+      max,
+      application_name: applicationName,
       // Запрос без ограничения времени держит соединение и блокировки бесконечно.
       statement_timeout: env.DATABASE_STATEMENT_TIMEOUT_MS,
       idle_in_transaction_session_timeout: 30_000,
       connectionTimeoutMillis: 5_000,
     });
-
-    this.pool.on('error', (error) => {
+    pool.on('error', (error) => {
       // Ошибка простаивающего соединения не должна ронять процесс.
-      this.logger.error({ msg: 'ошибка пула соединений', error: error.message });
+      this.logger.error({
+        msg: 'ошибка пула соединений',
+        pool: applicationName,
+        error: error.message,
+      });
     });
+    return pool;
+  }
+
+  /**
+   * Пул сервисной роли.
+   *
+   * Соединение открывается под собственной логин-ролью, а не через `SET ROLE` с
+   * подключения приложения: `app_backend_user` не состоит в сервисных группах и
+   * переключиться в них не может — это и есть граница, ради которой роли
+   * разделены (Database_Launch §1). Не настроен URL — контур недоступен.
+   */
+  private serviceRolePool(role: ServiceRole): pg.Pool {
+    const existing = this.servicePools.get(role);
+    if (existing) return existing;
+
+    const env = getEnv();
+    const url = SERVICE_ROLE_URLS[role](env);
+    if (!url) {
+      throw new Error(
+        `Сервисная роль ${role} не настроена: задай ${SERVICE_ROLE_ENV_KEYS[role]}. ` +
+          'Выполнять её операции под ролью приложения запрещено.',
+      );
+    }
+    // Пул сервисной роли меньше пользовательского: это редкие команды, а не
+    // поток запросов, и лишние соединения занимали бы слоты БД впустую.
+    const pool = this.createPool(url, `unicorn-launch-${role}`, SERVICE_POOL_MAX);
+    this.servicePools.set(role, pool);
+    return pool;
   }
 
   async onModuleDestroy(): Promise<void> {
     await this.pool.end();
+    for (const pool of this.servicePools.values()) await pool.end();
+    this.servicePools.clear();
   }
 
   /**
@@ -114,9 +154,12 @@ export class Database implements OnModuleDestroy {
     if (!SERVICE_ROLES.has(role)) {
       throw new Error(`Недопустимая сервисная роль: ${role}`);
     }
-    const client = await this.pool.connect();
+    const client = await this.serviceRolePool(role).connect();
     try {
       await client.query('BEGIN');
+      await client.query(`SET LOCAL statement_timeout = ${this.statementTimeoutMs}`);
+      // Логин-пользователь и так входит только в свою группу; явный SET ROLE —
+      // проверка того, что соединение действительно взято из нужного пула.
       // Имя роли не параметризуется, поэтому проверено по allowlist выше.
       await client.query(`SET LOCAL ROLE ${role}`);
       await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', '']);
@@ -194,3 +237,27 @@ export const SERVICE_ROLES = new Set([
 
 export type ServiceRole =
   'app_investments' | 'app_billing' | 'app_notifications' | 'app_integration';
+
+/** Небольшой пул: сервисные команды редки, соединения БД — общий ресурс. */
+const SERVICE_POOL_MAX = 4;
+
+/**
+ * Откуда берётся строка подключения каждой сервисной роли.
+ *
+ * Настроен только регулируемый контур: остальные роли появятся вместе со своими
+ * фазами, и до тех пор попытка их использовать обязана падать явно, а не
+ * молча исполняться под правами приложения.
+ */
+const SERVICE_ROLE_URLS: Record<ServiceRole, (env: ReturnType<typeof getEnv>) => string> = {
+  app_investments: (env) => env.DATABASE_URL_APP_INVESTMENTS,
+  app_billing: () => '',
+  app_notifications: () => '',
+  app_integration: () => '',
+};
+
+const SERVICE_ROLE_ENV_KEYS: Record<ServiceRole, string> = {
+  app_investments: 'DATABASE_URL_APP_INVESTMENTS',
+  app_billing: 'DATABASE_URL_APP_BILLING',
+  app_notifications: 'DATABASE_URL_APP_NOTIFICATIONS',
+  app_integration: 'DATABASE_URL_APP_INTEGRATION',
+};

@@ -110,6 +110,9 @@ async function bootstrap(): Promise<void> {
         isMutation &&
         (url.startsWith('/v1/billing/payments') ||
           url.startsWith('/v1/investments/agreements') ||
+          // Подтверждение транша создаёт начисление вознаграждения — это
+          // денежная мутация, даже если её инициирует оператор, а не клиент.
+          url.startsWith('/v1/investments/tranches') ||
           url.startsWith('/v1/billing/subscriptions'))
       ) {
         return env.RATE_LIMIT_MONEY_PER_MIN;

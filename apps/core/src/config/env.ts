@@ -30,6 +30,20 @@ const RawEnvSchema = z.object({
   CORS_ALLOWED_ORIGINS: z.string().default(''),
 
   DATABASE_URL: NonEmpty,
+  /**
+   * Отдельное подключение регулируемого контура (логин-роль
+   * `app_investments_user`).
+   *
+   * Роль приложения `app_backend` намеренно НЕ состоит в группе
+   * `app_investments`: иначе любая ошибка в коде или SQL-инъекция в
+   * пользовательском контуре могла бы переключиться на роль, которой разрешена
+   * запись в реестр договоров. Поэтому инвестиционные команды идут не через
+   * `SET ROLE`, а через собственное соединение с собственными правами.
+   *
+   * Пусто — контур недоступен: операции упадут явной ошибкой конфигурации, а не
+   * тихо выполнятся под правами пользовательской роли.
+   */
+  DATABASE_URL_APP_INVESTMENTS: z.string().default(''),
   DATABASE_SSL: z.enum(['true', 'false']).default('false'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).default(20),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(120_000).default(15_000),

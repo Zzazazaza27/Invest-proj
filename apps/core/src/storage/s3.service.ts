@@ -120,6 +120,85 @@ export class S3Service {
   }
 }
 
+/**
+ * Серверная запись объекта.
+ *
+ * Нужна для документов, которые формирует САМ сервер: условия предложения,
+ * текст договора. Такие документы клиенту загружать нельзя — их содержание
+ * является юридическим фактом, и подпись под ним должна относиться ровно к
+ * тому, что сформировал сервер.
+ *
+ * Подпись — SigV4 в заголовке Authorization, с хешем тела: подменить
+ * содержимое по дороге не получится, не сломав подпись.
+ */
+export async function putObject(input: {
+  key: string;
+  body: Buffer;
+  contentType: string;
+}): Promise<void> {
+  const env = getEnv();
+  const now = new Date();
+  const amzDate = toAmzDate(now);
+  const shortDate = amzDate.slice(0, 8);
+  const payloadHash = sha256Hex(input.body);
+
+  const base = env.S3_ENDPOINT.replace(/\/+$/, '');
+  const url = new URL(
+    env.S3_FORCE_PATH_STYLE === 'true'
+      ? `${base}/${env.S3_BUCKET}/${input.key}`
+      : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${input.key}`,
+  );
+
+  const headers: Record<string, string> = {
+    host: url.host,
+    'content-type': input.contentType,
+    'x-amz-content-sha256': payloadHash,
+    'x-amz-date': amzDate,
+  };
+  const signedHeaders = Object.keys(headers).sort().join(';');
+  const canonicalHeaders = Object.keys(headers)
+    .sort()
+    .map((name) => `${name}:${headers[name]}\n`)
+    .join('');
+
+  const canonicalRequest = [
+    'PUT',
+    url.pathname,
+    '',
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join('\n');
+
+  const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
+  const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
+  const signature = createHmac(
+    'sha256',
+    signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
+  )
+    .update(stringToSign, 'utf8')
+    .digest('hex');
+
+  const response = await fetch(url.toString(), {
+    method: 'PUT',
+    headers: {
+      ...headers,
+      Authorization:
+        `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
+        `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+    },
+    body: new Uint8Array(input.body),
+    // Таймаут обязателен на каждом внешнем вызове (RULES.md §3.1).
+    signal: AbortSignal.timeout(15_000),
+  });
+
+  if (!response.ok) {
+    // Тело ответа хранилища во внутренний лог не тянем: оно может содержать
+    // ключ объекта и служебные заголовки.
+    throw new Error(`хранилище отклонило запись объекта: ${response.status}`);
+  }
+}
+
 /** YYYYMMDD'T'HHMMSS'Z' — формат, которого требует SigV4. */
 export function toAmzDate(date: Date): string {
   return `${date.toISOString().replace(/[-:]/g, '').split('.')[0]}Z`;

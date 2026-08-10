@@ -4,8 +4,11 @@
  *
  * Заводит учётную запись `ssurgut` со всеми ролями, нужными, чтобы пройти
  * платформу целиком: основатель, инвестор, эксперт, организатор,
- * администратор. Пароль слабый и лежит в репозитории — это осознанно и
- * допустимо ТОЛЬКО в локальной разработке.
+ * администратор.
+ *
+ * Пароль берётся из `DEV_TEST_USER_PASSWORD` в `.env` и НЕ хранится в
+ * репозитории: пароль в коде — это секрет в коде, даже если он «всего лишь
+ * тестовый» (RULES.md §4). Файл `.env` в git не попадает.
  *
  * Скрипт отказывается работать при NODE_ENV=production. Перед выходом в
  * production запись должна быть удалена — см. TODO.md, раздел
@@ -41,7 +44,14 @@ if (process.env.NODE_ENV === 'production') {
 
 const LOGIN = 'ssurgut';
 const EMAIL = `${LOGIN}@unicorn.local`;
-const PASSWORD = 'a07070707';
+const PASSWORD = process.env.DEV_TEST_USER_PASSWORD ?? '';
+if (!PASSWORD) {
+  console.error(
+    'Не задан DEV_TEST_USER_PASSWORD. Добавь его в .env — пароль тестовой ' +
+      'учётки не хранится в репозитории.',
+  );
+  process.exit(1);
+}
 const ROLES = ['founder', 'investor', 'expert', 'organizer', 'admin'];
 
 function loadDotEnv() {
@@ -64,7 +74,6 @@ function loadDotEnv() {
   }
 }
 
-const API = process.env.CORE_PUBLIC_URL ?? 'http://127.0.0.1:4300';
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER, max: 2 });
 
 function blindIndex(value) {

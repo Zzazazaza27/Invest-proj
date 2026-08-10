@@ -242,6 +242,30 @@ describe('RLS: разделение денежных прав между рол�
     });
   });
 
+  /**
+   * Разделение ролей держится не только на GRANT'ах, но и на том, что
+   * логин-пользователь приложения НЕ состоит в сервисных группах: иначе любая
+   * ошибка в коде пользовательского контура могла бы выполнить `SET ROLE
+   * app_investments` и получить права записи в реестр договоров. Поэтому
+   * регулируемые команды ходят отдельным подключением, а не переключением роли.
+   */
+  it('логин-роль приложения не состоит в сервисных группах', async () => {
+    const { rows } = await getPool().query<{ granted: string }>(
+      `SELECT g.rolname AS granted
+         FROM pg_auth_members m
+         JOIN pg_roles r ON r.oid = m.member
+         JOIN pg_roles g ON g.oid = m.roleid
+        WHERE r.rolname = 'app_backend_user'
+        ORDER BY 1`,
+    );
+    const granted = rows.map((r) => r.granted);
+    // app_public_read — переключение ВНИЗ по привилегиям для публичного каталога.
+    expect(granted.sort()).toEqual(['app_backend', 'app_public_read']);
+    for (const service of ['app_investments', 'app_billing', 'app_integration']) {
+      expect(granted).not.toContain(service);
+    }
+  });
+
   it('app_backend не может создать начисление вознаграждения', async () => {
     await inRollbackTx(async (c) => {
       await actAs(c, { userId: null, roles: ['system'], dbRole: 'app_backend' });

@@ -12,6 +12,8 @@ import { Database } from './db/unit-of-work';
 import { HealthController } from './health/health.controller';
 import { IdentityController } from './identity/identity.controller';
 import { IdentityService } from './identity/identity.service';
+import { InvestmentsController } from './investments/investments.controller';
+import { InvestmentsService } from './investments/investments.service';
 import { KycController } from './kyc/kyc.controller';
 import { KycService } from './kyc/kyc.service';
 import { CatalogController } from './lab/catalog.controller';
@@ -43,6 +45,7 @@ import { S3Service } from './storage/s3.service';
     SeasonsController,
     BillingController,
     AdminController,
+    InvestmentsController,
   ],
   providers: [
     Database,
@@ -57,6 +60,7 @@ import { S3Service } from './storage/s3.service';
     SeasonsService,
     BillingService,
     AdminService,
+    InvestmentsService,
     PartitionMaintenanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
