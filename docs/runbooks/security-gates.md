@@ -56,18 +56,18 @@ node scripts/network-audit.mjs --api https://api.stage.unicorn.vc
 
 Скрипт проверяет **фактическое состояние**, а не конфиг:
 
-| Проверка | Что делает |
-|---|---|
-| `container-ports` | Реальные привязки портов из `docker ps`. Всё вне loopback — HIGH |
-| `compose-bindings` | Публикации портов в манифесте без `127.0.0.1` — HIGH |
-| `compose-anon` | Анонимный вход, `trust`-аутентификация PostgreSQL — CRITICAL |
-| `tls` | `rejectUnauthorized:false`, `verify=False`, `curl -k`, TLS < 1.2 — CRITICAL/HIGH |
-| `cors` | `origin:'*'` и отражение произвольного Origin при credentials — HIGH |
-| `infra-secrets` | Похожее на реальный секрет в манифестах — CRITICAL |
-| `headers` | Живой ответ API: CSP, X-Content-Type-Options, Referrer-Policy, COOP, X-Frame-Options |
-| `cors-live` | Запрос с `Origin: https://evil.example` не должен получить разрешение |
-| `cookie` | HttpOnly, Secure, SameSite на всех выставляемых cookie |
-| `banner` | Раскрытие стека в `Server` / `X-Powered-By` |
+| Проверка           | Что делает                                                                           |
+| ------------------ | ------------------------------------------------------------------------------------ |
+| `container-ports`  | Реальные привязки портов из `docker ps`. Всё вне loopback — HIGH                     |
+| `compose-bindings` | Публикации портов в манифесте без `127.0.0.1` — HIGH                                 |
+| `compose-anon`     | Анонимный вход, `trust`-аутентификация PostgreSQL — CRITICAL                         |
+| `tls`              | `rejectUnauthorized:false`, `verify=False`, `curl -k`, TLS < 1.2 — CRITICAL/HIGH     |
+| `cors`             | `origin:'*'` и отражение произвольного Origin при credentials — HIGH                 |
+| `infra-secrets`    | Похожее на реальный секрет в манифестах — CRITICAL                                   |
+| `headers`          | Живой ответ API: CSP, X-Content-Type-Options, Referrer-Policy, COOP, X-Frame-Options |
+| `cors-live`        | Запрос с `Origin: https://evil.example` не должен получить разрешение                |
+| `cookie`           | HttpOnly, Secure, SameSite на всех выставляемых cookie                               |
+| `banner`           | Раскрытие стека в `Server` / `X-Powered-By`                                          |
 
 Скрипт различает «наш core не запущен» и «на порту чужой сервис»: живая
 проверка засчитывается только если `/v1/health` возвращает
@@ -132,11 +132,11 @@ Get-NetTCPConnection -LocalPort 4300 -State Listen -ErrorAction SilentlyContinue
 
 ## 4. Что делать с находкой
 
-| Severity | Действие |
-|---|---|
-| CRITICAL / HIGH / MEDIUM | Фикс в этой же фазе, до коммита. Гейт перепрогоняется |
-| LOW | Фикс либо статус ACCEPTED с письменным обоснованием в отчёте фазы |
-| Не чинится в принципе | Статус BLOCKED, уведомление владельца первым сообщением, работа по фазе останавливается |
+| Severity                 | Действие                                                                                |
+| ------------------------ | --------------------------------------------------------------------------------------- |
+| CRITICAL / HIGH / MEDIUM | Фикс в этой же фазе, до коммита. Гейт перепрогоняется                                   |
+| LOW                      | Фикс либо статус ACCEPTED с письменным обоснованием в отчёте фазы                       |
+| Не чинится в принципе    | Статус BLOCKED, уведомление владельца первым сообщением, работа по фазе останавливается |
 
 Результат каждого прогона записывается в
 `docs/audits/<YYYY-MM-DD>-<тема>.md` вместе с фактическим выводом команд.

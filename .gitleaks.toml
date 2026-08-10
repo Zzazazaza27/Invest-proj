@@ -13,7 +13,9 @@ tags = ["key", "crypto"]
 [[rules]]
 id = "unicorn-db-url-with-password"
 description = "Строка подключения к БД с непустым паролем"
-regex = '''postgres(ql)?:\/\/[a-z_][a-z0-9_]*:(?!CHANGE_ME|local_dev_only)[^\s:@\/]{8,}@'''
+# gitleaks на Go/RE2: negative lookahead (?!...) не поддерживается.
+# Плейсхолдеры отсеиваются секцией [allowlist] ниже, а не в самом regex.
+regex = '''postgres(ql)?:\/\/[a-z_][a-z0-9_]*:[^\s:@\/]{8,}@'''
 tags = ["database"]
 
 [[rules]]
@@ -23,15 +25,22 @@ regex = '''(?i)(webhook_secret|hmac_secret|signing_secret)\s*[:=]\s*['"][^'"\s]{
 tags = ["secret"]
 
 [allowlist]
-description = "Плейсхолдеры, тестовые фикстуры и локальный контур"
+description = "Плейсхолдеры, тестовые фикстуры и эфемерные креды CI"
 paths = [
   '''(^|/)node_modules/''',
   '''(^|/)package-lock\.json$''',
   '''(^|/)dist/''',
   '''(^|/)coverage/''',
+  '''(^|/)gitleaks-report\.json$''',
 ]
 regexes = [
   '''CHANGE_ME''',
   '''local_dev_only_change_me''',
   '''test[-_]?fixture''',
+  # ci_only_password — пароль service-контейнера PostgreSQL внутри GitHub
+  # Actions. Контейнер живёт только на время job, доступен исключительно с
+  # localhost раннера и уничтожается вместе с ним. Значение намеренно
+  # самоописательное, чтобы его нельзя было спутать с рабочим секретом.
+  # Исключение узкое: одна конкретная строка, а не отключение правила.
+  '''ci_only_password''',
 ]

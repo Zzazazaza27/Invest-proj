@@ -12,10 +12,11 @@ AI-анализ и развитие; верифицированные инвес
 [`Database.md`](./Database.md) (целевая экосистема — швы под Unicorn Capital и
 медиаконтур Шоу).
 
-> **Статус реализации: фаза Ф0 из 12 завершена.** Что уже проверено прогоном
-> инструмента, а что ещё нет — в [`TODO.md`](./TODO.md) и
-> [`docs/audits/`](./docs/audits/). Ничего не помечается готовым без вывода
-> команды из текущей сессии.
+> **Статус реализации: фазы Ф0–Ф1 из 12 завершены.** Готова база данных:
+> 11 схем, 60 таблиц, 141 RLS-политика, 71 тест против реального PostgreSQL 16.
+> Что уже проверено прогоном инструмента, а что ещё нет — в
+> [`TODO.md`](./TODO.md) и [`docs/audits/`](./docs/audits/). Ничего не
+> помечается готовым без вывода команды из текущей сессии.
 
 ---
 
@@ -105,13 +106,20 @@ docker compose -f infra/docker-compose.yml --profile idp up -d keycloak
 Ни одна фаза не считается завершённой без прогона. Команды:
 
 ```bash
-npm run lint          # ESLint + граница «фронт ↔ бэк»
-npm run typecheck     # TypeScript strict
-npm run test          # юнит + интеграционные + негативные RLS
-npm run gate:deps     # npm audit --audit-level=high
-npm run gate:secrets  # gitleaks (ожидание: 0)
-npm run gate          # всё перечисленное подряд
+npm run lint                        # ESLint + граница «фронт ↔ бэк»
+npm run typecheck                   # TypeScript strict
+npm run test                        # юнит + интеграционные + негативные RLS
+npm run lint:migrations -w database # expand/contract, RLS, search_path, деньги-float
+npm run gate:deps                   # npm audit --audit-level=high
+npm run gate:secrets                # gitleaks (ожидание: 0)
+npm run gate:net                    # сетевая безопасность (RULES.md §3.2)
+npm run gate                        # всё перечисленное подряд
 ```
+
+Сетевой гейт (`scripts/network-audit.mjs`) проверяет **фактическое состояние**:
+реальные привязки портов контейнеров, реальные заголовки ответа API, реальное
+поведение CORS с чужим Origin. Ссылка на конфиг доказательством не считается.
+Порядок прогона и разбор находок — [`docs/runbooks/security-gates.md`](./docs/runbooks/security-gates.md).
 
 SAST (semgrep с правилами `.semgrep/guardian.yml` + OWASP) и секрет-скан
 прогоняются в CI на каждый push и PR: [`.github/workflows/ci.yml`](./.github/workflows/ci.yml).

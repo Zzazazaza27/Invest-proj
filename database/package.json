@@ -1,0 +1,24 @@
+{
+  "name": "@unicorn/database",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Схема БД UNICORN LAUNCH: миграции, RLS-политики, сиды, негативные тесты",
+  "scripts": {
+    "migrate": "node --experimental-strip-types src/migrate.ts",
+    "migrate:status": "node --experimental-strip-types src/migrate.ts --status",
+    "bootstrap:roles": "node --experimental-strip-types src/bootstrap-roles.ts",
+    "lint:migrations": "node --experimental-strip-types src/lint-migrations.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
+  }
+}
