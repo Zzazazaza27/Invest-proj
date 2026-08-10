@@ -178,6 +178,10 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
+      # Тесты ядра резолвят @unicorn/contracts через package.json main,
+      # то есть требуют собранного пакета. Job запускает workspace напрямую,
+      # минуя корневой скрипт test, поэтому сборка нужна здесь явно.
+      - run: npm run build:packages
       - run: npm run migrate -w database
       # apps/core появляется в фазе Ф3.
       - name: Тесты core
