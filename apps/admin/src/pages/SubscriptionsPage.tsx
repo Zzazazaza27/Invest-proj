@@ -175,6 +175,8 @@ function StatusBadge({ status }: { status: AdminSubscription['status'] }) {
     canceled: { cls: 'badge--muted', text: 'отменена' },
     expired: { cls: 'badge--muted', text: 'истекла' },
   };
-  const item = map[status];
+  // Значение по умолчанию, а не «!»: статус приходит с сервера, и контракт
+  // может расшириться раньше, чем этот файл — падать из-за этого нельзя.
+  const item = map[status] ?? { cls: 'badge--muted', text: status };
   return <span className={`badge ${item.cls}`}>{item.text}</span>;
 }

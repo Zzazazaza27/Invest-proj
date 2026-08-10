@@ -29,6 +29,11 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
+      # Типы приложений выводятся из d.ts рабочих пакетов: без сборки
+      # typecheck не находит @unicorn/contracts и падает. Локально это не
+      # видно — там dist уже лежит с прошлых сборок.
+      - name: Сборка рабочих пакетов
+        run: npm run build:packages
       - name: Prettier
         run: npm run format:check
       - name: ESLint (включая границу «фронт не импортирует бэкенд»)
