@@ -99,23 +99,44 @@ async function bootstrap(): Promise<void> {
     global: true,
     max: (request) => {
       const url = request.url;
+      const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
+
       if (url.startsWith('/v1/auth/')) return env.RATE_LIMIT_AUTH_PER_MIN;
+
+      // Денежный класс — только МУТАЦИИ: перевод денег и оформление подписки.
+      // Чтение своих счетов ограничивать так же жёстко нет смысла, а вреда от
+      // этого больше: пользователь упирается в 429 на обычном просмотре.
       if (
-        url.startsWith('/v1/billing/payments') ||
-        url.startsWith('/v1/investments/agreements') ||
-        url.startsWith('/v1/billing/subscriptions')
+        isMutation &&
+        (url.startsWith('/v1/billing/payments') ||
+          url.startsWith('/v1/investments/agreements') ||
+          url.startsWith('/v1/billing/subscriptions'))
       ) {
         return env.RATE_LIMIT_MONEY_PER_MIN;
       }
+
+      // Административный класс. Операции с тарифами и персональными ценами
+      // чувствительны, поэтому лимит ниже общего, но выше денежного: оператор
+      // за минуту делает и просмотры, и несколько изменений подряд.
+      if (url.startsWith('/v1/admin/')) return env.RATE_LIMIT_ADMIN_PER_MIN;
+
       return env.RATE_LIMIT_DEFAULT_PER_MIN;
     },
     timeWindow: '1 minute',
-    // Ключ — аутентифицированный пользователь, иначе IP. Иначе один клиент за
-    // NAT выбирал бы лимит за всех.
-    keyGenerator: (request) => {
-      const auth = (request as { auth?: { subject: string } }).auth;
-      return auth?.subject ?? request.ip;
-    },
+    // Ключ ведра — пара «адрес + владелец сессии».
+    //
+    // Только IP недостаточно: клиенты за одним NAT выбирали бы денежный лимит
+    // друг за друга (обнаружено живым прогоном — сценарий с четырьмя
+    // пользователями упирался в 429 на третьем). Только идентификатор сессии
+    // тоже не годится: он берётся из cookie ДО проверки подписи, потому что
+    // ограничение частоты обязано работать раньше аутентификации — иначе
+    // перебор паролей не ограничивался бы вовсе.
+    //
+    // Пара решает обе задачи: разные пользователи с одного адреса не мешают
+    // друг другу, а подделка cookie не даёт нового ведра — адрес остаётся тем
+    // же. Значение из cookie используется ИСКЛЮЧИТЕЛЬНО как ключ ведра и
+    // никогда как подтверждение личности.
+    keyGenerator: (request) => `${request.ip}|${sessionHint(request) ?? 'anon'}`,
     errorResponseBuilder: (_request, context) => ({
       type: 'https://unicorn.vc/problems/rate_limited',
       title: 'Слишком много запросов',
@@ -147,6 +168,36 @@ async function bootstrap(): Promise<void> {
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
+}
+
+/**
+ * Непроверенный идентификатор сессии из cookie — только для группировки
+ * запросов при ограничении частоты. Подпись здесь НЕ проверяется намеренно:
+ * проверка выполняется в guard, а лимит обязан работать и для запросов,
+ * которые проверку не пройдут.
+ */
+function sessionHint(request: { headers: Record<string, unknown> }): string | null {
+  const raw = request.headers['cookie'];
+  if (typeof raw !== 'string') return null;
+  const env = getEnv();
+  const match = new RegExp(String.raw`(?:^|;\s*)` + `${env.SESSION_COOKIE_NAME}=([^;]+)`).exec(raw);
+  const token = match?.[1];
+  if (!token) return null;
+
+  // Форматы отличаются: JWT — header.payload.signature, локальный адаптер —
+  // payload.mac. Позицию payload не угадываем, а находим: берём первую часть,
+  // которая разбирается в объект с полем sub. Ошибка позиции означала бы, что
+  // все анонимные запросы делят одно ведро (именно это и сломало живой прогон).
+  for (const part of token.split('.')) {
+    try {
+      const decoded: unknown = JSON.parse(Buffer.from(part, 'base64url').toString('utf8'));
+      const sub = (decoded as { sub?: unknown }).sub;
+      if (typeof sub === 'string') return sub.slice(0, 64);
+    } catch {
+      /* не эта часть */
+    }
+  }
+  return null;
 }
 
 void bootstrap().catch((error: unknown) => {

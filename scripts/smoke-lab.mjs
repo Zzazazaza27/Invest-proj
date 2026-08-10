@@ -59,6 +59,9 @@ function loadDotEnv() {
   }
 }
 
+const SESSION_COOKIE = process.env.SESSION_COOKIE_NAME ?? 'ul_session';
+const CSRF_COOKIE = process.env.CSRF_COOKIE_NAME ?? 'ul_csrf';
+
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL_OWNER,
   max: 4,
@@ -106,8 +109,8 @@ function makeClient() {
     const setCookies = result.response.headers.getSetCookie?.() ?? [];
     for (const cookie of setCookies) {
       const pair = cookie.split(';')[0];
-      if (cookie.startsWith('__Host-ul_session=')) state.session = pair;
-      if (cookie.startsWith('__Host-ul_csrf=')) state.csrf = pair;
+      if (cookie.startsWith(`${SESSION_COOKIE}=`)) state.session = pair;
+      if (cookie.startsWith(`${CSRF_COOKIE}=`)) state.csrf = pair;
     }
     return result;
   }

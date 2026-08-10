@@ -11,6 +11,7 @@ import {
   createOffer,
   createProject,
   createSignedAgreement,
+  createFounderSubscription,
   createUser,
   getPool,
   inRollbackTx,
@@ -735,5 +736,133 @@ describe('Публичный поиск не раскрывает непубли
     expect(granted).not.toContain('description');
     expect(granted).not.toContain('teaser_jsonb');
     expect(granted).not.toContain('search_tsv');
+  });
+});
+
+describe('Тарифы: история цен неизменяема (M015–M016)', () => {
+  it('цену действующей версии переписать нельзя', async () => {
+    await inRollbackTx(async (c) => {
+      const [plan] = (
+        await c.query(`SELECT id FROM billing.subscription_plans
+                        WHERE valid_from <= now() AND (valid_to IS NULL OR valid_to > now())
+                        LIMIT 1`)
+      ).rows;
+      await expect(
+        c.query('UPDATE billing.subscription_plans SET price = 1 WHERE id = $1', [plan.id]),
+      ).rejects.toThrow(/immutable/);
+    });
+  });
+
+  it('снять с продажи (проставить valid_to) действующую версию можно', async () => {
+    await inRollbackTx(async (c) => {
+      const [plan] = (
+        await c.query(`SELECT id FROM billing.subscription_plans
+                        WHERE valid_from <= now() AND (valid_to IS NULL OR valid_to > now())
+                        LIMIT 1`)
+      ).rows;
+      await c.query(
+        `UPDATE billing.subscription_plans SET valid_to = now() + interval '1 day' WHERE id = $1`,
+        [plan.id],
+      );
+      const { rows } = await c.query(
+        'SELECT valid_to FROM billing.subscription_plans WHERE id = $1',
+        [plan.id],
+      );
+      expect(rows[0]?.valid_to).not.toBeNull();
+    });
+  });
+
+  it('объявленную будущую версию можно править и удалить', async () => {
+    await inRollbackTx(async (c) => {
+      const id = uuidv7();
+      // Периоды версий одного тарифа не пересекаются: как и сервис, сначала
+      // закрываем действующую версию тем моментом, с которого начнётся новая.
+      await c.query(
+        `UPDATE billing.subscription_plans SET valid_to = now() + interval '10 days'
+          WHERE code = 'founder_t3' AND valid_to IS NULL`,
+      );
+      await c.query(
+        `INSERT INTO billing.subscription_plans
+           (id, code, version, audience, name, price, valid_from)
+         VALUES ($1, 'founder_t3', 99, 'founder', 'Будущая цена', 31990,
+                 now() + interval '10 days')`,
+        [id],
+      );
+      await c.query('UPDATE billing.subscription_plans SET price = 32990 WHERE id = $1', [id]);
+      await c.query('DELETE FROM billing.subscription_plans WHERE id = $1', [id]);
+      const { rows } = await c.query('SELECT 1 FROM billing.subscription_plans WHERE id = $1', [
+        id,
+      ]);
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  it('удалить действующую версию нельзя', async () => {
+    await inRollbackTx(async (c) => {
+      const [plan] = (
+        await c.query(`SELECT id FROM billing.subscription_plans
+                        WHERE valid_from <= now() LIMIT 1`)
+      ).rows;
+      await expect(
+        c.query('DELETE FROM billing.subscription_plans WHERE id = $1', [plan.id]),
+      ).rejects.toThrow(/уже действует|действовала/);
+    });
+  });
+});
+
+describe('Индивидуальная цена: четыре глаза (M017)', () => {
+  it('предложивший цену не может утвердить её сам', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c);
+      const admin = await createUser(c, { role: 'admin' });
+      const project = await createProject(c, founder.id);
+      const subscription = await createFounderSubscription(c, founder.id, project);
+
+      await expect(
+        c.query(
+          `INSERT INTO billing.custom_price_proposals
+             (id, subscription_id, price, reason, proposed_by, approved_by, approved_at, status)
+           VALUES (public.uuid_generate_v7(), $1, 1000, 'пилот', $2, $2, now(), 'approved')`,
+          [subscription, admin.id],
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('два ожидающих предложения на одну подписку невозможны', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c);
+      const admin = await createUser(c, { role: 'admin' });
+      const project = await createProject(c, founder.id);
+      const subscription = await createFounderSubscription(c, founder.id, project);
+
+      const insert = () =>
+        c.query(
+          `INSERT INTO billing.custom_price_proposals
+             (id, subscription_id, price, reason, proposed_by)
+           VALUES (public.uuid_generate_v7(), $1, 1000, 'пилот', $2)`,
+          [subscription, admin.id],
+        );
+      await insert();
+      await expect(insert()).rejects.toThrow();
+    });
+  });
+
+  it('подписка с назначенной, но не утверждённой ценой невозможна', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c);
+      const admin = await createUser(c, { role: 'admin' });
+      const project = await createProject(c, founder.id);
+      const subscription = await createFounderSubscription(c, founder.id, project);
+
+      await expect(
+        c.query(
+          `UPDATE billing.subscriptions
+              SET custom_price = 1000, custom_price_set_by = $2, price_snapshot = 1000
+            WHERE id = $1`,
+          [subscription, admin.id],
+        ),
+      ).rejects.toThrow();
+    });
   });
 });

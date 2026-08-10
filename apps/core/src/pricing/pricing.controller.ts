@@ -32,6 +32,18 @@ export class PricingController {
           ORDER BY audience, ask_limit NULLS LAST`,
       );
 
+      // Объявленные, но ещё не вступившие в силу версии. Пользователь должен
+      // узнавать о повышении цены заранее, а не из первого списания.
+      const announced = await tx.query(
+        `SELECT id, code, version, audience, name,
+                ask_limit::text AS ask_limit, individual_pricing,
+                price::text AS price, currency, billing_period,
+                valid_from, valid_to
+           FROM billing.subscription_plans
+          WHERE valid_from > now()
+          ORDER BY valid_from, audience`,
+      );
+
       const fee = await tx.query(
         `SELECT id, code, version,
                 investor_fee_pct::text AS investor_fee_pct,
@@ -52,6 +64,7 @@ export class PricingController {
 
       return PricingSchema.parse({
         plans: plans.rows.map(mapPlan),
+        announcedPlans: announced.rows.map(mapPlan),
         feeSchedule: mapFee(feeRow),
         feeDisclosure: {
           baseIsFullContractAmount: true,

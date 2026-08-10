@@ -316,7 +316,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 11 схем и 60 таблиц', async () => {
+  it('схема соответствует спецификации: 11 схем и 61 таблица', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -331,6 +331,9 @@ describe('RLS: покрытие манифеста', () => {
                             'seasons','comms','billing','audit','integration')
           AND c.relkind IN ('r','p') AND c.relispartition = false`,
     );
-    expect(Number(tables.rows[0]!.count)).toBe(60);
+    // 60 таблиц по Database_Launch.md + billing.custom_price_proposals (M017):
+    // двухшаговое согласование индивидуальной цены нельзя было уместить в саму
+    // подписку, не ослабив её CHECK-ограничение на четыре глаза.
+    expect(Number(tables.rows[0]!.count)).toBe(61);
   });
 });

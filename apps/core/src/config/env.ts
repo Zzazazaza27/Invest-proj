@@ -40,9 +40,12 @@ const RawEnvSchema = z.object({
   OIDC_JWKS_CACHE_TTL_SECONDS: z.coerce.number().int().min(30).max(86_400).default(300),
   LOCAL_AUTH_SIGNING_KEY: z.string().default(''),
 
-  SESSION_COOKIE_NAME: z.string().default('__Host-ul_session'),
+  // Дефолт — dev-безопасное имя без префикса: cookie с префиксом __Host-,
+  // поставленная без Secure по http, молча отбрасывается браузером.
+  // В production префикс обязателен и проверяется ниже.
+  SESSION_COOKIE_NAME: z.string().default('ul_session'),
   SESSION_TTL_SECONDS: z.coerce.number().int().min(60).max(86_400).default(3600),
-  CSRF_COOKIE_NAME: z.string().default('__Host-ul_csrf'),
+  CSRF_COOKIE_NAME: z.string().default('ul_csrf'),
 
   KMS_MODE: z.enum(['kms', 'local']).default('local'),
   KEK_SEARCH_INDEX: z.string().default(''),
@@ -56,6 +59,10 @@ const RawEnvSchema = z.object({
   RATE_LIMIT_DEFAULT_PER_MIN: z.coerce.number().int().min(1).default(120),
   RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().min(1).default(30),
   RATE_LIMIT_MONEY_PER_MIN: z.coerce.number().int().min(1).default(10),
+  // Административные операции — отдельный класс. Денежный лимит 10/мин здесь
+  // неприменим: оператор за минуту делает и просмотры, и несколько правок, и
+  // такой лимит превращает кабинет в неработающий (проверено живым прогоном).
+  RATE_LIMIT_ADMIN_PER_MIN: z.coerce.number().int().min(1).default(60),
 
   NATS_URL: z.string().default(''),
   NATS_STREAM: z.string().default('LAUNCH'),
@@ -220,6 +227,27 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
       path: ['SESSION_COOKIE_NAME'],
       message: 'в production имя сессионной cookie обязано начинаться с __Host-',
     });
+  }
+  // Обратная сторона того же правила. Вне production cookie ставится без
+  // Secure (сервер работает по http), а cookie с префиксом __Host- без Secure
+  // браузер МОЛЧА отбрасывает: вход просто не работает, и никакой ошибки в
+  // ответе при этом нет. Скрипты на fetch этого не замечают — правила
+  // префиксов применяет браузер, а не HTTP-клиент.
+  if (!isProd) {
+    for (const [path, value] of [
+      ['SESSION_COOKIE_NAME', env.SESSION_COOKIE_NAME],
+      ['CSRF_COOKIE_NAME', env.CSRF_COOKIE_NAME],
+    ] as const) {
+      if (value.startsWith('__Host-') || value.startsWith('__Secure-')) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [path],
+          message:
+            'вне production префиксы __Host-/__Secure- недопустимы: браузер отбрасывает ' +
+            'такую cookie, если она поставлена без Secure по http',
+        });
+      }
+    }
   }
 });
 

@@ -61,6 +61,14 @@ export type FeeSchedule = z.infer<typeof FeeScheduleSchema>;
 /** Публичная витрина цен: одним запросом, без авторизации. */
 export const PricingSchema = z.object({
   plans: z.array(SubscriptionPlanSchema),
+  /**
+   * Объявленные изменения тарифов — версии, которые ещё не вступили в силу.
+   *
+   * Публикуются открыто и заранее: цена, о которой пользователь узнаёт в момент
+   * списания, противоречит принципу радикальной прозрачности (Architect_Launch
+   * §5.4). Здесь видно и новую цену, и дату, с которой она начнёт действовать.
+   */
+  announcedPlans: z.array(SubscriptionPlanSchema),
   feeSchedule: FeeScheduleSchema,
   /**
    * Текст, который обязателен к показу до регистрации: база вознаграждения —
@@ -113,6 +121,108 @@ export const CreateSubscriptionRequestSchema = z.discriminatedUnion('audience', 
   }),
 ]);
 export type CreateSubscriptionRequest = z.infer<typeof CreateSubscriptionRequestSchema>;
+
+// --------------------------------------------------- административное управление
+
+/**
+ * Версия тарифа глазами администратора: то же, что и в публичной витрине, плюс
+ * состав («наполнение» подписки) и признак, можно ли ещё править эту версию.
+ */
+export const AdminPlanSchema = SubscriptionPlanSchema.extend({
+  features: z.record(z.string(), z.unknown()),
+  /** true — версия уже действует или действовала: денежные условия заморожены. */
+  isLocked: z.boolean(),
+  /** Активна ли версия прямо сейчас (продаётся). */
+  isActive: z.boolean(),
+  subscriptionsCount: z.number().int().nonnegative(),
+});
+export type AdminPlan = z.infer<typeof AdminPlanSchema>;
+
+/**
+ * Публикация новой версии тарифа.
+ *
+ * Изменение цены действующего тарифа — это именно публикация НОВОЙ версии:
+ * прежняя закрывается тем же моментом, с которого начинает действовать новая.
+ * Переписать цену, под которой уже подписались, нельзя ни через API, ни в БД
+ * (ADR-005, триггер `subscription_plans_history_immutable`).
+ */
+export const PublishPlanRequestSchema = z
+  .object({
+    code: PlanCodeSchema,
+    audience: PlanAudienceSchema,
+    name: z.string().trim().min(2).max(160),
+    /** Верхняя граница `investment_ask`. null — без ограничения (t5). */
+    askLimit: MoneyAmountSchema.nullable().optional(),
+    price: MoneyAmountSchema.nullable().optional(),
+    individualPricing: z.boolean().default(false),
+    billingPeriod: z.enum(['monthly', 'yearly']).default('monthly'),
+    /** Состав подписки: что входит. Показывается на витрине и в кабинете. */
+    features: z.record(z.string(), z.unknown()).default({}),
+    /** С какого момента версия действует. Прошлое недопустимо. */
+    validFrom: IsoDateTimeSchema.optional(),
+  })
+  .refine((v) => v.individualPricing || Boolean(v.price), {
+    message: 'нужна цена либо признак индивидуального ценообразования',
+    path: ['price'],
+  })
+  .refine((v) => !(v.individualPricing && v.price), {
+    message: 'у индивидуального тарифа не может быть фиксированной цены',
+    path: ['price'],
+  });
+export type PublishPlanRequest = z.infer<typeof PublishPlanRequestSchema>;
+
+/** Правка версии, которая ещё не вступила в силу. Действующую править нельзя. */
+export const UpdateDraftPlanRequestSchema = z.object({
+  name: z.string().trim().min(2).max(160).optional(),
+  askLimit: MoneyAmountSchema.nullable().optional(),
+  price: MoneyAmountSchema.nullable().optional(),
+  features: z.record(z.string(), z.unknown()).optional(),
+  validFrom: IsoDateTimeSchema.optional(),
+});
+export type UpdateDraftPlanRequest = z.infer<typeof UpdateDraftPlanRequestSchema>;
+
+/** Снятие тарифа с продажи. Существующие подписки продолжают действовать. */
+export const ClosePlanRequestSchema = z.object({
+  /** Момент закрытия. По умолчанию — сейчас. */
+  validTo: IsoDateTimeSchema.optional(),
+  reason: z.string().trim().min(3).max(500),
+});
+export type ClosePlanRequest = z.infer<typeof ClosePlanRequestSchema>;
+
+/**
+ * Индивидуальная цена. Двухшаговая по требованию 4-eyes: назначает один
+ * администратор, утверждает другой. Совпадение назначившего и утвердившего
+ * запрещено CHECK-ограничением в БД, а не только проверкой в коде.
+ */
+export const ProposeCustomPriceRequestSchema = z.object({
+  price: MoneyAmountSchema,
+  reason: z.string().trim().min(3).max(500),
+});
+export type ProposeCustomPriceRequest = z.infer<typeof ProposeCustomPriceRequestSchema>;
+
+export const AdminSubscriptionSchema = SubscriptionSchema.extend({
+  userId: UuidSchema,
+  userDisplayName: z.string(),
+  projectTitle: z.string().nullable(),
+  customPrice: z.string().nullable(),
+  customPriceSetBy: UuidSchema.nullable(),
+  customPriceApprovedBy: UuidSchema.nullable(),
+});
+export type AdminSubscription = z.infer<typeof AdminSubscriptionSchema>;
+
+export const FeatureFlagSchema = z.object({
+  key: z.string(),
+  enabled: z.boolean(),
+  rules: z.record(z.string(), z.unknown()),
+  updatedAt: IsoDateTimeSchema,
+});
+export type FeatureFlag = z.infer<typeof FeatureFlagSchema>;
+
+export const UpdateFeatureFlagRequestSchema = z.object({
+  enabled: z.boolean(),
+  reason: z.string().trim().min(3).max(500),
+});
+export type UpdateFeatureFlagRequest = z.infer<typeof UpdateFeatureFlagRequestSchema>;
 
 export const InvoiceStatusSchema = z.enum([
   'issued',

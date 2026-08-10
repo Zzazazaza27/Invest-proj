@@ -1,8 +1,12 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { AdminController } from './admin/admin.controller';
+import { AdminService } from './admin/admin.service';
 import { AuthGuard } from './auth/guards';
 import { TokenVerifier } from './auth/token.verifier';
 import { AuditRepository } from './audit/audit.repository';
+import { BillingController } from './billing/billing.controller';
+import { BillingService } from './billing/billing.service';
 import { CryptoService } from './crypto/crypto.service';
 import { Database } from './db/unit-of-work';
 import { HealthController } from './health/health.controller';
@@ -37,6 +41,8 @@ import { S3Service } from './storage/s3.service';
     ProjectsController,
     CatalogController,
     SeasonsController,
+    BillingController,
+    AdminController,
   ],
   providers: [
     Database,
@@ -49,6 +55,8 @@ import { S3Service } from './storage/s3.service';
     ProjectsService,
     CatalogService,
     SeasonsService,
+    BillingService,
+    AdminService,
     PartitionMaintenanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],

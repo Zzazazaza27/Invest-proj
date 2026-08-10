@@ -61,3 +61,6 @@ graphify-out/cache/
 
 # Граф проекта — производный артефакт, перегенерируется командой /graphify
 graphify-out/
+
+# Артефакты браузерных прогонов Playwright
+.playwright-mcp/

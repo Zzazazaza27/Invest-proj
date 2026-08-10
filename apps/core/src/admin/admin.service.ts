@@ -1,0 +1,663 @@
+import { Injectable } from '@nestjs/common';
+import {
+  uuidv7,
+  type AdminPlan,
+  type AdminSubscription,
+  type ClosePlanRequest,
+  type FeatureFlag,
+  type ProposeCustomPriceRequest,
+  type PublishPlanRequest,
+  type UpdateDraftPlanRequest,
+} from '@unicorn/contracts';
+import { errors } from '../common/errors';
+import { AuditRepository } from '../audit/audit.repository';
+import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { mapDbErrors } from '../billing/billing.service';
+
+/**
+ * Административное управление платформой.
+ *
+ * Главное правило раздела тарифов: **цена не редактируется, цена публикуется**.
+ * Администратор не «меняет число в поле», а объявляет новую версию условий — с
+ * датой, с которой она вступает в силу. Прежняя версия закрывается ровно этим
+ * моментом и остаётся в истории: под ней кто-то подписался, и переписать её
+ * задним числом нельзя ни через API, ни напрямую в БД (ADR-005, триггер
+ * `subscription_plans_history_immutable`).
+ *
+ * Отсюда естественно получается сценарий «объявляем: с 1-го числа следующего
+ * месяца тариф стоит столько»: публикуется версия с будущей `validFrom`. До
+ * этой даты продаётся старая цена, после — новая. Объявление можно отменить,
+ * пока оно не вступило в силу.
+ */
+@Injectable()
+export class AdminService {
+  constructor(
+    private readonly db: Database,
+    private readonly audit: AuditRepository,
+  ) {}
+
+  // ---------------------------------------------------------------- тарифы
+
+  async listPlans(ctx: RequestContext): Promise<AdminPlan[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<PlanRow>(
+        `SELECT p.id, p.code, p.version, p.audience, p.name,
+                p.ask_limit::text AS ask_limit, p.individual_pricing,
+                p.price::text AS price, p.currency, p.billing_period,
+                p.features_jsonb, p.valid_from, p.valid_to,
+                (SELECT count(*) FROM billing.subscriptions s WHERE s.plan_id = p.id)::int
+                  AS subscriptions_count
+           FROM billing.subscription_plans p
+          ORDER BY p.audience, p.code, p.version DESC`,
+      );
+      return rows.map(mapPlan);
+    });
+  }
+
+  async publishPlan(ctx: RequestContext, input: PublishPlanRequest): Promise<AdminPlan> {
+    const validFrom = input.validFrom ? new Date(input.validFrom) : new Date();
+    // Задним числом опубликовать цену нельзя: это означало бы пересчёт условий
+    // за период, который уже прожит.
+    if (validFrom.getTime() < Date.now() - 60_000) {
+      throw errors.validation([
+        { path: 'validFrom', message: 'дата вступления в силу не может быть в прошлом' },
+      ]);
+    }
+
+    return mapDbErrors(async () =>
+      this.db.transaction(ctx, async (tx) => {
+        const scheduled = await tx.query<{ id: string; valid_from: Date }>(
+          `SELECT id, valid_from FROM billing.subscription_plans
+            WHERE code = $1 AND valid_from > now()`,
+          [input.code],
+        );
+        if (scheduled.rows[0]) {
+          // Два объявления на один тариф — источник спора о том, какая цена
+          // действует. Сначала отменяется прежнее объявление.
+          throw errors.conflict(
+            'По этому тарифу уже объявлено изменение: отмените его или отредактируйте',
+            { scheduledId: scheduled.rows[0].id },
+          );
+        }
+
+        const current = await tx.query<{ id: string; valid_from: Date }>(
+          `SELECT id, valid_from FROM billing.subscription_plans
+            WHERE code = $1 AND valid_from <= now() AND (valid_to IS NULL OR valid_to > $2)
+            ORDER BY version DESC LIMIT 1`,
+          [input.code, validFrom.toISOString()],
+        );
+
+        // Действующая версия закрывается ровно тем моментом, с которого
+        // начинает действовать новая: разрыва и наложения быть не должно.
+        if (current.rows[0]) {
+          await tx.query(`UPDATE billing.subscription_plans SET valid_to = $2 WHERE id = $1`, [
+            current.rows[0].id,
+            validFrom.toISOString(),
+          ]);
+        }
+
+        const next = await tx.query<{ next_version: number }>(
+          `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
+             FROM billing.subscription_plans WHERE code = $1`,
+          [input.code],
+        );
+        const version = Number(next.rows[0]?.next_version ?? 1);
+        const id = uuidv7();
+
+        await tx.query(
+          `INSERT INTO billing.subscription_plans
+             (id, code, version, audience, name, ask_limit, individual_pricing, price,
+              currency, billing_period, features_jsonb, valid_from)
+           VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8::numeric, 'RUB', $9, $10::jsonb, $11)`,
+          [
+            id,
+            input.code,
+            version,
+            input.audience,
+            input.name,
+            input.askLimit ?? null,
+            input.individualPricing,
+            input.price ?? null,
+            input.billingPeriod,
+            JSON.stringify(input.features),
+            validFrom.toISOString(),
+          ],
+        );
+
+        await this.audit.emit(tx, {
+          verb: 'billing.plan.published',
+          actorId: ctx.userId,
+          actorRole: 'admin',
+          subjectType: 'subscription_plan',
+          subjectId: id,
+          context: {
+            code: input.code,
+            version,
+            price: input.price ?? null,
+            validFrom: validFrom.toISOString(),
+            replacedPlanId: current.rows[0]?.id ?? null,
+          },
+          traceId: ctx.traceId,
+        });
+
+        return this.readPlan(tx, id);
+      }),
+    );
+  }
+
+  /** Правка объявления, которое ещё не вступило в силу. */
+  async updateDraftPlan(
+    ctx: RequestContext,
+    planId: string,
+    input: UpdateDraftPlanRequest,
+  ): Promise<AdminPlan> {
+    return mapDbErrors(async () =>
+      this.db.transaction(ctx, async (tx) => {
+        const plan = await this.requireScheduledPlan(tx, planId);
+
+        await tx.query(
+          `UPDATE billing.subscription_plans
+              SET name           = COALESCE($2, name),
+                  ask_limit      = COALESCE($3::numeric, ask_limit),
+                  price          = COALESCE($4::numeric, price),
+                  features_jsonb = COALESCE($5::jsonb, features_jsonb),
+                  valid_from     = COALESCE($6::timestamptz, valid_from)
+            WHERE id = $1`,
+          [
+            planId,
+            input.name ?? null,
+            input.askLimit ?? null,
+            input.price ?? null,
+            input.features ? JSON.stringify(input.features) : null,
+            input.validFrom ?? null,
+          ],
+        );
+
+        // Если сдвинули дату вступления в силу — предыдущая версия должна
+        // закрываться в тот же момент, иначе в тарифной сетке появится дыра.
+        if (input.validFrom) {
+          await tx.query(
+            `UPDATE billing.subscription_plans
+                SET valid_to = $2
+              WHERE code = $1 AND id <> $3 AND valid_to IS NOT NULL AND valid_from <= now()`,
+            [plan.code, input.validFrom, planId],
+          );
+        }
+
+        await this.audit.emit(tx, {
+          verb: 'billing.plan.draft_updated',
+          actorId: ctx.userId,
+          actorRole: 'admin',
+          subjectType: 'subscription_plan',
+          subjectId: planId,
+          context: { fields: Object.keys(input) },
+          traceId: ctx.traceId,
+        });
+
+        return this.readPlan(tx, planId);
+      }),
+    );
+  }
+
+  /** Отмена объявленного изменения до его вступления в силу. */
+  async cancelScheduledPlan(ctx: RequestContext, planId: string): Promise<{ ok: true }> {
+    return mapDbErrors(async () =>
+      this.db.transaction(ctx, async (tx) => {
+        const plan = await this.requireScheduledPlan(tx, planId);
+
+        await tx.query('DELETE FROM billing.subscription_plans WHERE id = $1', [planId]);
+        // Прежняя версия снова становится бессрочной: её закрывали именно под
+        // это объявление.
+        await tx.query(
+          `UPDATE billing.subscription_plans
+              SET valid_to = NULL
+            WHERE code = $1 AND valid_to = $2`,
+          [plan.code, plan.valid_from],
+        );
+
+        await this.audit.emit(tx, {
+          verb: 'billing.plan.schedule_canceled',
+          actorId: ctx.userId,
+          actorRole: 'admin',
+          subjectType: 'subscription_plan',
+          subjectId: planId,
+          context: { code: plan.code, plannedFrom: plan.valid_from.toISOString() },
+          traceId: ctx.traceId,
+        });
+
+        return { ok: true as const };
+      }),
+    );
+  }
+
+  /** Снятие тарифа с продажи. Действующие подписки не трогаются. */
+  async closePlan(
+    ctx: RequestContext,
+    planId: string,
+    input: ClosePlanRequest,
+  ): Promise<AdminPlan> {
+    const validTo = input.validTo ? new Date(input.validTo) : new Date();
+    return mapDbErrors(async () =>
+      this.db.transaction(ctx, async (tx) => {
+        const { rows } = await tx.query<{ id: string; valid_from: Date; valid_to: Date | null }>(
+          'SELECT id, valid_from, valid_to FROM billing.subscription_plans WHERE id = $1',
+          [planId],
+        );
+        const plan = rows[0];
+        if (!plan) throw errors.notFound({ subject: 'subscription_plan' });
+        if (plan.valid_to && plan.valid_to.getTime() <= Date.now()) {
+          throw errors.stateTransition('Эта версия тарифа уже закрыта');
+        }
+        if (validTo.getTime() <= plan.valid_from.getTime()) {
+          throw errors.validation([
+            { path: 'validTo', message: 'закрытие раньше начала действия версии' },
+          ]);
+        }
+
+        await tx.query('UPDATE billing.subscription_plans SET valid_to = $2 WHERE id = $1', [
+          planId,
+          validTo.toISOString(),
+        ]);
+
+        await this.audit.emit(tx, {
+          verb: 'billing.plan.closed',
+          actorId: ctx.userId,
+          actorRole: 'admin',
+          subjectType: 'subscription_plan',
+          subjectId: planId,
+          context: { validTo: validTo.toISOString(), reason: input.reason },
+          traceId: ctx.traceId,
+        });
+
+        return this.readPlan(tx, planId);
+      }),
+    );
+  }
+
+  // ------------------------------------------------------------- подписки
+
+  async listSubscriptions(ctx: RequestContext, limit: number): Promise<AdminSubscription[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<AdminSubscriptionRow>(
+        `SELECT s.id, s.plan_id, sp.code AS plan_code, s.project_id,
+                s.price_snapshot::text AS price_snapshot, s.currency_snapshot,
+                s.status, s.current_period_end, s.grace_until, s.created_at,
+                s.user_id, u.display_name, p.title AS project_title,
+                COALESCE(pr.price, s.custom_price)::text AS custom_price,
+                COALESCE(pr.proposed_by, s.custom_price_set_by) AS custom_price_set_by,
+                CASE WHEN pr.id IS NULL THEN s.custom_price_approved_by END
+                  AS custom_price_approved_by
+           FROM billing.subscriptions s
+           JOIN billing.subscription_plans sp ON sp.id = s.plan_id
+           JOIN identity.users u ON u.id = s.user_id
+           LEFT JOIN lab.projects p ON p.id = s.project_id
+           -- Ожидающее предложение показывается как «цена ждёт утверждения»:
+           -- в самой подписке его нет и быть не может (M017).
+           LEFT JOIN billing.custom_price_proposals pr
+                  ON pr.subscription_id = s.id AND pr.status = 'pending'
+          ORDER BY s.created_at DESC
+          LIMIT $1`,
+        [limit],
+      );
+      return rows.map(mapAdminSubscription);
+    });
+  }
+
+  /**
+   * Первый шаг 4-eyes: назначение индивидуальной цены.
+   *
+   * Записывается только в `custom_price_set_by`; пока второй администратор не
+   * утвердил, цена не применяется — CHECK в БД не даст сохранить подписку с
+   * назначенной, но не утверждённой ценой.
+   */
+  async proposeCustomPrice(
+    ctx: RequestContext,
+    subscriptionId: string,
+    input: ProposeCustomPriceRequest,
+  ): Promise<AdminSubscription> {
+    return mapDbErrors(async () =>
+      this.db.transaction(ctx, async (tx) => {
+        const { rows } = await tx.query<{ status: string }>(
+          'SELECT status FROM billing.subscriptions WHERE id = $1',
+          [subscriptionId],
+        );
+        if (!rows[0]) throw errors.notFound({ subject: 'subscription' });
+
+        // Предложение живёт отдельно от подписки: до утверждения цена подписки
+        // не меняется вовсе. Класть неутверждённую цену прямо в подписку
+        // нельзя — ограничение таблицы требует сразу обе подписи (M017).
+        await tx.query(
+          `UPDATE billing.custom_price_proposals
+              SET status = 'superseded'
+            WHERE subscription_id = $1 AND status = 'pending'`,
+          [subscriptionId],
+        );
+        await tx.query(
+          `INSERT INTO billing.custom_price_proposals
+             (id, subscription_id, price, reason, proposed_by)
+           VALUES ($1, $2, $3::numeric, $4, $5)`,
+          [uuidv7(), subscriptionId, input.price, input.reason, ctx.userId],
+        );
+
+        await this.audit.emit(tx, {
+          verb: 'billing.custom_price.proposed',
+          actorId: ctx.userId,
+          actorRole: 'admin',
+          subjectType: 'subscription',
+          subjectId: subscriptionId,
+          context: { price: input.price, reason: input.reason },
+          traceId: ctx.traceId,
+        });
+
+        return this.readAdminSubscription(tx, subscriptionId);
+      }),
+    );
+  }
+
+  /** Второй шаг 4-eyes: утверждение другим администратором. */
+  async approveCustomPrice(
+    ctx: RequestContext,
+    subscriptionId: string,
+  ): Promise<AdminSubscription> {
+    return mapDbErrors(async () =>
+      this.db.transaction(ctx, async (tx) => {
+        const { rows } = await tx.query<{
+          id: string;
+          price: string;
+          proposed_by: string;
+        }>(
+          `SELECT id, price::text AS price, proposed_by
+             FROM billing.custom_price_proposals
+            WHERE subscription_id = $1 AND status = 'pending'`,
+          [subscriptionId],
+        );
+        const proposal = rows[0];
+        if (!proposal) {
+          throw errors.stateTransition('Индивидуальная цена по этой подписке не предложена');
+        }
+        if (proposal.proposed_by === ctx.userId) {
+          // Дублирует CHECK в БД. Смысл правила: предложивший цену не может сам
+          // же её утвердить — иначе «четыре глаза» превращаются в два.
+          throw errors.forbidden({ stage: 'four-eyes' });
+        }
+
+        await tx.query(
+          `UPDATE billing.custom_price_proposals
+              SET status = 'approved', approved_by = $2, approved_at = now()
+            WHERE id = $1`,
+          [proposal.id, ctx.userId],
+        );
+
+        // Обе подписи ставятся в подписку одной операцией: промежуточного
+        // состояния «цена есть, утверждения нет» не существует по построению.
+        await tx.query(
+          `UPDATE billing.subscriptions
+              SET custom_price = $2::numeric,
+                  custom_price_set_by = $3,
+                  custom_price_approved_by = $4,
+                  price_snapshot = $2::numeric
+            WHERE id = $1`,
+          [subscriptionId, proposal.price, proposal.proposed_by, ctx.userId],
+        );
+
+        await this.audit.emit(tx, {
+          verb: 'billing.custom_price.approved',
+          actorId: ctx.userId,
+          actorRole: 'admin',
+          subjectType: 'subscription',
+          subjectId: subscriptionId,
+          context: { price: proposal.price, proposedBy: proposal.proposed_by },
+          traceId: ctx.traceId,
+        });
+
+        return this.readAdminSubscription(tx, subscriptionId);
+      }),
+    );
+  }
+
+  /**
+   * Активация подписки администратором.
+   *
+   * Временная мера на период отсутствия платёжного провайдера: оплата
+   * подтверждается человеком, а не системой. Каждое такое действие попадает в
+   * журнал с указанием, кто и на каком основании активировал — иначе платный
+   * доступ выдавался бы без следа.
+   */
+  async activateSubscription(
+    ctx: RequestContext,
+    subscriptionId: string,
+    reason: string,
+  ): Promise<AdminSubscription> {
+    return mapDbErrors(async () =>
+      this.db.transaction(ctx, async (tx) => {
+        const { rows } = await tx.query<{ id: string }>(
+          `UPDATE billing.subscriptions
+              SET status = 'active',
+                  current_period_end = COALESCE(current_period_end, now() + interval '30 days')
+            WHERE id = $1 AND status IN ('pending_payment','past_due')
+            RETURNING id`,
+          [subscriptionId],
+        );
+        if (!rows[0]) {
+          throw errors.stateTransition('Подписку в этом статусе активировать нельзя');
+        }
+
+        await this.audit.emit(tx, {
+          verb: 'lab.subscription.activated',
+          actorId: ctx.userId,
+          actorRole: 'system',
+          subjectType: 'subscription',
+          subjectId: subscriptionId,
+          context: { activatedBy: ctx.userId, reason, mode: 'manual' },
+          traceId: ctx.traceId,
+        });
+
+        return this.readAdminSubscription(tx, subscriptionId);
+      }),
+    );
+  }
+
+  // --------------------------------------------------------- фичефлаги
+
+  async listFeatureFlags(ctx: RequestContext): Promise<FeatureFlag[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<FlagRow>(
+        'SELECT key, enabled, rules_jsonb, updated_at FROM audit.feature_flags ORDER BY key',
+      );
+      return rows.map((r) => ({
+        key: r.key,
+        enabled: r.enabled,
+        rules: r.rules_jsonb,
+        updatedAt: r.updated_at.toISOString(),
+      }));
+    });
+  }
+
+  async setFeatureFlag(
+    ctx: RequestContext,
+    key: string,
+    enabled: boolean,
+    reason: string,
+  ): Promise<FeatureFlag> {
+    return mapDbErrors(async () =>
+      this.db.transaction(ctx, async (tx) => {
+        const { rows } = await tx.query<FlagRow>(
+          `UPDATE audit.feature_flags
+              SET enabled = $2, updated_by = $3, updated_at = now()
+            WHERE key = $1
+            RETURNING key, enabled, rules_jsonb, updated_at`,
+          [key, enabled, ctx.userId],
+        );
+        const row = rows[0];
+        if (!row) throw errors.notFound({ subject: 'feature_flag' });
+
+        await this.audit.emit(tx, {
+          verb: 'admin.feature_flag.changed',
+          actorId: ctx.userId,
+          actorRole: 'admin',
+          subjectType: 'feature_flag',
+          subjectId: null,
+          context: { key, enabled, reason },
+          traceId: ctx.traceId,
+        });
+
+        return {
+          key: row.key,
+          enabled: row.enabled,
+          rules: row.rules_jsonb,
+          updatedAt: row.updated_at.toISOString(),
+        };
+      }),
+    );
+  }
+
+  // ------------------------------------------------------------------ private
+
+  private async requireScheduledPlan(
+    tx: Tx,
+    planId: string,
+  ): Promise<{ code: string; valid_from: Date }> {
+    const { rows } = await tx.query<{ code: string; valid_from: Date }>(
+      'SELECT code, valid_from FROM billing.subscription_plans WHERE id = $1',
+      [planId],
+    );
+    const plan = rows[0];
+    if (!plan) throw errors.notFound({ subject: 'subscription_plan' });
+    if (plan.valid_from.getTime() <= Date.now()) {
+      throw errors.stateTransition(
+        'Версия уже вступила в силу: её условия неизменяемы. Опубликуйте новую версию',
+      );
+    }
+    return plan;
+  }
+
+  private async readPlan(tx: Tx, planId: string): Promise<AdminPlan> {
+    const { rows } = await tx.query<PlanRow>(
+      `SELECT p.id, p.code, p.version, p.audience, p.name,
+              p.ask_limit::text AS ask_limit, p.individual_pricing,
+              p.price::text AS price, p.currency, p.billing_period,
+              p.features_jsonb, p.valid_from, p.valid_to,
+              (SELECT count(*) FROM billing.subscriptions s WHERE s.plan_id = p.id)::int
+                AS subscriptions_count
+         FROM billing.subscription_plans p WHERE p.id = $1`,
+      [planId],
+    );
+    const row = rows[0];
+    if (!row) throw errors.notFound({ subject: 'subscription_plan' });
+    return mapPlan(row);
+  }
+
+  private async readAdminSubscription(tx: Tx, id: string): Promise<AdminSubscription> {
+    const { rows } = await tx.query<AdminSubscriptionRow>(
+      `SELECT s.id, s.plan_id, sp.code AS plan_code, s.project_id,
+              s.price_snapshot::text AS price_snapshot, s.currency_snapshot,
+              s.status, s.current_period_end, s.grace_until, s.created_at,
+              s.user_id, u.display_name, p.title AS project_title,
+              COALESCE(pr.price, s.custom_price)::text AS custom_price,
+              COALESCE(pr.proposed_by, s.custom_price_set_by) AS custom_price_set_by,
+              CASE WHEN pr.id IS NULL THEN s.custom_price_approved_by END
+                AS custom_price_approved_by
+         FROM billing.subscriptions s
+         JOIN billing.subscription_plans sp ON sp.id = s.plan_id
+         JOIN identity.users u ON u.id = s.user_id
+         LEFT JOIN lab.projects p ON p.id = s.project_id
+         LEFT JOIN billing.custom_price_proposals pr
+                ON pr.subscription_id = s.id AND pr.status = 'pending'
+        WHERE s.id = $1`,
+      [id],
+    );
+    const row = rows[0];
+    if (!row) throw errors.notFound({ subject: 'subscription' });
+    return mapAdminSubscription(row);
+  }
+}
+
+interface PlanRow {
+  id: string;
+  code: AdminPlan['code'];
+  version: number;
+  audience: AdminPlan['audience'];
+  name: string;
+  ask_limit: string | null;
+  individual_pricing: boolean;
+  price: string | null;
+  currency: string;
+  billing_period: AdminPlan['billingPeriod'];
+  features_jsonb: Record<string, unknown>;
+  valid_from: Date;
+  valid_to: Date | null;
+  subscriptions_count: number;
+}
+
+interface FlagRow {
+  key: string;
+  enabled: boolean;
+  rules_jsonb: Record<string, unknown>;
+  updated_at: Date;
+}
+
+interface AdminSubscriptionRow {
+  id: string;
+  plan_id: string;
+  plan_code: AdminSubscription['planCode'];
+  project_id: string | null;
+  price_snapshot: string;
+  currency_snapshot: string;
+  status: AdminSubscription['status'];
+  current_period_end: Date | null;
+  grace_until: Date | null;
+  created_at: Date;
+  user_id: string;
+  display_name: string;
+  project_title: string | null;
+  custom_price: string | null;
+  custom_price_set_by: string | null;
+  custom_price_approved_by: string | null;
+}
+
+function mapPlan(row: PlanRow): AdminPlan {
+  const now = Date.now();
+  const from = row.valid_from.getTime();
+  const to = row.valid_to?.getTime() ?? null;
+  return {
+    id: row.id,
+    code: row.code,
+    version: row.version,
+    audience: row.audience,
+    name: row.name,
+    askLimit: row.ask_limit,
+    individualPricing: row.individual_pricing,
+    price: row.price,
+    currency: row.currency as 'RUB',
+    billingPeriod: row.billing_period,
+    validFrom: row.valid_from.toISOString(),
+    validTo: row.valid_to?.toISOString() ?? null,
+    features: row.features_jsonb,
+    // Версия «заперта», как только начала действовать: с этого момента её
+    // денежные условия — исторический факт, а не настройка.
+    isLocked: from <= now,
+    isActive: from <= now && (to === null || to > now),
+    subscriptionsCount: row.subscriptions_count,
+  };
+}
+
+function mapAdminSubscription(row: AdminSubscriptionRow): AdminSubscription {
+  return {
+    id: row.id,
+    planId: row.plan_id,
+    planCode: row.plan_code,
+    projectId: row.project_id,
+    priceSnapshot: row.price_snapshot,
+    currency: row.currency_snapshot as 'RUB',
+    status: row.status,
+    currentPeriodEnd: row.current_period_end?.toISOString() ?? null,
+    graceUntil: row.grace_until?.toISOString() ?? null,
+    createdAt: row.created_at.toISOString(),
+    userId: row.user_id,
+    userDisplayName: row.display_name,
+    projectTitle: row.project_title,
+    customPrice: row.custom_price,
+    customPriceSetBy: row.custom_price_set_by,
+    customPriceApprovedBy: row.custom_price_approved_by,
+  };
+}

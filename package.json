@@ -14,7 +14,7 @@
     "e2e"
   ],
   "scripts": {
-    "build": "npm run build:packages && npm run build -w apps/core --if-present && npm run build -w apps/web-public --if-present",
+    "build": "npm run build:packages && npm run build -w apps/core --if-present && npm run build -w apps/web-public --if-present && npm run build -w apps/admin --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

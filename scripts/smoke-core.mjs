@@ -11,6 +11,11 @@
 const apiIndex = process.argv.indexOf('--api');
 const BASE = apiIndex >= 0 ? process.argv[apiIndex + 1] : 'http://127.0.0.1:4300';
 
+// Имена cookie берутся из окружения: в dev они без префикса __Host-,
+// иначе браузер отбросил бы их при работе по http.
+const SESSION_COOKIE = process.env.SESSION_COOKIE_NAME ?? 'ul_session';
+const CSRF_COOKIE = process.env.CSRF_COOKIE_NAME ?? 'ul_csrf';
+
 let passed = 0;
 let failed = 0;
 
@@ -173,13 +178,19 @@ let csrfCookie;
   check('CSRF-токен выдан', typeof json?.csrfToken === 'string' && json.csrfToken.length >= 32);
 
   const cookies = response.headers.getSetCookie?.() ?? [];
-  const session = cookies.find((c) => c.startsWith('__Host-ul_session=')) ?? null;
-  const csrf = cookies.find((c) => c.startsWith('__Host-ul_csrf=')) ?? null;
+  const session = cookies.find((c) => c.startsWith(`${SESSION_COOKIE}=`)) ?? null;
+  const csrf = cookies.find((c) => c.startsWith(`${CSRF_COOKIE}=`)) ?? null;
   check('сессия выдана в cookie', Boolean(session));
   check('сессионная cookie httpOnly', Boolean(session && /HttpOnly/i.test(session)));
   check('сессионная cookie SameSite=Strict', Boolean(session && /SameSite=Strict/i.test(session)));
   check('CSRF-cookie доступна скрипту (double-submit)', Boolean(csrf && !/HttpOnly/i.test(csrf)));
-  check('токен НЕ возвращается в теле ответа', !JSON.stringify(json ?? {}).includes('__Host'));
+  // Значение сессионной cookie не должно встречаться в теле ответа: токен
+  // живёт только в httpOnly-cookie и до JavaScript не доходит.
+  const sessionValue = session?.split(';')[0]?.split('=').slice(1).join('=') ?? '';
+  check(
+    'токен НЕ возвращается в теле ответа',
+    sessionValue.length > 0 && !JSON.stringify(json ?? {}).includes(sessionValue),
+  );
 
   sessionCookie = session?.split(';')[0] ?? null;
   csrfCookie = csrf?.split(';')[0] ?? null;
