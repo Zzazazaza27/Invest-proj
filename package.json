@@ -29,7 +29,8 @@
     "gate:secrets": "gitleaks detect --no-banner --redact --config .gitleaks.toml",
     "gate:deps": "npm audit --audit-level=high",
     "gate:net": "node scripts/network-audit.mjs",
-    "gate": "npm run lint && npm run typecheck && npm run test && npm run gate:deps && npm run gate:net"
+    "gate": "npm run lint && npm run typecheck && npm run test && npm run gate:boundary && npm run gate:deps && npm run gate:net",
+    "gate:boundary": "node scripts/check-frontend-boundary.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
