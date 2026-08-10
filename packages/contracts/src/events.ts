@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { IsoDateTimeSchema, UuidSchema } from './common/primitives.ts';
+import { IsoDateTimeSchema, UuidSchema } from './common/primitives';
 
 /**
  * Событийные контракты (NATS JetStream, стрим LAUNCH).

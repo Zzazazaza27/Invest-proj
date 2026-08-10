@@ -6,7 +6,7 @@ import {
   IsoDateTimeSchema,
   MoneyAmountSchema,
   UuidSchema,
-} from '../common/primitives.ts';
+} from '../common/primitives';
 
 export const ProjectStageSchema = z.enum(['idea', 'mvp', 'early_revenue', 'growth']);
 export type ProjectStage = z.infer<typeof ProjectStageSchema>;

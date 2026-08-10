@@ -2,15 +2,19 @@
  * Создание логин-пользователей БД из переменных окружения.
  *
  * Групповые роли (app_backend, app_billing, …) создаёт миграция M000 как
- * NOLOGIN — в миграциях нет и не должно быть паролей. Этот скрипт заводит
+ * NOLOGIN — паролей в миграциях нет и быть не должно. Этот скрипт заводит
  * логин-пользователей и включает их в соответствующие группы.
+ *
+ * Пароль НЕ передаётся на сервер в открытом виде: клиент сам считает
+ * SCRAM-SHA-256 верификатор и отправляет уже его. Иначе пароль сервисной роли
+ * оказался бы в журнале запросов PostgreSQL при включённом log_statement.
  *
  * Запуск: npm run bootstrap:roles -w database
  */
+import { createHash, createHmac, pbkdf2Sync, randomBytes } from 'node:crypto';
 import pg from 'pg';
 import { ownerConnectionString, requireEnv, sslConfig } from './env.ts';
 
-/** Логин-пользователь → групповая роль, права которой он получает. */
 const ROLE_MAP: { login: string; group: string; passwordEnv: string }[] = [
   { login: 'app_backend_user', group: 'app_backend', passwordEnv: 'DB_ROLE_PASSWORD_APP_BACKEND' },
   {
@@ -42,10 +46,57 @@ const ROLE_MAP: { login: string; group: string; passwordEnv: string }[] = [
 ];
 
 const MIN_PASSWORD_LENGTH = 24;
+/** Итераций больше, чем дефолтные 4096 в PostgreSQL: перебор дороже. */
+const SCRAM_ITERATIONS = 15_000;
+const SCRAM_SALT_BYTES = 16;
+const SCRAM_KEY_BYTES = 32;
+
+/**
+ * SCRAM-SHA-256 верификатор в формате, который PostgreSQL хранит в
+ * `pg_authid.rolpassword`:
+ *   SCRAM-SHA-256$<iterations>:<salt>$<StoredKey>:<ServerKey>
+ */
+function scramVerifier(password: string): string {
+  const salt = randomBytes(SCRAM_SALT_BYTES);
+  const saltedPassword = pbkdf2Sync(
+    password.normalize('NFKC'),
+    salt,
+    SCRAM_ITERATIONS,
+    SCRAM_KEY_BYTES,
+    'sha256',
+  );
+  const clientKey = createHmac('sha256', saltedPassword).update('Client Key').digest();
+  const storedKey = createHash('sha256').update(clientKey).digest();
+  const serverKey = createHmac('sha256', saltedPassword).update('Server Key').digest();
+  return (
+    `SCRAM-SHA-256$${SCRAM_ITERATIONS}:${salt.toString('base64')}` +
+    `$${storedKey.toString('base64')}:${serverKey.toString('base64')}`
+  );
+}
 
 function assertIdentifier(name: string): string {
   if (!/^[a-z_][a-z0-9_]*$/.test(name)) throw new Error(`Недопустимое имя роли: ${name}`);
   return name;
+}
+
+/**
+ * Собирает DDL на стороне сервера через format(): имена экранируются %I,
+ * литералы — %L. Клиентской конкатенации строк нет.
+ */
+async function buildStatement(
+  client: pg.Client,
+  template: string,
+  args: unknown[],
+): Promise<string> {
+  // Явное приведение к text обязательно: без него PostgreSQL не может вывести
+  // тип параметра для полиморфного format() и падает с
+  // «could not determine data type of parameter».
+  const placeholders = args.map((_, i) => `$${i + 1}::text`).join(', ');
+  const { rows } = await client.query<{ stmt: string }>(
+    `SELECT format($fmt$${template}$fmt$, ${placeholders}) AS stmt`,
+    args,
+  );
+  return rows[0]!.stmt;
 }
 
 async function main(): Promise<void> {
@@ -67,35 +118,33 @@ async function main(): Promise<void> {
       }
       const loginId = assertIdentifier(login);
       const groupId = assertIdentifier(group);
+      const verifier = scramVerifier(password);
 
       const { rows } = await client.query<{ exists: boolean }>(
         'SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1) AS exists',
         [loginId],
       );
 
-      // Имя роли нельзя передать параметром, поэтому оно проверено allowlist'ом
-      // выше; пароль передаётся как литерал через format(%L) на стороне сервера.
-      if (rows[0]?.exists) {
-        await client.query(
-          `DO $do$ BEGIN EXECUTE format('ALTER ROLE %I LOGIN NOBYPASSRLS NOSUPERUSER PASSWORD %L', $1, $2); END $do$`,
-          [loginId, password],
-        );
-      } else {
-        await client.query(
-          `DO $do$ BEGIN EXECUTE format('CREATE ROLE %I LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L', $1, $2); END $do$`,
-          [loginId, password],
-        );
-      }
-      await client.query(`DO $do$ BEGIN EXECUTE format('GRANT %I TO %I', $1, $2); END $do$`, [
-        groupId,
-        loginId,
-      ]);
+      const ddl = rows[0]?.exists
+        ? await buildStatement(
+            client,
+            'ALTER ROLE %I LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L',
+            [loginId, verifier],
+          )
+        : await buildStatement(
+            client,
+            'CREATE ROLE %I LOGIN NOBYPASSRLS NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD %L',
+            [loginId, verifier],
+          );
+      await client.query(ddl);
+
+      await client.query(await buildStatement(client, 'GRANT %I TO %I', [groupId, loginId]));
       // Логин-пользователь работает ТОЛЬКО с правами своей группы.
       await client.query(
-        `DO $do$ BEGIN EXECUTE format('ALTER ROLE %I SET role = %I', $1, $2); END $do$`,
-        [loginId, groupId],
+        await buildStatement(client, 'ALTER ROLE %I SET role = %I', [loginId, groupId]),
       );
-      console.warn(`  ✔ ${loginId} → ${groupId}`);
+
+      console.warn(`  ok  ${loginId} -> ${groupId}`);
     }
 
     // Контрольная проверка: ни у кого нет BYPASSRLS или SUPERUSER.
@@ -105,7 +154,17 @@ async function main(): Promise<void> {
     if (rows.length > 0) {
       throw new Error(`Роли с BYPASSRLS/SUPERUSER: ${rows.map((r) => r.rolname).join(', ')}`);
     }
-    console.warn('\nВсе роли созданы, BYPASSRLS/SUPERUSER ни у кого нет.\n');
+
+    // И что пароли действительно хранятся как SCRAM, а не как md5 или plain.
+    const weak = await client.query<{ rolname: string }>(
+      `SELECT rolname FROM pg_authid
+        WHERE rolname LIKE 'app\\_%\\_user' AND (rolpassword IS NULL OR rolpassword NOT LIKE 'SCRAM-SHA-256$%')`,
+    );
+    if (weak.rows.length > 0) {
+      throw new Error(`Роли без SCRAM-пароля: ${weak.rows.map((r) => r.rolname).join(', ')}`);
+    }
+
+    console.warn('\nВсе роли созданы. BYPASSRLS/SUPERUSER нет, пароли — SCRAM-SHA-256.\n');
   } finally {
     await client.end();
   }

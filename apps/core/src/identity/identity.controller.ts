@@ -1,0 +1,168 @@
+import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
+import {
+  AuthSessionSchema,
+  ConsentAcceptanceSchema,
+  CurrentUserSchema,
+  LoginRequestSchema,
+  RegisterRequestSchema,
+} from '@unicorn/contracts';
+import { z } from 'zod';
+import { getEnv } from '../config/env';
+import { errors } from '../common/errors';
+import { parseOrThrow } from '../common/validation';
+import { Ctx, Public, type AuthenticatedRequest } from '../auth/guards';
+import { TokenVerifier } from '../auth/token.verifier';
+import type { RequestContext } from '../db/unit-of-work';
+import { IdentityService } from './identity.service';
+
+/**
+ * Аутентификация и профиль.
+ *
+ * Токен НИКОГДА не возвращается в теле ответа: он уходит в httpOnly-cookie,
+ * недоступную JavaScript. В теле — только то, что фронтенду действительно
+ * нужно: роли, статус, CSRF-токен и признак необходимости ре-акцепта.
+ */
+@Controller('auth')
+export class IdentityController {
+  constructor(
+    private readonly identity: IdentityService,
+    private readonly verifier: TokenVerifier,
+  ) {}
+
+  @Public()
+  @Post('register')
+  async register(
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const input = parseOrThrow(RegisterRequestSchema, rawBody);
+    const { userId, roles } = await this.identity.register(input, ctx);
+    const missing = await this.identity.missingConsents({ ...ctx, userId, roles }, input.locale);
+
+    const { session, csrfToken } = this.identity.buildSession({
+      userId,
+      roles,
+      status: missing.length === 0 ? 'active' : 'pending_consents',
+      reacceptRequired: missing.length > 0,
+      mfaEnabled: false,
+    });
+    this.setSessionCookies(reply, userId, roles, csrfToken);
+    return AuthSessionSchema.parse(session);
+  }
+
+  @Public()
+  @Post('login')
+  async login(
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const input = parseOrThrow(LoginRequestSchema, rawBody);
+    if (!input.email && !input.phone) {
+      throw errors.validation([{ path: 'email', message: 'нужен email или телефон' }]);
+    }
+    const result = await this.identity.verifyPassword(
+      { email: input.email, phone: input.phone },
+      input.password,
+      ctx,
+    );
+    const missing = await this.identity.missingConsents(
+      { ...ctx, userId: result.userId, roles: result.roles },
+      'ru-RU',
+    );
+
+    const { session, csrfToken } = this.identity.buildSession({
+      userId: result.userId,
+      roles: result.roles,
+      status: result.status,
+      reacceptRequired: missing.length > 0,
+      mfaEnabled: false,
+    });
+    this.setSessionCookies(reply, result.userId, result.roles, csrfToken);
+    return AuthSessionSchema.parse(session);
+  }
+
+  @Post('logout')
+  logout(@Res({ passthrough: true }) reply: FastifyReply): { ok: true } {
+    const env = getEnv();
+    // Обе cookie удаляются с теми же атрибутами, с какими ставились: иначе
+    // браузер оставит старую.
+    reply.clearCookie(env.SESSION_COOKIE_NAME, { path: '/' });
+    reply.clearCookie(env.CSRF_COOKIE_NAME, { path: '/' });
+    return { ok: true };
+  }
+
+  @Get('me')
+  async me(@Ctx() ctx: RequestContext) {
+    return CurrentUserSchema.parse(await this.identity.getCurrentUser(ctx));
+  }
+
+  @Post('consents')
+  async acceptConsents(
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const input = parseOrThrow(
+      z.object({ consents: z.array(ConsentAcceptanceSchema).min(1).max(10) }),
+      rawBody,
+    );
+    await this.identity.acceptConsents(ctx, input.consents);
+    const missing = await this.identity.missingConsents(ctx);
+
+    const { session } = this.identity.buildSession({
+      userId: ctx.userId!,
+      roles: (request.auth?.roles ?? []) as never,
+      status: missing.length === 0 ? 'active' : 'pending_consents',
+      reacceptRequired: missing.length > 0,
+      mfaEnabled: false,
+    });
+    // CSRF-токен не пересоздаётся: текущая сессия остаётся действующей.
+    return AuthSessionSchema.parse({ ...session, csrfToken: this.currentCsrf(request) });
+  }
+
+  private currentCsrf(request: AuthenticatedRequest): string {
+    const env = getEnv();
+    const cookies = (request as unknown as { cookies?: Record<string, string> }).cookies;
+    return cookies?.[env.CSRF_COOKIE_NAME] ?? '';
+  }
+
+  /**
+   * Сессионная cookie — httpOnly, Secure, SameSite=Strict, Path=/.
+   *
+   * CSRF-cookie намеренно ЧИТАЕМА из JS (httpOnly=false): схема double-submit
+   * требует, чтобы фронтенд мог скопировать значение в заголовок. Секретом она
+   * не является — её роль в том, что межсайтовый запрос не может выставить
+   * заголовок.
+   */
+  private setSessionCookies(
+    reply: FastifyReply,
+    userId: string,
+    roles: string[],
+    csrfToken: string,
+  ): void {
+    const env = getEnv();
+    const token = this.verifier.issueLocal({
+      subject: userId,
+      roles,
+      ttlSeconds: env.SESSION_TTL_SECONDS,
+    });
+
+    reply.setCookie(env.SESSION_COOKIE_NAME, token, {
+      httpOnly: true,
+      secure: env.isProduction,
+      sameSite: 'strict',
+      path: '/',
+      maxAge: env.SESSION_TTL_SECONDS,
+    });
+    reply.setCookie(env.CSRF_COOKIE_NAME, csrfToken, {
+      httpOnly: false,
+      secure: env.isProduction,
+      sameSite: 'strict',
+      path: '/',
+      maxAge: env.SESSION_TTL_SECONDS,
+    });
+  }
+}

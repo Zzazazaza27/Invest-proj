@@ -40,9 +40,9 @@ import {
   type UpdateProjectRequest,
 } from '@unicorn/contracts';
 import { z } from 'zod';
-import { ApiClient, type ClientOptions } from './client.ts';
+import { ApiClient, type ClientOptions } from './client';
 
-export { ApiClient, ApiError, type AuthMode, type ClientOptions } from './client.ts';
+export { ApiClient, ApiError, type AuthMode, type ClientOptions } from './client';
 
 /**
  * Фасад API /v1.

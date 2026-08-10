@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { ApiClient, ApiError, createPublicClient, createWebClient } from '../src/index.ts';
+import { ApiClient, ApiError, createPublicClient, createWebClient } from '../src/index';
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
@@ -108,10 +108,10 @@ describe('Транспорт: заголовки и учётные данные'
       method: 'POST',
       path: '/billing/payments',
       body: {},
-      idempotencyKey: 'idem-0123456789abcdef',
+      idempotencyKey: 'idem-test-fixture-000000',
     });
     expect(new Headers(callArgs(fetchImpl).init.headers).get('Idempotency-Key')).toBe(
-      'idem-0123456789abcdef',
+      'idem-test-fixture-000000',
     );
   });
 

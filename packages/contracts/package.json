@@ -2,16 +2,19 @@
   "name": "@unicorn/contracts",
   "private": true,
   "version": "0.1.0",
-  "type": "module",
   "description": "Единственный источник правды контрактов: zod-схемы DTO, событий и кодов ошибок",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
     "zod": "^4.4.3"

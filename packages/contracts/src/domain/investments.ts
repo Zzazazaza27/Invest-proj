@@ -6,7 +6,7 @@ import {
   IsoDateTimeSchema,
   MoneyAmountSchema,
   UuidSchema,
-} from '../common/primitives.ts';
+} from '../common/primitives';
 
 /**
  * Регулируемый контур ОИП.

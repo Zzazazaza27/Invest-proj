@@ -123,6 +123,18 @@ export default tseslint.config(
     },
   },
 
+  // --- Ядро на NestJS: DI зависит от РАНТАЙМНЫХ импортов ---
+  // consistent-type-imports превращает импорт внедряемого класса в type-only,
+  // а такой импорт стирается при компиляции. emitDecoratorMetadata теряет
+  // токен, и приложение падает на старте с 'Nest can't resolve dependencies'.
+  // Автофикс этого правила уже ломал сборку — поэтому оно здесь выключено.
+  {
+    files: ['apps/core/**/*.ts'],
+    rules: {
+      '@typescript-eslint/consistent-type-imports': 'off',
+    },
+  },
+
   // --- Тесты: послабления ---
   {
     files: ['**/*.test.ts', '**/*.spec.ts', '**/tests/**/*.ts', 'e2e/**/*.ts'],

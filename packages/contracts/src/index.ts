@@ -12,17 +12,17 @@
  *  - секреты и ключи.
  */
 
-export * from './common/primitives.ts';
-export * from './common/problem.ts';
-export * from './common/pagination.ts';
+export * from './common/primitives';
+export * from './common/problem';
+export * from './common/pagination';
 
-export * from './domain/identity.ts';
-export * from './domain/lab.ts';
-export * from './domain/billing.ts';
-export * from './domain/investments.ts';
-export * from './domain/misc.ts';
+export * from './domain/identity';
+export * from './domain/lab';
+export * from './domain/billing';
+export * from './domain/investments';
+export * from './domain/misc';
 
-export * from './events.ts';
+export * from './events';
 
 /** Версия контракта API. Меняется вместе с несовместимыми изменениями. */
 export const API_VERSION = 'v1' as const;

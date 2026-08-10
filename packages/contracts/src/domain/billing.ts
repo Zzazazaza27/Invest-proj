@@ -5,7 +5,7 @@ import {
   IsoDateTimeSchema,
   MoneyAmountSchema,
   UuidSchema,
-} from '../common/primitives.ts';
+} from '../common/primitives';
 
 /**
  * Биллинг — ВЫРУЧКА ПЛАТФОРМЫ и только она: подписки и вознаграждение ОИП.

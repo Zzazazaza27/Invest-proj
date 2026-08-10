@@ -15,7 +15,7 @@ import {
   toMinorUnits,
   uuidv7,
   UuidSchema,
-} from '../src/index.ts';
+} from '../src/index';
 
 describe('UUIDv7', () => {
   it('соответствует формату и версии 7', () => {
@@ -118,7 +118,7 @@ describe('Инвестиционное предложение', () => {
     offerId: '019feb5f-43fe-77e7-b3c3-f0fa999cf06f',
     contractAmount: '1000000.00',
     currency: 'RUB' as const,
-    idempotencyKey: 'idem-0123456789abcdef',
+    idempotencyKey: 'idem-test-fixture-000000',
     acknowledgedFeeDisclosure: true as const,
     acknowledgedRulesVersion: 'platform_rules_v1',
   };
@@ -144,7 +144,7 @@ describe('Подписка: тариф резолвит сервер', () => {
     const ok = CreateSubscriptionRequestSchema.safeParse({
       audience: 'founder',
       projectId: '019feb5f-43fe-77e7-b3c3-f0fa999cf06f',
-      idempotencyKey: 'idem-0123456789abcdef',
+      idempotencyKey: 'idem-test-fixture-000000',
     });
     expect(ok.success).toBe(true);
     // planId в контракте отсутствует — подставить чужой тариф нельзя.
@@ -156,7 +156,7 @@ describe('Подписка: тариф резолвит сервер', () => {
       CreateSubscriptionRequestSchema.safeParse({
         audience: 'investor',
         projectId: '019feb5f-43fe-77e7-b3c3-f0fa999cf06f',
-        idempotencyKey: 'idem-0123456789abcdef',
+        idempotencyKey: 'idem-test-fixture-000000',
       }).success,
     ).toBe(true); // лишнее поле игнорируется, но и не влияет на резолв
   });

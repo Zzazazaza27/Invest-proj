@@ -1,10 +1,5 @@
 import { z } from 'zod';
-import {
-  boundedString,
-  IsoDateTimeSchema,
-  LocaleSchema,
-  UuidSchema,
-} from '../common/primitives.ts';
+import { boundedString, IsoDateTimeSchema, LocaleSchema, UuidSchema } from '../common/primitives';
 
 /** Роли. `corporate` и `showrunner` зарезервированы под Capital и медиаконтур. */
 export const RoleSchema = z.enum([

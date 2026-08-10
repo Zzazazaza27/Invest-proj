@@ -4,7 +4,7 @@ import {
   CountryCodeSchema,
   IsoDateTimeSchema,
   UuidSchema,
-} from '../common/primitives.ts';
+} from '../common/primitives';
 
 // ------------------------------------------------------------------- KYC/KYB
 
