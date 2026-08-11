@@ -1,4 +1,5 @@
 import {
+  AnalysisRunSchema,
   AuthSessionSchema,
   CommissionAccrualSchema,
   CurrentUserSchema,
@@ -13,8 +14,11 @@ import {
   PaymentSchema,
   PricingSchema,
   ProjectFullSchema,
+  ProjectSummarySchema,
   ProjectTeaserSchema,
   RatingEntrySchema,
+  ReadinessEntrySchema,
+  RoadmapSchema,
   SeasonSchema,
   SubscriptionSchema,
   TaxonomyNodeSchema,
@@ -144,12 +148,16 @@ export class UnicornApi {
 
   // -------------------------------------------------------------- проекты
   readonly projects = {
-    list: (query: { cursor?: string; limit?: number } = {}) =>
-      this.http.request({
-        path: '/projects',
-        query,
-        schema: pageResponseSchema(ProjectFullSchema),
-      }),
+    /**
+     * Свои проекты. Список НЕ постраничный и отдаёт краткую форму: у одного
+     * основателя их единицы, и курсор здесь был бы усложнением без пользы.
+     * Раньше клиент ждал страницу полных карточек — метод падал на разборе
+     * ответа (найдено рендер-проверкой кабинета в Ф10b).
+     */
+    list: () =>
+      this.http
+        .request({ path: '/projects', schema: z.object({ items: z.array(ProjectSummarySchema) }) })
+        .then((response) => response.items),
 
     get: (id: string) => this.http.request({ path: `/projects/${id}`, schema: ProjectFullSchema }),
 
@@ -187,6 +195,37 @@ export class UnicornApi {
 
     addProductLink: (body: AddProductLink) =>
       this.http.request({ method: 'POST', path: '/projects/materials/link', body }),
+
+    /**
+     * Подача заявки в сезон. Создаёт неизменяемый снимок версии: именно он, а
+     * не текущее состояние проекта, идёт на экспертизу.
+     */
+    submit: (id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/submit`,
+        schema: z.object({ version: z.number().int().positive() }).loose(),
+        idempotencyKey: uuidv7(),
+      }),
+
+    /** Прогон анализа. Возвращает результат вместе с признаком, считала ли его модель. */
+    runAnalysis: (id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/analysis`,
+        schema: AnalysisRunSchema,
+      }),
+
+    readiness: (id: string) =>
+      this.http
+        .request({
+          path: `/projects/${id}/readiness`,
+          schema: z.object({ items: z.array(ReadinessEntrySchema) }),
+        })
+        .then((response) => response.items),
+
+    roadmap: (id: string) =>
+      this.http.request({ path: `/projects/${id}/roadmap`, schema: RoadmapSchema.nullable() }),
 
     passport: (id: string) =>
       this.http.request({

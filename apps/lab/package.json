@@ -1,0 +1,27 @@
+{
+  "name": "@unicorn/lab",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Кабинет основателя (ЛПИ): заявка, материалы, листинг, инвестиционный паспорт",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview --port 5175",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@unicorn/api-client": "*",
+    "@unicorn/contracts": "*",
+    "@unicorn/ui": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^6.0.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.1"
+  }
+}

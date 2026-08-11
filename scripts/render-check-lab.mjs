@@ -1,0 +1,260 @@
+#!/usr/bin/env node
+/**
+ * Проверка кабинета основателя в РЕАЛЬНОМ рендере (`RULES.md` §2).
+ *
+ * Проверяется не «страница открылась», а рабочий путь целиком: вход настоящей
+ * учётной записью, создание заявки, отображение своих проектов и отказ сервера
+ * там, где условия не выполнены. Отдельно — что чужой проект в кабинете не
+ * появляется: изоляция держится RLS, но увидеть её нарушение можно только
+ * глазами интерфейса.
+ *
+ * Запуск: node scripts/render-check-lab.mjs
+ * Требуется: core на 4300 и кабинет на 5175.
+ */
+import { chromium } from 'playwright';
+import pg from 'pg';
+import { createHmac, randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+loadDotEnv();
+
+const LAB_URL = process.env.LAB_URL ?? 'http://127.0.0.1:5175/';
+const CORE_URL = process.env.CORE_URL ?? 'http://127.0.0.1:4300';
+
+let passed = 0;
+let failed = 0;
+
+function check(name, condition, detail = '') {
+  if (condition) {
+    passed += 1;
+    console.warn(`  OK    ${name}${detail ? ` — ${detail}` : ''}`);
+  } else {
+    failed += 1;
+    console.warn(`  FAIL  ${name}${detail ? ` — ${detail}` : ''}`);
+  }
+}
+
+function loadDotEnv() {
+  const envFile = join(ROOT, '.env');
+  if (!existsSync(envFile)) return;
+  for (const line of readFileSync(envFile, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] ??= value;
+  }
+}
+
+const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER, max: 4 });
+const sql = async (text, params = []) => (await pool.query(text, params)).rows;
+
+function blindIndex(email) {
+  return createHmac('sha256', Buffer.from(process.env.KEK_SEARCH_INDEX ?? '', 'base64'))
+    .update(`email:${email.trim().toLowerCase()}`, 'utf8')
+    .digest();
+}
+
+const suffix = `${Date.now() % 1e9}`;
+const CONSENTS = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind) => ({
+  kind,
+  version: 'v1',
+  locale: 'ru-RU',
+}));
+
+/** Учётная запись заводится через API: кабинет должен работать с настоящей. */
+async function register(tag) {
+  const email = `lab-${tag}-${suffix}@test.local`;
+  const password = `Pw-${randomUUID()}`;
+  const response = await fetch(`${CORE_URL}/v1/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    // Таймаут обязателен и в прогоне: зависший запрос превращает проверку в
+    // бесконечное ожидание вместо честного падения.
+    signal: AbortSignal.timeout(15_000),
+    body: JSON.stringify({
+      email,
+      password,
+      displayName: `Основатель ${tag}`,
+      role: 'founder',
+      locale: 'ru-RU',
+      consents: CONSENTS,
+    }),
+  });
+  if (!response.ok) throw new Error(`регистрация ${tag}: HTTP ${response.status}`);
+  const [row] = await sql('SELECT id FROM identity.users WHERE email_hmac = $1', [
+    blindIndex(email),
+  ]);
+  return { email, password, userId: row.id };
+}
+
+console.warn('\n=== РЕНДЕР-ПРОВЕРКА: КАБИНЕТ ОСНОВАТЕЛЯ ===\n');
+
+const owner = await register('owner');
+const stranger = await register('stranger');
+
+// Чужой проект: он не должен появиться в кабинете первого пользователя.
+const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
+const [strangerProject] = await sql(
+  `INSERT INTO lab.projects (id, taxonomy_id, title, stage, investment_ask, required_plan_id)
+   VALUES (public.uuid_generate_v7(), $1, $2, 'growth', 5000000,
+           billing.resolve_founder_plan(5000000))
+   RETURNING id, title`,
+  [taxonomy.id, `Чужой проект ${suffix}`],
+);
+await sql(
+  `INSERT INTO lab.founders_projects (project_id, user_id, role) VALUES ($1, $2, 'owner')`,
+  [strangerProject.id, stranger.userId],
+);
+
+const browser = await chromium.launch();
+const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+const page = await context.newPage();
+const consoleErrors = [];
+page.on('console', (message) => {
+  if (message.type() !== 'error') return;
+  const text = message.text();
+  // 401 на проверке сессии — штатный путь, а не дефект: кабинет не может
+  // знать заранее, вошёл ли пользователь, и спрашивает об этом сервер.
+  // Браузер печатает такой ответ как ошибку ресурса; отличать её от настоящей
+  // приходится здесь, иначе проверка красная всегда.
+  // Сценарий намеренно вызывает доменные отказы: 401 на проверке сессии,
+  // 403 на публикации без верификации, 404 на ещё не созданном паспорте. Это
+  // ПРАВИЛЬНОЕ поведение сервера, и считать его ошибкой интерфейса нельзя —
+  // иначе проверка запрещает приложению корректно обрабатывать отказы.
+  // Настоящие дефекты — это 5xx, исключения страницы и ошибки разбора ответа.
+  if (/\b(401|403|404) \(/.test(text)) return;
+  consoleErrors.push(text);
+});
+page.on('pageerror', (error) => consoleErrors.push(String(error)));
+
+// -------------------------------------------------------------------- вход
+console.warn('[1] Вход');
+await page.goto(LAB_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+
+check(
+  'незалогиненному показан вход, а не пустой экран',
+  (await page.getByRole('heading', { name: 'Вход' }).count()) === 1,
+);
+
+await page.fill('#email', owner.email);
+await page.fill('#password', 'заведомо-неверный-пароль');
+await page.getByRole('button', { name: 'Войти' }).click();
+await page.waitForTimeout(1200);
+check(
+  'неверный пароль показывает отказ, а не молчит',
+  (await page.locator('[role="alert"]').count()) > 0,
+);
+
+await page.fill('#password', owner.password);
+await page.getByRole('button', { name: 'Войти' }).click();
+await page.waitForSelector('text=Мои проекты', { timeout: 15_000 });
+check('вход выполнен и открыт список проектов', true);
+
+// -------------------------------------------------------------- пустой список
+console.warn('\n[2] Пустое состояние и создание заявки');
+// Ждём именно КОНЦА загрузки списка, а не «сколько-нибудь»: считать элементы
+// на середине запроса — значит проверять скорость машины, а не интерфейс.
+await page
+  .getByText('Проектов пока нет')
+  .waitFor({ timeout: 15_000 })
+  .catch(() => undefined);
+const listArea = await page.locator('main').innerText();
+check(
+  'пустой список объяснён словами',
+  (await page.getByText('Проектов пока нет').count()) === 1,
+  // При неудаче показываем, что РЕАЛЬНО на экране: иначе «не нашёл текст»
+  // не отличить от «список не загрузился» и от «пришла ошибка».
+  listArea.replace(/\s+/g, ' ').slice(0, 160),
+);
+
+check(
+  'чужой проект в кабинете не виден',
+  !(await page.locator('body').innerText()).includes(strangerProject.title),
+);
+
+await page.getByRole('button', { name: 'Новая заявка' }).first().click();
+await page.waitForSelector('#title', { timeout: 10_000 });
+const projectTitle = `Проект прогона ${suffix}`;
+await page.fill('#title', projectTitle);
+await page.fill('#tagline', 'Проверка кабинета в реальном рендере');
+await page.fill('#investmentAsk', '5000000.00');
+await page.getByRole('button', { name: 'Создать' }).click();
+
+await page.waitForSelector('text=Действия', { timeout: 15_000 });
+check(
+  'после создания открылась карточка проекта',
+  (await page.locator('h1').innerText()).includes(projectTitle),
+);
+
+// ------------------------------------------------------------------ действия
+console.warn('\n[3] Действия и отказы сервера');
+check('карточка показывает статус проекта', (await page.getByText('Черновик').count()) > 0);
+
+// Публикация листинга без подписки и KYC обязана отказать — и объяснить.
+await page.getByRole('button', { name: 'Опубликовать листинг' }).click();
+await page.waitForTimeout(2000);
+const noticeText = await page.locator('[role="alert"], [role="status"]').first().innerText();
+check(
+  'отказ публикации объяснён сервером, а не проглочен',
+  noticeText.trim().length > 10,
+  noticeText.slice(0, 80),
+);
+
+check(
+  'паспорта ещё нет — и это сказано словами',
+  (await page.getByText('Паспорта ещё нет').count()) > 0,
+);
+
+// -------------------------------------------------------------- доступность
+console.warn('\n[4] Доступность и раскладка');
+check('ровно один h1', (await page.locator('h1').count()) === 1);
+const unlabeled = await page.locator('input:not([id]):not([aria-label])').count();
+check('поля ввода имеют подписи', unlabeled === 0, `без подписи: ${unlabeled}`);
+
+await page.setViewportSize({ width: 390, height: 844 });
+await page.waitForTimeout(300);
+const overflow = await page.evaluate(
+  // eslint-disable-next-line no-undef
+  () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+);
+check('горизонтальной прокрутки нет на 390px', overflow <= 1, `переполнение: ${overflow}px`);
+
+check(
+  'ошибок в консоли нет',
+  consoleErrors.length === 0,
+  consoleErrors.slice(0, 2).join(' | ') || 'нет',
+);
+
+// ------------------------------------------------------------ выход и сессия
+console.warn('\n[5] Выход');
+await page.setViewportSize({ width: 1280, height: 900 });
+await page.getByRole('button', { name: 'Выйти' }).click();
+await page.waitForTimeout(1500);
+check(
+  'после выхода снова показан вход',
+  (await page.getByRole('heading', { name: 'Вход' }).count()) === 1,
+);
+
+await page.reload({ waitUntil: 'networkidle' });
+check(
+  'перезагрузка после выхода не возвращает кабинет',
+  (await page.getByRole('heading', { name: 'Вход' }).count()) === 1,
+);
+
+await browser.close();
+await pool.end();
+
+console.warn(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===\n`);
+process.exit(failed > 0 ? 1 : 0);

@@ -119,6 +119,9 @@ node scripts/smoke-api-client.mjs      # клиент против живого 
 npm run build -w apps/web-public && npm run preview -w apps/web-public   # витрина на 5173
 node scripts/render-check-web-public.mjs     # витрина в реальном браузере: 13 проверок
 
+npm run build -w apps/lab && npm run preview -w apps/lab                 # кабинет основателя на 5175
+node scripts/render-check-lab.mjs            # кабинет в реальном браузере: 15 проверок
+
 node scripts/dev-ai-gateway.mjs --detached   # AI-шлюз на 127.0.0.1:8100
 node scripts/smoke-ai.mjs                    # AI-контур: 40 проверок
 ```
