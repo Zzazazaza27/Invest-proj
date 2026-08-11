@@ -121,6 +121,16 @@ await sql(
   `INSERT INTO lab.founders_projects (project_id, user_id, role) VALUES ($1, $2, 'owner')`,
   [project.id, founder.userId],
 );
+// Материал проекта: без него проверка «рецензент видит материалы» проверяла бы
+// пустой список и была бы зелёной ни о чём.
+await sql(
+  `INSERT INTO lab.project_materials
+     (id, project_id, type, version, url, parse_status, uploaded_by)
+   VALUES (public.uuid_generate_v7(), $1, 'product_link', 1,
+           'https://example.com/expert-material', 'not_required', $2)`,
+  [project.id, founder.userId],
+);
+
 const [assignment] = await sql(
   `INSERT INTO experts.expert_assignments
      (id, project_id, expert_id, assigned_reason, due_at)
@@ -172,6 +182,23 @@ console.warn('\n[3] Принятие и рецензия');
 await page.getByRole('button', { name: 'Принять' }).first().click();
 await page.waitForTimeout(2500);
 check('назначение принято', (await page.locator('main').innerText()).includes('Принято'));
+
+// Материалы проекта — то, по чему пишется рецензия. Проверяется, что они
+// РАСКРЫВАЮТСЯ и содержат приложенное основателем: доступ рецензента к
+// материалам открывается по факту назначения (M025), и увидеть его работу
+// можно только здесь.
+await page.getByRole('button', { name: 'Материалы проекта' }).first().click();
+await page.waitForTimeout(2500);
+const materialsText = await page.locator('main').innerText();
+check(
+  'материалы назначенного проекта раскрыты',
+  materialsText.includes('Материалы') && materialsText.includes('Поданные версии'),
+  materialsText.replace(/\s+/g, ' ').slice(0, 120),
+);
+check(
+  'ссылка на продукт видна рецензенту',
+  materialsText.includes('https://example.com/expert-material'),
+);
 
 await page.getByRole('button', { name: 'Написать рецензию' }).first().click();
 await page.waitForSelector('#score-team', { timeout: 10_000 });

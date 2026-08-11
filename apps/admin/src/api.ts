@@ -5,21 +5,31 @@ import {
   AuthSessionSchema,
   FeatureFlagSchema,
   KycVerificationSchema,
+  NotificationTemplateSchema,
+  ProjectStageChangeSchema,
+  SeasonFunnelConfigSchema,
   SeasonSchema,
+  SeasonStageOccupancySchema,
   ServiceAccountSchema,
   ServiceAccountWithSecretSchema,
   type AdminPlan,
+  type AdvanceProjectStageRequest,
   type AdminSubscription,
   type AuthSession,
   type ClosePlanRequest,
   type FeatureFlag,
   type KycVerification,
+  type NotificationTemplate,
+  type ProjectStageChange,
   type ProposeCustomPriceRequest,
   type PublishPlanRequest,
   type Season,
+  type SeasonFunnelConfig,
+  type SeasonStageOccupancy,
   type ServiceAccount,
   type ServiceAccountWithSecret,
   type UpdateDraftPlanRequest,
+  type UpsertNotificationTemplate,
 } from '@unicorn/contracts';
 import { z } from 'zod';
 
@@ -316,6 +326,68 @@ export const api = {
       path: `/v1/seasons/${id}/status`,
       body: { status },
       schema: SeasonSchema,
+    });
+  },
+
+  // ------------------------------------------------------------- воронка сезона
+
+  /** Занятость этапов: сколько мест занято и сколько осталось по квоте. */
+  async funnel(seasonId: string): Promise<SeasonStageOccupancy[]> {
+    const { items } = await client.request({
+      method: 'GET',
+      path: `/v1/seasons/${seasonId}/funnel`,
+      schema: z.object({ items: z.array(SeasonStageOccupancySchema) }),
+    });
+    return items;
+  },
+
+  setFunnel(seasonId: string, config: SeasonFunnelConfig): Promise<SeasonFunnelConfig> {
+    return client.request({
+      method: 'POST',
+      path: `/v1/seasons/${seasonId}/funnel`,
+      body: config,
+      schema: SeasonFunnelConfigSchema,
+    });
+  },
+
+  advanceStage(
+    seasonId: string,
+    projectId: string,
+    body: AdvanceProjectStageRequest,
+  ): Promise<ProjectStageChange> {
+    return client.request({
+      method: 'POST',
+      path: `/v1/seasons/${seasonId}/projects/${projectId}/stage`,
+      body,
+      schema: ProjectStageChangeSchema,
+    });
+  },
+
+  // ------------------------------------------------------ шаблоны уведомлений
+
+  async templates(): Promise<NotificationTemplate[]> {
+    const { items } = await client.request({
+      method: 'GET',
+      path: '/v1/admin/notification-templates',
+      schema: z.object({ items: z.array(NotificationTemplateSchema) }),
+    });
+    return items;
+  },
+
+  saveTemplate(body: UpsertNotificationTemplate): Promise<NotificationTemplate> {
+    return client.request({
+      method: 'POST',
+      path: '/v1/admin/notification-templates',
+      body,
+      schema: NotificationTemplateSchema,
+    });
+  },
+
+  deactivateTemplate(id: string): Promise<NotificationTemplate> {
+    return client.request({
+      method: 'DELETE',
+      path: `/v1/admin/notification-templates/${id}`,
+      schema: NotificationTemplateSchema,
     });
   },
 };

@@ -5,6 +5,11 @@ import react from '@vitejs/plugin-react';
 // Никаких прокси к БД, очередям или внутренним сервисам (см. ADR-002).
 export default defineConfig({
   plugins: [react()],
+  // Пакеты монорепо собираются в CommonJS: их потребляет и ядро на NestJS,
+  // которое ESM не принимает. Vite не пре-бандлит связанные пакеты по
+  // умолчанию и подаёт их браузеру как есть — тот падает на именованном
+  // экспорте из CJS-модуля. Явное включение возвращает шаг преобразования.
+  optimizeDeps: { include: ['@unicorn/api-client', '@unicorn/contracts'] },
   server: {
     port: 5173,
     strictPort: true,

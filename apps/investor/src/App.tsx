@@ -15,6 +15,7 @@ import { ApiError, api, setCsrf } from './api';
 import { CatalogPage } from './pages/CatalogPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
 import { OffersPage } from './pages/OffersPage';
+import { VerificationPage } from './pages/VerificationPage';
 
 /**
  * Кабинет инвестора.
@@ -25,7 +26,7 @@ import { OffersPage } from './pages/OffersPage';
  * реестр ОИП — и кабинет говорит об этом прямо, а не показывает пустой список,
  * из которого можно заключить «предложений нет».
  */
-type Tab = 'catalog' | 'subscription' | 'offers';
+type Tab = 'catalog' | 'subscription' | 'verification' | 'offers';
 
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
@@ -70,12 +71,23 @@ export default function App() {
           <strong>Кабинет инвестора</strong>
           {me ? (
             <>
-              <nav aria-label="Разделы" style={{ display: 'flex', gap: 'var(--u-space-2)' }}>
+              {/*
+                Разделов четыре, и на узком экране они перестают помещаться в
+                строку. Перенос вместо горизонтальной прокрутки страницы:
+                прокрутка увела бы вправо весь кабинет, а не только меню.
+              */}
+              <nav
+                aria-label="Разделы"
+                style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}
+              >
                 <TabButton active={tab === 'catalog'} onClick={() => setTab('catalog')}>
                   Каталог
                 </TabButton>
                 <TabButton active={tab === 'subscription'} onClick={() => setTab('subscription')}>
                   Подписка
+                </TabButton>
+                <TabButton active={tab === 'verification'} onClick={() => setTab('verification')}>
+                  Верификация
                 </TabButton>
                 <TabButton active={tab === 'offers'} onClick={() => setTab('offers')}>
                   Предложения
@@ -107,6 +119,7 @@ export default function App() {
           {!checking && !me ? <LoginPage onLoggedIn={() => void load()} /> : null}
           {!checking && me && tab === 'catalog' ? <CatalogPage /> : null}
           {!checking && me && tab === 'subscription' ? <SubscriptionPage /> : null}
+          {!checking && me && tab === 'verification' ? <VerificationPage /> : null}
           {!checking && me && tab === 'offers' ? <OffersPage /> : null}
         </Container>
       </main>

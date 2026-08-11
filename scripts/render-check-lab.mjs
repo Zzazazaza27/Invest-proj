@@ -217,6 +217,51 @@ check(
   (await page.getByText('Паспорта ещё нет').count()) > 0,
 );
 
+// ------------------------------------------------------ материалы и роадмап
+console.warn('\n[3b] Материалы и путь по сезону');
+
+check(
+  'путь по сезону показан с текущим этапом',
+  (await page.getByText('Путь по сезону').count()) > 0 &&
+    (await page.getByText('сейчас').count()) > 0,
+);
+
+check(
+  'история подач объяснена словами при отсутствии версий',
+  (await page.getByText('Заявка ещё не подавалась').count()) > 0,
+);
+
+check(
+  'пустые материалы объяснены, а не показаны пустым местом',
+  (await page.getByText('Материалов пока нет').count()) > 0,
+);
+
+// Ссылка на продукт добавляется через сервер; проверяется появление в списке,
+// а не факт нажатия кнопки: нажатие без результата ничего не доказывает.
+const productUrl = `https://example.com/product-${Date.now() % 100000}`;
+await page.getByLabel('Ссылка на продукт').fill(productUrl);
+await page.getByRole('button', { name: 'Добавить ссылку' }).click();
+await page.waitForTimeout(2500);
+check(
+  'добавленная ссылка появилась в списке материалов',
+  (await page.getByText(productUrl).count()) > 0,
+  productUrl,
+);
+
+// Отказ сервера тоже обязан быть виден: внутренний адрес запрещён (SSRF).
+await page.getByLabel('Ссылка на продукт').fill('https://127.0.0.1/internal');
+await page.getByRole('button', { name: 'Добавить ссылку' }).click();
+await page.waitForTimeout(2000);
+// Именно последнее сообщение: выше на странице уже есть отказ публикации, и
+// `first()` прочитал бы его — проверка зеленела бы, ничего не проверяя.
+const linkNotice = await page.locator('[role="alert"], [role="status"]').last().innerText();
+check(
+  'внутренний адрес отклонён с объяснением',
+  linkNotice.trim().length > 5 &&
+    (await page.getByText('https://127.0.0.1/internal').count()) === 0,
+  linkNotice.slice(0, 70),
+);
+
 // -------------------------------------------------------------- доступность
 console.warn('\n[4] Доступность и раскладка');
 check('ровно один h1', (await page.locator('h1').count()) === 1);
@@ -231,10 +276,15 @@ const overflow = await page.evaluate(
 );
 check('горизонтальной прокрутки нет на 390px', overflow <= 1, `переполнение: ${overflow}px`);
 
+// Отказы, вызванные ПРЕДНАМЕРЕННО (публикация без подписки, внутренний адрес),
+// печатаются браузером как ошибки загрузки ресурса. Это ожидаемое поведение
+// сервера, а не дефект страницы, поэтому такие строки исключаются явно —
+// а не гейт целиком.
+const unexpectedErrors = consoleErrors.filter((text) => !/status of (400|403|422)/.test(text));
 check(
-  'ошибок в консоли нет',
-  consoleErrors.length === 0,
-  consoleErrors.slice(0, 2).join(' | ') || 'нет',
+  'непредвиденных ошибок в консоли нет',
+  unexpectedErrors.length === 0,
+  unexpectedErrors.slice(0, 2).join(' | ') || 'нет',
 );
 
 // ------------------------------------------------------------ выход и сессия

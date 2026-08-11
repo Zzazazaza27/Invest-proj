@@ -123,7 +123,16 @@ await page.waitForSelector('text=Тарифы', { timeout: 15_000 });
 check('вход выполнен, кабинет открыт', true);
 
 console.warn('\n[2] Разделы кабинета');
-for (const label of ['Тарифы', 'Подписки', 'Комплаенс', 'Сезон', 'Функции платформы', 'Доступ']) {
+for (const label of [
+  'Тарифы',
+  'Подписки',
+  'Комплаенс',
+  'Сезон',
+  'Воронка сезона',
+  'Уведомления',
+  'Функции платформы',
+  'Доступ',
+]) {
   check(
     `раздел «${label}» присутствует`,
     (await page.getByText(label, { exact: true }).count()) > 0,
@@ -171,7 +180,49 @@ const [journal] = await sql(
 );
 check('выдача попала в журнал', journal.n === 1, `записей: ${journal.n}`);
 
+console.warn('\n[3b] Воронка сезона и тексты уведомлений');
+await page.getByRole('link', { name: 'Воронка сезона', exact: true }).click();
+await page.getByRole('heading', { name: 'Воронка сезона' }).waitFor({ timeout: 15_000 });
+await page.waitForTimeout(1500);
+const funnelText = await page.locator('main').innerText();
+check(
+  'экран воронки открылся',
+  funnelText.includes('Воронка сезона'),
+  funnelText.replace(/\s+/g, ' ').slice(0, 110),
+);
+check(
+  'состояние воронки объяснено словами: либо этапы, либо отсутствие сезона',
+  funnelText.includes('Буткемп') || funnelText.includes('Активного сезона нет'),
+);
+
+// Ссылка в боковом меню, а не любой текст «Уведомления» на странице: клик по
+// произвольному совпадению никуда не ведёт, а проверка потом читает прежний
+// экран и краснеет по своей же вине.
+await page.getByRole('link', { name: 'Уведомления', exact: true }).click();
+await page.getByRole('heading', { name: 'Тексты уведомлений' }).waitFor({ timeout: 15_000 });
+// Ждём КОНЦА загрузки, а не появления заголовка: заголовок отрисован сразу, и
+// проверка списка на этом месте измеряла бы скорость машины.
+await page
+  .locator('table')
+  .first()
+  .waitFor({ timeout: 15_000 })
+  .catch(() => undefined);
+const templatesText = await page.locator('main').innerText();
+check(
+  'список шаблонов загружен, а не пуст молча',
+  templatesText.includes('season.stage.advanced') || templatesText.includes('Шаблонов нет'),
+  templatesText.replace(/\s+/g, ' ').slice(0, 110),
+);
+check(
+  'запрет персональных данных объявлен на экране',
+  templatesText.includes('Имена, телефоны и реквизиты запрещены'),
+);
+
 console.warn('\n[4] Клиенты Integration API');
+// Раздел живёт на экране «Доступ». Проверка после перехода на другой экран
+// искала бы его не там, где он есть, и краснела бы по своей же вине.
+await page.getByText('Доступ', { exact: true }).click();
+await page.waitForSelector('#role-user', { timeout: 15_000 });
 check('раздел клиентов отрисован', (await page.getByText('Клиенты Integration API').count()) === 1);
 
 console.warn('\n[5] Доступность и раскладка');

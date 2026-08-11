@@ -1,0 +1,309 @@
+import { useCallback, useEffect, useState } from 'react';
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Field,
+  Input,
+  LoadingState,
+  Stack,
+} from '@unicorn/ui';
+import type { ProjectMaterial, ProjectVersion } from '@unicorn/contracts';
+import { ApiError, api } from '../api';
+
+const TYPE_TITLES: Record<string, string> = {
+  deck: 'презентация',
+  video: 'видео',
+  doc: 'документ',
+  product_link: 'ссылка на продукт',
+};
+
+/**
+ * Материалы проекта и ссылка на продукт.
+ *
+ * Файл сюда НЕ проходит: сервер выдаёт подписанную форму загрузки, и файл идёт
+ * в хранилище напрямую. Поэтому здесь два разных действия с разной механикой —
+ * добавить ссылку (обычный запрос) и получить билет на загрузку (после чего
+ * форма отправляется в хранилище браузером).
+ */
+export function MaterialsCard({ projectId }: { projectId: string }) {
+  const [state, setState] = useState<
+    | { status: 'loading' }
+    | { status: 'ready'; items: ProjectMaterial[] }
+    | { status: 'error'; message: string }
+  >({ status: 'loading' });
+  const [url, setUrl] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+
+  const load = useCallback(async () => {
+    setState({ status: 'loading' });
+    try {
+      setState({ status: 'ready', items: await api.projects.materials(projectId) });
+    } catch (error) {
+      setState({
+        status: 'error',
+        message:
+          error instanceof ApiError
+            ? (error.problem?.detail ?? error.message)
+            : 'Сервис недоступен',
+      });
+    }
+  }, [projectId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const addLink = useCallback(async () => {
+    setBusy(true);
+    setNotice(null);
+    try {
+      // Адрес не проверяется здесь на «внутренний»: этот запрет — правило
+      // сервера (SSRF), и дублировать его в браузере значило бы завести второе
+      // место, где он может разойтись с настоящим.
+      await api.projects.addProductLink(projectId, { projectId, url });
+      setUrl('');
+      setNotice({ tone: 'ok', text: 'Ссылка добавлена' });
+      await load();
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        text:
+          error instanceof ApiError
+            ? (error.problem?.detail ?? error.message)
+            : 'Сервис недоступен',
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, [projectId, url, load]);
+
+  /**
+   * Загрузка файла: сервер выдаёт подписанную форму, браузер отправляет файл
+   * прямо в хранилище. Условия подписи (ключ, тип, размер) проверяет само
+   * хранилище — заявленный размер здесь ничего не «разрешает».
+   */
+  const upload = useCallback(async () => {
+    if (!file) return;
+    setBusy(true);
+    setNotice(null);
+    try {
+      const ticket = await api.projects.requestUpload(projectId, {
+        projectId,
+        type: 'deck',
+        fileName: file.name,
+        contentType: file.type as 'application/pdf',
+        sizeBytes: file.size,
+      });
+      const form = new FormData();
+      for (const [key, value] of Object.entries(ticket.formFields)) form.append(key, value);
+      form.append('file', file);
+      const response = await fetch(ticket.uploadUrl, { method: 'POST', body: form });
+      if (!response.ok) throw new Error(`хранилище ответило ${response.status}`);
+      setFile(null);
+      setNotice({ tone: 'ok', text: 'Файл загружен' });
+      await load();
+    } catch (error) {
+      setNotice({
+        tone: 'error',
+        text:
+          error instanceof ApiError
+            ? (error.problem?.detail ?? error.message)
+            : error instanceof Error
+              ? error.message
+              : 'Загрузка не удалась',
+      });
+    } finally {
+      setBusy(false);
+    }
+  }, [file, projectId, load]);
+
+  return (
+    <Card>
+      <Stack>
+        <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Материалы</h2>
+
+        {state.status === 'loading' ? <LoadingState label="Загружаем материалы" /> : null}
+        {state.status === 'error' ? (
+          <ErrorState description={state.message} onRetry={() => void load()} />
+        ) : null}
+        {state.status === 'ready' && state.items.length === 0 ? (
+          <EmptyState
+            title="Материалов пока нет"
+            description="Добавьте презентацию и ссылку на работающий продукт — по ним работают эксперты."
+          />
+        ) : null}
+        {state.status === 'ready' && state.items.length > 0 ? (
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              display: 'grid',
+              gap: 'var(--u-space-2)',
+            }}
+          >
+            {state.items.map((material) => (
+              <li
+                key={material.id}
+                style={{ display: 'flex', gap: 'var(--u-space-3)', alignItems: 'center' }}
+              >
+                <Badge>{TYPE_TITLES[material.type] ?? material.type}</Badge>
+                <span style={{ flex: 1, wordBreak: 'break-all' }}>
+                  {material.url ?? `версия ${material.version}`}
+                </span>
+                <Badge tone={material.parseStatus === 'failed' ? 'warning' : 'neutral'}>
+                  {material.parseStatus}
+                </Badge>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {notice ? (
+          <div
+            role={notice.tone === 'error' ? 'alert' : 'status'}
+            style={{
+              padding: 'var(--u-space-3) var(--u-space-4)',
+              borderRadius: 'var(--u-radius-md)',
+              background:
+                notice.tone === 'error' ? 'var(--u-danger-subtle)' : 'var(--u-success-subtle)',
+              color: notice.tone === 'error' ? 'var(--u-danger)' : 'var(--u-success)',
+            }}
+          >
+            {notice.text}
+          </div>
+        ) : null}
+
+        <Field label="Ссылка на продукт" htmlFor="product-link" hint="Только https-адрес">
+          <Input
+            id="product-link"
+            type="url"
+            value={url}
+            placeholder="https://example.com"
+            onChange={(event) => setUrl(event.target.value)}
+          />
+        </Field>
+        <Button onClick={() => void addLink()} loading={busy} disabled={url.trim().length === 0}>
+          Добавить ссылку
+        </Button>
+
+        <Field
+          label="Презентация"
+          htmlFor="deck-file"
+          hint="PDF или PPTX, до 500 МБ. Файл уходит в хранилище напрямую, минуя API."
+        >
+          <input
+            id="deck-file"
+            type="file"
+            accept="application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+          />
+        </Field>
+        <Button variant="secondary" onClick={() => void upload()} loading={busy} disabled={!file}>
+          Загрузить презентацию
+        </Button>
+      </Stack>
+    </Card>
+  );
+}
+
+const STAGE_TITLES: { status: string; title: string }[] = [
+  { status: 'draft', title: 'Черновик' },
+  { status: 'submitted', title: 'Заявка подана' },
+  { status: 'ai_review', title: 'AI-оценка' },
+  { status: 'expert_review', title: 'Экспертиза' },
+  { status: 'bootcamp', title: 'Буткемп' },
+  { status: 'finalist', title: 'Финал' },
+  { status: 'graduated', title: 'Выпуск' },
+];
+
+/**
+ * Роадмап проекта: путь по воронке сезона и история поданных версий.
+ *
+ * Порядок этапов здесь — отображение той же машины переходов, что действует на
+ * сервере. Он показывает, где проект находится, но НЕ обещает, что следующий
+ * этап наступит: решение принимает организатор.
+ */
+export function RoadmapCard({ projectId, status }: { projectId: string; status: string }) {
+  const [versions, setVersions] = useState<ProjectVersion[] | 'loading' | 'error'>('loading');
+
+  useEffect(() => {
+    let cancelled = false;
+    api.projects
+      .versions(projectId)
+      .then((value) => {
+        if (!cancelled) setVersions(value);
+      })
+      .catch(() => {
+        if (!cancelled) setVersions('error');
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  const currentIndex = STAGE_TITLES.findIndex((stage) => stage.status === status);
+  const rejected = status === 'rejected' || status === 'archived';
+
+  return (
+    <Card>
+      <Stack>
+        <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Путь по сезону</h2>
+
+        {rejected ? (
+          <span style={{ color: 'var(--u-text-muted)' }}>
+            Проект вышел из воронки сезона (статус «{status}»). Заявку можно доработать и подать в
+            следующем сезоне.
+          </span>
+        ) : null}
+
+        <ol
+          style={{
+            listStyle: 'none',
+            margin: 0,
+            padding: 0,
+            display: 'grid',
+            gap: 'var(--u-space-2)',
+          }}
+        >
+          {STAGE_TITLES.map((stage, index) => {
+            const passed = currentIndex >= 0 && index < currentIndex;
+            const current = index === currentIndex;
+            return (
+              <li key={stage.status} style={{ display: 'flex', gap: 'var(--u-space-3)' }}>
+                <Badge tone={current ? 'accent' : passed ? 'success' : 'neutral'}>
+                  {current ? 'сейчас' : passed ? 'пройден' : 'впереди'}
+                </Badge>
+                <span style={{ fontWeight: current ? 600 : 400 }}>{stage.title}</span>
+              </li>
+            );
+          })}
+        </ol>
+
+        <h3 style={{ margin: 0, fontSize: 'var(--u-text-md)' }}>История подач</h3>
+        {versions === 'loading' ? <LoadingState label="Загружаем историю" /> : null}
+        {versions === 'error' ? <ErrorState description="История подач недоступна" /> : null}
+        {Array.isArray(versions) && versions.length === 0 ? (
+          <span style={{ color: 'var(--u-text-muted)' }}>
+            Заявка ещё не подавалась. Подача создаёт неизменяемый снимок — именно он идёт на
+            экспертизу.
+          </span>
+        ) : null}
+        {Array.isArray(versions) && versions.length > 0 ? (
+          <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
+            {versions.map((version) => (
+              <li key={version.id}>
+                версия {version.versionNo} — {new Date(version.submittedAt).toLocaleString('ru-RU')}
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </Stack>
+    </Card>
+  );
+}

@@ -10,7 +10,12 @@ import {
   LoadingState,
   Stack,
 } from '@unicorn/ui';
-import { RUBRIC_KEYS, type ExpertAssignment } from '@unicorn/contracts';
+import {
+  RUBRIC_KEYS,
+  type ExpertAssignment,
+  type ProjectMaterial,
+  type ProjectVersion,
+} from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 
 /**
@@ -31,6 +36,8 @@ export function AssignmentsPage() {
   const [busy, setBusy] = useState<string | null>(null);
   const [reviewFor, setReviewFor] = useState<ExpertAssignment | null>(null);
   const [conflictFor, setConflictFor] = useState<ExpertAssignment | null>(null);
+  /** Проект, чьи материалы раскрыты. Раскрыт максимум один — иначе список нечитаем. */
+  const [materialsFor, setMaterialsFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -169,7 +176,24 @@ export function AssignmentsPage() {
                   <Button variant="ghost" onClick={() => setConflictFor(assignment)}>
                     Заявить конфликт интересов
                   </Button>
+
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      setMaterialsFor((current) =>
+                        current === assignment.projectId ? null : assignment.projectId,
+                      )
+                    }
+                  >
+                    {materialsFor === assignment.projectId
+                      ? 'Скрыть материалы'
+                      : 'Материалы проекта'}
+                  </Button>
                 </div>
+
+                {materialsFor === assignment.projectId ? (
+                  <MaterialsPanel projectId={assignment.projectId} />
+                ) : null}
 
                 {reviewFor?.id === assignment.id ? (
                   <ReviewForm
@@ -420,3 +444,83 @@ const SELECT_STYLE: React.CSSProperties = {
   fontFamily: 'inherit',
   width: '100%',
 };
+
+/**
+ * Материалы и версии проекта, доступные рецензенту.
+ *
+ * Доступ определяется НЕ этой панелью, а сервером: политика открывает материалы
+ * по факту назначения (M025). Поэтому пустой список здесь — законный ответ
+ * «материалов нет», а не «доступ закрыт»: отказ пришёл бы ошибкой.
+ */
+function MaterialsPanel({ projectId }: { projectId: string }) {
+  const [state, setState] = useState<
+    | { status: 'loading' }
+    | { status: 'ready'; materials: ProjectMaterial[]; versions: ProjectVersion[] }
+    | { status: 'error'; message: string }
+  >({ status: 'loading' });
+
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([api.projects.materials(projectId), api.projects.versions(projectId)])
+      .then(([materials, versions]) => {
+        if (!cancelled) setState({ status: 'ready', materials, versions });
+      })
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        setState({
+          status: 'error',
+          message:
+            error instanceof ApiError
+              ? (error.problem?.detail ?? error.message)
+              : 'Материалы недоступны',
+        });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId]);
+
+  if (state.status === 'loading') return <LoadingState label="Загружаем материалы" />;
+  if (state.status === 'error') return <ErrorState description={state.message} />;
+
+  return (
+    <Stack gap="var(--u-space-3)">
+      <strong>Материалы</strong>
+      {state.materials.length === 0 ? (
+        <span style={{ color: 'var(--u-text-muted)' }}>
+          Основатель не приложил материалов. Рецензия пишется по тексту заявки.
+        </span>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
+          {state.materials.map((material) => (
+            <li key={material.id} style={{ wordBreak: 'break-all' }}>
+              <Badge>{material.type}</Badge>{' '}
+              {material.url ? (
+                // Внешняя ссылка открывается без передачи адреса этой страницы:
+                // куда именно ходит рецензент — не дело чужого сайта.
+                <a href={material.url} target="_blank" rel="noreferrer noopener">
+                  {material.url}
+                </a>
+              ) : (
+                `файл, версия ${material.version}`
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <strong>Поданные версии</strong>
+      {state.versions.length === 0 ? (
+        <span style={{ color: 'var(--u-text-muted)' }}>Версий заявки нет.</span>
+      ) : (
+        <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
+          {state.versions.map((version) => (
+            <li key={version.id}>
+              версия {version.versionNo} — {new Date(version.submittedAt).toLocaleString('ru-RU')}
+            </li>
+          ))}
+        </ul>
+      )}
+    </Stack>
+  );
+}

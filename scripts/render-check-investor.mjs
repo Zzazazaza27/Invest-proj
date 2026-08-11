@@ -166,6 +166,32 @@ check(
   !offersText.includes('Открытых предложений нет'),
 );
 
+console.warn('\n[4b] Верификация');
+await page.getByRole('button', { name: 'Верификация' }).click();
+await page.waitForTimeout(1500);
+const verificationText = await page.locator('main').innerText();
+check(
+  'экран верификации открылся и объясняет назначение',
+  verificationText.includes('Верификация') && verificationText.includes('Открыть проверку'),
+  verificationText.replace(/\s+/g, ' ').slice(0, 110),
+);
+check('отсутствие проверок объяснено словами', verificationText.includes('Проверок ещё не было'));
+check(
+  'ограничение второго фактора названо прямо, а не скрыто',
+  verificationText.includes('step_up_required'),
+);
+
+// Проверка открывается настоящим запросом: нажатая кнопка без результата
+// ничего не доказывает.
+await page.getByRole('button', { name: 'Открыть проверку' }).click();
+await page.waitForTimeout(2500);
+const afterStart = await page.locator('main').innerText();
+check(
+  'открытая проверка появилась в списке со статусом',
+  afterStart.includes('Личность') && !afterStart.includes('Проверок ещё не было'),
+  afterStart.replace(/\s+/g, ' ').slice(0, 110),
+);
+
 console.warn('\n[5] Доступность и раскладка');
 check('ровно один h1', (await page.locator('h1').count()) === 1);
 check(

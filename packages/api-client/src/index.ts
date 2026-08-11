@@ -1,6 +1,7 @@
 import {
   AnalysisRunSchema,
   AuthSessionSchema,
+  BusinessEntitySchema,
   CommissionAccrualSchema,
   CurrentUserSchema,
   ExpertAssignmentSchema,
@@ -9,6 +10,7 @@ import {
   InvestmentOfferSchema,
   InvestmentPassportSchema,
   InvoiceSchema,
+  KycVerificationSchema,
   NotificationPreferenceSchema,
   NotificationSchema,
   PaymentSchema,
@@ -48,6 +50,7 @@ import {
   type RequestUpload,
   type SeasonFunnelConfig,
   type SignAgreementRequest,
+  type StartKycRequest,
   type SubmitReviewRequest,
   type UpdateProjectRequest,
 } from '@unicorn/contracts';
@@ -177,11 +180,42 @@ export class UnicornApi {
 
   // ------------------------------------------------------------------- KYC
   readonly kyc = {
-    start: (body: unknown) =>
-      this.http.request({ method: 'POST', path: '/kyc/verifications', body }),
-    status: () => this.http.request({ path: '/kyc/verifications' }),
+    /**
+     * Начать проверку. Схема ответа объявлена: без неё метод возвращал `unknown`,
+     * и расхождение с сервером обнаруживалось бы уже в интерфейсе.
+     */
+    start: (body: StartKycRequest) =>
+      this.http.request({
+        method: 'POST',
+        path: '/kyc/verifications',
+        body,
+        schema: KycVerificationSchema,
+      }),
+
+    /** Свои проверки. Сервер отдаёт конверт `{ items }`. */
+    status: () =>
+      this.http
+        .request({
+          path: '/kyc/verifications',
+          schema: z.object({ items: z.array(KycVerificationSchema) }),
+        })
+        .then((response) => response.items),
+
     createEntity: (body: CreateEntityRequest) =>
-      this.http.request({ method: 'POST', path: '/kyc/entities', body }),
+      this.http.request({
+        method: 'POST',
+        path: '/kyc/entities',
+        body,
+        schema: BusinessEntitySchema,
+      }),
+
+    entities: () =>
+      this.http
+        .request({
+          path: '/kyc/entities',
+          schema: z.object({ items: z.array(BusinessEntitySchema) }),
+        })
+        .then((response) => response.items),
   };
 
   // -------------------------------------------------------------- проекты

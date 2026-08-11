@@ -3,6 +3,7 @@ import { Badge, Button, Card, ErrorState, LoadingState, Stack } from '@unicorn/u
 import type { InvestmentPassport, ProjectFull, ReadinessEntry } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
+import { MaterialsCard, RoadmapCard } from './MaterialsCard';
 
 /**
  * Карточка проекта: состояние, действия и результат анализа.
@@ -173,6 +174,8 @@ export function ProjectPage({ projectId, onBack }: { projectId: string; onBack: 
         </Stack>
       </Card>
 
+      <RoadmapCard projectId={project.id} status={project.status} />
+      <MaterialsCard projectId={project.id} />
       <PassportCard projectId={project.id} />
       <ReadinessCard projectId={project.id} />
     </Stack>

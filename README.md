@@ -128,14 +128,14 @@ npm run build -w apps/web-public && npm run preview -w apps/web-public   # ви�
 node scripts/render-check-web-public.mjs     # витрина в реальном браузере: 13 проверок
 
 npm run build -w apps/lab && npm run preview -w apps/lab                 # кабинет основателя на 5175
-node scripts/render-check-lab.mjs            # кабинет основателя в браузере: 15 проверок
+node scripts/render-check-lab.mjs            # кабинет основателя в браузере: 20 проверок
 
 npm run build -w apps/investor && npm run preview -w apps/investor        # кабинет инвестора на 5176
-node scripts/render-check-investor.mjs       # кабинет инвестора в браузере: 13 проверок
+node scripts/render-check-investor.mjs       # кабинет инвестора в браузере: 17 проверок
 
 npm run build -w apps/expert && npm run preview -w apps/expert            # кабинет эксперта на 5177
-node scripts/render-check-expert.mjs         # кабинет эксперта в браузере: 16 проверок
-node scripts/render-check-admin.mjs          # админский кабинет в браузере: 17 проверок
+node scripts/render-check-expert.mjs         # кабинет эксперта в браузере: 18 проверок
+node scripts/render-check-admin.mjs          # админский кабинет в браузере: 23 проверки
 
 node scripts/nats-init-stream.mjs            # стрим событий LAUNCH (операционная задача)
 node scripts/e2e-full-cycle.mjs              # сквозной сценарий через все роли: 32 проверки
