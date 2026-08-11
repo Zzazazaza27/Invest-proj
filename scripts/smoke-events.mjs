@@ -158,14 +158,52 @@ const nats = await connect({
 const js = nats.jetstream();
 const jsm = await nats.jetstreamManager();
 
-// Стрим создаётся прогоном: ядро только публикует, управление стримами —
-// операционная задача, а не право приложения.
+// Прогон работает ПОВЕРХ рабочего стрима, а не создаёт свой.
+//
+// Раньше он поднимал собственный SMOKE<suffix> и публиковал в него — и был
+// зелёным при том, что рабочего стрима платформы не существовало вовсе
+// (см. находку Ф11). Прогон, создающий инфраструктуру для себя, проверяет свою
+// настройку, а не систему. Стрим создаётся отдельной командой
+// `node scripts/nats-init-stream.mjs`, как и в бою.
+const STREAM = process.env.NATS_STREAM ?? 'LAUNCH';
 const subject = `lab.smoke.${suffix}`;
+
+/**
+ * Уборка за прогоном.
+ *
+ * Стрим прогона удаляется ВСЕГДА, а не только при удачном завершении: брошенный
+ * `SMOKE*` перекрывает subject `lab.>` и не даёт создать рабочий стрим
+ * платформы. Именно это и случилось после падения прогона в Ф9b — обнаружилось
+ * лишь в сквозном сценарии Ф11, когда 189 событий осели в outbox с ошибкой 503.
+ */
+async function cleanup() {
+  try {
+    const manager = await nats.jetstreamManager();
+    // Удаляется ТОЛЬКО свой потребитель. Рабочий стрим прогону не принадлежит,
+    // и трогать его он не имеет права: в нём история событий платформы.
+    await manager.consumers.delete(STREAM, `reader${suffix}`);
+  } catch {
+    // Потребителя нет — убирать нечего.
+  }
+}
+process.on('exit', () => {
+  // Синхронный обработчик не дождётся сети; настоящая уборка — в блоках ниже.
+});
+process.on('uncaughtException', async (error) => {
+  console.error('прогон упал:', error.message);
+  await cleanup();
+  await nats.drain().catch(() => undefined);
+  process.exit(1);
+});
 try {
-  await jsm.streams.add({ name: `SMOKE${suffix}`, subjects: [subject] });
-  check('стрим для прогона создан', true);
+  const info = await jsm.streams.info(STREAM);
+  check('рабочий стрим существует', true, `${STREAM}: ${info.config.subjects.join(', ')}`);
 } catch (error) {
-  check('стрим для прогона создан', false, error.message);
+  check(
+    'рабочий стрим существует',
+    false,
+    `${error.message} — выполните: node scripts/nats-init-stream.mjs`,
+  );
 }
 
 // Событие кладём прямо в outbox: доменный путь до него уже проверен другими
@@ -186,17 +224,20 @@ const eventId = (
   // Pull-подписка: она не требует deliver_subject и точнее отражает то, как
   // события будет забирать реальный потребитель (Capital), — по запросу, а не
   // потоком в открытое соединение.
-  const consumer = await jsm.consumers.add(`SMOKE${suffix}`, {
+  const consumer = await jsm.consumers.add(STREAM, {
     durable_name: `reader${suffix}`,
     ack_policy: 'explicit',
     deliver_policy: 'all',
+    // Фильтр по subject прогона: рабочий стрим содержит и чужие события, а
+    // проверять надо ровно своё.
+    filter_subject: subject,
   });
   check('потребитель создан', Boolean(consumer.name));
 
   const received = [];
   const deadline = Date.now() + 20_000;
   while (received.length === 0 && Date.now() < deadline) {
-    const messages = await js.fetch(`SMOKE${suffix}`, `reader${suffix}`, {
+    const messages = await js.fetch(STREAM, `reader${suffix}`, {
       batch: 5,
       expires: 2000,
     });
@@ -234,11 +275,13 @@ const eventId = (
     [eventId],
   );
   await new Promise((r) => setTimeout(r, 2500));
-  const info = await jsm.streams.info(`SMOKE${suffix}`);
+  // Считаем сообщения РОВНО своего subject: рабочий стрим содержит и чужие
+  // события, и общий счётчик стрима здесь ничего не сказал бы.
+  const consumerInfo = await jsm.consumers.info(STREAM, `reader${suffix}`);
   check(
     'повторных публикаций нет',
-    info.state.messages === 1,
-    `сообщений в стриме: ${info.state.messages}, помечено: ${before[0].n}`,
+    consumerInfo.num_pending === 0,
+    `не прочитано новых: ${consumerInfo.num_pending}, помечено опубликованным: ${before[0].n}`,
   );
 }
 
@@ -457,7 +500,7 @@ console.warn('\n[4] Форма подписи доставки');
   check('строка подписки сохранена для аудита', row.status === 'disabled', row.status);
 }
 
-await jsm.streams.delete(`SMOKE${suffix}`).catch(() => undefined);
+await cleanup();
 await nats.drain();
 
 console.warn(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===\n`);

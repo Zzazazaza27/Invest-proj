@@ -14,6 +14,7 @@ import {
   PricingSchema,
   ProjectFullSchema,
   ProjectSummarySchema,
+  ProjectVersionSchema,
   ProjectTeaserSchema,
   RatingEntrySchema,
   ReadinessEntrySchema,
@@ -204,7 +205,9 @@ export class UnicornApi {
       this.http.request({
         method: 'POST',
         path: `/projects/${id}/submit`,
-        schema: z.object({ version: z.number().int().positive() }).loose(),
+        // Возвращается сам снимок версии, а не `{ version }`: поле называется
+        // versionNo, и придуманная форма ответа падала бы на разборе.
+        schema: ProjectVersionSchema,
         idempotencyKey: uuidv7(),
       }),
 
