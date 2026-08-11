@@ -492,7 +492,14 @@ export class ProjectsService {
           actorRole: 'founder',
           aggregateType: 'project',
           aggregateId: projectId,
-          aggregateVersion: 1,
+          // Листинг публикуется и снимается многократно: постоянная «1» на
+          // второй публикации конфликтовала бы с первой (CODE-06).
+          aggregateVersion: await this.audit.nextAggregateVersion(
+            tx,
+            'project',
+            projectId,
+            'lab.listing.published',
+          ),
           payload: {
             projectId,
             investmentAsk: project.investment_ask,
@@ -528,7 +535,12 @@ export class ProjectsService {
         actorRole: 'founder',
         aggregateType: 'project',
         aggregateId: projectId,
-        aggregateVersion: 2,
+        aggregateVersion: await this.audit.nextAggregateVersion(
+          tx,
+          'project',
+          projectId,
+          'lab.listing.unpublished',
+        ),
         payload: { projectId },
         traceId: ctx.traceId,
       });

@@ -113,6 +113,9 @@ run('права на SECURITY DEFINER', 'node', ['scripts/check-definer-privileg
 // Зонд исчерпывает окно лимита намеренно — следующий прогон идёт после паузы.
 pause(62, 'лимит класса auth перед зондом');
 run('обход лимита подделкой cookie', 'node', ['scripts/probe-rate-limit.mjs']);
+run('DNS rebinding в доставке вебхуков', 'node', ['scripts/probe-dns-rebinding.mjs']);
+run('аренда очереди и повтор рассылки', 'node', ['scripts/probe-outbox-lease.mjs']);
+run('версии событий агрегата', 'node', ['scripts/probe-event-versions.mjs']);
 
 console.warn('\n--- Живые прогоны контуров ---');
 const LIVE = [

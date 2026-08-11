@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { uuidv7 } from '@unicorn/contracts';
 import type { Tx } from '../db/unit-of-work';
+import { errors } from '../common/errors';
 
 /**
  * Журнал событий и transactional outbox.
@@ -62,24 +63,78 @@ export class AuditRepository {
     },
   ): Promise<string> {
     const id = uuidv7();
-    await tx.query(
+    const payload = JSON.stringify(input.payload);
+    const { rows } = await tx.query<{ id: string }>(
       `INSERT INTO audit.outbox_events
          (id, aggregate_type, aggregate_id, event_type, payload_jsonb, nats_subject,
           aggregate_version, message_key)
        VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)
-       ON CONFLICT (aggregate_type, aggregate_id, aggregate_version, event_type) DO NOTHING`,
+       ON CONFLICT (aggregate_type, aggregate_id, aggregate_version, event_type) DO NOTHING
+       RETURNING id`,
       [
         id,
         input.aggregateType,
         input.aggregateId,
         input.eventType,
-        JSON.stringify(input.payload),
+        payload,
         input.natsSubject ?? input.eventType,
         input.aggregateVersion,
         input.messageKey ?? input.aggregateId,
       ],
     );
-    return id;
+    if (rows[0]) return rows[0].id;
+
+    // Вставки не было. Прежний код всё равно возвращал НОВЫЙ id — вызывающий
+    // считал событие поставленным, а его не существовало. Молчаливая потеря
+    // события в системе, где событие и есть доказательство действия,
+    // недопустима, поэтому конфликт разбирается по существу.
+    const { rows: existing } = await tx.query<{ id: string; payload_jsonb: unknown }>(
+      `SELECT id, payload_jsonb FROM audit.outbox_events
+        WHERE aggregate_type = $1 AND aggregate_id = $2
+          AND aggregate_version = $3 AND event_type = $4`,
+      [input.aggregateType, input.aggregateId, input.aggregateVersion, input.eventType],
+    );
+    const previous = existing[0];
+    if (previous && JSON.stringify(previous.payload_jsonb) === payload) {
+      // Тот же факт с тем же содержимым — законный повтор (повторная доставка
+      // запроса, идемпотентность). Возвращается СУЩЕСТВУЮЩАЯ запись.
+      return previous.id;
+    }
+    // Разное содержимое при одной версии агрегата — ошибка нумерации версий, а
+    // не идемпотентность: одно из двух событий было бы потеряно.
+    throw errors.conflict('Конфликт версии события агрегата', {
+      aggregateType: input.aggregateType,
+      aggregateId: input.aggregateId,
+      aggregateVersion: input.aggregateVersion,
+      eventType: input.eventType,
+    });
+  }
+
+  /**
+   * Следующий номер версии агрегата для события данного типа.
+   *
+   * Фиксированные номера (всегда 1, всегда 2) выглядят безобидно ровно до
+   * второго вызова: повторная ротация секрета или повторная публикация листинга
+   * дают ту же пару (агрегат, версия), и событие конфликтует само с собой.
+   * Advisory-лок на агрегат сериализует одновременные вычисления — без него два
+   * параллельных действия получают один номер.
+   */
+  async nextAggregateVersion(
+    tx: Tx,
+    aggregateType: string,
+    aggregateId: string,
+    eventType: string,
+  ): Promise<number> {
+    await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+      `outbox-version:${aggregateType}:${aggregateId}`,
+    ]);
+    const { rows } = await tx.query<{ next: string }>(
+      `SELECT coalesce(max(aggregate_version), 0) + 1 AS next
+         FROM audit.outbox_events
+        WHERE aggregate_type = $1 AND aggregate_id = $2 AND event_type = $3`,
+      [aggregateType, aggregateId, eventType],
+    );
+    return Number(rows[0]!.next);
   }
 
   /** Записать факт и событие одним вызовом — самый частый случай. */

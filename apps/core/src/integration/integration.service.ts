@@ -130,7 +130,14 @@ export class IntegrationService {
         actorRole: 'admin',
         aggregateType: 'service_account',
         aggregateId: accountId,
-        aggregateVersion: 2,
+        // Ротация повторяется: фиксированная «2» на второй ротации давала бы
+        // конфликт версии и потерю события (CODE-06).
+        aggregateVersion: await this.audit.nextAggregateVersion(
+          tx,
+          'service_account',
+          accountId,
+          'integration.service_account.rotated',
+        ),
         payload: { clientId: account.client_id },
         traceId: ctx.traceId,
       });

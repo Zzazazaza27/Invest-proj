@@ -4,6 +4,7 @@ import { getEnv } from '../config/env';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type Tx } from '../db/unit-of-work';
 import { buildEnvelope, type OutboxRow } from './publisher.service';
+import { postPinned } from './pinned-fetch';
 import {
   assertPublicDestination,
   deliveryTimeoutMs,
@@ -109,15 +110,17 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
 
     try {
       // Резолв проверяется ПЕРЕД каждой доставкой: имя, безопасное при
-      // регистрации, могло начать указывать во внутреннюю сеть.
-      await assertPublicDestination(item.url);
+      // регистрации, могло начать указывать во внутреннюю сеть. Проверенные
+      // адреса используются дальше как есть — повторного разрешения имени
+      // не происходит (DNS rebinding, SEC-05).
+      const allowedAddresses = await assertPublicDestination(item.url);
 
       const secret = this.crypto
         .openDirect('webhook_secrets', item.secret_ciphertext, WEBHOOK_SECRET_AAD)
         .toString('utf8');
 
-      const response = await fetch(item.url, {
-        method: 'POST',
+      const response = await postPinned(item.url, {
+        allowedAddresses,
         headers: {
           'Content-Type': 'application/json',
           'Unicorn-Signature': signDelivery(secret, timestamp, body),
@@ -127,11 +130,12 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
         },
         body,
         // Внешний вызов без таймаута удерживает соединение бесконечно.
-        signal: AbortSignal.timeout(deliveryTimeoutMs()),
-        redirect: 'error',
+        timeoutMs: deliveryTimeoutMs(),
       });
 
-      if (response.ok) {
+      // Перенаправления не выполняются: 3xx считается неуспехом доставки, а не
+      // приглашением сходить по адресу из Location.
+      if (response.status >= 200 && response.status < 300) {
         await this.markDelivered(traceId, item.id, response.status);
         return true;
       }

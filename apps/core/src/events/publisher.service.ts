@@ -26,6 +26,11 @@ import { NatsClient } from './nats.client';
 @Injectable()
 export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(OutboxPublisherService.name);
+  /**
+   * Кто держит аренду. Записывается в строку: по нему видно, какой экземпляр
+   * завис, а не просто «строка кем-то занята».
+   */
+  private readonly instanceId = `${process.pid}-${randomUUID().slice(0, 8)}`;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -46,6 +51,9 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     }
     this.timer = setInterval(() => {
       void this.runOnce();
+      // Повторная постановка доставок идёт тем же тактом: событие, у которого
+      // рассылка не удалась, иначе никем не подхватывается (M033).
+      void this.runFanOutOnce();
     }, env.OUTBOX_POLL_INTERVAL_MS);
     this.timer.unref();
   }
@@ -83,7 +91,12 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
             messageKey: event.message_key,
           });
           await this.markPublished(traceId, event.id, seq);
-          await this.fanOutToWebhooks(traceId, event);
+          // Постановка доставок — отдельный факт с отдельной отметкой. Её
+          // неудача больше не теряет задачу: строка останется в очереди
+          // повторной рассылки (M033).
+          if (await this.fanOutToWebhooks(traceId, event)) {
+            await this.markFanOutDone(traceId, event.id);
+          }
           published += 1;
         } catch (error) {
           await this.markFailed(traceId, event, error);
@@ -104,27 +117,83 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  /** Забирает пачку и помечает её взятой в работу. */
+  /**
+   * Атомарный захват пачки в аренду.
+   *
+   * `FOR UPDATE SKIP LOCKED` держит строку только до конца транзакции, а
+   * транзакция закрывалась ДО публикации: второй экземпляр немедленно забирал
+   * те же события. Поэтому захват и отметка аренды выполняются ОДНИМ
+   * выражением, а условие выборки её учитывает — строка занята до `locked_until`.
+   *
+   * Просроченная аренда освобождается сама: экземпляр, упавший посреди прохода,
+   * не должен блокировать очередь навсегда.
+   */
   private async lockBatch(tx: Tx, size: number): Promise<OutboxRow[]> {
     const { rows } = await tx.query<OutboxRow>(
-      `SELECT id, aggregate_type, aggregate_id, aggregate_version, event_type,
-              payload_jsonb, nats_subject, schema_version, message_key, attempts, created_at
-         FROM audit.outbox_events
-        WHERE published_at IS NULL
-          AND next_attempt_at <= now()
-          AND attempts < $2
-        ORDER BY created_at
-        FOR UPDATE SKIP LOCKED
-        LIMIT $1`,
-      [size, MAX_ATTEMPTS],
+      `UPDATE audit.outbox_events o
+          SET locked_at = now(),
+              locked_until = now() + ($3 || ' seconds')::interval,
+              locked_by = $4
+        WHERE o.id IN (
+          SELECT id FROM audit.outbox_events
+           WHERE published_at IS NULL
+             AND next_attempt_at <= now()
+             AND attempts < $2
+             AND (locked_until IS NULL OR locked_until < now())
+           ORDER BY created_at
+           FOR UPDATE SKIP LOCKED
+           LIMIT $1)
+      RETURNING o.id, o.aggregate_type, o.aggregate_id, o.aggregate_version, o.event_type,
+                o.payload_jsonb, o.nats_subject, o.schema_version, o.message_key,
+                o.attempts, o.created_at`,
+      [size, MAX_ATTEMPTS, LEASE_SECONDS, this.instanceId],
     );
-    if (rows.length > 0) {
-      await tx.query(
-        `UPDATE audit.outbox_events SET locked_at = now() WHERE id = ANY($1::uuid[])`,
-        [rows.map((row) => row.id)],
-      );
-    }
     return rows;
+  }
+
+  /**
+   * Повторная постановка доставок для уже опубликованных событий.
+   *
+   * Очередь, которой раньше не существовало: событие, опубликованное в брокер,
+   * но не разосланное подписчикам, прежде не выбиралось ничем и терялось молча.
+   */
+  async runFanOutOnce(): Promise<number> {
+    if (!getEnv().DATABASE_URL_APP_INTEGRATION) return 0;
+    const traceId = `fanout-${randomUUID()}`;
+
+    const pending = await this.db.transaction(
+      { userId: null, roles: ['system'], traceId },
+      async (tx) => {
+        const { rows } = await tx.query<OutboxRow>(
+          `SELECT id, aggregate_type, aggregate_id, aggregate_version, event_type,
+                  payload_jsonb, nats_subject, schema_version, message_key, attempts, created_at
+             FROM audit.outbox_events
+            WHERE published_at IS NOT NULL AND fanout_completed_at IS NULL
+            ORDER BY published_at
+            LIMIT $1`,
+          [getEnv().OUTBOX_BATCH_SIZE],
+        );
+        return rows;
+      },
+    );
+
+    let done = 0;
+    for (const event of pending) {
+      if (await this.fanOutToWebhooks(traceId, event)) {
+        await this.markFanOutDone(traceId, event.id);
+        done += 1;
+      }
+    }
+    if (done > 0) this.logger.log({ msg: 'доставки поставлены повторно', count: done });
+    return done;
+  }
+
+  private async markFanOutDone(traceId: string, id: string): Promise<void> {
+    await this.db.transaction({ userId: null, roles: ['system'], traceId }, async (tx) => {
+      await tx.query(`UPDATE audit.outbox_events SET fanout_completed_at = now() WHERE id = $1`, [
+        id,
+      ]);
+    });
   }
 
   private async markPublished(traceId: string, id: string, seq: number): Promise<void> {
@@ -188,8 +257,10 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
    * означает согласия получать события регулируемого контура. Дубли исключены
    * ограничением (endpoint_id, event_id).
    */
-  private async fanOutToWebhooks(traceId: string, event: OutboxRow): Promise<void> {
-    if (!getEnv().DATABASE_URL_APP_INTEGRATION) return;
+  private async fanOutToWebhooks(traceId: string, event: OutboxRow): Promise<boolean> {
+    // Контур интеграции не настроен — рассылать некому, и это законченное
+    // состояние, а не отложенная работа.
+    if (!getEnv().DATABASE_URL_APP_INTEGRATION) return true;
     try {
       await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
         await tx.query(
@@ -201,21 +272,33 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
           [event.id, event.event_type],
         );
       });
+      return true;
     } catch (error) {
-      // Неудача постановки доставки не должна отменять уже состоявшуюся
-      // публикацию в брокер: событие опубликовано, а доставку подхватит
-      // следующий проход по неопубликованным.
+      // Неудача постановки не отменяет состоявшуюся публикацию в брокер, но и
+      // не теряется: `fanout_completed_at` остаётся пустым, и событие заберёт
+      // проход повторной рассылки. Прежний комментарий обещал подхват
+      // «следующим проходом по неопубликованным» — тот проход такие строки не
+      // видит вовсе, и доставки терялись безвозвратно (CODE-04).
       this.logger.error({
-        msg: 'постановка доставок вебхуков не выполнена',
+        msg: 'постановка доставок вебхуков не выполнена, событие в очереди повтора',
         id: event.id,
         error: error instanceof Error ? error.message : String(error),
       });
+      return false;
     }
   }
 }
 
 /** Предел попыток публикации. Дальше — DLQ и разбор человеком. */
 const MAX_ATTEMPTS = 10;
+
+/**
+ * Срок аренды строки. Больше самого долгого прохода публикации и меньше
+ * интервала, за который недоступность брокера становится заметной: слишком
+ * короткая аренда отдаст строку второму экземпляру во время работы первого,
+ * слишком длинная задержит повтор после падения.
+ */
+const LEASE_SECONDS = 60;
 const MAX_BACKOFF_SECONDS = 300;
 
 export interface OutboxRow {

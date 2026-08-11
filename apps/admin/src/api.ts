@@ -50,9 +50,23 @@ import { z } from 'zod';
  * сессионная cookie на такой запрос не отправляется. Внешне это выглядит как
  * «вход не работает», хотя сервер отвечает корректно.
  */
-const BASE_URL =
+/**
+ * Здесь нужен ОРИГИН без версии: пути ниже уже содержат `/v1/…`.
+ *
+ * Документированная переменная `VITE_API_BASE_URL` задана с версией (так её
+ * ожидают остальные приложения), и подстановка её как есть давала запросы вида
+ * `/v1/v1/…`. Локально это не проявлялось только потому, что переменная не
+ * задавалась и работал запасной вариант. Поэтому версия здесь снимается явно —
+ * приложение принимает обе формы записи и не зависит от того, какую передали.
+ */
+function toOrigin(value: string): string {
+  return value.replace(/\/+$/, '').replace(/\/v1$/, '');
+}
+
+const BASE_URL = toOrigin(
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  `${window.location.protocol}//${window.location.hostname}:4300`;
+    `${window.location.protocol}//${window.location.hostname}:4300`,
+);
 
 /**
  * Имя CSRF-cookie зависит от окружения: в production действует префикс

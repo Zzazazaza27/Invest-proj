@@ -143,18 +143,45 @@ const SKIP_DIRS = new Set([
   'graphify-out',
   '.venv',
   '__pycache__',
+  '.pytest_cache',
+  '.ruff_cache',
+  '.mypy_cache',
 ]);
 const SCAN_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|py|yml|yaml|json|sql|toml)$/;
 
+/**
+ * Обход дерева, устойчивый к недоступным каталогам.
+ *
+ * Прежняя версия падала с EPERM на служебном каталоге (`.pytest_cache`), и
+ * гейт не выдавал заключения вовсе — то есть переставал работать из-за файла,
+ * который его не касается. Пропуск такого каталога объявляется вслух: молчать
+ * о непросмотренном участке нельзя, иначе «находок нет» означает «не смотрел».
+ */
 function* walk(dir) {
-  for (const entry of readdirSync(dir)) {
+  let entries;
+  try {
+    entries = readdirSync(dir);
+  } catch (error) {
+    skipped.push(`${dir} (${error.code ?? 'ошибка чтения'})`);
+    return;
+  }
+  for (const entry of entries) {
     if (SKIP_DIRS.has(entry)) continue;
     const full = join(dir, entry);
-    const st = statSync(full);
+    let st;
+    try {
+      st = statSync(full);
+    } catch (error) {
+      skipped.push(`${full} (${error.code ?? 'ошибка чтения'})`);
+      continue;
+    }
     if (st.isDirectory()) yield* walk(full);
     else if (SCAN_EXT.test(entry)) yield full;
   }
 }
+
+/** Непросмотренные пути: печатаются в конце, а не пропадают. */
+const skipped = [];
 
 function checkInsecureTransport() {
   // Правило и его описание не должны сами по себе считаться находкой,
