@@ -1,0 +1,315 @@
+import { useCallback, useEffect, useState } from 'react';
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Field,
+  Input,
+  LoadingState,
+  Stack,
+} from '@unicorn/ui';
+import { ApiError, api } from '../api';
+
+/**
+ * Управление доступом: роли пользователей и сервисные клиенты внешних систем.
+ *
+ * Два самых весомых действия администратора собраны на одном экране намеренно:
+ * и роль, и клиент Integration API — это раздача прав, а не редактирование
+ * справочника. Оба сопровождаются напоминанием о том, чего интерфейс сделать
+ * не может: снять роль себе, разжаловать последнего администратора, показать
+ * секрет повторно.
+ */
+export function AccessPage() {
+  return (
+    <Stack gap="var(--u-space-6)">
+      <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Доступ</h1>
+      <RolesSection />
+      <ServiceAccountsSection />
+    </Stack>
+  );
+}
+
+function RolesSection() {
+  const [userId, setUserId] = useState('');
+  const [role, setRole] = useState('expert');
+  const [items, setItems] = useState<
+    { role: string; grantedAt: string; revokedAt: string | null }[]
+  >([]);
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const run = useCallback(
+    async (action: () => Promise<{ items: typeof items }>, okText: string) => {
+      setBusy(true);
+      setNotice(null);
+      try {
+        const result = await action();
+        setItems(result.items);
+        setNotice({ tone: 'ok', text: okText });
+      } catch (error) {
+        setNotice({
+          tone: 'error',
+          text:
+            error instanceof ApiError
+              ? (error.problem?.detail ?? error.message)
+              : 'Сервис недоступен',
+        });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [],
+  );
+
+  return (
+    <Card>
+      <Stack>
+        <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Роли пользователя</h2>
+        <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+          Выдать роль себе нельзя, снять роль у последнего администратора — тоже. Каждое изменение
+          попадает в журнал вместе с тем, кто его сделал.
+        </span>
+
+        <Field label="Идентификатор пользователя" htmlFor="role-user" hint="UUID из базы">
+          <Input
+            id="role-user"
+            value={userId}
+            onChange={(event) => setUserId(event.target.value)}
+            placeholder="019f…"
+          />
+        </Field>
+
+        <Field label="Роль" htmlFor="role-name">
+          <select
+            id="role-name"
+            value={role}
+            onChange={(event) => setRole(event.target.value)}
+            style={SELECT_STYLE}
+          >
+            <option value="expert">эксперт</option>
+            <option value="organizer">организатор</option>
+            <option value="admin">администратор</option>
+            <option value="investor">инвестор</option>
+            <option value="founder">основатель</option>
+          </select>
+        </Field>
+
+        <div style={{ display: 'flex', gap: 'var(--u-space-3)', flexWrap: 'wrap' }}>
+          <Button
+            loading={busy}
+            disabled={!userId}
+            onClick={() => void run(() => api.listRoles(userId), 'Роли загружены')}
+            variant="secondary"
+          >
+            Показать роли
+          </Button>
+          <Button
+            loading={busy}
+            disabled={!userId}
+            onClick={() => void run(() => api.grantRole(userId, role), 'Роль выдана')}
+          >
+            Выдать
+          </Button>
+          <Button
+            loading={busy}
+            disabled={!userId}
+            variant="danger"
+            onClick={() => void run(() => api.revokeRole(userId, role), 'Роль снята')}
+          >
+            Снять
+          </Button>
+        </div>
+
+        {notice ? (
+          <div
+            role={notice.tone === 'error' ? 'alert' : 'status'}
+            style={{
+              padding: 'var(--u-space-3)',
+              borderRadius: 'var(--u-radius-md)',
+              background:
+                notice.tone === 'error' ? 'var(--u-danger-subtle)' : 'var(--u-success-subtle)',
+              color: notice.tone === 'error' ? 'var(--u-danger)' : 'var(--u-success)',
+            }}
+          >
+            {notice.text}
+          </div>
+        ) : null}
+
+        {items.length > 0 ? (
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              display: 'grid',
+              gap: 'var(--u-space-2)',
+            }}
+          >
+            {items.map((item) => (
+              <li
+                key={`${item.role}-${item.grantedAt}`}
+                style={{ display: 'flex', gap: 'var(--u-space-3)', alignItems: 'center' }}
+              >
+                <Badge tone={item.revokedAt ? 'neutral' : 'success'}>{item.role}</Badge>
+                <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+                  выдана {new Date(item.grantedAt).toLocaleDateString('ru-RU')}
+                  {item.revokedAt
+                    ? `, снята ${new Date(item.revokedAt).toLocaleDateString('ru-RU')}`
+                    : ''}
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+      </Stack>
+    </Card>
+  );
+}
+
+/**
+ * Сервисные клиенты Integration API.
+ *
+ * Секрет показывается ровно один раз — при создании и при ротации. Это не
+ * недоработка интерфейса: в базе лежит только Argon2id-хеш, и «показать ещё
+ * раз» невозможно by design.
+ */
+function ServiceAccountsSection() {
+  const [state, setState] = useState<
+    | { status: 'loading' }
+    | {
+        status: 'ready';
+        items: { id: string; clientId: string; name: string; scopes: string[]; status: string }[];
+      }
+    | { status: 'error'; message: string }
+  >({ status: 'loading' });
+  const [secret, setSecret] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setState({ status: 'loading' });
+    try {
+      const { items } = await api.serviceAccounts();
+      setState({ status: 'ready', items });
+    } catch (error) {
+      setState({
+        status: 'error',
+        message:
+          error instanceof ApiError
+            ? (error.problem?.detail ?? error.message)
+            : 'Сервис недоступен',
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  return (
+    <Card>
+      <Stack>
+        <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Клиенты Integration API</h2>
+
+        {state.status === 'loading' ? <LoadingState label="Загружаем клиентов" /> : null}
+        {state.status === 'error' ? (
+          <ErrorState description={state.message} onRetry={() => void load()} />
+        ) : null}
+
+        {state.status === 'ready' && state.items.length === 0 ? (
+          <EmptyState
+            title="Клиентов нет"
+            description="Клиент внешней системы создаётся здесь; секрет выдаётся один раз и хранится только в виде хеша."
+          />
+        ) : null}
+
+        {state.status === 'ready' && state.items.length > 0 ? (
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              display: 'grid',
+              gap: 'var(--u-space-3)',
+            }}
+          >
+            {state.items.map((account) => (
+              <li key={account.id}>
+                <div style={{ display: 'grid', gap: 'var(--u-space-2)' }}>
+                  <div style={{ display: 'flex', gap: 'var(--u-space-2)', alignItems: 'center' }}>
+                    <Badge tone={account.status === 'active' ? 'success' : 'warning'}>
+                      {account.status}
+                    </Badge>
+                    <strong>{account.name}</strong>
+                    <code style={{ fontSize: 'var(--u-text-xs)' }}>{account.clientId}</code>
+                  </div>
+                  <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
+                    {account.scopes.map((scope) => (
+                      <Badge key={scope}>{scope}</Badge>
+                    ))}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    onClick={async () => {
+                      try {
+                        const rotated = await api.rotateServiceAccount(account.id);
+                        setSecret(rotated.clientSecret);
+                        await load();
+                      } catch (error) {
+                        setSecret(null);
+                        setState({
+                          status: 'error',
+                          message:
+                            error instanceof ApiError
+                              ? (error.problem?.detail ?? error.message)
+                              : 'Сервис недоступен',
+                        });
+                      }
+                    }}
+                  >
+                    Ротировать секрет
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        {secret ? (
+          <div
+            role="status"
+            style={{
+              padding: 'var(--u-space-4)',
+              borderRadius: 'var(--u-radius-md)',
+              border: '1px solid var(--u-warning)',
+              background: 'var(--u-warning-subtle)',
+            }}
+          >
+            <Stack gap="var(--u-space-2)">
+              <strong>Секрет клиента — скопируйте сейчас</strong>
+              <code style={{ wordBreak: 'break-all' }}>{secret}</code>
+              <span style={{ fontSize: 'var(--u-text-sm)' }}>
+                Повторно он не отображается: в базе хранится только хеш. Потеряли — ротируйте снова.
+              </span>
+              <Button variant="secondary" onClick={() => setSecret(null)}>
+                Скрыть
+              </Button>
+            </Stack>
+          </div>
+        ) : null}
+      </Stack>
+    </Card>
+  );
+}
+
+const SELECT_STYLE: React.CSSProperties = {
+  minHeight: 44,
+  padding: '0 var(--u-space-3)',
+  borderRadius: 'var(--u-radius-md)',
+  border: '1px solid var(--u-border-strong)',
+  background: 'var(--u-surface)',
+  color: 'var(--u-text)',
+  fontSize: 'var(--u-text-md)',
+  fontFamily: 'inherit',
+  width: '100%',
+};

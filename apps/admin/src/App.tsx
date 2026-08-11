@@ -7,6 +7,7 @@ import { SubscriptionsPage } from './pages/SubscriptionsPage';
 import { FlagsPage } from './pages/FlagsPage';
 import { CompliancePage } from './pages/CompliancePage';
 import { SeasonPage } from './pages/SeasonPage';
+import { AccessPage } from './pages/AccessPage';
 
 /**
  * Корень админки.
@@ -71,6 +72,7 @@ export function App() {
         <NavItem to="/compliance" label="Комплаенс" />
         <NavItem to="/season" label="Сезон" />
         <NavItem to="/flags" label="Функции платформы" />
+        <NavItem to="/access" label="Доступ" />
         <div className="sidebar__footer">
           <div>{me.displayName}</div>
           <div className="small muted" style={{ marginBottom: 8 }}>
@@ -102,6 +104,7 @@ export function App() {
           <Route path="/compliance" element={<CompliancePage />} />
           <Route path="/season" element={<SeasonPage />} />
           <Route path="/flags" element={<FlagsPage />} />
+          <Route path="/access" element={<AccessPage />} />
           <Route path="*" element={<Navigate to="/plans" replace />} />
         </Routes>
       </main>

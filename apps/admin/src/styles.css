@@ -403,3 +403,51 @@ button:disabled {
   font-weight: 600;
   font-size: 14px;
 }
+
+/*
+ * Узкий экран.
+ *
+ * Раскладка в две колонки с боковой панелью фиксированной ширины даёт
+ * горизонтальную прокрутку на телефоне — проверено рендером: 138px
+ * переполнения на 390px. Оператор открывает кабинет и с телефона (утвердить
+ * цену, разобрать очередь комплаенса), поэтому на узком экране панель
+ * становится верхней строкой, а её пункты — прокручиваемым рядом.
+ */
+@media (max-width: 720px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .sidebar__brand {
+    padding: 0;
+    flex: 1 1 100%;
+  }
+
+  .sidebar__footer {
+    margin-top: 0;
+    border-top: none;
+    padding-top: 0;
+    flex: 1 1 100%;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  /* Таблицы — единственное, что честно не помещается: им своя прокрутка. */
+  .table-wrap,
+  table {
+    display: block;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+}

@@ -6,6 +6,8 @@ import {
   FeatureFlagSchema,
   KycVerificationSchema,
   SeasonSchema,
+  ServiceAccountSchema,
+  ServiceAccountWithSecretSchema,
   type AdminPlan,
   type AdminSubscription,
   type AuthSession,
@@ -15,6 +17,8 @@ import {
   type ProposeCustomPriceRequest,
   type PublishPlanRequest,
   type Season,
+  type ServiceAccount,
+  type ServiceAccountWithSecret,
   type UpdateDraftPlanRequest,
 } from '@unicorn/contracts';
 import { z } from 'zod';
@@ -49,6 +53,17 @@ const BASE_URL =
  * случай проверяются оба варианта — рассинхрон имени тихо ломает все
  * небезопасные запросы после перезагрузки страницы (проверено в браузере).
  */
+/**
+ * Роль в истории выдач. Форма подтверждена живым прогоном Ф9c: сервер отдаёт
+ * список с моментом выдачи и снятия.
+ */
+const GrantedRoleSchema = z.object({
+  role: z.string(),
+  grantedAt: z.string(),
+  revokedAt: z.string().nullable(),
+});
+type GrantedRole = z.infer<typeof GrantedRoleSchema>;
+
 const CSRF_COOKIE_NAMES = [
   (import.meta.env.VITE_CSRF_COOKIE_NAME as string | undefined) ?? 'ul_csrf',
   '__Host-ul_csrf',
@@ -244,6 +259,55 @@ export const api = {
       schema: z.object({ season: SeasonSchema.nullable() }),
     });
     return season;
+  },
+
+  // ------------------------------------------------------------------ доступ
+
+  /**
+   * Роли пользователя. Сервер возвращает полную историю выдач и снятий: она
+   * нужна, чтобы видеть не только текущее состояние прав, но и как оно
+   * получилось.
+   */
+  listRoles(userId: string): Promise<{ items: GrantedRole[] }> {
+    return client.request({
+      method: 'GET',
+      path: `/v1/admin/users/${userId}/roles`,
+      schema: z.object({ items: z.array(GrantedRoleSchema) }),
+    });
+  },
+
+  grantRole(userId: string, role: string): Promise<{ items: GrantedRole[] }> {
+    return client.request({
+      method: 'POST',
+      path: `/v1/admin/users/${userId}/roles`,
+      body: { role },
+      schema: z.object({ items: z.array(GrantedRoleSchema) }),
+    });
+  },
+
+  revokeRole(userId: string, role: string): Promise<{ items: GrantedRole[] }> {
+    return client.request({
+      method: 'DELETE',
+      path: `/v1/admin/users/${userId}/roles/${role}`,
+      schema: z.object({ items: z.array(GrantedRoleSchema) }),
+    });
+  },
+
+  serviceAccounts(): Promise<{ items: ServiceAccount[] }> {
+    return client.request({
+      method: 'GET',
+      path: '/v1/admin/service-accounts',
+      schema: z.object({ items: z.array(ServiceAccountSchema) }),
+    });
+  },
+
+  /** Ротация. Секрет возвращается ОДИН раз — в базе только Argon2id-хеш. */
+  rotateServiceAccount(id: string): Promise<ServiceAccountWithSecret> {
+    return client.request({
+      method: 'POST',
+      path: `/v1/admin/service-accounts/${id}/rotation`,
+      schema: ServiceAccountWithSecretSchema,
+    });
   },
 
   changeSeasonStatus(id: string, status: Season['status']): Promise<Season> {
