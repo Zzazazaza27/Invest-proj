@@ -31,11 +31,18 @@ AI-анализ и развитие; верифицированные инвес
 > фронтендов**: публичная витрина и кабинеты основателя, инвестора, эксперта и
 > администратора — все на общей дизайн-системе, все проверены в реальном
 > браузере.
-> 279 тестов плюс **более 500 живых проверок** против запущенных сервисов, из
-> них 74 — в реальном браузере (витрина и четыре кабинета).
+> 298 тестов плюс **более 600 живых проверок** против запущенных сервисов, из
+> них 91 — в реальном браузере (витрина и четыре кабинета) и 32 — зонды
+> безопасности, воспроизводящие конкретные атаки (обход ограничения частоты,
+> DNS rebinding, подстановка чужого CSRF-токена, отзыв прав).
 > Все двенадцать фаз плана закрыты; проект остаётся в состоянии «до гейта A» —
 > инвестиционный контур выключен фичефлагом до включения оператора в реестр
 > Банка России, и это состояние продукта, а не незавершённая работа.
+> По проекту прошли два независимых внешних аудита (безопасность и код):
+> 20 находок закрыто с доказательствами, ответ — в
+> [`docs/audits/2026-08-11-внешний-аудит-ответ.md`](./docs/audits/2026-08-11-внешний-аудит-ответ.md).
+> Вердикт «не допускать в production» остаётся в силе: OIDC-поток и KMS-провайдер
+> не реализованы, и это требует внешних систем, а не кода в этом репозитории.
 > Что уже проверено прогоном инструмента, а что ещё нет — в
 > [`TODO.md`](./TODO.md) и [`docs/audits/`](./docs/audits/). Ничего не
 > помечается готовым без вывода команды из текущей сессии.
@@ -79,10 +86,11 @@ packages/
   contracts/     zod-схемы DTO и событий — единственный источник правды контрактов
   api-client/    Типизированный HTTP-клиент (без React), общий для всех фронтов
   ui/            Дизайн-токены и примитивы
-database/        Миграции M000–M031, RLS-политики, сиды, негативные тесты
+database/        Миграции M000–M037, RLS-политики, сиды, негативные тесты
 infra/           docker-compose локального контура и образ PostgreSQL.
                  Terraform/Helm production-контура ещё НЕТ — см. TODO.md
 docs/            ADR, аудиты сессий, runbooks, руководство по замене фронтенда
+scripts/         Живые прогоны, зонды безопасности и эксплуатационные скрипты
 obsidian-notes/  Рабочие заметки проекта: статус фаз, находки, решения
 ```
 
@@ -96,7 +104,7 @@ obsidian-notes/  Рабочие заметки проекта: статус фа
 cp .env.example .env          # заполнить CHANGE_ME
 npm install
 npm run infra:up              # PostgreSQL 16 + Redis + NATS JetStream + MinIO (+ бакет)
-npm run db:migrate            # миграции M000–M031
+npm run db:migrate            # миграции M000–M037
 npm run db:seed               # сезон, таксономия, тарифы, fee schedule, шаблоны
 npm run bootstrap:roles -w database   # логин-роли БД из переменных окружения
 ```
@@ -266,6 +274,7 @@ npm run test                        # юнит + интеграционные + 
 npm run lint:migrations -w database # expand/contract, RLS, search_path, деньги-float
 npm run gate:deps                   # npm audit --audit-level=high
 npm run gate:secrets                # gitleaks — вся история коммитов (ожидание: 0)
+node scripts/security-audit-full.mjs # ВСЕ гейты подряд на одной сборке (~25 мин)
 npm run gate:boundary               # граница фронт↔бэк работает (позитивный контроль)
 npm run gate:ai                     # тесты AI-шлюза + pip-audit
 npm run gate:net                    # сетевая безопасность (RULES.md §3.2)
@@ -286,9 +295,12 @@ SAST (semgrep с правилами `.semgrep/guardian.yml` + OWASP) и секр
 
 Граф кода перестраивается после каждой фазы командой `/graphify` и лежит в
 `graphify-out/` (в репозиторий не коммитится — это производный артефакт).
-Последний прогон (после Ф8): 2271 узел, 4189 связей, 239 сообществ; связи
-извлечены структурно (AST) — семантический слой пересобирается отдельным
-прогоном по документам.
+Последний прогон: 3330 узлов, 5982 связи, 322 сообщества. Связи извлекаются
+структурно (AST); семантический слой по документам пересобирается отдельно.
+
+Извлечение выполняется ПОСЛЕДОВАТЕЛЬНО: параллельный обход возвращал ноль узлов
+для 174 файлов, и граф терял треть содержимого. Поймала это встроенная защита
+graphify, отказавшись перезаписывать граф меньшим.
 
 ---
 
@@ -297,64 +309,74 @@ SAST (semgrep с правилами `.semgrep/guardian.yml` + OWASP) и секр
 Всё под `/v1`. Маршрут без пометки «публичный» требует сессии: guard включён
 глобально, анонимный доступ открывается только явным декоратором.
 
-| Метод и путь                             | Доступ              | Назначение                                          |
-| ---------------------------------------- | ------------------- | --------------------------------------------------- |
-| `GET /health`                            | публичный           | Живость сервиса и БД                                |
-| `GET /pricing`                           | публичный           | Тарифы и условия вознаграждения ОИП                 |
-| `GET /taxonomy`                          | публичный           | Справочник направлений                              |
-| `GET /catalog`                           | публичный           | Каталог тизеров: поиск, фильтры, keyset-курсор      |
-| `GET /catalog/:id`                       | публичный           | Тизер листинга                                      |
-| `GET /seasons/current`                   | публичный           | Метроном сезона                                     |
-| `POST /auth/register` · `/login`         | публичный           | Регистрация с блокирующим акцептом, вход            |
-| `GET /auth/me` · `POST /auth/consents`   | сессия              | Профиль, ре-акцепт условий                          |
-| `POST /kyc/verifications`                | сессия              | Заявка на верификацию личности                      |
-| `POST /kyc/entities` · `/:id/kyb`        | сессия              | Юрлицо и заявка на проверку реестра                 |
-| `POST /kyc/entities/:id/members`         | владелец юрлица     | Подписанты и бенефициары                            |
-| `GET /kyc/queue` · `POST …/decision`     | `admin`             | Очередь комплаенса и решения                        |
-| `POST /projects` · `GET /projects`       | `founder`           | Заявка проекта, свои проекты                        |
-| `GET/PATCH /projects/:id`                | владелец / подписка | Полная карточка                                     |
-| `POST /projects/:id/submit`              | владелец            | Неизменяемый снимок заявки в сезон                  |
-| `POST /projects/:id/materials/…`         | владелец            | Ссылка на продукт, билет на подписанную загрузку    |
-| `POST/DELETE /projects/:id/listing`      | владелец            | Публикация и снятие листинга                        |
-| `POST /seasons/:id/status`               | `admin`/`organizer` | Переход сезона по статусной машине                  |
-| `POST /investments/offers`               | `founder`/`admin`   | Инвестиционное предложение (черновик)               |
-| `POST /investments/offers/:id/publish`   | `admin`             | Публикация предложения комплаенсом                  |
-| `GET /investments/offers`                | сессия              | Предложения: полные — подписчику с KYC              |
-| `POST /investments/agreements`           | `investor` + MFA    | Принятие предложения, договор с идемпотентностью    |
-| `POST …/agreements/:id/signature`        | сторона + MFA       | Подпись стороны договора                            |
-| `GET /investments/agreements`            | сессия              | Свои договоры (стороны и админ)                     |
-| `POST /investments/tranches/confirm`     | `admin`             | Подтверждение транша по банковскому событию         |
-| `POST /projects/:id/analysis`            | владелец / `admin`  | Прогон анализа: паспорт, 9 осей, IRS, роадмап       |
-| `GET /projects/:id/passport`             | владелец / подписка | Инвестиционный паспорт с оценками и IRS             |
-| `GET /projects/:id/readiness`            | владелец / `admin`  | Карта готовности по 13 измерениям                   |
-| `GET /projects/:id/roadmap`              | владелец / `admin`  | Активный роадмап развития                           |
-| `GET /seasons/:id/rating`                | публичный           | Рейтинг сезона по последнему IRS                    |
-| `POST /seasons/:id/rating/refresh`       | `admin`/`organizer` | Пересчёт рейтинга и публикация события              |
-| `POST/GET /seasons/:id/golden-tickets`   | `admin`/`organizer` | Золотой билет: выдача (лимит 2 на сезон) и список   |
-| `GET /experts/assignments`               | `expert`            | Свои назначения на рецензию                         |
-| `POST /experts/assignments`              | `admin`/`organizer` | Назначение рецензентов на проект                    |
-| `POST …/assignments/:id/decision`        | `expert`            | Принять или отклонить назначение                    |
-| `POST /experts/reviews`                  | `expert`            | Рецензия по рубрике из 6 осей                       |
-| `GET /experts/projects/:id/reviews`      | `admin`/`organizer` | Сводка рецензий и расхождение оценок                |
-| `POST /experts/conflicts`                | `expert`            | Декларация конфликта интересов                      |
-| `POST …/conflicts/:id/resolution`        | `admin`/`organizer` | Решение комплаенса по конфликту                     |
-| `POST /experts/consensus`                | `admin`/`organizer` | Финальное решение по проекту (человек)              |
-| `GET /notifications`                     | сессия              | Своя лента уведомлений                              |
-| `POST/GET/DELETE …/devices`              | сессия              | Устройства для push                                 |
-| `GET/PUT /notifications/preferences`     | сессия              | Каналы и темы уведомлений                           |
-| `POST /admin/service-accounts`           | `admin`             | Клиент внешней системы; секрет выдаётся один раз    |
-| `POST …/service-accounts/:id/rotation`   | `admin`             | Ротация секрета клиента                             |
-| `POST /integration/token`                | client_credentials  | Токен сервисного клиента (TTL 15 мин)               |
-| `GET /integration/graduates`             | `graduates:read`    | Выпускники, keyset-курсор                           |
-| `GET …/projects/:id/passport`            | `passport:read`     | Паспорт уровня teaser/full                          |
-| `GET …/projects/:id/irs-history`         | `passport:read`     | История IRS                                         |
-| `POST /integration/listings`             | `listing:create`    | Регистрация внешнего листинга выпускника            |
-| `GET /integration/deals`                 | `deals:read`        | Агрегаты договоров без сторон сделки                |
-| `GET …/projects/:id/public-profile`      | `show:read`         | Обезличенная проекция при действующем согласии      |
-| `GET /integration/seasons/current`       | `seasons:read`      | Метроном сезона для внешних систем                  |
-| `POST/GET/DELETE …/webhooks`             | `webhooks:manage`   | Подписка на события; секрет подписи выдаётся раз    |
-| `GET/POST/DELETE /admin/users/:id/roles` | `admin`             | Выдача и снятие ролей — не себе, с записью в журнал |
-| `GET /openapi.json`                      | публичный           | Типы запросов и ответов, выведенные из контрактов   |
+| Метод и путь                                    | Доступ               | Назначение                                          |
+| ----------------------------------------------- | -------------------- | --------------------------------------------------- |
+| `GET /health`                                   | публичный            | Живость сервиса и БД                                |
+| `GET /pricing`                                  | публичный            | Тарифы и условия вознаграждения ОИП                 |
+| `GET /taxonomy`                                 | публичный            | Справочник направлений                              |
+| `GET /catalog`                                  | публичный            | Каталог тизеров: поиск, фильтры, keyset-курсор      |
+| `GET /catalog/:id`                              | публичный            | Тизер листинга                                      |
+| `GET /seasons/current`                          | публичный            | Метроном сезона                                     |
+| `POST /auth/register` · `/login`                | публичный            | Регистрация с блокирующим акцептом, вход            |
+| `GET /auth/me` · `POST /auth/consents`          | сессия               | Профиль, ре-акцепт условий                          |
+| `POST /kyc/verifications`                       | сессия               | Заявка на верификацию личности                      |
+| `POST /kyc/entities` · `/:id/kyb`               | сессия               | Юрлицо и заявка на проверку реестра                 |
+| `POST /kyc/entities/:id/members`                | владелец юрлица      | Подписанты и бенефициары                            |
+| `GET /kyc/queue` · `POST …/decision`            | `admin`              | Очередь комплаенса и решения                        |
+| `POST /projects` · `GET /projects`              | `founder`            | Заявка проекта, свои проекты                        |
+| `GET/PATCH /projects/:id`                       | владелец / подписка  | Полная карточка                                     |
+| `POST /projects/:id/submit`                     | владелец             | Неизменяемый снимок заявки в сезон                  |
+| `POST /projects/:id/materials/…`                | владелец             | Ссылка на продукт, билет на подписанную загрузку    |
+| `POST /projects/:id/materials/:mid/finalize`    | владелец             | Подтверждение загрузки: сервер проверяет объект сам |
+| `GET /projects/:id/versions`                    | владелец / рецензент | История поданных версий заявки                      |
+| `POST/DELETE /projects/:id/listing`             | владелец             | Публикация и снятие листинга                        |
+| `POST /seasons/:id/status`                      | `admin`/`organizer`  | Переход сезона по статусной машине                  |
+| `GET/POST /seasons/:id/funnel`                  | `admin`/`organizer`  | Квоты и расписание этапов сезона                    |
+| `POST /seasons/:id/projects/:pid/stage`         | `admin`/`organizer`  | Перевод проекта по этапам, погашение билета         |
+| `POST /investments/offers`                      | `founder`/`admin`    | Инвестиционное предложение (черновик)               |
+| `POST /investments/offers/:id/publish`          | `admin`              | Публикация предложения комплаенсом                  |
+| `GET /investments/offers`                       | сессия               | Предложения: полные — подписчику с KYC              |
+| `POST /investments/agreements`                  | `investor` + MFA     | Принятие предложения, договор с идемпотентностью    |
+| `POST …/agreements/:id/signature`               | сторона + MFA        | Подпись стороны договора                            |
+| `GET /investments/agreements`                   | сессия               | Свои договоры (стороны и админ)                     |
+| `POST /investments/tranches/confirm`            | `admin`              | Подтверждение транша по банковскому событию         |
+| `POST /projects/:id/analysis`                   | владелец / `admin`   | Прогон анализа: паспорт, 9 осей, IRS, роадмап       |
+| `GET /projects/:id/passport`                    | владелец / подписка  | Инвестиционный паспорт с оценками и IRS             |
+| `GET /projects/:id/readiness`                   | владелец / `admin`   | Карта готовности по 13 измерениям                   |
+| `GET /projects/:id/roadmap`                     | владелец / `admin`   | Активный роадмап развития                           |
+| `GET /seasons/:id/rating`                       | публичный            | Рейтинг сезона по последнему IRS                    |
+| `POST /seasons/:id/rating/refresh`              | `admin`/`organizer`  | Пересчёт рейтинга и публикация события              |
+| `POST/GET /seasons/:id/golden-tickets`          | `admin`/`organizer`  | Золотой билет: выдача (лимит 2 на сезон) и список   |
+| `GET /experts/assignments`                      | `expert`             | Свои назначения на рецензию                         |
+| `POST /experts/assignments`                     | `admin`/`organizer`  | Назначение рецензентов на проект                    |
+| `POST …/assignments/:id/decision`               | `expert`             | Принять или отклонить назначение                    |
+| `POST /experts/reviews`                         | `expert`             | Рецензия по рубрике из 6 осей                       |
+| `GET /experts/projects/:id/reviews`             | `admin`/`organizer`  | Сводка рецензий и расхождение оценок                |
+| `POST /experts/conflicts`                       | `expert`             | Декларация конфликта интересов                      |
+| `POST …/conflicts/:id/resolution`               | `admin`/`organizer`  | Решение комплаенса по конфликту                     |
+| `POST /experts/consensus`                       | `admin`/`organizer`  | Финальное решение по проекту (человек)              |
+| `GET/POST /billing/subscriptions`               | сессия               | Свои подписки и оформление (тариф резолвит сервер)  |
+| `GET /billing/invoices` · `/accruals`           | сессия               | Свои счета и начисления вознаграждения              |
+| `GET /notifications`                            | сессия               | Своя лента уведомлений                              |
+| `POST/GET/DELETE …/devices`                     | сессия               | Устройства для push                                 |
+| `GET/PUT /notifications/preferences`            | сессия               | Каналы и темы уведомлений                           |
+| `POST /admin/service-accounts`                  | `admin`              | Клиент внешней системы; секрет выдаётся один раз    |
+| `POST …/service-accounts/:id/rotation`          | `admin`              | Ротация секрета клиента                             |
+| `POST …/service-accounts/:id/status`            | `admin`              | Приостановка и возобновление клиента                |
+| `GET/POST/DELETE /admin/notification-templates` | `admin`              | Тексты уведомлений: версии, запрет ПДн в шаблоне    |
+| `GET/POST/DELETE /admin/users/:id/roles`        | `admin`              | Роли пользователя; отзыв действует немедленно       |
+| `GET/POST/DELETE /integration/webhooks`         | `webhook:manage`     | Подписки на события; адрес проверяется на SSRF      |
+| `POST /integration/token`                       | client_credentials   | Токен сервисного клиента (TTL 15 мин)               |
+| `GET /integration/graduates`                    | `graduates:read`     | Выпускники, keyset-курсор                           |
+| `GET …/projects/:id/passport`                   | `passport:read`      | Паспорт уровня teaser/full                          |
+| `GET …/projects/:id/irs-history`                | `passport:read`      | История IRS                                         |
+| `POST /integration/listings`                    | `listing:create`     | Регистрация внешнего листинга выпускника            |
+| `GET /integration/deals`                        | `deals:read`         | Агрегаты договоров без сторон сделки                |
+| `GET …/projects/:id/public-profile`             | `show:read`          | Обезличенная проекция при действующем согласии      |
+| `GET /integration/seasons/current`              | `seasons:read`       | Метроном сезона для внешних систем                  |
+| `POST/GET/DELETE …/webhooks`                    | `webhooks:manage`    | Подписка на события; секрет подписи выдаётся раз    |
+| `GET/POST/DELETE /admin/users/:id/roles`        | `admin`              | Выдача и снятие ролей — не себе, с записью в журнал |
+| `GET /openapi.json`                             | публичный            | Типы запросов и ответов, выведенные из контрактов   |
 
 Публикация листинга требует одновременно: действующего KYC владельца, тарифа,
 соответствующего текущему `investment_ask`, и активной подписки этого тарифа.
