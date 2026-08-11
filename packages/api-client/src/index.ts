@@ -68,17 +68,35 @@ export class UnicornApi {
   /** Тарифы и условия вознаграждения — без авторизации (радикальная прозрачность). */
   readonly pricing = () => this.http.request({ path: '/pricing', schema: PricingSchema });
 
+  /**
+   * Справочник направлений.
+   *
+   * Сервер отдаёт список в конверте `{ items }`, и клиент обязан разбирать
+   * именно его. Раньше здесь стоял голый массив: метод падал при каждом вызове,
+   * и это никем не замечалось, пока не появился фронтенд, который его вызывает
+   * (найдено рендер-проверкой витрины в Ф10).
+   */
   readonly taxonomy = () =>
-    this.http.request({ path: '/taxonomy', schema: z.array(TaxonomyNodeSchema) });
+    this.http
+      .request({ path: '/taxonomy', schema: z.object({ items: z.array(TaxonomyNodeSchema) }) })
+      .then((response) => response.items);
 
+  /** Текущий сезон. `null` — активного сезона нет, и это законный ответ. */
   readonly currentSeason = () =>
-    this.http.request({ path: '/seasons/current', schema: SeasonSchema });
+    this.http
+      .request({
+        path: '/seasons/current',
+        schema: z.object({ season: SeasonSchema.nullable() }),
+      })
+      .then((response) => response.season);
 
   readonly rating = (seasonId: string) =>
-    this.http.request({
-      path: `/seasons/${seasonId}/rating`,
-      schema: z.array(RatingEntrySchema),
-    });
+    this.http
+      .request({
+        path: `/seasons/${seasonId}/rating`,
+        schema: z.object({ items: z.array(RatingEntrySchema) }),
+      })
+      .then((response) => response.items);
 
   /** Публичный каталог тизеров. Полные карточки — только по подписке. */
   readonly catalog = (filter: CatalogFilter & { cursor?: string; limit?: number } = {}) =>

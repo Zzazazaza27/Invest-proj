@@ -6,15 +6,22 @@
   "description": "Публичная витрина: лендинг, тизерный каталог, тарифы и вознаграждение ОИП",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview --port 5173"
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview --port 5173",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@unicorn/api-client": "*",
+    "@unicorn/contracts": "*",
+    "@unicorn/ui": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^6.0.5",
+    "typescript": "^5.9.3",
     "vite": "^8.2.1"
   }
 }
