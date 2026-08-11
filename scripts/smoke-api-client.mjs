@@ -16,6 +16,7 @@
  * Запуск: node scripts/smoke-api-client.mjs (нужен core на 4300)
  */
 import { UnicornApi } from '../packages/api-client/dist/index.js';
+import { randomUUID } from 'node:crypto';
 
 const BASE = process.env.CORE_BASE_URL ?? 'http://127.0.0.1:4300/v1';
 
@@ -97,7 +98,100 @@ if (seasonId) {
   check('rating пропущен: активного сезона нет', true, 'нечего проверять');
 }
 
-console.warn('\n[2] Поведение при отказе');
+// --------------------------------------------------- методы под сессией
+console.warn('\n[2] Методы, требующие сессии');
+{
+  // Публичные методы — половина клиента. Вторая половина работает только под
+  // сессией, и именно в ней накопились расхождения: клиент писался по
+  // представлению о контракте, а проверить его было нечем.
+  const suffix = Date.now() % 1e9;
+  const email = `client-probe-${suffix}@test.local`;
+  const password = `Pw-${randomUUID()}`;
+  const consents = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind) => ({
+    kind,
+    version: 'v1',
+    locale: 'ru-RU',
+  }));
+
+  let cookies = '';
+  let csrf = null;
+  const authed = new UnicornApi({
+    baseUrl: BASE,
+    auth: { kind: 'cookie', csrfToken: null },
+    timeoutMs: 10_000,
+    // Node не хранит cookie сам: подменяем транспорт, чтобы клиент работал так
+    // же, как в браузере, — иначе проверялась бы не та схема аутентификации.
+    fetchImpl: async (url, init = {}) => {
+      const headers = new Headers(init.headers ?? {});
+      if (cookies) headers.set('Cookie', cookies);
+      if (csrf) headers.set('X-CSRF-Token', csrf);
+      // Сигнал прерывания приходит от самого клиента (init.signal) — он и
+      // задаёт таймаут. Здесь добавляем собственный предел на случай, если
+      // подменённый транспорт вызовут без него: fetch без таймаута висит вечно.
+      const response = await fetch(url, {
+        ...init,
+        headers,
+        signal: init.signal ?? AbortSignal.timeout(15_000),
+      });
+      const set = response.headers.getSetCookie?.() ?? [];
+      if (set.length > 0) cookies = set.map((c) => c.split(';')[0]).join('; ');
+      return response;
+    },
+  });
+
+  await probe(
+    'auth.register',
+    async () => {
+      const session = await authed.auth.register({
+        email,
+        password,
+        displayName: 'Проверка клиента',
+        role: 'investor',
+        locale: 'ru-RU',
+        consents,
+      });
+      csrf = session.csrfToken ?? null;
+      return session;
+    },
+    (r) => typeof r.userId === 'string' || typeof r.csrfToken === 'string',
+  );
+
+  await probe(
+    'auth.me',
+    () => authed.auth.me(),
+    (r) => typeof r.id === 'string' && Array.isArray(r.roles),
+  );
+  await probe(
+    'projects.list',
+    () => authed.projects.list(),
+    (r) => Array.isArray(r),
+  );
+  await probe(
+    'billing.subscriptions',
+    () => authed.billing.subscriptions(),
+    (r) => Array.isArray(r),
+  );
+  await probe(
+    'notifications.list',
+    () => authed.notifications.list(),
+    (r) => r !== undefined,
+  );
+  await probe(
+    'kyc.status',
+    () => authed.kyc.status(),
+    (r) => r !== undefined,
+  );
+  await probe(
+    'auth.logout',
+    async () => {
+      await authed.auth.logout();
+      return 'ок';
+    },
+    (r) => r === 'ок',
+  );
+}
+
+console.warn('\n[3] Поведение при отказе');
 await probe(
   'несуществующий маршрут отвергается ошибкой, а не пустым результатом',
   async () => {

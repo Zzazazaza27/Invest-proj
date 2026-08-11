@@ -1,15 +1,14 @@
 import {
   AnalysisRunSchema,
   AuthSessionSchema,
-  CommissionAccrualSchema,
   CurrentUserSchema,
   ExpertAssignmentSchema,
   HealthSchema,
   InvestmentAgreementSchema,
   InvestmentOfferSchema,
   InvestmentPassportSchema,
-  InvoiceSchema,
   MentorAnswerSchema,
+  NotificationPreferenceSchema,
   NotificationSchema,
   PaymentSchema,
   PricingSchema,
@@ -22,6 +21,7 @@ import {
   SeasonSchema,
   SubscriptionSchema,
   TaxonomyNodeSchema,
+  UserDeviceSchema,
   pageResponseSchema,
   uuidv7,
   type AcceptOfferRequest,
@@ -244,8 +244,14 @@ export class UnicornApi {
 
   // -------------------------------------------------------------- биллинг
   readonly billing = {
+    /** Свои подписки. Сервер отдаёт конверт `{ items }`, а не голый массив. */
     subscriptions: () =>
-      this.http.request({ path: '/billing/subscriptions', schema: z.array(SubscriptionSchema) }),
+      this.http
+        .request({
+          path: '/billing/subscriptions',
+          schema: z.object({ items: z.array(SubscriptionSchema) }),
+        })
+        .then((response) => response.items),
 
     subscribe: (body: CreateSubscriptionRequest) =>
       this.http.request({
@@ -257,21 +263,13 @@ export class UnicornApi {
       }),
 
     cancel: (id: string) =>
-      this.http.request({ method: 'DELETE', path: `/billing/subscriptions/${id}` }),
+      this.http.request({ method: 'POST', path: `/billing/subscriptions/${id}/cancel` }),
 
-    invoices: (query: { cursor?: string; limit?: number } = {}) =>
-      this.http.request({
-        path: '/billing/invoices',
-        query,
-        schema: pageResponseSchema(InvoiceSchema),
-      }),
-
-    accruals: (query: { cursor?: string; limit?: number } = {}) =>
-      this.http.request({
-        path: '/billing/accruals',
-        query,
-        schema: pageResponseSchema(CommissionAccrualSchema),
-      }),
+    // Счета и начисления сюда ещё не вынесены: маршрутов /billing/invoices и
+    // /billing/accruals на сервере нет (проверено — 404). Объявлять здесь
+    // метод, которого не существует, значит обещать контракт, которого нет:
+    // клиент компилируется, а падает только в проде. Появятся вместе с
+    // выставлением счетов (TODO, гейт A).
 
     pay: (body: CreatePaymentRequest) =>
       this.http.request({
@@ -353,20 +351,56 @@ export class UnicornApi {
 
   // ----------------------------------------------------------- уведомления
   readonly notifications = {
-    list: (query: { cursor?: string; limit?: number } = {}) =>
-      this.http.request({
-        path: '/notifications',
-        query,
-        schema: pageResponseSchema(NotificationSchema),
-      }),
+    /** Своя лента. Конверт `{ items }`, без курсора: лента ограничена лимитом. */
+    list: (query: { limit?: number } = {}) =>
+      this.http
+        .request({
+          path: '/notifications',
+          query,
+          schema: z.object({ items: z.array(NotificationSchema) }),
+        })
+        .then((response) => response.items),
 
-    preferences: () => this.http.request({ path: '/notifications/preferences' }),
+    preferences: () =>
+      this.http
+        .request({
+          path: '/notifications/preferences',
+          schema: z.object({ items: z.array(NotificationPreferenceSchema) }),
+        })
+        .then((response) => response.items),
 
-    updatePreferences: (prefs: NotificationPreference[]) =>
-      this.http.request({ method: 'PUT', path: '/notifications/preferences', body: { prefs } }),
+    /**
+     * Обновление настроек. Сервер принимает поле `items`, а не `prefs`:
+     * расхождение имени тихо игнорировало бы все переданные настройки.
+     */
+    updatePreferences: (items: NotificationPreference[]) =>
+      this.http
+        .request({
+          method: 'PUT',
+          path: '/notifications/preferences',
+          body: { items },
+          schema: z.object({ items: z.array(NotificationPreferenceSchema) }),
+        })
+        .then((response) => response.items),
+
+    devices: () =>
+      this.http
+        .request({
+          path: '/notifications/devices',
+          schema: z.object({ items: z.array(UserDeviceSchema) }),
+        })
+        .then((response) => response.items),
 
     registerDevice: (body: RegisterDeviceRequest) =>
-      this.http.request({ method: 'POST', path: '/notifications/devices', body }),
+      this.http.request({
+        method: 'POST',
+        path: '/notifications/devices',
+        body,
+        schema: UserDeviceSchema,
+      }),
+
+    revokeDevice: (id: string) =>
+      this.http.request({ method: 'DELETE', path: `/notifications/devices/${id}` }),
   };
 
   // ------------------------------------------------------------- согласия
