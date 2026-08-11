@@ -10,8 +10,12 @@ import { AnalysisService } from './ai/analysis.service';
 import { AuditRepository } from './audit/audit.repository';
 import { BillingController } from './billing/billing.controller';
 import { BillingService } from './billing/billing.service';
+import { NotificationsController } from './comms/notifications.controller';
+import { NotificationsService } from './comms/notifications.service';
 import { CryptoService } from './crypto/crypto.service';
 import { Database } from './db/unit-of-work';
+import { ExpertsController } from './experts/experts.controller';
+import { ExpertsService } from './experts/experts.service';
 import { HealthController } from './health/health.controller';
 import { IdentityController } from './identity/identity.controller';
 import { IdentityService } from './identity/identity.service';
@@ -50,6 +54,8 @@ import { S3Service } from './storage/s3.service';
     AdminController,
     InvestmentsController,
     AnalysisController,
+    ExpertsController,
+    NotificationsController,
   ],
   providers: [
     Database,
@@ -67,6 +73,8 @@ import { S3Service } from './storage/s3.service';
     InvestmentsService,
     AiGatewayClient,
     AnalysisService,
+    ExpertsService,
+    NotificationsService,
     PartitionMaintenanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],

@@ -302,6 +302,87 @@ export const DeclareConflictRequestSchema = z.object({
   projectId: UuidSchema,
   description: boundedString(10, 2000),
 });
+export type DeclareConflictRequest = z.infer<typeof DeclareConflictRequestSchema>;
+
+/**
+ * Назначение рецензентов. Список экспертов, а не один: рецензия одного
+ * человека не даёт ни консенсуса, ни расхождения, которое можно измерить.
+ */
+export const CreateAssignmentsRequestSchema = z.object({
+  projectId: UuidSchema,
+  expertIds: z.array(UuidSchema).min(1).max(10),
+  /** Срок рецензии. Без него назначение невозможно просрочить, а значит и вести. */
+  dueAt: IsoDateTimeSchema,
+  reason: z.enum(['auto_taxonomy', 'manual', 'third_reviewer']).default('manual'),
+});
+export type CreateAssignmentsRequest = z.infer<typeof CreateAssignmentsRequestSchema>;
+
+/**
+ * Ответ эксперта на назначение. Отказ — законный исход, а не сбой: эксперт,
+ * который не может оценить проект честно, обязан иметь способ это сказать.
+ */
+export const AssignmentDecisionRequestSchema = z.object({
+  decision: z.enum(['accepted', 'declined']),
+});
+export type AssignmentDecisionRequest = z.infer<typeof AssignmentDecisionRequestSchema>;
+
+export const ExpertConflictSchema = z.object({
+  id: UuidSchema,
+  expertId: UuidSchema,
+  projectId: UuidSchema,
+  description: z.string(),
+  resolution: z.enum(['recused', 'approved_with_disclosure']).nullable(),
+  createdAt: IsoDateTimeSchema,
+});
+export type ExpertConflict = z.infer<typeof ExpertConflictSchema>;
+
+export const ResolveConflictRequestSchema = z.object({
+  resolution: z.enum(['recused', 'approved_with_disclosure']),
+});
+export type ResolveConflictRequest = z.infer<typeof ResolveConflictRequestSchema>;
+
+/** Рецензия в сводке для организатора. Имя эксперта не раскрывается основателю. */
+export const ExpertReviewSchema = z.object({
+  assignmentId: UuidSchema,
+  expertId: UuidSchema,
+  rubricScores: z.record(z.string(), z.number()),
+  comment: z.string().nullable(),
+  recommendation: ExpertRecommendationSchema,
+  submittedAt: IsoDateTimeSchema,
+});
+export type ExpertReview = z.infer<typeof ExpertReviewSchema>;
+
+/**
+ * Финальное решение по проекту. Его фиксирует ЧЕЛОВЕК: `decidedBy` берётся из
+ * контекста запроса, а не из тела — «AI ускоряет, человек решает»
+ * (Architect.md §3.6). Модель может посчитать расхождение, но не подписаться
+ * за организатора.
+ */
+export const DecideConsensusRequestSchema = z.object({
+  projectId: UuidSchema,
+  finalDecision: ExpertRecommendationSchema,
+  /** Третий рецензент, если решение принято после разведения оценок. */
+  thirdReviewerId: UuidSchema.optional(),
+});
+export type DecideConsensusRequest = z.infer<typeof DecideConsensusRequestSchema>;
+
+export const ReviewConsensusSchema = z.object({
+  id: UuidSchema,
+  projectId: UuidSchema,
+  seasonId: UuidSchema.nullable(),
+  /** Разброс оценок рецензентов, 0–10. Считается сервером по рубрикам. */
+  discrepancyScore: z.number().nullable(),
+  finalDecision: ExpertRecommendationSchema,
+  decidedAt: IsoDateTimeSchema,
+});
+export type ReviewConsensus = z.infer<typeof ReviewConsensusSchema>;
+
+/**
+ * Порог расхождения рецензий. Выше него решение без третьего рецензента
+ * считается непроверяемым: два эксперта разошлись слишком сильно, чтобы
+ * усреднение что-то значило.
+ */
+export const REVIEW_DISCREPANCY_THRESHOLD = 3;
 
 // -------------------------------------------------------------------- сезоны
 
@@ -356,6 +437,30 @@ export const RatingEntrySchema = z.object({
 });
 export type RatingEntry = z.infer<typeof RatingEntrySchema>;
 
+/**
+ * Золотой билет — ручное решение организатора провести проект дальше вопреки
+ * рейтингу. Причина обязательна: непрозрачная привилегия обесценивает сам
+ * рейтинг. Лимит на выдающего в пределах сезона проверяется в БД триггером.
+ */
+export const GrantGoldenTicketRequestSchema = z.object({
+  projectId: UuidSchema,
+  reason: boundedString(10, 1000),
+});
+export type GrantGoldenTicketRequest = z.infer<typeof GrantGoldenTicketRequestSchema>;
+
+export const GoldenTicketSchema = z.object({
+  id: UuidSchema,
+  projectId: UuidSchema,
+  seasonId: UuidSchema,
+  reason: z.string(),
+  usedAt: IsoDateTimeSchema.nullable(),
+  createdAt: IsoDateTimeSchema,
+});
+export type GoldenTicket = z.infer<typeof GoldenTicketSchema>;
+
+/** Сколько золотых билетов один организатор может выдать за сезон (M007). */
+export const GOLDEN_TICKETS_PER_GRANTOR = 2;
+
 // -------------------------------------------------------------- уведомления
 
 export const NotificationChannelSchema = z.enum(['push', 'telegram', 'email', 'sms', 'inapp']);
@@ -408,6 +513,28 @@ export const RegisterDeviceRequestSchema = z.object({
   appVersion: boundedString(0, 40).optional(),
 });
 export type RegisterDeviceRequest = z.infer<typeof RegisterDeviceRequestSchema>;
+
+/**
+ * Устройство в ответе. Push-токена здесь НЕТ намеренно: он позволяет слать
+ * уведомления от имени приложения, поэтому наружу не возвращается даже
+ * владельцу — отдать его обратно клиенту незачем, а утечь он может.
+ */
+export const UserDeviceSchema = z.object({
+  id: UuidSchema,
+  platform: z.enum(['ios', 'android', 'web_pwa']),
+  pushProvider: z.enum(['fcm', 'apns', 'web_push']),
+  deviceName: z.string().nullable(),
+  appVersion: z.string().nullable(),
+  lastSeenAt: IsoDateTimeSchema,
+  createdAt: IsoDateTimeSchema,
+});
+export type UserDevice = z.infer<typeof UserDeviceSchema>;
+
+/** Пакетное обновление предпочтений: настройки меняют экраном, а не по одной. */
+export const UpdatePreferencesRequestSchema = z.object({
+  items: z.array(NotificationPreferenceSchema).min(1).max(100),
+});
+export type UpdatePreferencesRequest = z.infer<typeof UpdatePreferencesRequestSchema>;
 
 export const NotificationSchema = z.object({
   id: UuidSchema,

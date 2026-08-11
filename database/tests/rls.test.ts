@@ -9,6 +9,7 @@
  * приложения, и была бы зелёной по неверной причине.
  */
 import { afterAll, describe, expect, it } from 'vitest';
+import type { Client } from './helpers.ts';
 import {
   actAs,
   approveKyc,
@@ -21,6 +22,7 @@ import {
   createUser,
   getPool,
   inRollbackTx,
+  uuidv7,
 } from './helpers.ts';
 
 afterAll(async () => {
@@ -315,6 +317,123 @@ describe('RLS: разделение денежных прав между рол�
       `SELECT rolname FROM pg_roles WHERE rolname LIKE 'app\\_%' AND rolbypassrls`,
     );
     expect(rows.map((r) => r.rolname)).toEqual([]);
+  });
+});
+
+describe('RLS: экспертиза и уведомления', () => {
+  /** Эксперт с назначением в заданном статусе. Возвращает id проекта и эксперта. */
+  async function assignedReviewer(
+    c: Client,
+    status: string,
+  ): Promise<{ projectId: string; expertId: string }> {
+    const founder = await createUser(c, { role: 'founder' });
+    const expert = await createUser(c, { role: 'expert' });
+    const projectId = await createProject(c, founder.id);
+    await c.query(
+      `INSERT INTO experts.experts (user_id, expertise_tags) VALUES ($1, ARRAY['fintech'])`,
+      [expert.id],
+    );
+    await c.query(
+      `INSERT INTO experts.expert_assignments
+         (id, project_id, expert_id, assigned_reason, status, due_at)
+       VALUES ($1, $2, $3, 'manual', $4, now() + interval '7 days')`,
+      [uuidv7(), projectId, expert.id, status],
+    );
+    return { projectId, expertId: expert.id };
+  }
+
+  // Обратный случай — «эксперт не видит неназначенный проект» — уже закрыт в
+  // блоке изоляции проектов; здесь проверяется, что назначение доступ ОТКРЫВАЕТ.
+  it('назначенный рецензент видит проект — иначе рецензировать нечего', async () => {
+    await inRollbackTx(async (c) => {
+      const { projectId, expertId } = await assignedReviewer(c, 'accepted');
+
+      await actAs(c, { userId: expertId, roles: ['expert'], dbRole: 'app_backend' });
+      const { rows } = await c.query('SELECT id FROM lab.projects WHERE id = $1', [projectId]);
+      expect(rows).toHaveLength(1);
+    });
+  });
+
+  it('отказавшийся от назначения эксперт теряет доступ к проекту', async () => {
+    await inRollbackTx(async (c) => {
+      const { projectId, expertId } = await assignedReviewer(c, 'declined');
+
+      await actAs(c, { userId: expertId, roles: ['expert'], dbRole: 'app_backend' });
+      const { rows } = await c.query('SELECT id FROM lab.projects WHERE id = $1', [projectId]);
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  it('эксперт не читает чужую рецензию', async () => {
+    await inRollbackTx(async (c) => {
+      const first = await assignedReviewer(c, 'accepted');
+      const intruder = await createUser(c, { role: 'expert' });
+      const { rows: assignment } = await c.query<{ id: string }>(
+        `SELECT id FROM experts.expert_assignments WHERE expert_id = $1`,
+        [first.expertId],
+      );
+      await c.query(
+        `INSERT INTO experts.expert_reviews
+           (id, assignment_id, rubric_scores_jsonb, recommendation)
+         VALUES ($1, $2, $3::jsonb, 'pass')`,
+        [
+          uuidv7(),
+          assignment[0]!.id,
+          JSON.stringify({
+            team: 8,
+            product: 8,
+            strategy: 8,
+            legal: 8,
+            finmodel: 8,
+            scalability: 8,
+          }),
+        ],
+      );
+
+      await actAs(c, { userId: intruder.id, roles: ['expert'], dbRole: 'app_backend' });
+      const { rows } = await c.query('SELECT id FROM experts.expert_reviews');
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  it('пользователь не видит чужих уведомлений и чужих устройств', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const intruder = await createUser(c, { role: 'founder' });
+      await c.query(
+        `INSERT INTO comms.notifications (id, user_id, channel, template_code, payload_jsonb)
+         VALUES ($1, $2, 'push', 'project.scored', '{}'::jsonb)`,
+        [uuidv7(), owner.id],
+      );
+      await c.query(
+        `INSERT INTO comms.user_devices (id, user_id, platform, push_provider, push_token)
+         VALUES ($1, $2, 'ios', 'apns', $3)`,
+        [uuidv7(), owner.id, `tok-${uuidv7()}`],
+      );
+
+      await actAs(c, { userId: intruder.id, roles: ['founder'], dbRole: 'app_backend' });
+      const notifications = await c.query('SELECT id FROM comms.notifications');
+      const devices = await c.query('SELECT id FROM comms.user_devices');
+      expect(notifications.rows).toHaveLength(0);
+      expect(devices.rows).toHaveLength(0);
+    });
+  });
+
+  it('роль приложения не может пересчитать рейтинг мимо функции-обёртки', async () => {
+    await inRollbackTx(async (c) => {
+      await actAs(c, { userId: null, roles: ['admin'], dbRole: 'app_backend' });
+      await expect(c.query('REFRESH MATERIALIZED VIEW seasons.mv_season_rating')).rejects.toThrow();
+    });
+  });
+
+  it('без роли организатора функция пересчёта рейтинга отказывает', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c, { role: 'founder' });
+      await actAs(c, { userId: user.id, roles: ['founder'], dbRole: 'app_backend' });
+      await expect(c.query('SELECT seasons.refresh_rating()')).rejects.toThrow(
+        /admin or organizer/,
+      );
+    });
   });
 });
 

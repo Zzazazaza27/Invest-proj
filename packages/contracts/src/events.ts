@@ -31,6 +31,12 @@ export const EventVerb = {
   CONSENT_PUBLICATION_GRANTED: 'lab.consent.publication_granted',
   CONSENT_PUBLICATION_REVOKED: 'lab.consent.publication_revoked',
   CONSENSUS_DECIDED: 'lab.consensus.decided',
+  EXPERT_ASSIGNED: 'lab.expert.assigned',
+  EXPERT_ASSIGNMENT_CLOSED: 'lab.expert.assignment_closed',
+  EXPERT_REVIEW_SUBMITTED: 'lab.expert.review_submitted',
+  EXPERT_CONFLICT_DECLARED: 'lab.expert.conflict_declared',
+  EXPERT_CONFLICT_RESOLVED: 'lab.expert.conflict_resolved',
+  GOLDEN_TICKET_GRANTED: 'lab.golden_ticket.granted',
 } as const;
 
 export type EventVerbValue = (typeof EventVerb)[keyof typeof EventVerb];
