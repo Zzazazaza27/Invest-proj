@@ -14,6 +14,10 @@ import { NotificationsController } from './comms/notifications.controller';
 import { NotificationsService } from './comms/notifications.service';
 import { CryptoService } from './crypto/crypto.service';
 import { Database } from './db/unit-of-work';
+import { NatsClient } from './events/nats.client';
+import { OutboxPublisherService } from './events/publisher.service';
+import { WebhookDeliveryService } from './events/webhook-delivery.service';
+import { WebhooksService } from './events/webhooks.service';
 import { ExpertsController } from './experts/experts.controller';
 import { ExpertsService } from './experts/experts.service';
 import { HealthController } from './health/health.controller';
@@ -85,6 +89,10 @@ import { S3Service } from './storage/s3.service';
     ExpertsService,
     NotificationsService,
     IntegrationService,
+    NatsClient,
+    WebhooksService,
+    OutboxPublisherService,
+    WebhookDeliveryService,
     PartitionMaintenanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],

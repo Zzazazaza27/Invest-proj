@@ -76,6 +76,7 @@ const RawEnvSchema = z.object({
   KEK_INVESTMENT_DOCUMENTS: z.string().default(''),
   KEK_NOMINAL_ACCOUNT_EVIDENCE: z.string().default(''),
   KEK_BILLING_DOCUMENTS: z.string().default(''),
+  KEK_WEBHOOK_SECRETS: z.string().default(''),
 
   RATE_LIMIT_DEFAULT_PER_MIN: z.coerce.number().int().min(1).default(120),
   RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().min(1).default(30),
@@ -87,6 +88,18 @@ const RawEnvSchema = z.object({
 
   NATS_URL: z.string().default(''),
   NATS_STREAM: z.string().default('LAUNCH'),
+  // Учётные данные брокера держатся ОТДЕЛЬНО от адреса: пароль внутри URL
+  // попадает в логи подключения, в сообщения об ошибках и в конфиги как есть.
+  NATS_USER: z.string().default(''),
+  NATS_PASSWORD: z.string().default(''),
+  // Пауза между проходами публикатора outbox. Секунда — компромисс: событие
+  // уходит потребителю почти сразу, но холостые проходы не бьют по БД.
+  OUTBOX_POLL_INTERVAL_MS: z.coerce.number().int().min(200).max(60_000).default(1_000),
+  OUTBOX_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(50),
+  // Доставка вебхуков — отдельный ритм: у внешнего потребителя свои таймауты,
+  // и частить к нему смысла нет.
+  WEBHOOK_POLL_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(2_000),
+  WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(5_000),
 
   // --- Integration API (service-to-service) -------------------------------
   // Токен сервисного клиента живёт минутами: он не привязан к человеку, его

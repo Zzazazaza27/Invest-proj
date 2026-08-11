@@ -26,7 +26,8 @@ export type KekDomain =
   | 'investment_documents'
   | 'nominal_account_evidence'
   | 'billing_documents'
-  | 'search_index';
+  | 'search_index'
+  | 'webhook_secrets';
 
 const ENV_BY_DOMAIN: Record<KekDomain, string> = {
   kyc_documents: 'KEK_KYC_DOCUMENTS',
@@ -36,6 +37,7 @@ const ENV_BY_DOMAIN: Record<KekDomain, string> = {
   nominal_account_evidence: 'KEK_NOMINAL_ACCOUNT_EVIDENCE',
   billing_documents: 'KEK_BILLING_DOCUMENTS',
   search_index: 'KEK_SEARCH_INDEX',
+  webhook_secrets: 'KEK_WEBHOOK_SECRETS',
 };
 
 const IV_BYTES = 12; // рекомендованный размер nonce для GCM
@@ -95,6 +97,27 @@ export class CryptoService {
     } finally {
       dek.fill(0);
     }
+  }
+
+  /**
+   * Шифрование КОРОТКОГО секрета напрямую ключом домена, без обёрнутого DEK.
+   *
+   * Схема с DEK существует ради двух вещей: шифровать много данных одним
+   * ключом и менять KEK, не трогая шифртексты. Для 32-байтного секрета подписи
+   * вебхука не нужно ни то, ни другое — а хранить рядом ещё и обёрнутый DEK
+   * схема таблицы не предусматривает (`integration.webhook_endpoints` держит
+   * один `secret_ciphertext`). Ротация KEK здесь означает перешифровку
+   * нескольких строк, и это дешевле, чем размазывать формат по колонкам.
+   *
+   * Для документов и ПДн этот метод НЕ применяется: там объёмы и ротация как
+   * раз те, ради которых нужен DEK.
+   */
+  sealDirect(domain: KekDomain, plaintext: Buffer | string, aad: string): Buffer {
+    return this.encrypt(this.kek(domain), Buffer.from(plaintext), aad);
+  }
+
+  openDirect(domain: KekDomain, payload: Buffer, aad: string): Buffer {
+    return this.decrypt(this.kek(domain), payload, aad);
   }
 
   open(domain: KekDomain, sealed: SealedValue, aad?: string): Buffer {

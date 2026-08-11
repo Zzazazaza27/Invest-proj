@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import {
   CreateListingRefRequestSchema,
+  CreateWebhookRequestSchema,
   ExternalRefSchema,
   GraduateSchema,
   INTEGRATION_DATA_VERSION,
@@ -10,11 +11,14 @@ import {
   IrsHistoryEntrySchema,
   PublicProfileSchema,
   UuidSchema,
+  WebhookCreatedSchema,
+  WebhookEndpointSchema,
 } from '@unicorn/contracts';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { Public, ServiceAuth } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
+import { WebhooksService } from '../events/webhooks.service';
 import { IntegrationService, decodeIntegrationCursor } from './integration.service';
 import {
   clientCertFingerprint,
@@ -40,7 +44,10 @@ import {
 @UseGuards(IntegrationGuard)
 @Controller('integration')
 export class IntegrationController {
-  constructor(private readonly integration: IntegrationService) {}
+  constructor(
+    private readonly integration: IntegrationService,
+    private readonly webhooks: WebhooksService,
+  ) {}
 
   @Scope('graduates:read')
   @Get('graduates')
@@ -125,6 +132,32 @@ export class IntegrationController {
       season: await this.integration.currentSeason(ctx),
       dataVersion: INTEGRATION_DATA_VERSION,
     };
+  }
+
+  /**
+   * Подписка на события. Секрет подписи возвращается один раз — им получатель
+   * проверяет, что доставка пришла от нас, а не от того, кто узнал адрес.
+   */
+  @Scope('webhooks:manage')
+  @Post('webhooks')
+  async registerWebhook(@Body() rawBody: unknown, @IntegrationCtx() ctx: IntegrationContext) {
+    const input = parseOrThrow(CreateWebhookRequestSchema, rawBody);
+    return WebhookCreatedSchema.parse(await this.webhooks.register(ctx, input));
+  }
+
+  @Scope('webhooks:manage')
+  @Get('webhooks')
+  async listWebhooks(@IntegrationCtx() ctx: IntegrationContext) {
+    const items = await this.webhooks.list(ctx);
+    return { items: items.map((item) => WebhookEndpointSchema.parse(item)) };
+  }
+
+  @Scope('webhooks:manage')
+  @Delete('webhooks/:id')
+  async disableWebhook(@Param('id') rawId: string, @IntegrationCtx() ctx: IntegrationContext) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    await this.webhooks.disable(ctx, id);
+    return { disabled: true };
   }
 }
 
