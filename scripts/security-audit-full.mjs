@@ -114,6 +114,8 @@ run('права на SECURITY DEFINER', 'node', ['scripts/check-definer-privileg
 pause(62, 'лимит класса auth перед зондом');
 run('обход лимита подделкой cookie', 'node', ['scripts/probe-rate-limit.mjs']);
 run('DNS rebinding в доставке вебхуков', 'node', ['scripts/probe-dns-rebinding.mjs']);
+pause(62, 'лимит класса auth перед проверкой CSRF');
+run('привязка CSRF к сессии', 'node', ['scripts/probe-csrf-binding.mjs']);
 run('аренда очереди и повтор рассылки', 'node', ['scripts/probe-outbox-lease.mjs']);
 run('версии событий агрегата', 'node', ['scripts/probe-event-versions.mjs']);
 pause(62, 'лимит класса auth перед прогоном отзыва прав');

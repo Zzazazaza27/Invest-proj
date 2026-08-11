@@ -14,6 +14,7 @@ import { CryptoService } from '../crypto/crypto.service';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext } from '../db/unit-of-work';
 import { getEnv } from '../config/env';
+import { issueCsrfToken } from '../auth/csrf';
 
 /**
  * Регистрация, вход и согласия.
@@ -284,7 +285,9 @@ export class IdentityService {
     mfaEnabled: boolean;
   }): { session: AuthSession; csrfToken: string } {
     const env = getEnv();
-    const csrfToken = randomBytes(32).toString('base64url');
+    // Токен связан с владельцем сессии подписью: чужая подставленная cookie
+    // больше не образует согласованную пару с заголовком (SEC-12).
+    const csrfToken = issueCsrfToken(input.userId);
     return {
       csrfToken,
       session: {

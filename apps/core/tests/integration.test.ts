@@ -28,6 +28,9 @@ const BASE_ENV: NodeJS.ProcessEnv = {
   DATABASE_URL: 'postgres://app:pw@localhost:5433/db',
   AUTH_MODE: 'local',
   LOCAL_AUTH_SIGNING_KEY: 'k'.repeat(64),
+  // CSRF-токен подписывается всегда, поэтому ключ обязателен при любой схеме
+  // входа — конфигурация без него не проходит валидацию (SEC-12).
+  CSRF_SIGNING_KEY: 'c'.repeat(64),
   KMS_MODE: 'local',
   KEK_SEARCH_INDEX: Buffer.alloc(32, 7).toString('base64'),
 };

@@ -100,6 +100,11 @@ const RawEnvSchema = z.object({
   SESSION_COOKIE_NAME: z.string().default('ul_session'),
   SESSION_TTL_SECONDS: z.coerce.number().int().min(60).max(86_400).default(3600),
   CSRF_COOKIE_NAME: z.string().default('ul_csrf'),
+  /**
+   * Ключ подписи CSRF-токенов. Отдельный от ключа сессий: тот обязателен только
+   * при AUTH_MODE=local, а CSRF действует при любой схеме входа через cookie.
+   */
+  CSRF_SIGNING_KEY: z.string().default(''),
 
   KMS_MODE: z.enum(['kms', 'local']).default('local'),
   KEK_SEARCH_INDEX: z.string().default(''),
@@ -210,6 +215,14 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
         message: 'обязателен: без проверки aud токен другого клиента будет принят',
       });
     }
+  }
+  // CSRF-токен подписывается всегда, поэтому и ключ нужен всегда.
+  if (env.CSRF_SIGNING_KEY.length < LOCAL_KEY_MIN_LENGTH) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['CSRF_SIGNING_KEY'],
+      message: `минимум ${LOCAL_KEY_MIN_LENGTH} символов: токен без подписи не связан с сессией`,
+    });
   }
   if (env.AUTH_MODE === 'local' && env.LOCAL_AUTH_SIGNING_KEY.length < LOCAL_KEY_MIN_LENGTH) {
     ctx.addIssue({

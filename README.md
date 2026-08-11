@@ -80,9 +80,9 @@ packages/
   api-client/    Типизированный HTTP-клиент (без React), общий для всех фронтов
   ui/            Дизайн-токены и примитивы
 database/        Миграции M000–M031, RLS-политики, сиды, негативные тесты
-infra/           docker-compose локального контура, образ PostgreSQL, Terraform
+infra/           docker-compose локального контура и образ PostgreSQL.
+                 Terraform/Helm production-контура ещё НЕТ — см. TODO.md
 docs/            ADR, аудиты сессий, runbooks, руководство по замене фронтенда
-e2e/             Сквозные сценарии Playwright
 obsidian-notes/  Рабочие заметки проекта: статус фаз, находки, решения
 ```
 
@@ -126,9 +126,14 @@ node scripts/smoke-events.mjs          # события и вебхуки: 30 п
 node scripts/smoke-admin-roles.mjs     # роли и описание API: 25 проверок
 node scripts/smoke-api-client.mjs      # клиент против живого API: 16 проверок
 node scripts/smoke-techdebt.mjs        # закрытый техдолг: 28 проверок
-node scripts/probe-rate-limit.mjs      # обходится ли лимит подделкой cookie
-node scripts/check-definer-privileges.mjs  # EXECUTE у PUBLIC на SECURITY DEFINER
 node scripts/check-service-roles.mjs   # границы сервисных ролей БД: 14 проверок
+node scripts/check-definer-privileges.mjs  # EXECUTE у PUBLIC на SECURITY DEFINER
+node scripts/probe-rate-limit.mjs      # обход лимита подделкой cookie
+node scripts/probe-csrf-binding.mjs    # привязка CSRF-токена к сессии: 5 проверок
+node scripts/probe-role-revocation.mjs # немедленность отзыва прав: 4 проверки
+node scripts/probe-dns-rebinding.mjs   # DNS rebinding в доставке вебхуков: 4 проверки
+node scripts/probe-outbox-lease.mjs    # аренда очереди и повтор рассылки: 6 проверок
+node scripts/probe-event-versions.mjs  # версии событий агрегата: 6 проверок
 
 npm run build -w apps/web-public && npm run preview -w apps/web-public   # витрина на 5173
 node scripts/render-check-web-public.mjs     # витрина в реальном браузере: 13 проверок
@@ -144,7 +149,7 @@ node scripts/render-check-expert.mjs         # кабинет эксперта �
 node scripts/render-check-admin.mjs          # админский кабинет в браузере: 23 проверки
 
 node scripts/nats-init-stream.mjs            # стрим событий LAUNCH (операционная задача)
-node scripts/e2e-full-cycle.mjs              # сквозной сценарий через все роли: 32 проверки
+node scripts/e2e-full-cycle.mjs              # сквозной сценарий через все роли: 35 проверок
 node scripts/dr-restore-check.mjs            # восстановление из копии: 19 проверок
 node scripts/perf-measure.mjs                # замеры на 20 000 проектов (убирает за собой)
 node scripts/security-audit-full.mjs         # ГЛОБАЛЬНЫЙ аудит: все гейты одним прогоном

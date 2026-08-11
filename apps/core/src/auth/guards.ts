@@ -14,6 +14,7 @@ import { errors } from '../common/errors';
 import type { RequestContext } from '../db/unit-of-work';
 import { TokenVerifier } from './token.verifier';
 import { SessionEpochService } from './session-epoch.service';
+import { isCsrfTokenValid } from './csrf';
 
 /**
  * Авторизация: deny by default.
@@ -177,6 +178,15 @@ export class AuthGuard implements CanActivate {
     const b = Buffer.from(fromHeader);
     if (a.length !== b.length || !timingSafeEqual(a, b)) {
       throw errors.forbidden({ stage: 'csrf-mismatch' });
+    }
+
+    // Совпадения cookie и заголовка МАЛО: обе части подконтрольны тому, кто смог
+    // поставить жертве свою cookie (перехваченный поддомен, dns takeover).
+    // Поэтому проверяется ещё и подпись, связывающая токен с владельцем
+    // сессии: изготовить её под чужой аккаунт без ключа сервера нельзя (SEC-12).
+    const subject = request.auth?.subject;
+    if (!subject || !isCsrfTokenValid(subject, fromCookie)) {
+      throw errors.forbidden({ stage: 'csrf-unbound' });
     }
 
     // Дополнительный барьер: браузер сообщает происхождение запроса сам.

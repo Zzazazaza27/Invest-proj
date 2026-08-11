@@ -17,6 +17,9 @@ const BASE_ENV: NodeJS.ProcessEnv = {
   DATABASE_URL: 'postgres://app:pw@localhost:5433/db',
   AUTH_MODE: 'local',
   LOCAL_AUTH_SIGNING_KEY: 'k'.repeat(64),
+  // CSRF-токен подписывается всегда, поэтому ключ обязателен при любой схеме
+  // входа — конфигурация без него не проходит валидацию (SEC-12).
+  CSRF_SIGNING_KEY: 'c'.repeat(64),
   KMS_MODE: 'local',
   KEK_SEARCH_INDEX: Buffer.alloc(32, 7).toString('base64'),
 };
@@ -276,5 +279,23 @@ describe('Проверка токена', () => {
       process.env = saved;
       resetEnvCache();
     }
+  });
+});
+
+describe('Ключ подписи CSRF', () => {
+  it('обязателен при любой схеме входа', () => {
+    // Токен без подписи не связан с сессией: подставленная чужая cookie снова
+    // образовала бы согласованную пару с заголовком (SEC-12).
+    expect(() => loadEnv({ ...BASE_ENV, CSRF_SIGNING_KEY: '' })).toThrow(/CSRF_SIGNING_KEY/);
+    expect(() => loadEnv({ ...BASE_ENV, CSRF_SIGNING_KEY: 'короткий' })).toThrow(
+      /CSRF_SIGNING_KEY/,
+    );
+  });
+
+  it('не подменяется ключом сессий', () => {
+    // Ключ сессий проверяется только при AUTH_MODE=local и в production может
+    // быть пустым — использовать его для CSRF значило бы повторить SEC-01.
+    const env = loadEnv({ ...BASE_ENV, CSRF_SIGNING_KEY: 'c'.repeat(64) });
+    expect(env.CSRF_SIGNING_KEY).not.toBe(env.LOCAL_AUTH_SIGNING_KEY);
   });
 });

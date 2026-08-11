@@ -10,8 +10,7 @@
   "workspaces": [
     "packages/*",
     "apps/*",
-    "database",
-    "e2e"
+    "database"
   ],
   "scripts": {
     "build": "npm run build:packages && npm run build -w packages/ui --if-present && npm run build -w apps/core --if-present && npm run build -w apps/web-public --if-present && npm run build -w apps/admin --if-present && npm run build -w apps/lab --if-present && npm run build -w apps/investor --if-present && npm run build -w apps/expert --if-present",
