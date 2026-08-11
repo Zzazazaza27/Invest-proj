@@ -19,6 +19,12 @@ import { ExpertsService } from './experts/experts.service';
 import { HealthController } from './health/health.controller';
 import { IdentityController } from './identity/identity.controller';
 import { IdentityService } from './identity/identity.service';
+import {
+  IntegrationController,
+  IntegrationTokenController,
+} from './integration/integration.controller';
+import { IntegrationService } from './integration/integration.service';
+import { ServiceAccountsController } from './integration/service-accounts.controller';
 import { InvestmentsController } from './investments/investments.controller';
 import { InvestmentsService } from './investments/investments.service';
 import { KycController } from './kyc/kyc.controller';
@@ -56,6 +62,9 @@ import { S3Service } from './storage/s3.service';
     AnalysisController,
     ExpertsController,
     NotificationsController,
+    IntegrationController,
+    IntegrationTokenController,
+    ServiceAccountsController,
   ],
   providers: [
     Database,
@@ -75,6 +84,7 @@ import { S3Service } from './storage/s3.service';
     AnalysisService,
     ExpertsService,
     NotificationsService,
+    IntegrationService,
     PartitionMaintenanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],

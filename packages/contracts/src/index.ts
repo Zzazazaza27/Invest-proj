@@ -20,6 +20,7 @@ export * from './domain/identity';
 export * from './domain/lab';
 export * from './domain/billing';
 export * from './domain/investments';
+export * from './domain/integration';
 export * from './domain/misc';
 
 export * from './events';

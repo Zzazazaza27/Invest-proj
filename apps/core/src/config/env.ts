@@ -44,6 +44,13 @@ const RawEnvSchema = z.object({
    * тихо выполнятся под правами пользовательской роли.
    */
   DATABASE_URL_APP_INVESTMENTS: z.string().default(''),
+  /**
+   * Подключение интеграционного контура. Роль `app_integration` читает проекции
+   * для внешних систем и владеет вебхуками; роль приложения в эту группу не
+   * входит. Пусто — Integration API недоступен, и это правильное поведение:
+   * отдавать данные наружу под правами пользовательской роли нельзя.
+   */
+  DATABASE_URL_APP_INTEGRATION: z.string().default(''),
   DATABASE_SSL: z.enum(['true', 'false']).default('false'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).default(20),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(120_000).default(15_000),
@@ -80,6 +87,19 @@ const RawEnvSchema = z.object({
 
   NATS_URL: z.string().default(''),
   NATS_STREAM: z.string().default('LAUNCH'),
+
+  // --- Integration API (service-to-service) -------------------------------
+  // Токен сервисного клиента живёт минутами: он не привязан к человеку, его
+  // некому отозвать «выходом из аккаунта», и единственная реальная защита от
+  // утёкшего токена — короткий срок жизни.
+  INTEGRATION_TOKEN_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
+  /**
+   * Заголовок с отпечатком клиентского сертификата, который проставляет
+   * терминирующий mTLS прокси. Пусто — проверка отпечатка не выполняется:
+   * в dev нет mTLS. В production обязателен (проверка ниже), иначе
+   * `client_credentials` остаётся единственным фактором.
+   */
+  INTEGRATION_CLIENT_CERT_HEADER: z.string().default(''),
 
   // --- AI-контур ----------------------------------------------------------
   // Шлюз — единственный выход к моделям (ADR-007). Адрес и токен приходят из
@@ -150,6 +170,21 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
       code: 'custom',
       path: ['LOCAL_AUTH_SIGNING_KEY'],
       message: `минимум ${LOCAL_KEY_MIN_LENGTH} символов`,
+    });
+  }
+
+  // ---- Integration API ----------------------------------------------------
+  // Спецификация требует mTLS + client_credentials (Architect_Launch §6.1).
+  // Секрет клиента может утечь из конфигурации потребителя; сертификат — второй
+  // фактор, и в production он обязателен. Без заголовка от прокси проверить его
+  // нечем, поэтому пустое значение в production — ошибка конфигурации.
+  if (isProd && env.DATABASE_URL_APP_INTEGRATION && !env.INTEGRATION_CLIENT_CERT_HEADER) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['INTEGRATION_CLIENT_CERT_HEADER'],
+      message:
+        'Integration API включён без проверки клиентского сертификата: ' +
+        'в production mTLS обязателен (Architect_Launch §6.1).',
     });
   }
 

@@ -244,15 +244,15 @@ const SERVICE_POOL_MAX = 4;
 /**
  * Откуда берётся строка подключения каждой сервисной роли.
  *
- * Настроен только регулируемый контур: остальные роли появятся вместе со своими
- * фазами, и до тех пор попытка их использовать обязана падать явно, а не
- * молча исполняться под правами приложения.
+ * Настроены регулируемый и интеграционный контуры: остальные роли появятся
+ * вместе со своими фазами, и до тех пор попытка их использовать обязана падать
+ * явно, а не молча исполняться под правами приложения.
  */
 const SERVICE_ROLE_URLS: Record<ServiceRole, (env: ReturnType<typeof getEnv>) => string> = {
   app_investments: (env) => env.DATABASE_URL_APP_INVESTMENTS,
   app_billing: () => '',
   app_notifications: () => '',
-  app_integration: () => '',
+  app_integration: (env) => env.DATABASE_URL_APP_INTEGRATION,
 };
 
 const SERVICE_ROLE_ENV_KEYS: Record<ServiceRole, string> = {

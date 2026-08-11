@@ -101,7 +101,11 @@ async function bootstrap(): Promise<void> {
       const url = request.url;
       const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
 
-      if (url.startsWith('/v1/auth/')) return env.RATE_LIMIT_AUTH_PER_MIN;
+      // Выдача токена — тот же класс, что и вход человека: это проверка
+      // секрета, и перебор по ней ограничивается так же жёстко.
+      if (url.startsWith('/v1/auth/') || url.startsWith('/v1/integration/token')) {
+        return env.RATE_LIMIT_AUTH_PER_MIN;
+      }
 
       // Денежный класс — только МУТАЦИИ: перевод денег и оформление подписки.
       // Чтение своих счетов ограничивать так же жёстко нет смысла, а вреда от

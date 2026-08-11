@@ -437,6 +437,113 @@ describe('RLS: экспертиза и уведомления', () => {
   });
 });
 
+describe('RLS: граница интеграционного контура', () => {
+  /**
+   * Роль `app_integration` обслуживает ВНЕШНИЕ системы. Проверяется не то, что
+   * ей доступно, а то, что ей недоступно: персональные данные, деньги и чужая
+   * переписка. Отказ здесь — это и есть работающая граница.
+   */
+  const forbidden: [string, string][] = [
+    ['персональные данные пользователей', 'SELECT id FROM identity.users LIMIT 1'],
+    ['согласия на публичность', 'SELECT id FROM identity.publication_consents LIMIT 1'],
+    ['верификации KYC', 'SELECT id FROM kyc.kyc_verifications LIMIT 1'],
+    ['начисления вознаграждения', 'SELECT id FROM billing.commission_accruals LIMIT 1'],
+    ['платежи', 'SELECT id FROM billing.payments LIMIT 1'],
+    ['очередь уведомлений', 'SELECT id FROM comms.notifications LIMIT 1'],
+    ['рецензии экспертов', 'SELECT id FROM experts.expert_reviews LIMIT 1'],
+  ];
+
+  for (const [label, query] of forbidden) {
+    it(`интеграционная роль не читает: ${label}`, async () => {
+      await inRollbackTx(async (c) => {
+        await actAs(c, { userId: null, roles: [], dbRole: 'app_integration' });
+        await expect(c.query(query)).rejects.toThrow();
+      });
+    });
+  }
+
+  it('интеграционная роль читает проекции, ради которых существует', async () => {
+    await inRollbackTx(async (c) => {
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_integration' });
+      // Позитивный контроль: отказы выше должны означать «нет прав», а не
+      // «роль не работает вовсе».
+      await expect(c.query('SELECT id FROM lab.projects LIMIT 1')).resolves.toBeDefined();
+      await expect(c.query('SELECT id FROM seasons.seasons LIMIT 1')).resolves.toBeDefined();
+      await expect(
+        c.query('SELECT id FROM scoring.investment_passports LIMIT 1'),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  it('факт согласия доступен интеграции без доступа к самим согласиям', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, founder.id);
+      await c.query(
+        `INSERT INTO identity.publication_consents
+           (id, user_id, project_id, scope, document_version, document_sha256)
+         VALUES ($1, $2, $3, 'top100_public', 'v1', digest('doc','sha256'))`,
+        [uuidv7(), founder.id, projectId],
+      );
+
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_integration' });
+      const { rows } = await c.query(
+        `SELECT scope, granted_at FROM integration.active_publication_consent($1, 'top100_public')`,
+        [projectId],
+      );
+      expect(rows).toHaveLength(1);
+      // Через функцию не достать ни владельца согласия, ни его документ.
+      expect(Object.keys(rows[0] as object).sort()).toEqual(['granted_at', 'scope']);
+    });
+  });
+
+  it('отозванное согласие исчезает из выдачи функции немедленно', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, founder.id);
+      const { rows: inserted } = await c.query<{ id: string }>(
+        `INSERT INTO identity.publication_consents
+           (id, user_id, project_id, scope, document_version, document_sha256)
+         VALUES ($1, $2, $3, 'top100_public', 'v1', digest('doc','sha256'))
+         RETURNING id`,
+        [uuidv7(), founder.id, projectId],
+      );
+      await c.query('UPDATE identity.publication_consents SET revoked_at = now() WHERE id = $1', [
+        inserted[0]!.id,
+      ]);
+
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_integration' });
+      const { rows } = await c.query(
+        `SELECT scope FROM integration.active_publication_consent($1, 'top100_public')`,
+        [projectId],
+      );
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  it('момент выпуска проставляется триггером и не переписывается', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, founder.id);
+      await c.query(`UPDATE lab.projects SET status = 'graduated' WHERE id = $1`, [projectId]);
+      const first = await c.query<{ graduated_at: Date }>(
+        'SELECT graduated_at FROM lab.projects WHERE id = $1',
+        [projectId],
+      );
+      expect(first.rows[0]!.graduated_at).not.toBeNull();
+
+      // Повторное обновление статуса не должно сдвигать точку отсчёта, по
+      // которой внешние системы синхронизируются.
+      await c.query(`UPDATE lab.projects SET status = 'graduated' WHERE id = $1`, [projectId]);
+      const second = await c.query<{ graduated_at: Date }>(
+        'SELECT graduated_at FROM lab.projects WHERE id = $1',
+        [projectId],
+      );
+      expect(second.rows[0]!.graduated_at.getTime()).toBe(first.rows[0]!.graduated_at.getTime());
+    });
+  });
+});
+
 describe('RLS: покрытие манифеста', () => {
   it('каждая доменная таблица имеет ENABLE + FORCE RLS и хотя бы одну политику', async () => {
     const { rows } = await getPool().query<{ table_name: string; reason: string }>(

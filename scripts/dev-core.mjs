@@ -43,6 +43,35 @@ if (existsSync(envFile)) {
   }
 }
 
+/**
+ * Порт занят — значит запущена ПРЕЖНЯЯ сборка.
+ *
+ * Без этой проверки фоновый старт выглядит успешным (pid напечатан), новый
+ * процесс тихо умирает на EADDRINUSE, а прогоны идут против старого кода и
+ * показывают то, чего в текущей сборке нет. Проверено на живом прогоне Ф9:
+ * 25 «падений» подряд объяснялись именно этим. Молчаливый успех здесь опаснее
+ * явного отказа.
+ */
+async function assertPortFree(port) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/v1/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    if (response.ok || response.status > 0) {
+      console.error(
+        `Порт ${port} уже занят запущенным core. Останови прежний процесс, ` +
+          'иначе прогон пойдёт против СТАРОЙ сборки.',
+      );
+      process.exit(1);
+    }
+  } catch {
+    // Соединения нет — порт свободен, это ожидаемый путь.
+  }
+}
+
+const CORE_PORT = Number(env.PORT ?? 4300);
+await assertPortFree(CORE_PORT);
+
 const detached = process.argv.includes('--detached');
 if (detached) {
   const out = openSync(join(ROOT, 'core.log'), 'w');

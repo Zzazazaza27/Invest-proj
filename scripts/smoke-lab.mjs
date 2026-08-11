@@ -309,17 +309,31 @@ let projectId = null;
 }
 
 // -------------------------------------------------------------------- сезон
-// Предусловие: сезон возвращается в исходное состояние прямо в БД. Через API
-// это невозможно намеренно — статусная машина односторонняя, — а без сброса
-// второй запуск скрипта проверял бы уже открытый сезон и был бы зелёным по
-// неверной причине.
+// Предусловие: прогон заводит СВОЙ сезон в статусе draft и делает его текущим.
+//
+// Раньше здесь сбрасывался в draft любой открытый сезон и бралcя тот, что
+// вернёт `/seasons/current`. Это ставило прогон в зависимость от состояния,
+// оставленного другими прогонами: сезон в статусе `review` (его создаёт
+// прогон экспертизы) становится текущим, а открыть приём заявок из `review`
+// статусная машина не даёт — и семь проверок падали не потому, что сломан
+// код. Свой сезон убирает эту связь: односторонность машины по-прежнему
+// проверяется, но на предсказуемом входе.
 await sql(`UPDATE seasons.seasons SET status = 'draft' WHERE status = 'applications_open'`);
 
 let seasonId;
 {
+  const [row] = await sql(
+    `INSERT INTO seasons.seasons (id, number, title, starts_at, ends_at, status)
+     VALUES (public.uuid_generate_v7(),
+             (SELECT coalesce(max(number), 0) + 1 FROM seasons.seasons),
+             'Сезон прогона lab', now() - interval '1 day', now() + interval '60 days', 'draft')
+     RETURNING id`,
+  );
+  seasonId = row.id;
   const { json } = await raw('/v1/seasons/current');
-  seasonId = json?.season?.id ?? null;
-  check('текущий сезон публичен', Boolean(seasonId), json?.season?.status ?? 'нет сезона');
+  // Публичность метронома проверяется отдельно от того, какой сезон текущий:
+  // маршрут обязан отвечать анониму в любом состоянии воронки.
+  check('текущий сезон публичен', Boolean(json?.season?.id), json?.season?.status ?? 'нет сезона');
 }
 {
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {

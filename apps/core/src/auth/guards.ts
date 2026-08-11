@@ -25,9 +25,21 @@ import { TokenVerifier } from './token.verifier';
 export const IS_PUBLIC = 'auth:public';
 export const REQUIRED_ROLES = 'auth:roles';
 export const REQUIRES_STEP_UP = 'auth:step-up';
+export const AUTH_SCHEME = 'auth:scheme';
 
 /** Маршрут доступен без аутентификации. Ставится осознанно и заметно. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
+
+/**
+ * Маршрут обслуживается ДРУГОЙ схемой аутентификации (Integration API,
+ * service-to-service), у которой свой guard и свой формат токена.
+ *
+ * Это не «público»: доступ по-прежнему закрыт, просто проверяет его не
+ * `AuthGuard`. Без этой пометки пользовательский guard попытался бы разобрать
+ * сервисный токен как токен IdP и отклонил бы запрос раньше, чем до него дошёл
+ * профильный guard — что и случилось при первом живом прогоне Ф9.
+ */
+export const ServiceAuth = () => SetMetadata(AUTH_SCHEME, 'service');
 
 /** Требуемые роли. Пустой список недопустим — это была бы тихая дыра. */
 export const Roles = (...roles: Role[]) => SetMetadata(REQUIRED_ROLES, roles);
@@ -58,6 +70,14 @@ export class AuthGuard implements CanActivate {
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const traceId = (request.headers['x-request-id'] as string | undefined) ?? request.id;
+
+    // Маршрут чужой схемы аутентификации: пользовательский контекст здесь не
+    // создаётся вовсе, проверку выполняет профильный guard контроллера.
+    const scheme = this.reflector.getAllAndOverride<string>(AUTH_SCHEME, [
+      context.getHandler(),
+      context.getClass(),
+    ]);
+    if (scheme === 'service') return true;
 
     const isPublic = this.reflector.getAllAndOverride<boolean>(IS_PUBLIC, [
       context.getHandler(),

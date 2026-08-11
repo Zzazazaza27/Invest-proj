@@ -1,0 +1,212 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { createHmac } from 'node:crypto';
+import {
+  CreateListingRefRequestSchema,
+  CreateServiceAccountRequestSchema,
+  CreateWebhookRequestSchema,
+  INTEGRATION_SCOPES,
+  IntegrationTokenRequestSchema,
+} from '@unicorn/contracts';
+import { resetEnvCache } from '../src/config/env';
+import { parseOrThrow } from '../src/common/validation';
+import {
+  decodeIntegrationCursor,
+  encodeIntegrationCursor,
+} from '../src/integration/integration.service';
+import { issueServiceToken, verifyServiceToken } from '../src/integration/service-auth';
+
+/**
+ * Юнит-тесты Integration API.
+ *
+ * Здесь проверяется то, чего живой прогон не покажет: устойчивость токена к
+ * подделке отдельных частей, поведение курсора на испорченном входе и границы
+ * схем запроса. Поведение маршрутов и изоляция ролей БД проверяются прогоном
+ * по запущенному серверу и негативными тестами RLS.
+ */
+
+const BASE_ENV: NodeJS.ProcessEnv = {
+  DATABASE_URL: 'postgres://app:pw@localhost:5433/db',
+  AUTH_MODE: 'local',
+  LOCAL_AUTH_SIGNING_KEY: 'k'.repeat(64),
+  KMS_MODE: 'local',
+  KEK_SEARCH_INDEX: Buffer.alloc(32, 7).toString('base64'),
+};
+
+function withEnv<T>(fn: () => T, extra: NodeJS.ProcessEnv = {}): T {
+  const saved = { ...process.env };
+  resetEnvCache();
+  Object.assign(process.env, BASE_ENV, extra);
+  try {
+    return fn();
+  } finally {
+    process.env = saved;
+    resetEnvCache();
+  }
+}
+
+beforeEach(() => {
+  resetEnvCache();
+});
+
+describe('Токен сервисного клиента', () => {
+  const input = {
+    serviceAccountId: '018f2b7c-0000-7000-8000-000000000001',
+    clientId: 'capital',
+    scopes: ['graduates:read', 'passport:read'],
+  };
+
+  it('выпущенный токен проверяется и несёт свои скоупы', () => {
+    withEnv(() => {
+      const { token, expiresIn } = issueServiceToken(input);
+      const payload = verifyServiceToken(token);
+      expect(payload.sub).toBe(input.serviceAccountId);
+      expect(payload.cid).toBe('capital');
+      expect(payload.scopes).toEqual(input.scopes);
+      expect(expiresIn).toBe(900);
+    });
+  });
+
+  it('подделка полезной нагрузки ломает подпись', () => {
+    withEnv(() => {
+      const { token } = issueServiceToken(input);
+      const [, signature] = token.split('.');
+      const forged = Buffer.from(
+        JSON.stringify({
+          sub: input.serviceAccountId,
+          cid: 'capital',
+          scopes: [...INTEGRATION_SCOPES],
+          exp: Math.floor(Date.now() / 1000) + 900,
+          aud: 'integration',
+        }),
+        'utf8',
+      ).toString('base64url');
+      expect(() => verifyServiceToken(`${forged}.${signature}`)).toThrow();
+    });
+  });
+
+  it('истёкший токен не принимается', () => {
+    withEnv(
+      () => {
+        const { token } = issueServiceToken(input);
+        // Срок нельзя «подправить» в самом токене — он под подписью. Поэтому
+        // проверяем единственным честным способом: сдвигаем часы вперёд.
+        expect(() => verifyServiceToken(token)).not.toThrow();
+        vi.useFakeTimers();
+        try {
+          vi.setSystemTime(new Date(Date.now() + 61_000));
+          expect(() => verifyServiceToken(token)).toThrow();
+        } finally {
+          vi.useRealTimers();
+        }
+      },
+      { INTEGRATION_TOKEN_TTL_SECONDS: '60' },
+    );
+  });
+
+  it('токен пользовательской сессии не проходит как сервисный', () => {
+    withEnv(() => {
+      // Формат совпадает (body.mac), но контекст подписи другой — и это
+      // единственное, что мешает подставить один токен вместо другого.
+      const body = Buffer.from(
+        JSON.stringify({ sub: 'user', roles: ['admin'], exp: Math.floor(Date.now() / 1000) + 900 }),
+        'utf8',
+      ).toString('base64url');
+      const mac = createHmac('sha256', 'k'.repeat(64)).update(body).digest('base64url');
+      expect(() => verifyServiceToken(`${body}.${mac}`)).toThrow();
+    });
+  });
+
+  it('мусор вместо токена отвергается, а не роняет процесс', () => {
+    withEnv(() => {
+      for (const bad of ['', '.', 'abc', 'a.b.c', '!!!.???']) {
+        expect(() => verifyServiceToken(bad)).toThrow();
+      }
+    });
+  });
+});
+
+describe('Курсор Integration API', () => {
+  it('переживает кодирование и декодирование', () => {
+    const payload = { at: '2026-08-11T06:00:00.000Z', id: '018f2b7c-0000-7000-8000-000000000001' };
+    expect(decodeIntegrationCursor(encodeIntegrationCursor(payload))).toEqual(payload);
+  });
+
+  it('подделанный курсор отвергается', () => {
+    const forged = Buffer.from(JSON.stringify({ at: 'вчера', id: 'нет' }), 'utf8').toString(
+      'base64url',
+    );
+    expect(() => decodeIntegrationCursor(forged)).toThrow();
+    expect(() => decodeIntegrationCursor('не-base64url!!')).toThrow();
+  });
+
+  it('курсор без идентификатора не принимается: keyset без него неоднозначен', () => {
+    const partial = Buffer.from(JSON.stringify({ at: '2026-08-11T06:00:00.000Z' })).toString(
+      'base64url',
+    );
+    expect(() => decodeIntegrationCursor(partial)).toThrow();
+  });
+});
+
+describe('Контракты Integration API', () => {
+  it('секрет клиента короче 32 символов не принимается', () => {
+    expect(() =>
+      parseOrThrow(IntegrationTokenRequestSchema, { clientId: 'capital', clientSecret: 'x' }),
+    ).toThrow();
+  });
+
+  it('client_id ограничен строгим набором символов', () => {
+    for (const clientId of ['Capital', 'ca', 'client id', 'клиент', 'a'.repeat(65)]) {
+      expect(
+        CreateServiceAccountRequestSchema.safeParse({
+          name: 'X',
+          clientId,
+          scopes: ['deals:read'],
+          mtlsCertFingerprint: 'a'.repeat(64),
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('аккаунт без скоупов не создаётся: клиент без прав бессмыслен', () => {
+    expect(
+      CreateServiceAccountRequestSchema.safeParse({
+        name: 'X',
+        clientId: 'capital',
+        scopes: [],
+        mtlsCertFingerprint: 'a'.repeat(64),
+      }).success,
+    ).toBe(false);
+  });
+
+  it('вебхук принимает только https', () => {
+    for (const url of ['http://example.org/hook', 'ftp://example.org', 'javascript:alert(1)']) {
+      expect(CreateWebhookRequestSchema.safeParse({ url, subscribedVerbs: ['a.b'] }).success).toBe(
+        false,
+      );
+    }
+    expect(
+      CreateWebhookRequestSchema.safeParse({
+        url: 'https://example.org/hook',
+        subscribedVerbs: ['lab.project.graduated'],
+      }).success,
+    ).toBe(true);
+  });
+
+  it('подписка без единого события не создаётся', () => {
+    expect(
+      CreateWebhookRequestSchema.safeParse({ url: 'https://example.org', subscribedVerbs: [] })
+        .success,
+    ).toBe(false);
+  });
+
+  it('регистрация листинга требует внешнего идентификатора', () => {
+    expect(() =>
+      parseOrThrow(CreateListingRefRequestSchema, {
+        projectId: '018f2b7c-0000-7000-8000-000000000001',
+        remoteSystem: 'unicorn-capital',
+        remoteType: 'listing',
+        remoteId: '',
+      }),
+    ).toThrow();
+  });
+});
