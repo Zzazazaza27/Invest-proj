@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import hmac
+import json
 import logging
 import os
 import re
@@ -36,6 +37,82 @@ from .policy import Policy, PolicyError, ResidencyViolation, load_policy
 LOG = logging.getLogger("ai-gateway")
 
 MAX_BODY_BYTES: Final[int] = 1_000_000
+
+
+class BodyLimitMiddleware:
+    """Предел тела запроса на уровне ASGI.
+
+    Почему не обычная http-мидлварь: она получает уже собранный объект запроса,
+    и подмена его `receive` до обработчика не доходит — тело успевает прочитаться
+    целиком. Здесь оборачивается сам `receive`, поэтому счётчик работает раньше
+    любого разбора.
+
+    Считается ФАКТИЧЕСКИ прочитанное, а не заявленное: при chunked-передаче
+    заголовка `Content-Length` нет вовсе, и проверка по нему пропускала тело
+    любого размера (SEC-13).
+    """
+
+    def __init__(self, app: Any, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        received = 0
+        exceeded = False
+
+        async def counting_receive() -> dict[str, Any]:
+            nonlocal received, exceeded
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    exceeded = True
+                    # Обрываем поток: дальше тело не читается.
+                    return {"type": "http.disconnect"}
+            return message
+
+        # При превышении отдаём СВОЙ ответ целиком, а не правим чужой статус:
+        # обработчик, оставшийся без тела, вернёт собственную ошибку разбора, и
+        # клиент получил бы 413 с чужим телом — сообщение, по которому нельзя
+        # понять причину.
+        answered = False
+
+        async def guarded_send(message: dict[str, Any]) -> None:
+            nonlocal answered
+            if not exceeded:
+                await send(message)
+                return
+            if message["type"] == "http.response.start" and not answered:
+                answered = True
+                body = json.dumps({"code": "body_too_large"}).encode("utf-8")
+                await send(
+                    {
+                        "type": "http.response.start",
+                        "status": 413,
+                        "headers": [
+                            (b"content-type", b"application/json"),
+                            (b"content-length", str(len(body)).encode("ascii")),
+                            (b"x-content-type-options", b"nosniff"),
+                            (b"referrer-policy", b"no-referrer"),
+                        ],
+                    }
+                )
+                await send({"type": "http.response.body", "body": body})
+
+        await self.app(scope, counting_receive, guarded_send)
+
+
+class BodyTooLarge(Exception):
+    """Тело запроса превысило предел при потоковом чтении.
+
+    Отдельное исключение, а не возврат ответа из обработчика чтения: прервать
+    приём нужно ДО того, как тело будет разобрано, и единственный способ
+    сделать это из ASGI-receive — исключение.
+    """
 MAX_MATERIALS: Final[int] = 50
 MAX_TEXT_CHARS: Final[int] = 100_000
 MIN_TOKEN_LENGTH: Final[int] = 32
@@ -122,6 +199,9 @@ def create_app(policy: Policy | None = None) -> FastAPI:
         openapi_url=None,
     )
     app.state.policy = resolved_policy
+    # Предел тела ставится ASGI-мидлварью: она видит поток раньше, чем его
+    # прочитает разбор JSON, и потому ловит запрос без Content-Length.
+    app.add_middleware(BodyLimitMiddleware, max_bytes=MAX_BODY_BYTES)
 
     async def authenticate(authorization: str = Header(default="")) -> None:
         prefix = "Bearer "
@@ -135,6 +215,7 @@ def create_app(policy: Policy | None = None) -> FastAPI:
         declared = request.headers.get("content-length")
         if declared is not None and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
             return JSONResponse(status_code=413, content={"code": "body_too_large"})
+
         response = await call_next(request)
         # Ответ шлюза не должен раскрывать стек: заголовок server ставит uvicorn.
         response.headers["X-Content-Type-Options"] = "nosniff"

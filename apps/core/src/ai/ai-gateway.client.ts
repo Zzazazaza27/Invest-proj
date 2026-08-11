@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
+import { z } from 'zod';
 
 /**
  * Клиент AI-шлюза.
@@ -27,6 +28,73 @@ export interface AnalysisInput {
   stage: string;
   materials: { type: string; text?: string | null; url?: string | null }[];
 }
+
+/**
+ * Схема ответа шлюза.
+ *
+ * Ответ ВНЕШНЕЙ системы разбирается, а не приводится к типу: приведение — это
+ * обещание компилятора, а не проверка данных. Скомпрометированный или просто
+ * сломанный шлюз возвращал бы что угодно, и это «что угодно» сохранялось в БД
+ * и публиковалось как инвестиционный паспорт (CODE-08).
+ *
+ * Ограничения на длины и количества здесь не косметика: без них ответ на
+ * сотни мегабайт проходит разбор и укладывается в таблицу.
+ */
+export const AnalysisResultSchema = z.object({
+  provider: z.string().max(120),
+  isLlm: z.boolean(),
+  jurisdiction: z.string().max(40),
+  dataClass: z.string().max(40),
+  modelVersion: z.string().max(120),
+  passport: z.record(z.string(), z.unknown()),
+  facts: z
+    .array(
+      z.object({
+        category: z.string().max(120),
+        key: z.string().max(200),
+        value: z.record(z.string(), z.unknown()),
+        confidence: z.number().min(0).max(1),
+        sourceType: z.string().max(60),
+        sourceRef: z.string().max(500),
+      }),
+    )
+    .max(500),
+  scores: z
+    .array(
+      z.object({
+        axis: z.string().max(60),
+        value: z.number().min(0).max(100),
+        confidenceLow: z.number().min(0).max(100),
+        confidenceHigh: z.number().min(0).max(100),
+        explanation: z.string().max(4000),
+        sources: z.array(z.string().max(500)).max(50),
+      }),
+    )
+    .max(50),
+  irs: z.object({ value: z.number().min(0).max(100) }),
+  readiness: z
+    .array(
+      z.object({
+        dimension: z.string().max(60),
+        level: z.string().max(20),
+        recommendations: z.array(z.string().max(2000)).max(50),
+      }),
+    )
+    .max(50),
+  roadmap: z
+    .array(
+      z.object({
+        title: z.string().max(300),
+        description: z.string().max(4000),
+        dimension: z.string().max(60),
+        priority: z.number().int(),
+        orderIndex: z.number().int(),
+      }),
+    )
+    .max(200),
+  injectionMarkers: z.number().int().nonnegative(),
+  durationMs: z.number().nonnegative(),
+});
 
 export interface AnalysisResult {
   provider: string;
@@ -63,6 +131,9 @@ export interface AnalysisResult {
   injectionMarkers: number;
   durationMs: number;
 }
+
+/** Предел ответа шлюза. Больше — это не анализ проекта, а попытка нагрузить. */
+const MAX_RESPONSE_CHARS = 2_000_000;
 
 @Injectable()
 export class AiGatewayClient {
@@ -119,7 +190,26 @@ export class AiGatewayClient {
       throw errors.upstreamUnavailable('ai_gateway');
     }
 
-    const result = (await response.json()) as AnalysisResult;
+    // Размер ответа ограничен до разбора: `response.json()` на потоке в
+    // гигабайт съест память раньше, чем схема успеет что-либо проверить.
+    const raw = await response.text();
+    if (raw.length > MAX_RESPONSE_CHARS) {
+      this.logger.error({ msg: 'ответ AI-шлюза превысил предел', traceId, size: raw.length });
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+
+    const parsed = AnalysisResultSchema.safeParse(JSON.parse(raw));
+    if (!parsed.success) {
+      // Несоответствие схеме — отказ, а не «сохраним что дали»: результат
+      // анализа публикуется и становится инвестиционным паспортом.
+      this.logger.error({
+        msg: 'ответ AI-шлюза не соответствует схеме',
+        traceId,
+        issues: parsed.error.issues.slice(0, 3).map((issue) => issue.path.join('.')),
+      });
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+    const result = parsed.data as AnalysisResult;
     if (result.injectionMarkers > 0) {
       // Поведение шлюза от этого не изменилось — запись нужна, чтобы попытка
       // была видна в журнале приложения, а не только в журнале шлюза.

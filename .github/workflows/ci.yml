@@ -209,4 +209,14 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
+      # Собираются ВСЕ приложения: прежде команда включала только ядро, витрину
+      # и админку, поэтому поломка трёх кабинетов или пакета ui проходила
+      # зелёный CI (CODE-03).
       - run: npm run build
+
+      - name: Тесты AI-шлюза (Python)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r apps/ai-gateway/requirements.txt
+          pip install pytest
+          cd apps/ai-gateway && python -m pytest tests/ -q
