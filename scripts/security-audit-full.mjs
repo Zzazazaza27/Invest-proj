@@ -93,6 +93,7 @@ run(
   },
 );
 run('сетевая безопасность', 'node', ['scripts/network-audit.mjs']);
+run('границы сервисных ролей БД', 'node', ['scripts/check-service-roles.mjs']);
 
 console.warn('\n--- Живые прогоны контуров ---');
 const LIVE = [
@@ -104,6 +105,7 @@ const LIVE = [
   ['Integration API', 'scripts/smoke-integration.mjs'],
   ['события и вебхуки', 'scripts/smoke-events.mjs'],
   ['роли и описание API', 'scripts/smoke-admin-roles.mjs'],
+  ['закрытый техдолг', 'scripts/smoke-techdebt.mjs'],
   ['AI-контур', 'scripts/smoke-ai.mjs'],
   ['сквозной сценарий платформы', 'scripts/e2e-full-cycle.mjs'],
 ];

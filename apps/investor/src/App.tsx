@@ -28,6 +28,24 @@ import { VerificationPage } from './pages/VerificationPage';
  */
 type Tab = 'catalog' | 'subscription' | 'verification' | 'offers';
 
+/**
+ * Короткое имя входа дополняется внутренним доменом.
+ *
+ * Тестовые и служебные учётные записи заводятся как `имя@unicorn.local`, но
+ * человек вводит просто `имя`. Отдельного поля «логин» в схеме нет и заводить
+ * его ради удобства входа не стоит, поэтому подстановка живёт на границе
+ * интерфейса — сервер по-прежнему получает адрес и о ней ничего не знает.
+ *
+ * То же правило действует в админке: расхождение между кабинетами выглядело бы
+ * как «в одном вход работает, в другом нет».
+ */
+const INTERNAL_DOMAIN = 'unicorn.local';
+
+function toAddress(input: string): string {
+  const value = input.trim();
+  return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
+}
+
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [checking, setChecking] = useState(true);
@@ -174,7 +192,7 @@ function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
           setBusy(true);
           setError(null);
           try {
-            const session = await api.auth.login({ email, password });
+            const session = await api.auth.login({ email: toAddress(email), password });
             setCsrf(session.csrfToken ?? null);
             onLoggedIn();
           } catch (caught) {
@@ -190,10 +208,15 @@ function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
       >
         <Stack>
           <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Вход</h1>
-          <Field label="Электронная почта" htmlFor="email">
+          <Field
+            label="Почта или логин"
+            htmlFor="email"
+            hint="Короткое имя дополняется доменом автоматически"
+          >
             <Input
               id="email"
-              type="email"
+              // Не type="email": короткое имя без @ браузер отверг бы до отправки.
+              type="text"
               autoComplete="username"
               required
               value={email}
