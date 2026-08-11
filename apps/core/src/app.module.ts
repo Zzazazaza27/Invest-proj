@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AdminController } from './admin/admin.controller';
 import { AdminService } from './admin/admin.service';
+import { RolesController } from './admin/roles.controller';
+import { RolesService } from './admin/roles.service';
 import { AuthGuard } from './auth/guards';
 import { TokenVerifier } from './auth/token.verifier';
 import { AiGatewayClient } from './ai/ai-gateway.client';
@@ -21,6 +23,7 @@ import { WebhooksService } from './events/webhooks.service';
 import { ExpertsController } from './experts/experts.controller';
 import { ExpertsService } from './experts/experts.service';
 import { HealthController } from './health/health.controller';
+import { OpenApiController } from './health/openapi.controller';
 import { IdentityController } from './identity/identity.controller';
 import { IdentityService } from './identity/identity.service';
 import {
@@ -69,6 +72,8 @@ import { S3Service } from './storage/s3.service';
     IntegrationController,
     IntegrationTokenController,
     ServiceAccountsController,
+    RolesController,
+    OpenApiController,
   ],
   providers: [
     Database,
@@ -83,6 +88,7 @@ import { S3Service } from './storage/s3.service';
     SeasonsService,
     BillingService,
     AdminService,
+    RolesService,
     InvestmentsService,
     AiGatewayClient,
     AnalysisService,
