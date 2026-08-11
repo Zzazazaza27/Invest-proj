@@ -125,6 +125,9 @@ node scripts/render-check-lab.mjs            # кабинет основател
 npm run build -w apps/investor && npm run preview -w apps/investor        # кабинет инвестора на 5176
 node scripts/render-check-investor.mjs       # кабинет инвестора в браузере: 13 проверок
 
+npm run build -w apps/expert && npm run preview -w apps/expert            # кабинет эксперта на 5177
+node scripts/render-check-expert.mjs         # кабинет эксперта в браузере: 16 проверок
+
 node scripts/dev-ai-gateway.mjs --detached   # AI-шлюз на 127.0.0.1:8100
 node scripts/smoke-ai.mjs                    # AI-контур: 40 проверок
 ```

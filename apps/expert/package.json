@@ -1,0 +1,27 @@
+{
+  "name": "@unicorn/expert",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Кабинет эксперта: назначения, рецензии, конфликты интересов",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "preview": "vite preview --port 5177",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@unicorn/api-client": "*",
+    "@unicorn/contracts": "*",
+    "@unicorn/ui": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^6.0.5",
+    "typescript": "^5.9.3",
+    "vite": "^8.2.1"
+  }
+}

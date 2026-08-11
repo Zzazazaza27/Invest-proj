@@ -335,15 +335,35 @@ export class UnicornApi {
 
   // -------------------------------------------------------------- эксперты
   readonly experts = {
+    /** Свои назначения. Конверт `{ items }`, как и у остальных списков. */
     assignments: () =>
-      this.http.request({ path: '/experts/assignments', schema: z.array(ExpertAssignmentSchema) }),
+      this.http
+        .request({
+          path: '/experts/assignments',
+          schema: z.object({ items: z.array(ExpertAssignmentSchema) }),
+        })
+        .then((response) => response.items),
 
-    submitReview: (body: SubmitReviewRequest) =>
+    /**
+     * Ответ на назначение. Эксперт принимает его или отказывается — отказ
+     * законный исход: рецензент, который не может оценить проект честно,
+     * обязан иметь способ это сказать.
+     */
+    decideAssignment: (assignmentId: string, decision: 'accepted' | 'declined') =>
       this.http.request({
         method: 'POST',
-        path: `/experts/assignments/${body.assignmentId}/review`,
-        body,
+        path: `/experts/assignments/${assignmentId}/decision`,
+        body: { decision },
+        schema: ExpertAssignmentSchema,
       }),
+
+    /**
+     * Рецензия. Маршрут — `POST /experts/reviews` с идентификатором назначения
+     * в теле; прежний путь `/assignments/:id/review` на сервере не
+     * существовал, и метод падал бы при первом же вызове.
+     */
+    submitReview: (body: SubmitReviewRequest) =>
+      this.http.request({ method: 'POST', path: '/experts/reviews', body }),
 
     declareConflict: (body: { projectId: string; description: string }) =>
       this.http.request({ method: 'POST', path: '/experts/conflicts', body }),
