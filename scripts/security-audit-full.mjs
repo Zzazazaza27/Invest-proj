@@ -21,7 +21,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const results = [];
 
-function run(name, command, args, { optional = false } = {}) {
+function run(name, command, args, { optional = false, retried = false } = {}) {
   const started = Date.now();
   const result = spawnSync(command, args, {
     cwd: ROOT,
@@ -51,6 +51,18 @@ function run(name, command, args, { optional = false } = {}) {
     output.match(/no leaks found/)?.[0] ??
     output.match(/Tests\s+\d+ passed[^\n]*/g)?.join(' · ') ??
     (ok ? 'без замечаний' : 'см. вывод');
+
+  // Отказ по лимиту частоты — не дефект прогона, а работающая защита: класс
+  // `auth` ограничен 30 запросами в минуту, и прогон, создающий десяток
+  // учётных записей, в него упирается, если предыдущий прогон уже израсходовал
+  // окно. Единственная повторная попытка после честного ожидания — это
+  // соблюдение ограничения, а не его обход. Ослаблять лимит ради зелёного
+  // прогона нельзя: он защищает настоящих пользователей.
+  if (!ok && !optional && /rate_limited|429/.test(output) && !retried) {
+    console.warn(`      … отказ по лимиту частоты, ждём 65с и повторяем один раз`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 65_000);
+    return run(name, command, args, { optional, retried: true });
+  }
 
   results.push({ name, ok, optional, seconds, summary: summary.trim().slice(0, 160) });
   console.warn(
@@ -132,6 +144,14 @@ pause(62, 'лимит класса auth');
 run('рендер: кабинет эксперта', 'node', ['scripts/render-check-expert.mjs']);
 pause(62, 'лимит класса auth');
 run('рендер: админский кабинет', 'node', ['scripts/render-check-admin.mjs']);
+
+console.warn('\n--- Стенд ---');
+// Стенд разворачивается перед проверкой: она входит каждой ролью и смотрит,
+// что кабинет показывает именно её данные. Развёрнутый стенд и работающий —
+// разные утверждения, и проверяется второе.
+run('стенд: учётные записи и данные', 'node', ['scripts/dev-stand.mjs']);
+pause(62, 'лимит класса auth');
+run('стенд: вход по ролям', 'node', ['scripts/check-stand.mjs']);
 
 console.warn('\n--- Восстановление ---');
 run('восстановление из копии', 'node', ['scripts/dr-restore-check.mjs']);

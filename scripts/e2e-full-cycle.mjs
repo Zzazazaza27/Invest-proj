@@ -228,7 +228,12 @@ let projectId;
 
 // ------------------------------------------------------------- экспертиза
 console.warn('\n[3] Экспертиза');
-await sql(`UPDATE lab.projects SET status = 'expert_review' WHERE id = $1`, [projectId]);
+// Этап двигается по одному шагу — так же, как это делает платформа: воронка
+// не позволяет перепрыгнуть AI-оценку (M025). Раньше фикстура прыгала сразу в
+// экспертизу и тем самым проверяла состояние, недостижимое в бою.
+for (const stage of ['ai_review', 'expert_review']) {
+  await sql(`UPDATE lab.projects SET status = $2 WHERE id = $1`, [projectId, stage]);
+}
 const dueAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
 {
   const { response, json } = await organizer.client.call('/v1/experts/assignments', {
@@ -337,7 +342,12 @@ await sql(
    VALUES (public.uuid_generate_v7(), $1, 77.50)`,
   [projectId],
 );
-await sql(`UPDATE lab.projects SET status = 'graduated' WHERE id = $1`, [projectId]);
+// Выпуск — тоже по шагам: буткемп → финал → выпуск. Это и есть путь проекта
+// по сезону, и сквозной сценарий обязан проходить его целиком, а не подставлять
+// конечное состояние.
+for (const stage of ['bootcamp', 'finalist', 'graduated']) {
+  await sql(`UPDATE lab.projects SET status = $2 WHERE id = $1`, [projectId, stage]);
+}
 {
   const [row] = await sql('SELECT graduated_at FROM lab.projects WHERE id = $1', [projectId]);
   check('момент выпуска проставлен триггером', row.graduated_at !== null);

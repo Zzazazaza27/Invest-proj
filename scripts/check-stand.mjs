@@ -98,9 +98,15 @@ console.warn('--- публичная витрина ---');
   const context = await browser.newContext();
   const page = await context.newPage();
   await page.goto('http://127.0.0.1:5173/', { waitUntil: 'networkidle', timeout: 30_000 });
+  // Каталог отсортирован по времени публикации, и его наполняют другие прогоны:
+  // ждать проект стенда на первой странице — значит проверять, кто публиковался
+  // последним. Поэтому ищем его поиском, как это сделал бы человек.
+  await page.fill('#catalog-search', 'Стенд демонстрационный');
+  await page.getByRole('button', { name: 'Найти' }).click();
+  await page.waitForTimeout(2500);
   const text = await page.locator('body').innerText();
   check(
-    'витрина показывает проект стенда без входа',
+    'витрина находит проект стенда без входа',
     text.includes('Стенд · демонстрационный проект'),
     text.replace(/\s+/g, ' ').slice(0, 90),
   );
@@ -116,7 +122,20 @@ console.warn('\n--- кабинет инвестора (stand-investor) ---');
     'Каталог',
   );
   check('вход выполнен', text.includes('Кабинет инвестора') && !text.includes('Вход'), '');
-  check('в каталоге виден проект стенда', text.includes('Стенд · демонстрационный проект'));
+  // В кабинете инвестора — тот же довод: каталог общий, и первая страница
+  // принадлежит тому, кто публиковался последним.
+  await page.fill('#catalog-search', 'Стенд демонстрационный').catch(() => undefined);
+  await page
+    .getByRole('button', { name: 'Найти' })
+    .click()
+    .catch(() => undefined);
+  await page.waitForTimeout(2500);
+  const catalogText = await page.locator('main').innerText();
+  check(
+    'в каталоге виден проект стенда',
+    catalogText.includes('Стенд · демонстрационный проект'),
+    catalogText.replace(/\s+/g, ' ').slice(0, 90),
+  );
 
   await page.getByRole('button', { name: 'Подписка' }).click();
   await page.waitForTimeout(2000);
