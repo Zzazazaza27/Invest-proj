@@ -13,6 +13,7 @@ import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 import type { RequestContext } from '../db/unit-of-work';
 import { TokenVerifier } from './token.verifier';
+import { SessionEpochService } from './session-epoch.service';
 
 /**
  * Авторизация: deny by default.
@@ -65,6 +66,7 @@ export class AuthGuard implements CanActivate {
   constructor(
     private readonly reflector: Reflector,
     private readonly verifier: TokenVerifier,
+    private readonly epochs: SessionEpochService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -95,7 +97,25 @@ export class AuthGuard implements CanActivate {
       throw errors.unauthenticated({ stage: 'no-token' });
     }
 
-    const verified = await this.verifier.verify(token);
+    // На ПУБЛИЧНОМ маршруте негодный токен означает «аноним», а не отказ.
+    // Иначе протухшая или отозванная cookie делает невозможным сам вход:
+    // запрос к /auth/login отклонялся бы раньше, чем дошёл до проверки пароля,
+    // и пользователь оставался бы заперт снаружи до ручной очистки cookie.
+    // Поймано прогоном отзыва прав: после отзыва повторный вход давал 401.
+    let verified;
+    try {
+      verified = await this.verifier.verify(token);
+      if (!(await this.epochs.isTokenValid(verified.subject, verified.issuedAt))) {
+        // Токен, выпущенный до сдвига рубежа, недействителен: именно так снятая
+        // роль перестаёт действовать сразу, а не по истечении часа (SEC-08).
+        throw errors.unauthenticated({ stage: 'session-revoked' });
+      }
+    } catch (error) {
+      if (!isPublic) throw error;
+      request.ctx = { userId: null, roles: [], traceId };
+      return true;
+    }
+
     request.auth = { subject: verified.subject, roles: verified.roles, acr: verified.acr };
     request.ctx = { userId: verified.subject, roles: verified.roles, traceId };
 

@@ -18,6 +18,8 @@ import { errors } from '../common/errors';
 export interface VerifiedToken {
   subject: string;
   roles: string[];
+  /** Момент выпуска (секунды). Нужен рубежу действительности сессий (M035). */
+  issuedAt: number | null;
   /** Уровень аутентификации. 'mfa' требуется для денежных и регулируемых операций. */
   acr: string | null;
   expiresAt: number;
@@ -105,7 +107,8 @@ export class TokenVerifier {
       ? rawRoles.filter((r): r is string => typeof r === 'string')
       : [];
     const acr = typeof payload.acr === 'string' ? payload.acr : null;
-    return { subject, roles, acr, expiresAt: (payload.exp ?? 0) * 1000 };
+    const issuedAt = typeof payload.iat === 'number' ? payload.iat : null;
+    return { subject, roles, acr, issuedAt, expiresAt: (payload.exp ?? 0) * 1000 };
   }
 
   /** Выпуск токена локального адаптера. Существует только вне production. */

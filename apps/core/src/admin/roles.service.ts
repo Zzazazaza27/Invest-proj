@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { type Role } from '@unicorn/contracts';
 import { AuditRepository } from '../audit/audit.repository';
+import { SessionEpochService } from '../auth/session-epoch.service';
 import { errors } from '../common/errors';
 import { Database, type RequestContext } from '../db/unit-of-work';
 
@@ -27,6 +28,7 @@ export class RolesService {
   constructor(
     private readonly db: Database,
     private readonly audit: AuditRepository,
+    private readonly epochs: SessionEpochService,
   ) {}
 
   async list(ctx: RequestContext, userId: string): Promise<GrantedRole[]> {
@@ -65,6 +67,11 @@ export class RolesService {
         }
         throw error;
       }
+
+      // Права изменились — все ранее выданные токены пользователя перестают
+      // действовать. Без этого снятая роль оставалась бы в токене до его
+      // истечения, а выдача роли требовала бы перевхода (SEC-08).
+      await this.epochs.invalidate(tx, userId);
 
       await this.audit.record(tx, {
         verb: 'identity.role.granted',
@@ -110,6 +117,11 @@ export class RolesService {
         [userId, role],
       );
       if (rowCount === 0) throw errors.notFound({ subject: 'role' });
+
+      // Права изменились — все ранее выданные токены пользователя перестают
+      // действовать. Без этого снятая роль оставалась бы в токене до его
+      // истечения, а выдача роли требовала бы перевхода (SEC-08).
+      await this.epochs.invalidate(tx, userId);
 
       await this.audit.record(tx, {
         verb: 'identity.role.revoked',

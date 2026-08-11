@@ -116,6 +116,8 @@ run('обход лимита подделкой cookie', 'node', ['scripts/probe
 run('DNS rebinding в доставке вебхуков', 'node', ['scripts/probe-dns-rebinding.mjs']);
 run('аренда очереди и повтор рассылки', 'node', ['scripts/probe-outbox-lease.mjs']);
 run('версии событий агрегата', 'node', ['scripts/probe-event-versions.mjs']);
+pause(62, 'лимит класса auth перед прогоном отзыва прав');
+run('немедленный отзыв прав', 'node', ['scripts/probe-role-revocation.mjs']);
 
 console.warn('\n--- Живые прогоны контуров ---');
 const LIVE = [
