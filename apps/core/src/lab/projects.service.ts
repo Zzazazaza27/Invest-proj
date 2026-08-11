@@ -297,6 +297,34 @@ export class ProjectsService {
     });
   }
 
+  /**
+   * История поданных версий заявки.
+   *
+   * Отдаются только метаданные: сам снимок (`snapshot_jsonb`) — это заявка
+   * целиком, и её содержимое читается через карточку проекта, где действуют
+   * собственные правила видимости. Кто увидит список, решает RLS: владелец,
+   * админ, организатор и назначенный рецензент (M025).
+   */
+  async listVersions(ctx: RequestContext, projectId: string): Promise<ProjectVersion[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<VersionRow>(
+        `SELECT id, project_id, season_id, version_no, submitted_at
+           FROM lab.project_versions
+          WHERE project_id = $1
+          ORDER BY version_no DESC
+          LIMIT 100`,
+        [projectId],
+      );
+      return rows.map((row) => ({
+        id: row.id,
+        projectId: row.project_id,
+        seasonId: row.season_id,
+        versionNo: row.version_no,
+        submittedAt: row.submitted_at.toISOString(),
+      }));
+    });
+  }
+
   // ------------------------------------------------------------------ материалы
 
   async listMaterials(ctx: RequestContext, projectId: string): Promise<ProjectMaterial[]> {

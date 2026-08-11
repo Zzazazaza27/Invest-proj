@@ -1,31 +1,38 @@
 import {
   AnalysisRunSchema,
   AuthSessionSchema,
+  CommissionAccrualSchema,
   CurrentUserSchema,
   ExpertAssignmentSchema,
   HealthSchema,
   InvestmentAgreementSchema,
   InvestmentOfferSchema,
   InvestmentPassportSchema,
-  MentorAnswerSchema,
+  InvoiceSchema,
   NotificationPreferenceSchema,
   NotificationSchema,
   PaymentSchema,
   PricingSchema,
   ProjectFullSchema,
+  ProjectMaterialSchema,
+  ProjectStageChangeSchema,
   ProjectSummarySchema,
   ProjectVersionSchema,
   ProjectTeaserSchema,
   RatingEntrySchema,
   ReadinessEntrySchema,
   RoadmapSchema,
+  SeasonFunnelConfigSchema,
   SeasonSchema,
+  SeasonStageOccupancySchema,
   SubscriptionSchema,
   TaxonomyNodeSchema,
+  UploadTicketSchema,
   UserDeviceSchema,
   pageResponseSchema,
   uuidv7,
   type AcceptOfferRequest,
+  type AdvanceProjectStageRequest,
   type AddProductLink,
   type CatalogFilter,
   type CreateEntityRequest,
@@ -34,12 +41,12 @@ import {
   type CreateProjectRequest,
   type CreateSubscriptionRequest,
   type LoginRequest,
-  type MentorQuestion,
   type NotificationPreference,
   type PublicationConsentRequest,
   type RegisterDeviceRequest,
   type RegisterRequest,
   type RequestUpload,
+  type SeasonFunnelConfig,
   type SignAgreementRequest,
   type SubmitReviewRequest,
   type UpdateProjectRequest,
@@ -102,6 +109,36 @@ export class UnicornApi {
         schema: z.object({ items: z.array(RatingEntrySchema) }),
       })
       .then((response) => response.items);
+
+  /**
+   * Отбор внутри сезона — действия организатора: конфигурация воронки и
+   * перевод проектов по этапам.
+   */
+  readonly seasons = {
+    funnel: (seasonId: string) =>
+      this.http
+        .request({
+          path: `/seasons/${seasonId}/funnel`,
+          schema: z.object({ items: z.array(SeasonStageOccupancySchema) }),
+        })
+        .then((response) => response.items),
+
+    setFunnel: (seasonId: string, body: SeasonFunnelConfig) =>
+      this.http.request({
+        method: 'POST',
+        path: `/seasons/${seasonId}/funnel`,
+        body,
+        schema: SeasonFunnelConfigSchema,
+      }),
+
+    advanceStage: (seasonId: string, projectId: string, body: AdvanceProjectStageRequest) =>
+      this.http.request({
+        method: 'POST',
+        path: `/seasons/${seasonId}/projects/${projectId}/stage`,
+        body,
+        schema: ProjectStageChangeSchema,
+      }),
+  };
 
   /** Публичный каталог тизеров. Полные карточки — только по подписке. */
   readonly catalog = (filter: CatalogFilter & { cursor?: string; limit?: number } = {}) =>
@@ -191,11 +228,42 @@ export class UnicornApi {
     unpublish: (id: string) =>
       this.http.request({ method: 'DELETE', path: `/projects/${id}/listing` }),
 
-    requestUpload: (body: RequestUpload) =>
-      this.http.request({ method: 'POST', path: '/projects/materials/upload', body }),
+    /** Материалы проекта. Видимость решает сервер: владелец, админ, рецензент. */
+    materials: (id: string) =>
+      this.http
+        .request({
+          path: `/projects/${id}/materials`,
+          schema: z.object({ items: z.array(ProjectMaterialSchema) }),
+        })
+        .then((response) => response.items),
 
-    addProductLink: (body: AddProductLink) =>
-      this.http.request({ method: 'POST', path: '/projects/materials/link', body }),
+    /** История подач заявки — версии-снимки, на которые ссылается экспертиза. */
+    versions: (id: string) =>
+      this.http
+        .request({
+          path: `/projects/${id}/versions`,
+          schema: z.object({ items: z.array(ProjectVersionSchema) }),
+        })
+        .then((response) => response.items),
+
+    // Адресат берётся из пути: маршруты сервера — `/projects/:id/materials/*`.
+    // Клиент до этого звал `/projects/materials/upload`, где `materials`
+    // подставлялось в `:id` и запрос падал на разборе UUID.
+    requestUpload: (id: string, body: RequestUpload) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/materials/upload`,
+        body,
+        schema: UploadTicketSchema,
+      }),
+
+    addProductLink: (id: string, body: AddProductLink) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/materials/link`,
+        body,
+        schema: ProjectMaterialSchema,
+      }),
 
     /**
      * Подача заявки в сезон. Создаёт неизменяемый снимок версии: именно он, а
@@ -236,13 +304,9 @@ export class UnicornApi {
         schema: InvestmentPassportSchema,
       }),
 
-    askMentor: (body: MentorQuestion) =>
-      this.http.request({
-        method: 'POST',
-        path: '/projects/mentor',
-        body,
-        schema: MentorAnswerSchema,
-      }),
+    // askMentor удалён: маршрута `/projects/mentor` на сервере нет. AI Mentor
+    // выключен до появления eval-гейта (TODO.md), а метод, компилирующийся, но
+    // падающий при вызове, обещает контракт, которого не существует.
   };
 
   // -------------------------------------------------------------- биллинг
@@ -268,11 +332,23 @@ export class UnicornApi {
     cancel: (id: string) =>
       this.http.request({ method: 'POST', path: `/billing/subscriptions/${id}/cancel` }),
 
-    // Счета и начисления сюда ещё не вынесены: маршрутов /billing/invoices и
-    // /billing/accruals на сервере нет (проверено — 404). Объявлять здесь
-    // метод, которого не существует, значит обещать контракт, которого нет:
-    // клиент компилируется, а падает только в проде. Появятся вместе с
-    // выставлением счетов (TODO, гейт A).
+    /**
+     * Свои счета. Пустой список законен: счета выставляются вместе с PDF, а
+     * генератора PDF пока нет — маршрут при этом настоящий, не 404.
+     */
+    invoices: () =>
+      this.http
+        .request({ path: '/billing/invoices', schema: z.object({ items: z.array(InvoiceSchema) }) })
+        .then((response) => response.items),
+
+    /** Начисления вознаграждения по своим сделкам. */
+    accruals: () =>
+      this.http
+        .request({
+          path: '/billing/accruals',
+          schema: z.object({ items: z.array(CommissionAccrualSchema) }),
+        })
+        .then((response) => response.items),
 
     pay: (body: CreatePaymentRequest) =>
       this.http.request({

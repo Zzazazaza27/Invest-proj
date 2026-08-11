@@ -64,6 +64,14 @@ export class ProjectsController {
     return ProjectVersionSchema.parse(await this.projects.submit(ctx, id));
   }
 
+  /** История подач. Видимость определяет RLS, не роль в декораторе. */
+  @Get(':id/versions')
+  async listVersions(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const items = await this.projects.listVersions(ctx, id);
+    return { items: items.map((v) => ProjectVersionSchema.parse(v)) };
+  }
+
   // ------------------------------------------------------------------ материалы
 
   @Get(':id/materials')

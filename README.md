@@ -79,7 +79,7 @@ packages/
   contracts/     zod-схемы DTO и событий — единственный источник правды контрактов
   api-client/    Типизированный HTTP-клиент (без React), общий для всех фронтов
   ui/            Дизайн-токены и примитивы
-database/        Миграции M000–M024, RLS-политики, сиды, негативные тесты
+database/        Миграции M000–M031, RLS-политики, сиды, негативные тесты
 infra/           docker-compose локального контура, образ PostgreSQL, Terraform
 docs/            ADR, аудиты сессий, runbooks, руководство по замене фронтенда
 e2e/             Сквозные сценарии Playwright
@@ -96,7 +96,7 @@ obsidian-notes/  Рабочие заметки проекта: статус фа
 cp .env.example .env          # заполнить CHANGE_ME
 npm install
 npm run infra:up              # PostgreSQL 16 + Redis + NATS JetStream + MinIO (+ бакет)
-npm run db:migrate            # миграции M000–M024
+npm run db:migrate            # миграции M000–M031
 npm run db:seed               # сезон, таксономия, тарифы, fee schedule, шаблоны
 npm run bootstrap:roles -w database   # логин-роли БД из переменных окружения
 ```
@@ -121,6 +121,8 @@ node scripts/smoke-integration.mjs     # Integration API: 50 проверок
 node scripts/smoke-events.mjs          # события и вебхуки: 30 проверок (нужен NATS)
 node scripts/smoke-admin-roles.mjs     # роли и описание API: 25 проверок
 node scripts/smoke-api-client.mjs      # клиент против живого API: 16 проверок
+node scripts/smoke-techdebt.mjs        # закрытый техдолг: 28 проверок
+node scripts/check-service-roles.mjs   # границы сервисных ролей БД: 14 проверок
 
 npm run build -w apps/web-public && npm run preview -w apps/web-public   # витрина на 5173
 node scripts/render-check-web-public.mjs     # витрина в реальном браузере: 13 проверок
@@ -138,6 +140,7 @@ node scripts/render-check-admin.mjs          # админский кабинет
 node scripts/nats-init-stream.mjs            # стрим событий LAUNCH (операционная задача)
 node scripts/e2e-full-cycle.mjs              # сквозной сценарий через все роли: 32 проверки
 node scripts/dr-restore-check.mjs            # восстановление из копии: 19 проверок
+node scripts/perf-measure.mjs                # замеры на 20 000 проектов (убирает за собой)
 node scripts/security-audit-full.mjs         # ГЛОБАЛЬНЫЙ аудит: все гейты одним прогоном
 
 node scripts/dev-ai-gateway.mjs --detached   # AI-шлюз на 127.0.0.1:8100

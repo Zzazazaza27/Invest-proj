@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import {
+  CommissionAccrualSchema,
   CreateSubscriptionRequestSchema,
+  InvoiceSchema,
   SubscriptionSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -34,6 +36,23 @@ export class BillingController {
   async listMine(@Ctx() ctx: RequestContext) {
     const items = await this.billing.listMine(ctx);
     return { items: items.map((s) => SubscriptionSchema.parse(s)) };
+  }
+
+  /**
+   * Счета пользователя. Кто и что видит — решает RLS, поэтому роль в декораторе
+   * не указана: любой авторизованный получает СВОИ счета и только их.
+   */
+  @Get('invoices')
+  async listInvoices(@Ctx() ctx: RequestContext) {
+    const items = await this.billing.listInvoices(ctx);
+    return { items: items.map((invoice) => InvoiceSchema.parse(invoice)) };
+  }
+
+  /** Начисления вознаграждения по сделкам, стороной которых человек является. */
+  @Get('accruals')
+  async listAccruals(@Ctx() ctx: RequestContext) {
+    const items = await this.billing.listAccruals(ctx);
+    return { items: items.map((accrual) => CommissionAccrualSchema.parse(accrual)) };
   }
 
   @Post('subscriptions/:id/cancel')

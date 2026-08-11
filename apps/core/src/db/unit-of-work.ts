@@ -244,14 +244,15 @@ const SERVICE_POOL_MAX = 4;
 /**
  * Откуда берётся строка подключения каждой сервисной роли.
  *
- * Настроены регулируемый и интеграционный контуры: остальные роли появятся
- * вместе со своими фазами, и до тех пор попытка их использовать обязана падать
- * явно, а не молча исполняться под правами приложения.
+ * Пустая строка означает, что контур не настроен: попытка его использовать
+ * падает явной ошибкой с именем недостающей переменной, а не исполняется молча
+ * под правами пользовательской роли (ADR-006). Это поведение сохраняется и
+ * после настройки — оно про отсутствующую конфигурацию, а не про фазу проекта.
  */
 const SERVICE_ROLE_URLS: Record<ServiceRole, (env: ReturnType<typeof getEnv>) => string> = {
   app_investments: (env) => env.DATABASE_URL_APP_INVESTMENTS,
-  app_billing: () => '',
-  app_notifications: () => '',
+  app_billing: (env) => env.DATABASE_URL_APP_BILLING,
+  app_notifications: (env) => env.DATABASE_URL_APP_NOTIFICATIONS,
   app_integration: (env) => env.DATABASE_URL_APP_INTEGRATION,
 };
 

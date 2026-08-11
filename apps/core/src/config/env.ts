@@ -51,6 +51,22 @@ const RawEnvSchema = z.object({
    * отдавать данные наружу под правами пользовательской роли нельзя.
    */
   DATABASE_URL_APP_INTEGRATION: z.string().default(''),
+  /**
+   * Подключение денежного контура. Роль `app_billing` пишет начисления, счета и
+   * платежи; роль приложения в эту группу не входит по той же причине, что и в
+   * `app_investments`, — ошибка в пользовательском контуре не должна получать
+   * право переписать деньги.
+   *
+   * Пусто — денежные сервисные операции недоступны и падают явной ошибкой
+   * конфигурации (ADR-006).
+   */
+  DATABASE_URL_APP_BILLING: z.string().default(''),
+  /**
+   * Подключение контура доставки уведомлений. Роль `app_notifications` читает
+   * шаблоны и обновляет статусы отправки; читать прикладные данные ей не нужно
+   * и не разрешено.
+   */
+  DATABASE_URL_APP_NOTIFICATIONS: z.string().default(''),
   DATABASE_SSL: z.enum(['true', 'false']).default('false'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).default(20),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(120_000).default(15_000),

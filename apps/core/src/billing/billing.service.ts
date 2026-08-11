@@ -1,5 +1,11 @@
 import { Injectable } from '@nestjs/common';
-import { uuidv7, type CreateSubscriptionRequest, type Subscription } from '@unicorn/contracts';
+import {
+  uuidv7,
+  type CommissionAccrual,
+  type CreateSubscriptionRequest,
+  type Invoice,
+  type Subscription,
+} from '@unicorn/contracts';
 import { AppError, errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
@@ -96,6 +102,54 @@ export class BillingService {
         [ctx.userId],
       );
       return rows.map(mapSubscription);
+    });
+  }
+
+  /**
+   * Счета, выставленные пользователю.
+   *
+   * Фильтра по пользователю в запросе нет намеренно: отбор делает RLS
+   * (`invoices_party`, M009) — по плательщику-физлицу или по членству в
+   * компании-плательщике. Продублировать это условие в SQL значило бы завести
+   * второй, расходящийся источник правды о том, чей это счёт.
+   *
+   * Пустой список — законный ответ: счета выставляются вместе с PDF-документом,
+   * а генератора PDF пока нет (TODO, гейт A). Маршрут существует, чтобы
+   * клиент имел настоящий контракт, а не 404.
+   */
+  async listInvoices(ctx: RequestContext): Promise<Invoice[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<InvoiceRow>(
+        `SELECT id, number, payer_role, subscription_id, accrual_id,
+                amount_due::text AS amount_due, currency, status, issued_at, due_at
+           FROM billing.invoices
+          ORDER BY issued_at DESC
+          LIMIT 200`,
+      );
+      return rows.map(mapInvoice);
+    });
+  }
+
+  /**
+   * Начисления вознаграждения по своим сделкам.
+   *
+   * Видимость — стороны договора и админ (`accruals_party`, M009). Суммы
+   * отдаются строками: NUMERIC(14,2) в double превращается в деньги с ошибкой.
+   */
+  async listAccruals(ctx: RequestContext): Promise<CommissionAccrual[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<AccrualRow>(
+        `SELECT id, agreement_id, base_amount::text AS base_amount, currency,
+                investor_fee_pct::text AS investor_fee_pct,
+                issuer_fee_pct::text AS issuer_fee_pct,
+                investor_fee_amount::text AS investor_fee_amount,
+                issuer_fee_amount::text AS issuer_fee_amount,
+                status, accrued_at
+           FROM billing.commission_accruals
+          ORDER BY accrued_at DESC
+          LIMIT 200`,
+      );
+      return rows.map(mapAccrual);
     });
   }
 
@@ -255,4 +309,60 @@ export async function mapDbErrors<T>(work: () => Promise<T>): Promise<T> {
     }
     throw error;
   }
+}
+
+interface InvoiceRow {
+  id: string;
+  number: string;
+  payer_role: Invoice['payerRole'];
+  subscription_id: string | null;
+  accrual_id: string | null;
+  amount_due: string;
+  currency: string;
+  status: Invoice['status'];
+  issued_at: Date;
+  due_at: Date;
+}
+
+function mapInvoice(row: InvoiceRow): Invoice {
+  return {
+    id: row.id,
+    number: row.number,
+    payerRole: row.payer_role,
+    subscriptionId: row.subscription_id,
+    accrualId: row.accrual_id,
+    amountDue: row.amount_due,
+    currency: row.currency as 'RUB',
+    status: row.status,
+    issuedAt: row.issued_at.toISOString(),
+    dueAt: row.due_at.toISOString(),
+  };
+}
+
+interface AccrualRow {
+  id: string;
+  agreement_id: string;
+  base_amount: string;
+  currency: string;
+  investor_fee_pct: string;
+  issuer_fee_pct: string;
+  investor_fee_amount: string;
+  issuer_fee_amount: string;
+  status: CommissionAccrual['status'];
+  accrued_at: Date;
+}
+
+function mapAccrual(row: AccrualRow): CommissionAccrual {
+  return {
+    id: row.id,
+    agreementId: row.agreement_id,
+    baseAmount: row.base_amount,
+    currency: row.currency as 'RUB',
+    investorFeePct: row.investor_fee_pct,
+    issuerFeePct: row.issuer_fee_pct,
+    investorFeeAmount: row.investor_fee_amount,
+    issuerFeeAmount: row.issuer_fee_amount,
+    status: row.status,
+    accruedAt: row.accrued_at.toISOString(),
+  };
 }

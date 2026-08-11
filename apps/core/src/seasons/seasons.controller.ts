@@ -1,9 +1,13 @@
 import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import {
+  AdvanceProjectStageRequestSchema,
   GoldenTicketSchema,
   GrantGoldenTicketRequestSchema,
+  ProjectStageChangeSchema,
   RatingEntrySchema,
+  SeasonFunnelConfigSchema,
   SeasonSchema,
+  SeasonStageOccupancySchema,
   UpdateSeasonStatusRequestSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -68,6 +72,47 @@ export class SeasonsController {
     const id = parseOrThrow(UuidSchema, rawId);
     const input = parseOrThrow(GrantGoldenTicketRequestSchema, rawBody);
     return GoldenTicketSchema.parse(await this.seasons.grantGoldenTicket(ctx, id, input));
+  }
+
+  /**
+   * Конфигурация воронки сезона: квоты этапов и расписание их открытия.
+   * Это решение об отборе, поэтому оно доступно только организатору и админу.
+   */
+  @Roles('admin', 'organizer')
+  @Post(':id/funnel')
+  async setFunnel(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const config = parseOrThrow(SeasonFunnelConfigSchema, rawBody);
+    return SeasonFunnelConfigSchema.parse(await this.seasons.setFunnelConfig(ctx, id, config));
+  }
+
+  @Roles('admin', 'organizer')
+  @Get(':id/funnel')
+  async funnelState(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const items = await this.seasons.funnelState(ctx, id);
+    return { items: items.map((item) => SeasonStageOccupancySchema.parse(item)) };
+  }
+
+  /** Перевод проекта по этапам сезона — отбор, а не редактирование заявки. */
+  @Roles('admin', 'organizer')
+  @Post(':id/projects/:projectId/stage')
+  async advanceStage(
+    @Param('id') rawId: string,
+    @Param('projectId') rawProjectId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const projectId = parseOrThrow(UuidSchema, rawProjectId);
+    const input = parseOrThrow(AdvanceProjectStageRequestSchema, rawBody);
+    return ProjectStageChangeSchema.parse(
+      await this.seasons.advanceProjectStage(ctx, id, projectId, input),
+    );
   }
 
   @Roles('admin', 'organizer')

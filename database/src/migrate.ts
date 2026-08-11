@@ -109,9 +109,29 @@ async function main(): Promise<void> {
     for (const file of pending) {
       const started = Date.now();
       console.warn(`→ ${file.id}`);
+      // Часть операций PostgreSQL не выполняется внутри транзакции —
+      // в первую очередь CREATE INDEX CONCURRENTLY, единственный способ
+      // построить индекс на живой таблице без блокировки записи. Такая
+      // миграция помечает себя сама и идёт вне транзакции.
+      //
+      // Плата за это названа прямо: откатить её нечем. Поэтому в такой
+      // миграции допустимы только идемпотентные операции (IF NOT EXISTS), а
+      // повторный прогон после падения обязан быть безопасным. Проверяет это
+      // линтер миграций, а не доверие к автору.
+      const concurrent = /^\s*--\s*migrate:no-transaction\s*$/m.test(file.sql);
       try {
-        await client.query('BEGIN');
-        await client.query(file.sql);
+        if (!concurrent) await client.query('BEGIN');
+        if (concurrent) {
+          // Несколько выражений, отправленных ОДНОЙ строкой, PostgreSQL
+          // оборачивает в неявную транзакцию — и CONCURRENTLY снова падает,
+          // хотя явного BEGIN нет. Поэтому такая миграция выполняется по
+          // одному выражению за запрос.
+          for (const statement of splitStatements(file.sql)) {
+            await client.query(statement);
+          }
+        } else {
+          await client.query(file.sql);
+        }
         // M000 создаёт реестр, поэтому запись возможна только после его прогона.
         await client.query(
           `INSERT INTO public.schema_migrations (id, checksum, duration_ms)
@@ -119,10 +139,12 @@ async function main(): Promise<void> {
            ON CONFLICT (id) DO UPDATE SET checksum = EXCLUDED.checksum`,
           [file.id, file.checksum, Date.now() - started],
         );
-        await client.query('COMMIT');
-        console.warn(`  применена за ${Date.now() - started} мс`);
+        if (!concurrent) await client.query('COMMIT');
+        console.warn(
+          `  применена за ${Date.now() - started} мс${concurrent ? ' (вне транзакции)' : ''}`,
+        );
       } catch (error) {
-        await client.query('ROLLBACK').catch(() => undefined);
+        if (!concurrent) await client.query('ROLLBACK').catch(() => undefined);
         const detail = error instanceof Error ? error.message : String(error);
         // cause сохраняется: без него теряются position/hint из ошибки PostgreSQL,
         // а именно они показывают конкретное место в SQL.
@@ -135,6 +157,67 @@ async function main(): Promise<void> {
     await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]).catch(() => undefined);
     await client.end();
   }
+}
+
+/**
+ * Разбор SQL на отдельные выражения для миграций вне транзакции.
+ *
+ * Наивный split(';') разрезал бы литерал с точкой с запятой, поэтому кавычки и
+ * долларовые кавычки учитываются. Такие миграции линтер и так ограничивает
+ * операциями с индексами, но разбор, который «обычно работает», — ровно тот
+ * класс кода, который однажды режет чужой текст пополам.
+ */
+function splitStatements(sql: string): string[] {
+  const statements: string[] = [];
+  let current = '';
+  let quote: string | null = null;
+  let i = 0;
+
+  while (i < sql.length) {
+    const rest = sql.slice(i);
+
+    if (quote === null) {
+      const dollar = /^\$[A-Za-z_]*\$/.exec(rest);
+      if (dollar) {
+        quote = dollar[0];
+        current += dollar[0];
+        i += dollar[0].length;
+        continue;
+      }
+      if (sql[i] === "'") {
+        quote = "'";
+        current += "'";
+        i += 1;
+        continue;
+      }
+      if (rest.startsWith('--')) {
+        const end = sql.indexOf('\n', i);
+        const line = end === -1 ? rest : sql.slice(i, end + 1);
+        current += line;
+        i += line.length;
+        continue;
+      }
+      if (sql[i] === ';') {
+        if (current.trim()) statements.push(current.trim());
+        current = '';
+        i += 1;
+        continue;
+      }
+    } else if (quote === "'") {
+      if (sql[i] === "'") quote = null;
+    } else if (rest.startsWith(quote)) {
+      current += quote;
+      i += quote.length;
+      quote = null;
+      continue;
+    }
+
+    current += sql[i];
+    i += 1;
+  }
+
+  if (current.trim()) statements.push(current.trim());
+  return statements;
 }
 
 main().catch((error: unknown) => {

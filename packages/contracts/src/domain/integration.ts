@@ -73,6 +73,23 @@ export const IntegrationDealSchema = z.object({
   instrumentType: z.string(),
   signedAt: IsoDateTimeSchema.nullable(),
   effectiveAt: IsoDateTimeSchema.nullable(),
+  /**
+   * Вознаграждение платформы по сделке. `null` — начисления ещё нет: оно
+   * возникает вместе с подтверждённым первым траншем, и до этого момента ноль
+   * означал бы «комиссия нулевая», а не «сделка ещё не оплачена».
+   *
+   * Данные приходят из проекции `integration.deal_commissions`, которую
+   * наполняет биллинг: интеграционная роль денежных таблиц не читает.
+   */
+  commission: z
+    .object({
+      baseAmount: z.string(),
+      investorFeeAmount: z.string(),
+      issuerFeeAmount: z.string(),
+      totalFeeAmount: z.string(),
+      accruedAt: IsoDateTimeSchema,
+    })
+    .nullable(),
 });
 export type IntegrationDeal = z.infer<typeof IntegrationDealSchema>;
 

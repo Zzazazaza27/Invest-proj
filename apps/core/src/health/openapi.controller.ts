@@ -1,8 +1,15 @@
 import { Controller, Get } from '@nestjs/common';
+import { DiscoveryService } from '@nestjs/core';
 import * as contracts from '@unicorn/contracts';
 import { API_VERSION, INTEGRATION_SCOPES } from '@unicorn/contracts';
 import { z } from 'zod';
 import { Public } from '../auth/guards';
+import {
+  collectRoutes,
+  routesToPaths,
+  type ControllerClass,
+  type RouteDescriptor,
+} from './openapi.routes';
 
 /**
  * Машиночитаемое описание API.
@@ -12,17 +19,29 @@ import { Public } from '../auth/guards';
  * расходится с реальностью на первом же изменении и становится вреднее, чем
  * его отсутствие: клиент верит документу, а сервер живёт по коду.
  *
- * Отсюда следует и ограничение, которое честнее назвать вслух: это описание
- * ТИПОВ, а не полный контракт с перечнем маршрутов и кодов ответа. Перечень
- * маршрутов выводится из декораторов Nest и появится вместе со сквозной
- * генерацией; выдавать неполный документ за полный — тот же самый вред.
+ * Перечень маршрутов снимается с живого графа контроллеров (`DiscoveryService`)
+ * вместе с требованиями доступа: способ аутентификации, роли, скоуп и
+ * необходимость второго фактора. Что по-прежнему НЕ выводится — связь
+ * конкретного маршрута с конкретной схемой тела: валидация вызывается внутри
+ * обработчика, и такая связь была бы догадкой, а не фактом.
  */
 @Public()
 @Controller('openapi.json')
 export class OpenApiController {
+  /**
+   * `DiscoveryService`, а не импорт списка контроллеров из модуля: импорт дал бы
+   * цикл (модуль объявляет этот контроллер), а список, переписанный руками,
+   * разошёлся бы с модулем незаметно.
+   */
+  constructor(private readonly discovery: DiscoveryService) {}
+
   @Get()
   document(): Record<string, unknown> {
-    return buildOpenApiDocument();
+    const controllers = this.discovery
+      .getControllers()
+      .map((wrapper) => wrapper.metatype)
+      .filter((metatype): metatype is ControllerClass => typeof metatype === 'function');
+    return buildOpenApiDocument(collectRoutes(controllers, API_VERSION));
   }
 }
 
@@ -34,7 +53,9 @@ export class OpenApiController {
  * молча выкинуть её значило бы отдать клиенту неполный документ без единого
  * признака неполноты.
  */
-export function buildOpenApiDocument(): Record<string, unknown> {
+export function buildOpenApiDocument(
+  routes: readonly RouteDescriptor[] = [],
+): Record<string, unknown> {
   const schemas: Record<string, unknown> = {};
   const skipped: string[] = [];
 
@@ -60,10 +81,13 @@ export function buildOpenApiDocument(): Record<string, unknown> {
       version: API_VERSION,
       description:
         'Типы запросов и ответов, выведенные из @unicorn/contracts — тех же схем, ' +
-        'которыми сервер валидирует вход. Перечень маршрутов в документ пока не ' +
-        'входит: он выводится из декораторов и появится отдельно.',
+        'которыми сервер валидирует вход, и перечень маршрутов, снятый с графа ' +
+        'контроллеров вместе с требованиями доступа. Связь конкретного маршрута ' +
+        'с конкретной схемой тела не выводится: валидация вызывается внутри ' +
+        'обработчика, и такая связь была бы догадкой.',
     },
     servers: [{ url: `/${API_VERSION}` }],
+    paths: routesToPaths(routes),
     components: {
       schemas,
       securitySchemes: {
@@ -84,6 +108,7 @@ export function buildOpenApiDocument(): Record<string, unknown> {
     },
     // Неполнота объявляется в самом документе, а не остаётся known issue.
     'x-schemas-skipped': skipped,
+    'x-routes-total': routes.length,
     'x-integration-scopes': INTEGRATION_SCOPES,
   };
 }

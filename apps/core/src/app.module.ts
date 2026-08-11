@@ -2,8 +2,11 @@ import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AdminController } from './admin/admin.controller';
 import { AdminService } from './admin/admin.service';
+import { DiscoveryModule } from '@nestjs/core';
 import { RolesController } from './admin/roles.controller';
 import { RolesService } from './admin/roles.service';
+import { TemplatesController } from './admin/templates.controller';
+import { TemplatesService } from './admin/templates.service';
 import { AuthGuard } from './auth/guards';
 import { TokenVerifier } from './auth/token.verifier';
 import { AiGatewayClient } from './ai/ai-gateway.client';
@@ -55,6 +58,9 @@ import { S3Service } from './storage/s3.service';
  * только осознанно открыть маршрут.
  */
 @Module({
+  // DiscoveryModule нужен описанию API: перечень маршрутов снимается с живого
+  // графа контроллеров, а не переписывается руками.
+  imports: [DiscoveryModule],
   controllers: [
     HealthController,
     PricingController,
@@ -73,6 +79,7 @@ import { S3Service } from './storage/s3.service';
     IntegrationTokenController,
     ServiceAccountsController,
     RolesController,
+    TemplatesController,
     OpenApiController,
   ],
   providers: [
@@ -89,6 +96,7 @@ import { S3Service } from './storage/s3.service';
     BillingService,
     AdminService,
     RolesService,
+    TemplatesService,
     InvestmentsService,
     AiGatewayClient,
     AnalysisService,

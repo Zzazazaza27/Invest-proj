@@ -79,6 +79,53 @@ for (const file of files) {
     }
   }
 
+  // --- 1b. Миграции вне транзакции: только идемпотентные операции ----------
+  //
+  // Раннер выполняет такую миграцию без BEGIN/COMMIT (иначе CREATE INDEX
+  // CONCURRENTLY невозможен вовсе). Откатить её нечем: упавшая посередине
+  // миграция оставляет часть изменений применёнными, и следующий прогон обязан
+  // безопасно повториться. Поэтому здесь требуется IF NOT EXISTS, а операции,
+  // которые нельзя повторить, запрещены.
+  const noTransaction = /^\s*--\s*migrate:no-transaction\s*$/m.test(raw);
+  const concurrentIndex = /CREATE\s+INDEX\s+CONCURRENTLY/i.test(sql);
+
+  if (concurrentIndex && !noTransaction) {
+    add(
+      'ERROR',
+      file,
+      lineOf(/CREATE\s+INDEX\s+CONCURRENTLY/i),
+      'no-transaction',
+      'CREATE INDEX CONCURRENTLY не выполняется внутри транзакции. Пометь миграцию ' +
+        'строкой `-- migrate:no-transaction` — тогда раннер выполнит её отдельно.',
+    );
+  }
+  if (noTransaction) {
+    if (!/IF\s+NOT\s+EXISTS/i.test(sql)) {
+      add(
+        'ERROR',
+        file,
+        lineOf(/migrate:no-transaction/),
+        'no-transaction',
+        'Миграция вне транзакции обязана быть идемпотентной: откатить её нечем, ' +
+          'а после падения она будет прогнана повторно. Используй IF NOT EXISTS.',
+      );
+    }
+    const statements = sql.split(';').filter((s) => s.trim().length > 0);
+    const nonIndex = statements.filter(
+      (s) => !/^\s*(CREATE\s+INDEX|DROP\s+INDEX|COMMENT\s+ON\s+INDEX|ANALYZE)\b/i.test(s.trim()),
+    );
+    if (nonIndex.length > 0) {
+      add(
+        'ERROR',
+        file,
+        lineOf(/migrate:no-transaction/),
+        'no-transaction',
+        'Вне транзакции допустимы только операции с индексами: остальное обязано ' +
+          'быть атомарным. Вынеси прочие изменения в обычную миграцию.',
+      );
+    }
+  }
+
   // --- 2. Каждая созданная таблица получает RLS ----------------------------
   const created = [
     ...sql.matchAll(/CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([a-z_]+)\.([a-z_]+)/gi),

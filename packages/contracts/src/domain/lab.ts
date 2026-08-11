@@ -25,6 +25,63 @@ export const ProjectStatusSchema = z.enum([
 ]);
 export type ProjectStatus = z.infer<typeof ProjectStatusSchema>;
 
+/**
+ * Движение проекта по воронке сезона.
+ *
+ * Вперёд — ровно на один этап: «перепрыгнуть» экспертизу и оказаться финалистом
+ * нельзя, иначе отбор перестаёт что-либо означать. Назад хода нет — этап уже
+ * объявлен участнику и внешним потребителям события.
+ *
+ * `rejected` доступен с любого рабочего этапа: отказ — это выход из воронки, а
+ * не движение по ней. `archived` — только из терминальных состояний: архивация
+ * живой заявки скрывала бы её от участника без решения по существу.
+ */
+export const PROJECT_TRANSITIONS: Record<ProjectStatus, readonly ProjectStatus[]> = {
+  draft: ['submitted', 'archived'],
+  submitted: ['ai_review', 'rejected'],
+  ai_review: ['expert_review', 'rejected'],
+  expert_review: ['bootcamp', 'rejected'],
+  bootcamp: ['finalist', 'rejected'],
+  finalist: ['graduated', 'rejected'],
+  graduated: ['archived'],
+  rejected: ['archived'],
+  archived: [],
+};
+
+/** Этапы, на которые проект переводит организатор отбором внутри сезона. */
+export const SEASON_SELECTION_STAGES = [
+  'ai_review',
+  'expert_review',
+  'bootcamp',
+  'finalist',
+  'graduated',
+] as const;
+
+/**
+ * Перевод проекта на следующий этап. Целевой этап называет клиент, допустимость
+ * решает сервер: таблица переходов не является предметом договорённости с
+ * фронтендом.
+ *
+ * `useGoldenTicket` — проход мимо порога отбора по золотому билету. Билет
+ * погашается ровно в этом переводе и только один раз.
+ */
+export const AdvanceProjectStageRequestSchema = z.object({
+  status: z.enum(['ai_review', 'expert_review', 'bootcamp', 'finalist', 'graduated', 'rejected']),
+  reason: boundedString(3, 500),
+  useGoldenTicket: z.boolean().default(false),
+});
+export type AdvanceProjectStageRequest = z.infer<typeof AdvanceProjectStageRequestSchema>;
+
+/** Результат перевода: сам факт и был ли при этом погашен билет. */
+export const ProjectStageChangeSchema = z.object({
+  projectId: UuidSchema,
+  from: ProjectStatusSchema,
+  to: ProjectStatusSchema,
+  goldenTicketRedeemed: z.boolean(),
+  changedAt: IsoDateTimeSchema,
+});
+export type ProjectStageChange = z.infer<typeof ProjectStageChangeSchema>;
+
 /** Статус листинга. НЕ путать со статусом проекта: это разные оси. */
 export const ListingStatusSchema = z.enum([
   'not_listed',

@@ -37,6 +37,9 @@ export const EventVerb = {
   EXPERT_CONFLICT_DECLARED: 'lab.expert.conflict_declared',
   EXPERT_CONFLICT_RESOLVED: 'lab.expert.conflict_resolved',
   GOLDEN_TICKET_GRANTED: 'lab.golden_ticket.granted',
+  GOLDEN_TICKET_REDEEMED: 'lab.golden_ticket.redeemed',
+  PROJECT_STAGE_CHANGED: 'lab.project.stage_changed',
+  SEASON_FUNNEL_CONFIGURED: 'lab.season.funnel_configured',
 } as const;
 
 export type EventVerbValue = (typeof EventVerb)[keyof typeof EventVerb];

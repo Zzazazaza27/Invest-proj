@@ -428,6 +428,50 @@ export const SEASON_TRANSITIONS: Record<
   closed: [],
 };
 
+/**
+ * Конфигурация воронки сезона: сколько проектов проходит на каждый этап и с
+ * какого момента этап открыт.
+ *
+ * Живёт в `seasons.seasons.funnel_config_jsonb`, а не в отдельных колонках:
+ * набор этапов воронки меняется вместе с продуктом, и каждая такая правка
+ * означала бы миграцию с блокировкой таблицы сезонов.
+ *
+ * Квота — верхняя граница числа проектов НА этапе, а не число мест «сверх
+ * уже занятых»: пересчёт квоты вниз не выкидывает тех, кто прошёл раньше,
+ * но и добрать до старого числа больше не позволит.
+ */
+export const SeasonFunnelConfigSchema = z.object({
+  quotas: z
+    .object({
+      ai_review: z.number().int().positive().optional(),
+      expert_review: z.number().int().positive().optional(),
+      bootcamp: z.number().int().positive().optional(),
+      finalist: z.number().int().positive().optional(),
+      graduated: z.number().int().positive().optional(),
+    })
+    .default({}),
+  /** Момент открытия этапа. Раньше него перевести проект нельзя. */
+  schedule: z
+    .object({
+      ai_review: IsoDateTimeSchema.optional(),
+      expert_review: IsoDateTimeSchema.optional(),
+      bootcamp: IsoDateTimeSchema.optional(),
+      finalist: IsoDateTimeSchema.optional(),
+      graduated: IsoDateTimeSchema.optional(),
+    })
+    .default({}),
+});
+export type SeasonFunnelConfig = z.infer<typeof SeasonFunnelConfigSchema>;
+
+/** Занятость этапа: сколько проектов уже прошло и сколько мест осталось. */
+export const SeasonStageOccupancySchema = z.object({
+  stage: z.string(),
+  occupied: z.number().int().nonnegative(),
+  quota: z.number().int().positive().nullable(),
+  opensAt: IsoDateTimeSchema.nullable(),
+});
+export type SeasonStageOccupancy = z.infer<typeof SeasonStageOccupancySchema>;
+
 export const RatingEntrySchema = z.object({
   rank: z.number().int().positive(),
   projectId: UuidSchema,
@@ -529,6 +573,45 @@ export const UserDeviceSchema = z.object({
   createdAt: IsoDateTimeSchema,
 });
 export type UserDevice = z.infer<typeof UserDeviceSchema>;
+
+/**
+ * Шаблон текста уведомления.
+ *
+ * Версия — часть идентичности шаблона, а не служебное поле: активной остаётся
+ * одна версия на (code, channel, locale), прежние сохраняются как история того,
+ * что платформа действительно писала пользователям.
+ */
+export const NotificationTemplateSchema = z.object({
+  id: UuidSchema,
+  code: z.string(),
+  channel: NotificationChannelSchema,
+  locale: z.string(),
+  version: z.number().int().positive(),
+  titleTemplate: z.string().nullable(),
+  bodyTemplate: z.string(),
+  fallbackChain: z.array(z.string()),
+  isCritical: z.boolean(),
+  isActive: z.boolean(),
+});
+export type NotificationTemplate = z.infer<typeof NotificationTemplateSchema>;
+
+/**
+ * Сохранение текста. Номер версии клиент НЕ называет: его выдаёт сервер, иначе
+ * два администратора, редактирующих один шаблон, назначили бы одинаковую версию.
+ */
+export const UpsertNotificationTemplateSchema = z.object({
+  code: boundedString(3, 100).regex(
+    /^[a-z][a-z0-9_.]*$/,
+    'код шаблона — латиница, точки, подчёркивания',
+  ),
+  channel: NotificationChannelSchema,
+  locale: z.enum(['ru-RU', 'en-US']).default('ru-RU'),
+  titleTemplate: boundedString(0, 200).nullable().optional(),
+  bodyTemplate: boundedString(1, 4000),
+  fallbackChain: z.array(NotificationChannelSchema).max(4).default([]),
+  isCritical: z.boolean().default(false),
+});
+export type UpsertNotificationTemplate = z.infer<typeof UpsertNotificationTemplateSchema>;
 
 /** Пакетное обновление предпочтений: настройки меняют экраном, а не по одной. */
 export const UpdatePreferencesRequestSchema = z.object({

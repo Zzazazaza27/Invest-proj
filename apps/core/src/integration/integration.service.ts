@@ -352,9 +352,19 @@ export class IntegrationService {
                 -- Момент подписания = когда подписали ОБЕ стороны: договор,
                 -- подписанный одной, ещё не сделка.
                 GREATEST(a.investor_signed_at, a.issuer_signed_at) AS signed_at,
-                a.effective_at, a.created_at
+                a.effective_at, a.created_at,
+                -- Вознаграждение берётся из ПРОЕКЦИИ, а не из billing.*:
+                -- интеграционная роль денежных таблиц не читает (M028).
+                -- LEFT JOIN, потому что начисление возникает только с первым
+                -- траншем: у подписанной, но не оплаченной сделки его нет, и
+                -- ноль здесь был бы неправдой.
+                c.total_fee_amount::text AS total_fee_amount,
+                c.investor_fee_amount::text AS investor_fee_amount,
+                c.issuer_fee_amount::text AS issuer_fee_amount,
+                c.accrued_at
            FROM investments.investment_agreements a
            JOIN investments.investment_offers o ON o.id = a.offer_id
+           LEFT JOIN integration.deal_commissions c ON c.agreement_id = a.id
           WHERE ($1::timestamptz IS NULL
                  OR (a.created_at, a.id) < ($1::timestamptz, $2::uuid))
           ORDER BY a.created_at DESC, a.id DESC
@@ -649,6 +659,10 @@ interface DealRow {
   signed_at: Date | null;
   effective_at: Date | null;
   created_at: Date;
+  total_fee_amount: string | null;
+  investor_fee_amount: string | null;
+  issuer_fee_amount: string | null;
+  accrued_at: Date | null;
 }
 
 function mapDeal(row: DealRow): IntegrationDeal {
@@ -661,6 +675,18 @@ function mapDeal(row: DealRow): IntegrationDeal {
     instrumentType: row.instrument_type,
     signedAt: row.signed_at ? row.signed_at.toISOString() : null,
     effectiveAt: row.effective_at ? row.effective_at.toISOString() : null,
+    // Отсутствие начисления и нулевое начисление — разные факты, поэтому null,
+    // а не '0.00': сделка без первого транша ещё не породила вознаграждения.
+    commission:
+      row.accrued_at === null
+        ? null
+        : {
+            baseAmount: row.amount,
+            investorFeeAmount: row.investor_fee_amount ?? '0.00',
+            issuerFeeAmount: row.issuer_fee_amount ?? '0.00',
+            totalFeeAmount: row.total_fee_amount ?? '0.00',
+            accruedAt: row.accrued_at.toISOString(),
+          },
   };
 }
 
