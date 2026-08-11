@@ -146,6 +146,66 @@ export class IntegrationService {
     });
   }
 
+  /**
+   * Приостановка и возобновление сервисного аккаунта.
+   *
+   * Приостановка — единственный способ закрыть доступ внешней системе быстрее,
+   * чем истечёт выданный токен. Она НЕ отзывает уже выданные токены: они
+   * самодостаточны и живут до `exp`. Это ограничение названо прямо, а не
+   * скрыто: ротация секрета и приостановка закрывают выдачу НОВЫХ токенов,
+   * немедленный отзыв уже выданных требует хранения их идентификаторов и
+   * остаётся открытым долгом (SEC-07).
+   */
+  async setServiceAccountStatus(
+    ctx: RequestContext,
+    accountId: string,
+    status: 'active' | 'suspended',
+  ): Promise<ServiceAccount> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows } = await tx.query<AccountRow>(
+        `UPDATE integration.service_accounts
+            SET status = $2
+          WHERE id = $1 AND status <> $2
+          RETURNING id, client_id, name, scopes, status, created_at, rotated_at`,
+        [accountId, status],
+      );
+      const account = rows[0];
+      // Отсутствие строки означает либо чужой идентификатор, либо тот же статус:
+      // и то и другое — не изменение, и события об изменении быть не должно.
+      if (!account) {
+        const { rows: existing } = await tx.query<AccountRow>(
+          `SELECT id, client_id, name, scopes, status, created_at, rotated_at
+             FROM integration.service_accounts WHERE id = $1`,
+          [accountId],
+        );
+        if (!existing[0]) throw errors.notFound({ subject: 'service_account' });
+        return mapAccount(existing[0]);
+      }
+
+      const verb =
+        status === 'suspended'
+          ? 'integration.service_account.suspended'
+          : 'integration.service_account.resumed';
+      await this.audit.record(tx, {
+        verb,
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        aggregateType: 'service_account',
+        aggregateId: accountId,
+        aggregateVersion: await this.audit.nextAggregateVersion(
+          tx,
+          'service_account',
+          accountId,
+          verb,
+        ),
+        payload: { clientId: account.client_id, status },
+        traceId: ctx.traceId,
+      });
+
+      return mapAccount(account);
+    });
+  }
+
   async listServiceAccounts(ctx: RequestContext): Promise<ServiceAccount[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<AccountRow>(
@@ -188,9 +248,13 @@ export class IntegrationService {
           mtls_cert_fingerprint: string;
           scopes: string[];
         }>(
+          // Статус входит в условие, а не проверяется потом: приостановленная
+          // учётная запись продолжала получать токены — отзыв доступа не
+          // работал вовсе (SEC-07). Выборка «по client_id» без статуса делает
+          // приостановку декоративной.
           `SELECT id, client_id, client_secret_hash, mtls_cert_fingerprint, scopes
              FROM integration.service_accounts
-            WHERE client_id = $1`,
+            WHERE client_id = $1 AND status = 'active'`,
           [input.clientId],
         );
         return rows[0] ?? null;

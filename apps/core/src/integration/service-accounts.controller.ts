@@ -5,6 +5,7 @@ import {
   ServiceAccountWithSecretSchema,
   UuidSchema,
 } from '@unicorn/contracts';
+import { z } from 'zod';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';
@@ -41,5 +42,25 @@ export class ServiceAccountsController {
   async rotate(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
     return ServiceAccountWithSecretSchema.parse(await this.integration.rotateSecret(ctx, id));
+  }
+
+  /**
+   * Приостановка и возобновление доступа внешней системы.
+   *
+   * Без этого маршрута статус аккаунта было НЕЧЕМ изменить, а значит и проверка
+   * статуса при выдаче токена ничего не давала бы: приостановка существовала
+   * только как значение в колонке.
+   */
+  @Post(':id/status')
+  async setStatus(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const input = parseOrThrow(z.object({ status: z.enum(['active', 'suspended']) }), rawBody);
+    return ServiceAccountSchema.parse(
+      await this.integration.setServiceAccountStatus(ctx, id, input.status),
+    );
   }
 }

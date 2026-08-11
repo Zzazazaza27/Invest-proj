@@ -284,6 +284,44 @@ let accountId;
   );
 }
 
+// Приостановка закрывает выдачу токенов. Проверяется фактом: прежде статус
+// аккаунта в выборке не участвовал, и приостановленный клиент продолжал
+// получать токены — отзыв доступа не работал (SEC-07).
+{
+  const { response } = await admin.client.call(`/v1/admin/service-accounts/${accountId}/status`, {
+    method: 'POST',
+    body: { status: 'suspended' },
+  });
+  check(
+    'аккаунт приостановлен админом',
+    response.status === 200 || response.status === 201,
+    `HTTP ${response.status}`,
+  );
+}
+{
+  const { response } = await raw('/v1/integration/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId, clientSecret }),
+  });
+  check(
+    'приостановленный аккаунт токен НЕ получает',
+    response.status === 401,
+    `HTTP ${response.status}`,
+  );
+}
+{
+  const { response } = await admin.client.call(`/v1/admin/service-accounts/${accountId}/status`, {
+    method: 'POST',
+    body: { status: 'active' },
+  });
+  check(
+    'аккаунт возобновлён',
+    response.status === 200 || response.status === 201,
+    `HTTP ${response.status}`,
+  );
+}
+
 let token;
 {
   const { response, json } = await raw('/v1/integration/token', {
