@@ -102,7 +102,14 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
       const form = new FormData();
       for (const [key, value] of Object.entries(ticket.formFields)) form.append(key, value);
       form.append('file', file);
-      const response = await fetch(ticket.uploadUrl, { method: 'POST', body: form });
+      // Таймаут обязателен и здесь: хранилище — внешняя зависимость, и зависший
+      // запрос иначе оставляет кнопку в состоянии «загружается» навсегда.
+      // Пять минут, а не пятнадцать секунд: это выгрузка файла до 500 МБ.
+      const response = await fetch(ticket.uploadUrl, {
+        method: 'POST',
+        body: form,
+        signal: AbortSignal.timeout(300_000),
+      });
       if (!response.ok) throw new Error(`хранилище ответило ${response.status}`);
       setFile(null);
       setNotice({ tone: 'ok', text: 'Файл загружен' });

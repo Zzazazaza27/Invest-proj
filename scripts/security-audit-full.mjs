@@ -80,8 +80,11 @@ run('линтер миграций', 'npm', ['run', 'lint:migrations', '-w', 'da
 run('граница фронт↔бэк', 'node', ['scripts/check-frontend-boundary.mjs']);
 
 console.warn('\n--- Безопасность ---');
-run('SAST: правила проекта', 'semgrep', ['--config', '.semgrep/guardian.yml', '.']);
-run('SAST: OWASP Top-10', 'semgrep', ['--config', 'p/owasp-top-ten', '.']);
+// `--error` обязателен: без него semgrep завершается кодом 0 даже при
+// блокирующих находках, и гейт печатает «Findings: 1 (1 blocking)» рядом со
+// словом OK. Проверено на живом прогоне — находка была настоящей.
+run('SAST: правила проекта', 'semgrep', ['--error', '--config', '.semgrep/guardian.yml', '.']);
+run('SAST: OWASP Top-10', 'semgrep', ['--error', '--config', 'p/owasp-top-ten', '.']);
 run('аудит зависимостей npm', 'npm', ['audit', '--audit-level=high']);
 run('аудит зависимостей python', 'node', ['scripts/gate-ai-gateway.mjs']);
 run(
