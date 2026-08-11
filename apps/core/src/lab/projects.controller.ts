@@ -105,6 +105,23 @@ export class ProjectsController {
 
   // -------------------------------------------------------------------- листинг
 
+  /**
+   * Подтверждение загрузки. Без него материал остаётся намерением: билет мог
+   * быть выдан и не использован, и показывать такую запись как материал —
+   * вводить в заблуждение основателя и рецензента (SEC-14).
+   */
+  @Roles('founder', 'admin')
+  @Post(':id/materials/:materialId/finalize')
+  async finalizeUpload(
+    @Param('id') rawId: string,
+    @Param('materialId') rawMaterialId: string,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const materialId = parseOrThrow(UuidSchema, rawMaterialId);
+    return ProjectMaterialSchema.parse(await this.projects.finalizeUpload(ctx, id, materialId));
+  }
+
   @Roles('founder', 'admin')
   @Post(':id/listing')
   async publish(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {

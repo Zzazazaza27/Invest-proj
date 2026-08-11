@@ -132,8 +132,9 @@ node scripts/probe-rate-limit.mjs      # обход лимита подделк�
 node scripts/probe-csrf-binding.mjs    # привязка CSRF-токена к сессии: 5 проверок
 node scripts/probe-role-revocation.mjs # немедленность отзыва прав: 4 проверки
 node scripts/probe-dns-rebinding.mjs   # DNS rebinding в доставке вебхуков: 4 проверки
-node scripts/probe-outbox-lease.mjs    # аренда очереди и повтор рассылки: 6 проверок
+node scripts/probe-outbox-lease.mjs    # аренда очередей и повтор рассылки: 8 проверок
 node scripts/probe-event-versions.mjs  # версии событий агрегата: 6 проверок
+node scripts/probe-upload-quota.mjs    # квоты и подтверждение загрузки: 5 проверок
 
 npm run build -w apps/web-public && npm run preview -w apps/web-public   # витрина на 5173
 node scripts/render-check-web-public.mjs     # витрина в реальном браузере: 13 проверок

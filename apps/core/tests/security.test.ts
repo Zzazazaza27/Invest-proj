@@ -299,3 +299,33 @@ describe('Ключ подписи CSRF', () => {
     expect(env.CSRF_SIGNING_KEY).not.toBe(env.LOCAL_AUTH_SIGNING_KEY);
   });
 });
+
+describe('Транспорт до внутренних систем в production', () => {
+  const PROD_ENV = {
+    ...BASE_ENV,
+    NODE_ENV: 'production',
+    AUTH_MODE: 'oidc',
+    OIDC_ISSUER: 'https://idp.example.org',
+    OIDC_AUDIENCE: 'unicorn',
+    KMS_MODE: 'kms',
+    SESSION_COOKIE_NAME: '__Host-ul_session',
+    CSRF_COOKIE_NAME: '__Host-ul_csrf',
+    PUBLIC_BASE_URL: 'https://unicorn.example.org',
+    CORS_ALLOWED_ORIGINS: 'https://unicorn.example.org',
+    DATABASE_SSL: 'true',
+  };
+
+  it('открытое соединение с БД не проходит', () => {
+    // Пароли, ПДн и события пошли бы внутри сети открытым текстом (SEC-09).
+    expect(() => loadEnv({ ...PROD_ENV, DATABASE_SSL: 'false' })).toThrow(/DATABASE_SSL/);
+  });
+
+  it('брокер по nats:// не проходит', () => {
+    expect(() => loadEnv({ ...PROD_ENV, NATS_URL: 'nats://broker:4222' })).toThrow(/NATS_URL/);
+  });
+
+  it('tls:// принимается', () => {
+    // Контроль: правило запрещает открытый транспорт, а не подключение вообще.
+    expect(() => loadEnv({ ...PROD_ENV, NATS_URL: 'tls://broker:4222' })).not.toThrow(/NATS_URL/);
+  });
+});

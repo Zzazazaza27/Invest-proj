@@ -291,6 +291,17 @@ export class UnicornApi {
         schema: UploadTicketSchema,
       }),
 
+    /**
+     * Подтверждение загрузки после отправки файла в хранилище. Сервер проверяет
+     * наличие объекта сам: «я загрузил» от клиента доказательством не является.
+     */
+    finalizeUpload: (id: string, materialId: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/materials/${materialId}/finalize`,
+        schema: ProjectMaterialSchema,
+      }),
+
     addProductLink: (id: string, body: AddProductLink) =>
       this.http.request({
         method: 'POST',

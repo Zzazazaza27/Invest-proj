@@ -58,6 +58,78 @@ export class S3Service {
     return `projects/${projectId}/materials/${kind}/${materialId}`;
   }
 
+  /**
+   * Существует ли объект и какого он размера.
+   *
+   * Нужен, чтобы подтвердить загрузку фактом, а не словом клиента: билет мог
+   * быть выдан и не использован, а запись материала при этом уже создана
+   * (SEC-14). HEAD дешевле GET и не тянет тело.
+   */
+  async headObject(key: string): Promise<{ exists: boolean; sizeBytes: number | null }> {
+    const env = getEnv();
+    if (!this.isConfigured) throw new Error('S3 не настроен');
+
+    const now = new Date();
+    const amzDate = toAmzDate(now);
+    const shortDate = amzDate.slice(0, 8);
+    // У HEAD тела нет, и хеш пустого тела — часть подписи.
+    const payloadHash = sha256Hex(Buffer.alloc(0));
+
+    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
+    const url = new URL(
+      env.S3_FORCE_PATH_STYLE === 'true'
+        ? `${base}/${env.S3_BUCKET}/${key}`
+        : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${key}`,
+    );
+
+    const headers: Record<string, string> = {
+      host: url.host,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate,
+    };
+    const signedHeaders = Object.keys(headers).sort().join(';');
+    const canonicalHeaders = Object.keys(headers)
+      .sort()
+      .map((name) => `${name}:${headers[name]}\n`)
+      .join('');
+
+    const canonicalRequest = [
+      'HEAD',
+      url.pathname,
+      '',
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+
+    const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
+    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
+    const signature = createHmac(
+      'sha256',
+      signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
+    )
+      .update(stringToSign, 'utf8')
+      .digest('hex');
+
+    const response = await fetch(url.toString(), {
+      method: 'HEAD',
+      headers: {
+        ...headers,
+        Authorization:
+          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
+          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      },
+      // Хранилище — внешняя зависимость: без таймаута зависший ответ держит
+      // запрос пользователя бесконечно.
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    if (response.status === 404) return { exists: false, sizeBytes: null };
+    if (!response.ok) throw new Error(`хранилище ответило ${response.status} на HEAD`);
+    const length = response.headers.get('content-length');
+    return { exists: true, sizeBytes: length === null ? null : Number(length) };
+  }
+
   presignUpload(input: {
     key: string;
     contentType: string;

@@ -27,6 +27,8 @@ import {
 @Injectable()
 export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(WebhookDeliveryService.name);
+  /** Кто держит аренду: по нему видно, какой экземпляр завис. */
+  private readonly instanceId = `${process.pid}-${randomUUID().slice(0, 8)}`;
   private timer: NodeJS.Timeout | null = null;
   private running = false;
 
@@ -81,7 +83,43 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /**
+   * Атомарный захват доставок в аренду.
+   *
+   * `FOR UPDATE SKIP LOCKED` отпускал строку вместе с транзакцией — то есть ДО
+   * самого HTTP-запроса, и второй экземпляр отправлял ту же доставку
+   * одновременно. Заголовок `Unicorn-Event-Id` помогает получателю
+   * дедуплицировать, но перекладывать гарантию на чужую систему нельзя:
+   * побочный эффект у неё настоящий (SEC-19).
+   *
+   * Захват и отметка аренды — одним выражением; условие выборки её учитывает.
+   */
   private async lockBatch(tx: Tx): Promise<DeliveryRow[]> {
+    // Шаг 1: захват. Одно выражение — иначе между выбором и отметкой аренды
+    // остаётся окно, в которое ту же строку берёт второй экземпляр.
+    const { rows: claimed } = await tx.query<{ id: string }>(
+      `UPDATE integration.webhook_deliveries d
+          SET locked_until = now() + ($3 || ' seconds')::interval,
+              locked_by = $4
+        WHERE d.id IN (
+          SELECT d2.id
+            FROM integration.webhook_deliveries d2
+            JOIN integration.webhook_endpoints e2 ON e2.id = d2.endpoint_id
+           WHERE d2.status IN ('queued', 'failed')
+             AND (d2.next_retry_at IS NULL OR d2.next_retry_at <= now())
+             AND d2.attempts < $1
+             AND e2.status = 'active'
+             AND (d2.locked_until IS NULL OR d2.locked_until < now())
+           ORDER BY d2.created_at
+           FOR UPDATE OF d2 SKIP LOCKED
+           LIMIT $2)
+      RETURNING d.id`,
+      [MAX_ATTEMPTS, getEnv().OUTBOX_BATCH_SIZE, DELIVERY_LEASE_SECONDS, this.instanceId],
+    );
+    if (claimed.length === 0) return [];
+
+    // Шаг 2: данные для доставки. Отдельным запросом, а не подзапросами в
+    // RETURNING: строки уже наши по аренде, и читать их можно спокойно.
     const { rows } = await tx.query<DeliveryRow>(
       `SELECT d.id, d.endpoint_id, d.event_id, d.attempts,
               e.url, e.secret_ciphertext, e.status AS endpoint_status,
@@ -91,14 +129,9 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
          FROM integration.webhook_deliveries d
          JOIN integration.webhook_endpoints e ON e.id = d.endpoint_id
          JOIN audit.outbox_events o ON o.id = d.event_id
-        WHERE d.status IN ('queued', 'failed')
-          AND (d.next_retry_at IS NULL OR d.next_retry_at <= now())
-          AND d.attempts < $1
-          AND e.status = 'active'
-        ORDER BY d.created_at
-        FOR UPDATE OF d SKIP LOCKED
-        LIMIT $2`,
-      [MAX_ATTEMPTS, getEnv().OUTBOX_BATCH_SIZE],
+        WHERE d.id = ANY($1::uuid[])
+        ORDER BY d.created_at`,
+      [claimed.map((row) => row.id)],
     );
     return rows;
   }
@@ -195,6 +228,13 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
     });
   }
 }
+
+/**
+ * Срок аренды доставки. Больше самого долгого HTTP-запроса к получателю
+ * (таймаут доставки) и достаточно короткий, чтобы упавший экземпляр не держал
+ * очередь дольше минуты.
+ */
+const DELIVERY_LEASE_SECONDS = 60;
 
 const MAX_ATTEMPTS = 8;
 const MAX_BACKOFF_SECONDS = 3600;

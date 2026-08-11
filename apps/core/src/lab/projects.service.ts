@@ -31,6 +31,15 @@ import { S3Service } from '../storage/s3.service';
  */
 
 /** Лимиты загрузки по типу материала. Больше — отказ на стороне хранилища. */
+/**
+ * Предел числа материалов на проект. Не «красивое число»: заявка с полусотней
+ * приложений не читается человеком, а рецензент обязан её прочесть.
+ */
+const MAX_MATERIALS_PER_PROJECT = 50;
+
+/** Незавершённых загрузок одновременно: больше — это уже не работа, а запас. */
+const MAX_PENDING_UPLOADS_PER_PROJECT = 5;
+
 const MAX_UPLOAD_BYTES: Record<'deck' | 'video' | 'doc', number> = {
   deck: 50 * 1024 * 1024,
   video: 500 * 1024 * 1024,
@@ -325,14 +334,102 @@ export class ProjectsService {
     });
   }
 
+  /**
+   * Квота проекта на материалы.
+   *
+   * Без неё авторизованный пользователь выпускает билеты сколько угодно: каждая
+   * выдача создаёт строку и объект в хранилище, и рост ограничен только его
+   * терпением (SEC-14). Считаются и незавершённые загрузки — иначе квота
+   * обходится тем, что файлы просто не досылаются.
+   */
+  private async assertUploadQuota(tx: Tx, projectId: string): Promise<void> {
+    const { rows } = await tx.query<{ total: string; pending: string }>(
+      `SELECT count(*)::text AS total,
+              count(*) FILTER (WHERE uploaded_at IS NULL)::text AS pending
+         FROM lab.project_materials
+        WHERE project_id = $1`,
+      [projectId],
+    );
+    const total = Number(rows[0]!.total);
+    const pending = Number(rows[0]!.pending);
+
+    if (total >= MAX_MATERIALS_PER_PROJECT) {
+      throw errors.limitExceeded(
+        `У проекта уже ${total} материалов при пределе ${MAX_MATERIALS_PER_PROJECT}`,
+      );
+    }
+    // Отдельный предел на НЕЗАВЕРШЁННЫЕ: цепочка выданных и брошенных билетов
+    // — самый дешёвый способ занять место, ничего не загружая.
+    if (pending >= MAX_PENDING_UPLOADS_PER_PROJECT) {
+      throw errors.limitExceeded(
+        `У проекта ${pending} незавершённых загрузок. Завершите или дождитесь их отмены`,
+      );
+    }
+  }
+
+  /**
+   * Подтверждение загрузки.
+   *
+   * До этого вызова строка материала — намерение, а не материал: билет мог быть
+   * выдан и не использован. Факт проверяется обращением к хранилищу, а не
+   * словами клиента: «я загрузил» от клиента — это не доказательство.
+   */
+  async finalizeUpload(
+    ctx: RequestContext,
+    projectId: string,
+    materialId: string,
+  ): Promise<ProjectMaterial> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows } = await tx.query<MaterialRow & { s3_key: string | null }>(
+        `SELECT id, project_id, type, version, url, parse_status, created_at, s3_key
+           FROM lab.project_materials
+          WHERE id = $1 AND project_id = $2`,
+        [materialId, projectId],
+      );
+      const material = rows[0];
+      if (!material) throw errors.notFound({ subject: 'material' });
+      if (!material.s3_key) {
+        throw errors.conflict('Этот материал не требует подтверждения загрузки');
+      }
+
+      const head = await this.s3.headObject(material.s3_key);
+      if (!head.exists) {
+        throw errors.conflict('Объект не найден в хранилище: загрузка не завершена');
+      }
+
+      const { rows: updated } = await tx.query<MaterialRow>(
+        `UPDATE lab.project_materials
+            SET uploaded_at = coalesce(uploaded_at, now()), size_bytes = $3
+          WHERE id = $1 AND project_id = $2
+        RETURNING id, project_id, type, version, url, parse_status, created_at`,
+        [materialId, projectId, head.sizeBytes],
+      );
+
+      await this.audit.emit(tx, {
+        verb: 'lab.material.added',
+        actorId: ctx.userId,
+        actorRole: 'founder',
+        subjectType: 'project',
+        subjectId: projectId,
+        context: { materialId, sizeBytes: head.sizeBytes, finalized: true },
+        traceId: ctx.traceId,
+      });
+
+      return mapMaterial(updated[0]!);
+    });
+  }
+
   // ------------------------------------------------------------------ материалы
 
   async listMaterials(ctx: RequestContext, projectId: string): Promise<ProjectMaterial[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<MaterialRow>(
+        // Только подтверждённые: выданный и брошенный билет не материал, и
+        // показывать его как материал значит вводить в заблуждение и
+        // основателя, и рецензента.
         `SELECT id, project_id, type, version, url, parse_status, created_at
            FROM lab.project_materials
-          WHERE project_id = $1
+          WHERE project_id = $1 AND uploaded_at IS NOT NULL
           ORDER BY created_at DESC
           LIMIT 100`,
         [projectId],
@@ -393,6 +490,7 @@ export class ProjectsService {
     return this.runMapped(async () =>
       this.db.transaction(ctx, async (tx) => {
         await this.assertProjectVisible(tx, input.projectId);
+        await this.assertUploadQuota(tx, input.projectId);
         const version = await this.nextMaterialVersion(tx, input.projectId, input.type);
         const materialId = uuidv7();
         const key = this.s3.buildMaterialKey(input.projectId, materialId, input.type);

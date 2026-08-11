@@ -78,6 +78,8 @@ async function claim(instance, size) {
 
 console.warn('\n=== ПРОВЕРКА ОЧЕРЕДИ OUTBOX ===\n');
 const created = [];
+/** Подписчики, заведённые прогоном: убираются в finally вместе с событиями. */
+const createdEndpoints = [];
 
 try {
   // Пять неопубликованных событий с известным типом.
@@ -147,7 +149,76 @@ try {
     [created[0]],
   );
   check('прежнему проходу это событие не видно — потеря была настоящей', invisible.length === 0);
+  // --- 3. Аренда очереди ДОСТАВОК (SEC-19) --------------------------------
+  // Прежде строка доставки отпускалась вместе с транзакцией — до самого
+  // HTTP-запроса, и два экземпляра слали одно событие получателю одновременно.
+  // Подписчик заводится ПРОГОНОМ, а не ищется в базе: пропущенная проверка
+  // ничего не доказывает, а зависеть от чужих данных — тот же ложный зелёный.
+  const [account] = await sql(
+    `SELECT id FROM integration.service_accounts ORDER BY created_at LIMIT 1`,
+  );
+  let endpoint = null;
+  if (account) {
+    [endpoint] = await sql(
+      `INSERT INTO integration.webhook_endpoints
+         (id, service_account_id, url, subscribed_verbs, secret_ciphertext,
+          secret_kms_key_id, secret_fingerprint, status)
+       VALUES (public.uuid_generate_v7(), $1, 'https://probe.example.org/hook',
+               ARRAY['lab.season.opened'], $2, 'probe', $3, 'active')
+       RETURNING id`,
+      // Байты передаются параметром, а не литералом: экранированный литерал
+      // превратился в настоящий нулевой байт внутри текста запроса и сломал
+      // протокол соединения.
+      [account.id, Buffer.from([0]), Buffer.from([0])],
+    );
+    createdEndpoints.push(endpoint.id);
+  }
+  if (!endpoint) {
+    check('подписчик для проверки аренды заведён', false, 'в базе нет сервисного аккаунта');
+  } else {
+    const [delivery] = await sql(
+      `INSERT INTO integration.webhook_deliveries (id, endpoint_id, event_id, status)
+       VALUES (public.uuid_generate_v7(), $1, $2, 'queued')
+       ON CONFLICT (endpoint_id, event_id) DO UPDATE
+         SET status = 'queued', locked_until = NULL, attempts = 0
+       RETURNING id`,
+      [endpoint.id, created[1]],
+    );
+
+    const claim = async (instance) =>
+      sql(
+        `UPDATE integration.webhook_deliveries d
+            SET locked_until = now() + interval '60 seconds', locked_by = $2
+          WHERE d.id IN (
+            SELECT d2.id FROM integration.webhook_deliveries d2
+             WHERE d2.id = $1
+               AND d2.status IN ('queued','failed')
+               AND (d2.locked_until IS NULL OR d2.locked_until < now())
+             FOR UPDATE OF d2 SKIP LOCKED)
+        RETURNING d.id`,
+        [delivery.id, instance],
+      );
+
+    const firstDelivery = await claim('delivery-A');
+    const secondDelivery = await claim('delivery-B');
+    check('доставку забрал первый экземпляр', firstDelivery.length === 1);
+    check(
+      'второй экземпляр ту же доставку НЕ получил',
+      secondDelivery.length === 0,
+      `строк: ${secondDelivery.length}`,
+    );
+
+    await sql('DELETE FROM integration.webhook_deliveries WHERE id = $1', [delivery.id]);
+  }
 } finally {
+  if (createdEndpoints.length > 0) {
+    await sql('DELETE FROM integration.webhook_deliveries WHERE endpoint_id = ANY($1::uuid[])', [
+      createdEndpoints,
+    ]);
+    await sql('DELETE FROM integration.webhook_endpoints WHERE id = ANY($1::uuid[])', [
+      createdEndpoints,
+    ]);
+  }
   if (created.length > 0) {
     await sql('DELETE FROM audit.outbox_events WHERE id = ANY($1::uuid[])', [created]);
     console.warn('\n  прогон убрал свои события');

@@ -373,6 +373,26 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
   // Префикс __Host- требует Secure, Path=/ и отсутствия Domain. Браузер молча
   // отбросит такую cookie по http, поэтому в production он обязателен, а в
   // dev — наоборот, недопустим.
+  // ---- Транспорт до внутренних систем -------------------------------------
+  // Внешние адреса в production обязаны быть https, а вот до БД и брокера
+  // требования не было вовсе: пароли, ПДн и события шли бы открытым текстом
+  // внутри сети. Компрометация сегмента east-west превращается в перехват
+  // учётных данных (SEC-09).
+  if (isProd && env.DATABASE_SSL !== 'true') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['DATABASE_SSL'],
+      message: 'в production соединение с БД обязано идти по TLS',
+    });
+  }
+  if (isProd && env.NATS_URL && !env.NATS_URL.startsWith('tls://')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['NATS_URL'],
+      message: 'в production брокер подключается по tls://, а не nats://',
+    });
+  }
+
   if (isProd && !env.SESSION_COOKIE_NAME.startsWith('__Host-')) {
     ctx.addIssue({
       code: 'custom',

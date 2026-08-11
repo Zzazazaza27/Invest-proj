@@ -118,6 +118,8 @@ pause(62, 'лимит класса auth перед проверкой CSRF');
 run('привязка CSRF к сессии', 'node', ['scripts/probe-csrf-binding.mjs']);
 run('аренда очереди и повтор рассылки', 'node', ['scripts/probe-outbox-lease.mjs']);
 run('версии событий агрегата', 'node', ['scripts/probe-event-versions.mjs']);
+pause(62, 'лимит класса auth перед проверкой квот загрузки');
+run('квоты и подтверждение загрузки', 'node', ['scripts/probe-upload-quota.mjs']);
 pause(62, 'лимит класса auth перед прогоном отзыва прав');
 run('немедленный отзыв прав', 'node', ['scripts/probe-role-revocation.mjs']);
 
