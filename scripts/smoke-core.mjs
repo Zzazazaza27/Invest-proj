@@ -8,8 +8,31 @@
  *
  * Запуск: node scripts/smoke-core.mjs [--api http://127.0.0.1:4300]
  */
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
 const apiIndex = process.argv.indexOf('--api');
 const BASE = apiIndex >= 0 ? process.argv[apiIndex + 1] : 'http://127.0.0.1:4300';
+
+/**
+ * Значение из `.env`: прогон не поднимает приложение и своей конфигурации не
+ * имеет, поэтому спрашивать её надо там же, откуда её берёт сервер. Умолчание
+ * в коде прогона означало бы проверку выдуманного порога, а не настроенного.
+ */
+function readEnvValue(key) {
+  const envFile = join(ROOT, '.env');
+  if (!existsSync(envFile)) return null;
+  for (const line of readFileSync(envFile, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq > 0 && trimmed.slice(0, eq).trim() === key) return trimmed.slice(eq + 1).trim();
+  }
+  return null;
+}
 
 // Имена cookie берутся из окружения: в dev они без префикса __Host-,
 // иначе браузер отбросил бы их при работе по http.
@@ -311,7 +334,11 @@ let csrfCookie;
   const results = [];
   // Лимит класса auth берётся из конфигурации; проверяем факт срабатывания,
   // а не конкретное число.
-  const authLimit = Number(process.env.RATE_LIMIT_AUTH_PER_MIN ?? 30);
+  // Лимит читается из .env, а не из умолчания: значение для разработки поднято
+  // (ведро класса auth считается по адресу, и прогоны делят одно ведро). Число
+  // «30» здесь означало бы ожидание отказа там, где сервер его не даёт, —
+  // проверка краснела бы при исправной защите.
+  const authLimit = Number(readEnvValue('RATE_LIMIT_AUTH_PER_MIN') ?? 30);
   for (let i = 0; i < authLimit + 5; i += 1) {
     const { response } = await req('/v1/auth/login', {
       method: 'POST',

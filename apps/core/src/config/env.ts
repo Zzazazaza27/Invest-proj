@@ -28,6 +28,15 @@ const RawEnvSchema = z.object({
   CORE_BIND_HOST: z.string().default('127.0.0.1'),
   CORE_PUBLIC_URL: z.url().default('http://localhost:4300'),
   CORS_ALLOWED_ORIGINS: z.string().default(''),
+  /**
+   * Адреса прокси, чьим заголовкам `X-Forwarded-*` разрешено верить.
+   *
+   * Через запятую, в форме адреса или CIDR. Пусто — прокси нет, заголовки
+   * игнорируются и адрес клиента берётся из соединения. Значение `true` здесь
+   * невозможно намеренно: «доверять любому» означает, что клиент подменяет
+   * собственный адрес, а вместе с ним — ключ ограничения частоты.
+   */
+  TRUSTED_PROXY_CIDRS: z.string().default(''),
 
   DATABASE_URL: NonEmpty,
   /**
@@ -51,6 +60,14 @@ const RawEnvSchema = z.object({
    * отдавать данные наружу под правами пользовательской роли нельзя.
    */
   DATABASE_URL_APP_INTEGRATION: z.string().default(''),
+  /**
+   * Ключ подписи сервисных токенов Integration API.
+   *
+   * Отдельный от ключа пользовательских сессий намеренно: у контуров разный
+   * срок жизни, разные потребители и разная процедура ротации. Общий ключ
+   * означает, что компрометация одного контура компрометирует второй.
+   */
+  INTEGRATION_TOKEN_SIGNING_KEY: z.string().default(''),
   /**
    * Подключение денежного контура. Роль `app_billing` пишет начисления, счета и
    * платежи; роль приложения в эту группу не входит по той же причине, что и в
@@ -207,6 +224,25 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
   // Секрет клиента может утечь из конфигурации потребителя; сертификат — второй
   // фактор, и в production он обязателен. Без заголовка от прокси проверить его
   // нечем, поэтому пустое значение в production — ошибка конфигурации.
+  // Сервисные токены Integration API подписывались тем же ключом, что и
+  // локальные сессии, а его длина проверялась ТОЛЬКО при AUTH_MODE=local. В
+  // production, где обязателен oidc, ключ мог остаться пустым — и подпись
+  // вычислялась HMAC с пустым, то есть известным, ключом. Свой ключ обязателен
+  // всегда, когда контур включён: подпись, которую может вычислить кто угодно,
+  // не является подписью.
+  if (
+    env.DATABASE_URL_APP_INTEGRATION &&
+    env.INTEGRATION_TOKEN_SIGNING_KEY.length < LOCAL_KEY_MIN_LENGTH
+  ) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['INTEGRATION_TOKEN_SIGNING_KEY'],
+      message:
+        'Integration API включён без собственного ключа подписи токенов ' +
+        `(минимум ${LOCAL_KEY_MIN_LENGTH} символов). Ключ сессий для этого не годится.`,
+    });
+  }
+
   if (isProd && env.DATABASE_URL_APP_INTEGRATION && !env.INTEGRATION_CLIENT_CERT_HEADER) {
     ctx.addIssue({
       code: 'custom',

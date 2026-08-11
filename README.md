@@ -107,6 +107,10 @@ npm run bootstrap:roles -w database   # логин-роли БД из перем
 NODE_ENV=test npm run db:migrate
 ```
 
+Между живыми прогонами нужна пауза в минуту: ведро класса auth считается по
+адресу (подделка cookie не должна давать новый лимит), поэтому все локальные
+прогоны делят одно окно. `security-audit-full.mjs` выдерживает паузы сам.
+
 Запуск ядра и живая проверка:
 
 ```bash
@@ -122,6 +126,8 @@ node scripts/smoke-events.mjs          # события и вебхуки: 30 п
 node scripts/smoke-admin-roles.mjs     # роли и описание API: 25 проверок
 node scripts/smoke-api-client.mjs      # клиент против живого API: 16 проверок
 node scripts/smoke-techdebt.mjs        # закрытый техдолг: 28 проверок
+node scripts/probe-rate-limit.mjs      # обходится ли лимит подделкой cookie
+node scripts/check-definer-privileges.mjs  # EXECUTE у PUBLIC на SECURITY DEFINER
 node scripts/check-service-roles.mjs   # границы сервисных ролей БД: 14 проверок
 
 npm run build -w apps/web-public && npm run preview -w apps/web-public   # витрина на 5173

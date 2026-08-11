@@ -81,9 +81,18 @@ export function issueServiceToken(input: {
   return { token: `${body}.${sign(body)}`, expiresIn: ttl };
 }
 
+/**
+ * Подпись сервисного токена СВОИМ ключом.
+ *
+ * Раньше здесь стоял ключ пользовательских сессий, длина которого проверяется
+ * только при AUTH_MODE=local. В production (AUTH_MODE=oidc) он мог быть пустым,
+ * и тогда подпись вычислялась с пустым — то есть общеизвестным — ключом:
+ * токен с любыми scope подделывался без секрета. Конфигурация теперь требует
+ * отдельный ключ всегда, когда контур включён.
+ */
 function sign(body: string): string {
   const env = getEnv();
-  return createHmac('sha256', env.LOCAL_AUTH_SIGNING_KEY)
+  return createHmac('sha256', env.INTEGRATION_TOKEN_SIGNING_KEY)
     .update(`${SIGNATURE_CONTEXT}.${body}`)
     .digest('base64url');
 }

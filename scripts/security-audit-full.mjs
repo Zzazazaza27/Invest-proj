@@ -109,6 +109,10 @@ run(
 );
 run('сетевая безопасность', 'node', ['scripts/network-audit.mjs']);
 run('границы сервисных ролей БД', 'node', ['scripts/check-service-roles.mjs']);
+run('права на SECURITY DEFINER', 'node', ['scripts/check-definer-privileges.mjs']);
+// Зонд исчерпывает окно лимита намеренно — следующий прогон идёт после паузы.
+pause(62, 'лимит класса auth перед зондом');
+run('обход лимита подделкой cookie', 'node', ['scripts/probe-rate-limit.mjs']);
 
 console.warn('\n--- Живые прогоны контуров ---');
 const LIVE = [
