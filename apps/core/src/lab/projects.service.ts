@@ -470,6 +470,15 @@ export class ProjectsService {
     return this.runMapped(async () =>
       this.db.transaction(ctx, async (tx) => {
         await this.assertProjectVisible(tx, input.projectId);
+        // Тот же лок, что берёт проверка квоты на втором пути создания
+        // материала. Без него два одновременных добавления ссылки считают ОДНУ
+        // следующую версию, и второе упирается в `UNIQUE (project_id, type,
+        // version)`: пользователь получает «такая запись уже существует» на
+        // законное действие, хотя ссылка другая и версия должна быть следующей
+        // (CODE-15). Лок сериализует только этот проект.
+        await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          `material-quota:${input.projectId}`,
+        ]);
         const version = await this.nextMaterialVersion(tx, input.projectId, 'product_link');
         const id = uuidv7();
 

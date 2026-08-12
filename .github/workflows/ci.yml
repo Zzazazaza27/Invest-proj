@@ -15,18 +15,27 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  # Версия по умолчанию для остальных гейтов. Диапазон, который проект
+  # объявляет в `engines`, проверяется матрицей в гейте 1.
   NODE_VERSION: '22'
 
 jobs:
   # ---------------------------------------------------------------- гейт 1
   static:
-    name: Линт, типы, формат
+    name: Линт, типы, формат (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
+    # ОБА конца объявленного диапазона `engines`. Раньше CI шёл только на 22,
+    # а разработка велась на 24 — то есть версия, на которой пишется код,
+    # гейтом не проверялась вовсе, и расхождение всплыло бы в проде (CODE-19).
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
-          node-version: ${{ env.NODE_VERSION }}
+          node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
       # Типы приложений выводятся из d.ts рабочих пакетов: без сборки

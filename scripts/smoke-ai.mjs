@@ -486,6 +486,39 @@ try {
   }
 }
 
+// Одиночный прогон на проект (SEC-17). Раньше ничто не мешало запустить сколько
+// угодно дорогих анализов одного проекта одновременно: общий предел частоты на
+// порядки выше стоимости одного прогона. Опыт ставится честно — три
+// ОДНОВРЕМЕННЫХ запроса; принят должен быть ровно один.
+{
+  await sql(
+    `UPDATE audit.agent_runs SET status = 'failed', finished_at = now()
+      WHERE project_id = $1 AND status = 'running'`,
+    [projectId],
+  );
+  const attempts = await Promise.all(
+    [0, 1, 2].map(() =>
+      founder.client.call(`/v1/projects/${projectId}/analysis`, { method: 'POST', body: {} }),
+    ),
+  );
+  const codes = attempts.map((a) => a.response.status).join(',');
+  const conflicts = attempts.filter((a) => a.response.status === 409).length;
+  check(
+    'одновременные запуски анализа: принят не более одного',
+    conflicts >= 2,
+    `ответы: ${codes}`,
+  );
+  const running = await sql(
+    `SELECT count(*)::int n FROM audit.agent_runs WHERE project_id = $1 AND status = 'running'`,
+    [projectId],
+  );
+  check(
+    'в журнале не осталось нескольких активных прогонов',
+    running[0].n <= 1,
+    `активных: ${running[0].n}`,
+  );
+}
+
 console.warn(`\nИтог: ${passed} проверок пройдено, ${failed} провалено.\n`);
 await pool.end();
 if (failed > 0) process.exitCode = 1;

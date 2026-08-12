@@ -253,6 +253,39 @@ if (firstMaterialId) {
   );
 }
 
+// Гонка версии ссылки на продукт (CODE-15). Версия считалась как MAX+1 без
+// сериализации: два одновременных добавления получали одно и то же число, и
+// второе упиралось в UNIQUE (project_id, type, version) — законное действие
+// отвергалось как дубликат.
+//
+// Опыт ставится ровно на это: три одновременных запроса с РАЗНЫМИ адресами.
+// Правильный исход — все три приняты и версии различны.
+{
+  const links = await Promise.all(
+    ['alpha', 'beta', 'gamma'].map((tag) =>
+      client.call(`/v1/projects/${projectId}/materials/link`, {
+        method: 'POST',
+        body: { projectId, url: `https://example.com/${tag}-${Date.now()}` },
+      }),
+    ),
+  );
+  const codes = links.map((r) => r.status).join(',');
+  const accepted = links.filter((r) => r.status === 200 || r.status === 201).length;
+
+  const versions = await sql(
+    `SELECT version FROM lab.project_materials
+      WHERE project_id = $1 AND type = 'product_link' ORDER BY version`,
+    [projectId],
+  );
+  const numbers = versions.map((v) => Number(v.version));
+  check('одновременные ссылки на продукт приняты все', accepted === 3, `ответы: ${codes}`);
+  check(
+    'версии различны и идут подряд',
+    new Set(numbers).size === numbers.length && numbers.length === 3,
+    `версии: ${numbers.join(',')}`,
+  );
+}
+
 // Уборка: прогон не оставляет за собой ни проект, ни материалы.
 await sql('DELETE FROM lab.project_materials WHERE project_id = $1', [projectId]);
 await sql('DELETE FROM lab.founders_projects WHERE project_id = $1', [projectId]);

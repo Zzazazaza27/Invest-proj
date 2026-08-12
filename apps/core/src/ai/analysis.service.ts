@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { uuidv7 } from '@unicorn/contracts';
 import { errors } from '../common/errors';
+import { getEnv } from '../config/env';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { AiGatewayClient, type AnalysisResult } from './ai-gateway.client';
@@ -69,7 +70,47 @@ export class AnalysisService {
     });
 
     const runId = uuidv7();
+    const env = getEnv();
     await this.db.transaction(ctx, async (tx) => {
+      // Лок на проект берётся ДО проверок. Без него «посмотрели, что активного
+      // прогона нет → вставили» — обычная гонка: одновременные запросы читают
+      // одно и то же и проходят все (SEC-17).
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `analysis-run:${projectId}`,
+      ]);
+
+      // Брошенные прогоны закрываются, иначе упавший экземпляр заблокировал бы
+      // проект навсегда: «один активный» превратилось бы в «ни одного больше».
+      await tx.query(
+        `UPDATE audit.agent_runs
+            SET status = 'failed', finished_at = now()
+          WHERE project_id = $1 AND status = 'running'
+            AND started_at < now() - ($2 || ' minutes')::interval`,
+        [projectId, String(env.AI_ANALYSIS_STALE_MINUTES)],
+      );
+
+      const { rows: active } = await tx.query(
+        `SELECT 1 FROM audit.agent_runs
+          WHERE project_id = $1 AND status = 'running' LIMIT 1`,
+        [projectId],
+      );
+      if (active.length > 0) {
+        throw errors.conflict('Анализ этого проекта уже выполняется');
+      }
+
+      // Суточная квота на пользователя. Общий предел частоты здесь не защищает:
+      // он на порядки выше стоимости одного анализа.
+      const { rows: used } = await tx.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM audit.agent_runs
+          WHERE user_id = $1 AND started_at > now() - interval '24 hours'`,
+        [ctx.userId],
+      );
+      if (Number(used[0]?.n ?? 0) >= env.AI_ANALYSIS_DAILY_LIMIT) {
+        throw errors.conflict(
+          `Суточный предел запусков анализа исчерпан (${env.AI_ANALYSIS_DAILY_LIMIT})`,
+        );
+      }
+
       await tx.query(
         `INSERT INTO audit.agent_runs (id, graph_name, project_id, user_id, status)
          VALUES ($1, 'project_analysis', $2, $3, 'running')`,
