@@ -446,9 +446,14 @@ export class ProjectsService {
         const id = uuidv7();
 
         const { rows } = await tx.query<MaterialRow>(
+          // `uploaded_at` проставляется явно: ссылка не проходит через
+          // хранилище, поэтому момент её создания и есть момент загрузки. Без
+          // отметки материал считался бы намерением и не показывался бы ни
+          // владельцу, ни рецензенту (M037/M040). То же правило продублировано
+          // триггером БД — сервисный слой здесь не единственная защита.
           `INSERT INTO lab.project_materials
-             (id, project_id, type, version, url, parse_status, uploaded_by)
-           VALUES ($1, $2, 'product_link', $3, $4, 'not_required', $5)
+             (id, project_id, type, version, url, parse_status, uploaded_by, uploaded_at)
+           VALUES ($1, $2, 'product_link', $3, $4, 'not_required', $5, now())
            RETURNING id, project_id, type, version, url, parse_status, created_at`,
           [id, input.projectId, version, input.url, ctx.userId],
         );

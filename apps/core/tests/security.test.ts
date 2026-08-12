@@ -4,6 +4,7 @@ import { CryptoService } from '../src/crypto/crypto.service';
 import { TokenVerifier } from '../src/auth/token.verifier';
 import { TokenRevocationService } from '../src/auth/token-revocation.service';
 import { createHmac } from 'node:crypto';
+import { OpenApiController } from '../src/health/openapi.controller';
 
 /**
  * Юнит-тесты периметра безопасности. Проверяют то, что нельзя увидеть в
@@ -14,6 +15,9 @@ import { createHmac } from 'node:crypto';
 beforeEach(() => {
   resetEnvCache();
 });
+
+/** Идентификатор пользователя обязан быть UUID: на нём построены все политики RLS. */
+const SUBJECT = '01890a5d-ac96-774b-bcce-b302099a8057';
 
 const BASE_ENV: NodeJS.ProcessEnv = {
   DATABASE_URL: 'postgres://app:pw@localhost:5433/db',
@@ -239,16 +243,16 @@ describe('Проверка токена', () => {
 
   it('валидный локальный токен принимается', async () => {
     await withEnv(async () => {
-      const token = verifier.issueLocal({ subject: 'u1', roles: ['founder'], ttlSeconds: 60 });
+      const token = verifier.issueLocal({ subject: SUBJECT, roles: ['founder'], ttlSeconds: 60 });
       const result = await verifier.verify(token);
-      expect(result.subject).toBe('u1');
+      expect(result.subject).toBe(SUBJECT);
       expect(result.roles).toEqual(['founder']);
     });
   });
 
   it('подделанная подпись отвергается', async () => {
     await withEnv(async () => {
-      const token = verifier.issueLocal({ subject: 'u1', roles: ['founder'], ttlSeconds: 60 });
+      const token = verifier.issueLocal({ subject: SUBJECT, roles: ['founder'], ttlSeconds: 60 });
       const [body] = token.split('.');
       await expect(verifier.verify(`${body}.AAAA`)).rejects.toThrow();
     });
@@ -256,10 +260,10 @@ describe('Проверка токена', () => {
 
   it('изменённая полезная нагрузка отвергается', async () => {
     await withEnv(async () => {
-      const token = verifier.issueLocal({ subject: 'u1', roles: ['founder'], ttlSeconds: 60 });
+      const token = verifier.issueLocal({ subject: SUBJECT, roles: ['founder'], ttlSeconds: 60 });
       const [, signature] = token.split('.');
       const forged = Buffer.from(
-        JSON.stringify({ sub: 'u1', roles: ['admin'], exp: Math.floor(Date.now() / 1000) + 60 }),
+        JSON.stringify({ sub: SUBJECT, roles: ['admin'], exp: Math.floor(Date.now() / 1000) + 60 }),
       ).toString('base64url');
       await expect(verifier.verify(`${forged}.${signature}`)).rejects.toThrow();
     });
@@ -267,7 +271,7 @@ describe('Проверка токена', () => {
 
   it('истёкший токен отвергается', async () => {
     await withEnv(async () => {
-      const token = verifier.issueLocal({ subject: 'u1', roles: [], ttlSeconds: -10 });
+      const token = verifier.issueLocal({ subject: SUBJECT, roles: [], ttlSeconds: -10 });
       await expect(verifier.verify(token)).rejects.toThrow();
     });
   });
@@ -285,7 +289,7 @@ describe('Проверка токена', () => {
     });
     resetEnvCache();
     try {
-      expect(() => verifier.issueLocal({ subject: 'u', roles: [], ttlSeconds: 60 })).toThrow();
+      expect(() => verifier.issueLocal({ subject: SUBJECT, roles: [], ttlSeconds: 60 })).toThrow();
     } finally {
       process.env = saved;
       resetEnvCache();
@@ -381,6 +385,69 @@ describe('Транспорт до внутренних систем в productio
   });
 });
 
+describe('Строгий разбор токена (SEC-22)', () => {
+  const verifier = new TokenVerifier();
+
+  async function withEnv<T>(fn: () => T | Promise<T>): Promise<T> {
+    const saved = { ...process.env };
+    Object.assign(process.env, BASE_ENV, { NODE_ENV: 'development' });
+    resetEnvCache();
+    try {
+      return await fn();
+    } finally {
+      process.env = saved;
+      resetEnvCache();
+    }
+  }
+
+  it('идентификатор пользователя обязан быть UUID', async () => {
+    await withEnv(async () => {
+      // Значение уходит в app.current_user_id, на котором построены ВСЕ
+      // политики RLS: произвольная строка превращалась там в ошибку приведения
+      // типа внутри запроса, то есть в 500 вместо честного отказа на входе.
+      await expect(
+        verifier.verify(signLocal({ sub: 'u1', roles: [], exp: nowPlus(60) })),
+      ).rejects.toThrow();
+      await expect(
+        verifier.verify(signLocal({ sub: '', roles: [], exp: nowPlus(60) })),
+      ).rejects.toThrow();
+      await expect(
+        verifier.verify(signLocal({ sub: 42, roles: [], exp: nowPlus(60) })),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('неизвестная роль из токена отбрасывается', async () => {
+    await withEnv(async () => {
+      const verified = await verifier.verify(
+        signLocal({
+          sub: SUBJECT,
+          roles: ['founder', 'system', 'superadmin', 42],
+          exp: nowPlus(60),
+        }),
+      );
+      // Иначе имя роли из claim'а становится частью выражения любой будущей
+      // политики app.has_role(...), и новая политика задним числом расширяет
+      // права уже выданных токенов.
+      expect(verified.roles).toEqual(['founder']);
+    });
+  });
+
+  it('неизвестный уровень аутентификации не принимается за признак', async () => {
+    await withEnv(async () => {
+      const forged = await verifier.verify(
+        signLocal({ sub: SUBJECT, roles: [], acr: 'totally-mfa', exp: nowPlus(60) }),
+      );
+      expect(forged.acr).toBeNull();
+      const real = await verifier.verify(
+        signLocal({ sub: SUBJECT, roles: [], acr: 'mfa', exp: nowPlus(60) }),
+      );
+      // Контроль: allowlist не ломает настоящий признак второго фактора.
+      expect(real.acr).toBe('mfa');
+    });
+  });
+});
+
 describe('Идентификатор токена и точечный отзыв (M038)', () => {
   const verifier = new TokenVerifier();
 
@@ -408,10 +475,10 @@ describe('Идентификатор токена и точечный отзыв
   it('локальный токен получает идентификатор, и он разный у разных выпусков', async () => {
     await withEnv(async () => {
       const first = await verifier.verify(
-        verifier.issueLocal({ subject: 'u1', roles: ['founder'], ttlSeconds: 60 }),
+        verifier.issueLocal({ subject: SUBJECT, roles: ['founder'], ttlSeconds: 60 }),
       );
       const second = await verifier.verify(
-        verifier.issueLocal({ subject: 'u1', roles: ['founder'], ttlSeconds: 60 }),
+        verifier.issueLocal({ subject: SUBJECT, roles: ['founder'], ttlSeconds: 60 }),
       );
       expect(first.tokenId).toBeTruthy();
       expect(second.tokenId).toBeTruthy();
@@ -423,7 +490,7 @@ describe('Идентификатор токена и точечный отзыв
 
   it('идентификатор вне допустимой длины отбрасывается, а не доходит до запроса', async () => {
     await withEnv(async () => {
-      const forged = { sub: 'u1', roles: [], jti: 'x'.repeat(500), exp: nowPlus(60) };
+      const forged = { sub: SUBJECT, roles: [], jti: 'x'.repeat(500), exp: nowPlus(60) };
       expect((await verifier.verify(signLocal(forged))).tokenId).toBeNull();
       expect((await verifier.verify(signLocal({ ...forged, jti: 'short' }))).tokenId).toBeNull();
       expect((await verifier.verify(signLocal({ ...forged, jti: 42 }))).tokenId).toBeNull();
@@ -482,3 +549,62 @@ function signLocal(payload: Record<string, unknown>): string {
     .digest('base64url');
   return `${body}.${mac}`;
 }
+
+describe('Реконнесанс-поверхность (SEC-21)', () => {
+  const PROD = {
+    ...BASE_ENV,
+    NODE_ENV: 'production',
+    AUTH_MODE: 'oidc',
+    OIDC_ISSUER: 'https://idp.example.org',
+    OIDC_AUDIENCE: 'unicorn',
+    KMS_MODE: 'kms',
+    SESSION_COOKIE_NAME: '__Host-ul_session',
+    CSRF_COOKIE_NAME: '__Host-ul_csrf',
+    CORE_PUBLIC_URL: 'https://unicorn.example.org',
+    CORS_ALLOWED_ORIGINS: 'https://unicorn.example.org',
+    DATABASE_SSL: 'true',
+    REDIS_URL: 'rediss://cache.internal:6379',
+    REDIS_PASSWORD: 'p'.repeat(24),
+  };
+
+  /** Описание API строится из живого графа контроллеров; для теста он не нужен. */
+  const controller = new OpenApiController({ getControllers: () => [] } as never);
+
+  function withEnv<T>(env: NodeJS.ProcessEnv, fn: () => T): T {
+    const saved = { ...process.env };
+    process.env = { ...env };
+    resetEnvCache();
+    try {
+      return fn();
+    } finally {
+      process.env = saved;
+      resetEnvCache();
+    }
+  }
+
+  it('в production описание API анониму не отдаётся', () => {
+    withEnv(PROD, () => {
+      // Документ перечисляет все маршруты, включая административные и
+      // интеграционные: анониму это карта поверхности атаки одним запросом.
+      expect(() =>
+        controller.document({ userId: null, roles: [], traceId: 't' }),
+      ).toThrow();
+    });
+  });
+
+  it('в production описание API отдаётся по сессии', () => {
+    withEnv(PROD, () => {
+      const doc = controller.document({ userId: SUBJECT, roles: ['founder'], traceId: 't' });
+      expect(doc.openapi).toBe('3.1.0');
+    });
+  });
+
+  it('вне production описание остаётся открытым', () => {
+    withEnv({ ...BASE_ENV, NODE_ENV: 'development' }, () => {
+      // Контроль: правило про production, а не про закрытие документа вообще —
+      // разработке и живым прогонам он нужен анонимно.
+      const doc = controller.document({ userId: null, roles: [], traceId: 't' });
+      expect(doc.openapi).toBe('3.1.0');
+    });
+  });
+});

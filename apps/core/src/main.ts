@@ -195,6 +195,27 @@ async function bootstrap(): Promise<void> {
         url.startsWith('/v1/auth/') || url.startsWith('/v1/integration/token');
       return unauthenticated ? request.ip : `${request.ip}|${sessionHint(request) ?? 'anon'}`;
     },
+    // Заголовки лимита наружу НЕ выдаются. Они сообщают атакующему точный
+    // порог и остаток на каждый класс операций — то есть позволяют подобрать
+    // темп перебора, оставаясь под лимитом, и заранее понять, какой маршрут
+    // ограничен жёстче (SEC-21, реконнесанс-поверхность). Легитимному клиенту
+    // остаётся `retry-after` на отказе: сколько ждать, он узнаёт тогда, когда
+    // это ему действительно нужно.
+    // Два РАЗНЫХ набора: `addHeadersOnExceeding` управляет обычными ответами,
+    // `addHeaders` — ответом 429. Первый из них и выдавал остаток лимита на
+    // каждом успешном запросе; выключение только второго ничего не меняло
+    // (поймано живой проверкой заголовков, а не чтением документации).
+    addHeadersOnExceeding: {
+      'x-ratelimit-limit': false,
+      'x-ratelimit-remaining': false,
+      'x-ratelimit-reset': false,
+    },
+    addHeaders: {
+      'x-ratelimit-limit': false,
+      'x-ratelimit-remaining': false,
+      'x-ratelimit-reset': false,
+      'retry-after': true,
+    },
     errorResponseBuilder: (_request, context) => ({
       type: 'https://unicorn.vc/problems/rate_limited',
       title: 'Слишком много запросов',

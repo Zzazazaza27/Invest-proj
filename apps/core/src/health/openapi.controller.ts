@@ -3,7 +3,10 @@ import { DiscoveryService } from '@nestjs/core';
 import * as contracts from '@unicorn/contracts';
 import { API_VERSION, INTEGRATION_SCOPES } from '@unicorn/contracts';
 import { z } from 'zod';
-import { Public } from '../auth/guards';
+import { Ctx, Public } from '../auth/guards';
+import { getEnv } from '../config/env';
+import { errors } from '../common/errors';
+import type { RequestContext } from '../db/unit-of-work';
 import {
   collectRoutes,
   routesToPaths,
@@ -35,8 +38,21 @@ export class OpenApiController {
    */
   constructor(private readonly discovery: DiscoveryService) {}
 
+  /**
+   * В production описание отдаётся ТОЛЬКО по сессии.
+   *
+   * Документ перечисляет все маршруты, включая административные и
+   * интеграционные, вместе с требованиями доступа. Анониму это карта поверхности
+   * атаки, полученная одним запросом (SEC-21). Вне production он остаётся
+   * открытым: там он нужен разработке и живым прогонам, а скрывать нечего.
+   *
+   * Отказ — 404, а не 403: 403 подтвердил бы, что документ существует.
+   */
   @Get()
-  document(): Record<string, unknown> {
+  document(@Ctx() ctx: RequestContext): Record<string, unknown> {
+    if (getEnv().isProduction && !ctx.userId) {
+      throw errors.notFound({ subject: 'openapi' });
+    }
     const controllers = this.discovery
       .getControllers()
       .map((wrapper) => wrapper.metatype)

@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
+import { RoleSchema, type Role } from '@unicorn/contracts';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 
@@ -17,7 +18,7 @@ import { errors } from '../common/errors';
 
 export interface VerifiedToken {
   subject: string;
-  roles: string[];
+  roles: Role[];
   /** Момент выпуска (секунды). Нужен рубежу действительности сессий (M035). */
   issuedAt: number | null;
   /**
@@ -34,6 +35,19 @@ export interface VerifiedToken {
 
 /** Алгоритмы с симметричным ключом и `none` не принимаются никогда. */
 const ALLOWED_ALGS = ['RS256', 'RS384', 'RS512', 'ES256', 'ES384'] as const;
+
+/** Роли, которые вообще существуют в системе. Всё остальное из токена не берётся. */
+const KNOWN_ROLES = new Set<string>(RoleSchema.options);
+
+/**
+ * Значения `acr`, которые что-то означают. `mfa` требуется денежным и
+ * регулируемым операциям; `pwd` — обычный вход. Прочее приравнивается к
+ * отсутствию признака, а не принимается на веру.
+ */
+const KNOWN_ACR = new Set(['pwd', 'mfa']);
+
+/** UUID любой версии: идентификатор пользователя — ключ всех политик RLS. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 @Injectable()
 export class TokenVerifier {
@@ -106,14 +120,25 @@ export class TokenVerifier {
 
   private toVerified(payload: JWTPayload): VerifiedToken {
     const subject = payload.sub;
-    if (typeof subject !== 'string' || subject.length === 0) {
+    // Идентификатор обязан быть UUID, а не «непустой строкой». Значение из
+    // токена уходит в `app.current_user_id`, на котором построены ВСЕ политики
+    // RLS; произвольная строка там превращалась в ошибку приведения типа уже
+    // внутри запроса — то есть в 500 вместо честного отказа на входе (SEC-22).
+    if (typeof subject !== 'string' || !UUID_PATTERN.test(subject)) {
       throw errors.unauthenticated({ stage: 'no-subject' });
     }
     const rawRoles = (payload as { roles?: unknown }).roles;
+    // Роли из токена проходят через allowlist. Неизвестное имя роли молча
+    // отбрасывается, а не отправляется в `app.current_roles`: иначе значение
+    // claim'а становится частью выражения любой будущей политики
+    // `app.has_role(...)`, и появление политики с новым именем роли задним
+    // числом расширяет права уже выданных токенов (SEC-22).
     const roles = Array.isArray(rawRoles)
-      ? rawRoles.filter((r): r is string => typeof r === 'string')
+      ? rawRoles.filter((r): r is Role => typeof r === 'string' && KNOWN_ROLES.has(r))
       : [];
-    const acr = typeof payload.acr === 'string' ? payload.acr : null;
+    // Уровень аутентификации — тоже allowlist: сравнение идёт с 'mfa', и
+    // произвольная строка в этом поле смысла не имеет.
+    const acr = typeof payload.acr === 'string' && KNOWN_ACR.has(payload.acr) ? payload.acr : null;
     const issuedAt = typeof payload.iat === 'number' ? payload.iat : null;
     // Длина ограничена той же рамкой, что и колонка реестра: идентификатор
     // произвольной длины из чужого токена не должен доходить до запроса.
