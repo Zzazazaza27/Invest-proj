@@ -18,6 +18,7 @@ export * from './common/pagination';
 
 export * from './domain/identity';
 export * from './domain/lab';
+export * from './domain/content';
 export * from './domain/billing';
 export * from './domain/investments';
 export * from './domain/integration';

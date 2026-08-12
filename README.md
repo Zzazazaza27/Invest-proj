@@ -89,7 +89,7 @@ packages/
   contracts/     zod-схемы DTO и событий — единственный источник правды контрактов
   api-client/    Типизированный HTTP-клиент (без React), общий для всех фронтов
   ui/            Дизайн-токены и примитивы
-database/        Миграции M000–M043, RLS-политики, сиды, негативные тесты
+database/        Миграции M000–M049, RLS-политики, сиды, негативные тесты
 infra/           docker-compose локального контура и образ PostgreSQL.
                  Terraform/Helm production-контура ещё НЕТ — см. TODO.md
 docs/            ADR, аудиты сессий, runbooks, руководство по замене фронтенда
@@ -107,7 +107,7 @@ obsidian-notes/  Рабочие заметки проекта: статус фа
 cp .env.example .env          # заполнить CHANGE_ME
 npm install
 npm run infra:up              # PostgreSQL 16 + Redis + NATS JetStream + MinIO (+ бакет)
-npm run db:migrate            # миграции M000–M043
+npm run db:migrate            # миграции M000–M049
 npm run db:seed               # сезон, таксономия, тарифы, fee schedule, шаблоны
 npm run bootstrap:roles -w database   # логин-роли БД из переменных окружения
 ```
@@ -131,13 +131,14 @@ NODE_ENV=test npm run db:migrate
 npm run build -w apps/core
 node scripts/dev-core.mjs --detached   # лог: core.log
 node scripts/smoke-core.mjs            # периметр: 46 проверок
-node scripts/smoke-lab.mjs             # KYC, проекты, каталог: 92 проверки
+node scripts/smoke-lab.mjs             # KYC, проекты, каталог: 93 проверки
 node scripts/smoke-billing.mjs         # биллинг и админский контур: 44 проверки
 node scripts/smoke-investments.mjs     # регулируемый контур ОИП: 34 проверки
 node scripts/smoke-experts.mjs         # экспертиза, сезон, уведомления: 49 проверок
 node scripts/smoke-integration.mjs     # Integration API: 50 проверок
 node scripts/smoke-events.mjs          # события и вебхуки: 30 проверок (нужен NATS)
 node scripts/smoke-admin-roles.mjs     # роли и описание API: 25 проверок
+node scripts/smoke-content.mjs         # контент публичной витрины: 18 проверок
 node scripts/smoke-api-client.mjs      # клиент против живого API: 16 проверок
 node scripts/smoke-techdebt.mjs        # закрытый техдолг: 28 проверок
 node scripts/check-service-roles.mjs   # границы сервисных ролей БД: 14 проверок

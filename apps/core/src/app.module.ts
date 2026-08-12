@@ -36,6 +36,8 @@ import {
   IntegrationTokenController,
 } from './integration/integration.controller';
 import { IntegrationService } from './integration/integration.service';
+import { ContentService } from './content/content.service';
+import { AdminContentController, ContentController } from './content/content.controller';
 import { ServiceAccountStateService } from './integration/service-account-state.service';
 import { ServiceAccountsController } from './integration/service-accounts.controller';
 import { InvestmentsController } from './investments/investments.controller';
@@ -68,6 +70,8 @@ import { S3Service } from './storage/s3.service';
   controllers: [
     HealthController,
     PricingController,
+    ContentController,
+    AdminContentController,
     IdentityController,
     KycController,
     ProjectsController,
@@ -110,6 +114,7 @@ import { S3Service } from './storage/s3.service';
     NotificationsService,
     IntegrationService,
     ServiceAccountStateService,
+    ContentService,
     NatsClient,
     WebhooksService,
     OutboxPublisherService,
