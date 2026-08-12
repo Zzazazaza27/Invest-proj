@@ -392,9 +392,15 @@ export class ProjectsService {
   ): Promise<ProjectMaterial> {
     return this.db.transaction(ctx, async (tx) => {
       const { rows } = await tx.query<MaterialRow & { s3_key: string | null }>(
+        // FOR UPDATE обязателен. Без блокировки между этим чтением и записью
+        // ниже успевает вклиниться уборщик брошенных загрузок: он удаляет
+        // объект в хранилище, а подтверждение затем проставляет `uploaded_at` —
+        // и получается «готовый» материал без файла (SEC-04). Блокировка
+        // сериализует подтверждение и уборку одной строки.
         `SELECT id, project_id, type, version, url, parse_status, created_at, s3_key
            FROM lab.project_materials
-          WHERE id = $1 AND project_id = $2`,
+          WHERE id = $1 AND project_id = $2
+            FOR UPDATE`,
         [materialId, projectId],
       );
       const material = rows[0];
@@ -409,12 +415,23 @@ export class ProjectsService {
       }
 
       const { rows: updated } = await tx.query<MaterialRow>(
+        // Отпечаток пишется только при первом подтверждении — тем же
+        // `coalesce`, что и момент загрузки: повторный вызов не должен
+        // переписывать зафиксированное состояние новым содержимым объекта.
         `UPDATE lab.project_materials
-            SET uploaded_at = coalesce(uploaded_at, now()), size_bytes = $3
+            SET uploaded_at = coalesce(uploaded_at, now()),
+                size_bytes = $3,
+                content_hash = coalesce(content_hash, $4)
           WHERE id = $1 AND project_id = $2
         RETURNING id, project_id, type, version, url, parse_status, created_at`,
-        [materialId, projectId, head.sizeBytes],
+        [materialId, projectId, head.sizeBytes, head.etag],
       );
+      // Строки может не быть, если её убрали между чтением и записью. Прежний
+      // код брал `updated[0]!` и падал внутренней ошибкой; отказ должен быть
+      // объяснимым.
+      if (!updated[0]) {
+        throw errors.conflict('Материал был удалён во время подтверждения загрузки');
+      }
 
       await this.audit.emit(tx, {
         verb: 'lab.material.added',
@@ -426,7 +443,7 @@ export class ProjectsService {
         traceId: ctx.traceId,
       });
 
-      return mapMaterial(updated[0]!);
+      return mapMaterial(updated[0]);
     });
   }
 

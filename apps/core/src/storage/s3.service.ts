@@ -65,7 +65,9 @@ export class S3Service {
    * быть выдан и не использован, а запись материала при этом уже создана
    * (SEC-14). HEAD дешевле GET и не тянет тело.
    */
-  async headObject(key: string): Promise<{ exists: boolean; sizeBytes: number | null }> {
+  async headObject(
+    key: string,
+  ): Promise<{ exists: boolean; sizeBytes: number | null; etag: string | null }> {
     const env = getEnv();
     if (!this.isConfigured) throw new Error('S3 не настроен');
 
@@ -124,10 +126,21 @@ export class S3Service {
       signal: AbortSignal.timeout(10_000),
     });
 
-    if (response.status === 404) return { exists: false, sizeBytes: null };
+    if (response.status === 404) return { exists: false, sizeBytes: null, etag: null };
     if (!response.ok) throw new Error(`хранилище ответило ${response.status} на HEAD`);
     const length = response.headers.get('content-length');
-    return { exists: true, sizeBytes: length === null ? null : Number(length) };
+    // ETag запоминается вместе с размером: подписанная форма действует до
+    // истечения и относится к ПОСТОЯННОМУ ключу, поэтому тот же запрос можно
+    // отправить повторно и подменить объект уже после подтверждения. Без
+    // версионирования бакета это не предотвратить, но зафиксированный отпечаток
+    // делает подмену ОБНАРУЖИМОЙ: размер может совпасть, отпечаток — нет
+    // (SEC-04).
+    const etag = response.headers.get('etag');
+    return {
+      exists: true,
+      sizeBytes: length === null ? null : Number(length),
+      etag: etag === null ? null : etag.replaceAll('"', ''),
+    };
   }
 
   /**
