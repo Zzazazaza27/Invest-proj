@@ -321,7 +321,10 @@ describe('Транспорт до внутренних систем в productio
     KMS_MODE: 'kms',
     SESSION_COOKIE_NAME: '__Host-ul_session',
     CSRF_COOKIE_NAME: '__Host-ul_csrf',
-    PUBLIC_BASE_URL: 'https://unicorn.example.org',
+    // Переменная называется CORE_PUBLIC_URL. Здесь стояло несуществующее
+    // PUBLIC_BASE_URL, и набор оставался зелёным только потому, что проверял
+    // конкретное сообщение об ошибке, а не сам факт отказа.
+    CORE_PUBLIC_URL: 'https://unicorn.example.org',
     CORS_ALLOWED_ORIGINS: 'https://unicorn.example.org',
     DATABASE_SSL: 'true',
   };
@@ -338,6 +341,43 @@ describe('Транспорт до внутренних систем в productio
   it('tls:// принимается', () => {
     // Контроль: правило запрещает открытый транспорт, а не подключение вообще.
     expect(() => loadEnv({ ...PROD_ENV, NATS_URL: 'tls://broker:4222' })).not.toThrow(/NATS_URL/);
+  });
+
+  it('production без общего счётчика частоты не поднимается', () => {
+    // Счётчики в памяти процесса умножают разрешённую частоту на число
+    // экземпляров, а перезапуск обнуляет их целиком (SEC-11).
+    expect(() => loadEnv({ ...PROD_ENV, REDIS_URL: '' })).toThrow(/REDIS_URL/);
+  });
+
+  it('счётчик по открытому redis:// в production не проходит', () => {
+    expect(() =>
+      loadEnv({ ...PROD_ENV, REDIS_URL: 'redis://cache:6379', REDIS_PASSWORD: 'p'.repeat(24) }),
+    ).toThrow(/REDIS_URL/);
+  });
+
+  it('счётчик без аутентификации в production не проходит', () => {
+    expect(() =>
+      loadEnv({ ...PROD_ENV, REDIS_URL: 'rediss://cache:6379', REDIS_PASSWORD: '' }),
+    ).toThrow(/REDIS_PASSWORD/);
+  });
+
+  it('учётные данные внутри адреса счётчика запрещены в любом режиме', () => {
+    // Пароль внутри URL попадает в логи подключения и в тексты ошибок как есть
+    // — тот же довод, по которому у брокера логин и пароль вынесены отдельно.
+    expect(() => loadEnv({ ...BASE_ENV, REDIS_URL: 'redis://:pw@localhost:6380' })).toThrow(
+      /REDIS_URL/,
+    );
+  });
+
+  it('корректная конфигурация счётчика принимается', () => {
+    // Контроль: правила запрещают конкретные ошибки, а не счётчик как таковой.
+    expect(() =>
+      loadEnv({
+        ...PROD_ENV,
+        REDIS_URL: 'rediss://cache.internal:6379',
+        REDIS_PASSWORD: 'p'.repeat(24),
+      }),
+    ).not.toThrow();
   });
 });
 

@@ -11,6 +11,7 @@ import { AppModule } from './app.module';
 import { getEnv } from './config/env';
 import { ProblemDetailsFilter } from './common/problem.filter';
 import { MAX_BODY_BYTES } from './common/validation';
+import { createRateLimitRedis } from './cache/redis.client';
 
 /**
  * Точка входа.
@@ -100,8 +101,34 @@ async function bootstrap(): Promise<void> {
   // ---- Ограничение частоты ------------------------------------------------
   // Класс операции определяется по пути: денежные и аутентификационные
   // маршруты жёстче общего лимита (Architect_Launch §7).
+  // Общий счётчик. Без него ведро живёт в памяти процесса: два экземпляра
+  // считают независимо, и фактически разрешённая частота умножается на их
+  // число, а перезапуск обнуляет счётчики (SEC-11). В production переменная
+  // обязательна — проверяется конфигурацией, здесь остаётся только громкое
+  // предупреждение для локального контура.
+  const rateLimitRedis = createRateLimitRedis();
+  if (!rateLimitRedis) {
+    logger.warn(
+      'REDIS_URL не задан: ограничение частоты считается в памяти процесса. ' +
+        'Для нескольких экземпляров это означает умножение разрешённой частоты.',
+    );
+  }
+
   await app.register(rateLimit, {
     global: true,
+    // Плагин сам ведёт ключи и срок жизни ведра в Redis; при `null` остаётся
+    // встроенное хранилище в памяти.
+    ...(rateLimitRedis ? { redis: rateLimitRedis } : {}),
+    // Недоступный счётчик НЕ означает «пропускать всё». По умолчанию плагин
+    // поступает наоборот: ошибка хранилища — запрос проходит мимо лимита. Для
+    // класса auth это ровно то, чего добивается атакующий: уронить счётчик и
+    // получить неограниченный перебор паролей.
+    //
+    // Размен назван прямо: недоступность общего счётчика превращается в отказ
+    // в обслуживании, а не в тихое снятие защиты. В production счётчик и так
+    // обязателен по конфигурации, то есть является такой же зависимостью, как
+    // БД, — а падение БД тоже означает отказ, а не работу «как-нибудь».
+    skipOnError: false,
     max: (request) => {
       const url = request.url;
       const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
@@ -195,6 +222,9 @@ async function bootstrap(): Promise<void> {
   const shutdown = async (signal: string): Promise<void> => {
     logger.log(`получен ${signal}, завершаем приём запросов`);
     await app.close();
+    // Соединение со счётчиком закрывается явно: иначе процесс держится живым
+    // из-за открытого сокета и завершение выглядит зависанием.
+    if (rateLimitRedis) await rateLimitRedis.quit().catch(() => undefined);
     process.exit(0);
   };
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
