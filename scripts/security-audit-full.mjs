@@ -21,6 +21,24 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const results = [];
 
+/**
+ * Есть ли инструмент в PATH.
+ *
+ * `where` на Windows, `which` в остальных системах. Результат кешируется:
+ * один и тот же инструмент спрашивается в аудите по нескольку раз.
+ */
+const toolAvailability = new Map();
+function isToolAvailable(command) {
+  if (toolAvailability.has(command)) return toolAvailability.get(command);
+  const probe = spawnSync(process.platform === 'win32' ? 'where' : 'which', [command], {
+    encoding: 'utf8',
+    shell: false,
+  });
+  const available = probe.status === 0;
+  toolAvailability.set(command, available);
+  return available;
+}
+
 function run(name, command, args, { optional = false, retried = false } = {}) {
   const started = Date.now();
   const result = spawnSync(command, args, {
@@ -39,6 +57,18 @@ function run(name, command, args, { optional = false, retried = false } = {}) {
   });
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`;
   const ok = result.status === 0;
+
+  // «Необязательный» шаг — это про ОТСУТСТВИЕ инструмента, а не про его находки.
+  // Прежняя логика считала пропуском любой ненулевой код: секрет-скан нашёл в
+  // одном из прогонов ПЯТЬ утечек, а аудит напечатал «ПРОП … нет инструмента».
+  // Гейт, который сереет вместо красного, хуже отсутствующего гейта: он создаёт
+  // видимость проверки.
+  //
+  // Наличие инструмента проверяется ОТДЕЛЬНОЙ командой, а не разбором текста
+  // ошибки: под `shell: true` на Windows сообщение «не является внутренней или
+  // внешней командой» приходит в кодировке консоли и в регулярное выражение не
+  // попадает — проверка по тексту молча считала бы инструмент имеющимся.
+  const toolMissing = optional && !isToolAvailable(command);
   const seconds = Math.round((Date.now() - started) / 1000);
 
   // Итоговую строку прогонов достаём из их же вывода: она уже содержит цифры,
@@ -64,11 +94,13 @@ function run(name, command, args, { optional = false, retried = false } = {}) {
     return run(name, command, args, { optional, retried: true });
   }
 
-  results.push({ name, ok, optional, seconds, summary: summary.trim().slice(0, 160) });
+  // Пропуск засчитывается ТОЛЬКО отсутствующему инструменту.
+  const skipped = optional && toolMissing;
+  results.push({ name, ok, optional: skipped, seconds, summary: summary.trim().slice(0, 160) });
   console.warn(
-    `${ok ? 'OK  ' : optional ? 'ПРОП' : 'FAIL'}  ${name.padEnd(42)} ${seconds}с  ${summary.trim().slice(0, 90)}`,
+    `${ok ? 'OK  ' : skipped ? 'ПРОП' : 'FAIL'}  ${name.padEnd(42)} ${seconds}с  ${summary.trim().slice(0, 90)}`,
   );
-  if (!ok && !optional) {
+  if (!ok && !skipped) {
     // Код возврата, сигнал и ошибка запуска печатаются ЯВНО. Без них падение
     // выглядит одинаково при трёх разных причинах: прогон сам решил, что не
     // прошёл (status=1), его убили извне (signal), или он вообще не запустился
@@ -136,6 +168,9 @@ pause(62, 'лимит класса auth');
 run('точечный отзыв токена', 'node', ['scripts/probe-token-revocation.mjs']);
 pause(62, 'лимит класса auth');
 run('уборка брошенных загрузок', 'node', ['scripts/probe-abandoned-uploads.mjs']);
+// Выгрузка журнала в холодное хранилище: класса auth не касается, паузы не
+// требует — работает подключением владельца и хранилищем.
+run('выгрузка журнала в архив', 'node', ['scripts/probe-event-archive.mjs']);
 // Прогон общего счётчика намеренно ИСЧЕРПЫВАЕТ ведро класса auth — иначе он не
 // доказал бы, что лимит общий. Пауза после него обязательна, иначе следующий
 // прогон упрётся в его же отказ.
