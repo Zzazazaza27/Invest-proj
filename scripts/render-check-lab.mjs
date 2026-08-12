@@ -139,6 +139,43 @@ page.on('console', (message) => {
 });
 page.on('pageerror', (error) => consoleErrors.push(String(error)));
 
+/**
+ * Ответы API запоминаются целиком.
+ *
+ * Прогон один раз из пяти падал ожиданием элемента после создания проекта, и
+ * причину назвать было нечем: в отчёте оставался только таймаут локатора.
+ * Ответ сервера — первое, что нужно знать в такой момент: 429, 5xx и обычный
+ * 201 выглядят на экране одинаково — «ничего не появилось».
+ */
+const apiCalls = [];
+page.on('response', (response) => {
+  const url = response.url();
+  if (!url.includes('/v1/')) return;
+  apiCalls.push(
+    `${response.request().method()} ${url.replace(CORE_URL, '')} → ${response.status()}`,
+  );
+});
+
+/**
+ * Ожидание с диагностикой. Молчаливый таймаут локатора не говорит НИЧЕГО о
+ * причине: экран мог остаться прежним и из-за отказа сервера, и из-за ошибки
+ * разбора ответа, и просто из-за медленного первого рендера.
+ */
+async function waitWithDiagnosis(selector, timeout, stage) {
+  try {
+    await page.waitForSelector(selector, { timeout });
+  } catch (error) {
+    console.warn(`
+  ДИАГНОСТИКА (${stage}): ожидание «${selector}» не дождалось`);
+    console.warn(`  последние вызовы API: ${apiCalls.slice(-6).join(' | ') || '—'}`);
+    console.warn(`  ошибки консоли: ${consoleErrors.slice(-3).join(' | ') || 'нет'}`);
+    console.warn(
+      `  текст экрана: ${(await page.locator('body').innerText()).slice(0, 300).replace(/\s+/g, ' ')}`,
+    );
+    throw error;
+  }
+}
+
 // -------------------------------------------------------------------- вход
 console.warn('[1] Вход');
 await page.goto(LAB_URL, { waitUntil: 'networkidle', timeout: 30_000 });
@@ -190,9 +227,19 @@ const projectTitle = `Проект прогона ${suffix}`;
 await page.fill('#title', projectTitle);
 await page.fill('#tagline', 'Проверка кабинета в реальном рендере');
 await page.fill('#investmentAsk', '5000000.00');
+// Справочник направлений грузится асинхронно, и до его ответа `taxonomyId`
+// пуст: отправка в этот момент ГАРАНТИРОВАННО получает 400. Под нагрузкой
+// прогон успевал нажать «Создать» раньше ответа — и падал ожиданием карточки,
+// не назвав причины. Ждём заполненного значения, а не времени.
+await page
+  .locator('#taxonomyId option[value]:not([value=""])')
+  .first()
+  // `attached`, а не `visible`: пункты списка Playwright считает невидимыми,
+  // пока список не раскрыт, — ждать их видимости значило бы ждать вечно.
+  .waitFor({ state: 'attached', timeout: 15_000 });
 await page.getByRole('button', { name: 'Создать' }).click();
 
-await page.waitForSelector('text=Действия', { timeout: 15_000 });
+await waitWithDiagnosis('text=Действия', 15_000, 'карточка проекта после создания');
 check(
   'после создания открылась карточка проекта',
   (await page.locator('h1').innerText()).includes(projectTitle),

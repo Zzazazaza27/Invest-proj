@@ -59,6 +59,21 @@ function getDummyHash(): Promise<string> {
   return dummyHashPromise;
 }
 
+/**
+ * Нарушение уникальности ИМЕННО по контакту.
+ *
+ * Проверяется имя ограничения, а не только код `23505`: под тот же код
+ * попадают и другие уникальные индексы, и превращать их все в «контакт занят»
+ * значило бы прятать чужие дефекты за понятным текстом.
+ */
+function isContactUniqueViolation(error: unknown): boolean {
+  const pg = error as { code?: string; constraint?: string };
+  return (
+    pg?.code === '23505' &&
+    (pg.constraint === 'users_email_hmac_uq' || pg.constraint === 'users_phone_hmac_uq')
+  );
+}
+
 @Injectable()
 export class IdentityService {
   constructor(
@@ -88,28 +103,49 @@ export class IdentityService {
 
     return this.db.transaction(ctx, async (tx) => {
       // Занятость контакта проверяется до вставки, чтобы вернуть внятную
-      // ошибку; гонку закрывает UNIQUE-индекс по blind index.
+      // ошибку. UNIQUE-индекс по blind index закрывает ГОНКУ — но только от
+      // появления дубликата: ответ при этом был 500, пока его не перевели в
+      // доменный отказ ниже.
       if (emailIndex) await this.assertContactFree(tx, 'email_hmac', emailIndex);
       if (phoneIndex) await this.assertContactFree(tx, 'phone_hmac', phoneIndex);
 
-      await tx.query(
-        `INSERT INTO identity.users
-           (id, email_ciphertext, phone_ciphertext, contact_wrapped_dek, email_hmac, phone_hmac,
-            password_hash, display_name, primary_role, status, locale)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_consents', $10)`,
-        [
-          userId,
-          contact.ciphertexts.email,
-          contact.ciphertexts.phone,
-          contact.wrappedDek,
-          emailIndex,
-          phoneIndex,
-          passwordHash,
-          input.displayName,
-          input.role,
-          input.locale,
-        ],
-      );
+      try {
+        await tx.query(
+          `INSERT INTO identity.users
+             (id, email_ciphertext, phone_ciphertext, contact_wrapped_dek, email_hmac, phone_hmac,
+              password_hash, display_name, primary_role, status, locale)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_consents', $10)`,
+          [
+            userId,
+            contact.ciphertexts.email,
+            contact.ciphertexts.phone,
+            contact.wrappedDek,
+            emailIndex,
+            phoneIndex,
+            passwordHash,
+            input.displayName,
+            input.role,
+            input.locale,
+          ],
+        );
+      } catch (error) {
+        // Проверка занятости выше и сама вставка — разные моменты времени:
+        // между ними другая транзакция успевает зарегистрировать тот же
+        // контакт. Дубликата не возникает — его не пускает UNIQUE-индекс, — но
+        // до этого исправления наружу уходил 500 «внутренняя ошибка» вместо
+        // доменного отказа. Воспроизведено четырьмя одновременными
+        // регистрациями с одинаковым адресом.
+        //
+        // Текст отказа ТОТ ЖЕ, что у предпроверки: две разные формулировки для
+        // одного и того же исхода отличали бы гонку от обычной занятости и
+        // помогали бы перечислять пользователей.
+        if (isContactUniqueViolation(error)) {
+          throw errors.conflict('Регистрация с указанными данными невозможна', {
+            reason: 'contact-taken-race',
+          });
+        }
+        throw error;
+      }
       await tx.query('INSERT INTO identity.user_roles (user_id, role) VALUES ($1, $2)', [
         userId,
         input.role,

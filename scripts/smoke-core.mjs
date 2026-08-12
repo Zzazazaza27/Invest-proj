@@ -329,6 +329,48 @@ let csrfCookie;
   );
 }
 
+// ------------------------------------------- гонка регистрации одного адреса
+// Проверка занятости контакта и вставка — разные моменты времени. Гонку
+// закрывает UNIQUE-индекс, но до исправления наружу уходила «внутренняя
+// ошибка»: пользователь, дважды нажавший «Зарегистрироваться», получал 500.
+// Найдено случайно — четырьмя одновременными прогонами кабинета, стартовавшими
+// в одну миллисекунду. Здесь оно становится постоянной проверкой.
+{
+  const raceEmail = `race-${Date.now() % 1e9}@test.local`;
+  const raceBody = JSON.stringify({
+    email: raceEmail,
+    password: `Pw-${crypto.randomUUID()}`,
+    displayName: 'Гонка регистрации',
+    role: 'founder',
+    locale: 'ru-RU',
+    consents: ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind) => ({
+      kind,
+      version: 'v1',
+      locale: 'ru-RU',
+    })),
+  });
+  const attempts = await Promise.all(
+    Array.from({ length: 5 }, () =>
+      req('/v1/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: raceBody,
+      }),
+    ),
+  );
+  const statuses = attempts.map((a) => a.response.status);
+  check(
+    'гонка регистрации не даёт внутренней ошибки',
+    statuses.every((s) => s < 500),
+    `статусы: ${[...new Set(statuses)].join(',')}`,
+  );
+  check(
+    'из одновременных регистраций проходит ровно одна',
+    statuses.filter((s) => s === 201).length === 1,
+    `создано: ${statuses.filter((s) => s === 201).length}`,
+  );
+}
+
 // --------------------------------------------------- ограничение частоты
 {
   const results = [];

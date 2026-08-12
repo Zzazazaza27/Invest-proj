@@ -69,6 +69,16 @@ function run(name, command, args, { optional = false, retried = false } = {}) {
     `${ok ? 'OK  ' : optional ? 'ПРОП' : 'FAIL'}  ${name.padEnd(42)} ${seconds}с  ${summary.trim().slice(0, 90)}`,
   );
   if (!ok && !optional) {
+    // Код возврата, сигнал и ошибка запуска печатаются ЯВНО. Без них падение
+    // выглядит одинаково при трёх разных причинах: прогон сам решил, что не
+    // прошёл (status=1), его убили извне (signal), или он вообще не запустился
+    // (error). Один прогон в глобальном аудите оборвался, напечатав шесть
+    // успешных строк и ни строки причины, — разобрать его было нечем именно
+    // поэтому.
+    console.warn(
+      `      завершение: status=${result.status ?? '—'} signal=${result.signal ?? '—'}` +
+        `${result.error ? ` error=${result.error.message}` : ''}`,
+    );
     const tail = output.split('\n').filter(Boolean).slice(-6).join('\n      ');
     console.warn(`      ${tail}`);
   }

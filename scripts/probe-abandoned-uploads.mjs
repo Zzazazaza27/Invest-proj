@@ -127,7 +127,24 @@ async function uploadByTicket(ticket, bytes) {
 function startJanitorInstance() {
   const entry = join(ROOT, 'apps', 'core', 'dist', 'main.js');
   const env = { ...process.env, CORE_PORT: String(JANITOR_PORT) };
-  return spawn(process.execPath, [entry], { env, stdio: 'ignore', windowsHide: true });
+  const child = spawn(process.execPath, [entry], { env, stdio: 'ignore', windowsHide: true });
+  // Смерть поднятого экземпляра обязана быть заметной. Без этого прогон ждёт
+  // здоровья порта — и может получить его от ЧУЖОГО процесса, который занял тот
+  // же порт: проверка станет зелёной, ничего не проверив.
+  child.on('error', (error) => {
+    console.error(`ЭКЗЕМПЛЯР ОБСЛУЖИВАНИЯ НЕ ЗАПУСТИЛСЯ: ${error.message}`);
+    process.exit(1);
+  });
+  child.on('exit', (code, signal) => {
+    if (!child.killedByProbe) {
+      console.error(
+        `ЭКЗЕМПЛЯР ОБСЛУЖИВАНИЯ ЗАВЕРШИЛСЯ САМ: code=${code ?? '—'} signal=${signal ?? '—'} ` +
+          `(порт ${JANITOR_PORT} мог быть занят другим процессом)`,
+      );
+      process.exit(1);
+    }
+  });
+  return child;
 }
 
 async function waitHealthy(port, timeoutMs = 40_000) {
@@ -314,6 +331,7 @@ try {
   await maintenance.end();
 }
 
+janitor.killedByProbe = true;
 janitor.kill();
 
 // Уборка за собой: прогон не оставляет ни проект, ни материалы, ни объекты.

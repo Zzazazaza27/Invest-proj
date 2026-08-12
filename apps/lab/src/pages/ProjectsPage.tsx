@@ -267,9 +267,21 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
             </div>
           ) : null}
 
-          <Button type="submit" loading={busy}>
+          {/*
+            Пока справочник направлений не загружен, `taxonomyId` пуст, и отправка
+            формы ГАРАНТИРОВАННО получает 400: сервер требует направление. Это
+            воспроизведено под нагрузкой — форма успевала отправиться раньше
+            ответа справочника. Кнопка, ведущая только к отказу, не должна быть
+            нажимаемой; причина названа словами, а не спрятана в disabled.
+          */}
+          <Button type="submit" loading={busy} disabled={taxonomy.length === 0}>
             Создать
           </Button>
+          {taxonomy.length === 0 && !error ? (
+            <div style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+              Загружается справочник направлений — без него заявку принять нельзя.
+            </div>
+          ) : null}
         </Stack>
       </form>
     </Card>

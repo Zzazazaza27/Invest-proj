@@ -129,7 +129,7 @@ NODE_ENV=test npm run db:migrate
 ```bash
 npm run build -w apps/core
 node scripts/dev-core.mjs --detached   # лог: core.log
-node scripts/smoke-core.mjs            # периметр: 44 проверки
+node scripts/smoke-core.mjs            # периметр: 46 проверок
 node scripts/smoke-lab.mjs             # KYC, проекты, каталог: 90 проверок
 node scripts/smoke-billing.mjs         # биллинг и админский контур: 43 проверки
 node scripts/smoke-investments.mjs     # регулируемый контур ОИП: 34 проверки

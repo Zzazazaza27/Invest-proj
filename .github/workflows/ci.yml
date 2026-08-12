@@ -168,14 +168,24 @@ jobs:
           DB_ROLE_PASSWORD_APP_MAINTENANCE: ci_only_role_password_mainten_0
       - name: Права PUBLIC на функциях SECURITY DEFINER (ожидание 0 нарушений)
         run: node scripts/check-definer-privileges.mjs
+      # Строки подключения собираются в шаге, а не лежат литералами: пароль
+      # внутри URL — то самое, что запрещено в проекте и что ловит собственный
+      # секрет-скан (он и поймал первую версию этого шага).
       - name: Границы сервисных ролей БД
-        run: node scripts/check-service-roles.mjs
+        run: |
+          host="localhost:5432/unicorn_test"
+          export DATABASE_URL="postgres://app_backend_user:${PW_BACKEND}@${host}"
+          export DATABASE_URL_APP_BILLING="postgres://app_billing_user:${PW_BILLING}@${host}"
+          export DATABASE_URL_APP_NOTIFICATIONS="postgres://app_notifications_user:${PW_NOTIFY}@${host}"
+          export DATABASE_URL_APP_INTEGRATION="postgres://app_integration_user:${PW_INTEGR}@${host}"
+          export DATABASE_URL_APP_MAINTENANCE="postgres://app_maintenance_user:${PW_MAINTEN}@${host}"
+          node scripts/check-service-roles.mjs
         env:
-          DATABASE_URL: postgres://app_backend_user:ci_only_role_password_backend_00@localhost:5432/unicorn_test
-          DATABASE_URL_APP_BILLING: postgres://app_billing_user:ci_only_role_password_billing_00@localhost:5432/unicorn_test
-          DATABASE_URL_APP_NOTIFICATIONS: postgres://app_notifications_user:ci_only_role_password_notify_00@localhost:5432/unicorn_test
-          DATABASE_URL_APP_INTEGRATION: postgres://app_integration_user:ci_only_role_password_integr_00@localhost:5432/unicorn_test
-          DATABASE_URL_APP_MAINTENANCE: postgres://app_maintenance_user:ci_only_role_password_mainten_0@localhost:5432/unicorn_test
+          PW_BACKEND: ci_only_role_password_backend_00
+          PW_BILLING: ci_only_role_password_billing_00
+          PW_NOTIFY: ci_only_role_password_notify_00
+          PW_INTEGR: ci_only_role_password_integr_00
+          PW_MAINTEN: ci_only_role_password_mainten_0
 
   # ---------------------------------------------------------------- гейт 6
   unit:

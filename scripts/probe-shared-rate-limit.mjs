@@ -89,6 +89,22 @@ function startSecondInstance() {
     stdio: 'ignore',
     windowsHide: true,
   });
+  // Смерть поднятого экземпляра обязана быть заметной: иначе прогон дождётся
+  // здоровья порта от ЧУЖОГО процесса и объявит проверку пройденной, ничего не
+  // проверив.
+  child.on('error', (error) => {
+    console.error(`ВТОРОЙ ЭКЗЕМПЛЯР НЕ ЗАПУСТИЛСЯ: ${error.message}`);
+    process.exit(1);
+  });
+  child.on('exit', (code, signal) => {
+    if (!child.killedByProbe) {
+      console.error(
+        `ВТОРОЙ ЭКЗЕМПЛЯР ЗАВЕРШИЛСЯ САМ: code=${code ?? '—'} signal=${signal ?? '—'} ` +
+          `(порт ${SECOND_PORT} мог быть занят другим процессом)`,
+      );
+      process.exit(1);
+    }
+  });
   return child;
 }
 
@@ -167,6 +183,7 @@ check(
 
 // ---- 3. Перезапуск не обнуляет счётчик -----------------------------------
 const beforeRestart = await bucketValue();
+second.killedByProbe = true;
 second.kill();
 await new Promise((resolve) => setTimeout(resolve, 1500));
 second = startSecondInstance();
@@ -185,6 +202,7 @@ check(
   `HTTP ${afterRestartCall.status}`,
 );
 
+second.killedByProbe = true;
 second.kill();
 await redis.quit();
 console.warn(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===\n`);
