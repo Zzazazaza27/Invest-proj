@@ -23,7 +23,12 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const ENV_PATH = resolve(ROOT, process.argv[2] ?? '.env');
+const args = process.argv.slice(2);
+// --check ничего не пишет: сверяет пак на диске с тем, что получилось бы сейчас.
+// Нужен как гейт: после ротации секретов пак обязан быть пересобран, иначе он
+// редактирует прежние значения, а новые уходят в транскрипт открытыми.
+const CHECK = args.includes('--check');
+const ENV_PATH = resolve(ROOT, args.find((a) => !a.startsWith('--')) ?? '.env');
 const OUT_DIR = resolve(ROOT, '.entire/redactors/local');
 const OUT_PATH = resolve(OUT_DIR, 'env-values.yaml');
 
@@ -95,9 +100,9 @@ if (rules.length === 0) {
   process.exit(1);
 }
 
-mkdirSync(OUT_DIR, { recursive: true });
+if (!CHECK) mkdirSync(OUT_DIR, { recursive: true });
 
-if (!assertIgnored(OUT_PATH)) {
+if (!CHECK && !assertIgnored(OUT_PATH)) {
   console.error(
     `ОТКАЗ: ${OUT_PATH} не игнорируется git.\n` +
       'Файл содержит секреты в открытом виде. Восстанови правило redactors/local/ ' +
@@ -128,7 +133,38 @@ const body = rules
   )
   .join('\n');
 
-writeFileSync(OUT_PATH, `${header}\n${body}\n`, 'utf8');
+const content = `${header}\n${body}\n`;
+
+if (CHECK) {
+  if (!existsSync(OUT_PATH)) {
+    console.error(`ОТСУТСТВУЕТ ${OUT_PATH.replace(ROOT, '.')}`);
+    console.error('Секреты из .env не редактируются в транскриптах сессий.');
+    console.error('Пересобрать: npm run secrets:redactors');
+    process.exit(1);
+  }
+  const onDisk = readFileSync(OUT_PATH, 'utf8');
+  if (onDisk !== content) {
+    // Сравниваем по составу правил, чтобы назвать, ЧТО разошлось, не печатая значений.
+    const idsOf = (text) => new Set([...text.matchAll(/^ {2}- id: (\S+)$/gm)].map((m) => m[1]));
+    const want = idsOf(content);
+    const have = idsOf(onDisk);
+    const missing = [...want].filter((i) => !have.has(i));
+    const extra = [...have].filter((i) => !want.has(i));
+    console.error(`ПАК УСТАРЕЛ: ${OUT_PATH.replace(ROOT, '.')} расходится с .env`);
+    if (missing.length) console.error(`  нет правил для: ${missing.join(', ')}`);
+    if (extra.length) console.error(`  лишние правила: ${extra.join(', ')}`);
+    if (!missing.length && !extra.length) {
+      console.error('  состав правил тот же — разошлись сами значения (ротация без пересборки)');
+    }
+    console.error('Пока пак не пересобран, новые значения уходят в транскрипт открытыми.');
+    console.error('Пересобрать: npm run secrets:redactors');
+    process.exit(1);
+  }
+  console.warn(`пак актуален: ${rules.length} правил, совпадает с .env`);
+  process.exit(0);
+}
+
+writeFileSync(OUT_PATH, content, 'utf8');
 
 console.warn(`записан ${OUT_PATH.replace(ROOT, '.')}`);
 console.warn(`правил: ${rules.length} (из ${entries.length} записей окружения)`);

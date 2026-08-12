@@ -26,6 +26,7 @@
     "db:migrate": "npm run migrate -w database",
     "gate:secrets": "gitleaks detect --no-banner --redact --config .gitleaks.toml",
     "secrets:redactors": "node scripts/build-local-redactors.mjs",
+    "gate:redactors": "node scripts/build-local-redactors.mjs --check",
     "probe:secret-leak": "node scripts/probe-secret-leak.mjs",
     "rotate:kek": "node scripts/rotate-kek.mjs",
     "gate:deps": "npm audit --audit-level=high",
