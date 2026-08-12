@@ -236,7 +236,12 @@ export class AdminService {
     planId: string,
     input: ClosePlanRequest,
   ): Promise<AdminPlan> {
-    const validTo = input.validTo ? new Date(input.validTo) : new Date();
+    // Явно заданный момент берётся как есть; «сейчас» — НЕ часы приложения.
+    // Раньше здесь стоял `new Date()`, и снятие с продажи получало метку на
+    // несколько миллисекунд ПОЗЖЕ времени транзакции в БД. Витрина фильтрует
+    // по `now()` базы, поэтому в это окно только что снятый тариф ещё
+    // продавался — поймано прогоном smoke-billing, падение плавающее.
+    const validTo = input.validTo ? new Date(input.validTo) : null;
     return mapDbErrors(async () =>
       this.db.transaction(ctx, async (tx) => {
         const { rows } = await tx.query<{ id: string; valid_from: Date; valid_to: Date | null }>(
@@ -248,16 +253,23 @@ export class AdminService {
         if (plan.valid_to && plan.valid_to.getTime() <= Date.now()) {
           throw errors.stateTransition('Эта версия тарифа уже закрыта');
         }
-        if (validTo.getTime() <= plan.valid_from.getTime()) {
+        if (validTo && validTo.getTime() <= plan.valid_from.getTime()) {
           throw errors.validation([
             { path: 'validTo', message: 'закрытие раньше начала действия версии' },
           ]);
         }
 
-        await tx.query('UPDATE billing.subscription_plans SET valid_to = $2 WHERE id = $1', [
-          planId,
-          validTo.toISOString(),
-        ]);
+        // `coalesce($2, now())`: момент закрытия берётся из ТОЙ ЖЕ базы, по
+        // часам которой его потом читает витрина. Никакого окна между «часами
+        // приложения» и «часами БД» не остаётся.
+        const { rows: closed } = await tx.query<{ valid_to: Date }>(
+          `UPDATE billing.subscription_plans
+              SET valid_to = coalesce($2::timestamptz, now())
+            WHERE id = $1
+        RETURNING valid_to`,
+          [planId, validTo ? validTo.toISOString() : null],
+        );
+        const effectiveValidTo = closed[0]!.valid_to;
 
         await this.audit.emit(tx, {
           verb: 'billing.plan.closed',
@@ -265,7 +277,7 @@ export class AdminService {
           actorRole: 'admin',
           subjectType: 'subscription_plan',
           subjectId: planId,
-          context: { validTo: validTo.toISOString(), reason: input.reason },
+          context: { validTo: effectiveValidTo.toISOString(), reason: input.reason },
           traceId: ctx.traceId,
         });
 
