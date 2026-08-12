@@ -461,6 +461,42 @@ let subscriptionId;
   check('цена подписки стала персональной', json?.priceSnapshot === '3990.00', json?.priceSnapshot);
 }
 
+// ------------------------------- гонка утверждения персональной цены (4 eyes)
+// Утверждение читает предложение и меняет подписку. Между чтением и записью
+// проходит время: два одновременных утверждения могли записать в журнал ДВА
+// согласования одного предложения — а для контроля «четыре глаза» целостность
+// следа и есть весь смысл.
+{
+  await admin.call(`/v1/admin/subscriptions/${subscriptionId}/custom-price`, {
+    method: 'POST',
+    body: { price: '2990.00', reason: 'проверка гонки утверждения' },
+  });
+  const before = await sql(
+    `SELECT count(*)::int AS n FROM audit.events
+      WHERE verb = 'billing.custom_price.approved' AND subject_id = $1`,
+    [subscriptionId],
+  );
+  const parallel = await Promise.all([
+    admin2.call(`/v1/admin/subscriptions/${subscriptionId}/custom-price/approve`, {
+      method: 'POST',
+    }),
+    admin2.call(`/v1/admin/subscriptions/${subscriptionId}/custom-price/approve`, {
+      method: 'POST',
+    }),
+  ]);
+  const after = await sql(
+    `SELECT count(*)::int AS n FROM audit.events
+      WHERE verb = 'billing.custom_price.approved' AND subject_id = $1`,
+    [subscriptionId],
+  );
+  const added = after[0].n - before[0].n;
+  check(
+    'одновременное утверждение записывает ровно одно согласование',
+    added === 1,
+    `записано согласований: ${added}, ответы: ${parallel.map((p) => p.response.status).join(',')}`,
+  );
+}
+
 // ------------------------------------------------------------- фичефлаги
 {
   const { response, json } = await admin.call('/v1/admin/feature-flags');

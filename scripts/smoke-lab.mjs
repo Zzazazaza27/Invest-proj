@@ -559,6 +559,40 @@ let entityId = null;
   check('дубликат юрлица по ИНН отклонён', response.status === 409, `статус ${response.status}`);
 }
 {
+  // Одновременное создание одного и того же юрлица. Проверяется НАБЛЮДАЕМОЕ:
+  // ни одного 5xx и ровно одно созданное юрлицо.
+  //
+  // Честная оговорка: локально эта проверка проходит и с переводом ошибки
+  // 23505 в доменный отказ, и без него — запросы успевают сериализоваться, и
+  // окно между проверкой дубликата и вставкой не достигается. В отличие от
+  // гейта гонки регистрации (там окно расширено хешированием пароля и падение
+  // на прежнем коде воспроизведено), здесь это защита от регрессии по смыслу,
+  // а не проверенный на падение гейт.
+  const raceInn = `77${String(Date.now() % 100000000).padStart(8, '0')}`;
+  const body = {
+    legalName: 'Гонка юрлица',
+    inn: raceInn,
+    ogrn: TEST_OGRN,
+    jurisdiction: 'RU',
+  };
+  const attempts = await Promise.all(
+    Array.from({ length: 4 }, () =>
+      founderA.client.call('/v1/kyc/entities', { method: 'POST', body }),
+    ),
+  );
+  const statuses = attempts.map((a) => a.response.status);
+  check(
+    'одновременное создание юрлица не даёт внутренней ошибки',
+    statuses.every((s) => s < 500),
+    `статусы: ${[...new Set(statuses)].join(',')}`,
+  );
+  check(
+    'из одновременных созданий проходит ровно одно',
+    statuses.filter((s) => s === 200 || s === 201).length === 1,
+    `создано: ${statuses.filter((s) => s === 200 || s === 201).length}`,
+  );
+}
+{
   const { response } = await founderB.client.call(`/v1/kyc/entities/${entityId}/kyb`, {
     method: 'POST',
     body: { kind: 'registry_check' },

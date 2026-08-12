@@ -366,9 +366,18 @@ export class AdminService {
           price: string;
           proposed_by: string;
         }>(
+          // FOR UPDATE — не украшение. Без блокировки строки два одновременных
+          // утверждения читают одно и то же предложение в состоянии `pending`,
+          // оба проходят проверку и оба пишут согласование: в журнале контроля
+          // «четыре глаза» оказывается ДВА согласования одного предложения.
+          // Воспроизведено двумя параллельными запросами — оба вернули 201.
+          //
+          // Блокировка сериализует их: второй дождётся первого, увидит статус
+          // `approved` и получит честный отказ перехода состояния.
           `SELECT id, price::text AS price, proposed_by
              FROM billing.custom_price_proposals
-            WHERE subscription_id = $1 AND status = 'pending'`,
+            WHERE subscription_id = $1 AND status = 'pending'
+            FOR UPDATE`,
           [subscriptionId],
         );
         const proposal = rows[0];

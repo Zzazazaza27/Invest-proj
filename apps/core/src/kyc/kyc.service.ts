@@ -34,6 +34,18 @@ const DEFAULT_VALIDITY_DAYS = 365;
 /** За сколько дней до истечения проверка попадает в очередь пересмотра. */
 const REVIEW_LEAD_DAYS = 30;
 
+/**
+ * Нарушение уникальности ИМЕННО по ИНН и юрисдикции.
+ *
+ * Имя ограничения проверяется явно: под код `23505` попадают и другие
+ * уникальные индексы, и переводить их все в «юрлицо уже заведено» значило бы
+ * прятать чужие дефекты за понятным текстом.
+ */
+function isEntityUniqueViolation(error: unknown): boolean {
+  const pg = error as { code?: string; constraint?: string };
+  return pg?.code === '23505' && pg.constraint === 'business_entities_inn_uq';
+}
+
 @Injectable()
 export class KycService {
   constructor(
@@ -144,25 +156,43 @@ export class KycService {
         });
       }
 
-      const { rows } = await tx.query<EntityRow>(
-        `INSERT INTO kyc.business_entities
-           (id, legal_name, legal_form, inn_ciphertext, ogrn_ciphertext, entity_wrapped_dek,
-            inn_hmac, jurisdiction, owner_user_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, legal_name, legal_form, inn_ciphertext, entity_wrapped_dek,
-                   jurisdiction, registry_status, created_at`,
-        [
-          id,
-          input.legalName,
-          input.legalForm ?? null,
-          sealed.ciphertexts.inn,
-          sealed.ciphertexts.ogrn,
-          sealed.wrappedDek,
-          innIndex,
-          input.jurisdiction,
-          ctx.userId,
-        ],
-      );
+      let rows: EntityRow[];
+      try {
+        const inserted = await tx.query<EntityRow>(
+          `INSERT INTO kyc.business_entities
+             (id, legal_name, legal_form, inn_ciphertext, ogrn_ciphertext, entity_wrapped_dek,
+              inn_hmac, jurisdiction, owner_user_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING id, legal_name, legal_form, inn_ciphertext, entity_wrapped_dek,
+                     jurisdiction, registry_status, created_at`,
+          [
+            id,
+            input.legalName,
+            input.legalForm ?? null,
+            sealed.ciphertexts.inn,
+            sealed.ciphertexts.ogrn,
+            sealed.wrappedDek,
+            innIndex,
+            input.jurisdiction,
+            ctx.userId,
+          ],
+        );
+        rows = inserted.rows;
+      } catch (error) {
+        // Проверка дубликата выше и вставка — разные моменты времени. Дубликат
+        // не возникает (UNIQUE-индекс по инн+юрисдикции), но без этого перевода
+        // наружу уходила бы «внутренняя ошибка» вместо доменного отказа — тот
+        // же дефект, что был найден в гонке регистрации.
+        //
+        // Текст отказа ТОТ ЖЕ, что у предпроверки: иначе гонка отличалась бы
+        // от обычного дубликата и давала справку о чужом ИНН.
+        if (isEntityUniqueViolation(error)) {
+          throw errors.conflict('Юридическое лицо с такими данными уже заведено', {
+            reason: 'entity-exists-race',
+          });
+        }
+        throw error;
+      }
 
       // Владелец сразу становится подписантом: без этого он не сможет подать
       // юрлицо на проверку — политика kyb_insert требует роли signatory.
