@@ -27,6 +27,7 @@
     "gate:secrets": "gitleaks detect --no-banner --redact --config .gitleaks.toml",
     "secrets:redactors": "node scripts/build-local-redactors.mjs",
     "probe:secret-leak": "node scripts/probe-secret-leak.mjs",
+    "rotate:kek": "node scripts/rotate-kek.mjs",
     "gate:deps": "npm audit --audit-level=high",
     "gate:net": "node scripts/network-audit.mjs",
     "gate:net:strict": "node scripts/network-audit.mjs --strict",
