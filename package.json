@@ -24,7 +24,6 @@
     "infra:down": "docker compose -f infra/docker-compose.yml down",
     "infra:reset": "docker compose -f infra/docker-compose.yml down -v",
     "db:migrate": "npm run migrate -w database",
-    "db:seed": "npm run seed -w database",
     "gate:secrets": "gitleaks detect --no-banner --redact --config .gitleaks.toml",
     "gate:deps": "npm audit --audit-level=high",
     "gate:net": "node scripts/network-audit.mjs",

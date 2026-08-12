@@ -108,7 +108,9 @@ cp .env.example .env          # заполнить CHANGE_ME
 npm install
 npm run infra:up              # PostgreSQL 16 + Redis + NATS JetStream + MinIO (+ бакет)
 npm run db:migrate            # миграции M000–M049
-npm run db:seed               # сезон, таксономия, тарифы, fee schedule, шаблоны
+# Сиды (сезон, таксономия, тарифы, fee schedule, шаблоны документов и
+# уведомлений) — это миграция M011, а не отдельная команда: они применяются
+# тем же db:migrate и потому не могут разойтись со схемой.
 npm run bootstrap:roles -w database   # логин-роли БД из переменных окружения
 ```
 
@@ -240,7 +242,7 @@ docker compose -f infra/docker-compose.yml --profile idp up -d keycloak
 
 ```bash
 # 1. Инфраструктура и данные
-npm run infra:up && npm run db:migrate && npm run db:seed
+npm run infra:up && npm run db:migrate
 
 # 2. Сервисы
 npm run build -w apps/core && node scripts/dev-core.mjs --detached   # API на 4300

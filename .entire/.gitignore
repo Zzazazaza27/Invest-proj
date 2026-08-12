@@ -3,3 +3,11 @@ settings.local.json
 metadata/
 logs/
 redactors/local/
+
+# Ветки чекпоинтов Entire в этом репозитории не создаются: они складывают
+# транскрипт сессии в git-объекты ПРОЕКТА. Транскрипт содержит вывод команд, а
+# значит рано или поздно — значения из .env. Так и произошло 2026-08-12: ветка
+# entire/checkpoints/v1 унесла в git ключевой материал KEK_KYC_DOCUMENTS,
+# KEK_PASSPORT_SENSITIVE и KEK_NOMINAL_ACCOUNT_EVIDENCE, секрет-гейт дал 75
+# находок. Ветка удалена, объекты вычищены, чекпоинты выключены в settings.json.
+checkpoints/
