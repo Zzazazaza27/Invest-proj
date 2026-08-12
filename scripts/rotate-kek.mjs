@@ -36,7 +36,7 @@
 //   node scripts/rotate-kek.mjs --domain passport_sensitive --generate --test
 //   node scripts/rotate-kek.mjs --domain passport_sensitive --new-key <base64> --apply
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,6 +114,19 @@ function decrypt(key, payload, aad) {
 
 const digest = (buf) => createHash('sha256').update(buf).digest('hex').slice(0, 16);
 
+// Записывает новое значение прямо в .env. Нужен, чтобы ключ не появлялся ни в
+// argv (виден в списке процессов), ни в stdout (попадает в транскрипт сессии —
+// ровно тот путь, которым ключи и утекли в git 2026-08-12).
+function writeEnvValue(name, value) {
+  const path = resolve(ROOT, '.env');
+  const text = readFileSync(path, 'utf8');
+  const line = new RegExp(`^${name}=.*$`, 'm');
+  if (!line.test(text)) throw new Error(`в .env нет строки ${name}=`);
+  const updated = text.replace(line, `${name}=${value}`);
+  writeFileSync(path, updated, 'utf8');
+  return text; // прежнее содержимое — для отката
+}
+
 function readEnvValue(name) {
   if (process.env[name]) return process.env[name];
   const path = resolve(ROOT, '.env');
@@ -132,6 +145,10 @@ const value = (n) => {
 
 const domain = value('--domain');
 const mode = flag('--apply') ? 'apply' : flag('--test') ? 'test' : 'check';
+// --write-env: скрипт сам подставляет новый ключ в .env. Без него значение
+// пришлось бы передать через argv или прочитать с экрана — и оно осело бы в
+// транскрипте сессии.
+const WRITE_ENV = flag('--write-env');
 
 if (!domain) {
   console.error('нужен --domain. Конвертные домены: ' + Object.keys(ENVELOPE).join(', '));
@@ -147,11 +164,23 @@ if (NOT_ENVELOPE[domain]) {
 
 if (!ENVELOPE[domain]) {
   const known = Object.keys(ENV_BY_DOMAIN).includes(domain);
+  if (!known) {
+    console.error(`неизвестный домен ${domain}`);
+    process.exit(1);
+  }
+  // Домен объявлен, но им ничего не зашифровано: в базе нет ни одной обёртки,
+  // поэтому ротация — это просто новое значение в .env, без работы с данными.
+  if (mode === 'apply' && WRITE_ENV) {
+    writeEnvValue(ENV_BY_DOMAIN[domain], randomBytes(DEK_BYTES).toString('base64'));
+    console.warn(`${ENV_BY_DOMAIN[domain]}: новое значение записано в .env`);
+    console.warn('данными домен не пользуется — переобёртка не требовалась');
+    console.warn('дальше: npm run secrets:redactors');
+    process.exit(0);
+  }
   console.error(
-    known
-      ? `домен ${domain} объявлен, но им ничего не зашифровано — ротация сводится к замене значения в .env`
-      : `неизвестный домен ${domain}`,
+    `домен ${domain} объявлен, но им ничего не зашифровано — ротация сводится к замене значения в .env`,
   );
+  console.error('выполнить: npm run rotate:kek -- --domain ' + domain + ' --apply --write-env');
   process.exit(1);
 }
 
@@ -311,19 +340,50 @@ try {
     await client.query('ROLLBACK');
     console.warn('транзакция откачена: база не изменена');
   } else if (mode === 'apply') {
-    await client.query('COMMIT');
-    console.warn('');
-    console.warn(`зафиксировано: переобёрнуто ${totalRewrapped} из ${totalRows} строк`);
-    console.warn('');
-    console.warn('ДАЛЬШЕ, не откладывая:');
-    console.warn(`  1) заменить ${ENV_BY_DOMAIN[domain]} в .env на новое значение;`);
-    console.warn('  2) npm run secrets:redactors — иначе новый ключ уйдёт в транскрипт открытым;');
-    console.warn('  3) перезапустить ядро.');
-    console.warn('До шага 1 приложение работает со СТАРЫМ ключом и данные не откроются.');
-    if (generated) {
+    if (WRITE_ENV) {
+      // .env пишем ДО фиксации: если фиксация сорвётся, откатываем и файл, и
+      // транзакцию. Иначе возможен разъезд — в базе новые обёртки, в .env
+      // старый ключ, и данные не открываются.
+      let previousEnv;
+      try {
+        previousEnv = writeEnvValue(ENV_BY_DOMAIN[domain], newKek.toString('base64'));
+      } catch (e) {
+        await client.query('ROLLBACK');
+        await client.end();
+        console.error(`не удалось записать .env: ${e.message} — транзакция откачена`);
+        process.exit(1);
+      }
+      try {
+        await client.query('COMMIT');
+      } catch (e) {
+        writeFileSync(resolve(ROOT, '.env'), previousEnv, 'utf8');
+        await client.end();
+        console.error(`фиксация не прошла: ${e.message} — .env возвращён к прежнему значению`);
+        process.exit(1);
+      }
       console.warn('');
-      console.warn(`новое значение ${ENV_BY_DOMAIN[domain]} (показывается один раз):`);
-      console.warn(newKek.toString('base64'));
+      console.warn(`зафиксировано: переобёрнуто ${totalRewrapped} из ${totalRows} строк`);
+      console.warn(`${ENV_BY_DOMAIN[domain]}: новое значение записано в .env`);
+      console.warn('значение нигде не печаталось — в транскрипт сессии оно не попало');
+      console.warn('');
+      console.warn('ДАЛЬШЕ: npm run secrets:redactors, затем перезапустить ядро.');
+    } else {
+      await client.query('COMMIT');
+      console.warn('');
+      console.warn(`зафиксировано: переобёрнуто ${totalRewrapped} из ${totalRows} строк`);
+      console.warn('');
+      console.warn('ДАЛЬШЕ, не откладывая:');
+      console.warn(`  1) заменить ${ENV_BY_DOMAIN[domain]} в .env на новое значение;`);
+      console.warn(
+        '  2) npm run secrets:redactors — иначе новый ключ уйдёт в транскрипт открытым;',
+      );
+      console.warn('  3) перезапустить ядро.');
+      console.warn('До шага 1 приложение работает со СТАРЫМ ключом и данные не откроются.');
+      if (generated) {
+        console.warn('');
+        console.warn(`новое значение ${ENV_BY_DOMAIN[domain]} (показывается один раз):`);
+        console.warn(newKek.toString('base64'));
+      }
     }
   } else {
     console.warn('');

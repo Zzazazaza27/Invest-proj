@@ -354,13 +354,23 @@ npm run probe:secret-leak    # проверить, что значений из 
 переобёртки: старые `wrapped_dek` перестанут открываться.
 
 ```bash
-npm run rotate:kek -- --domain passport_sensitive               # осмотр, без записи
+npm run rotate:kek -- --domain passport_sensitive                     # осмотр, без записи
 npm run rotate:kek -- --domain passport_sensitive --generate --test   # ротация с откатом
-npm run rotate:kek -- --domain passport_sensitive --new-key <base64> --apply
+npm run rotate:kek -- --domain passport_sensitive --generate --apply --write-env
 ```
 
-После `--apply`: заменить значение в `.env` → `npm run secrets:redactors` →
-перезапустить ядро. До замены в `.env` приложение работает со старым ключом.
+`--write-env` — предпочтительный способ: скрипт сам подставляет новое значение
+в `.env`. Иначе ключ придётся передать через argv (виден в списке процессов)
+или прочитать с экрана — и он осядет в транскрипте сессии, то есть повторит
+путь утечки. `.env` пишется до фиксации транзакции: при сбое откатываются оба,
+иначе возможен разъезд «новые обёртки в базе, старый ключ в файле».
+
+После ротации: `npm run secrets:redactors` → перезапустить ядро (пока оно
+работает, в памяти остаётся прежний ключ).
+
+Ротация 2026-08-12: `KEK_KYC_DOCUMENTS`, `KEK_NOMINAL_ACCOUNT_EVIDENCE`
+(значения заменены, данными не пользуются) и `KEK_PASSPORT_SENSITIVE`
+(переобёрнуто 1403 из 1403 строк, данные проверены расшифровкой).
 
 Не все домены переобёртываются. `webhook_secrets` шифруется KEK напрямую
 (нужна перешифровка строк), `search_index` служит ключом HMAC для blind index
