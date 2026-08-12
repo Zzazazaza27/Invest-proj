@@ -49,6 +49,21 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
       });
       return;
     }
+    // Стрим проверяется ОДИН раз при старте. Ядро не создаёт его (право на
+    // управление стримом — это и право стереть историю событий), но обязано
+    // громко сказать, если публиковать некуда: без этой проверки события
+    // молча копились в outbox, и обнаружилось это только сквозным прогоном.
+    void this.nats.streamStatus().then((status) => {
+      if (status) {
+        this.logger.log({
+          msg: 'стрим событий доступен',
+          stream: status.stream,
+          messages: status.messages,
+          subjects: status.subjects.length,
+        });
+      }
+    });
+
     this.timer = setInterval(() => {
       void this.runOnce();
       // Повторная постановка доставок идёт тем же тактом: событие, у которого

@@ -85,6 +85,40 @@ export class NatsClient implements OnModuleDestroy {
     }
   }
 
+  /**
+   * Проверка того, что стрим существует и принимает наши предметы.
+   *
+   * Создавать стрим ядро НЕ вправе: право на управление стримом — это и право
+   * его удалить вместе со всей историей событий, и такое право у приложения,
+   * которое только публикует, не нужно. Но и молчать нельзя: пока стрима не
+   * было, публикация копилась в outbox с ошибкой 503, и обнаружилось это лишь
+   * в сквозном прогоне — 189 неопубликованных событий.
+   *
+   * Поэтому проверка на чтение: стрим есть — записываем в лог его состояние,
+   * стрима нет — громкое предупреждение с именем команды, которая его создаёт.
+   * Возвращает `null`, если контур публикации выключен или брокер недоступен.
+   */
+  async streamStatus(): Promise<{ stream: string; messages: number; subjects: string[] } | null> {
+    if (!this.enabled) return null;
+    try {
+      const js = await this.ensureJetStream();
+      const info = await js.jetstreamManager().then((jsm) => jsm.streams.info(EVENT_STREAM));
+      return {
+        stream: info.config.name,
+        messages: Number(info.state.messages),
+        subjects: info.config.subjects ?? [],
+      };
+    } catch (error) {
+      this.logger.error({
+        msg:
+          `стрим ${EVENT_STREAM} недоступен: события будут копиться в outbox. ` +
+          'Создать стрим: node scripts/nats-init-stream.mjs',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
   private async watchStatus(connection: NatsConnection): Promise<void> {
     for await (const status of connection.status()) {
       this.logger.warn({ msg: 'состояние подключения NATS', type: status.type });
