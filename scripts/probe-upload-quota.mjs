@@ -156,6 +156,73 @@ for (let i = 0; i < 8; i += 1) {
 }
 check('предел незавершённых загрузок сработал', limitHit > 0, `отказов: ${limitHit} из 8 попыток`);
 
+// Квота считается запросом, а вставка идёт после него: одновременные запросы
+// могут пройти проверку все сразу. Предел, обходимый параллелизмом, — это не
+// предел, а пожелание (SEC-14 вводился ровно против бесконтрольного роста).
+{
+  // Точный опыт на ГРАНИЦЕ квоты: проект доводится до предела минус один, а
+  // затем идут одновременные запросы РАЗНЫХ типов.
+  //
+  // Оба условия обязательны. На исчерпанном пределе окно не открывается вовсе —
+  // все запросы отвергаются проверкой. На одинаковом типе запросы упираются в
+  // уникальность версии материала и отвергаются конфликтом РАНЬШЕ квоты. В обоих
+  // случаях проверка была бы зелёной, ничего не проверив: так и вышло с первыми
+  // двумя её версиями.
+  const second = await client.call('/v1/projects', {
+    method: 'POST',
+    body: {
+      title: `Проект гонки квот ${suffix}`,
+      stage: 'mvp',
+      taxonomyId: taxonomy,
+      investmentAsk: '1000000.00',
+      askCurrency: 'RUB',
+    },
+  });
+  const raceProjectId = second.json?.id;
+  const [ownerRow] = await sql(
+    'SELECT user_id FROM lab.founders_projects WHERE project_id = $1 LIMIT 1',
+    [raceProjectId],
+  );
+  // Четыре незавершённых при пределе пять. Путь их появления неважен —
+  // проверяется поведение сервиса на границе.
+  for (let i = 0; i < 4; i += 1) {
+    await sql(
+      `INSERT INTO lab.project_materials
+         (id, project_id, type, version, s3_key, parse_status, uploaded_by)
+       VALUES (public.uuid_generate_v7(), $1, 'doc', $2::int, 'key-' || $2::text, 'queued', $3)`,
+      [raceProjectId, 100 + i, ownerRow.user_id],
+    );
+  }
+
+  const parallel = await Promise.all(
+    ['deck', 'video', 'doc'].map((type, i) =>
+      client.call(`/v1/projects/${raceProjectId}/materials/upload`, {
+        method: 'POST',
+        body: {
+          type,
+          fileName: `race-${i}.pdf`,
+          contentType: 'application/pdf',
+          sizeBytes: 1024,
+        },
+      }),
+    ),
+  );
+  const [{ after }] = await sql(
+    `SELECT count(*)::int AS after FROM lab.project_materials
+      WHERE project_id = $1 AND uploaded_at IS NULL`,
+    [raceProjectId],
+  );
+  check(
+    'параллельные запросы не обходят предел незавершённых загрузок',
+    after <= 5,
+    `незавершённых стало ${after} при пределе 5 (ответы: ${parallel.map((r) => r.status).join(',')})`,
+  );
+
+  await sql('DELETE FROM lab.project_materials WHERE project_id = $1', [raceProjectId]);
+  await sql('DELETE FROM lab.founders_projects WHERE project_id = $1', [raceProjectId]);
+  await sql('DELETE FROM lab.projects WHERE id = $1', [raceProjectId]);
+}
+
 // Невыгруженный материал не должен показываться как материал проекта.
 {
   const list = await client.call(`/v1/projects/${projectId}/materials`);

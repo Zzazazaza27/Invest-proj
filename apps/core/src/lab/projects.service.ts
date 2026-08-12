@@ -343,6 +343,17 @@ export class ProjectsService {
    * обходится тем, что файлы просто не досылаются.
    */
   private async assertUploadQuota(tx: Tx, projectId: string): Promise<void> {
+    // Блокировка на проект берётся ДО подсчёта. Без неё предел обходится
+    // параллелизмом: одновременные запросы читают одно и то же число и все
+    // проходят проверку. Воспроизведено — проект с 4 незавершёнными загрузками
+    // при пределе 5 получил ещё две и оказался на 6.
+    //
+    // Тот же приём уже применён к квотам этапа сезона: advisory-лок в рамках
+    // транзакции сериализует именно этот проект, не мешая остальным.
+    await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+      `material-quota:${projectId}`,
+    ]);
+
     const { rows } = await tx.query<{ total: string; pending: string }>(
       `SELECT count(*)::text AS total,
               count(*) FILTER (WHERE uploaded_at IS NULL)::text AS pending
