@@ -6,6 +6,7 @@ import { DiscoveryModule } from '@nestjs/core';
 import { RolesController } from './admin/roles.controller';
 import { RolesService } from './admin/roles.service';
 import { SessionEpochService } from './auth/session-epoch.service';
+import { TokenRevocationService } from './auth/token-revocation.service';
 import { TemplatesController } from './admin/templates.controller';
 import { TemplatesService } from './admin/templates.service';
 import { AuthGuard } from './auth/guards';
@@ -89,6 +90,7 @@ import { S3Service } from './storage/s3.service';
     AuditRepository,
     TokenVerifier,
     SessionEpochService,
+    TokenRevocationService,
     S3Service,
     IdentityService,
     KycService,

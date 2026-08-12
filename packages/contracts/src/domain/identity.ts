@@ -116,6 +116,20 @@ export const AuthSessionSchema = z.object({
 });
 export type AuthSession = z.infer<typeof AuthSessionSchema>;
 
+/**
+ * Ответ выхода.
+ *
+ * `tokenRevoked` — не украшение: сервер отзывает предъявленный токен по его
+ * идентификатору (M038), но у токена внешнего IdP claim `jti` может
+ * отсутствовать. Тогда сессия закрыта только удалением cookie, и клиент обязан
+ * знать разницу, а не считать «вышли» в обоих случаях.
+ */
+export const LogoutResultSchema = z.object({
+  ok: z.literal(true),
+  tokenRevoked: z.boolean(),
+});
+export type LogoutResult = z.infer<typeof LogoutResultSchema>;
+
 export const CurrentUserSchema = z.object({
   id: UuidSchema,
   displayName: z.string(),

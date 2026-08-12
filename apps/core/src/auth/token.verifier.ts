@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { createHmac, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
@@ -20,6 +20,13 @@ export interface VerifiedToken {
   roles: string[];
   /** Момент выпуска (секунды). Нужен рубежу действительности сессий (M035). */
   issuedAt: number | null;
+  /**
+   * Идентификатор токена (`jti`). Нужен точечному отзыву: без него отозвать
+   * можно только все сессии пользователя разом (M038). У токена внешнего IdP
+   * claim может отсутствовать — тогда `null`, и такой токен отзывается только
+   * рубежом сессий.
+   */
+  tokenId: string | null;
   /** Уровень аутентификации. 'mfa' требуется для денежных и регулируемых операций. */
   acr: string | null;
   expiresAt: number;
@@ -108,7 +115,12 @@ export class TokenVerifier {
       : [];
     const acr = typeof payload.acr === 'string' ? payload.acr : null;
     const issuedAt = typeof payload.iat === 'number' ? payload.iat : null;
-    return { subject, roles, acr, issuedAt, expiresAt: (payload.exp ?? 0) * 1000 };
+    // Длина ограничена той же рамкой, что и колонка реестра: идентификатор
+    // произвольной длины из чужого токена не должен доходить до запроса.
+    const rawJti = payload.jti;
+    const tokenId =
+      typeof rawJti === 'string' && rawJti.length >= 8 && rawJti.length <= 128 ? rawJti : null;
+    return { subject, roles, acr, issuedAt, tokenId, expiresAt: (payload.exp ?? 0) * 1000 };
   }
 
   /** Выпуск токена локального адаптера. Существует только вне production. */
@@ -126,6 +138,11 @@ export class TokenVerifier {
       sub: input.subject,
       roles: input.roles,
       acr: input.acr ?? 'pwd',
+      // Идентификатор токена: без него отозвать одну сессию, не трогая
+      // остальные, нечем (M038). Случайный UUID, а не производная от
+      // пользователя, — иначе по нему восстанавливалась бы связь между
+      // сессиями одного человека.
+      jti: randomUUID(),
       iat: Math.floor(Date.now() / 1000),
       exp: Math.floor(Date.now() / 1000) + input.ttlSeconds,
     };

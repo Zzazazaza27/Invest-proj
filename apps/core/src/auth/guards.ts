@@ -14,6 +14,7 @@ import { errors } from '../common/errors';
 import type { RequestContext } from '../db/unit-of-work';
 import { TokenVerifier } from './token.verifier';
 import { SessionEpochService } from './session-epoch.service';
+import { TokenRevocationService } from './token-revocation.service';
 import { isCsrfTokenValid } from './csrf';
 
 /**
@@ -51,7 +52,15 @@ export const StepUp = () => SetMetadata(REQUIRES_STEP_UP, true);
 
 export interface AuthenticatedRequest extends FastifyRequest {
   ctx?: RequestContext;
-  auth?: { subject: string; roles: string[]; acr: string | null };
+  auth?: {
+    subject: string;
+    roles: string[];
+    acr: string | null;
+    /** Идентификатор предъявленного токена: по нему отзывается одна сессия (M038). */
+    tokenId: string | null;
+    /** Истечение предъявленного токена, мс. Нужно записи в реестр отзыва. */
+    expiresAt: number;
+  };
 }
 
 export const Ctx = createParamDecorator(
@@ -68,6 +77,7 @@ export class AuthGuard implements CanActivate {
     private readonly reflector: Reflector,
     private readonly verifier: TokenVerifier,
     private readonly epochs: SessionEpochService,
+    private readonly revocations: TokenRevocationService,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -111,13 +121,25 @@ export class AuthGuard implements CanActivate {
         // роль перестаёт действовать сразу, а не по истечении часа (SEC-08).
         throw errors.unauthenticated({ stage: 'session-revoked' });
       }
+      // Точечный отзыв: выход на одном устройстве не должен ронять остальные
+      // сессии, а скопированное значение cookie обязано перестать работать
+      // сразу после выхода, а не по истечении срока токена (M038).
+      if (await this.revocations.isRevoked(verified.tokenId)) {
+        throw errors.unauthenticated({ stage: 'token-revoked' });
+      }
     } catch (error) {
       if (!isPublic) throw error;
       request.ctx = { userId: null, roles: [], traceId };
       return true;
     }
 
-    request.auth = { subject: verified.subject, roles: verified.roles, acr: verified.acr };
+    request.auth = {
+      subject: verified.subject,
+      roles: verified.roles,
+      acr: verified.acr,
+      tokenId: verified.tokenId,
+      expiresAt: verified.expiresAt,
+    };
     request.ctx = { userId: verified.subject, roles: verified.roles, traceId };
 
     this.assertCsrf(request);

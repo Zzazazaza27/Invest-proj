@@ -11,6 +11,7 @@ import {
   InvestmentPassportSchema,
   InvoiceSchema,
   KycVerificationSchema,
+  LogoutResultSchema,
   NotificationPreferenceSchema,
   NotificationSchema,
   PaymentSchema,
@@ -164,7 +165,16 @@ export class UnicornApi {
     login: (body: LoginRequest) =>
       this.http.request({ method: 'POST', path: '/auth/login', body, schema: AuthSessionSchema }),
 
-    logout: () => this.http.request<void>({ method: 'POST', path: '/auth/logout' }),
+    /**
+     * Выход. Сервер отзывает ИМЕННО этот токен, а не все сессии пользователя.
+     *
+     * `tokenRevoked: false` означает, что у токена нет идентификатора (внешний
+     * IdP без claim `jti`) и сессия закрыта только удалением cookie. Поле не
+     * декоративное: интерфейсу нельзя обещать «вышли везде», когда отозвать
+     * было нечего.
+     */
+    logout: () =>
+      this.http.request({ method: 'POST', path: '/auth/logout', schema: LogoutResultSchema }),
 
     me: () => this.http.request({ path: '/auth/me', schema: CurrentUserSchema }),
 

@@ -17,6 +17,8 @@ import {
   inRollbackTx,
   uuidv7,
 } from './helpers.ts';
+import { readdirSync } from 'node:fs';
+import { MIGRATIONS_DIR } from '../src/env.ts';
 
 afterAll(async () => {
   await closePool();
@@ -864,5 +866,26 @@ describe('Индивидуальная цена: четыре глаза (M017)'
         ),
       ).rejects.toThrow();
     });
+  });
+});
+
+describe('Тестовая БД соответствует дереву миграций', () => {
+  it('в журнале миграций нет пропусков относительно каталога', async () => {
+    // Локальная тестовая БД отставала на 14 миграций, и весь набор тестов был
+    // зелёным по неверной причине: проверки шли против СТАРОЙ схемы. Один
+    // прыжок статуса `draft -> graduated` и число таблиц 61 держались именно
+    // на этом. Проверка обязана падать первой, а не оставлять разбираться в
+    // странных отказах ниже по списку.
+    const applied = await getPool().query<{ id: string }>(
+      'SELECT id FROM public.schema_migrations ORDER BY id',
+    );
+    const onDisk = readdirSync(MIGRATIONS_DIR)
+      .filter((f) => f.endsWith('.sql'))
+      .map((f) => f.replace(/\.sql$/, ''))
+      .sort();
+    const missing = onDisk.filter((id) => !applied.rows.some((r) => r.id === id));
+    expect(missing, 'не применены миграции — прогони NODE_ENV=test npm run migrate -w database').toEqual(
+      [],
+    );
   });
 });

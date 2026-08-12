@@ -2,6 +2,7 @@ import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@ne
 import { randomUUID } from 'node:crypto';
 import { getEnv } from '../config/env';
 import { Database } from '../db/unit-of-work';
+import { TokenRevocationService } from '../auth/token-revocation.service';
 
 /**
  * Плановое обслуживание партиций журнала.
@@ -21,16 +22,21 @@ export class PartitionMaintenanceService implements OnModuleInit, OnModuleDestro
   private readonly logger = new Logger(PartitionMaintenanceService.name);
   private timer: NodeJS.Timeout | null = null;
 
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly revocations: TokenRevocationService,
+  ) {}
 
   async onModuleInit(): Promise<void> {
     const env = getEnv();
     // Первый прогон — сразу: экземпляр, поднявшийся после долгого простоя,
     // не должен ждать полного интервала.
     await this.runOnce();
+    await this.purgeRevocations();
 
     this.timer = setInterval(() => {
       void this.runOnce();
+      void this.purgeRevocations();
     }, env.PARTITION_MAINTENANCE_INTERVAL_HOURS * 3_600_000);
     // Таймер не должен удерживать процесс при штатном завершении.
     this.timer.unref();
@@ -64,6 +70,27 @@ export class PartitionMaintenanceService implements OnModuleInit, OnModuleDestro
       // покажет деградацию, а следующий тик попробует снова.
       this.logger.error({
         msg: 'обслуживание партиций не выполнено',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return 0;
+    }
+  }
+
+  /**
+   * Уборка реестра отозванных токенов (M038).
+   *
+   * Запись о токене, который и так истёк, ни на что не влияет: срок проверяется
+   * раньше. Реестр обязан оставаться маленьким — на этом построена дешевизна
+   * проверки отзыва снимком, а не запросом на каждый вызов API.
+   */
+  async purgeRevocations(): Promise<number> {
+    try {
+      const removed = await this.revocations.purgeExpired();
+      if (removed > 0) this.logger.log(`убрано записей об истёкших токенах: ${removed}`);
+      return removed;
+    } catch (error) {
+      this.logger.error({
+        msg: 'уборка реестра отозванных токенов не выполнена',
         error: error instanceof Error ? error.message : String(error),
       });
       return 0;

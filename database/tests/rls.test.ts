@@ -525,7 +525,13 @@ describe('RLS: граница интеграционного контура', ()
     await inRollbackTx(async (c) => {
       const founder = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, founder.id);
-      await c.query(`UPDATE lab.projects SET status = 'graduated' WHERE id = $1`, [projectId]);
+      // Проект проходит воронку по шагам. Прыжок `draft -> graduated` запрещён
+      // триггером `projects_stage_order` (M025), и тест, который его делал,
+      // был зелёным только на устаревшей схеме.
+      for (const stage of ['submitted', 'ai_review', 'expert_review', 'bootcamp', 'finalist',
+        'graduated']) {
+        await c.query(`UPDATE lab.projects SET status = $2 WHERE id = $1`, [projectId, stage]);
+      }
       const first = await c.query<{ graduated_at: Date }>(
         'SELECT graduated_at FROM lab.projects WHERE id = $1',
         [projectId],
@@ -566,7 +572,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 11 схем и 61 таблица', async () => {
+  it('схема соответствует спецификации: 11 схем и 63 таблицы', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -584,6 +590,117 @@ describe('RLS: покрытие манифеста', () => {
     // 60 таблиц по Database_Launch.md + billing.custom_price_proposals (M017):
     // двухшаговое согласование индивидуальной цены нельзя было уместить в саму
     // подписку, не ослабив её CHECK-ограничение на четыре глаза.
-    expect(Number(tables.rows[0]!.count)).toBe(61);
+    // + integration.deal_commissions (M028): обезличенная проекция сделок для
+    // внешних потребителей.
+    // + identity.revoked_tokens (M038): точечный отзыв токена, которого рубеж
+    // сессий не даёт.
+    //
+    // Число держится вручную намеренно: рост числа таблиц обязан быть
+    // осознанным. Ожидание 61 продержалось лишние две миграции только потому,
+    // что локальная тестовая БД отставала и проверка была зелёной по неверной
+    // причине.
+    expect(Number(tables.rows[0]!.count)).toBe(63);
+  });
+});
+
+describe('RLS: реестр отозванных токенов (M038)', () => {
+  it('пользователь не видит отзывы чужих сессий', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const bob = await createUser(c, { role: 'founder' });
+      await c.query(
+        `INSERT INTO identity.revoked_tokens (jti, user_id, expires_at, reason)
+              VALUES ($1, $2, now() + interval '1 hour', 'logout')`,
+        [`jti-${uuidv7()}`, alice.id],
+      );
+
+      await actAs(c, { userId: bob.id, roles: ['founder'], dbRole: 'app_backend' });
+      const { rows } = await c.query(
+        'SELECT jti FROM identity.revoked_tokens WHERE user_id = $1',
+        [alice.id],
+      );
+      // Перечень отозванных идентификаторов чужих сессий — сам по себе
+      // разведывательная информация: он показывает, когда и сколько раз человек
+      // выходил.
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  it('свои отзывы владелец видит', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const jti = `jti-${uuidv7()}`;
+      await c.query(
+        `INSERT INTO identity.revoked_tokens (jti, user_id, expires_at, reason)
+              VALUES ($1, $2, now() + interval '1 hour', 'logout')`,
+        [jti, alice.id],
+      );
+
+      await actAs(c, { userId: alice.id, roles: ['founder'], dbRole: 'app_backend' });
+      const { rows } = await c.query('SELECT jti FROM identity.revoked_tokens WHERE jti = $1', [
+        jti,
+      ]);
+      expect(rows).toHaveLength(1);
+    });
+  });
+
+  it('отозвать чужой токен нельзя', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const bob = await createUser(c, { role: 'founder' });
+
+      await actAs(c, { userId: bob.id, roles: ['founder'], dbRole: 'app_backend' });
+      // Иначе достаточно угадать идентификатор чужого токена, чтобы выкинуть
+      // человека из его сессии.
+      await expect(
+        c.query(
+          `INSERT INTO identity.revoked_tokens (jti, user_id, expires_at, reason)
+                VALUES ($1, $2, now() + interval '1 hour', 'logout')`,
+          [`jti-${uuidv7()}`, alice.id],
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('роль приложения не может удалять из реестра вовсе', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const jti = `jti-${uuidv7()}`;
+      await c.query(
+        `INSERT INTO identity.revoked_tokens (jti, user_id, expires_at, reason)
+              VALUES ($1, $2, now() + interval '1 hour', 'logout')`,
+        [jti, alice.id],
+      );
+
+      await actAs(c, { userId: alice.id, roles: ['founder'], dbRole: 'app_backend' });
+      // Снятие записи вернуло бы отозванному токену силу — это и есть обход
+      // отзыва, а не «уборка». Права на удаление у роли приложения нет.
+      await expect(
+        c.query('DELETE FROM identity.revoked_tokens WHERE jti = $1', [jti]),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('уборка убирает истёкшие записи и не трогает действующие', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const active = `jti-${uuidv7()}`;
+      const expired = `jti-${uuidv7()}`;
+      await c.query(
+        `INSERT INTO identity.revoked_tokens (jti, user_id, expires_at, reason)
+              VALUES ($1, $2, now() + interval '1 hour', 'logout'),
+                     ($3, $2, now() - interval '1 hour', 'logout')`,
+        [active, alice.id, expired],
+      );
+
+      // Уборка идёт БЕЗ пользовательского контекста — так её и выполняет core.
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_notifications' });
+      const { rows } = await c.query<{ jti: string }>(
+        'DELETE FROM identity.revoked_tokens WHERE expires_at < now() RETURNING jti',
+      );
+      // Ровно одна запись: удаление ДЕЙСТВУЮЩЕЙ вернуло бы отозванному токену
+      // силу, а ноль записей означало бы, что реестр растёт без уборки.
+      expect(rows.map((r) => r.jti)).toEqual([expired]);
+    });
   });
 });

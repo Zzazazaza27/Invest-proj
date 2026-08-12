@@ -53,6 +53,9 @@ export class WebhooksService {
     const ciphertext = this.crypto.sealDirect('webhook_secrets', secret, WEBHOOK_SECRET_AAD);
     // Отпечаток — для аудита и поиска: по нему видно, что секрет тот самый, и
     // при этом сам секрет не раскрывается.
+    // Правило SAST срабатывает на ИМЯ переменной. Значение здесь — свежие 32
+    // байта из `randomBytes` строкой выше, а не литерал в исходниках.
+    // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
     const fingerprint = createHash('sha256').update(secret, 'utf8').digest();
     const id = uuidv7();
 
@@ -266,7 +269,14 @@ function mapEndpoint(row: EndpointRow): WebhookEndpoint {
   };
 }
 
-/** Экспортируется для доставщика: он читает секрет тем же доменом ключей. */
+/**
+ * Экспортируется для доставщика: он читает секрет тем же доменом ключей.
+ *
+ * Это метка связанных данных (AAD) шифрования, а не секрет: она обязана быть
+ * одинаковой у того, кто шифрует, и у того, кто расшифровывает, и её раскрытие
+ * ничего не даёт.
+ */
+// nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
 export const WEBHOOK_SECRET_AAD = 'webhook:signing';
 
 export type { Tx };

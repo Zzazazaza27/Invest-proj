@@ -15,6 +15,14 @@ import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext } from '../db/unit-of-work';
 import { getEnv } from '../config/env';
 import { issueCsrfToken } from '../auth/csrf';
+import { TokenRevocationService } from '../auth/token-revocation.service';
+
+/**
+ * Роли, от имени которых разрешено писать глагол `identity.token.revoked`
+ * (перечень задан в M038). Список нужен здесь, чтобы не отправлять в журнал
+ * роль, которую реестр глаголов отвергнет ошибкой прав уже внутри транзакции.
+ */
+const AUDITABLE_ACTOR_ROLES = new Set(['founder', 'investor', 'expert', 'organizer', 'admin']);
 
 /**
  * Регистрация, вход и согласия.
@@ -57,6 +65,7 @@ export class IdentityService {
     private readonly db: Database,
     private readonly crypto: CryptoService,
     private readonly audit: AuditRepository,
+    private readonly revocations: TokenRevocationService,
   ) {}
 
   async register(
@@ -275,6 +284,60 @@ export class IdentityService {
       );
       return rows.map((r) => r.kind);
     });
+  }
+
+  /**
+   * Отозвать ОДИН токен — тот, которым сделан этот запрос.
+   *
+   * Выход раньше удалял только cookie у клиента; сам токен оставался
+   * действительным до `exp`, и скопированное значение продолжало работать. Здесь
+   * идентификатор токена попадает в реестр отзыва (M038), и с этого момента он
+   * не проходит на входе. Остальные сессии пользователя не затрагиваются — в
+   * этом вся разница с рубежом сессий.
+   *
+   * Возвращает `false`, если отзывать нечего: у токена нет идентификатора
+   * (внешний IdP без claim `jti`). Врать про успешный отзыв в этом случае
+   * нельзя — вызывающий обязан знать, что сессия закрыта только на клиенте.
+   */
+  async revokeCurrentToken(
+    ctx: RequestContext,
+    token: { tokenId: string | null; expiresAt: number },
+  ): Promise<boolean> {
+    if (!token.tokenId || !ctx.userId) return false;
+
+    await this.db.transaction(ctx, async (tx) => {
+      await this.revocations.revoke(tx, {
+        tokenId: token.tokenId!,
+        userId: ctx.userId!,
+        expiresAt: new Date(token.expiresAt),
+        reason: 'logout',
+        revokedBy: ctx.userId,
+      });
+
+      // Журнал ведётся глаголом с явным перечнем ролей актора. Если роли в
+      // токене нет ни одной из известных, событие не пишется: фальшивая роль
+      // актора в журнале хуже её отсутствия, а сам факт отзыва остаётся в
+      // реестре с отметкой времени и инициатором.
+      const actorRole = ctx.roles.find((role) => AUDITABLE_ACTOR_ROLES.has(role));
+      if (actorRole) {
+        await this.audit.emit(tx, {
+          verb: 'identity.token.revoked',
+          actorId: ctx.userId,
+          actorRole,
+          subjectType: 'user',
+          subjectId: ctx.userId,
+          // Идентификатор токена в журнал не пишется: он попадает в выгрузки и
+          // связывает записи журнала с конкретной сессией. Реестр отзыва и так
+          // хранит его вместе с отметкой времени.
+          context: { reason: 'logout' },
+          traceId: ctx.traceId,
+        });
+      }
+    });
+    // Только после фиксации: на этом экземпляре токен перестаёт действовать
+    // немедленно, на остальных — в пределах окна снимка реестра.
+    this.revocations.markRevokedLocally(token.tokenId);
+    return true;
   }
 
   buildSession(input: {

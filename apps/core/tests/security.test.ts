@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { loadEnv, resetEnvCache } from '../src/config/env';
 import { CryptoService } from '../src/crypto/crypto.service';
 import { TokenVerifier } from '../src/auth/token.verifier';
+import { TokenRevocationService } from '../src/auth/token-revocation.service';
+import { createHmac } from 'node:crypto';
 
 /**
  * Юнит-тесты периметра безопасности. Проверяют то, что нельзя увидеть в
@@ -214,12 +216,21 @@ describe('Blind index', () => {
 describe('Проверка токена', () => {
   const verifier = new TokenVerifier();
 
-  function withEnv<T>(fn: () => T | Promise<T>): T | Promise<T> {
+  /**
+   * Окружение на время одного теста.
+   *
+   * Помощник ОБЯЗАН дожидаться `fn`. Прежняя версия возвращала промис из `try`,
+   * поэтому `finally` восстанавливал `process.env` уже на первом `await` внутри
+   * теста: всё, что шло после первого ожидания, работало с ПУСТЫМ окружением.
+   * Тесты этого не замечали, потому что конфигурация кешируется на первом
+   * синхронном вызове, — то есть были зелёными по неверной причине.
+   */
+  async function withEnv<T>(fn: () => T | Promise<T>): Promise<T> {
     const saved = { ...process.env };
     Object.assign(process.env, BASE_ENV, { NODE_ENV: 'development' });
     resetEnvCache();
     try {
-      return fn();
+      return await fn();
     } finally {
       process.env = saved;
       resetEnvCache();
@@ -329,3 +340,105 @@ describe('Транспорт до внутренних систем в productio
     expect(() => loadEnv({ ...PROD_ENV, NATS_URL: 'tls://broker:4222' })).not.toThrow(/NATS_URL/);
   });
 });
+
+describe('Идентификатор токена и точечный отзыв (M038)', () => {
+  const verifier = new TokenVerifier();
+
+  /**
+   * Окружение на время одного теста.
+   *
+   * Помощник ОБЯЗАН дожидаться `fn`. Прежняя версия возвращала промис из `try`,
+   * поэтому `finally` восстанавливал `process.env` уже на первом `await` внутри
+   * теста: всё, что шло после первого ожидания, работало с ПУСТЫМ окружением.
+   * Тесты этого не замечали, потому что конфигурация кешируется на первом
+   * синхронном вызове, — то есть были зелёными по неверной причине.
+   */
+  async function withEnv<T>(fn: () => T | Promise<T>): Promise<T> {
+    const saved = { ...process.env };
+    Object.assign(process.env, BASE_ENV, { NODE_ENV: 'development' });
+    resetEnvCache();
+    try {
+      return await fn();
+    } finally {
+      process.env = saved;
+      resetEnvCache();
+    }
+  }
+
+  it('локальный токен получает идентификатор, и он разный у разных выпусков', async () => {
+    await withEnv(async () => {
+      const first = await verifier.verify(
+        verifier.issueLocal({ subject: 'u1', roles: ['founder'], ttlSeconds: 60 }),
+      );
+      const second = await verifier.verify(
+        verifier.issueLocal({ subject: 'u1', roles: ['founder'], ttlSeconds: 60 }),
+      );
+      expect(first.tokenId).toBeTruthy();
+      expect(second.tokenId).toBeTruthy();
+      // Одинаковый идентификатор означал бы, что отзыв одной сессии закрывает
+      // все — ровно то, что рубеж сессий уже умеет и что здесь не нужно.
+      expect(first.tokenId).not.toBe(second.tokenId);
+    });
+  });
+
+  it('идентификатор вне допустимой длины отбрасывается, а не доходит до запроса', async () => {
+    await withEnv(async () => {
+      const forged = { sub: 'u1', roles: [], jti: 'x'.repeat(500), exp: nowPlus(60) };
+      expect((await verifier.verify(signLocal(forged))).tokenId).toBeNull();
+      expect((await verifier.verify(signLocal({ ...forged, jti: 'short' }))).tokenId).toBeNull();
+      expect((await verifier.verify(signLocal({ ...forged, jti: 42 }))).tokenId).toBeNull();
+    });
+  });
+
+  it('отзыв опрашивает реестр только при наличии идентификатора', async () => {
+    const queried: (string | null)[] = [];
+    const service = new TokenRevocationService({
+      asServiceRole: async (
+        _role: string,
+        _ctx: unknown,
+        work: (tx: unknown) => Promise<unknown>,
+      ) => {
+        queried.push('snapshot');
+        return work({ query: async () => ({ rows: [{ jti: 'revoked-token-id' }] }) });
+      },
+    } as never);
+
+    // Токен без идентификатора: отзывать нечего, реестр не трогаем.
+    expect(await service.isRevoked(null)).toBe(false);
+    expect(queried).toHaveLength(0);
+
+    expect(await service.isRevoked('revoked-token-id')).toBe(true);
+    expect(await service.isRevoked('another-token-id')).toBe(false);
+    // Снимок читается один раз на окно, а не на каждую проверку.
+    expect(queried).toHaveLength(1);
+  });
+
+  it('недоступный реестр не превращается в «токен действителен»', async () => {
+    const service = new TokenRevocationService({
+      asServiceRole: async () => {
+        throw new Error('БД недоступна');
+      },
+    } as never);
+    // Снимок прочитать не удалось: проверка обязана падать, а не отвечать «нет».
+    await expect(service.isRevoked('some-token-id')).rejects.toThrow();
+  });
+});
+
+function nowPlus(seconds: number): number {
+  return Math.floor(Date.now() / 1000) + seconds;
+}
+
+/**
+ * Подписать произвольную полезную нагрузку ключом локального адаптера.
+ *
+ * Ключ берётся из BASE_ENV, а не из `process.env`: помощник `withEnv`
+ * восстанавливает окружение синхронно, то есть уже на первом `await` внутри
+ * асинхронного теста — к моменту вызова отсюда переменной там может не быть.
+ */
+function signLocal(payload: Record<string, unknown>): string {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const mac = createHmac('sha256', BASE_ENV.LOCAL_AUTH_SIGNING_KEY as string)
+    .update(body)
+    .digest('base64url');
+  return `${body}.${mac}`;
+}

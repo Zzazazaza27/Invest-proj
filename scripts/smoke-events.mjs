@@ -373,8 +373,12 @@ let signingSecret;
     'SELECT secret_ciphertext, secret_fingerprint FROM integration.webhook_endpoints WHERE id = $1',
     [webhookId],
   );
+  // Значение получено из ответа API минуту назад, в исходниках его нет:
+  // правило SAST реагирует на имя переменной.
+  // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
   const plain = Buffer.from(signingSecret, 'utf8');
   check('секрет в БД зашифрован', !row.secret_ciphertext.includes(plain));
+  // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
   const expected = createHash('sha256').update(signingSecret, 'utf8').digest();
   check(
     'отпечаток секрета совпадает',

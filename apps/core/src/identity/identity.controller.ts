@@ -5,7 +5,9 @@ import {
   ConsentAcceptanceSchema,
   CurrentUserSchema,
   LoginRequestSchema,
+  LogoutResultSchema,
   RegisterRequestSchema,
+  type LogoutResult,
 } from '@unicorn/contracts';
 import { z } from 'zod';
 import { getEnv } from '../config/env';
@@ -84,14 +86,34 @@ export class IdentityController {
     return AuthSessionSchema.parse(session);
   }
 
+  /**
+   * Выход.
+   *
+   * Удаления cookie МАЛО: токен остаётся действительным до `exp`, и
+   * скопированное значение продолжает работать (остаток SEC-07/08). Поэтому
+   * идентификатор именно этого токена уходит в реестр отзыва — остальные
+   * сессии пользователя при этом живут дальше, в отличие от сдвига рубежа.
+   *
+   * `tokenRevoked: false` означает, что у предъявленного токена нет
+   * идентификатора (внешний IdP без claim `jti`): сессия закрыта только на
+   * клиенте, и ответ говорит об этом прямо, а не изображает успех.
+   */
   @Post('logout')
-  logout(@Res({ passthrough: true }) reply: FastifyReply): { ok: true } {
+  async logout(
+    @Ctx() ctx: RequestContext,
+    @Req() request: AuthenticatedRequest,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ): Promise<LogoutResult> {
     const env = getEnv();
+    const tokenRevoked = await this.identity.revokeCurrentToken(ctx, {
+      tokenId: request.auth?.tokenId ?? null,
+      expiresAt: request.auth?.expiresAt ?? Date.now(),
+    });
     // Обе cookie удаляются с теми же атрибутами, с какими ставились: иначе
     // браузер оставит старую.
     reply.clearCookie(env.SESSION_COOKIE_NAME, { path: '/' });
     reply.clearCookie(env.CSRF_COOKIE_NAME, { path: '/' });
-    return { ok: true };
+    return LogoutResultSchema.parse({ ok: true, tokenRevoked });
   }
 
   @Get('me')
