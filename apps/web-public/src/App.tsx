@@ -13,7 +13,7 @@ import {
   Stack,
   UI_KEYFRAMES,
 } from '@unicorn/ui';
-import type { Pricing, ProjectTeaser, Season } from '@unicorn/contracts';
+import type { LandingBlock, Pricing, ProjectTeaser, Season } from '@unicorn/contracts';
 import { api } from './api';
 import { useAsync } from './useAsync';
 
@@ -92,7 +92,43 @@ const linkStyle: React.CSSProperties = {
   fontWeight: 600,
 };
 
+/**
+ * Тексты витрины на случай, когда контент ещё не опубликован или API недоступен.
+ *
+ * Не «дефолтные значения ради удобства»: витрина — публичная страница, и пустое
+ * место на ней хуже устаревшей формулировки. Как только администратор
+ * публикует блок, показывается он, а эти строки перестают использоваться.
+ * Держать их здесь — сознательный дубликат, и он единственный.
+ */
+const FALLBACK: Record<string, { title?: string; body: string }> = {
+  hero_title: { body: 'Инвестиционная платформа для проектов, прошедших проверку' },
+  hero_subtitle: {
+    body:
+      'Основатели проходят экспертизу и получают инвестиционный паспорт. ' +
+      'Верифицированные инвесторы видят полные карточки и заключают договоры ' +
+      'средствами платформы — движение средств учитывается через номинальный ' +
+      'счёт оператора.',
+  },
+  disclaimer: {
+    body:
+      'UNICORN LAUNCH — оператор инвестиционной платформы. Инвестиционный контур ' +
+      'включается после включения оператора в реестр Банка России.',
+  },
+};
+
+/** Текст блока: опубликованный, иначе запасной. */
+function blockText(blocks: LandingBlock[] | null, key: string): string {
+  return blocks?.find((b) => b.key === key)?.body ?? FALLBACK[key]?.body ?? '';
+}
+
 function Hero() {
+  // Ошибка загрузки контента НЕ ломает витрину и не показывается посетителю:
+  // он пришёл читать про платформу, а не про состояние нашего API. Каталог,
+  // цены и сезон ведут себя иначе — там пустой экран означал бы неверные
+  // сведения, а здесь достаточно запасного текста.
+  const { state } = useAsync<LandingBlock[]>(() => api.landingContent(), []);
+  const blocks = state.status === 'ready' ? state.data : null;
+
   return (
     <section style={{ padding: 'var(--u-space-8) 0', background: 'var(--u-bg-subtle)' }}>
       <Container>
@@ -105,13 +141,10 @@ function Hero() {
               letterSpacing: '-0.03em',
             }}
           >
-            Инвестиционная платформа для проектов, прошедших проверку
+            {blockText(blocks, 'hero_title')}
           </h1>
           <p style={{ margin: 0, color: 'var(--u-text-muted)', fontSize: 'var(--u-text-lg)' }}>
-            Основатели проходят экспертизу и получают инвестиционный паспорт.
-            Верифицированные инвесторы видят полные карточки и заключают договоры
-            средствами платформы — движение средств учитывается через номинальный
-            счёт оператора.
+            {blockText(blocks, 'hero_subtitle')}
           </p>
         </Stack>
       </Container>
@@ -450,12 +483,14 @@ function PricingSection() {
 }
 
 function Footer() {
+  const { state } = useAsync<LandingBlock[]>(() => api.landingContent(), []);
+  const blocks = state.status === 'ready' ? state.data : null;
+
   return (
     <footer style={{ borderTop: '1px solid var(--u-border)', padding: 'var(--u-space-6) 0' }}>
       <Container>
         <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-          UNICORN LAUNCH — оператор инвестиционной платформы. Инвестиционный контур
-          включается после включения оператора в реестр Банка России.
+          {blockText(blocks, 'disclaimer')}
         </span>
       </Container>
     </footer>

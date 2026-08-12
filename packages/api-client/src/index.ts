@@ -26,6 +26,7 @@ import {
   ReadinessEntrySchema,
   RoadmapSchema,
   SeasonFunnelConfigSchema,
+  LandingContentSchema,
   SeasonSchema,
   SeasonStageOccupancySchema,
   SubscriptionSchema,
@@ -96,6 +97,21 @@ export class UnicornApi {
     this.http
       .request({ path: '/taxonomy', schema: z.object({ items: z.array(TaxonomyNodeSchema) }) })
       .then((response) => response.items);
+
+  /**
+   * Контент публичной витрины: тексты и баннеры.
+   *
+   * Пустой список — законный ответ: он означает, что администратор ещё ничего
+   * не опубликовал. Витрина обязана оставаться читаемой и в этом случае, а не
+   * показывать пустые места.
+   */
+  readonly landingContent = (locale = 'ru-RU') =>
+    this.http
+      .request({
+        path: `/content/landing?locale=${encodeURIComponent(locale)}`,
+        schema: LandingContentSchema,
+      })
+      .then((response) => response.blocks);
 
   /** Текущий сезон. `null` — активного сезона нет, и это законный ответ. */
   readonly currentSeason = () =>
