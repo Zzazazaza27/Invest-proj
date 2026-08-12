@@ -528,8 +528,14 @@ describe('RLS: граница интеграционного контура', ()
       // Проект проходит воронку по шагам. Прыжок `draft -> graduated` запрещён
       // триггером `projects_stage_order` (M025), и тест, который его делал,
       // был зелёным только на устаревшей схеме.
-      for (const stage of ['submitted', 'ai_review', 'expert_review', 'bootcamp', 'finalist',
-        'graduated']) {
+      for (const stage of [
+        'submitted',
+        'ai_review',
+        'expert_review',
+        'bootcamp',
+        'finalist',
+        'graduated',
+      ]) {
         await c.query(`UPDATE lab.projects SET status = $2 WHERE id = $1`, [projectId, stage]);
       }
       const first = await c.query<{ graduated_at: Date }>(
@@ -615,10 +621,9 @@ describe('RLS: реестр отозванных токенов (M038)', () => {
       );
 
       await actAs(c, { userId: bob.id, roles: ['founder'], dbRole: 'app_backend' });
-      const { rows } = await c.query(
-        'SELECT jti FROM identity.revoked_tokens WHERE user_id = $1',
-        [alice.id],
-      );
+      const { rows } = await c.query('SELECT jti FROM identity.revoked_tokens WHERE user_id = $1', [
+        alice.id,
+      ]);
       // Перечень отозванных идентификаторов чужих сессий — сам по себе
       // разведывательная информация: он показывает, когда и сколько раз человек
       // выходил.

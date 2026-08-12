@@ -27,6 +27,19 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Молчаливая смерть прогона неотличима от «ничего не проверено»: в глобальном
+// аудите этот скрипт однажды упал, не напечатав ни строки причины. Любая
+// необработанная ошибка обязана назвать себя.
+process.on('unhandledRejection', (reason) => {
+  console.error('ПРОГОН ОБОРВАН (unhandledRejection):', reason);
+  process.exit(1);
+});
+process.on('uncaughtException', (error) => {
+  console.error('ПРОГОН ОБОРВАН (uncaughtException):', error);
+  process.exit(1);
+});
+
 loadDotEnv();
 
 function loadDotEnv() {
@@ -196,7 +209,11 @@ async function ticket(index) {
 const abandoned = await ticket(1);
 check('билет выдан', Boolean(abandoned?.materialId));
 const uploadStatus = await uploadByTicket(abandoned, payload);
-check('объект положен в хранилище', uploadStatus === 204 || uploadStatus === 200, `HTTP ${uploadStatus}`);
+check(
+  'объект положен в хранилище',
+  uploadStatus === 204 || uploadStatus === 200,
+  `HTTP ${uploadStatus}`,
+);
 const [abandonedRow] = await sql('SELECT s3_key FROM lab.project_materials WHERE id = $1', [
   abandoned.materialId,
 ]);
@@ -212,7 +229,11 @@ const finalize = await client.call(
   `/v1/projects/${projectId}/materials/${confirmed.materialId}/finalize`,
   { method: 'POST' },
 );
-check('материал подтверждён', finalize.status === 200 || finalize.status === 201, `HTTP ${finalize.status}`);
+check(
+  'материал подтверждён',
+  finalize.status === 200 || finalize.status === 201,
+  `HTTP ${finalize.status}`,
+);
 
 // 3. Свежий брошенный билет — уборка не должна его тронуть: загрузка может идти.
 const fresh = await ticket(3);
@@ -232,9 +253,10 @@ check('экземпляр обслуживания поднялся', await wait
 // вызовом: даём проходу договорить.
 await new Promise((resolve) => setTimeout(resolve, 3000));
 
-const [abandonedAfter] = await sql('SELECT count(*)::int AS n FROM lab.project_materials WHERE id = $1', [
-  abandoned.materialId,
-]);
+const [abandonedAfter] = await sql(
+  'SELECT count(*)::int AS n FROM lab.project_materials WHERE id = $1',
+  [abandoned.materialId],
+);
 check('строка брошенного билета убрана', abandonedAfter.n === 0, `строк: ${abandonedAfter.n}`);
 check(
   'объект брошенного билета удалён из хранилища',
@@ -254,9 +276,10 @@ check(
   (await s3.headObject(confirmedRow.s3_key)).exists,
 );
 
-const [freshAfter] = await sql('SELECT count(*)::int AS n FROM lab.project_materials WHERE id = $1', [
-  fresh.materialId,
-]);
+const [freshAfter] = await sql(
+  'SELECT count(*)::int AS n FROM lab.project_materials WHERE id = $1',
+  [fresh.materialId],
+);
 check('свежий билет не тронут', freshAfter.n === 1, `строк: ${freshAfter.n}`);
 
 // 4. Границы роли обслуживания: она знает только о мусоре, который убирает.

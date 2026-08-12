@@ -22,6 +22,19 @@ import { fileURLToPath } from 'node:url';
 import Redis from 'ioredis';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Молчаливая смерть прогона неотличима от «ничего не проверено»: в глобальном
+// аудите этот скрипт однажды упал, не напечатав ни строки причины. Любая
+// необработанная ошибка обязана назвать себя.
+process.on('unhandledRejection', (reason) => {
+  console.error('ПРОГОН ОБОРВАН (unhandledRejection):', reason);
+  process.exit(1);
+});
+process.on('uncaughtException', (error) => {
+  console.error('ПРОГОН ОБОРВАН (uncaughtException):', error);
+  process.exit(1);
+});
+
 const ENV = loadDotEnv();
 
 function loadDotEnv() {

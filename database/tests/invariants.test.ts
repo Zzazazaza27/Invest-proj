@@ -884,8 +884,9 @@ describe('Тестовая БД соответствует дереву мигр
       .map((f) => f.replace(/\.sql$/, ''))
       .sort();
     const missing = onDisk.filter((id) => !applied.rows.some((r) => r.id === id));
-    expect(missing, 'не применены миграции — прогони NODE_ENV=test npm run migrate -w database').toEqual(
-      [],
-    );
+    expect(
+      missing,
+      'не применены миграции — прогони NODE_ENV=test npm run migrate -w database',
+    ).toEqual([]);
   });
 });

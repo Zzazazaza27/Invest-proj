@@ -176,7 +176,11 @@ async function signedRequest(method, url, body) {
 const showOnly = process.argv.includes('--show');
 
 if (!showOnly) {
-  const put = await signedRequest('PUT', bucketUrl('lifecycle'), Buffer.from(LIFECYCLE_XML, 'utf8'));
+  const put = await signedRequest(
+    'PUT',
+    bucketUrl('lifecycle'),
+    Buffer.from(LIFECYCLE_XML, 'utf8'),
+  );
   if (!put.ok) {
     console.error(`Хранилище отклонило политику: HTTP ${put.status}`);
     console.error((await put.text()).slice(0, 500));

@@ -122,6 +122,15 @@ pause(62, 'лимит класса auth перед проверкой квот �
 run('квоты и подтверждение загрузки', 'node', ['scripts/probe-upload-quota.mjs']);
 pause(62, 'лимит класса auth перед прогоном отзыва прав');
 run('немедленный отзыв прав', 'node', ['scripts/probe-role-revocation.mjs']);
+pause(62, 'лимит класса auth');
+run('точечный отзыв токена', 'node', ['scripts/probe-token-revocation.mjs']);
+pause(62, 'лимит класса auth');
+run('уборка брошенных загрузок', 'node', ['scripts/probe-abandoned-uploads.mjs']);
+// Прогон общего счётчика намеренно ИСЧЕРПЫВАЕТ ведро класса auth — иначе он не
+// доказал бы, что лимит общий. Пауза после него обязательна, иначе следующий
+// прогон упрётся в его же отказ.
+run('общий счётчик ограничения частоты', 'node', ['scripts/probe-shared-rate-limit.mjs']);
+pause(62, 'прогон общего счётчика исчерпал ведро класса auth');
 
 console.warn('\n--- Живые прогоны контуров ---');
 const LIVE = [

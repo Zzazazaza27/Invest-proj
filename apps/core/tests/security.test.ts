@@ -586,9 +586,7 @@ describe('Реконнесанс-поверхность (SEC-21)', () => {
     withEnv(PROD, () => {
       // Документ перечисляет все маршруты, включая административные и
       // интеграционные: анониму это карта поверхности атаки одним запросом.
-      expect(() =>
-        controller.document({ userId: null, roles: [], traceId: 't' }),
-      ).toThrow();
+      expect(() => controller.document({ userId: null, roles: [], traceId: 't' })).toThrow();
     });
   });
 

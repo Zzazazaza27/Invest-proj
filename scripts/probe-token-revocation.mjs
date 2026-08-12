@@ -24,6 +24,19 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+
+// Молчаливая смерть прогона неотличима от «ничего не проверено»: в глобальном
+// аудите этот скрипт однажды упал, не напечатав ни строки причины. Любая
+// необработанная ошибка обязана назвать себя.
+process.on('unhandledRejection', (reason) => {
+  console.error('ПРОГОН ОБОРВАН (unhandledRejection):', reason);
+  process.exit(1);
+});
+process.on('uncaughtException', (error) => {
+  console.error('ПРОГОН ОБОРВАН (uncaughtException):', error);
+  process.exit(1);
+});
+
 loadDotEnv();
 
 function loadDotEnv() {
@@ -162,7 +175,11 @@ const stolen = [first.session, first.csrf].filter(Boolean).join('; ');
 const logout = await first.call('/v1/auth/logout', { method: 'POST' });
 const logoutBody = await logout.json().catch(() => ({}));
 check('выход выполнен', logout.status === 200 || logout.status === 201, `HTTP ${logout.status}`);
-check('ответ сообщает об отзыве токена', logoutBody.tokenRevoked === true, JSON.stringify(logoutBody));
+check(
+  'ответ сообщает об отзыве токена',
+  logoutBody.tokenRevoked === true,
+  JSON.stringify(logoutBody),
+);
 
 const replay = await first.call('/v1/auth/me', { cookies: stolen });
 check(
@@ -211,8 +228,11 @@ check(
 // в этом месте первая версия молча удаляла ноль строк: DELETE читает строку, и
 // к нему применяется SELECT-политика роли.
 const app = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 1 });
+// Уборку выполняет роль обслуживания (M039), а не доставка уведомлений: та
+// лишь читает реестр на входе. Прогон, оставшийся на старой роли, падал с
+// permission denied — право переехало, а проверка нет.
 const janitor = new pg.Pool({
-  connectionString: process.env.DATABASE_URL_APP_NOTIFICATIONS,
+  connectionString: process.env.DATABASE_URL_APP_MAINTENANCE,
   max: 1,
 });
 const expiredJti = `expired-${randomUUID()}`;
@@ -243,7 +263,7 @@ try {
 const janitorClient = await janitor.connect();
 try {
   await janitorClient.query('BEGIN');
-  await janitorClient.query(`SET LOCAL ROLE app_notifications`);
+  await janitorClient.query(`SET LOCAL ROLE app_maintenance`);
   await janitorClient.query(`SELECT set_config('app.current_user_id', '', true)`);
   await janitorClient.query(`SELECT set_config('app.current_roles', 'system', true)`);
   const dead = await janitorClient.query(
