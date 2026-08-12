@@ -30,7 +30,7 @@
     "gate:net": "node scripts/network-audit.mjs",
     "gate": "npm run lint && npm run typecheck && npm run test && npm run gate:boundary && npm run gate:deps && npm run gate:ai && npm run gate:net",
     "gate:boundary": "node scripts/check-frontend-boundary.mjs",
-    "build:packages": "npm run build -w packages/contracts && npm run build -w packages/api-client",
+    "build:packages": "npm run build -w packages/contracts && npm run build -w packages/ui && npm run build -w packages/api-client",
     "gate:ai": "node scripts/gate-ai-gateway.mjs"
   },
   "devDependencies": {

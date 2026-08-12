@@ -481,6 +481,31 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
       message: 'в production брокер подключается по tls://, а не nats://',
     });
   }
+  // TLS шифрует канал, но НЕ говорит брокеру, кто подключился. У сервера NATS по
+  // умолчанию аутентификации нет вовсе: до этой проверки production требовал
+  // только tls://, а `NATS_USER`/`NATS_PASSWORD` имели пустые значения по
+  // умолчанию — клиент просто не передавал учётных данных. Любой, кто дотянулся
+  // до брокера по сети, мог публиковать события и читать чужие (SEC-05).
+  if (isProd && env.NATS_URL && (!env.NATS_USER || !env.NATS_PASSWORD)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['NATS_USER'],
+      message:
+        'в production подключение к брокеру обязано быть аутентифицированным: ' +
+        'задай NATS_USER и NATS_PASSWORD (шифрование канала не заменяет проверку публикующего)',
+    });
+  }
+  // Тот же запрет, что для Redis и БД: учётные данные внутри адреса попадают в
+  // логи подключения и в тексты ошибок.
+  if (env.NATS_URL.includes('@')) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['NATS_URL'],
+      message:
+        'учётные данные внутри адреса недопустимы: пароль попадёт в логи. ' +
+        'Задай NATS_USER и NATS_PASSWORD отдельными переменными.',
+    });
+  }
 
   if (isProd && !env.SESSION_COOKIE_NAME.startsWith('__Host-')) {
     ctx.addIssue({

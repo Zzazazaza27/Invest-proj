@@ -31,12 +31,13 @@ AI-анализ и развитие; верифицированные инвес
 > фронтендов**: публичная витрина и кабинеты основателя, инвестора, эксперта и
 > администратора — все на общей дизайн-системе, все проверены в реальном
 > браузере.
-> 298 тестов плюс **более 600 живых проверок** против запущенных сервисов, из
-> них 91 — в реальном браузере (витрина и четыре кабинета) и 73 — зонды
+> 358 тестов плюс **более 600 живых проверок** против запущенных сервисов, из
+> них 91 — в реальном браузере (витрина и четыре кабинета) и 90 — зонды
 > безопасности, воспроизводящие конкретные атаки (обход ограничения частоты,
 > DNS rebinding, подстановка чужого CSRF-токена, отзыв прав, предъявление
-> скопированного токена после выхода, удвоение разрешённой частоты вторым
-> экземпляром, брошенный объект в хранилище).
+> скопированного токена после выхода, работа по токену приостановленной
+> интеграции, бессрочная блокировка адреса залипшим счётчиком, удвоение
+> разрешённой частоты вторым экземпляром, брошенный объект в хранилище).
 > Все двенадцать фаз плана закрыты; проект остаётся в состоянии «до гейта A» —
 > инвестиционный контур выключен фичефлагом до включения оператора в реестр
 > Банка России, и это состояние продукта, а не незавершённая работа.
@@ -88,7 +89,7 @@ packages/
   contracts/     zod-схемы DTO и событий — единственный источник правды контрактов
   api-client/    Типизированный HTTP-клиент (без React), общий для всех фронтов
   ui/            Дизайн-токены и примитивы
-database/        Миграции M000–M041, RLS-политики, сиды, негативные тесты
+database/        Миграции M000–M043, RLS-политики, сиды, негативные тесты
 infra/           docker-compose локального контура и образ PostgreSQL.
                  Terraform/Helm production-контура ещё НЕТ — см. TODO.md
 docs/            ADR, аудиты сессий, runbooks, руководство по замене фронтенда
@@ -106,7 +107,7 @@ obsidian-notes/  Рабочие заметки проекта: статус фа
 cp .env.example .env          # заполнить CHANGE_ME
 npm install
 npm run infra:up              # PostgreSQL 16 + Redis + NATS JetStream + MinIO (+ бакет)
-npm run db:migrate            # миграции M000–M041
+npm run db:migrate            # миграции M000–M043
 npm run db:seed               # сезон, таксономия, тарифы, fee schedule, шаблоны
 npm run bootstrap:roles -w database   # логин-роли БД из переменных окружения
 ```
@@ -130,8 +131,8 @@ NODE_ENV=test npm run db:migrate
 npm run build -w apps/core
 node scripts/dev-core.mjs --detached   # лог: core.log
 node scripts/smoke-core.mjs            # периметр: 46 проверок
-node scripts/smoke-lab.mjs             # KYC, проекты, каталог: 90 проверок
-node scripts/smoke-billing.mjs         # биллинг и админский контур: 43 проверки
+node scripts/smoke-lab.mjs             # KYC, проекты, каталог: 92 проверки
+node scripts/smoke-billing.mjs         # биллинг и админский контур: 44 проверки
 node scripts/smoke-investments.mjs     # регулируемый контур ОИП: 34 проверки
 node scripts/smoke-experts.mjs         # экспертиза, сезон, уведомления: 49 проверок
 node scripts/smoke-integration.mjs     # Integration API: 50 проверок
@@ -147,7 +148,7 @@ node scripts/probe-role-revocation.mjs # немедленность отзыва
 node scripts/probe-dns-rebinding.mjs   # DNS rebinding в доставке вебхуков: 4 проверки
 node scripts/probe-outbox-lease.mjs    # аренда очередей и повтор рассылки: 8 проверок
 node scripts/probe-event-versions.mjs  # версии событий агрегата: 6 проверок
-node scripts/probe-upload-quota.mjs    # квоты и подтверждение загрузки: 5 проверок
+node scripts/probe-upload-quota.mjs    # квоты и подтверждение загрузки: 6 проверок
 node scripts/probe-token-revocation.mjs # точечный отзыв токена: 18 проверок
 node scripts/probe-shared-rate-limit.mjs # общий счётчик частоты на двух экземплярах: 9 проверок
 node scripts/probe-abandoned-uploads.mjs # уборка брошенных загрузок: 14 проверок
@@ -155,6 +156,8 @@ node scripts/s3-lifecycle-apply.mjs      # политика жизненного
 node scripts/load-test.mjs               # нагрузка: 32 клиента, p50/p95/p99 по маршрутам
 node scripts/archive-events.mjs --dry-run # выгрузка журнала в холодное хранилище (посчитать)
 node scripts/probe-event-archive.mjs     # выгрузка журнала: 11 проверок
+node scripts/probe-service-token-epoch.mjs # отзыв токенов интеграции: 9 проверок
+node scripts/probe-ip-ceiling-ttl.mjs    # потолок частоты не залипает: 8 проверок
 
 npm run build -w apps/web-public && npm run preview -w apps/web-public   # витрина на 5173
 node scripts/render-check-web-public.mjs     # витрина в реальном браузере: 13 проверок

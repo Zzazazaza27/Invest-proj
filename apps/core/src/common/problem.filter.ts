@@ -27,7 +27,11 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     const http = host.switchToHttp();
     const reply = http.getResponse<FastifyReply>();
     const request = http.getRequest<FastifyRequest>();
-    const traceId = (request.headers['x-request-id'] as string | undefined) ?? request.id;
+    // Не сырой заголовок: `request.id` — это тот же внешний идентификатор, но
+    // уже прошедший проверку формата (см. acceptableRequestId в main.ts).
+    // Чтение заголовка напрямую обходило её и возвращало управляющие символы в
+    // журнал (SEC-15).
+    const traceId = request.id;
 
     const { problem, internal, cause } = this.toProblem(exception, request.url, traceId);
 

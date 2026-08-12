@@ -56,6 +56,7 @@ describe('Токен сервисного клиента', () => {
     serviceAccountId: '018f2b7c-0000-7000-8000-000000000001',
     clientId: 'capital',
     scopes: ['graduates:read', 'passport:read'],
+    tokenEpoch: 1,
   };
 
   it('выпущенный токен проверяется и несёт свои скоупы', () => {
@@ -124,6 +125,29 @@ describe('Токен сервисного клиента', () => {
       for (const bad of ['', '.', 'abc', 'a.b.c', '!!!.???']) {
         expect(() => verifyServiceToken(bad)).toThrow();
       }
+    });
+  });
+
+  // Рубеж аккаунта (M042, находка SEC-08). Сам токен по-прежнему проверяется
+  // подписью и сроком; сверка рубежа с БД — работа гварда, здесь проверяется,
+  // что рубеж вообще ДОЕЗЖАЕТ до проверяющего и не подделывается.
+  it('рубеж аккаунта попадает в токен', () => {
+    withEnv(() => {
+      const { token } = issueServiceToken({ ...input, tokenEpoch: 7 });
+      expect(verifyServiceToken(token).ep).toBe(7);
+    });
+  });
+
+  it('подмена рубежа в токене ломает подпись', () => {
+    withEnv(() => {
+      const { token } = issueServiceToken({ ...input, tokenEpoch: 7 });
+      const [body, signature] = token.split('.');
+      const payload = JSON.parse(Buffer.from(body!, 'base64url').toString('utf8')) as {
+        ep: number;
+      };
+      payload.ep = 8; // «продлить» отозванный токен, вернув его к новому рубежу
+      const forged = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+      expect(() => verifyServiceToken(`${forged}.${signature}`)).toThrow();
     });
   });
 });

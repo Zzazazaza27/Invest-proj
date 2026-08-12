@@ -8,6 +8,7 @@ import { errors } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
 import { getEnv } from '../config/env';
 import { Database, type Tx } from '../db/unit-of-work';
+import { isForbiddenAddress, forbiddenReason } from './ip-classifier';
 import type { IntegrationContext } from '../integration/service-auth';
 
 /**
@@ -173,32 +174,13 @@ export const WEBHOOK_SIGNATURE_TOLERANCE_SECONDS = 300;
 /**
  * Диапазоны, в которые доставка не пойдёт никогда.
  *
- * Список намеренно шире «локалхоста»: адрес метаданных облака выдаёт временные
- * учётные данные роли инстанса — это самый дорогой из возможных исходов SSRF.
+ * Реализация — в `ip-classifier.ts`: она сравнивает канонические байты адреса с
+ * диапазонами по длине префикса. Прежняя версия жила здесь и сравнивала
+ * строковые префиксы, из-за чего пропускала `fe90::1`, `febf::1`,
+ * `::ffff:7f00:1`, `224.0.0.1` и `198.18.0.1`. Реэкспорт оставлен, чтобы не
+ * ломать импорты зондов и тестов.
  */
-export function isForbiddenAddress(address: string): boolean {
-  const version = isIP(address);
-  if (version === 4) {
-    const [a = 0, b = 0] = address.split('.').map(Number);
-    if (a === 10 || a === 127 || a === 0) return true;
-    if (a === 169 && b === 254) return true; // link-local и метаданные облака
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true; // CGNAT
-    return false;
-  }
-  if (version === 6) {
-    const normalized = address.toLowerCase();
-    if (normalized === '::1' || normalized === '::') return true;
-    if (normalized.startsWith('fc') || normalized.startsWith('fd')) return true; // ULA
-    if (normalized.startsWith('fe80')) return true; // link-local
-    // IPv4-mapped: ::ffff:127.0.0.1 обходит проверку четвёрки, если её не снять.
-    const mapped = normalized.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    if (mapped?.[1]) return isForbiddenAddress(mapped[1]);
-    return false;
-  }
-  return true;
-}
+export { isForbiddenAddress, forbiddenReason };
 
 /**
  * Проверка адреса доставки ПЕРЕД запросом.

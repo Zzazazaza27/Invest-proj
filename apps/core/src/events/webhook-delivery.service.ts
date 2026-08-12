@@ -4,7 +4,7 @@ import { getEnv } from '../config/env';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type Tx } from '../db/unit-of-work';
 import { buildEnvelope, type OutboxRow } from './publisher.service';
-import { postPinned } from './pinned-fetch';
+import { absoluteDeadlineMs, postPinned } from './pinned-fetch';
 import {
   assertPublicDestination,
   deliveryTimeoutMs,
@@ -68,6 +68,22 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
 
       let delivered = 0;
       for (const item of batch) {
+        // Аренда продлевается ПЕРЕД каждой доставкой, а не берётся одна на всю
+        // пачку. Прежняя схема была арифметически несостоятельна: до
+        // OUTBOX_BATCH_SIZE строк (по умолчанию 50) получали общую аренду в
+        // DELIVERY_LEASE_SECONDS, а отправлялись последовательно, каждая до
+        // нескольких секунд. К концу пачки аренда давно истекала, другой
+        // экземпляр забирал те же строки и слал вебхук ВТОРОЙ раз — а побочный
+        // эффект у получателя настоящий: списание, сделка, запись в CRM
+        // (SEC-06).
+        if (!(await this.renewLease(traceId, item.id))) {
+          this.logger.warn({
+            msg: 'аренда доставки потеряна, отправка пропущена',
+            deliveryId: item.id,
+            eventType: item.event_type,
+          });
+          continue;
+        }
         const ok = await this.deliverOne(traceId, item);
         if (ok) delivered += 1;
       }
@@ -114,7 +130,7 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
            FOR UPDATE OF d2 SKIP LOCKED
            LIMIT $2)
       RETURNING d.id`,
-      [MAX_ATTEMPTS, getEnv().OUTBOX_BATCH_SIZE, DELIVERY_LEASE_SECONDS, this.instanceId],
+      [MAX_ATTEMPTS, getEnv().OUTBOX_BATCH_SIZE, deliveryLeaseSeconds(), this.instanceId],
     );
     if (claimed.length === 0) return [];
 
@@ -134,6 +150,29 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
       [claimed.map((row) => row.id)],
     );
     return rows;
+  }
+
+  /**
+   * Продлить аренду ровно этой строки, оставаясь её владельцем.
+   *
+   * Возвращает `false`, если аренда уже не наша: истекла и её перехватили, либо
+   * строку забрал другой экземпляр. Тогда отправлять НЕЛЬЗЯ — она уже в работе
+   * у другого, и вторая отправка означала бы повторный побочный эффект.
+   *
+   * Условие `locked_by = $2` — это ограждение. Идентификатор экземпляра свой у
+   * каждого процесса, поэтому перехват строки чужим экземпляром обнуляет наше
+   * право на неё, даже если по времени аренда ещё выглядит живой.
+   */
+  private async renewLease(traceId: string, id: string): Promise<boolean> {
+    return this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
+      const { rowCount } = await tx.query(
+        `UPDATE integration.webhook_deliveries
+            SET locked_until = now() + ($3 || ' seconds')::interval
+          WHERE id = $1 AND locked_by = $2 AND locked_until > now()`,
+        [id, this.instanceId, deliveryLeaseSeconds()],
+      );
+      return (rowCount ?? 0) === 1;
+    });
   }
 
   private async deliverOne(traceId: string, item: DeliveryRow): Promise<boolean> {
@@ -187,13 +226,19 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
 
   private async markDelivered(traceId: string, id: string, code: number): Promise<void> {
     await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
-      await tx.query(
+      // Результат пишется, только пока строка НАША. Без этого условия
+      // экземпляр, у которого аренду уже перехватили, затирал бы итог того,
+      // кто отправляет её сейчас (SEC-06).
+      const { rowCount } = await tx.query(
         `UPDATE integration.webhook_deliveries
             SET status = 'delivered', attempts = attempts + 1, response_code = $2,
                 next_retry_at = NULL
-          WHERE id = $1`,
-        [id, code],
+          WHERE id = $1 AND locked_by = $3`,
+        [id, code, this.instanceId],
       );
+      if ((rowCount ?? 0) === 0) {
+        this.logger.warn({ msg: 'итог доставки не записан: аренда уже не наша', deliveryId: id });
+      }
     });
   }
 
@@ -208,14 +253,27 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
     const delaySeconds = Math.min(2 ** attempts, MAX_BACKOFF_SECONDS);
 
     await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
-      await tx.query(
+      const { rowCount } = await tx.query(
         `UPDATE integration.webhook_deliveries
             SET status = $3, attempts = $2, response_code = $4,
                 next_retry_at = CASE WHEN $3 = 'exhausted' THEN NULL
                                      ELSE now() + make_interval(secs => $5) END
-          WHERE id = $1`,
-        [item.id, attempts, exhausted ? 'exhausted' : 'failed', code, delaySeconds],
+          WHERE id = $1 AND locked_by = $6`,
+        [
+          item.id,
+          attempts,
+          exhausted ? 'exhausted' : 'failed',
+          code,
+          delaySeconds,
+          this.instanceId,
+        ],
       );
+      if ((rowCount ?? 0) === 0) {
+        this.logger.warn({
+          msg: 'отказ доставки не записан: аренда уже не наша',
+          deliveryId: item.id,
+        });
+      }
     });
 
     this.logger[exhausted ? 'error' : 'warn']({
@@ -230,11 +288,28 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
 }
 
 /**
- * Срок аренды доставки. Больше самого долгого HTTP-запроса к получателю
- * (таймаут доставки) и достаточно короткий, чтобы упавший экземпляр не держал
- * очередь дольше минуты.
+ * Срок аренды ОДНОЙ доставки.
+ *
+ * Считается от предельной длительности самой доставки, а не назначается числом.
+ * Прежняя константа в 60 секунд была взята «с запасом от таймаута», но запас
+ * считался от ОДНОГО запроса, тогда как под общей арендой шла вся пачка. Такой
+ * запас не запас: при пятидесяти строках он исчерпывался на первых нескольких.
+ *
+ * Теперь аренда продлевается перед каждой доставкой (`renewLease`), и её срок
+ * обязан покрывать ровно одну доставку с её абсолютным предельным сроком плюс
+ * поле на запись результата.
  */
-const DELIVERY_LEASE_SECONDS = 60;
+export function deliveryLeaseSeconds(): number {
+  return (
+    Math.ceil(absoluteDeadlineMs({ timeoutMs: deliveryTimeoutMs() }) / 1000) + LEASE_MARGIN_SECONDS
+  );
+}
+
+/**
+ * Поле сверх предельного срока доставки: время на запись результата и на
+ * расхождение часов между экземплярами.
+ */
+const LEASE_MARGIN_SECONDS = 10;
 
 const MAX_ATTEMPTS = 8;
 const MAX_BACKOFF_SECONDS = 3600;

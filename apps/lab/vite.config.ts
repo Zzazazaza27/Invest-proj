@@ -13,5 +13,10 @@ export default defineConfig({
   optimizeDeps: { include: ['@unicorn/api-client', '@unicorn/contracts'] },
   server: { port: 5175, strictPort: true, host: '127.0.0.1' },
   preview: { port: 5175, strictPort: true, host: '127.0.0.1' },
-  build: { outDir: 'dist', sourcemap: true, target: 'es2022' },
+  // Карты исходников НЕ публикуются: они восстанавливают исходный TypeScript,
+  // имена и структуру маршрутов из раздаваемого каталога. Отдельного шага,
+  // который бы вырезал `.map` из артефакта перед выкладкой, здесь нет — а
+  // значит, «hidden» не помог бы: он лишь убирает ссылку, оставляя сами карты
+  // доступными по прямому адресу (SEC-13).
+  build: { outDir: 'dist', sourcemap: false, target: 'es2022' },
 });

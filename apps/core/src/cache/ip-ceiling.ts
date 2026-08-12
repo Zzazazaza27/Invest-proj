@@ -26,6 +26,34 @@ import { getEnv } from '../config/env';
  * Fail-closed: недоступный счётчик означает отказ, а не снятие потолка — та же
  * сторона размена, что и у `skipOnError: false` у классовых вёдер.
  */
+
+/**
+ * Счёт и срок жизни ОДНОЙ операцией.
+ *
+ * Раньше здесь стояли `INCR` и следом `EXPIRE` — два обращения к счётчику.
+ * Между ними есть окно: обрыв соединения, перезапуск процесса или падение
+ * Redis после первого и до второго оставляют ключ БЕЗ СРОКА. Такой ключ не
+ * истекает никогда, счётчик продолжает расти, и адрес получает 429 бессрочно —
+ * то есть промах в служебном коде превращается в вечную блокировку живого
+ * пользователя (SEC-11).
+ *
+ * Скрипт выполняется целиком и атомарно. Срок ставится не «первому запросу
+ * окна», а любому запросу, увидевшему ключ без срока: это ещё и чинит ключи,
+ * уже осиротевшие по прежней схеме, без ручной уборки.
+ *
+ * Возвращается и остаток срока — иначе `retry-after` требовал бы третьего
+ * обращения, которое может увидеть уже другое состояние.
+ */
+const CEILING_SCRIPT = `
+local used = redis.call('INCR', KEYS[1])
+local ttl = redis.call('TTL', KEYS[1])
+if ttl < 0 then
+  redis.call('EXPIRE', KEYS[1], ARGV[1])
+  ttl = tonumber(ARGV[1])
+end
+return { used, ttl }
+`;
+
 export function registerIpCeiling(app: FastifyInstance, redis: Redis | null): void {
   const env = getEnv();
   if (!redis) return;
@@ -39,12 +67,16 @@ export function registerIpCeiling(app: FastifyInstance, redis: Redis | null): vo
 
     const key = `ip-ceiling:${request.ip}`;
     let used: number;
+    let ttl: number;
     try {
-      used = await redis.incr(key);
-      // Срок ставится ТОЛЬКО первому запросу окна. Иначе каждый следующий
-      // запрос продлевал бы окно, и оно не заканчивалось бы никогда, пока
-      // клиент не замолчит.
-      if (used === 1) await redis.expire(key, windowSeconds);
+      const [usedRaw, ttlRaw] = (await redis.eval(
+        CEILING_SCRIPT,
+        1,
+        key,
+        String(windowSeconds),
+      )) as [number, number];
+      used = Number(usedRaw);
+      ttl = Number(ttlRaw);
     } catch {
       // Счётчик недоступен — отказ, а не проход мимо потолка.
       return reply.code(503).send({
@@ -57,16 +89,16 @@ export function registerIpCeiling(app: FastifyInstance, redis: Redis | null): vo
     }
 
     if (used > env.RATE_LIMIT_IP_CEILING_PER_MIN) {
-      const ttl = await redis.ttl(key).catch(() => windowSeconds);
+      const retryAfter = ttl > 0 ? ttl : windowSeconds;
       return reply
         .code(429)
-        .header('retry-after', String(ttl > 0 ? ttl : windowSeconds))
+        .header('retry-after', String(retryAfter))
         .send({
           type: 'https://unicorn.vc/problems/rate_limited',
           title: 'Слишком много запросов',
           status: 429,
           code: 'rate_limited',
-          detail: `Повторите через ${ttl > 0 ? ttl : windowSeconds} с`,
+          detail: `Повторите через ${retryAfter} с`,
         });
     }
     return undefined;

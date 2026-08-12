@@ -427,13 +427,16 @@ export class IdentityService {
     consents: { kind: string; version: string; locale: string }[],
     ctx: RequestContext,
   ): Promise<void> {
-    const ipHash = this.crypto.contextHash(ctx.traceId);
+    // Хеш ИДЕНТИФИКАТОРА ЗАПРОСА, а не адреса. Раньше то же самое значение
+    // писалось в колонку `ip_hash`, и запись о согласии выглядела как
+    // доказательство канала, которым она не является (SEC-16, M043).
+    const traceHash = this.crypto.contextHash(ctx.traceId);
     for (const consent of consents) {
       await tx.query(
-        `INSERT INTO identity.consents (id, user_id, kind, version, locale, ip_hash)
+        `INSERT INTO identity.consents (id, user_id, kind, version, locale, request_trace_hash)
          VALUES ($1, $2, $3, $4, $5, $6)
          ON CONFLICT (user_id, kind, version) DO NOTHING`,
-        [uuidv7(), userId, consent.kind, consent.version, consent.locale, ipHash],
+        [uuidv7(), userId, consent.kind, consent.version, consent.locale, traceHash],
       );
     }
   }

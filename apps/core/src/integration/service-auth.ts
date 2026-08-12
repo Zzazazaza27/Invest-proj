@@ -11,6 +11,7 @@ import type { FastifyRequest } from 'fastify';
 import { INTEGRATION_SCOPES, type IntegrationScope } from '@unicorn/contracts';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
+import { ServiceAccountStateService } from './service-account-state.service';
 
 /**
  * Аутентификация сервис-к-сервису.
@@ -58,6 +59,8 @@ interface TokenPayload {
   scopes: string[];
   exp: number;
   aud: 'integration';
+  /** Рубеж токенов аккаунта (M042). Сверяется с текущим на каждом запросе. */
+  ep: number;
 }
 
 /** Отдельный контекст подписи: токен интеграции не проверится как токен сессии. */
@@ -67,6 +70,8 @@ export function issueServiceToken(input: {
   serviceAccountId: string;
   clientId: string;
   scopes: readonly string[];
+  /** Рубеж аккаунта на момент выдачи (M042). */
+  tokenEpoch: number;
 }): { token: string; expiresIn: number } {
   const env = getEnv();
   const ttl = env.INTEGRATION_TOKEN_TTL_SECONDS;
@@ -76,6 +81,7 @@ export function issueServiceToken(input: {
     scopes: [...input.scopes],
     exp: Math.floor(Date.now() / 1000) + ttl,
     aud: 'integration',
+    ep: input.tokenEpoch,
   };
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
   return { token: `${body}.${sign(body)}`, expiresIn: ttl };
@@ -133,11 +139,18 @@ export function verifyServiceToken(token: string): TokenPayload {
 
 @Injectable()
 export class IntegrationGuard implements CanActivate {
-  constructor(private readonly reflector: Reflector) {}
+  constructor(
+    private readonly reflector: Reflector,
+    private readonly accounts: ServiceAccountStateService,
+  ) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<IntegrationRequest>();
-    const traceId = (request.headers['x-request-id'] as string | undefined) ?? request.id;
+    // Не сырой заголовок: `request.id` — это тот же внешний идентификатор, но
+    // уже прошедший проверку формата (см. acceptableRequestId в main.ts).
+    // Чтение заголовка напрямую обходило её и возвращало управляющие символы в
+    // журнал (SEC-15).
+    const traceId = request.id;
 
     const required = this.reflector.getAllAndOverride<IntegrationScope>(INTEGRATION_SCOPE, [
       context.getHandler(),
@@ -154,6 +167,13 @@ export class IntegrationGuard implements CanActivate {
       throw errors.unauthenticated({ stage: 'integration-no-token' });
     }
     const payload = verifyServiceToken(header.slice('Bearer '.length).trim());
+
+    // Проверка действующего состояния аккаунта. Без неё приостановка не имела
+    // силы до истечения токена: подпись и срок в токене есть, а «аккаунт ещё
+    // существует и не приостановлен» — не проверялось (SEC-08).
+    if (!(await this.accounts.isTokenCurrent(payload.sub, payload.ep))) {
+      throw errors.unauthenticated({ stage: 'integration-account-state' });
+    }
 
     if (!payload.scopes.includes(required)) {
       // Скоупы клиента наружу не перечисляются: это карта его прав.

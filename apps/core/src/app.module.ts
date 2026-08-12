@@ -36,6 +36,7 @@ import {
   IntegrationTokenController,
 } from './integration/integration.controller';
 import { IntegrationService } from './integration/integration.service';
+import { ServiceAccountStateService } from './integration/service-account-state.service';
 import { ServiceAccountsController } from './integration/service-accounts.controller';
 import { InvestmentsController } from './investments/investments.controller';
 import { InvestmentsService } from './investments/investments.service';
@@ -108,6 +109,7 @@ import { S3Service } from './storage/s3.service';
     ExpertsService,
     NotificationsService,
     IntegrationService,
+    ServiceAccountStateService,
     NatsClient,
     WebhooksService,
     OutboxPublisherService,

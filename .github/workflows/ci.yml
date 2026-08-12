@@ -63,10 +63,16 @@ jobs:
       # Прямой запуск контейнера вместо gitleaks-action: action ожидает
       # results.sarif и лицензию для организаций, из-за чего падает на
       # приватном репозитории даже при отсутствии находок.
+      #
+      # Образ закреплён ДАЙДЖЕСТОМ, а не тегом. Тег `latest` подменяем: он
+      # указывает на то, что владелец образа выложил последним, и гейт секретов
+      # начал бы выполнять чужой неизвестный код при следующем прогоне без
+      # единой правки в этом репозитории (SEC-18). Дайджест — единственная
+      # неизменяемая ссылка. Соответствует v8.28.0.
       - name: gitleaks
         run: |
           docker run --rm -v "$PWD:/repo" -w /repo \
-            zricethezav/gitleaks:latest detect \
+            zricethezav/gitleaks@sha256:cdbb7c955abce02001a9f6c9f602fb195b7fadc1e812065883f695d1eeaba854 detect \
               --source=/repo --config=/repo/.gitleaks.toml \
               --no-banner --redact --exit-code 1
 
@@ -75,9 +81,18 @@ jobs:
     name: SAST semgrep (ожидание 0 ERROR)
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep:1.99.0
+      # Дайджест соответствует 1.99.0. Тег в реестре можно перевесить на другой
+      # образ; дайджест — нельзя (SEC-18).
+      image: semgrep/semgrep@sha256:ae27024c16f7848cdbfd49c24ed0b78b13f13b85fcd7b87c679aaa8b0c0dce98
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # ОГОВОРКА о неизменяемости. Сам semgrep закреплён дайджестом, а вот
+      # наборы `p/...` разрешаются в реестре при каждом прогоне: их содержимое
+      # может измениться без правки этого файла. Это принято осознанно —
+      # застывший набор правил безопасности устаревает и перестаёт находить
+      # новые классы дефектов, то есть цена «неизменяемости» здесь выше выгоды.
+      # Проектные правила, на которых держится гейт, лежат в репозитории
+      # (`.semgrep/guardian.yml`) и меняются только коммитом (SEC-18).
       - name: Проектные правила + OWASP
         run: |
           semgrep scan \
@@ -114,7 +129,7 @@ jobs:
       - name: Python-зависимости AI-контура
         run: |
           if [ -f apps/ai-gateway/requirements.txt ]; then
-            python -m pip install --quiet pip-audit
+            python -m pip install --quiet pip-audit==2.9.0
             pip-audit -r apps/ai-gateway/requirements.txt --strict
           else
             echo "::notice::apps/ai-gateway/requirements.txt отсутствует — AI-контур ещё не реализован (фаза Ф7). Проверка НЕ выполнялась."
@@ -126,7 +141,8 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        # Дайджест соответствует pg16.
+        image: pgvector/pgvector@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
         env:
           POSTGRES_DB: unicorn_test
           POSTGRES_USER: unicorn_owner
@@ -194,7 +210,8 @@ jobs:
     needs: [static]
     services:
       postgres:
-        image: pgvector/pgvector:pg16
+        # Дайджест соответствует pg16.
+        image: pgvector/pgvector@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
         env:
           POSTGRES_DB: unicorn_test
           POSTGRES_USER: unicorn_owner
@@ -205,7 +222,8 @@ jobs:
         ports:
           - 5432:5432
       redis:
-        image: redis:7.4-alpine
+        # Дайджест соответствует 7.4-alpine.
+        image: redis@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s --health-timeout 5s --health-retries 20
@@ -256,7 +274,9 @@ jobs:
 
       - name: Тесты AI-шлюза (Python)
         run: |
+          # Версии закреплены: незакреплённый инструмент в цепочке сборки — это
+          # чужой код, который меняется без правки этого файла (SEC-18).
           python -m pip install --upgrade pip
           pip install -r apps/ai-gateway/requirements.txt
-          pip install pytest
+          pip install pytest==8.3.4
           cd apps/ai-gateway && python -m pytest tests/ -q

@@ -18,6 +18,7 @@ import { AuditRepository } from '../audit/audit.repository';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { issueServiceToken, type IntegrationContext } from './service-auth';
+import { ServiceAccountStateService } from './service-account-state.service';
 
 /**
  * Integration API.
@@ -38,6 +39,7 @@ export class IntegrationService {
   constructor(
     private readonly db: Database,
     private readonly audit: AuditRepository,
+    private readonly accounts: ServiceAccountStateService,
   ) {}
 
   // ------------------------------------------------- сервисные аккаунты (admin)
@@ -69,7 +71,7 @@ export class IntegrationService {
           `INSERT INTO integration.service_accounts
              (id, client_id, name, client_secret_hash, mtls_cert_fingerprint, scopes, created_by)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
-           RETURNING id, client_id, name, scopes, status, created_at, rotated_at`,
+           RETURNING id, client_id, name, scopes, status, created_at, rotated_at, token_epoch`,
           [
             id,
             input.clientId,
@@ -113,12 +115,16 @@ export class IntegrationService {
    */
   async rotateSecret(ctx: RequestContext, accountId: string): Promise<ServiceAccountWithSecret> {
     const secret = generateSecret();
-    return this.db.transaction(ctx, async (tx) => {
+    const rotated = await this.db.transaction(ctx, async (tx) => {
       const { rows } = await tx.query<AccountRow>(
         `UPDATE integration.service_accounts
-            SET client_secret_hash = $2, rotated_at = now()
+            SET client_secret_hash = $2,
+                rotated_at = now(),
+                -- Рубеж растёт вместе с секретом: иначе токены, выданные по
+                -- старому секрету, продолжали бы работать до истечения (SEC-08).
+                token_epoch = token_epoch + 1
           WHERE id = $1
-          RETURNING id, client_id, name, scopes, status, created_at, rotated_at`,
+          RETURNING id, client_id, name, scopes, status, created_at, rotated_at, token_epoch`,
         [accountId, await argon2.hash(secret, ARGON2_OPTIONS)],
       );
       const account = rows[0];
@@ -142,31 +148,44 @@ export class IntegrationService {
         traceId: ctx.traceId,
       });
 
-      return { ...mapAccount(account), clientSecret: secret };
+      // Рубеж возвращается отдельным полем, а не через контракт: наружу число
+      // рубежа не отдаётся — оно внутреннее и держателю токена не нужно.
+      return {
+        account: { ...mapAccount(account), clientSecret: secret },
+        epoch: account.token_epoch,
+      };
     });
+    // Снимок своего экземпляра обновляется ПОСЛЕ фиксации: внутри транзакции
+    // откат оставил бы в памяти рубеж, которого в БД нет, и действующие токены
+    // отвергались бы до истечения снимка.
+    this.accounts.markEpochLocally(rotated.account.id, Number(rotated.epoch));
+    return rotated.account;
   }
 
   /**
    * Приостановка и возобновление сервисного аккаунта.
    *
-   * Приостановка — единственный способ закрыть доступ внешней системе быстрее,
-   * чем истечёт выданный токен. Она НЕ отзывает уже выданные токены: они
-   * самодостаточны и живут до `exp`. Это ограничение названо прямо, а не
-   * скрыто: ротация секрета и приостановка закрывают выдачу НОВЫХ токенов,
-   * немедленный отзыв уже выданных требует хранения их идентификаторов и
-   * остаётся открытым долгом (SEC-07).
+   * Приостановка обесценивает уже выданные токены, а не только закрывает выдачу
+   * новых: она увеличивает рубеж аккаунта (`token_epoch`, M042), и токен со
+   * старым рубежом отвергается на входе. Раньше этого не было — приостановленный
+   * аккаунт продолжал работать по выданному токену до его истечения, то есть до
+   * часа (SEC-08). Задержка на других экземплярах — не больше срока жизни снимка
+   * в `ServiceAccountStateService`.
    */
   async setServiceAccountStatus(
     ctx: RequestContext,
     accountId: string,
     status: 'active' | 'suspended',
   ): Promise<ServiceAccount> {
-    return this.db.transaction(ctx, async (tx) => {
+    const changed = await this.db.transaction(ctx, async (tx) => {
       const { rows } = await tx.query<AccountRow>(
         `UPDATE integration.service_accounts
-            SET status = $2
+            SET status = $2,
+                -- Рубеж растёт и при возобновлении тоже: иначе «приостановить и
+                -- вернуть» воскрешало бы токены, выданные до инцидента.
+                token_epoch = token_epoch + 1
           WHERE id = $1 AND status <> $2
-          RETURNING id, client_id, name, scopes, status, created_at, rotated_at`,
+          RETURNING id, client_id, name, scopes, status, created_at, rotated_at, token_epoch`,
         [accountId, status],
       );
       const account = rows[0];
@@ -174,12 +193,12 @@ export class IntegrationService {
       // и то и другое — не изменение, и события об изменении быть не должно.
       if (!account) {
         const { rows: existing } = await tx.query<AccountRow>(
-          `SELECT id, client_id, name, scopes, status, created_at, rotated_at
+          `SELECT id, client_id, name, scopes, status, created_at, rotated_at, token_epoch
              FROM integration.service_accounts WHERE id = $1`,
           [accountId],
         );
         if (!existing[0]) throw errors.notFound({ subject: 'service_account' });
-        return mapAccount(existing[0]);
+        return { account: mapAccount(existing[0]), epoch: null };
       }
 
       const verb =
@@ -202,14 +221,26 @@ export class IntegrationService {
         traceId: ctx.traceId,
       });
 
-      return mapAccount(account);
+      return { account: mapAccount(account), epoch: account.token_epoch };
     });
+
+    // После фиксации: приостановленный аккаунт исчезает из снимка, возобновлённый
+    // получает новый рубеж. На своём экземпляре — немедленно, на остальных — не
+    // позже срока жизни снимка.
+    if (changed.epoch !== null) {
+      if (changed.account.status === 'suspended') {
+        this.accounts.markSuspendedLocally(changed.account.id);
+      } else {
+        this.accounts.markEpochLocally(changed.account.id, Number(changed.epoch));
+      }
+    }
+    return changed.account;
   }
 
   async listServiceAccounts(ctx: RequestContext): Promise<ServiceAccount[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<AccountRow>(
-        `SELECT id, client_id, name, scopes, status, created_at, rotated_at
+        `SELECT id, client_id, name, scopes, status, created_at, rotated_at, token_epoch
            FROM integration.service_accounts
           ORDER BY created_at DESC
           LIMIT 200`,
@@ -247,12 +278,13 @@ export class IntegrationService {
           client_secret_hash: string;
           mtls_cert_fingerprint: string;
           scopes: string[];
+          token_epoch: number;
         }>(
           // Статус входит в условие, а не проверяется потом: приостановленная
           // учётная запись продолжала получать токены — отзыв доступа не
           // работал вовсе (SEC-07). Выборка «по client_id» без статуса делает
           // приостановку декоративной.
-          `SELECT id, client_id, client_secret_hash, mtls_cert_fingerprint, scopes
+          `SELECT id, client_id, client_secret_hash, mtls_cert_fingerprint, scopes, token_epoch
              FROM integration.service_accounts
             WHERE client_id = $1 AND status = 'active'`,
           [input.clientId],
@@ -284,6 +316,7 @@ export class IntegrationService {
       serviceAccountId: found.id,
       clientId: found.client_id,
       scopes: found.scopes,
+      tokenEpoch: Number(found.token_epoch),
     });
 
     await this.db.asServiceRole('app_integration', { traceId: input.traceId }, async (tx) => {
@@ -679,6 +712,7 @@ interface AccountRow {
   status: ServiceAccount['status'];
   created_at: Date;
   rotated_at: Date | null;
+  token_epoch: number;
 }
 
 function mapAccount(row: AccountRow): ServiceAccount {
