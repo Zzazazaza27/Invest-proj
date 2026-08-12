@@ -694,13 +694,107 @@ describe('RLS: реестр отозванных токенов (M038)', () => {
       );
 
       // Уборка идёт БЕЗ пользовательского контекста — так её и выполняет core.
-      await actAs(c, { userId: null, roles: [], dbRole: 'app_notifications' });
+      // Права уборки принадлежат роли обслуживания (M039), а не доставке
+      // уведомлений: та лишь читает реестр на входе.
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_maintenance' });
       const { rows } = await c.query<{ jti: string }>(
         'DELETE FROM identity.revoked_tokens WHERE expires_at < now() RETURNING jti',
       );
       // Ровно одна запись: удаление ДЕЙСТВУЮЩЕЙ вернуло бы отозванному токену
       // силу, а ноль записей означало бы, что реестр растёт без уборки.
       expect(rows.map((r) => r.jti)).toEqual([expired]);
+    });
+  });
+});
+
+describe('RLS: роль планового обслуживания (M039)', () => {
+  /** Билет на загрузку: строка материала без подтверждения. */
+  async function createTicket(
+    c: Client,
+    projectId: string,
+    userId: string,
+    ageHours: number,
+    uploaded: boolean,
+    version = 1,
+  ): Promise<string> {
+    const id = uuidv7();
+    await c.query(
+      `INSERT INTO lab.project_materials
+         (id, project_id, type, version, s3_key, parse_status, uploaded_by, created_at, uploaded_at)
+       VALUES ($1, $2, 'deck', $7, $3, 'queued', $4,
+               now() - ($5 || ' hours')::interval,
+               CASE WHEN $6 THEN now() ELSE NULL END)`,
+      [
+        id,
+        projectId,
+        `projects/${projectId}/materials/deck/${id}`,
+        userId,
+        String(ageHours),
+        uploaded,
+        version,
+      ],
+    );
+    return id;
+  }
+
+  it('видит только брошенные билеты старше часа', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c, { role: 'founder' });
+      const project = await createProject(c, founder.id);
+      const abandoned = await createTicket(c, project, founder.id, 5, false, 1);
+      const fresh = await createTicket(c, project, founder.id, 0, false, 2);
+      const confirmed = await createTicket(c, project, founder.id, 5, true, 3);
+
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_maintenance' });
+      const { rows } = await c.query<{ id: string }>('SELECT id FROM lab.project_materials');
+      const visible = rows.map((r) => r.id);
+      expect(visible).toContain(abandoned);
+      // Свежий билет — возможно, загрузка ещё идёт: подписанная форма живёт
+      // до часа. Подтверждённый материал роли обслуживания не виден вовсе.
+      expect(visible).not.toContain(fresh);
+      expect(visible).not.toContain(confirmed);
+    });
+  });
+
+  it('не может удалить подтверждённый материал', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c, { role: 'founder' });
+      const project = await createProject(c, founder.id);
+      const confirmed = await createTicket(c, project, founder.id, 48, true);
+
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_maintenance' });
+      const { rowCount } = await c.query('DELETE FROM lab.project_materials WHERE id = $1', [
+        confirmed,
+      ]);
+      // Уборка, способная удалить настоящий материал, — это не уборка.
+      expect(rowCount).toBe(0);
+    });
+  });
+
+  it('не может читать проекты и персональные данные', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c, { role: 'founder' });
+      await createProject(c, founder.id);
+
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_maintenance' });
+      // Роль обслуживания знает только о мусоре, который убирает.
+      await expect(c.query('SELECT count(*) FROM lab.projects')).rejects.toThrow();
+      await expect(c.query('SELECT count(*) FROM identity.users')).rejects.toThrow();
+    });
+  });
+
+  it('убирает брошенный билет', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c, { role: 'founder' });
+      const project = await createProject(c, founder.id);
+      const abandoned = await createTicket(c, project, founder.id, 48, false);
+
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_maintenance' });
+      const { rowCount } = await c.query('DELETE FROM lab.project_materials WHERE id = $1', [
+        abandoned,
+      ]);
+      // Контроль: политика ограничивает уборку, а не запрещает её.
+      expect(rowCount).toBe(1);
     });
   });
 });

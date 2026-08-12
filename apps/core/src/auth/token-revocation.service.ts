@@ -98,12 +98,12 @@ export class TokenRevocationService {
    * дешевизна проверки снимком.
    */
   async purgeExpired(): Promise<number> {
-    // Сервисной ролью, а не ролью приложения. DELETE читает строку, поэтому к
-    // нему применяется SELECT-политика: у роли приложения она ограничена
+    // Ролью обслуживания, а не ролью приложения. DELETE читает строку, поэтому
+    // к нему применяется SELECT-политика: у роли приложения она ограничена
     // своими записями, и уборка без пользовательского контекста удаляла ноль
-    // строк — молча, без ошибки (поймано прогоном, см. M038).
+    // строк — молча, без ошибки (поймано прогоном, см. M038/M039).
     const removed = await this.db.asServiceRole(
-      'app_notifications',
+      'app_maintenance',
       { traceId: `token-purge-${randomUUID()}` },
       async (tx) => {
         const { rowCount } = await tx.query(

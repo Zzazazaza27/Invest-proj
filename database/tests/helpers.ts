@@ -97,6 +97,7 @@ export async function actAs(
       'app_integration',
       'app_billing',
       'app_readonly',
+      'app_maintenance',
     ]);
     if (!allowed.has(opts.dbRole)) throw new Error(`Неизвестная роль БД: ${opts.dbRole}`);
     await client.query(`SET LOCAL ROLE ${opts.dbRole}`);

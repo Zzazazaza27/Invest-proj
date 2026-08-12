@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { getEnv } from '../config/env';
 import { Database } from '../db/unit-of-work';
 import { TokenRevocationService } from '../auth/token-revocation.service';
+import { StorageJanitorService } from './storage-janitor.service';
 
 /**
  * Плановое обслуживание партиций журнала.
@@ -25,6 +26,7 @@ export class PartitionMaintenanceService implements OnModuleInit, OnModuleDestro
   constructor(
     private readonly db: Database,
     private readonly revocations: TokenRevocationService,
+    private readonly storageJanitor: StorageJanitorService,
   ) {}
 
   async onModuleInit(): Promise<void> {
@@ -33,10 +35,12 @@ export class PartitionMaintenanceService implements OnModuleInit, OnModuleDestro
     // не должен ждать полного интервала.
     await this.runOnce();
     await this.purgeRevocations();
+    await this.purgeAbandonedUploads();
 
     this.timer = setInterval(() => {
       void this.runOnce();
       void this.purgeRevocations();
+      void this.purgeAbandonedUploads();
     }, env.PARTITION_MAINTENANCE_INTERVAL_HOURS * 3_600_000);
     // Таймер не должен удерживать процесс при штатном завершении.
     this.timer.unref();
@@ -91,6 +95,25 @@ export class PartitionMaintenanceService implements OnModuleInit, OnModuleDestro
     } catch (error) {
       this.logger.error({
         msg: 'уборка реестра отозванных токенов не выполнена',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return 0;
+    }
+  }
+
+  /**
+   * Уборка брошенных билетов на загрузку (остаток SEC-14).
+   *
+   * Ошибка уборки не роняет процесс: обслуживание — фоновая работа, и
+   * недоступное хранилище не повод не обслуживать запросы. Но и молчать о ней
+   * нельзя: мусор копится незаметно.
+   */
+  async purgeAbandonedUploads(): Promise<number> {
+    try {
+      return await this.storageJanitor.purgeAbandonedUploads();
+    } catch (error) {
+      this.logger.error({
+        msg: 'уборка брошенных загрузок не выполнена',
         error: error instanceof Error ? error.message : String(error),
       });
       return 0;

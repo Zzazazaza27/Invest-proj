@@ -233,10 +233,16 @@ export const SERVICE_ROLES = new Set([
   'app_billing',
   'app_notifications',
   'app_integration',
+  'app_maintenance',
 ] as const);
 
 export type ServiceRole =
-  'app_investments' | 'app_billing' | 'app_notifications' | 'app_integration';
+  | 'app_investments'
+  | 'app_billing'
+  | 'app_notifications'
+  | 'app_integration'
+  /** Плановое обслуживание: уборка реестра отзывов и брошенных билетов (M039). */
+  | 'app_maintenance';
 
 /** Небольшой пул: сервисные команды редки, соединения БД — общий ресурс. */
 const SERVICE_POOL_MAX = 4;
@@ -254,6 +260,7 @@ const SERVICE_ROLE_URLS: Record<ServiceRole, (env: ReturnType<typeof getEnv>) =>
   app_billing: (env) => env.DATABASE_URL_APP_BILLING,
   app_notifications: (env) => env.DATABASE_URL_APP_NOTIFICATIONS,
   app_integration: (env) => env.DATABASE_URL_APP_INTEGRATION,
+  app_maintenance: (env) => env.DATABASE_URL_APP_MAINTENANCE,
 };
 
 const SERVICE_ROLE_ENV_KEYS: Record<ServiceRole, string> = {
@@ -261,4 +268,5 @@ const SERVICE_ROLE_ENV_KEYS: Record<ServiceRole, string> = {
   app_billing: 'DATABASE_URL_APP_BILLING',
   app_notifications: 'DATABASE_URL_APP_NOTIFICATIONS',
   app_integration: 'DATABASE_URL_APP_INTEGRATION',
+  app_maintenance: 'DATABASE_URL_APP_MAINTENANCE',
 };

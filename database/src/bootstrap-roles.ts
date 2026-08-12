@@ -43,6 +43,14 @@ const ROLE_MAP: { login: string; group: string; passwordEnv: string }[] = [
     group: 'app_readonly',
     passwordEnv: 'DB_ROLE_PASSWORD_APP_READONLY',
   },
+  // Плановое обслуживание: уборка реестра отозванных токенов и брошенных
+  // билетов на загрузку. Отдельная роль, а не «та, у которой подошли права»
+  // (M039).
+  {
+    login: 'app_maintenance_user',
+    group: 'app_maintenance',
+    passwordEnv: 'DB_ROLE_PASSWORD_APP_MAINTENANCE',
+  },
 ];
 
 const MIN_PASSWORD_LENGTH = 24;

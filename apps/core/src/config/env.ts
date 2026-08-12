@@ -84,6 +84,16 @@ const RawEnvSchema = z.object({
    * и не разрешено.
    */
   DATABASE_URL_APP_NOTIFICATIONS: z.string().default(''),
+  /**
+   * Подключение контура планового обслуживания. Роль `app_maintenance` умеет
+   * ровно две вещи: убирать истёкшие записи реестра отзывов и брошенные билеты
+   * на загрузку. Ни читать проекты, ни трогать подтверждённые материалы она не
+   * может — это ограничено политиками, а не аккуратностью кода (M039).
+   *
+   * Пусто — уборка не выполняется и объявляет это в логе, а не делает вид, что
+   * отработала.
+   */
+  DATABASE_URL_APP_MAINTENANCE: z.string().default(''),
   DATABASE_SSL: z.enum(['true', 'false']).default('false'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).default(20),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(120_000).default(15_000),
@@ -187,6 +197,15 @@ const RawEnvSchema = z.object({
   S3_FORCE_PATH_STYLE: z.enum(['true', 'false']).default('true'),
   S3_PRESIGN_TTL_SECONDS: z.coerce.number().int().min(60).max(3600).default(900),
   S3_PRESIGN_TTL_SENSITIVE_SECONDS: z.coerce.number().int().min(60).max(1800).default(300),
+
+  /**
+   * Через сколько часов неподтверждённый билет на загрузку считается брошенным.
+   *
+   * Минимум — час, и это не настройка вкуса: предельный срок жизни подписанной
+   * формы загрузки составляет 3600 секунд, поэтому раньше часа «загрузка ещё
+   * идёт» остаётся возможной. Тот же порог продублирован в политике БД (M039).
+   */
+  MATERIAL_ABANDONED_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(24),
 
   /** Плановое обслуживание партиций журнала: интервал прогона. */
   PARTITION_MAINTENANCE_INTERVAL_HOURS: z.coerce.number().int().min(1).max(168).default(24),

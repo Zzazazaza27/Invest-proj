@@ -130,6 +130,80 @@ export class S3Service {
     return { exists: true, sizeBytes: length === null ? null : Number(length) };
   }
 
+  /**
+   * Удалить объект.
+   *
+   * Нужно уборке брошенных загрузок: билет мог быть выдан, объект — положен, а
+   * подтверждения не случиться. Тогда объект не принадлежит ни одному
+   * материалу и не будет удалён никогда (остаток SEC-14).
+   *
+   * Удаление несуществующего объекта — НЕ ошибка: хранилище отвечает 204 и на
+   * него, и это правильное поведение для уборки, которая повторяется.
+   */
+  async deleteObject(key: string): Promise<void> {
+    const env = getEnv();
+    if (!this.isConfigured) throw new Error('S3 не настроен');
+
+    const now = new Date();
+    const amzDate = toAmzDate(now);
+    const shortDate = amzDate.slice(0, 8);
+    const payloadHash = sha256Hex(Buffer.alloc(0));
+
+    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
+    const url = new URL(
+      env.S3_FORCE_PATH_STYLE === 'true'
+        ? `${base}/${env.S3_BUCKET}/${key}`
+        : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${key}`,
+    );
+
+    const headers: Record<string, string> = {
+      host: url.host,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate,
+    };
+    const signedHeaders = Object.keys(headers).sort().join(';');
+    const canonicalHeaders = Object.keys(headers)
+      .sort()
+      .map((name) => `${name}:${headers[name]}\n`)
+      .join('');
+
+    const canonicalRequest = [
+      'DELETE',
+      url.pathname,
+      '',
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+
+    const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
+    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
+    const signature = createHmac(
+      'sha256',
+      signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
+    )
+      .update(stringToSign, 'utf8')
+      .digest('hex');
+
+    const response = await fetch(url.toString(), {
+      method: 'DELETE',
+      headers: {
+        ...headers,
+        Authorization:
+          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
+          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      },
+      // Таймаут обязателен на каждом внешнем вызове (RULES.md §3.1).
+      signal: AbortSignal.timeout(10_000),
+    });
+
+    // 204 — удалено, 404 — уже нет. Всё остальное означает, что объект
+    // остался, и уборка обязана об этом сказать, а не молча пойти дальше.
+    if (response.status !== 204 && response.status !== 200 && response.status !== 404) {
+      throw new Error(`хранилище ответило ${response.status} на DELETE`);
+    }
+  }
+
   presignUpload(input: {
     key: string;
     contentType: string;

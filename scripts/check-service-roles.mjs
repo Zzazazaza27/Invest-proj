@@ -93,6 +93,22 @@ const ROLES = [
     ],
   },
   {
+    // Плановое обслуживание (M039). Роль знает только о мусоре, который убирает:
+    // ни проектов, ни персональных данных, ни денег.
+    role: 'app_maintenance',
+    urlKey: 'DATABASE_URL_APP_MAINTENANCE',
+    login: 'app_maintenance_user',
+    allowed: [
+      ['читает реестр отозванных токенов', 'SELECT count(*) FROM identity.revoked_tokens'],
+      ['читает брошенные билеты на загрузку', 'SELECT count(*) FROM lab.project_materials'],
+    ],
+    forbidden: [
+      ['не читает проекты', 'SELECT count(*) FROM lab.projects'],
+      ['не читает пользователей', 'SELECT count(*) FROM identity.users'],
+      ['не читает деньги', 'SELECT count(*) FROM billing.invoices'],
+    ],
+  },
+  {
     role: 'app_integration',
     urlKey: 'DATABASE_URL_APP_INTEGRATION',
     login: 'app_integration_user',

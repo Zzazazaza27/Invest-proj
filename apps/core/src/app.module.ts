@@ -46,6 +46,7 @@ import { CatalogService } from './lab/catalog.service';
 import { ProjectsController } from './lab/projects.controller';
 import { ProjectsService } from './lab/projects.service';
 import { PartitionMaintenanceService } from './maintenance/partitions.service';
+import { StorageJanitorService } from './maintenance/storage-janitor.service';
 import { PricingController } from './pricing/pricing.controller';
 import { SeasonsController } from './seasons/seasons.controller';
 import { SeasonsService } from './seasons/seasons.service';
@@ -111,6 +112,7 @@ import { S3Service } from './storage/s3.service';
     WebhooksService,
     OutboxPublisherService,
     WebhookDeliveryService,
+    StorageJanitorService,
     PartitionMaintenanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],
