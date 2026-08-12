@@ -12,6 +12,35 @@ import { getEnv } from './config/env';
 import { ProblemDetailsFilter } from './common/problem.filter';
 import { MAX_BODY_BYTES } from './common/validation';
 import { createRateLimitRedis } from './cache/redis.client';
+import { registerIpCeiling } from './cache/ip-ceiling';
+
+/**
+ * Запрет мощных возможностей браузера. Пустой список источников `()` означает
+ * «никому, включая собственный документ».
+ *
+ * Перечень явный, а не `*=()`: подстановочной формы в спецификации нет, и
+ * заголовок с ней браузер отбрасывает целиком — то есть защита выглядела бы
+ * выставленной, не будучи ею.
+ */
+const PERMISSIONS_POLICY = [
+  'accelerometer=()',
+  'autoplay=()',
+  'camera=()',
+  'display-capture=()',
+  'encrypted-media=()',
+  'fullscreen=()',
+  'geolocation=()',
+  'gyroscope=()',
+  'magnetometer=()',
+  'microphone=()',
+  'midi=()',
+  'payment=()',
+  'picture-in-picture=()',
+  'publickey-credentials-get=()',
+  'screen-wake-lock=()',
+  'usb=()',
+  'xr-spatial-tracking=()',
+].join(', ');
 
 /**
  * Точка входа.
@@ -225,6 +254,11 @@ async function bootstrap(): Promise<void> {
     }),
   });
 
+  // Потолок по адресу поверх классовых вёдер: закрывает остаточный обход
+  // подделкой cookie, который классовый ключ закрыть не может (см.
+  // `cache/ip-ceiling.ts`).
+  registerIpCeiling(app.getHttpAdapter().getInstance(), rateLimitRedis);
+
   // Ответы API не кешируются: в них персональные данные.
   app
     .getHttpAdapter()
@@ -232,6 +266,14 @@ async function bootstrap(): Promise<void> {
     .addHook('onSend', async (_req, reply, payload) => {
       void reply.header('Cache-Control', 'no-store');
       void reply.header('Pragma', 'no-cache');
+      // Permissions-Policy helmet не выставляет — его не было ни в ответах, ни в
+      // списке сетевого гейта, хотя RULES §3.2 требует его явно.
+      //
+      // API отдаёт только JSON и документов не рендерит, поэтому все мощные
+      // возможности браузера здесь запрещены пустым списком источников. Это
+      // эшелон защиты на случай, когда ответ всё же оказывается отрендерен —
+      // например, при ошибке содержимого или при встраивании через посредника.
+      void reply.header('Permissions-Policy', PERMISSIONS_POLICY);
       return payload;
     });
 

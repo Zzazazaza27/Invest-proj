@@ -72,6 +72,7 @@ function startInstance() {
       RATE_LIMIT_AUTH_PER_MIN: '10000000',
       RATE_LIMIT_ADMIN_PER_MIN: '10000000',
       RATE_LIMIT_MONEY_PER_MIN: '10000000',
+      RATE_LIMIT_IP_CEILING_PER_MIN: '100000000',
     },
     stdio: 'ignore',
     windowsHide: true,

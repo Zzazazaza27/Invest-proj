@@ -578,7 +578,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 11 схем и 63 таблицы', async () => {
+  it('схема соответствует спецификации: 11 схем и 64 таблицы', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -600,12 +600,14 @@ describe('RLS: покрытие манифеста', () => {
     // внешних потребителей.
     // + identity.revoked_tokens (M038): точечный отзыв токена, которого рубеж
     // сессий не даёт.
+    // + audit.event_archives (M041): след выгрузок журнала в холодное
+    // хранилище — без него «выгружено» было бы устным знанием.
     //
     // Число держится вручную намеренно: рост числа таблиц обязан быть
     // осознанным. Ожидание 61 продержалось лишние две миграции только потому,
     // что локальная тестовая БД отставала и проверка была зелёной по неверной
     // причине.
-    expect(Number(tables.rows[0]!.count)).toBe(63);
+    expect(Number(tables.rows[0]!.count)).toBe(64);
   });
 });
 

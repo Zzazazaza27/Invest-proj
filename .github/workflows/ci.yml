@@ -45,6 +45,12 @@ jobs:
       # перестать действовать, а заменяемость фронтенда — остаться на словах.
       - name: Граница фронт↔бэк работает (ADR-002)
         run: npm run gate:boundary
+      # Статическая часть сетевого гейта: привязки портов в compose, анонимный
+      # доступ к инфраструктуре, отключение проверки TLS, CORS с '*'. Живые
+      # проверки периметра здесь недоступны и гейт объявляет их невыполненными
+      # сам — это его штатное поведение, а не зелёный статус.
+      - name: Сетевой гейт (статическая часть)
+        run: npm run gate:net
 
   # ---------------------------------------------------------------- гейт 2
   secrets-scan:
@@ -146,6 +152,30 @@ jobs:
         run: npm run lint:migrations -w database
       - name: Негативные тесты RLS и конкурентные инварианты
         run: npm run test -w database
+      # Постоянные гейты прав. Локально они прогонялись руками — то есть не
+      # прогонялись на каждом изменении: расширить права сервисной роли или
+      # выдать PUBLIC право на SECURITY DEFINER можно было незаметно для CI.
+      - name: Логин-роли БД из переменных окружения
+        run: npm run bootstrap:roles -w database
+        env:
+          DB_ROLE_PASSWORD_APP_BACKEND: ci_only_role_password_backend_00
+          DB_ROLE_PASSWORD_APP_PUBLIC_READ: ci_only_role_password_public_00
+          DB_ROLE_PASSWORD_APP_INVESTMENTS: ci_only_role_password_invest_00
+          DB_ROLE_PASSWORD_APP_BILLING: ci_only_role_password_billing_00
+          DB_ROLE_PASSWORD_APP_NOTIFICATIONS: ci_only_role_password_notify_00
+          DB_ROLE_PASSWORD_APP_INTEGRATION: ci_only_role_password_integr_00
+          DB_ROLE_PASSWORD_APP_READONLY: ci_only_role_password_readonly_0
+          DB_ROLE_PASSWORD_APP_MAINTENANCE: ci_only_role_password_mainten_0
+      - name: Права PUBLIC на функциях SECURITY DEFINER (ожидание 0 нарушений)
+        run: node scripts/check-definer-privileges.mjs
+      - name: Границы сервисных ролей БД
+        run: node scripts/check-service-roles.mjs
+        env:
+          DATABASE_URL: postgres://app_backend_user:ci_only_role_password_backend_00@localhost:5432/unicorn_test
+          DATABASE_URL_APP_BILLING: postgres://app_billing_user:ci_only_role_password_billing_00@localhost:5432/unicorn_test
+          DATABASE_URL_APP_NOTIFICATIONS: postgres://app_notifications_user:ci_only_role_password_notify_00@localhost:5432/unicorn_test
+          DATABASE_URL_APP_INTEGRATION: postgres://app_integration_user:ci_only_role_password_integr_00@localhost:5432/unicorn_test
+          DATABASE_URL_APP_MAINTENANCE: postgres://app_maintenance_user:ci_only_role_password_mainten_0@localhost:5432/unicorn_test
 
   # ---------------------------------------------------------------- гейт 6
   unit:

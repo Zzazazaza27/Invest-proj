@@ -256,6 +256,10 @@ const REQUIRED_HEADERS = {
   'content-security-policy': /default-src/i,
   'cross-origin-opener-policy': /same-origin/i,
   'x-frame-options': /deny|sameorigin/i,
+  // RULES §3.2 требует его явно, а helmet его не выставляет: заголовка не было
+  // ни в ответах, ни в этом списке — гейт был слабее правила, по которому
+  // объявлял себя пройденным.
+  'permissions-policy': /geolocation=\(\)/i,
 };
 
 /**
