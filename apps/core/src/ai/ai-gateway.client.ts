@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 import { z } from 'zod';
+import { ReadinessDimensionSchema, ReadinessLevelSchema } from '@unicorn/contracts';
 
 /**
  * Клиент AI-шлюза.
@@ -75,8 +76,14 @@ export const AnalysisResultSchema = z.object({
   readiness: z
     .array(
       z.object({
-        dimension: z.string().max(60),
-        level: z.string().max(20),
+        // Не «строка до 60 символов», а РОВНО те значения, которые примет БД.
+        // Свободная строка проходила проверку и падала уже на вставке
+        // ограничением `CHECK`: ответ модели с `level: "critical"` превращался
+        // во внутреннюю ошибку вместо честного отказа на границе (CODE-13).
+        // Перечисление берётся из контрактов, а не переписывается здесь: две
+        // копии одного списка разойдутся.
+        dimension: ReadinessDimensionSchema,
+        level: ReadinessLevelSchema,
         recommendations: z.array(z.string().max(2000)).max(50),
       }),
     )
@@ -86,7 +93,9 @@ export const AnalysisResultSchema = z.object({
       z.object({
         title: z.string().max(300),
         description: z.string().max(4000),
-        dimension: z.string().max(60),
+        // В `scoring.roadmap_steps` измерение необязательно, но если оно
+        // задано — оно из того же списка.
+        dimension: ReadinessDimensionSchema.nullable().optional(),
         priority: z.number().int(),
         orderIndex: z.number().int(),
       }),

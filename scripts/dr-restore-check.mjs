@@ -16,7 +16,8 @@
  */
 import pg from 'pg';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, mkdirSync, statSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, mkdtempSync, statSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -79,9 +80,58 @@ function inContainer(args, options = {}) {
 
 console.warn('\n=== ПРОВЕРКА ВОССТАНОВЛЕНИЯ ИЗ КОПИИ ===\n');
 
-const backupDir = join(ROOT, '.backup-check');
-mkdirSync(backupDir, { recursive: true });
+/**
+ * Каталог для дампа — ВНЕ репозитория и с уникальным именем.
+ *
+ * Раньше он создавался как `.backup-check` внутри рабочего дерева и не был в
+ * `.gitignore`: полный дамп боевой схемы со всеми идентификаторами и контекстом
+ * событий лежал там, где его подхватит и `git add -A`, и резервное копирование
+ * рабочей машины (SEC-10). Уборка стояла последней строкой скрипта — падение
+ * посередине оставляло дамп на диске.
+ *
+ * `mkdtemp` даёт каталог во временной папке системы, права на который есть
+ * только у текущего пользователя, а снос вынесен в `finally` ниже.
+ */
+const backupDir = mkdtempSync(join(tmpdir(), 'unicorn-dr-'));
 const dumpPath = join(backupDir, 'unicorn_launch.dump');
+
+/**
+ * Снос дампа при ЛЮБОМ исходе.
+ *
+ * Идемпотентен: вызывается и явно в конце, и из обработчиков выхода. Полный
+ * дамп схемы не должен пережить процесс — ни при исключении, ни при Ctrl+C,
+ * ни при падении посередине восстановления.
+ */
+let dumpRemoved = false;
+function removeDump() {
+  if (dumpRemoved) return;
+  dumpRemoved = true;
+  try {
+    rmSync(backupDir, { recursive: true, force: true });
+  } catch {
+    /* каталога уже нет */
+  }
+  try {
+    inContainer(['rm', '-f', '/tmp/restore/backup.dump']);
+  } catch {
+    /* уже удалено или контейнер недоступен */
+  }
+}
+process.on('exit', removeDump);
+process.on('SIGINT', () => {
+  removeDump();
+  process.exit(130);
+});
+process.on('uncaughtException', (error) => {
+  console.error('ПРОГОН ОБОРВАН:', error);
+  removeDump();
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('ПРОГОН ОБОРВАН:', reason);
+  removeDump();
+  process.exit(1);
+});
 
 // ------------------------------------------------------------- снимок
 console.warn('[1] Снятие копии');
@@ -249,12 +299,7 @@ const cleanup = new pg.Client({
 await cleanup.connect();
 await cleanup.query(`DROP DATABASE IF EXISTS ${RESTORE_DB}`);
 await cleanup.end();
-rmSync(backupDir, { recursive: true, force: true });
-try {
-  inContainer(['rm', '-f', '/tmp/restore/backup.dump']);
-} catch {
-  /* уже удалено */
-}
+removeDump();
 check('временная база и файлы копии удалены', true, 'проверка не оставляет следов');
 
 console.warn(

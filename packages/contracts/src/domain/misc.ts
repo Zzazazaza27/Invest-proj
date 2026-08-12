@@ -192,9 +192,19 @@ export const ReadinessDimensionSchema = z.enum([
 ]);
 export type ReadinessDimension = z.infer<typeof ReadinessDimensionSchema>;
 
+/**
+ * Уровень готовности по измерению.
+ *
+ * Вынесен отдельным именем, чтобы им пользовались и разбор ответа AI-шлюза, и
+ * контракт наружу: список, переписанный во втором месте, рано или поздно
+ * разойдётся с ограничением в БД (CODE-13).
+ */
+export const ReadinessLevelSchema = z.enum(['low', 'medium', 'high']);
+export type ReadinessLevel = z.infer<typeof ReadinessLevelSchema>;
+
 export const ReadinessEntrySchema = z.object({
   dimension: ReadinessDimensionSchema,
-  level: z.enum(['low', 'medium', 'high']),
+  level: ReadinessLevelSchema,
   recommendations: z.array(z.string()),
   updatedAt: IsoDateTimeSchema,
 });
