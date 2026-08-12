@@ -94,6 +94,15 @@ const RawEnvSchema = z.object({
    * отработала.
    */
   DATABASE_URL_APP_MAINTENANCE: z.string().default(''),
+  /**
+   * Подключение для проверки состояния сессий (роль `app_auth`, M046).
+   *
+   * Раньше рубеж сессий и реестр отозванных токенов читались ролью доставки
+   * уведомлений — у неё есть `SELECT` по пользователям и ролям целиком, тогда
+   * как проверке входа хватает двух колонок (SEC-21). Пусто — проверка падает
+   * явной ошибкой конфигурации, а не выполняется под более широкой ролью.
+   */
+  DATABASE_URL_APP_AUTH: z.string().default(''),
   DATABASE_SSL: z.enum(['true', 'false']).default('false'),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(200).default(20),
   DATABASE_STATEMENT_TIMEOUT_MS: z.coerce.number().int().min(100).max(120_000).default(15_000),

@@ -51,6 +51,13 @@ const ROLE_MAP: { login: string; group: string; passwordEnv: string }[] = [
     group: 'app_maintenance',
     passwordEnv: 'DB_ROLE_PASSWORD_APP_MAINTENANCE',
   },
+  // Чтение состояния сессий: рубеж и реестр отозванных токенов. Права выданы
+  // поколоночно, роли и контакты этой роли не видны (M046).
+  {
+    login: 'app_auth_user',
+    group: 'app_auth',
+    passwordEnv: 'DB_ROLE_PASSWORD_APP_AUTH',
+  },
 ];
 
 const MIN_PASSWORD_LENGTH = 24;

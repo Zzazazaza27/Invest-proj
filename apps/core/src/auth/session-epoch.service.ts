@@ -68,7 +68,7 @@ export class SessionEpochService {
     if (cached && Date.now() - cached.readAt < CACHE_TTL_MS) return cached.validFrom;
 
     const validFrom = await this.db.asServiceRole(
-      'app_notifications',
+      'app_auth',
       { traceId: `epoch-${userId}` },
       async (tx) => {
         const { rows } = await tx.query<{ sessions_valid_from: Date | null }>(

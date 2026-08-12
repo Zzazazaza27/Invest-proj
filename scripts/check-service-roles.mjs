@@ -109,6 +109,29 @@ const ROLES = [
     ],
   },
   {
+    // Состояние сессий (M046). Роль знает ровно то, что нужно проверке входа:
+    // рубеж и реестр отозванных токенов. Ни паролей, ни контактов, ни ролей —
+    // права на `identity.users` выданы ПОКОЛОНОЧНО, поэтому запрос к любой
+    // другой колонке этой же таблицы отвергается (SEC-21).
+    role: 'app_auth',
+    urlKey: 'DATABASE_URL_APP_AUTH',
+    login: 'app_auth_user',
+    allowed: [
+      [
+        'читает рубеж сессий',
+        'SELECT count(*) FROM (SELECT id, sessions_valid_from FROM identity.users) t',
+      ],
+      ['читает реестр отозванных токенов', 'SELECT count(*) FROM identity.revoked_tokens'],
+    ],
+    forbidden: [
+      ['не читает пароли', 'SELECT password_hash FROM identity.users LIMIT 1'],
+      ['не читает контакты', 'SELECT email_hmac FROM identity.users LIMIT 1'],
+      ['не читает роли', 'SELECT count(*) FROM identity.user_roles'],
+      ['не читает проекты', 'SELECT count(*) FROM lab.projects'],
+      ['не удаляет отзывы', "DELETE FROM identity.revoked_tokens WHERE jti = 'нет'"],
+    ],
+  },
+  {
     role: 'app_integration',
     urlKey: 'DATABASE_URL_APP_INTEGRATION',
     login: 'app_integration_user',

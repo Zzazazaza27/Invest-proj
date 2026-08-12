@@ -234,6 +234,7 @@ export const SERVICE_ROLES = new Set([
   'app_notifications',
   'app_integration',
   'app_maintenance',
+  'app_auth',
 ] as const);
 
 export type ServiceRole =
@@ -242,7 +243,15 @@ export type ServiceRole =
   | 'app_notifications'
   | 'app_integration'
   /** Плановое обслуживание: уборка реестра отзывов и брошенных билетов (M039). */
-  | 'app_maintenance';
+  | 'app_maintenance'
+  /**
+   * Чтение состояния сессий: рубеж и реестр отозванных токенов (M046).
+   *
+   * Отдельно от `app_notifications`, которой это доставалось раньше: у той есть
+   * `SELECT` по пользователям и ролям целиком, а проверке входа нужны две
+   * колонки и одна маленькая таблица (SEC-21).
+   */
+  | 'app_auth';
 
 /** Небольшой пул: сервисные команды редки, соединения БД — общий ресурс. */
 const SERVICE_POOL_MAX = 4;
@@ -261,6 +270,7 @@ const SERVICE_ROLE_URLS: Record<ServiceRole, (env: ReturnType<typeof getEnv>) =>
   app_notifications: (env) => env.DATABASE_URL_APP_NOTIFICATIONS,
   app_integration: (env) => env.DATABASE_URL_APP_INTEGRATION,
   app_maintenance: (env) => env.DATABASE_URL_APP_MAINTENANCE,
+  app_auth: (env) => env.DATABASE_URL_APP_AUTH,
 };
 
 const SERVICE_ROLE_ENV_KEYS: Record<ServiceRole, string> = {
@@ -269,4 +279,5 @@ const SERVICE_ROLE_ENV_KEYS: Record<ServiceRole, string> = {
   app_notifications: 'DATABASE_URL_APP_NOTIFICATIONS',
   app_integration: 'DATABASE_URL_APP_INTEGRATION',
   app_maintenance: 'DATABASE_URL_APP_MAINTENANCE',
+  app_auth: 'DATABASE_URL_APP_AUTH',
 };

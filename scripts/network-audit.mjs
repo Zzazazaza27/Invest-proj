@@ -25,11 +25,29 @@ const passed = [];
 const SEVERITY_ORDER = { CRITICAL: 0, HIGH: 1, MEDIUM: 2, LOW: 3, INFO: 4 };
 const BLOCKING = new Set(['CRITICAL', 'HIGH', 'MEDIUM']);
 
+/**
+ * Проверки, которые НЕ УДАЛОСЬ выполнить.
+ *
+ * Отдельный список, а не находка уровня LOW. Раньше «docker недоступен» и
+ * «живая проверка CORS не выполнена» записывались как LOW и тонули среди
+ * находок: блокируют только CRITICAL/HIGH/MEDIUM, поэтому гейт печатал «Гейт
+ * пройден», фактически проверив меньше, чем заявляет. Невыполненная проверка —
+ * это не «всё в порядке», это отсутствие сведений (SEC-20).
+ */
+const notRun = [];
+
+/** Строгий режим: невыполненная проверка блокирует. Включён в CI. */
+const STRICT = process.argv.includes('--strict') || process.env.NETWORK_AUDIT_STRICT === 'true';
+
 function fail(severity, check, detail) {
   findings.push({ severity, check, detail });
 }
 function ok(check, detail) {
   passed.push({ check, detail });
+}
+/** Проверка не выполнена: причина названа, результат не выдаётся за успех. */
+function skip(check, detail) {
+  notRun.push({ check, detail });
 }
 
 function sh(cmd, args) {
@@ -47,12 +65,12 @@ function sh(cmd, args) {
 function checkContainerPortBindings() {
   const out = sh('docker', ['ps', '--format', '{{.Names}}\t{{.Ports}}']);
   if (out === null) {
-    fail('LOW', 'container-ports', 'docker недоступен — проверка привязок портов не выполнена');
+    skip('container-ports', 'docker недоступен');
     return;
   }
   const lines = out.split('\n').filter((l) => l.trim() && l.includes('unicorn-'));
   if (lines.length === 0) {
-    fail('LOW', 'container-ports', 'контейнеры проекта не запущены — проверка не выполнена');
+    skip('container-ports', 'контейнеры проекта не запущены');
     return;
   }
   let exposed = 0;
@@ -285,12 +303,10 @@ async function checkLiveApi(apiBase) {
       redirect: 'manual',
     });
   } catch {
-    fail(
-      'LOW',
-      'live-api',
-      `API ${apiBase} не отвечает — живая проверка заголовков, CORS и rate-limit НЕ выполнена ` +
-        '(это ограничение фазы, а не зелёный статус)',
-    );
+    // Именно этот случай и делал гейт зелёным впустую: недоступный API —
+    // это НЕ выполненная проверка заголовков, CORS и ограничения частоты,
+    // а не их успех (SEC-20).
+    skip('live-api', `API ${apiBase} не отвечает — заголовки, CORS и rate-limit не проверены`);
     return;
   }
 
@@ -339,7 +355,7 @@ async function checkLiveApi(apiBase) {
       ok('cors-live', 'чужой Origin не получает Access-Control-Allow-Origin');
     }
   } catch {
-    fail('LOW', 'cors-live', 'живая проверка CORS не выполнена');
+    skip('cors-live', 'core не отвечает');
   }
 
   // Cookie-флаги, если сервер их ставит.
@@ -409,7 +425,7 @@ async function checkAiGateway(gatewayBase) {
       ok('ai-gateway-auth', 'анализ без сервисного токена отвергается (401)');
     }
   } catch {
-    fail('MEDIUM', 'ai-gateway-auth', 'проверка аутентификации шлюза не выполнена');
+    skip('ai-gateway-auth', 'шлюз не отвечает');
   }
 
   // Схема API наружу: /docs мало выключить — /openapi.json отдаёт то же самое.
@@ -508,13 +524,29 @@ if (findings.length > 0) console.warn('');
 for (const f of findings)
   console.warn(`  ${f.severity.padEnd(8)} ${f.check.padEnd(18)} ${f.detail}`);
 
+if (notRun.length > 0) {
+  console.warn('');
+  for (const n of notRun) console.warn(`  НЕ ВЫПОЛНЕНО ${n.check.padEnd(18)} ${n.detail}`);
+}
+
 const blocking = findings.filter((f) => BLOCKING.has(f.severity));
 console.warn(
   `\nИтог: ${passed.length} проверок пройдено, ${findings.length} находок ` +
-    `(блокирующих CRITICAL/HIGH/MEDIUM: ${blocking.length}).`,
+    `(блокирующих CRITICAL/HIGH/MEDIUM: ${blocking.length}), ` +
+    `не выполнено: ${notRun.length}.`,
 );
 
-if (blocking.length > 0) {
+// В строгом режиме невыполненная проверка равносильна находке: «мы не знаем»
+// не должно выглядеть как «всё хорошо». Обычный режим оставлен для локального
+// запуска без поднятых сервисов, но число невыполненных видно всегда.
+if (STRICT && notRun.length > 0) {
+  console.warn(
+    `
+Гейт НЕ пройден (строгий режим): ${notRun.length} проверок не выполнено.
+`,
+  );
+  process.exitCode = 1;
+} else if (blocking.length > 0) {
   console.warn('Гейт НЕ пройден. Находки чинятся в этой же фазе, до коммита.\n');
   // exitCode вместо process.exit(): принудительный выход при незакрытых
   // сокетах fetch роняет libuv на Windows (UV_HANDLE_CLOSING assertion).

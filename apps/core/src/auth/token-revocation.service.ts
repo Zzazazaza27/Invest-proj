@@ -134,7 +134,7 @@ export class TokenRevocationService {
   private async refresh(): Promise<void> {
     try {
       const rows = await this.db.asServiceRole(
-        'app_notifications',
+        'app_auth',
         { traceId: `token-revocations-${randomUUID()}` },
         async (tx) => {
           const { rows } = await tx.query<{ jti: string }>(
@@ -170,7 +170,7 @@ export class TokenRevocationService {
 
   private async lookup(tokenId: string): Promise<boolean> {
     return this.db.asServiceRole(
-      'app_notifications',
+      'app_auth',
       { traceId: `token-revocation-${randomUUID()}` },
       async (tx) => {
         const { rows } = await tx.query(

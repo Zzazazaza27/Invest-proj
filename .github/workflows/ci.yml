@@ -55,9 +55,15 @@ jobs:
       - name: Граница фронт↔бэк работает (ADR-002)
         run: npm run gate:boundary
       # Статическая часть сетевого гейта: привязки портов в compose, анонимный
-      # доступ к инфраструктуре, отключение проверки TLS, CORS с '*'. Живые
-      # проверки периметра здесь недоступны и гейт объявляет их невыполненными
-      # сам — это его штатное поведение, а не зелёный статус.
+      # доступ к инфраструктуре, отключение проверки TLS, CORS с '*'.
+      #
+      # БЕЗ `--strict` намеренно: живого ядра в этом задании нет, и строгий
+      # режим падал бы всегда. Зато число невыполненных проверок теперь печатается
+      # отдельной строкой «не выполнено: N» — раньше они записывались как LOW и
+      # тонули среди находок, а гейт объявлял себя пройденным (SEC-20).
+      # Строгий режим (`npm run gate:net:strict`) входит в локальную цепочку
+      # `npm run gate`, где периметр поднят. Перенос его в CI требует задания
+      # с запущенным ядром — записано в TODO.
       - name: Сетевой гейт (статическая часть)
         run: npm run gate:net
 
@@ -191,6 +197,7 @@ jobs:
           DB_ROLE_PASSWORD_APP_INTEGRATION: ci_only_role_password_integr_00
           DB_ROLE_PASSWORD_APP_READONLY: ci_only_role_password_readonly_0
           DB_ROLE_PASSWORD_APP_MAINTENANCE: ci_only_role_password_mainten_0
+          DB_ROLE_PASSWORD_APP_AUTH: ci_only_role_password_authstate_0
       - name: Права PUBLIC на функциях SECURITY DEFINER (ожидание 0 нарушений)
         run: node scripts/check-definer-privileges.mjs
       # Строки подключения собираются в шаге, а не лежат литералами: пароль
@@ -204,8 +211,10 @@ jobs:
           export DATABASE_URL_APP_NOTIFICATIONS="postgres://app_notifications_user:${PW_NOTIFY}@${host}"
           export DATABASE_URL_APP_INTEGRATION="postgres://app_integration_user:${PW_INTEGR}@${host}"
           export DATABASE_URL_APP_MAINTENANCE="postgres://app_maintenance_user:${PW_MAINTEN}@${host}"
+          export DATABASE_URL_APP_AUTH="postgres://app_auth_user:${PW_AUTH}@${host}"
           node scripts/check-service-roles.mjs
         env:
+          PW_AUTH: ci_only_role_password_authstate_0
           PW_BACKEND: ci_only_role_password_backend_00
           PW_BILLING: ci_only_role_password_billing_00
           PW_NOTIFY: ci_only_role_password_notify_00
