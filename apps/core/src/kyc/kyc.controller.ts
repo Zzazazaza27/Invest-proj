@@ -16,6 +16,7 @@ import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';
 import { KycService } from './kyc.service';
+import { decodeIntegrationCursor } from '../integration/integration.service';
 
 /**
  * Верификация участников.
@@ -74,10 +75,24 @@ export class KycController {
 
   @Roles('admin')
   @Get('queue')
-  async queue(@Query('limit') rawLimit: unknown, @Ctx() ctx: RequestContext) {
+  async queue(
+    @Query('limit') rawLimit: unknown,
+    @Query('cursor') rawCursor: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
     const limit = parseOrThrow(z.coerce.number().int().min(1).max(100).default(50), rawLimit ?? 50);
-    const items = await this.kyc.reviewQueue(ctx, limit);
-    return { items: items.map((v) => KycVerificationSchema.parse(v)) };
+    // Курсор необязателен: без него отдаётся первая страница. Повреждённый —
+    // это отказ проверки, а не молчаливый возврат к началу: иначе оператор
+    // незаметно для себя прочитал бы очередь заново.
+    const cursor =
+      typeof rawCursor === 'string' && rawCursor.length > 0
+        ? decodeIntegrationCursor(rawCursor)
+        : undefined;
+    const page = await this.kyc.reviewQueue(ctx, limit, cursor);
+    return {
+      items: page.items.map((v) => KycVerificationSchema.parse(v)),
+      nextCursor: page.nextCursor,
+    };
   }
 
   @Roles('admin')

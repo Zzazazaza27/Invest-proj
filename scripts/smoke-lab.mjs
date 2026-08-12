@@ -465,9 +465,25 @@ let verificationId = null;
     response.status === 200,
     `статус ${response.status}`,
   );
+
+  // Очередь листается курсором. Раньше здесь стояла проверка «заявка в первой
+  // странице», и она падала, как только ожидающих становилось больше предела:
+  // отдавались 50 САМЫХ СТАРЫХ, а способа дойти до остальных не было вовсе.
+  // Теперь проверяется то, что и должно быть верно: до заявки можно дойти.
+  let found = (json?.items ?? []).some((v) => v.id === verificationId);
+  let cursor = json?.nextCursor ?? null;
+  let pages = 1;
+  while (!found && cursor && pages < 50) {
+    const next = await adminClient.call(`/v1/kyc/queue?cursor=${encodeURIComponent(cursor)}`);
+    found = (next.json?.items ?? []).some((v) => v.id === verificationId);
+    cursor = next.json?.nextCursor ?? null;
+    pages += 1;
+  }
+  check('заявка основателя достижима в очереди', found, `страниц просмотрено: ${pages}`);
   check(
-    'заявка основателя в очереди',
-    (json?.items ?? []).some((v) => v.id === verificationId),
+    'повреждённый курсор отвергается, а не возвращает начало очереди',
+    (await adminClient.call('/v1/kyc/queue?cursor=%D0%BC%D1%83%D1%81%D0%BE%D1%80')).response
+      .status === 400,
   );
 }
 {

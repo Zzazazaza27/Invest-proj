@@ -14,6 +14,7 @@ import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { encodeIntegrationCursor } from '../integration/integration.service';
 
 /**
  * KYC физлиц и KYB юрлиц.
@@ -315,18 +316,48 @@ export class KycService {
 
   // ------------------------------------------------------------- комплаенс
 
-  /** Очередь верификаций. Доступна только роли admin (проверяется маршрутом). */
-  async reviewQueue(ctx: RequestContext, limit: number): Promise<KycVerification[]> {
+  /**
+   * Очередь верификаций. Доступна только роли admin (проверяется маршрутом).
+   *
+   * Постраничная выборка по курсору, а не просто `LIMIT`. Раньше очередь
+   * отдавала 50 самых старых заявок и способа дойти до остальных не было
+   * вовсе: при 52 ожидающих последние две не видел никто, и «пусто» на экране
+   * означало «дальше не показываем», а не «заявок нет». Поймано прогоном
+   * `smoke-lab` на накопленных данных.
+   *
+   * Курсор keyset по паре «момент + идентификатор»: пара уникальна, поэтому
+   * страницы не перекрываются и не теряют строк даже при одинаковом
+   * `created_at`. Формат — тот же, что у Integration API: второй формат курсора
+   * в проекте рано или поздно разойдётся с первым.
+   */
+  async reviewQueue(
+    ctx: RequestContext,
+    limit: number,
+    cursor?: { at: string; id: string },
+  ): Promise<{ items: KycVerification[]; nextCursor: string | null }> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<VerificationRow>(
         `SELECT id, kind, status, rejection_reason, expires_at, created_at
            FROM kyc.kyc_verifications
           WHERE status IN ('pending','in_review')
-          ORDER BY created_at
+            AND ($2::timestamptz IS NULL OR (created_at, id) > ($2::timestamptz, $3::uuid))
+          ORDER BY created_at, id
           LIMIT $1`,
-        [limit],
+        [limit + 1, cursor?.at ?? null, cursor?.id ?? null],
       );
-      return rows.map(mapVerification);
+      // Берётся на одну строку больше предела: наличие «лишней» и есть признак
+      // того, что следующая страница существует. Считать общее число незачем —
+      // это отдельный дорогой запрос ради одного признака.
+      const hasMore = rows.length > limit;
+      const page = hasMore ? rows.slice(0, limit) : rows;
+      const last = page[page.length - 1];
+      return {
+        items: page.map(mapVerification),
+        nextCursor:
+          hasMore && last
+            ? encodeIntegrationCursor({ at: last.created_at.toISOString(), id: last.id })
+            : null,
+      };
     });
   }
 
