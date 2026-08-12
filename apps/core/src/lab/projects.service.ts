@@ -15,6 +15,7 @@ import { AppError, errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
+import { getEnv } from '../config/env';
 
 /**
  * Проекты и листинги основателя.
@@ -407,6 +408,19 @@ export class ProjectsService {
       if (!material) throw errors.notFound({ subject: 'material' });
       if (!material.s3_key) {
         throw errors.conflict('Этот материал не требует подтверждения загрузки');
+      }
+
+      // Подтверждение имеет срок. Без него билет, переживший все проходы
+      // уборки, можно подтвердить когда угодно — и материал, который система
+      // уже считает мусором и чей объект могла удалить, вернулся бы в оборот
+      // «готовым» (CODE-05). Срок тот же, по которому работает уборка: за его
+      // пределами материала уже нет с точки зрения платформы.
+      const ttlHours = getEnv().MATERIAL_ABANDONED_TTL_HOURS;
+      const ageMs = Date.now() - material.created_at.getTime();
+      if (ageMs > ttlHours * 3600_000) {
+        throw errors.conflict(
+          `Срок подтверждения загрузки истёк (${ttlHours} ч): запроси новый билет`,
+        );
       }
 
       const head = await this.s3.headObject(material.s3_key);

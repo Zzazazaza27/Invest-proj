@@ -726,11 +726,17 @@ describe('RLS: роль планового обслуживания (M039)', () 
   ): Promise<string> {
     const id = uuidv7();
     await c.query(
+      // Размер проставляется вместе с отметкой загрузки, а не отдельно:
+      // подтверждённый объект без известного размера — состояние, которого не
+      // бывает, и схема его больше не принимает (M047). Помощник создавал
+      // именно его — ограничение это и поймало.
       `INSERT INTO lab.project_materials
-         (id, project_id, type, version, s3_key, parse_status, uploaded_by, created_at, uploaded_at)
+         (id, project_id, type, version, s3_key, parse_status, uploaded_by, created_at,
+          uploaded_at, size_bytes)
        VALUES ($1, $2, 'deck', $7, $3, 'queued', $4,
                now() - ($5 || ' hours')::interval,
-               CASE WHEN $6 THEN now() ELSE NULL END)`,
+               CASE WHEN $6 THEN now() ELSE NULL END,
+               CASE WHEN $6 THEN 1024 ELSE NULL END)`,
       [
         id,
         projectId,
