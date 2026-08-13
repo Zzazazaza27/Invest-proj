@@ -119,9 +119,9 @@ async function upsertUser(login, displayName, primaryRole, roles) {
     userId = created.id;
 
     await sql(
-      `INSERT INTO identity.consents (id, user_id, kind, version, locale, ip_hash)
+      `INSERT INTO identity.consents (id, user_id, kind, version, locale, request_trace_hash)
        SELECT public.uuid_generate_v7(), $1, t.kind, t.version, t.locale,
-              digest('127.0.0.1', 'sha256')
+              digest('dev-stand-trace', 'sha256')
          FROM identity.consent_templates t
         WHERE t.superseded_at IS NULL AND t.locale = 'ru-RU'
           AND t.kind IN ('platform_rules','tos','pdn','commission_terms')`,

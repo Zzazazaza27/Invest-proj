@@ -48,8 +48,8 @@ describe('Согласия: append-only и блокирующая активац
       const user = await createUser(c, { activate: false });
       // Три из четырёх документов — активации быть не должно.
       await c.query(
-        `INSERT INTO identity.consents (id, user_id, kind, version, locale, ip_hash)
-         SELECT public.uuid_generate_v7(), $1, t.kind, t.version, t.locale, digest('ip','sha256')
+        `INSERT INTO identity.consents (id, user_id, kind, version, locale, request_trace_hash)
+         SELECT public.uuid_generate_v7(), $1, t.kind, t.version, t.locale, digest('test-trace','sha256')
          FROM identity.consent_templates t
          WHERE t.superseded_at IS NULL AND t.locale = 'ru-RU'
            AND t.kind IN ('platform_rules','tos','pdn')`,

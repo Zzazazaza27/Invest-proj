@@ -289,7 +289,8 @@ node scripts/check-stand.mjs
 npm run lint                        # ESLint + граница «фронт ↔ бэк»
 npm run typecheck                   # TypeScript strict
 npm run test                        # юнит + интеграционные + негативные RLS
-npm run lint:migrations -w database # expand/contract, RLS, search_path, деньги-float
+npm run lint:migrations -w database # expand/contract, RLS, search_path, деньги-float;
+                                    # осознанный contract-шаг помечается `-- migrate:contract` (ERROR → WARN)
 npm run gate:deps                   # npm audit --audit-level=high
 npm run gate:secrets                # gitleaks — вся история коммитов (ожидание: 0)
 npm run gate:secret-reuse           # два секрета не делят одно значение (.env, пример, compose)

@@ -137,8 +137,8 @@ if (userId) {
   // Акцепты обязательных документов — те же четыре, без которых аккаунт не
   // активируется: фикстура не должна создавать состояние, невозможное в бою.
   await pool.query(
-    `INSERT INTO identity.consents (id, user_id, kind, version, locale, ip_hash)
-     SELECT public.uuid_generate_v7(), $1, t.kind, t.version, t.locale, digest('127.0.0.1', 'sha256')
+    `INSERT INTO identity.consents (id, user_id, kind, version, locale, request_trace_hash)
+     SELECT public.uuid_generate_v7(), $1, t.kind, t.version, t.locale, digest('dev-seed-trace', 'sha256')
        FROM identity.consent_templates t
       WHERE t.superseded_at IS NULL AND t.locale = 'ru-RU'
         AND t.kind IN ('platform_rules','tos','pdn','commission_terms')`,

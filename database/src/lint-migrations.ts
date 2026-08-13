@@ -58,6 +58,12 @@ for (const file of files) {
   };
 
   // --- 1. Contract-операции: разрушают данные, требуют отдельного релиза ----
+  //
+  // Законный contract-шаг (код перестал использовать объект, expand-миграция
+  // уже выкатана) помечается строкой `-- migrate:contract` в самом файле.
+  // Маркер не выключает проверку, а переводит её в WARNING: осознанная
+  // операция остаётся видимой в каждом прогоне, случайная — по-прежнему ERROR.
+  const contractMarker = /^\s*--\s*migrate:contract\s*$/m.test(raw);
   const contractOps: [RegExp, string][] = [
     [/\bDROP\s+TABLE\b/i, 'DROP TABLE'],
     [/\bDROP\s+COLUMN\b/i, 'DROP COLUMN'],
@@ -68,14 +74,26 @@ for (const file of files) {
   ];
   for (const [re, label] of contractOps) {
     if (re.test(sql)) {
-      add(
-        'ERROR',
-        file,
-        lineOf(re),
-        'expand-contract',
-        `${label} — необратимая contract-операция. Она выносится в отдельную миграцию ` +
-          'после того, как код перестал использовать объект (Database_Launch.md §16).',
-      );
+      if (contractMarker) {
+        add(
+          'WARN',
+          file,
+          lineOf(re),
+          'expand-contract',
+          `${label} — contract-операция, помечена осознанной (migrate:contract). ` +
+            'Убедись, что expand-миграция выкатана и код объект не использует.',
+        );
+      } else {
+        add(
+          'ERROR',
+          file,
+          lineOf(re),
+          'expand-contract',
+          `${label} — необратимая contract-операция. Она выносится в отдельную миграцию ` +
+            'после того, как код перестал использовать объект (Database_Launch.md §16), ' +
+            'и помечается строкой `-- migrate:contract`.',
+        );
+      }
     }
   }
 
