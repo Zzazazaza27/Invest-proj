@@ -147,7 +147,12 @@ export class ApiClient {
         throw new ApiError(
           isAbort ? 'Превышено время ожидания ответа сервера' : 'Сеть недоступна',
           {
-            code: isAbort ? ErrorCode.DEPENDENCY_UNAVAILABLE : ErrorCode.DEPENDENCY_UNAVAILABLE,
+            // Код один и тот же намеренно: и таймаут, и обрыв сети для
+            // вызывающего означают «зависимость недоступна». Раньше здесь
+            // стоял тернарник с одинаковыми ветками — он выглядел как
+            // различение, которого нет (INFO аудита №2). Различие видно в
+            // ТЕКСТЕ ошибки выше.
+            code: ErrorCode.DEPENDENCY_UNAVAILABLE,
             status: 0,
             cause: error,
           },

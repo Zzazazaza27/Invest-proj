@@ -93,7 +93,10 @@ async function bootstrap(): Promise<void> {
     // пустой список в production означает «прокси нет», и заголовки
     // игнорируются.
     trustProxy: env.TRUSTED_PROXY_CIDRS === '' ? false : env.TRUSTED_PROXY_CIDRS.split(','),
-    // Скрывает заголовок, раскрывающий стек.
+    // Логи запросов Fastify оставлены включёнными: они нужны для разбора
+    // инцидентов. (Прежний комментарий говорил про «заголовок, раскрывающий
+    // стек» — это про `hidePoweredBy` у helmet, к этой опции отношения не
+    // имеет; INFO аудита №2.)
     disableRequestLogging: false,
   });
 

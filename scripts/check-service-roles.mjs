@@ -146,6 +146,28 @@ const ROLES = [
     ],
   },
   {
+    // Регулируемый контур — самая «денежная» роль, и в гейте границ её не
+    // было вовсе (INFO внешнего аудита №2): расширение её прав проходило бы
+    // незамеченным.
+    role: 'app_investments',
+    urlKey: 'DATABASE_URL_APP_INVESTMENTS',
+    login: 'app_investments_user',
+    allowed: [
+      ['читает предложения', 'SELECT count(*) FROM investments.investment_offers'],
+      ['читает договоры', 'SELECT count(*) FROM investments.investment_agreements'],
+    ],
+    forbidden: [
+      // Поколоночный GRANT после M056: хеш пароля и контакты роли не видны.
+      ['не читает password_hash', 'SELECT password_hash FROM identity.users LIMIT 1'],
+      ['не читает шифртекст контакта', 'SELECT email_ciphertext FROM identity.users LIMIT 1'],
+      ['не пишет в журнал', "INSERT INTO audit.events (verb) VALUES ('x')"],
+      [
+        'не читает секреты интеграций',
+        'SELECT client_secret_hash FROM integration.service_accounts LIMIT 1',
+      ],
+    ],
+  },
+  {
     // Выгрузка журнала в архив (M052, остаток SEC-10). Роль читает журнал
     // ЦЕЛИКОМ (это её назначение) и ведёт append-only реестр выгрузок.
     // Изменять журнал и реестр, а также заглядывать в данные приложений — нет.

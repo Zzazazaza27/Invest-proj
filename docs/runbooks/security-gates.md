@@ -90,7 +90,7 @@ curl -sS -D - -o /dev/null http://localhost:4300/v1/health
 
 # Rate limit: 15 запросов подряд в класс money должны упереться в 429
 for i in $(seq 1 15); do
-  curl -s -o /dev/null -w "%{http_code} " http://localhost:4300/v1/billing/payments
+  curl -s -o /dev/null -w "%{http_code} " http://localhost:4300/v1/billing/subscriptions
 done; echo
 ```
 

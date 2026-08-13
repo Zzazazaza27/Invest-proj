@@ -15,6 +15,11 @@ import { errors } from './errors';
  * более новой версии API. Жёсткость нужна на входе сервера, и только на нём.
  */
 export function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
+  // Глубина проверяется ДО разбора схемой: рекурсивный обход глубоко
+  // вложенного JSON стоит стека, а лимит тела (1 МБ) от этого не защищает —
+  // 1 МБ вложенных массивов даёт десятки тысяч уровней. Проверка была
+  // написана, обещана комментарием и НЕ вызывалась ни разу (INFO аудита №2).
+  assertDepth(input);
   const effective = schema instanceof z.ZodObject ? strict(schema) : schema;
   const result = effective.safeParse(input);
   if (result.success) return result.data as T;

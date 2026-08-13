@@ -94,6 +94,15 @@ rm -rf apps/web-public apps/lab apps/investor apps/expert apps/admin
 | Cookie | Веб-фронтенды                 | `__Host-ul_session` — httpOnly, `Secure`, `SameSite=Strict`. Плюс double-submit CSRF-токен в заголовке `X-CSRF-Token` для небезопасных методов. Токен недоступен из JS |
 | Bearer | Мобильные и сторонние клиенты | OAuth 2.1 Authorization Code + PKCE напрямую к IdP `https://id.unicorn.vc`, затем `Authorization: Bearer <access_token>`                                               |
 
+> **Статус этого режима.** Ветка Bearer/OIDC **НЕ проверена против реального
+> IdP end-to-end**: ядро принимает и валидирует JWT (issuer, audience,
+> алгоритмы, JWKS с таймаутом), но обмен кода на сессию в самом ядре не
+> реализован — это CRITICAL внешнего аудита, открытый пункт `TODO.md`.
+> С Ф45 в локальном контуре есть realm Keycloak (клиент, роли, PKCE S256) —
+> инфраструктура для такой проверки, но не сама проверка. Интегратору стоит
+> закладывать время на верификацию этого пути.
+
+
 Оба валидируются одним и тем же кодом на сервере. Новый фронт выбирает любой.
 
 ## 7. Что фронтенд НЕ должен реализовывать

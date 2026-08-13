@@ -12,7 +12,7 @@ AI-анализ и развитие; верифицированные инвес
 [`Database.md`](./Database.md) (целевая экосистема — швы под Unicorn Capital и
 медиаконтур Шоу).
 
-> **Статус реализации: все фазы Ф0–Ф11 завершены.** Работает ядро API:
+> **Статус реализации: фазы Ф0–Ф46 завершены.** Работает ядро API:
 > регистрация с блокирующим акцептом условий, вход, публичные тарифы,
 > верификация участников и юрлиц (KYC/KYB), проекты и версии заявок, подписанная
 > загрузка материалов, публикация листингов и публичный каталог с поиском,
@@ -137,13 +137,13 @@ node scripts/smoke-lab.mjs             # KYC, проекты, каталог: 93
 node scripts/smoke-billing.mjs         # биллинг и админский контур: 44 проверки
 node scripts/smoke-investments.mjs     # регулируемый контур ОИП: 34 проверки
 node scripts/smoke-experts.mjs         # экспертиза, сезон, уведомления: 49 проверок
-node scripts/smoke-integration.mjs     # Integration API: 50 проверок
+node scripts/smoke-integration.mjs     # Integration API: 53 проверки
 node scripts/smoke-events.mjs          # события и вебхуки: 31 проверка (нужен NATS)
 node scripts/smoke-admin-roles.mjs     # роли и описание API: 25 проверок
 node scripts/smoke-content.mjs         # контент публичной витрины: 18 проверок
 node scripts/smoke-api-client.mjs      # клиент против живого API: 16 проверок
 node scripts/smoke-techdebt.mjs        # закрытый техдолг: 28 проверок
-node scripts/check-service-roles.mjs   # границы сервисных ролей БД: 42 проверки
+node scripts/check-service-roles.mjs   # границы сервисных ролей БД: 49 проверок
 node scripts/check-definer-privileges.mjs  # EXECUTE у PUBLIC на SECURITY DEFINER
 node scripts/probe-rate-limit.mjs      # обход лимита подделкой cookie
 node scripts/probe-csrf-binding.mjs    # привязка CSRF-токена к сессии: 5 проверок
@@ -574,8 +574,9 @@ hash-chain **диапазонным verifier'ом** (M053): проверяетс
 совпадения отпечатка байт в байт: расхождение означало бы, что append-only
 журнал изменился, и прогон падает вместо перезаписи.
 
-С Ф31 выгрузка работает с минимальными правами (остаток SEC-10): в БД — роль
-`app_archive_user` (M052; журнал только чтение, чужих схем не видит), в
+С Ф31 выгрузка работает с минимальными правами (остаток SEC-10): в БД — групповая роль
+`app_archive` (M052) и логин `app_archive_user` из bootstrap-roles (журнал
+только чтение, чужих схем не видит), в
 хранилище — учётка `unicorn_archive` (пишет и читает только `archive/*`,
 права удаления НЕТ — политика `unicorn-archive-append`, создаёт `minio-init`).
 С Ф34 у роли нет и прямого INSERT в реестр: единственный путь записи —

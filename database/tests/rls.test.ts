@@ -566,7 +566,7 @@ describe('RLS: покрытие манифеста', () => {
          FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname IN ('identity','kyc','lab','investments','scoring','experts',
-                            'seasons','comms','billing','audit','integration')
+                            'seasons','comms','billing','audit','integration','content')
           AND c.relkind IN ('r','p')
           AND c.relispartition = false
           AND (NOT c.relrowsecurity
@@ -578,19 +578,19 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 11 схем и 64 таблицы', async () => {
+  it('схема соответствует спецификации: 12 схем и 65 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
-                              'seasons','comms','billing','audit','integration')`,
+                              'seasons','comms','billing','audit','integration','content')`,
     );
-    expect(Number(schemas.rows[0]!.count)).toBe(11);
+    expect(Number(schemas.rows[0]!.count)).toBe(12);
 
     const tables = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname IN ('identity','kyc','lab','investments','scoring','experts',
-                            'seasons','comms','billing','audit','integration')
+                            'seasons','comms','billing','audit','integration','content')
           AND c.relkind IN ('r','p') AND c.relispartition = false`,
     );
     // 60 таблиц по Database_Launch.md + billing.custom_price_proposals (M017):
@@ -603,11 +603,15 @@ describe('RLS: покрытие манифеста', () => {
     // + audit.event_archives (M041): след выгрузок журнала в холодное
     // хранилище — без него «выгружено» было бы устным знанием.
     //
+    // + content.landing_blocks (M048): версионируемые тексты витрины.
+    // Схема `content` в манифесте ОТСУТСТВОВАЛА до Ф46 — её таблицы не
+    // попадали под проверку покрытия RLS вовсе (INFO аудита №2).
+    //
     // Число держится вручную намеренно: рост числа таблиц обязан быть
     // осознанным. Ожидание 61 продержалось лишние две миграции только потому,
     // что локальная тестовая БД отставала и проверка была зелёной по неверной
     // причине.
-    expect(Number(tables.rows[0]!.count)).toBe(64);
+    expect(Number(tables.rows[0]!.count)).toBe(65);
   });
 });
 

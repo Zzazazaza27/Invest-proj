@@ -60,6 +60,7 @@
 | Ф43  | AI-шлюз: threadpool, 401 на не-ASCII, trace_id, healthz, https-endpoint   | ✅ завершена 2026-08-13 |
 | Ф44  | Фронтенды: setCsrf, маскировка 401, адрес API, noindex, encodeURIComponent | ✅ завершена 2026-08-13 |
 | Ф45  | Инфра: realm Keycloak, своя роль БД IdP, атомарный .env, digest, --strict  | ✅ завершена 2026-08-13 |
+| Ф46  | Документация, мёртвый код, покрытие гейтов (content, app_investments)     | ✅ завершена 2026-08-13 |
 
 ---
 
@@ -185,12 +186,14 @@ CRITICAL/HIGH нет», противореча собственному разд
   rotate-kek; pip-audit --strict локально; pgvector по дайджесту;
   автоудаление .env.rotate-backup. Живьём: realm импортирован, discovery 200,
   JWKS 2 ключа, PKCE S256.
-- **Ф46 (документация/мёртвый код):** README (статус Ф0–Ф38, счётчики,
-  app_archive_user, цифры графа); runbook денежный маршрут;
-  frontend-replacement оговорка OIDC; obsidian 00-Обзор (схемы/таблицы,
-  «15 минут»); мёртвые assertDepth/BodyTooLarge/pino/тернарник;
-  rls-манифест + схема content; check-service-roles: app_investments,
-  app_backend; title LaunchBridge.
+- ~~**Ф46 (документация/мёртвый код)**~~ — ЗАКРЫТО 2026-08-13: assertDepth
+  подключён (60 уровней → 400 фактом), удалён pino, упрощён мёртвый тернарник,
+  исправлен комментарий про disableRequestLogging; схема content добавлена в
+  манифест RLS-покрытия (12 схем/65 таблиц, числа сверены прогоном);
+  app_investments добавлена в гейт границ (49 проверок вместо 42); README
+  (статус Ф0–Ф46, счётчики, роль/логин архива), runbook (несуществующий
+  маршрут), guide (оговорка о непроверенной ветке OIDC), obsidian-обзор
+  (схемы/таблицы, «15 минут» → немедленно).
 - **Решение владельца (необратимое):** перезапись/удаление истории ветки
   `entire/checkpoints/v1` на origin (старые скомпрометированные KEK читаемы
   в объектах remote). Кодом не закрывается; деструктивно — жду явного
