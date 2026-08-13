@@ -56,6 +56,7 @@
 | Ф39  | M054: самоактивация подписки, 4-eyes цены, выдача ролей — 3 HIGH аудита №2 | ✅ завершена 2026-08-13 |
 | Ф40  | Обход классов rate-limit, троттлинг перебора пароля, prod-гашение login   | ✅ завершена 2026-08-13 |
 | Ф41  | M056: least privilege identity.users, материалы, согласия, KYC, оффер     | ✅ завершена 2026-08-13 |
+| Ф42  | Скоупы вебхуков, гонки KYC, порядок S3, M057/M058 (регрессия M056)        | ✅ завершена 2026-08-13 |
 
 ---
 
@@ -150,10 +151,14 @@ CRITICAL/HIGH нет», противореча собственному разд
   integration.find_token_candidate вместо чтения всех client_secret_hash.
   6 новых RLS-тестов (61/61), smoke-integration 53/53, lab 93/93,
   investments 34/34, experts 49/49, core 46/46.
-- **Ф42 (MEDIUM/LOW core):** скоупы→verbs вебхуков; гонка decide KYC/KYB;
-  investments: права до S3; finalize early-return; acceptOffer идемпотентный
-  повтор; submit 23505; KEK все 8 доменов на старте; publish advisory-лок;
-  webhook-URL в журнале без пути.
+- ~~**Ф42 (MEDIUM/LOW core)**~~ — ЗАКРЫТО 2026-08-13: карта скоуп→событие в
+  контрактах и проверка при подписке (403 вживую); FOR UPDATE в decide
+  KYC/KYB; право до записи в S3 (investments); early-return finalize;
+  advisory-лок submit; webhook-URL в журнале без пути; валидация всех пяти
+  используемых KEK на старте. Плюс закрыта собственная регрессия M056:
+  M057 (служебные счётчики материалов через definer — квота и версия
+  считались по скрытым строкам) и M058 (незавершённый билет виден автору,
+  иначе finalize отвечал 404). 418 тестов, зонды 17/17 и 8/8.
 - **Ф43 (ai-gateway):** analyze в threadpool + limit-concurrency; 401 вместо
   500 на не-ASCII Authorization; pattern на trace_id; healthz только status;
   https+allowlist endpoint провайдера; мёртвый BodyTooLarge; source_ref;

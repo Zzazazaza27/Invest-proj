@@ -2,7 +2,12 @@ import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, createHash, randomBytes, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
-import { uuidv7, type WebhookCreated, type WebhookEndpoint } from '@unicorn/contracts';
+import {
+  uuidv7,
+  verbAllowedByScopes,
+  type WebhookCreated,
+  type WebhookEndpoint,
+} from '@unicorn/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { errors } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
@@ -98,7 +103,15 @@ export class WebhooksService {
         subjectType: 'webhook_endpoint',
         subjectId: id,
         // Ни секрета, ни его отпечатка в журнале: событие фиксирует подписку.
-        context: { clientId: ctx.clientId, verbs: input.subscribedVerbs, url: input.url },
+        // В журнал идёт ТОЛЬКО хост адреса: путь вебхука часто содержит
+        // секрет (Slack/Telegram-стиль), а журнал читается шире, чем
+        // комплаенс-контур (LOW внешнего аудита №2). Userinfo запрещён
+        // валидацией ещё раньше.
+        context: {
+          clientId: ctx.clientId,
+          verbs: input.subscribedVerbs,
+          urlHost: new URL(input.url).host,
+        },
         traceId: ctx.traceId,
       });
 
@@ -152,6 +165,21 @@ export class WebhooksService {
       throw errors.validation([
         { path: 'subscribedVerbs', message: `неизвестные события: ${unknown.join(', ')}` },
       ]);
+    }
+
+    // Существование глагола — не право на него. Проверка скоупов обязательна:
+    // без неё аккаунт с одним `webhooks:manage` подписывался на
+    // `investment.agreement.created` (сумма договора в payload) и обходил
+    // модель скоупов REST через push-канал (MEDIUM внешнего аудита №2).
+    const forbidden = verbs.filter((verb) => !verbAllowedByScopes(verb, ctx.scopes));
+    if (forbidden.length > 0) {
+      // Наружу — «нет права», а не «такого события нет»: существование глагола
+      // уже подтверждено проверкой выше, скрывать его второй раз бессмысленно,
+      // а вводить в заблуждение о причине отказа — вредно.
+      throw errors.forbidden({
+        stage: 'webhook-scope',
+        verbs: forbidden.join(','),
+      });
     }
   }
 }

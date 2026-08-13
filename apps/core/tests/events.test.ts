@@ -39,6 +39,13 @@ function withEnv<T>(fn: () => T, extra: NodeJS.ProcessEnv = {}): T {
       CSRF_SIGNING_KEY: 'c'.repeat(64),
       KMS_MODE: 'local',
       KEK_SEARCH_INDEX: Buffer.alloc(32, 7).toString('base64'),
+      // Остальные используемые KEK-домены: конфигурация проверяет все пять
+      // на старте (Ф42), а не только blind index — ошибка ключа обязана
+      // ронять запуск, а не всплывать на пользовательском запросе.
+      KEK_PASSPORT_SENSITIVE: Buffer.alloc(32, 8).toString('base64'),
+      KEK_KYB_DOCUMENTS: Buffer.alloc(32, 9).toString('base64'),
+      KEK_INVESTMENT_DOCUMENTS: Buffer.alloc(32, 10).toString('base64'),
+      KEK_WEBHOOK_SECRETS: Buffer.alloc(32, 11).toString('base64'),
     },
     extra,
   );

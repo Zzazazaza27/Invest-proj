@@ -354,15 +354,28 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
     });
   }
   if (env.KMS_MODE === 'local') {
-    // Blind index нужен всегда: без него нельзя ни зарегистрировать, ни найти
-    // пользователя по email.
-    const parsed = Base64Key32.safeParse(env.KEK_SEARCH_INDEX);
-    if (!parsed.success) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['KEK_SEARCH_INDEX'],
-        message: 'при KMS_MODE=local требуется 32 байта в base64',
-      });
+    // Проверяются ВСЕ фактически используемые домены, а не один blind index:
+    // прежде остальные семь падали при первом использовании — ошибка
+    // конфигурации всплывала на пользовательском запросе вместо старта
+    // (LOW внешнего аудита №2). Три домена (`kyc_documents`,
+    // `nominal_account_evidence`, `billing_documents`) намеренно
+    // зарезервированы схемой и кодом не вызываются — решение Ф27, их
+    // отсутствие в `.env` законно и держится гейтом `gate:kek`.
+    const REQUIRED_KEK_ENVS = [
+      'KEK_SEARCH_INDEX',
+      'KEK_PASSPORT_SENSITIVE',
+      'KEK_KYB_DOCUMENTS',
+      'KEK_INVESTMENT_DOCUMENTS',
+      'KEK_WEBHOOK_SECRETS',
+    ] as const;
+    for (const name of REQUIRED_KEK_ENVS) {
+      if (!Base64Key32.safeParse(env[name]).success) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [name],
+          message: 'при KMS_MODE=local требуется 32 байта в base64',
+        });
+      }
     }
   }
 

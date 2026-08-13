@@ -368,7 +368,11 @@ export class KycService {
   ): Promise<KycVerification> {
     return this.db.transaction(ctx, async (tx) => {
       const target = await tx.query<{ user_id: string; status: string }>(
-        'SELECT user_id, status FROM kyc.kyc_verifications WHERE id = $1',
+        // FOR UPDATE: два параллельных решения читали статус без блокировки и
+        // оба проходили — «последний победил», в журнале два решения по одной
+        // заявке. Рядом, в 4-eyes цены, эта же гонка была закрыта раньше;
+        // здесь она оставалась (MEDIUM внешнего аудита №2).
+        'SELECT user_id, status FROM kyc.kyc_verifications WHERE id = $1 FOR UPDATE',
         [verificationId],
       );
       const row = target.rows[0];
@@ -434,7 +438,8 @@ export class KycService {
   ): Promise<KybVerification> {
     return this.db.transaction(ctx, async (tx) => {
       const target = await tx.query<{ entity_id: string; status: string }>(
-        'SELECT entity_id, status FROM kyc.kyb_verifications WHERE id = $1',
+        // FOR UPDATE — как и в decide по верификации личности (аудит №2).
+        'SELECT entity_id, status FROM kyc.kyb_verifications WHERE id = $1 FOR UPDATE',
         [kybId],
       );
       const row = target.rows[0];

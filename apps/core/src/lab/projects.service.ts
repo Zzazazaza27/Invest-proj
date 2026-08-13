@@ -258,6 +258,13 @@ export class ProjectsService {
    */
   async submit(ctx: RequestContext, projectId: string): Promise<ProjectVersion> {
     return this.db.transaction(ctx, async (tx) => {
+      // Лок на проект: два параллельных submit считали ОДИН и тот же
+      // version_no, второй падал на UNIQUE и наружу уходил 500 вместо
+      // доменного отказа (LOW внешнего аудита №2). Тот же ключ, что у
+      // остальных путей, меняющих материалы и версии проекта.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `project-write:${projectId}`,
+      ]);
       const { rows: projectRows } = await tx.query<ProjectRow>(
         `SELECT ${PROJECT_COLUMNS} FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
         [projectId],
@@ -383,11 +390,13 @@ export class ProjectsService {
       `material-quota:${projectId}`,
     ]);
 
+    // Счёт идёт через SECURITY DEFINER-функцию (M057), а не прямым SELECT:
+    // политика материалов (M056) скрывает неподтверждённые строки от чтения,
+    // и прямой подсчёт видел бы ноль — предел незавершённых загрузок молча
+    // перестал бы действовать. Поймано зондом уборки, не ревью.
     const { rows } = await tx.query<{ total: string; pending: string }>(
-      `SELECT count(*)::text AS total,
-              count(*) FILTER (WHERE uploaded_at IS NULL)::text AS pending
-         FROM lab.project_materials
-        WHERE project_id = $1`,
+      `SELECT total::text AS total, pending::text AS pending
+         FROM lab.material_counters($1)`,
       [projectId],
     );
     const total = Number(rows[0]!.total);
@@ -426,17 +435,26 @@ export class ProjectsService {
         // объект в хранилище, а подтверждение затем проставляет `uploaded_at` —
         // и получается «готовый» материал без файла (SEC-04). Блокировка
         // сериализует подтверждение и уборку одной строки.
-        `SELECT id, project_id, type, version, url, parse_status, created_at, s3_key
+        `SELECT id, project_id, type, version, url, parse_status, created_at, s3_key, uploaded_at
            FROM lab.project_materials
           WHERE id = $1 AND project_id = $2
             FOR UPDATE`,
         [materialId, projectId],
       );
-      const material = rows[0];
+      const material = rows[0] as
+        (MaterialRow & { s3_key: string | null; uploaded_at: Date | null }) | undefined;
       if (!material) throw errors.notFound({ subject: 'material' });
       if (!material.s3_key) {
         throw errors.conflict('Этот материал не требует подтверждения загрузки');
       }
+
+      // Повторное подтверждение уже подтверждённого материала возвращает
+      // запись КАК ЕСТЬ, не перечитывая объект: getObjectDigest тянет тело
+      // целиком (до 500 МБ), и владелец проекта мог крутить finalize в цикле,
+      // расходуя egress хранилища и I/O ядра (LOW внешнего аудита №2).
+      // Отпечаток и размер зафиксированы при первом подтверждении и
+      // перезаписи не подлежат — перечитывать нечего.
+      if (material.uploaded_at) return mapMaterial(material);
 
       // Подтверждение имеет срок. Без него билет, переживший все проходы
       // уборки, можно подтвердить когда угодно — и материал, который система
@@ -763,9 +781,11 @@ export class ProjectsService {
   }
 
   private async nextMaterialVersion(tx: Tx, projectId: string, type: string): Promise<number> {
+    // Та же причина, что и у квоты (M057): под политикой M056 прямой MAX
+    // считал бы только подтверждённые версии, и номер повторялся бы —
+    // вставка падала на UNIQUE (project_id, type, version).
     const { rows } = await tx.query<{ next_version: string }>(
-      `SELECT COALESCE(MAX(version), 0) + 1 AS next_version
-         FROM lab.project_materials WHERE project_id = $1 AND type = $2`,
+      `SELECT lab.next_material_version($1, $2)::text AS next_version`,
       [projectId, type],
     );
     return Number(rows[0]?.next_version ?? 1);

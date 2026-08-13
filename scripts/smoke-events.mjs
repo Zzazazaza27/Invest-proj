@@ -296,7 +296,9 @@ let token;
     body: {
       name: 'Подписчик',
       clientId,
-      scopes: ['webhooks:manage', 'seasons:read'],
+      // graduates:read нужен для подписки на lab.project.graduated: с Ф42
+      // право подписки определяют скоупы данных, а не один webhooks:manage.
+      scopes: ['webhooks:manage', 'seasons:read', 'graduates:read'],
       mtlsCertFingerprint: 'd'.repeat(64),
     },
   });
@@ -342,6 +344,23 @@ for (const [label, url] of [
   check(
     'подписка на незарегистрированное событие отвергнута',
     response.status === 400,
+    `HTTP ${response.status}`,
+  );
+}
+
+{
+  // Подписка на денежное событие скоупами этого аккаунта НЕ покрыта: до Ф42
+  // хватало одного webhooks:manage, и сумма договора уходила в чужой вебхук.
+  const { response } = await api('/v1/integration/webhooks', {
+    method: 'POST',
+    body: {
+      url: 'https://example.org/unicorn-money-hook',
+      subscribedVerbs: ['investment.agreement.created'],
+    },
+  });
+  check(
+    'подписка на событие вне скоупов отвергнута',
+    response.status === 403,
     `HTTP ${response.status}`,
   );
 }

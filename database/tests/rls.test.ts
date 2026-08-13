@@ -1059,12 +1059,16 @@ describe('M056: least privilege и доуточнённые инварианты
     });
   });
 
-  it('неподтверждённый материал не виден даже владельцу проекта (вторая линия в RLS)', async () => {
+  it('неподтверждённый материал: автор видит свой, соучастник — нет (M056+M058)', async () => {
     await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const project = await createProject(c, founder.id);
-      // Свои фикстуры: помощник createTicket объявлен внутри другого describe.
-      const material = async (uploaded: boolean, version: number) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const editor = await createUser(c, { role: 'founder' });
+      const project = await createProject(c, owner.id);
+      await c.query(
+        `INSERT INTO lab.founders_projects (project_id, user_id, role) VALUES ($1, $2, 'cofounder')`,
+        [project, editor.id],
+      );
+      const material = async (uploaded: boolean, version: number, uploader: string) => {
         const id = uuidv7();
         await c.query(
           `INSERT INTO lab.project_materials
@@ -1073,21 +1077,33 @@ describe('M056: least privilege и доуточнённые инварианты
            VALUES ($1, $2, 'deck', $3, $4, 'queued', $5,
                    CASE WHEN $6 THEN now() ELSE NULL END,
                    CASE WHEN $6 THEN 1024 ELSE NULL END)`,
-          [id, project, version, `projects/${project}/materials/deck/${id}`, founder.id, uploaded],
+          [id, project, version, `projects/${project}/materials/deck/${id}`, uploader, uploaded],
         );
         return id;
       };
-      const pending = await material(false, 1);
-      const confirmed = await material(true, 2);
+      const pendingOfOwner = await material(false, 1, owner.id);
+      const confirmed = await material(true, 2, owner.id);
 
-      await actAs(c, { userId: founder.id, roles: ['founder'], dbRole: 'app_backend' });
-      const { rows } = await c.query<{ id: string }>(
+      // Автор билета видит свой незавершённый материал: он его подтверждает.
+      await actAs(c, { userId: owner.id, roles: ['founder'], dbRole: 'app_backend' });
+      const mine = await c.query<{ id: string }>(
         'SELECT id FROM lab.project_materials WHERE project_id = $1',
         [project],
       );
-      const ids = rows.map((r) => r.id);
+      expect(mine.rows.map((r) => r.id)).toEqual(
+        expect.arrayContaining([pendingOfOwner, confirmed]),
+      );
+
+      // Соучастник проекта — только подтверждённый: метаданные чужого
+      // незавершённого билета (s3_key, тип, версия) наружу не идут.
+      await actAs(c, { userId: editor.id, roles: ['founder'], dbRole: 'app_backend' });
+      const theirs = await c.query<{ id: string }>(
+        'SELECT id FROM lab.project_materials WHERE project_id = $1',
+        [project],
+      );
+      const ids = theirs.rows.map((r) => r.id);
       expect(ids).toContain(confirmed);
-      expect(ids).not.toContain(pending);
+      expect(ids).not.toContain(pendingOfOwner);
     });
   });
 

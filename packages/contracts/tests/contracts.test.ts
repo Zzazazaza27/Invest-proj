@@ -11,6 +11,7 @@ import {
   RegisterRequestSchema,
   RequestUploadSchema,
   REQUIRED_CONSENT_KINDS,
+  verbAllowedByScopes,
   ScoreSchema,
   fromMinorUnits,
   problemTypeUri,
@@ -292,5 +293,50 @@ describe('RequestUploadSchema — матрица тип ↔ MIME ↔ разме�
         sizeBytes: MATERIAL_UPLOAD_RULES.video.maxBytes,
       }).success,
     ).toBe(true);
+  });
+});
+
+describe('Скоупы вебхуков: событие доступно только своему скоупу (Ф42)', () => {
+  it('webhooks:manage сам по себе НЕ даёт подписку на денежные события', () => {
+    // Ровно находка аудита: аккаунт с одним webhooks:manage подписывался на
+    // investment.agreement.created — с суммой договора в payload.
+    expect(verbAllowedByScopes('investment.agreement.created', ['webhooks:manage'])).toBe(false);
+    expect(verbAllowedByScopes('billing.commission.accrued', ['webhooks:manage'])).toBe(false);
+  });
+
+  it('deals:read открывает инвестиционные события', () => {
+    expect(verbAllowedByScopes('investment.agreement.created', ['deals:read'])).toBe(true);
+    expect(verbAllowedByScopes('investment.first_tranche.confirmed', ['deals:read'])).toBe(true);
+  });
+
+  it('graduates:read не открывает деньги, а deals:read — выпускников', () => {
+    expect(verbAllowedByScopes('investment.agreement.created', ['graduates:read'])).toBe(false);
+    expect(verbAllowedByScopes('lab.project.graduated', ['deals:read'])).toBe(false);
+    expect(verbAllowedByScopes('lab.project.graduated', ['graduates:read'])).toBe(true);
+  });
+
+  it('внутренние события не открывает ни один скоуп', () => {
+    const all = [
+      'graduates:read',
+      'passport:read',
+      'listing:create',
+      'deals:read',
+      'show:read',
+      'seasons:read',
+      'webhooks:manage',
+    ];
+    for (const verb of [
+      'identity.user.registered',
+      'identity.login.failed',
+      'security.new_login',
+      'kyc.verification.decided',
+      'admin.feature_flag.changed',
+    ]) {
+      expect(verbAllowedByScopes(verb, all), verb).toBe(false);
+    }
+  });
+
+  it('пустой набор скоупов не открывает ничего', () => {
+    expect(verbAllowedByScopes('lab.project.graduated', [])).toBe(false);
   });
 });

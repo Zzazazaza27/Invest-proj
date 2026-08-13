@@ -75,16 +75,22 @@ export class InvestmentsService {
       const key = `investments/offers/${offerId}.txt`;
 
       if (!this.s3.isConfigured) throw errors.featureDisabled('investment_documents');
-      await putObject({ key, body: sealed.ciphertext, contentType: 'application/octet-stream' });
 
-      // Право размещать предложение проверяется в контексте пользователя — под
-      // его RLS. Сама запись идёт сервисной ролью: регулируемый контур доступен
-      // на запись только ей (политики offers_service_write, M005), и это не
-      // обходной путь, а заложенное разделение — пользовательская роль не
-      // должна уметь писать в реестр договоров даже при ошибке в коде.
+      // Право размещать предложение проверяется ДО записи в хранилище.
+      // Прежний порядок (сначала putObject, потом проверка) оставлял объект
+      // в S3 после отказа: сирота, которую уборщик не найдёт — он работает
+      // только по lab.project_materials (MEDIUM внешнего аудита №2).
+      //
+      // Проверка идёт в контексте пользователя — под его RLS. Сама запись
+      // ниже идёт сервисной ролью: регулируемый контур доступен на запись
+      // только ей (политики offers_service_write, M005), и это не обходной
+      // путь, а заложенное разделение — пользовательская роль не должна уметь
+      // писать в реестр договоров даже при ошибке в коде.
       await this.db.readOnly(ctx, async (tx) => {
         await this.assertIssuerEligible(tx, input.projectId, input.issuerEntityId, ctx.userId!);
       });
+
+      await putObject({ key, body: sealed.ciphertext, contentType: 'application/octet-stream' });
 
       return this.db.asServiceRole('app_investments', { traceId: ctx.traceId }, async (tx) => {
         const rules = await tx.query<{ rules_version: string }>(
