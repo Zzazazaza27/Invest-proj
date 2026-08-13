@@ -58,6 +58,7 @@
 | Ф41  | M056: least privilege identity.users, материалы, согласия, KYC, оффер     | ✅ завершена 2026-08-13 |
 | Ф42  | Скоупы вебхуков, гонки KYC, порядок S3, M057/M058 (регрессия M056)        | ✅ завершена 2026-08-13 |
 | Ф43  | AI-шлюз: threadpool, 401 на не-ASCII, trace_id, healthz, https-endpoint   | ✅ завершена 2026-08-13 |
+| Ф44  | Фронтенды: setCsrf, маскировка 401, адрес API, noindex, encodeURIComponent | ✅ завершена 2026-08-13 |
 
 ---
 
@@ -167,10 +168,14 @@ CRITICAL/HIGH нет», противореча собственному разд
   удалён мёртвый BodyTooLarge, обезличен source_ref, stage сведён к
   перечислению. Тестов шлюза 31 вместо 24 (+8, включая первые тесты на 401),
   smoke-ai 42/42.
-- **Ф44 (фронтенды):** унификация трёх кабинетов с admin (setCsrf(null),
-  маскировка detail логина); fail-fast BASE_URL в prod-сборке; noindex;
-  encodeURIComponent в admin api + UUID-валидация; VITE_CSRF_COOKIE_NAME в
-  .env.example.
+- ~~**Ф44 (фронтенды)**~~ — ЗАКРЫТО 2026-08-13: setCsrf(null) сбрасывает
+  токен (было — перечитывал cookie закрытой сессии); причина 401 не
+  показывается дословно; адрес API обязателен на не-локальном хосте
+  (fail-fast по ХОСТУ, не по PROD — иначе ломались бы браузерные прогоны);
+  noindex в трёх кабинетах; encodeURIComponent в admin api. 91 браузерная
+  проверка на production-сборке (20+17+18+23+13). Остаток: вынос общих
+  копий api.ts/App.tsx в packages — отдельная работа; CSP для статики SPA —
+  вместе с production-раздачей (нет в репозитории).
 - **Ф45 (инфра/скрипты):** keycloak realm-launch.json или снять volume;
   отдельный логин БД для Keycloak; rotate-kek атомарная запись .env;
   gate-ai --strict; pgvector digest; авто-удаление .env.rotate-backup.

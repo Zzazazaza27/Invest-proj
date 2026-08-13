@@ -14,6 +14,24 @@ const BASE_URL =
   `${window.location.protocol}//${window.location.hostname}:4300/v1`;
 
 /**
+ * Адрес API обязателен всюду, кроме локальной машины.
+ *
+ * Молчаливый переход на `hostname:4300` на реальном домене увёл бы
+ * приложение на порт того же хоста по http — сессионная cookie ушла бы в
+ * открытый канал (LOW внешнего аудита №2). Поэтому на не-локальном хосте это
+ * ошибка запуска, а не «работает как-нибудь».
+ *
+ * Проверяется именно ХОСТ, а не `import.meta.env.PROD`: локальные
+ * браузерные прогоны поднимают ровно production-сборку, и жёсткая проверка
+ * по PROD ломала бы их, ничего не защищая — на localhost адрес и так
+ * локальный.
+ */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+if (!import.meta.env.VITE_API_BASE_URL && !LOCAL_HOSTS.has(window.location.hostname)) {
+  throw new Error('VITE_API_BASE_URL обязателен: адрес API не может выводиться из адреса страницы');
+}
+
+/**
  * Имя CSRF-cookie зависит от окружения: в production действует префикс
  * `__Host-`, вне его — обычное имя (браузер отбрасывает `__Host-`-cookie,
  * поставленную без Secure по http). Проверяются оба варианта: рассинхрон имени
@@ -43,7 +61,15 @@ export const api = new UnicornApi({
 
 /** После входа сервер отдаёт свежий CSRF-токен в теле — cookie может отстать. */
 export function setCsrf(token: string | null): void {
-  api.http.setCsrfToken(token ?? readCsrfCookie());
+  // `null` означает СБРОС (выход из системы), а не «перечитай cookie»:
+  // прежний код после logout подхватывал ещё не удалённую браузером cookie
+  // и оставлял клиент с токеном уже закрытой сессии. В admin это было
+  // сделано правильно с самого начала — расхождение копий (аудит №2).
+  if (token === null) {
+    api.http.setCsrfToken(null);
+    return;
+  }
+  api.http.setCsrfToken(token || readCsrfCookie());
 }
 
 export { ApiError };

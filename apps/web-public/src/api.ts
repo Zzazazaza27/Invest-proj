@@ -10,6 +10,24 @@ import { UnicornApi } from '@unicorn/api-client';
  */
 const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4300/v1';
 
+/**
+ * Адрес API обязателен всюду, кроме локальной машины.
+ *
+ * Молчаливый переход на `hostname:4300` на реальном домене увёл бы
+ * приложение на порт того же хоста по http — сессионная cookie ушла бы в
+ * открытый канал (LOW внешнего аудита №2). Поэтому на не-локальном хосте это
+ * ошибка запуска, а не «работает как-нибудь».
+ *
+ * Проверяется именно ХОСТ, а не `import.meta.env.PROD`: локальные
+ * браузерные прогоны поднимают ровно production-сборку, и жёсткая проверка
+ * по PROD ломала бы их, ничего не защищая — на localhost адрес и так
+ * локальный.
+ */
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
+if (!import.meta.env.VITE_API_BASE_URL && !LOCAL_HOSTS.has(window.location.hostname)) {
+  throw new Error('VITE_API_BASE_URL обязателен: адрес API не может выводиться из адреса страницы');
+}
+
 export const api = new UnicornApi({
   baseUrl,
   auth: { kind: 'none' },
