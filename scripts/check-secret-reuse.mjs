@@ -32,6 +32,7 @@ const SECRET_NAME = /(PASSWORD|SECRET|_KEY$|_KEY_|SIGNING_KEY|^KEK_)/;
 /** Имена, которые секретами не являются, хотя подходят под шаблон. */
 const NOT_SECRET = new Set([
   'S3_ACCESS_KEY_ID', // идентификатор доступа — не секретная половина пары
+  'ARCHIVE_S3_ACCESS_KEY_ID', // то же: имя учётки архива
   'LANGFUSE_PUBLIC_KEY', // публичный ключ по определению
   'APNS_KEY_ID', // идентификатор ключа, не сам ключ
 ]);
