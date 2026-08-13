@@ -10,8 +10,18 @@ import {
   LoadingState,
   Stack,
 } from '@unicorn/ui';
-import type { ProjectMaterial, ProjectVersion } from '@unicorn/contracts';
+import {
+  MATERIAL_UPLOAD_RULES,
+  type ProjectMaterial,
+  type ProjectVersion,
+} from '@unicorn/contracts';
 import { ApiError, api } from '../api';
+
+// Лимит и допустимые форматы — из контрактов, а не строкой в подсказке:
+// обещание «до N МБ» в интерфейсе разошлось с проверкой сервера ровно один
+// раз — и этого достаточно (CODE-MED-02: UI обещал 500 МБ при серверных 50).
+const DECK_RULES = MATERIAL_UPLOAD_RULES.deck;
+const DECK_MAX_MB = Math.floor(DECK_RULES.maxBytes / (1024 * 1024));
 
 const TYPE_TITLES: Record<string, string> = {
   deck: 'презентация',
@@ -98,6 +108,15 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
    */
   const upload = useCallback(async () => {
     if (!file) return;
+    // Лимит проверяется ДО запроса билета: пользователь узнаёт об ошибке
+    // сразу, а не после ожидания ответа сервера (CODE-MED-02).
+    if (file.size > DECK_RULES.maxBytes) {
+      setNotice({
+        tone: 'error',
+        text: `Файл больше ${DECK_MAX_MB} МБ — выберите файл меньшего размера`,
+      });
+      return;
+    }
     setBusy(true);
     setNotice(null);
     try {
@@ -217,7 +236,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
         <Field
           label="Презентация"
           htmlFor="deck-file"
-          hint="PDF или PPTX, до 500 МБ. Файл уходит в хранилище напрямую, минуя API."
+          hint={`PDF или PPTX, до ${DECK_MAX_MB} МБ. Файл уходит в хранилище напрямую, минуя API.`}
         >
           <input
             id="deck-file"

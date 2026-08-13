@@ -21,7 +21,7 @@
  */
 import pg from 'pg';
 import { spawn } from 'node:child_process';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -251,6 +251,41 @@ check(
   finalize.status === 200 || finalize.status === 201,
   `HTTP ${finalize.status}`,
 );
+
+// 2а. Отпечаток — настоящий sha256 содержимого, а не ETag хранилища (Ф35,
+// SEC-HIGH-03): сверяется с хешем, посчитанным здесь от того же payload.
+{
+  const expectedHash = `sha256:${createHash('sha256').update(payload).digest('hex')}`;
+  const [row] = await sql('SELECT content_hash FROM lab.project_materials WHERE id = $1', [
+    confirmed.materialId,
+  ]);
+  check(
+    'content_hash — sha256 фактических байтов',
+    row?.content_hash === expectedHash,
+    `${row?.content_hash?.slice(0, 24)}…`,
+  );
+}
+
+// 2б. Содержимое, не соответствующее типу материала, подтверждение отвергает
+// (Ф35, SEC-HIGH-02): заявлен PDF, положен HTML — magic bytes не совпадают.
+{
+  const fake = await ticket(9);
+  await uploadByTicket(fake, Buffer.from('<html>не презентация</html>', 'utf8'));
+  const rejected = await client.call(
+    `/v1/projects/${projectId}/materials/${fake.materialId}/finalize`,
+    { method: 'POST' },
+  );
+  check(
+    'подделка формата отвергнута подтверждением',
+    rejected.status === 409,
+    `HTTP ${rejected.status}`,
+  );
+  const [fakeRow] = await sql(
+    'SELECT count(*)::int AS n FROM lab.project_materials WHERE id = $1 AND uploaded_at IS NOT NULL',
+    [fake.materialId],
+  );
+  check('подделка не стала подтверждённым материалом', fakeRow.n === 0);
+}
 
 // 3. Свежий брошенный билет — уборка не должна его тронуть: загрузка может идти.
 const fresh = await ticket(3);

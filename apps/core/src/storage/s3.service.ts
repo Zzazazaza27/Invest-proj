@@ -144,6 +144,104 @@ export class S3Service {
   }
 
   /**
+   * Прочитать объект ПОТОКОМ и вернуть его фактические размер, sha256 и первые
+   * байты (для сверки сигнатуры формата).
+   *
+   * Нужен подтверждению загрузки: ETag хранилища — НЕ криптографический
+   * отпечаток содержимого (multipart и SSE меняют его семантику, SEC-HIGH-03),
+   * поэтому `content_hash` считается здесь по фактическим байтам. Тело в
+   * память целиком не читается — хеш инкрементальный, в памяти живёт чанк.
+   */
+  async getObjectDigest(key: string): Promise<{
+    exists: boolean;
+    sizeBytes: number;
+    sha256: string | null;
+    head: Buffer;
+  }> {
+    const env = getEnv();
+    if (!this.isConfigured) throw new Error('S3 не настроен');
+
+    const now = new Date();
+    const amzDate = toAmzDate(now);
+    const shortDate = amzDate.slice(0, 8);
+    const payloadHash = sha256Hex(Buffer.alloc(0));
+
+    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
+    const url = new URL(
+      env.S3_FORCE_PATH_STYLE === 'true'
+        ? `${base}/${env.S3_BUCKET}/${key}`
+        : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${key}`,
+    );
+
+    const headers: Record<string, string> = {
+      host: url.host,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate,
+    };
+    const signedHeaders = Object.keys(headers).sort().join(';');
+    const canonicalHeaders = Object.keys(headers)
+      .sort()
+      .map((name) => `${name}:${headers[name]}\n`)
+      .join('');
+    const canonicalRequest = [
+      'GET',
+      url.pathname,
+      '',
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+    const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
+    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
+    const signature = createHmac(
+      'sha256',
+      signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
+    )
+      .update(stringToSign, 'utf8')
+      .digest('hex');
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        ...headers,
+        Authorization:
+          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
+          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      },
+      // Дольше, чем HEAD: тело видео может быть до 500 МБ. Таймаут всё равно
+      // обязателен — зависшее чтение держало бы запрос пользователя.
+      signal: AbortSignal.timeout(120_000),
+    });
+
+    if (response.status === 404) {
+      return { exists: false, sizeBytes: 0, sha256: null, head: Buffer.alloc(0) };
+    }
+    if (!response.ok || !response.body) {
+      throw new Error(`хранилище ответило ${response.status} на GET`);
+    }
+
+    const hash = createHash('sha256');
+    const headChunks: Buffer[] = [];
+    let headBytes = 0;
+    let sizeBytes = 0;
+    for await (const chunk of response.body) {
+      const buf = Buffer.from(chunk);
+      hash.update(buf);
+      sizeBytes += buf.byteLength;
+      if (headBytes < 16) {
+        headChunks.push(buf.subarray(0, 16 - headBytes));
+        headBytes = Math.min(16, headBytes + buf.byteLength);
+      }
+    }
+    return {
+      exists: true,
+      sizeBytes,
+      sha256: hash.digest('hex'),
+      head: Buffer.concat(headChunks),
+    };
+  }
+
+  /**
    * Удалить объект.
    *
    * Нужно уборке брошенных загрузок: билет мог быть выдан, объект — положен, а

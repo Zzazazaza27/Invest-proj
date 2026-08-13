@@ -165,27 +165,78 @@ export const CatalogFilterSchema = z.object({
 export type CatalogFilter = z.infer<typeof CatalogFilterSchema>;
 
 /**
+ * Правила загрузки по типу материала — единственный источник правды для API,
+ * сервера и интерфейсов (CODE-HIGH-09, CODE-MED-02).
+ *
+ * Раньше DTO разрешал пять MIME НЕЗАВИСИМО от типа материала (video/mp4
+ * проходил как «презентация»), а интерфейс обещал «до 500 МБ» там, где сервер
+ * принимал 50: два разных списка в двух местах разошлись при первом же
+ * изменении. Лимиты и допустимые MIME объявлены здесь один раз; клиент читает
+ * их отсюда же, поэтому обещание в UI не может разойтись с проверкой сервера.
+ */
+export const MATERIAL_UPLOAD_RULES = {
+  deck: {
+    maxBytes: 50 * 1024 * 1024,
+    mimeTypes: [
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    ],
+  },
+  video: {
+    maxBytes: 500 * 1024 * 1024,
+    mimeTypes: ['video/mp4'],
+  },
+  doc: {
+    maxBytes: 25 * 1024 * 1024,
+    mimeTypes: ['application/pdf', 'image/png', 'image/jpeg'],
+  },
+} as const satisfies Record<string, { maxBytes: number; mimeTypes: readonly string[] }>;
+
+export type UploadableMaterialType = keyof typeof MATERIAL_UPLOAD_RULES;
+
+/**
  * Запрос на загрузку материала. Файл идёт напрямую в S3 по presigned URL —
  * через API не проходит: иначе он становится и узким местом, и точкой,
  * где недоверенный контент касается прикладного процесса.
+ *
+ * Соответствие «тип материала ↔ MIME ↔ размер» проверяется НА ГРАНИЦЕ, а не
+ * доброй волей клиента: заявка video/mp4 как `deck` — отказ разбора.
  */
-export const RequestUploadSchema = z.object({
-  projectId: UuidSchema,
-  type: MaterialTypeSchema.exclude(['product_link']),
-  fileName: boundedString(1, 255),
-  contentType: z.enum([
-    'application/pdf',
-    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-    'video/mp4',
-    'image/png',
-    'image/jpeg',
-  ]),
-  sizeBytes: z
-    .number()
-    .int()
-    .positive()
-    .max(500 * 1024 * 1024, 'максимум 500 МБ'),
-});
+export const RequestUploadSchema = z
+  .object({
+    projectId: UuidSchema,
+    type: MaterialTypeSchema.exclude(['product_link']),
+    fileName: boundedString(1, 255),
+    contentType: z.enum([
+      'application/pdf',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'video/mp4',
+      'image/png',
+      'image/jpeg',
+    ]),
+    sizeBytes: z
+      .number()
+      .int()
+      .positive()
+      .max(500 * 1024 * 1024, 'максимум 500 МБ'),
+  })
+  .superRefine((input, ctx) => {
+    const rules = MATERIAL_UPLOAD_RULES[input.type];
+    if (!rules.mimeTypes.includes(input.contentType as never)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['contentType'],
+        message: `для типа ${input.type} допустимы: ${rules.mimeTypes.join(', ')}`,
+      });
+    }
+    if (input.sizeBytes > rules.maxBytes) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['sizeBytes'],
+        message: `для типа ${input.type} максимум ${rules.maxBytes} байт`,
+      });
+    }
+  });
 export type RequestUpload = z.infer<typeof RequestUploadSchema>;
 
 /**

@@ -1,6 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import {
   uuidv7,
+  MATERIAL_UPLOAD_RULES,
+  type UploadableMaterialType,
   type AddProductLink,
   type CreateProjectRequest,
   type ProjectFull,
@@ -41,11 +43,37 @@ const MAX_MATERIALS_PER_PROJECT = 50;
 /** Незавершённых загрузок одновременно: больше — это уже не работа, а запас. */
 const MAX_PENDING_UPLOADS_PER_PROJECT = 5;
 
-const MAX_UPLOAD_BYTES: Record<'deck' | 'video' | 'doc', number> = {
-  deck: 50 * 1024 * 1024,
-  video: 500 * 1024 * 1024,
-  doc: 25 * 1024 * 1024,
+/**
+ * Лимиты и MIME — из контрактов (MATERIAL_UPLOAD_RULES): один источник правды
+ * для DTO, сервера и интерфейсов (CODE-HIGH-09/CODE-MED-02).
+ */
+const MAX_UPLOAD_BYTES: Record<UploadableMaterialType, number> = {
+  deck: MATERIAL_UPLOAD_RULES.deck.maxBytes,
+  video: MATERIAL_UPLOAD_RULES.video.maxBytes,
+  doc: MATERIAL_UPLOAD_RULES.doc.maxBytes,
 };
+
+/**
+ * Сигнатуры форматов по типу материала. Заявленный Content-Type — слово
+ * клиента; подписанная форма фиксирует заголовок, но не содержимое
+ * (SEC-HIGH-02). Первые байты объекта обязаны соответствовать одному из
+ * форматов, допустимых для типа, иначе подтверждение отказывает.
+ */
+const MATERIAL_SIGNATURES: Record<UploadableMaterialType, (head: Buffer) => boolean> = {
+  // %PDF- либо контейнер OOXML (pptx — это zip: PK\x03\x04).
+  deck: (head) => isPdf(head) || isZip(head),
+  // ISO BMFF: 'ftyp' по смещению 4.
+  video: (head) => head.length >= 8 && head.subarray(4, 8).toString('latin1') === 'ftyp',
+  // Скан или документ: pdf, png, jpeg.
+  doc: (head) => isPdf(head) || isPng(head) || isJpeg(head),
+};
+
+const isPdf = (head: Buffer) => head.subarray(0, 5).toString('latin1') === '%PDF-';
+const isZip = (head: Buffer) => head.length >= 4 && head.readUInt32BE(0) === 0x504b0304;
+const isPng = (head: Buffer) =>
+  head.length >= 8 && head.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'));
+const isJpeg = (head: Buffer) =>
+  head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
 
 @Injectable()
 export class ProjectsService {
@@ -423,9 +451,22 @@ export class ProjectsService {
         );
       }
 
-      const head = await this.s3.headObject(material.s3_key);
-      if (!head.exists) {
+      // Объект читается ПОТОКОМ целиком: отпечаток — настоящий sha256 по
+      // фактическим байтам, а не ETag (ETag не криптографический digest:
+      // multipart и SSE меняют его семантику — SEC-HIGH-03), а первые байты
+      // сверяются с сигнатурой формата, допустимого для типа материала
+      // (SEC-HIGH-02): заявленный Content-Type — слово клиента, содержимое —
+      // нет.
+      const object = await this.s3.getObjectDigest(material.s3_key);
+      if (!object.exists) {
         throw errors.conflict('Объект не найден в хранилище: загрузка не завершена');
+      }
+      const signatureOk = MATERIAL_SIGNATURES[material.type as UploadableMaterialType];
+      if (!signatureOk || !signatureOk(object.head)) {
+        throw errors.conflict(
+          `Содержимое файла не соответствует типу материала «${material.type}»: ` +
+            'загрузите файл допустимого формата',
+        );
       }
 
       const { rows: updated } = await tx.query<MaterialRow>(
@@ -438,7 +479,7 @@ export class ProjectsService {
                 content_hash = coalesce(content_hash, $4)
           WHERE id = $1 AND project_id = $2
         RETURNING id, project_id, type, version, url, parse_status, created_at`,
-        [materialId, projectId, head.sizeBytes, head.etag],
+        [materialId, projectId, object.sizeBytes, `sha256:${object.sha256}`],
       );
       // Строки может не быть, если её убрали между чтением и записью. Прежний
       // код брал `updated[0]!` и падал внутренней ошибкой; отказ должен быть
@@ -453,7 +494,7 @@ export class ProjectsService {
         actorRole: 'founder',
         subjectType: 'project',
         subjectId: projectId,
-        context: { materialId, sizeBytes: head.sizeBytes, finalized: true },
+        context: { materialId, sizeBytes: object.sizeBytes, finalized: true },
         traceId: ctx.traceId,
       });
 

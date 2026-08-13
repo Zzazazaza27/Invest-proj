@@ -5,9 +5,11 @@ import {
   CreateSubscriptionRequestSchema,
   ERROR_STATUS,
   ErrorCode,
+  MATERIAL_UPLOAD_RULES,
   MoneyAmountSchema,
   NotificationPreferenceSchema,
   RegisterRequestSchema,
+  RequestUploadSchema,
   REQUIRED_CONSENT_KINDS,
   ScoreSchema,
   fromMinorUnits,
@@ -239,5 +241,56 @@ describe('Коды ошибок', () => {
 
   it('type — валидный URI', () => {
     expect(problemTypeUri(ErrorCode.NOT_FOUND)).toBe('https://unicorn.vc/problems/not_found');
+  });
+});
+
+describe('RequestUploadSchema — матрица тип ↔ MIME ↔ размер (Ф35, CODE-HIGH-09)', () => {
+  const base = {
+    projectId: '01890a5d-ac96-774b-bcce-b302099a8057',
+    type: 'deck' as const,
+    fileName: 'deck.pdf',
+    contentType: 'application/pdf' as const,
+    sizeBytes: 1024,
+  };
+
+  it('pdf как deck проходит', () => {
+    expect(RequestUploadSchema.safeParse(base).success).toBe(true);
+  });
+
+  it('video/mp4 как deck отвергается', () => {
+    expect(RequestUploadSchema.safeParse({ ...base, contentType: 'video/mp4' }).success).toBe(
+      false,
+    );
+  });
+
+  it('png как deck отвергается', () => {
+    expect(RequestUploadSchema.safeParse({ ...base, contentType: 'image/png' }).success).toBe(
+      false,
+    );
+  });
+
+  it('pdf как video отвергается', () => {
+    expect(RequestUploadSchema.safeParse({ ...base, type: 'video' }).success).toBe(false);
+  });
+
+  it('deck больше 50 МБ отвергается контрактом, а не только сервером', () => {
+    expect(
+      RequestUploadSchema.safeParse({
+        ...base,
+        sizeBytes: MATERIAL_UPLOAD_RULES.deck.maxBytes + 1,
+      }).success,
+    ).toBe(false);
+  });
+
+  it('video/mp4 как video в пределах лимита проходит', () => {
+    expect(
+      RequestUploadSchema.safeParse({
+        ...base,
+        type: 'video',
+        contentType: 'video/mp4',
+        fileName: 'demo.mp4',
+        sizeBytes: MATERIAL_UPLOAD_RULES.video.maxBytes,
+      }).success,
+    ).toBe(true);
   });
 });
