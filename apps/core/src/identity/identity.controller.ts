@@ -25,6 +25,24 @@ import { IdentityService } from './identity.service';
  * недоступную JavaScript. В теле — только то, что фронтенду действительно
  * нужно: роли, статус, CSRF-токен и признак необходимости ре-акцепта.
  */
+/**
+ * Локальный вход доступен только при `AUTH_MODE=local`.
+ *
+ * В production конфигурация требует `oidc`, а `issueLocal` там запрещён —
+ * значит, register/login отрабатывали полностью (включая argon2-хеширование)
+ * и падали 500 на самом последнем шаге. Это и мёртвая поверхность, и
+ * бесплатный CPU-DoS-усилитель: каждый запрос стоил нам хеширования, а
+ * атакующему — ничего (MEDIUM внешнего аудита №2).
+ *
+ * Отказ — 404, а не 403: 403 подтверждал бы существование маршрута, который
+ * в этом режиме не используется вовсе (та же анти-оракульная линия, что у
+ * описания API в production).
+ */
+function assertLocalAuthAvailable(): void {
+  if (getEnv().AUTH_MODE !== 'local')
+    throw errors.notFound({ subject: 'route', reason: 'oidc-mode' });
+}
+
 @Controller('auth')
 export class IdentityController {
   constructor(
@@ -39,6 +57,7 @@ export class IdentityController {
     @Ctx() ctx: RequestContext,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
+    assertLocalAuthAvailable();
     const input = parseOrThrow(RegisterRequestSchema, rawBody);
     const { userId, roles } = await this.identity.register(input, ctx);
     const missing = await this.identity.missingConsents({ ...ctx, userId, roles }, input.locale);
@@ -61,6 +80,7 @@ export class IdentityController {
     @Ctx() ctx: RequestContext,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
+    assertLocalAuthAvailable();
     const input = parseOrThrow(LoginRequestSchema, rawBody);
     if (!input.email && !input.phone) {
       throw errors.validation([{ path: 'email', message: 'нужен email или телефон' }]);

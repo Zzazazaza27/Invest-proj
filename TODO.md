@@ -54,6 +54,7 @@
 | Ф37  | Админка: пагинация KYC-очереди; pip pin, чистка build, prettierignore      | ✅ завершена 2026-08-13 |
 | Ф38  | Обнуление guardian.yml: расследование + защита read-only и гейт целостности | ✅ завершена 2026-08-13 |
 | Ф39  | M054: самоактивация подписки, 4-eyes цены, выдача ролей — 3 HIGH аудита №2 | ✅ завершена 2026-08-13 |
+| Ф40  | Обход классов rate-limit, троттлинг перебора пароля, prod-гашение login   | ✅ завершена 2026-08-13 |
 
 ---
 
@@ -129,10 +130,16 @@ CRITICAL/HIGH нет», противореча собственному разд
   proposals), user_roles_insert WITH CHECK (true) → админ от своего имени /
   регистрация только founder|investor. 11 RLS-тестов, smoke-billing 44/44,
   smoke-core 46/46.
-- **Ф40 (HIGH + MEDIUM, периметр):** обход классов rate-limit
-  percent-encoding (классификация по нормализованному пути); троттлинг
-  перебора пароля per-account (Redis) + событие identity.login.failed;
-  register/login в prod — 404 до argon2.
+- ~~**Ф40 (HIGH + MEDIUM, периметр)**~~ — ЗАКРЫТО 2026-08-13: классификация
+  rate-limit по нормализованному пути (`common/request-path.ts`,
+  многократный percent-decode; 7 тестов). **Живое доказательство**: при
+  лимите auth=5 закодированный `/v1/%61uth/login` даёт 429 на шестой попытке
+  — ровно как обычный путь. Троттлинг перебора per-account
+  (`LoginThrottleService`, Redis, ключ = hex blind-индекса): при пороге 3
+  счётчик останавливается на 3, ответ ускоряется с ~50 мс до 6–21 мс (argon2
+  не вызывается), успешный вход 201 обнуляет ключ. Событие
+  `identity.login.failed` (M055) — в журнале 3 записи с отпечатком контакта,
+  не самим контактом. register/login при `AUTH_MODE≠local` — 404 до argon2.
 - **Ф41 (MEDIUM БД):** поколоночные GRANT identity.users для
   app_investments/app_billing/app_notifications (без password_hash);
   users_update_self — только профильные колонки; SELECT-политики материалов

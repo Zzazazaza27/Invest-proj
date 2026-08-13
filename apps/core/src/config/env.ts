@@ -154,6 +154,14 @@ const RawEnvSchema = z.object({
    */
   RATE_LIMIT_IP_CEILING_PER_MIN: z.coerce.number().int().min(10).default(600),
   /**
+   * Порог неудачных входов НА АККАУНТ за окно, после которого вход отклоняется
+   * до проверки пароля (и до argon2 — это ещё и защита от CPU-DoS). Считается
+   * по blind-индексу контакта, поэтому распределённый перебор с ботнета не
+   * обходит его сменой адреса. Окно — LOGIN_THROTTLE_WINDOW_SEC.
+   */
+  RATE_LIMIT_LOGIN_FAIL_PER_ACCOUNT: z.coerce.number().int().min(3).default(10),
+  LOGIN_THROTTLE_WINDOW_SEC: z.coerce.number().int().min(30).default(900),
+  /**
    * Общий счётчик ограничения частоты.
    *
    * Пусто — счётчики живут в памяти процесса. Это работает ровно до второго

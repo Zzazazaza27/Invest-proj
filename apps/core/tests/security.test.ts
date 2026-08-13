@@ -5,6 +5,7 @@ import { TokenVerifier } from '../src/auth/token.verifier';
 import { TokenRevocationService } from '../src/auth/token-revocation.service';
 import { createHmac } from 'node:crypto';
 import { OpenApiController } from '../src/health/openapi.controller';
+import { normalizedPath } from '../src/common/request-path';
 
 /**
  * Юнит-тесты периметра безопасности. Проверяют то, что нельзя увидеть в
@@ -620,5 +621,40 @@ describe('Потолок частоты по адресу', () => {
     // Отсутствие значения не должно означать «без потолка»: обход классового
     // ведра подделкой подсказки сессии тогда снова становится безграничным.
     expect(loadEnv({ ...BASE_ENV }).RATE_LIMIT_IP_CEILING_PER_MIN).toBeGreaterThan(0);
+  });
+});
+
+describe('Классификация rate-limit по нормализованному пути (Ф40)', () => {
+  it('обычный путь не меняется', () => {
+    expect(normalizedPath('/v1/auth/login')).toBe('/v1/auth/login');
+  });
+
+  it('percent-encoded путь сводится к канону — обход класса auth закрыт', () => {
+    // Именно этот запрос уходил из класса auth (30/мин) в default (120/мин).
+    expect(normalizedPath('/v1/%61uth/login')).toBe('/v1/auth/login');
+  });
+
+  it('двойное кодирование тоже раскрывается', () => {
+    expect(normalizedPath('/v1/%2561uth/login')).toBe('/v1/auth/login');
+  });
+
+  it('денежные маршруты не уводятся кодировкой', () => {
+    expect(normalizedPath('/v1/billing/%70ayments')).toBe('/v1/billing/payments');
+    expect(normalizedPath('/v1/investments/%61greements')).toBe('/v1/investments/agreements');
+  });
+
+  it('строка запроса отбрасывается', () => {
+    expect(normalizedPath('/v1/auth/login?next=%2Fadmin')).toBe('/v1/auth/login');
+  });
+
+  it('верхний регистр приводится к нижнему', () => {
+    expect(normalizedPath('/V1/AUTH/LOGIN')).toBe('/v1/auth/login');
+  });
+
+  it('битая кодировка не бросает исключение и не открывает обход', () => {
+    // %zz не декодируется: возвращается предыдущее состояние, а не исключение,
+    // которое уронило бы вычисление лимита (и, значит, сам лимит).
+    expect(() => normalizedPath('/v1/auth/%zz')).not.toThrow();
+    expect(normalizedPath('/v1/auth/%zz').startsWith('/v1/auth/')).toBe(true);
   });
 });

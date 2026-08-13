@@ -13,6 +13,7 @@ import { ProblemDetailsFilter } from './common/problem.filter';
 import { MAX_BODY_BYTES } from './common/validation';
 import { createRateLimitRedis } from './cache/redis.client';
 import { registerIpCeiling } from './cache/ip-ceiling';
+import { normalizedPath } from './common/request-path';
 
 /**
  * Запрет мощных возможностей браузера. Пустой список источников `()` означает
@@ -185,7 +186,13 @@ async function bootstrap(): Promise<void> {
     // БД, — а падение БД тоже означает отказ, а не работу «как-нибудь».
     skipOnError: false,
     max: (request) => {
-      const url = request.url;
+      // Классификация по НОРМАЛИЗОВАННОМУ пути, а не по сырому `request.url`:
+      // Fastify маршрутизирует по декодированному пути, поэтому
+      // `POST /v1/%61uth/login` доходил до обработчика auth, но `startsWith`
+      // по сырому url класс auth не распознавал — применялся default
+      // (120/мин вместо 30), в 4 раза ослабляя защиту от перебора пароля
+      // (HIGH внешнего аудита №2). То же уводило деньги из 10/мин в общий.
+      const url = normalizedPath(request.url);
       const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
 
       // Выдача токена — тот же класс, что и вход человека: это проверка
@@ -245,7 +252,10 @@ async function bootstrap(): Promise<void> {
     // всё равно проходит авторизацию: лимит защищает от шторма, а не заменяет
     // проверку прав. Размен назван осознанно и записан в TODO.
     keyGenerator: (request) => {
-      const url = request.url ?? '';
+      // Тот же нормализованный путь, что и в классификаторе: иначе
+      // percent-encoded auth-запрос попал бы в ветку «адрес + подсказка
+      // сессии» и снова получил бы свежее ведро на подделанную cookie.
+      const url = normalizedPath(request.url ?? '');
       const unauthenticated =
         url.startsWith('/v1/auth/') || url.startsWith('/v1/integration/token');
       return unauthenticated ? request.ip : `${request.ip}|${sessionHint(request) ?? 'anon'}`;

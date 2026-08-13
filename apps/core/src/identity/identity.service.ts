@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import {
   REQUIRED_CONSENT_KINDS,
@@ -16,6 +16,7 @@ import { Database, type RequestContext } from '../db/unit-of-work';
 import { getEnv } from '../config/env';
 import { issueCsrfToken } from '../auth/csrf';
 import { TokenRevocationService } from '../auth/token-revocation.service';
+import { LoginThrottleService } from '../auth/login-throttle.service';
 
 /**
  * Роли, от имени которых разрешено писать глагол `identity.token.revoked`
@@ -76,12 +77,48 @@ function isContactUniqueViolation(error: unknown): boolean {
 
 @Injectable()
 export class IdentityService {
+  private readonly logger = new Logger(IdentityService.name);
+
   constructor(
     private readonly db: Database,
     private readonly crypto: CryptoService,
     private readonly audit: AuditRepository,
     private readonly revocations: TokenRevocationService,
+    private readonly loginThrottle: LoginThrottleService,
   ) {}
+
+  /**
+   * Событие неудачного входа в журнал.
+   *
+   * Пишется отдельной транзакцией и не роняет ответ: отказ входа не должен
+   * зависеть от доступности журнала. Контакт не сохраняется — только префикс
+   * отпечатка blind-индекса, по которому попытки одного аккаунта связываются
+   * между собой без раскрытия самого контакта.
+   */
+  private async recordLoginFailure(
+    ctx: RequestContext,
+    userId: string | null,
+    indexHex: string,
+  ): Promise<void> {
+    try {
+      await this.db.transaction(ctx, async (tx) => {
+        await this.audit.emit(tx, {
+          verb: 'identity.login.failed',
+          actorId: userId,
+          actorRole: 'system',
+          subjectType: 'user',
+          subjectId: userId,
+          context: { contactFingerprint: indexHex.slice(0, 16) },
+          traceId: ctx.traceId,
+        });
+      });
+    } catch (error) {
+      this.logger.warn({
+        msg: 'не удалось записать событие неудачного входа',
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
+  }
 
   async register(
     input: RegisterRequest,
@@ -192,6 +229,13 @@ export class IdentityService {
         : null;
     if (!index) throw errors.unauthenticated({ stage: 'no-contact' });
 
+    // Счётчик неудач ПО АККАУНТУ проверяется до argon2: распределённый перебор
+    // не обходится сменой адреса, а отклонённая попытка не стоит нам хеширования
+    // (MEDIUM внешнего аудита №2). Ключ — hex blind-индекса: значение контакта
+    // в счётчик не попадает.
+    const throttleKey = index.toString('hex');
+    await this.loginThrottle.assertNotLocked(throttleKey);
+
     const found = await this.db.readOnly(ctx, async (tx) => {
       // Обычный SELECT здесь не сработает: политика users_select требует
       // сессионного контекста, а при входе пользователь как раз доказывает,
@@ -212,10 +256,22 @@ export class IdentityService {
     // выдаёт факт существования аккаунта.
     const hash = found?.password_hash ?? (await getDummyHash());
     const ok = await argon2.verify(hash, password).catch(() => false);
-    if (!found || !ok) throw errors.unauthenticated({ stage: 'bad-credentials' });
+    if (!found || !ok) {
+      // Счётчик растёт и для НЕсуществующего контакта: иначе разница в
+      // поведении («залочен» против «нет такого») стала бы оракулом
+      // существования учётки.
+      await this.loginThrottle.recordFailure(throttleKey);
+      // Неудачный вход попадает в журнал: без этого события ни расследование,
+      // ни алерт на перебор невозможны. Контакт не пишется — только отпечаток.
+      await this.recordLoginFailure(ctx, found?.user_id ?? null, throttleKey);
+      throw errors.unauthenticated({ stage: 'bad-credentials' });
+    }
     if (found.status === 'suspended' || found.status === 'deleted') {
       throw errors.forbidden({ stage: 'account-status', status: found.status });
     }
+    // Успех обнуляет счётчик: иначе пользователь, вспомнивший пароль с
+    // девятой попытки, оставался бы под порогом до конца окна.
+    await this.loginThrottle.reset(throttleKey);
 
     const roles = await this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<{ role: Role }>(
