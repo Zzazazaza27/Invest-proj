@@ -291,13 +291,14 @@ export class IntegrationService {
           scopes: string[];
           token_epoch: number;
         }>(
-          // Статус входит в условие, а не проверяется потом: приостановленная
-          // учётная запись продолжала получать токены — отзыв доступа не
-          // работал вовсе (SEC-07). Выборка «по client_id» без статуса делает
-          // приостановку декоративной.
+          // Узкая SECURITY DEFINER-функция вместо прямой выборки (M056): у
+          // роли интеграции больше нет SELECT на `client_secret_hash`, то
+          // есть перечислить чужие хеши и получить офлайн-оракул нельзя —
+          // функция отдаёт материал ровно по запрошенному client_id. Статус
+          // проверяется ВНУТРИ функции, а не потом: выборка без статуса
+          // делала бы приостановку учётной записи декоративной (SEC-07).
           `SELECT id, client_id, client_secret_hash, mtls_cert_fingerprint, scopes, token_epoch
-             FROM integration.service_accounts
-            WHERE client_id = $1 AND status = 'active'`,
+             FROM integration.find_token_candidate($1)`,
           [input.clientId],
         );
         return rows[0] ?? null;

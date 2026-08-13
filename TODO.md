@@ -55,6 +55,7 @@
 | Ф38  | Обнуление guardian.yml: расследование + защита read-only и гейт целостности | ✅ завершена 2026-08-13 |
 | Ф39  | M054: самоактивация подписки, 4-eyes цены, выдача ролей — 3 HIGH аудита №2 | ✅ завершена 2026-08-13 |
 | Ф40  | Обход классов rate-limit, троттлинг перебора пароля, prod-гашение login   | ✅ завершена 2026-08-13 |
+| Ф41  | M056: least privilege identity.users, материалы, согласия, KYC, оффер     | ✅ завершена 2026-08-13 |
 
 ---
 
@@ -140,12 +141,15 @@ CRITICAL/HIGH нет», противореча собственному разд
   не вызывается), успешный вход 201 обнуляет ключ. Событие
   `identity.login.failed` (M055) — в журнале 3 записи с отпечатком контакта,
   не самим контактом. register/login при `AUTH_MODE≠local` — 404 до argon2.
-- **Ф41 (MEDIUM БД):** поколоночные GRANT identity.users для
-  app_investments/app_billing/app_notifications (без password_hash);
-  users_update_self — только профильные колонки; SELECT-политики материалов
-  uploaded_at IS NOT NULL; consents-гейт от плейсхолдерных хешей;
-  has_valid_kyc: sanctions review; has_required_consents на пустой локали;
-  ёмкость оффера при UPDATE; app_integration и client_secret_hash.
+- ~~**Ф41 (MEDIUM БД)**~~ — ЗАКРЫТО 2026-08-13, M056: поколоночный SELECT
+  identity.users для трёх сервисных ролей (без password_hash, шифртекстов,
+  DEK, hmac) и поколоночный UPDATE для app_backend (без primary_role,
+  deleted_at, контактов); SELECT-политики материалов требуют uploaded_at;
+  has_required_consents требует все 4 вида в локали; has_valid_kyc блокирует
+  sanctions review; триггер на снижение target_amount оффера;
+  integration.find_token_candidate вместо чтения всех client_secret_hash.
+  6 новых RLS-тестов (61/61), smoke-integration 53/53, lab 93/93,
+  investments 34/34, experts 49/49, core 46/46.
 - **Ф42 (MEDIUM/LOW core):** скоупы→verbs вебхуков; гонка decide KYC/KYB;
   investments: права до S3; finalize early-return; acceptOffer идемпотентный
   повтор; submit 23505; KEK все 8 доменов на старте; publish advisory-лок;

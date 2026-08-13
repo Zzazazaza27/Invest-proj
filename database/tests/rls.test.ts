@@ -981,3 +981,141 @@ describe('M054: переходы подписки и выдача ролей', (
     });
   });
 });
+
+describe('M056: least privilege и доуточнённые инварианты', () => {
+  /**
+   * Ожидаемая ошибка внутри savepoint: без него первая же отказанная команда
+   * переводит транзакцию в aborted, и следующий (позитивный) контроль падает
+   * не по своей причине — то есть тест был бы «зелёным/красным» по неверному
+   * поводу.
+   */
+  async function deniedInSavepoint(c: Client, sql: string, params: unknown[] = []) {
+    await c.query('SAVEPOINT probe');
+    let failed = false;
+    try {
+      await c.query(sql, params);
+    } catch {
+      failed = true;
+    }
+    await c.query('ROLLBACK TO SAVEPOINT probe');
+    return failed;
+  }
+
+  it('сервисные роли НЕ читают password_hash, но читают разрешённые колонки', async () => {
+    await inRollbackTx(async (c) => {
+      await createUser(c, { role: 'investor' });
+      for (const role of ['app_investments', 'app_billing', 'app_notifications']) {
+        await actAs(c, { userId: null, roles: [], dbRole: role });
+        expect(await deniedInSavepoint(c, 'SELECT password_hash FROM identity.users LIMIT 1')).toBe(
+          true,
+        );
+        // Позитивный контроль: разрешённые колонки роль по-прежнему видит.
+        const ok = await c.query('SELECT id, display_name, status FROM identity.users LIMIT 1');
+        expect(ok.rowCount).toBeGreaterThanOrEqual(0);
+        await actAs(c, { userId: null, roles: [], dbRole: 'app_backend' });
+      }
+    });
+  });
+
+  it('сервисные роли НЕ читают шифртексты контактов и blind-индексы', async () => {
+    await inRollbackTx(async (c) => {
+      await createUser(c, { role: 'investor' });
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_billing' });
+      for (const column of ['email_ciphertext', 'email_hmac', 'contact_wrapped_dek']) {
+        expect(await deniedInSavepoint(c, `SELECT ${column} FROM identity.users LIMIT 1`)).toBe(
+          true,
+        );
+      }
+    });
+  });
+
+  it('пользователь НЕ может сменить себе primary_role, снять blind-индекс или удалиться', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c, { role: 'founder' });
+      await actAs(c, { userId: user.id, roles: ['founder'], dbRole: 'app_backend' });
+      expect(
+        await deniedInSavepoint(
+          c,
+          `UPDATE identity.users SET primary_role = 'admin' WHERE id = $1`,
+          [user.id],
+        ),
+      ).toBe(true);
+      expect(
+        await deniedInSavepoint(c, 'UPDATE identity.users SET email_hmac = NULL WHERE id = $1', [
+          user.id,
+        ]),
+      ).toBe(true);
+      expect(
+        await deniedInSavepoint(c, 'UPDATE identity.users SET deleted_at = now() WHERE id = $1', [
+          user.id,
+        ]),
+      ).toBe(true);
+      // Позитивный контроль: профильные поля меняются.
+      const { rowCount } = await c.query(
+        `UPDATE identity.users SET display_name = 'новое имя' WHERE id = $1`,
+        [user.id],
+      );
+      expect(rowCount).toBe(1);
+    });
+  });
+
+  it('неподтверждённый материал не виден даже владельцу проекта (вторая линия в RLS)', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c, { role: 'founder' });
+      const project = await createProject(c, founder.id);
+      // Свои фикстуры: помощник createTicket объявлен внутри другого describe.
+      const material = async (uploaded: boolean, version: number) => {
+        const id = uuidv7();
+        await c.query(
+          `INSERT INTO lab.project_materials
+             (id, project_id, type, version, s3_key, parse_status, uploaded_by,
+              uploaded_at, size_bytes)
+           VALUES ($1, $2, 'deck', $3, $4, 'queued', $5,
+                   CASE WHEN $6 THEN now() ELSE NULL END,
+                   CASE WHEN $6 THEN 1024 ELSE NULL END)`,
+          [id, project, version, `projects/${project}/materials/deck/${id}`, founder.id, uploaded],
+        );
+        return id;
+      };
+      const pending = await material(false, 1);
+      const confirmed = await material(true, 2);
+
+      await actAs(c, { userId: founder.id, roles: ['founder'], dbRole: 'app_backend' });
+      const { rows } = await c.query<{ id: string }>(
+        'SELECT id FROM lab.project_materials WHERE project_id = $1',
+        [project],
+      );
+      const ids = rows.map((r) => r.id);
+      expect(ids).toContain(confirmed);
+      expect(ids).not.toContain(pending);
+    });
+  });
+
+  it('has_required_consents: локаль без шаблонов НЕ считается принятой', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c, { role: 'founder' });
+      const { rows } = await c.query<{ ok: boolean }>(
+        `SELECT identity.has_required_consents($1, 'xx-XX') AS ok`,
+        [user.id],
+      );
+      expect(rows[0]!.ok).toBe(false);
+    });
+  });
+
+  it('has_valid_kyc: незакрытый санкционный review не считается валидным', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c, { role: 'investor' });
+      const reviewer = await createUser(c, { role: 'admin' });
+      await c.query(
+        `INSERT INTO kyc.kyc_verifications
+           (id, user_id, kind, status, sanctions_status, reviewed_by, decided_at)
+         VALUES ($1, $2, 'identity', 'approved', 'review', $3, now())`,
+        [uuidv7(), user.id, reviewer.id],
+      );
+      const { rows } = await c.query<{ ok: boolean }>('SELECT kyc.has_valid_kyc($1) AS ok', [
+        user.id,
+      ]);
+      expect(rows[0]!.ok).toBe(false);
+    });
+  });
+});
