@@ -143,6 +143,31 @@ const ROLES = [
       ['не читает identity.users', 'SELECT count(*) FROM identity.users'],
     ],
   },
+  {
+    // Выгрузка журнала в архив (M052, остаток SEC-10). Роль читает журнал
+    // ЦЕЛИКОМ (это её назначение) и ведёт append-only реестр выгрузок.
+    // Изменять журнал и реестр, а также заглядывать в данные приложений — нет.
+    role: 'app_archive',
+    urlKey: 'DATABASE_URL_APP_ARCHIVE',
+    login: 'app_archive_user',
+    allowed: [
+      ['читает журнал целиком', 'SELECT count(*) FROM audit.events'],
+      ['читает реестр выгрузок', 'SELECT count(*) FROM audit.event_archives'],
+      ['сверяет hash-chain', 'SELECT count(*) FROM audit.verify_event_chain(NULL)'],
+    ],
+    forbidden: [
+      ['не пишет в журнал', "INSERT INTO audit.events (verb) VALUES ('x')"],
+      ['не правит журнал', "UPDATE audit.events SET verb = 'x' WHERE false"],
+      ['не удаляет из журнала', 'DELETE FROM audit.events WHERE false'],
+      [
+        'не правит реестр выгрузок',
+        "UPDATE audit.event_archives SET sha256 = repeat('0', 64) WHERE false",
+      ],
+      ['не удаляет из реестра', 'DELETE FROM audit.event_archives WHERE false'],
+      ['не читает пользователей', 'SELECT count(*) FROM identity.users'],
+      ['не читает проекты', 'SELECT count(*) FROM lab.projects'],
+    ],
+  },
 ];
 
 console.warn('\n=== СЕРВИСНЫЕ ПОДКЛЮЧЕНИЯ БД ===\n');

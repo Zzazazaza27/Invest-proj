@@ -147,6 +147,8 @@ services:
       S3_BUCKET: ${S3_BUCKET:-unicorn-launch}
       S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-}
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
+      ARCHIVE_S3_ACCESS_KEY_ID: ${ARCHIVE_S3_ACCESS_KEY_ID:-}
+      ARCHIVE_S3_SECRET_ACCESS_KEY: ${ARCHIVE_S3_SECRET_ACCESS_KEY:-}
     entrypoint:
       - /bin/sh
       - -c
@@ -175,6 +177,15 @@ services:
           echo "учётка приложения $$S3_ACCESS_KEY_ID готова (политика unicorn-app-rw)"
         else
           echo "ВНИМАНИЕ: S3_ACCESS_KEY_ID совпадает с root или пуст — приложение пойдёт под root-учёткой"
+        fi
+        # Учётка архива журнала (Ф31, остаток SEC-10): писать и читать может,
+        # УДАЛЯТЬ — нет (append-only на уровне прав), и только под archive/*.
+        if [ -n "$$ARCHIVE_S3_ACCESS_KEY_ID" ] && [ -n "$$ARCHIVE_S3_SECRET_ACCESS_KEY" ]; then
+          printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:GetObject"],"Resource":["arn:aws:s3:::%s/archive/*"]},{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::%s"]}]}' "$$S3_BUCKET" "$$S3_BUCKET" > /tmp/archive-policy.json
+          mc admin user add local "$$ARCHIVE_S3_ACCESS_KEY_ID" "$$ARCHIVE_S3_SECRET_ACCESS_KEY"
+          mc admin policy create local unicorn-archive-append /tmp/archive-policy.json || true
+          mc admin policy attach local unicorn-archive-append --user "$$ARCHIVE_S3_ACCESS_KEY_ID" || true
+          echo "учётка архива $$ARCHIVE_S3_ACCESS_KEY_ID готова (политика unicorn-archive-append, без Delete)"
         fi
         echo "бакет $$S3_BUCKET готов"
     restart: 'no'

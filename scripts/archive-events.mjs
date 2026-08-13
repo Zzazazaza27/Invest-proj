@@ -5,20 +5,30 @@
  * Закрывает эксплуатационный пункт: «архив событий старше 90 дней уезжает в
  * холодное хранилище отдельной процедурой». Процедура — эта.
  *
- * Три решения, каждое со своей причиной.
+ * Решения, каждое со своей причиной.
  *
  * 1. **Только копирование, без удаления.** Срок хранения журнала оператора
  *    инвестиционной платформы определяется законом и Правилами платформы, а не
  *    удобством эксплуатации. Скрипт, умеющий удалять события, рано или поздно
  *    удалит их «для чистоты» — поэтому он этого не умеет вовсе.
  *
- * 2. **Отдельная процедура, а не задача ядра.** Выгрузка требует доступа ко
- *    ВСЕМУ журналу; давать такое право приложению незачем. Скрипт работает
- *    подключением владельца схем, как и миграции.
+ * 2. **Своя роль БД, не владелец (M052, остаток SEC-10).** Выгрузке нужен весь
+ *    журнал НА ЧТЕНИЕ и append-only реестр. Владелец схем — суперпользователь,
+ *    который может переписать сам журнал; скомпрометированный скрипт выгрузки
+ *    не должен этого уметь. `app_archive_user` не умеет.
  *
- * 3. **Сверка цепочки до выгрузки.** Копия, снятая с повреждённой hash-chain,
+ * 3. **Своя учётка хранилища без права удаления.** `unicorn_archive` пишет и
+ *    читает только под `archive/*`; DeleteObject в политике нет — копия
+ *    журнала неудаляема этими кредами (Object Lock в production сверху).
+ *
+ * 4. **Сверка цепочки до выгрузки.** Копия, снятая с повреждённой hash-chain,
  *    доказательством целостности не является — и в реестре помечается
  *    `chain_intact = false`, а не выглядит полноценным архивом.
+ *
+ * 5. **Потоковая сборка и сверка содержимого (остаток SEC-10).** События
+ *    пишутся во временный файл партиями — в памяти живёт одна партия, а не
+ *    весь диапазон. Запись подтверждается не размером, а ЧТЕНИЕМ ОБЪЕКТА
+ *    ОБРАТНО со сверкой sha256 байт в байт.
  *
  * Прогон идемпотентен по ключу объекта: повторная выгрузка того же диапазона
  * упирается в UNIQUE и честно отказывает, а не создаёт вторую копию молча.
@@ -29,9 +39,13 @@
  *   node scripts/archive-events.mjs --dry-run        # посчитать, ничего не писать
  */
 import pg from 'pg';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, createWriteStream, createReadStream, statSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createHash, createHmac } from 'node:crypto';
+import { once } from 'node:events';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -60,117 +74,150 @@ function arg(name, fallback) {
 
 const RETENTION_DAYS = arg('days', 90);
 const DRY_RUN = process.argv.includes('--dry-run');
-/** Сколько событий читается за раз: выгрузка не должна держать всё в памяти. */
+/** Сколько событий читается за раз: в памяти живёт партия, а не весь диапазон. */
 const BATCH = 5_000;
 
-const { S3Service, putObject, sha256Hex } = await import(
-  new URL('../apps/core/dist/storage/s3.service.js', import.meta.url).href
-);
-const s3 = new S3Service();
-if (!s3.isConfigured) {
-  console.error('Хранилище не настроено: выгружать некуда.');
+// --- Хранилище: собственная учётка архива, подпись SigV4 ----------------------
+const S3 = {
+  endpoint: (process.env.S3_ENDPOINT ?? '').replace(/\/+$/, ''),
+  bucket: process.env.S3_BUCKET ?? '',
+  region: process.env.S3_REGION ?? 'us-east-1',
+  accessKey: process.env.ARCHIVE_S3_ACCESS_KEY_ID ?? '',
+  secretKey: process.env.ARCHIVE_S3_SECRET_ACCESS_KEY ?? '',
+};
+if (!S3.endpoint || !S3.bucket || !S3.accessKey || !S3.secretKey) {
+  console.error(
+    'Хранилище архива не настроено: нужны S3_ENDPOINT, S3_BUCKET, ' +
+      'ARCHIVE_S3_ACCESS_KEY_ID, ARCHIVE_S3_SECRET_ACCESS_KEY (учётка без права удаления).',
+  );
+  process.exit(1);
+}
+const DB_URL = process.env.DATABASE_URL_APP_ARCHIVE ?? '';
+if (!DB_URL) {
+  console.error(
+    'Нужен DATABASE_URL_APP_ARCHIVE (роль app_archive_user, M052) — выгрузка не работает ' +
+      'подключением владельца: у владельца слишком много прав для этой задачи.',
+  );
   process.exit(1);
 }
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER, max: 2 });
+const sha256HexOf = (buf) => createHash('sha256').update(buf).digest('hex');
+const amzDate = (d) =>
+  d
+    .toISOString()
+    .replace(/[-:]/g, '')
+    .replace(/\.\d{3}/, '');
+function signingKey(secret, shortDate, region, service) {
+  let k = createHmac('sha256', `AWS4${secret}`).update(shortDate).digest();
+  for (const part of [region, service, 'aws4_request'])
+    k = createHmac('sha256', k).update(part).digest();
+  return k;
+}
+
+/**
+ * Подписанный запрос к объекту архива. Для PUT тело подаётся ПОТОКОМ из файла:
+ * хеш содержимого посчитан заранее при сборке, файл в память не читается.
+ */
+async function s3Request(method, key, { bodyPath = null, payloadHashHex = null } = {}) {
+  const url = new URL(
+    `${S3.endpoint}/${S3.bucket}/${key.split('/').map(encodeURIComponent).join('/')}`,
+  );
+  const date = amzDate(new Date());
+  const shortDate = date.slice(0, 8);
+  const payloadHash = payloadHashHex ?? sha256HexOf(Buffer.alloc(0));
+  const headers = { host: url.host, 'x-amz-content-sha256': payloadHash, 'x-amz-date': date };
+  if (bodyPath) {
+    headers['content-length'] = String(statSync(bodyPath).size);
+    headers['content-type'] = 'application/x-ndjson';
+  }
+  const signedHeaders = Object.keys(headers).sort().join(';');
+  const canonicalHeaders = Object.keys(headers)
+    .sort()
+    .map((n) => `${n}:${headers[n]}\n`)
+    .join('');
+  const canonicalRequest = [
+    method,
+    url.pathname,
+    '',
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join('\n');
+  const scope = `${shortDate}/${S3.region}/s3/aws4_request`;
+  const stringToSign = ['AWS4-HMAC-SHA256', date, scope, sha256HexOf(canonicalRequest)].join('\n');
+  const signature = createHmac('sha256', signingKey(S3.secretKey, shortDate, S3.region, 's3'))
+    .update(stringToSign, 'utf8')
+    .digest('hex');
+  return fetch(url.toString(), {
+    method,
+    headers: {
+      ...headers,
+      Authorization: `AWS4-HMAC-SHA256 Credential=${S3.accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+    },
+    body: bodyPath ? ReadableStream.from(createReadStream(bodyPath)) : undefined,
+    duplex: bodyPath ? 'half' : undefined,
+    // Таймаут обязателен на каждом внешнем вызове (RULES.md §3.1).
+    signal: AbortSignal.timeout(120_000),
+  });
+}
+
+/** Прочитать объект обратно и посчитать sha256 потоком — сверка содержимого. */
+async function readBackDigest(key) {
+  const res = await s3Request('GET', key);
+  if (!res.ok) return { exists: res.status !== 404, ok: false, status: res.status };
+  const hash = createHash('sha256');
+  let size = 0;
+  for await (const chunk of res.body) {
+    hash.update(chunk);
+    size += chunk.length;
+  }
+  return { exists: true, ok: true, sha256: hash.digest('hex'), size };
+}
+
+const pool = new pg.Pool({ connectionString: DB_URL, max: 2 });
 const sql = async (text, params = []) => (await pool.query(text, params)).rows;
 
 console.warn('\n=== ВЫГРУЗКА ЖУРНАЛА СОБЫТИЙ В ХОЛОДНОЕ ХРАНИЛИЩЕ ===\n');
-console.warn(`порог: события старше ${RETENTION_DAYS} дней${DRY_RUN ? ' · сухой прогон' : ''}`);
+console.warn(
+  `порог: события старше ${RETENTION_DAYS} дней${DRY_RUN ? ' · сухой прогон' : ''} · роль app_archive_user · учётка unicorn_archive`,
+);
 
 const [{ boundary }] = await sql(`SELECT (now() - ($1 || ' days')::interval) AS boundary`, [
   String(RETENTION_DAYS),
 ]);
 
-// Что уже выгружено: диапазон начинается там, где закончился прошлый архив.
-// Иначе каждая выгрузка копировала бы всё с начала времён.
 const [{ last_end: lastEnd }] = await sql(
   `SELECT coalesce(max(period_end), to_timestamp(0)) AS last_end FROM audit.event_archives`,
 );
 
-// Реестр утверждает, что копия существует. Проверяем это, а не верим записи:
-// объект мог быть удалён из хранилища, и тогда «выгружено» — ложь, которую без
-// проверки никто не заметит. Восстанавливаем ту же копию из журнала.
-const [previous] = await sql(
-  `SELECT object_key, period_start, period_end, sha256
-     FROM audit.event_archives ORDER BY exported_at DESC LIMIT 1`,
-);
-if (previous) {
-  const head = await s3.headObject(previous.object_key);
-  if (!head.exists) {
-    console.warn(`  ВНИМАНИЕ  объект прошлой выгрузки отсутствует: ${previous.object_key}`);
-    const restored = await collectRange(previous.period_start, previous.period_end);
-    const restoredDigest = sha256Hex(restored.body);
-    if (restoredDigest !== previous.sha256) {
-      // Тот же диапазон журнала обязан дать тот же файл. Расхождение означает,
-      // что append-only журнал изменился, — это находка, а не повод перезаписать.
-      console.error(
-        'Восстановленная копия НЕ совпала с отпечатком из реестра: ' +
-          `${restoredDigest} против ${previous.sha256}. Журнал изменился — разбирайтесь вручную.`,
-      );
-      process.exit(1);
-    }
-    if (DRY_RUN) {
-      console.warn('  сухой прогон: восстановление объекта пропущено');
-    } else {
-      await putObject({
-        key: previous.object_key,
-        body: restored.body,
-        contentType: 'application/x-ndjson',
-      });
-      console.warn('  OK    объект восстановлен из журнала, отпечаток совпал');
-    }
-  }
-}
-
-const [counts] = await sql(
-  `SELECT count(*)::bigint AS total, min(ts) AS first_ts, max(ts) AS last_ts
-     FROM audit.events WHERE ts > $1 AND ts <= $2`,
-  [lastEnd, boundary],
-);
-const total = Number(counts.total);
-console.warn(
-  `к выгрузке: ${total} событий в диапазоне ` +
-    `(${new Date(lastEnd).toISOString()} … ${new Date(boundary).toISOString()}]`,
-);
-
-if (total === 0) {
-  console.warn('\nВыгружать нечего: в диапазоне нет событий.\n');
-  await pool.end();
-  process.exit(0);
-}
-
-// Сверка цепочки ДО выгрузки: копия с повреждённой цепочки архивом не является.
-const broken = await sql('SELECT broken_event_id FROM audit.verify_event_chain($1)', [lastEnd]);
-const chainIntact = broken.length === 0;
-console.warn(
-  chainIntact
-    ? '  OK    hash-chain цела на момент выгрузки'
-    : `  ВНИМАНИЕ  цепочка повреждена (${broken.length} разрывов) — архив будет помечен`,
-);
-
-// Ключ строится из диапазона: по нему видно, что внутри, без чтения файла.
-const objectKey =
-  `archive/audit-events/${new Date(boundary).toISOString().slice(0, 10)}/` +
-  `events-${new Date(lastEnd).getTime()}-${new Date(boundary).getTime()}.jsonl`;
+// Временный каталог СИСТЕМЫ (не репозитория); снос при любом исходе.
+const tmpRoot = await mkdtemp(join(tmpdir(), 'unicorn-archive-'));
+const cleanup = () => rm(tmpRoot, { recursive: true, force: true }).catch(() => {});
+process.on('exit', () => {
+  /* rm асинхронный — на exit только сигнал ниже */
+});
+process.on('SIGINT', async () => {
+  await cleanup();
+  process.exit(130);
+});
 
 /**
- * Собрать события диапазона `(from, to]` в строки JSONL.
- *
- * Отдельной функцией, потому что тот же сбор нужен восстановлению утраченной
- * копии — и он обязан давать БАЙТ В БАЙТ тот же файл, иначе сверка отпечатка
- * ничего не доказывает.
+ * Собрать события диапазона `(from, to]` в JSONL-файл ПОТОКОМ.
+ * В памяти живёт одна партия BATCH; sha256 считается инкрементально.
+ * Тот же сбор используется восстановлением утраченной копии — и обязан давать
+ * байт в байт тот же файл, иначе сверка отпечатка ничего не доказывает.
  */
-async function collectRange(from, to) {
-  const lines = [];
+async function collectRangeToFile(from, to, filePath) {
+  const out = createWriteStream(filePath, { encoding: 'utf8' });
+  const hash = createHash('sha256');
+  let count = 0;
   let firstEventId = null;
   let lastEventId = null;
   let offsetTs = from;
   let offsetId = '00000000-0000-0000-0000-000000000000';
 
   for (;;) {
-    // Keyset по (ts, id) — тот же порядок, что и у первичного ключа: OFFSET на
-    // сотнях тысяч строк превращает выгрузку в квадратичную.
+    // Keyset по (ts, id): OFFSET на сотнях тысяч строк квадратичен.
     const batch = await sql(
       `SELECT id, ts, verb, actor_id, actor_role, subject_type, subject_id,
               context_jsonb, trace_id, encode(prev_hash, 'hex') AS prev_hash,
@@ -183,75 +230,181 @@ async function collectRange(from, to) {
     );
     if (batch.length === 0) break;
 
+    let chunk = '';
     for (const row of batch) {
       firstEventId ??= row.id;
       lastEventId = row.id;
-      lines.push(
-        JSON.stringify({
-          id: row.id,
-          ts: row.ts.toISOString(),
-          verb: row.verb,
-          actorId: row.actor_id,
-          actorRole: row.actor_role,
-          subjectType: row.subject_type,
-          subjectId: row.subject_id,
-          context: row.context_jsonb,
-          traceId: row.trace_id,
-          prevHash: row.prev_hash,
-          rowHash: row.row_hash,
-        }),
-      );
+      chunk += `${JSON.stringify({
+        id: row.id,
+        ts: row.ts.toISOString(),
+        verb: row.verb,
+        actorId: row.actor_id,
+        actorRole: row.actor_role,
+        subjectType: row.subject_type,
+        subjectId: row.subject_id,
+        context: row.context_jsonb,
+        traceId: row.trace_id,
+        prevHash: row.prev_hash,
+        rowHash: row.row_hash,
+      })}\n`;
+      count += 1;
     }
+    hash.update(chunk, 'utf8');
+    if (!out.write(chunk)) await once(out, 'drain');
+
     const tail = batch[batch.length - 1];
     offsetTs = tail.ts;
     offsetId = tail.id;
     if (batch.length < BATCH) break;
   }
 
-  return { lines, firstEventId, lastEventId, body: Buffer.from(`${lines.join('\n')}\n`, 'utf8') };
+  out.end();
+  await once(out, 'finish');
+  return { count, firstEventId, lastEventId, sha256: hash.digest('hex') };
 }
 
-const collected = await collectRange(lastEnd, boundary);
-const lines = collected.lines;
-const firstEventId = collected.firstEventId;
-const lastEventId = collected.lastEventId;
-const body = collected.body;
-const digest = sha256Hex(body);
-console.warn(
-  `  собрано строк: ${lines.length}, размер ${body.length} байт, sha256 ${digest.slice(0, 16)}…`,
-);
-
-if (DRY_RUN) {
-  console.warn('\nСухой прогон: в хранилище и в реестр ничего не записано.\n');
-  await pool.end();
-  process.exit(0);
+/** Записать файл в хранилище и доказать сверкой содержимого, что он там. */
+async function uploadAndVerify(key, filePath, expectedSha256) {
+  const put = await s3Request('PUT', key, { bodyPath: filePath, payloadHashHex: expectedSha256 });
+  if (!put.ok) {
+    console.error(`PUT ${key}: HTTP ${put.status}`);
+    return false;
+  }
+  // «Записано» подтверждается чтением обратно и сверкой sha256, а не кодом
+  // ответа и не размером: хранилище может принять запрос и сохранить не то.
+  const back = await readBackDigest(key);
+  if (!back.ok || back.sha256 !== expectedSha256) {
+    console.error(
+      `объект в хранилище НЕ совпал по содержимому: sha256 ${back.sha256?.slice(0, 16)}… ` +
+        `против ${expectedSha256.slice(0, 16)}…`,
+    );
+    return false;
+  }
+  return { size: back.size };
 }
 
-await putObject({ key: objectKey, body, contentType: 'application/x-ndjson' });
-
-// «Записано» подтверждается чтением обратно, а не кодом ответа: хранилище
-// может принять запрос и сохранить не то (проверено на политике бакета).
-const head = await s3.headObject(objectKey);
-if (!head.exists || head.sizeBytes !== body.length) {
-  console.error(
-    `Объект в хранилище не совпал с выгруженным: exists=${head.exists}, ` +
-      `size=${head.sizeBytes} против ${body.length}`,
+const EXIT = Symbol('exit');
+try {
+  // Реестр утверждает, что копия существует. Проверяем это, а не верим записи;
+  // сверка — по СОДЕРЖИМОМУ, восстановление — из журнала.
+  const [previous] = await sql(
+    `SELECT object_key, period_start, period_end, sha256
+       FROM audit.event_archives ORDER BY exported_at DESC LIMIT 1`,
   );
-  process.exit(1);
+  if (previous) {
+    const back = await readBackDigest(previous.object_key);
+    if (!back.exists) {
+      console.warn(`  ВНИМАНИЕ  объект прошлой выгрузки отсутствует: ${previous.object_key}`);
+      const restorePath = join(tmpRoot, 'restore.jsonl');
+      const restored = await collectRangeToFile(
+        previous.period_start,
+        previous.period_end,
+        restorePath,
+      );
+      if (restored.sha256 !== previous.sha256) {
+        // Тот же диапазон журнала обязан дать тот же файл. Расхождение означает,
+        // что append-only журнал изменился, — это находка, а не повод перезаписать.
+        console.error(
+          'Восстановленная копия НЕ совпала с отпечатком из реестра: ' +
+            `${restored.sha256} против ${previous.sha256}. Журнал изменился — разбирайтесь вручную.`,
+        );
+        process.exitCode = 1;
+        throw EXIT;
+      }
+      if (DRY_RUN) {
+        console.warn('  сухой прогон: восстановление объекта пропущено');
+      } else if (await uploadAndVerify(previous.object_key, restorePath, restored.sha256)) {
+        console.warn('  OK    объект восстановлен из журнала, отпечаток совпал');
+      } else {
+        process.exitCode = 1;
+        throw EXIT;
+      }
+    } else if (back.sha256 !== previous.sha256) {
+      console.error(
+        `Объект прошлой выгрузки ИЗМЕНЁН в хранилище: sha256 ${back.sha256.slice(0, 16)}… ` +
+          `против реестра ${previous.sha256.slice(0, 16)}…. Разбирайтесь вручную.`,
+      );
+      process.exitCode = 1;
+      throw EXIT;
+    }
+  }
+
+  const [counts] = await sql(
+    `SELECT count(*)::bigint AS total FROM audit.events WHERE ts > $1 AND ts <= $2`,
+    [lastEnd, boundary],
+  );
+  const total = Number(counts.total);
+  console.warn(
+    `к выгрузке: ${total} событий в диапазоне ` +
+      `(${new Date(lastEnd).toISOString()} … ${new Date(boundary).toISOString()}]`,
+  );
+
+  if (total === 0) {
+    console.warn('\nВыгружать нечего: в диапазоне нет событий.\n');
+    process.exitCode = 0;
+    throw EXIT;
+  }
+
+  // Сверка цепочки ДО выгрузки: копия с повреждённой цепочки архивом не является.
+  const broken = await sql('SELECT broken_event_id FROM audit.verify_event_chain($1)', [lastEnd]);
+  const chainIntact = broken.length === 0;
+  console.warn(
+    chainIntact
+      ? '  OK    hash-chain цела на момент выгрузки'
+      : `  ВНИМАНИЕ  цепочка повреждена (${broken.length} разрывов) — архив будет помечен`,
+  );
+
+  const objectKey =
+    `archive/audit-events/${new Date(boundary).toISOString().slice(0, 10)}/` +
+    `events-${new Date(lastEnd).getTime()}-${new Date(boundary).getTime()}.jsonl`;
+
+  const exportPath = join(tmpRoot, 'export.jsonl');
+  const collected = await collectRangeToFile(lastEnd, boundary, exportPath);
+  console.warn(
+    `  собрано строк: ${collected.count}, размер ${statSync(exportPath).size} байт, ` +
+      `sha256 ${collected.sha256.slice(0, 16)}…`,
+  );
+
+  if (DRY_RUN) {
+    console.warn('\nСухой прогон: в хранилище и в реестр ничего не записано.\n');
+    process.exitCode = 0;
+    throw EXIT;
+  }
+
+  const uploaded = await uploadAndVerify(objectKey, exportPath, collected.sha256);
+  if (!uploaded) {
+    process.exitCode = 1;
+    throw EXIT;
+  }
+  console.warn(
+    `  OK    объект в хранилище: ${objectKey} (${uploaded.size} байт, sha256 сверен чтением обратно)`,
+  );
+
+  await sql(
+    `INSERT INTO audit.event_archives
+       (period_start, period_end, object_key, event_count, sha256,
+        first_event_id, last_event_id, chain_intact)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+    [
+      lastEnd,
+      boundary,
+      objectKey,
+      collected.count,
+      collected.sha256,
+      collected.firstEventId,
+      collected.lastEventId,
+      chainIntact,
+    ],
+  );
+  console.warn('  OK    запись в реестре выгрузок создана');
+
+  console.warn(
+    `\nВыгружено ${collected.count} событий. События в журнале НЕ удалены: ` +
+      'выгрузка только копирует.\n',
+  );
+} catch (e) {
+  if (e !== EXIT) throw e;
+} finally {
+  await cleanup();
+  await pool.end();
 }
-console.warn(`  OK    объект в хранилище: ${objectKey} (${head.sizeBytes} байт)`);
-
-await sql(
-  `INSERT INTO audit.event_archives
-     (period_start, period_end, object_key, event_count, sha256,
-      first_event_id, last_event_id, chain_intact)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-  [lastEnd, boundary, objectKey, lines.length, digest, firstEventId, lastEventId, chainIntact],
-);
-console.warn('  OK    запись в реестре выгрузок создана');
-
-console.warn(
-  `\nВыгружено ${lines.length} событий. События в журнале НЕ удалены: ` +
-    'выгрузка только копирует.\n',
-);
-await pool.end();

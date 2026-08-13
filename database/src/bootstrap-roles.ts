@@ -58,6 +58,13 @@ const ROLE_MAP: { login: string; group: string; passwordEnv: string }[] = [
     group: 'app_auth',
     passwordEnv: 'DB_ROLE_PASSWORD_APP_AUTH',
   },
+  // Выгрузка журнала в холодное хранилище: чтение журнала целиком + append-only
+  // реестр выгрузок. Журнал изменять не может (M052, остаток SEC-10).
+  {
+    login: 'app_archive_user',
+    group: 'app_archive',
+    passwordEnv: 'DB_ROLE_PASSWORD_APP_ARCHIVE',
+  },
 ];
 
 const MIN_PASSWORD_LENGTH = 24;
