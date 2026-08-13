@@ -15,17 +15,44 @@ import { formatDate, problemText } from '../lib/format';
  */
 export function CompliancePage() {
   const [queue, setQueue] = useState<KycVerification[] | null>(null);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // Перезагрузка с начала: после решения список сбрасывается, чтобы курсор не
+  // дублировал и не пропускал строки относительно изменившейся очереди.
   const load = useCallback(async () => {
     try {
-      setQueue(await api.kycQueue());
+      const page = await api.kycQueue();
+      setQueue(page.items);
+      setNextCursor(page.nextCursor);
       setError(null);
     } catch (err) {
       setError(problemText(err, 'Не удалось загрузить очередь'));
     }
   }, []);
+
+  // Следующая страница ДОПИСЫВАЕТСЯ к списку: раньше `nextCursor`
+  // выбрасывался клиентом, и заявки после первых 50 были недостижимы для
+  // оператора вовсе (CODE-MED-01).
+  const loadMore = useCallback(async () => {
+    if (!nextCursor) return;
+    setLoadingMore(true);
+    try {
+      const page = await api.kycQueue(nextCursor);
+      setQueue((current) => {
+        const seen = new Set((current ?? []).map((item) => item.id));
+        return [...(current ?? []), ...page.items.filter((item) => !seen.has(item.id))];
+      });
+      setNextCursor(page.nextCursor);
+      setError(null);
+    } catch (err) {
+      setError(problemText(err, 'Не удалось загрузить продолжение очереди'));
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor]);
 
   useEffect(() => {
     void load();
@@ -111,6 +138,16 @@ export function CompliancePage() {
               ))}
             </tbody>
           </table>
+          {nextCursor !== null && (
+            <button
+              type="button"
+              className="btn--sm"
+              disabled={loadingMore}
+              onClick={() => void loadMore()}
+            >
+              {loadingMore ? 'Загружаем…' : 'Показать ещё'}
+            </button>
+          )}
         </div>
       )}
     </>

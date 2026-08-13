@@ -252,13 +252,23 @@ export const api = {
 
   // --------------------------------------------------------------- комплаенс
 
-  async kycQueue(): Promise<KycVerification[]> {
-    const { items } = await client.request({
+  /**
+   * Страница очереди KYC. Прежний клиент выбрасывал `nextCursor`, и оператор
+   * ФИЗИЧЕСКИ не мог увидеть заявки после первых 50: страницы за первой были
+   * недостижимы из интерфейса (CODE-MED-01).
+   */
+  async kycQueue(
+    cursor?: string,
+  ): Promise<{ items: KycVerification[]; nextCursor: string | null }> {
+    const page = await client.request({
       method: 'GET',
-      path: '/v1/kyc/queue',
-      schema: listOf(KycVerificationSchema),
+      path: cursor ? `/v1/kyc/queue?cursor=${encodeURIComponent(cursor)}` : '/v1/kyc/queue',
+      schema: z.object({
+        items: z.array(KycVerificationSchema),
+        nextCursor: z.string().nullable(),
+      }),
     });
-    return items;
+    return page;
   },
 
   decideKyc(

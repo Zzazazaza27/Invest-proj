@@ -312,7 +312,9 @@ jobs:
         run: |
           # Версии закреплены: незакреплённый инструмент в цепочке сборки — это
           # чужой код, который меняется без правки этого файла (SEC-18).
-          python -m pip install --upgrade pip
-          pip install -r apps/ai-gateway/requirements.txt
-          pip install pytest==8.3.4
+          # pip тоже закреплён (SEC-MED-07): «--upgrade pip» без версии менял
+          # бутстрап-инструмент без правки коммита; набор пакетов — тот же
+          # requirements-dev.txt, что и локально, а не отдельный список.
+          python -m pip install pip==24.3.1
+          pip install -r apps/ai-gateway/requirements-dev.txt
           cd apps/ai-gateway && python -m pytest tests/ -q

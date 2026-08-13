@@ -20,3 +20,4 @@ ROADMAP.md
 
 # Унаследованный лендинг: конвертируется в TS в фазе Ф10, тогда и форматируется.
 apps/web-public/src
+.pytest-sandbox
