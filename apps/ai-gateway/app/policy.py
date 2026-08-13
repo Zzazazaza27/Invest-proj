@@ -124,12 +124,25 @@ def load_policy(path: str | Path) -> Policy:
                 f"провайдер {name} вне {sorted(allowed)}, но ему разрешены "
                 f"ограниченные классы {sorted(classes & restricted)}"
             )
+        # Endpoint сетевого провайдера обязан быть https и не может быть
+        # произвольной строкой из файла политики: компрометация политики иначе
+        # уводила бы данные по plain http на чужой хост, а проверка
+        # резидентности смотрит на поле jurisdiction, а не на адрес
+        # (LOW внешнего аудита №2). Детерминированный провайдер наружу не
+        # ходит — для него endpoint не требуется.
+        endpoint = entry.get("endpoint")
+        if entry.get("kind", "llm") != "deterministic" and endpoint is not None:
+            if not isinstance(endpoint, str) or not endpoint.startswith("https://"):
+                raise PolicyError(
+                    f"провайдер {name!r}: endpoint обязан быть https:// (получено {endpoint!r})"
+                )
+
         providers[name] = Provider(
             name=name,
             jurisdiction=jurisdiction,
             kind=entry.get("kind", "llm"),
             is_llm=bool(entry.get("is_llm", True)),
-            endpoint=entry.get("endpoint"),
+            endpoint=endpoint,
             data_classes=classes,
             # Детерминированный провайдер включён всегда: он не ходит наружу.
             enabled=bool(entry.get("enabled", entry.get("kind") == "deterministic")),

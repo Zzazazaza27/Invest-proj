@@ -57,6 +57,7 @@
 | Ф40  | Обход классов rate-limit, троттлинг перебора пароля, prod-гашение login   | ✅ завершена 2026-08-13 |
 | Ф41  | M056: least privilege identity.users, материалы, согласия, KYC, оффер     | ✅ завершена 2026-08-13 |
 | Ф42  | Скоупы вебхуков, гонки KYC, порядок S3, M057/M058 (регрессия M056)        | ✅ завершена 2026-08-13 |
+| Ф43  | AI-шлюз: threadpool, 401 на не-ASCII, trace_id, healthz, https-endpoint   | ✅ завершена 2026-08-13 |
 
 ---
 
@@ -159,10 +160,13 @@ CRITICAL/HIGH нет», противореча собственному разд
   M057 (служебные счётчики материалов через definer — квота и версия
   считались по скрытым строкам) и M058 (незавершённый билет виден автору,
   иначе finalize отвечал 404). 418 тестов, зонды 17/17 и 8/8.
-- **Ф43 (ai-gateway):** analyze в threadpool + limit-concurrency; 401 вместо
-  500 на не-ASCII Authorization; pattern на trace_id; healthz только status;
-  https+allowlist endpoint провайдера; мёртвый BodyTooLarge; source_ref;
-  stage enum; тесты на 401/не-ASCII.
+- ~~**Ф43 (ai-gateway)**~~ — ЗАКРЫТО 2026-08-13: analyze в threadpool +
+  --limit-concurrency; сравнение токена в байтах (401 вместо 500 на latin-1);
+  pattern на trace_id (422 на перевод строки); healthz только status;
+  https обязателен для endpoint провайдера (негативный контроль: PolicyError);
+  удалён мёртвый BodyTooLarge, обезличен source_ref, stage сведён к
+  перечислению. Тестов шлюза 31 вместо 24 (+8, включая первые тесты на 401),
+  smoke-ai 42/42.
 - **Ф44 (фронтенды):** унификация трёх кабинетов с admin (setCsrf(null),
   маскировка detail логина); fail-fast BASE_URL в prod-сборке; noindex;
   encodeURIComponent в admin api + UUID-валидация; VITE_CSRF_COOKIE_NAME в

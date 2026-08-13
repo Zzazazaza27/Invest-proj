@@ -192,7 +192,12 @@ def analyze(project: dict) -> dict:
     """Полный разбор заявки. Чистая функция: один вход — один выход."""
     title = str(project.get("title") or "")
     summary = str(project.get("summary") or "")
-    stage = str(project.get("stage") or "idea").lower()
+    # Стадия попадает в тексты, публикуемые инвесторам. Экранирование —
+    # обязанность фронтенда, но свободную строку из запроса дешевле свести к
+    # известному перечислению прямо здесь (INFO внешнего аудита №2):
+    # неизвестное значение становится 'idea' — тем же, что и пустое.
+    stage_raw = str(project.get("stage") or "idea").lower()
+    stage = stage_raw if stage_raw in STAGE_MATURITY else "idea"
     materials = project.get("materials") or []
 
     material_texts = [str(m.get("text") or "") for m in materials]
@@ -397,7 +402,7 @@ def analyze(project: dict) -> dict:
             value={"kinds": sorted(material_kinds), "count": len(materials)},
             confidence=1.0,
             source_type="materials",
-            source_ref="lab.project_materials",
+            source_ref="project_materials_count",
         ),
     ]
 

@@ -200,8 +200,14 @@ console.warn('\n=== ЖИВОЙ ПРОГОН: AI-КОНТУР ===\n');
   const health = await fetch(`${GATEWAY}/healthz`, {
     signal: AbortSignal.timeout(5000),
   }).then((r) => r.json());
-  check('шлюз отвечает', health.status === 'ok', `политика ${health.policyVersion}`);
-  check('провайдер по умолчанию — локальный', health.defaultProvider === 'local_deterministic');
+  // healthz отдаёт ТОЛЬКО статус (Ф43): версия политики и провайдер по
+  // умолчанию — разведданные для того, кто дотянулся до порта. Провайдер
+  // проверяется там, где он действительно важен, — в ответе анализа ниже.
+  check('шлюз отвечает', health.status === 'ok', `ответ: ${JSON.stringify(health)}`);
+  check(
+    'healthz не раскрывает политику и провайдера',
+    health.policyVersion === undefined && health.defaultProvider === undefined,
+  );
 }
 
 const founder = await register('founder', 'f');

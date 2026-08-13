@@ -28,6 +28,7 @@ import uuid
 from typing import Any, Final
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from starlette.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
@@ -160,7 +161,12 @@ class AnalyzeRequest(BaseModel):
     data_class: str = Field(max_length=32)
     project: ProjectPayload
     provider: str | None = Field(default=None, max_length=64)
-    trace_id: str | None = Field(default=None, max_length=128)
+    # Алфавит ограничен, а не только длина: trace_id пишется в лог, и
+    # перевод строки в нём — подделка строки журнала чужими руками (log
+    # forging, LOW внешнего аудита №2). Сейчас core присылает уже
+    # санированный идентификатор, но шлюз — граница доверия и обязан
+    # защищать себя сам.
+    trace_id: str | None = Field(default=None, pattern=r"^[A-Za-z0-9._:-]{1,64}$")
 
     @field_validator("task")
     @classmethod
@@ -206,8 +212,15 @@ def create_app(policy: Policy | None = None) -> FastAPI:
     async def authenticate(authorization: str = Header(default="")) -> None:
         prefix = "Bearer "
         presented = authorization[len(prefix) :] if authorization.startswith(prefix) else ""
+        # Сравнение в БАЙТАХ: compare_digest на str падает TypeError, если в
+        # строке есть символы вне ASCII (latin-1 из заголовка), — наружу
+        # уходил 500 вместо 401, а в лог трейсбек (LOW внешнего аудита №2).
+        # errors="ignore" не ослабляет проверку: любой не-ASCII символ делает
+        # байты заведомо отличными от токена, а токен — ASCII по построению.
+        presented_bytes = presented.encode("utf-8", errors="ignore")
+        expected_bytes = expected_token.encode("utf-8")
         # compare_digest и на пустой строке отработает за то же время.
-        if not hmac.compare_digest(presented, expected_token):
+        if not hmac.compare_digest(presented_bytes, expected_bytes):
             raise HTTPException(status_code=401, detail="unauthenticated")
 
     @app.middleware("http")
@@ -224,11 +237,10 @@ def create_app(policy: Policy | None = None) -> FastAPI:
 
     @app.get("/healthz")
     async def healthz() -> dict[str, Any]:
-        return {
-            "status": "ok",
-            "policyVersion": resolved_policy.version,
-            "defaultProvider": resolved_policy.default_provider,
-        }
+        # Только статус: версия политики и имя провайдера по умолчанию —
+        # бесплатная разведка для того, кто дотянулся до порта (LOW аудита №2).
+        # Эти значения доступны оператору из конфигурации, а не по HTTP.
+        return {"status": "ok"}
 
     @app.post("/v1/analyze", dependencies=[Depends(authenticate)])
     async def analyze_project(payload: AnalyzeRequest) -> dict[str, Any]:
@@ -284,7 +296,11 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 detail={"code": "provider_unavailable", "provider": provider.name},
             )
 
-        result = analyze(payload.project.model_dump())
+        # analyze() — CPU-bound: сканирование корпуса до ~1 МБ блокирует event
+        # loop на десятки-сотни мс. При одном воркере несколько параллельных
+        # запросов останавливали ВСЁ, включая /healthz — каскадный отказ
+        # контура (MEDIUM внешнего аудита №2). Выносится в threadpool.
+        result = await run_in_threadpool(analyze, payload.project.model_dump())
         result["provider"] = provider.name
         result["isLlm"] = provider.is_llm
         result["jurisdiction"] = provider.jurisdiction
