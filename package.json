@@ -34,6 +34,7 @@
     "gate:kek": "node scripts/check-kek-domains.mjs",
     "gate:roles-env": "node scripts/check-role-env-consistency.mjs",
     "gate:sast-config": "node scripts/check-sast-config.mjs",
+    "gate:checkpoint-secrets": "node scripts/check-checkpoint-secrets.mjs",
     "rotate:stand-secrets": "node scripts/rotate-stand-secrets.mjs",
     "gate:net": "node scripts/network-audit.mjs",
     "gate:net:strict": "node scripts/network-audit.mjs --strict",

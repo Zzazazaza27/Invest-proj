@@ -297,6 +297,7 @@ npm run gate:secret-reuse           # два секрета не делят од
 npm run gate:kek                    # KEK-домены: тип, вызовы seal*, карта ротации и колонки БД не расходятся
 npm run gate:roles-env              # логин-роли БД: bootstrap, границы ролей, CI env и .env.example не расходятся
 npm run gate:sast-config            # guardian.yml цел, совпадает с HEAD и защищён read-only (обнулялся 4 раза)
+npm run gate:checkpoint-secrets     # в ветках чекпоинтов Entire нет секретов (Ф47)
 npm run probe:secret-leak           # значения из .env в объектах git (ожидание: 0)
 node scripts/security-audit-full.mjs # ВСЕ гейты подряд на одной сборке (~25 мин)
 npm run gate:boundary               # граница фронт↔бэк работает (позитивный контроль)
