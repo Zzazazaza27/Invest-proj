@@ -179,7 +179,9 @@ if (reviewerId) {
 
 console.warn('Тестовый пользователь готов (ТОЛЬКО для разработки):');
 console.warn(`  логин:  ${LOGIN}   (полный адрес: ${EMAIL})`);
-console.warn(`  пароль: ${PASSWORD}`);
+// Значение пароля НЕ печатается: stdout попадает в транскрипты сессий и их
+// чекпоинты (инцидент Ф25). Пароль и так лежит в .env — смотри туда.
+console.warn('  пароль: значение из DEV_TEST_USER_PASSWORD в .env (не печатается)');
 console.warn(`  роли:   ${ROLES.join(', ')}`);
 console.warn(
   reviewerId
