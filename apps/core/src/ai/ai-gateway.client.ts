@@ -2,7 +2,11 @@ import { Injectable, Logger } from '@nestjs/common';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 import { z } from 'zod';
-import { ReadinessDimensionSchema, ReadinessLevelSchema } from '@unicorn/contracts';
+import {
+  ReadinessDimensionSchema,
+  ReadinessLevelSchema,
+  ScoreAxisSchema,
+} from '@unicorn/contracts';
 
 /**
  * Клиент AI-шлюза.
@@ -48,6 +52,11 @@ export const AnalysisResultSchema = z.object({
   dataClass: z.string().max(40),
   modelVersion: z.string().max(120),
   passport: z.record(z.string(), z.unknown()),
+  // Пустые facts/scores/readiness раньше проходили разбор: «анализ без единой
+  // оценки» сохранялся и публиковался как паспорт. Публичный контракт
+  // (`ScoreSchema`) требует непустые sources и enum осей — boundary-схема
+  // обязана быть НЕ слабее контракта, иначе single source of truth ломается
+  // ровно на границе доверия (CODE-HIGH-06).
   facts: z
     .array(
       z.object({
@@ -59,19 +68,39 @@ export const AnalysisResultSchema = z.object({
         sourceRef: z.string().max(500),
       }),
     )
+    .min(1)
     .max(500),
   scores: z
     .array(
-      z.object({
-        axis: z.string().max(60),
-        value: z.number().min(0).max(100),
-        confidenceLow: z.number().min(0).max(100),
-        confidenceHigh: z.number().min(0).max(100),
-        explanation: z.string().max(4000),
-        sources: z.array(z.string().max(500)).max(50),
-      }),
+      z
+        .object({
+          // Оси — enum из контрактов, а не свободная строка: БД и публичный
+          // контракт принимают ровно этот список.
+          axis: ScoreAxisSchema,
+          value: z.number().min(0).max(100),
+          confidenceLow: z.number().min(0).max(100),
+          confidenceHigh: z.number().min(0).max(100),
+          explanation: z.string().max(4000),
+          // Оценка без источников — мнение модели, выданное за факт.
+          sources: z.array(z.string().max(500)).min(1).max(50),
+        })
+        // Интервал уверенности обязан накрывать значение: low ≤ value ≤ high.
+        // Оценка 90 с интервалом [10, 20] — внутренне противоречива.
+        .refine((s) => s.confidenceLow <= s.value && s.value <= s.confidenceHigh, {
+          message: 'confidenceLow <= value <= confidenceHigh нарушено',
+        }),
     )
-    .max(50),
+    .min(1)
+    .max(50)
+    // Полный набор осей без дублей: дубль оси означал бы две оценки одного
+    // измерения, а пропуск — паспорт с дырой, которую UI покажет как ноль.
+    .refine(
+      (scores) => {
+        const axes = scores.map((s) => s.axis);
+        return new Set(axes).size === axes.length && axes.length === ScoreAxisSchema.options.length;
+      },
+      { message: 'оси оценок обязаны покрывать полный набор без дублей' },
+    ),
   irs: z.object({ value: z.number().min(0).max(100) }),
   readiness: z
     .array(
@@ -87,7 +116,11 @@ export const AnalysisResultSchema = z.object({
         recommendations: z.array(z.string().max(2000)).max(50),
       }),
     )
-    .max(50),
+    .min(1)
+    .max(50)
+    .refine((entries) => new Set(entries.map((e) => e.dimension)).size === entries.length, {
+      message: 'измерения карты готовности не должны дублироваться',
+    }),
   roadmap: z
     .array(
       z.object({
@@ -141,8 +174,14 @@ export interface AnalysisResult {
   durationMs: number;
 }
 
-/** Предел ответа шлюза. Больше — это не анализ проекта, а попытка нагрузить. */
-const MAX_RESPONSE_CHARS = 2_000_000;
+/**
+ * Предел ответа шлюза В БАЙТАХ. Больше — это не анализ проекта, а попытка
+ * нагрузить. Предел применяется ПОТОКОВО, по мере чтения чанков: прежний код
+ * сначала буферизовал ответ целиком (`response.text()`), потом сравнивал длину —
+ * chunked-ответ в гигабайты исчерпал бы память ядра раньше проверки
+ * (CODE-HIGH-08 / SEC-HIGH-08).
+ */
+const MAX_RESPONSE_BYTES = 2_000_000;
 
 @Injectable()
 export class AiGatewayClient {
@@ -199,13 +238,7 @@ export class AiGatewayClient {
       throw errors.upstreamUnavailable('ai_gateway');
     }
 
-    // Размер ответа ограничен до разбора: `response.json()` на потоке в
-    // гигабайт съест память раньше, чем схема успеет что-либо проверить.
-    const raw = await response.text();
-    if (raw.length > MAX_RESPONSE_CHARS) {
-      this.logger.error({ msg: 'ответ AI-шлюза превысил предел', traceId, size: raw.length });
-      throw errors.upstreamUnavailable('ai_gateway');
-    }
+    const raw = await this.readBounded(response, traceId);
 
     const parsed = AnalysisResultSchema.safeParse(JSON.parse(raw));
     if (!parsed.success) {
@@ -219,6 +252,47 @@ export class AiGatewayClient {
       throw errors.upstreamUnavailable('ai_gateway');
     }
     const result = parsed.data as AnalysisResult;
+    return this.handleParsed(result, traceId);
+  }
+
+  /**
+   * Чтение тела с потоковым пределом. `Content-Length` — ранний сигнал, но не
+   * доказательство: chunked-ответ его не имеет, поэтому счётчик байтов ведётся
+   * по фактическим чанкам, а превышение обрывает поток немедленно.
+   */
+  private async readBounded(response: Response, traceId: string): Promise<string> {
+    const declared = Number(response.headers.get('content-length') ?? NaN);
+    if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
+      this.logger.error({ msg: 'ответ AI-шлюза превысил предел', traceId, size: declared });
+      await response.body?.cancel().catch(() => undefined);
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+    if (!response.body) {
+      const text = await response.text();
+      if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) {
+        this.logger.error({ msg: 'ответ AI-шлюза превысил предел', traceId });
+        throw errors.upstreamUnavailable('ai_gateway');
+      }
+      return text;
+    }
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > MAX_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined);
+        this.logger.error({ msg: 'ответ AI-шлюза превысил предел', traceId, size: received });
+        throw errors.upstreamUnavailable('ai_gateway');
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString('utf8');
+  }
+
+  private handleParsed(result: AnalysisResult, traceId: string): AnalysisResult {
     if (result.injectionMarkers > 0) {
       // Поведение шлюза от этого не изменилось — запись нужна, чтобы попытка
       // была видна в журнале приложения, а не только в журнале шлюза.

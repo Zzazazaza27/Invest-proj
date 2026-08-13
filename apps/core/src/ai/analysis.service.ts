@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { createHash } from 'node:crypto';
+import { Injectable, Logger } from '@nestjs/common';
 import { uuidv7 } from '@unicorn/contracts';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
@@ -36,6 +37,8 @@ const ANALYSIS_DATA_CLASS = 'pseudonymous' as const;
 
 @Injectable()
 export class AnalysisService {
+  private readonly logger = new Logger(AnalysisService.name);
+
   constructor(
     private readonly db: Database,
     private readonly audit: AuditRepository,
@@ -45,38 +48,26 @@ export class AnalysisService {
   async run(ctx: RequestContext, projectId: string): Promise<AnalysisRunView> {
     await this.assertScoringEnabled(ctx);
 
-    // Право на запуск и входные данные читаются под RLS пользователя: если
-    // проект ему не виден, дальше идти незачем.
-    const input = await this.db.readOnly(ctx, async (tx) => {
-      const { rows } = await tx.query<ProjectRow>(
-        `SELECT p.id, p.title, p.tagline, p.description, p.stage,
-                EXISTS (SELECT 1 FROM lab.founders_projects fp
-                         WHERE fp.project_id = p.id AND fp.user_id = app.current_user_id()
-                           AND fp.role IN ('owner','editor')) AS can_edit
-           FROM lab.projects p
-          WHERE p.id = $1 AND p.deleted_at IS NULL`,
-        [projectId],
-      );
-      const row = rows[0];
-      if (!row) throw errors.notFound({ subject: 'project' });
-      if (!row.can_edit && !ctx.roles.includes('admin')) {
-        throw errors.forbidden({ stage: 'not-project-editor' });
-      }
-      const materials = await tx.query<{ type: string; url: string | null }>(
-        `SELECT type, url FROM lab.project_materials WHERE project_id = $1 ORDER BY created_at`,
-        [projectId],
-      );
-      return { row, materials: materials.rows };
-    });
-
     const runId = uuidv7();
     const env = getEnv();
-    await this.db.transaction(ctx, async (tx) => {
+    // Вход читается в ТОЙ ЖЕ транзакции, что создаёт прогон, под advisory-локом
+    // проекта: то, что ушло в анализ, зафиксировано снапшотом и отпечатком, а
+    // не «что успели прочитать до гонки» (CODE-HIGH-05). Право на запуск
+    // проверяется под RLS пользователя — отказ откатывает всё.
+    const input = await this.db.transaction(ctx, async (tx) => {
       // Лок на проект берётся ДО проверок. Без него «посмотрели, что активного
       // прогона нет → вставили» — обычная гонка: одновременные запросы читают
       // одно и то же и проходят все (SEC-17).
       await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
         `analysis-run:${projectId}`,
+      ]);
+      // Лок на пользователя — ПОСЛЕ лока проекта (порядок фиксирован, дедлок
+      // невозможен: обратного порядка нет ни в одном пути). Без него суточная
+      // квота обходилась параллельными запусками по РАЗНЫМ проектам: лок
+      // проекта их не сериализует, и count-before-insert видел одно и то же
+      // значение (CODE-HIGH-04 / SEC-HIGH-09).
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `analysis-quota:${ctx.userId}`,
       ]);
 
       // Брошенные прогоны закрываются, иначе упавший экземпляр заблокировал бы
@@ -111,11 +102,58 @@ export class AnalysisService {
         );
       }
 
+      const { rows } = await tx.query<ProjectRow>(
+        `SELECT p.id, p.title, p.tagline, p.description, p.stage,
+                p.updated_at,
+                EXISTS (SELECT 1 FROM lab.founders_projects fp
+                         WHERE fp.project_id = p.id AND fp.user_id = app.current_user_id()
+                           AND fp.role IN ('owner','editor')) AS can_edit
+           FROM lab.projects p
+          WHERE p.id = $1 AND p.deleted_at IS NULL`,
+        [projectId],
+      );
+      const row = rows[0];
+      if (!row) throw errors.notFound({ subject: 'project' });
+      if (!row.can_edit && !ctx.roles.includes('admin')) {
+        throw errors.forbidden({ stage: 'not-project-editor' });
+      }
+      // Только ПОДТВЕРЖДЁННЫЕ материалы: незавершённый upload-билет — это
+      // строка без файла, и учитывать его как «материал есть» значит дать
+      // основателю пять пустых билетов ради эвристического балла
+      // (CODE-HIGH-05 / SEC-HIGH-10).
+      const materials = await tx.query<MaterialRow>(
+        `SELECT id, type, version FROM lab.project_materials
+          WHERE project_id = $1 AND uploaded_at IS NOT NULL
+          ORDER BY id`,
+        [projectId],
+      );
+
+      const snapshot = {
+        title: row.title,
+        tagline: row.tagline,
+        description: row.description,
+        stage: row.stage,
+        projectUpdatedAt: row.updated_at.toISOString(),
+        materials: materials.rows.map((m) => ({ id: m.id, type: m.type, version: m.version })),
+      };
+      const inputSha256 = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
+
       await tx.query(
         `INSERT INTO audit.agent_runs (id, graph_name, project_id, user_id, status)
          VALUES ($1, 'project_analysis', $2, $3, 'running')`,
         [runId, projectId, ctx.userId],
       );
+      // Снапшот входа сохраняется рядом с прогоном: у результата появляется
+      // provenance — какой именно текст и какие материалы анализировались,
+      // с каким отпечатком. Без него «паспорт от 13-го» нечем связать с
+      // фактическим состоянием заявки.
+      await tx.query(
+        `INSERT INTO audit.node_checkpoints (id, run_id, node_name, state_jsonb)
+         VALUES ($1, $2, 'input_snapshot', $3::jsonb)`,
+        [uuidv7(), runId, JSON.stringify({ inputSha256, snapshot })],
+      );
+
+      return { row, materials: materials.rows, snapshot, inputSha256 };
     });
 
     let result: AnalysisResult;
@@ -143,7 +181,52 @@ export class AnalysisService {
       throw error;
     }
 
+    // Публикация обёрнута целиком: ЛЮБАЯ ошибка после успешного ответа шлюза
+    // (model lookup, constraint, supersede, outbox) раньше оставляла прогон в
+    // `running` навсегда — до stale-cleanup следующего запуска. Терминальное
+    // состояние — инвариант, а не пожелание (CODE-HIGH-03).
+    try {
+      return await this.publish(ctx, projectId, runId, input, result);
+    } catch (error) {
+      await this.failRun(ctx, runId);
+      throw error;
+    }
+  }
+
+  private async publish(
+    ctx: RequestContext,
+    projectId: string,
+    runId: string,
+    input: AnalysisInputSnapshot,
+    result: AnalysisResult,
+  ): Promise<AnalysisRunView> {
     return this.db.transaction(ctx, async (tx) => {
+      // Вход мог измениться, пока шлюз считал: публиковать «свежий» паспорт
+      // по устаревшему тексту — значит показать инвестору оценку, которая не
+      // соответствует заявке. Сверка по той же паре (updated_at + список
+      // подтверждённых материалов), что вошла в снапшот и отпечаток.
+      const { rows: current } = await tx.query<{ updated_at: Date }>(
+        `SELECT updated_at FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
+        [projectId],
+      );
+      if (!current[0]) throw errors.notFound({ subject: 'project' });
+      const currentMaterials = await tx.query<MaterialRow>(
+        `SELECT id, type, version FROM lab.project_materials
+          WHERE project_id = $1 AND uploaded_at IS NOT NULL
+          ORDER BY id`,
+        [projectId],
+      );
+      const sameProject = current[0].updated_at.toISOString() === input.snapshot.projectUpdatedAt;
+      const sameMaterials =
+        JSON.stringify(
+          currentMaterials.rows.map((m) => ({ id: m.id, type: m.type, version: m.version })),
+        ) === JSON.stringify(input.snapshot.materials);
+      if (!sameProject || !sameMaterials) {
+        throw errors.conflict(
+          'Проект изменился во время анализа — результат отброшен, запустите анализ заново',
+        );
+      }
+
       const modelId = await this.activeModelId(tx, 'ai_score');
       const irsModelId = await this.activeModelId(tx, 'irs');
 
@@ -275,6 +358,7 @@ export class AnalysisService {
         subjectId: projectId,
         context: {
           runId,
+          inputSha256: input.inputSha256,
           provider: result.provider,
           isLlm: result.isLlm,
           modelVersion: result.modelVersion,
@@ -438,6 +522,29 @@ export class AnalysisService {
 
   // ------------------------------------------------------------------ private
 
+  /**
+   * Терминальное закрытие прогона при провале публикации. Best-effort:
+   * если недоступна сама БД, здесь упадёт и это — тогда прогон закроет
+   * stale-cleanup следующего запуска, а причина останется в логе.
+   */
+  private async failRun(ctx: RequestContext, runId: string): Promise<void> {
+    try {
+      await this.db.transaction(ctx, async (tx) => {
+        await tx.query(
+          `UPDATE audit.agent_runs SET status = 'failed', finished_at = now()
+            WHERE id = $1 AND status = 'running'`,
+          [runId],
+        );
+      });
+    } catch (error) {
+      this.logger.error({
+        msg: 'не удалось пометить прогон анализа неуспешным',
+        runId,
+        error: error instanceof Error ? error.message : 'unknown',
+      });
+    }
+  }
+
   private async assertScoringEnabled(ctx: RequestContext): Promise<void> {
     const enabled = await this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<{ enabled: boolean }>(
@@ -488,7 +595,28 @@ interface ProjectRow {
   tagline: string | null;
   description: string | null;
   stage: string;
+  updated_at: Date;
   can_edit: boolean;
+}
+
+interface MaterialRow {
+  id: string;
+  type: string;
+  version: number;
+}
+
+interface AnalysisInputSnapshot {
+  row: ProjectRow;
+  materials: MaterialRow[];
+  snapshot: {
+    title: string;
+    tagline: string | null;
+    description: string | null;
+    stage: string;
+    projectUpdatedAt: string;
+    materials: { id: string; type: string; version: number }[];
+  };
+  inputSha256: string;
 }
 
 interface PassportRow {
