@@ -11,6 +11,7 @@ import {
   signDelivery,
   WEBHOOK_SIGNATURE_TOLERANCE_SECONDS,
 } from '../src/events/webhooks.service';
+import { addressInCidrs } from '../src/events/ip-classifier';
 
 /**
  * Юнит-тесты контура событий.
@@ -88,6 +89,12 @@ describe('Адреса, недопустимые для доставки', () =>
     ['документационная сеть TEST-NET-1', '192.0.2.1'],
     ['документационная сеть IPv6', '2001:db8::1'],
     ['развёрнутый loopback IPv6', '0000:0000:0000:0000:0000:0000:0000:0001'],
+    // Дополнение по реестру IANA (Ф36, SEC-MED-01).
+    ['local-use IPv4/IPv6 translation', '64:ff9b:1::1'],
+    ['dummy prefix', '100:0:0:1::1'],
+    ['benchmarking IPv6', '2001:2::1'],
+    ['documentation 3fff::/20', '3fff:abc::1'],
+    ['SRv6 SIDs', '5f00::1'],
   ] as const;
 
   for (const [label, address] of forbidden) {
@@ -113,6 +120,10 @@ describe('Адреса, недопустимые для доставки', () =>
     ['IPv4-mapped публичный адрес', '::ffff:93.184.216.34'],
     ['6to4 с встроенным публичным адресом', '2002:5db8:d822::1'],
     ['публичный IPv6 в другой группе', '2a00:1450:4001:80f::200e'],
+    // Границы новых диапазонов (Ф36): сосед запрещённого — не запрещён.
+    ['граница 3fff::/20 сверху', '4000::1'],
+    ['граница 5f00::/16 сверху', '5f01::1'],
+    ['NAT64 well-known без суффикса 1', '64:ff9b::93.184.216.34'],
   ] as const;
 
   for (const [label, address] of allowed) {
@@ -120,6 +131,34 @@ describe('Адреса, недопустимые для доставки', () =>
       expect(isForbiddenAddress(address)).toBe(false);
     });
   }
+});
+
+describe('Принадлежность CIDR доверенного прокси (Ф36, SEC-CRIT-03)', () => {
+  it('адрес внутри IPv4-CIDR распознаётся', () => {
+    expect(addressInCidrs('10.1.2.3', ['10.0.0.0/8'])).toBe(true);
+    expect(addressInCidrs('10.1.2.3', ['192.168.0.0/16'])).toBe(false);
+  });
+
+  it('IPv4-mapped запись равна точечной', () => {
+    expect(addressInCidrs('::ffff:10.1.2.3', ['10.0.0.0/8'])).toBe(true);
+    expect(addressInCidrs('::ffff:11.1.2.3', ['10.0.0.0/8'])).toBe(false);
+  });
+
+  it('одиночный адрес без маски — точное совпадение', () => {
+    expect(addressInCidrs('127.0.0.1', ['127.0.0.1'])).toBe(true);
+    expect(addressInCidrs('127.0.0.2', ['127.0.0.1'])).toBe(false);
+  });
+
+  it('IPv6-CIDR работает', () => {
+    expect(addressInCidrs('fd00::5', ['fd00::/8'])).toBe(true);
+    expect(addressInCidrs('2a00::1', ['fd00::/8'])).toBe(false);
+  });
+
+  it('пустой список и мусор — отказ, а не пропуск', () => {
+    expect(addressInCidrs('10.0.0.1', [])).toBe(false);
+    expect(addressInCidrs('не-адрес', ['10.0.0.0/8'])).toBe(false);
+    expect(addressInCidrs('10.0.0.1', ['мусор/8'])).toBe(false);
+  });
 });
 
 describe('Подпись доставки', () => {

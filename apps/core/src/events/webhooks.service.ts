@@ -210,7 +210,7 @@ export async function assertPublicDestination(rawUrl: string): Promise<string[]>
 
   let addresses: string[];
   try {
-    const resolved = await lookup(host, { all: true });
+    const resolved = await lookupWithDeadline(host);
     addresses = resolved.map((entry) => entry.address);
   } catch {
     throw errors.validation([{ path: 'url', message: 'имя не разрешается' }]);
@@ -221,6 +221,33 @@ export async function assertPublicDestination(rawUrl: string): Promise<string[]>
     throw errors.validation([{ path: 'url', message: 'имя разрешается во внутреннюю сеть' }]);
   }
   return addresses;
+}
+
+/**
+ * Предел на разрешение имени. `dns.promises.lookup` не принимает AbortSignal,
+ * а HTTP-deadline начинается только ПОСЛЕ резолва: зависший или атакуемый
+ * резолвер держал бы регистрацию endpoint'а и воркер доставки бесконечно
+ * (CODE-MED-07 / SEC-HIGH-07). Таймер снимается в finally; сам системный
+ * вызов может дожить в threadpool, но запрос он больше не держит.
+ */
+const DNS_LOOKUP_TIMEOUT_MS = 5_000;
+
+async function lookupWithDeadline(host: string): Promise<{ address: string }[]> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      lookup(host, { all: true }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error('DNS lookup превысил предел времени')),
+          DNS_LOOKUP_TIMEOUT_MS,
+        );
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /** Идентификатор трассировки доставки — попадает в заголовок получателю. */

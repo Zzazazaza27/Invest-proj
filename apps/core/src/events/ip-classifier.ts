@@ -76,6 +76,15 @@ const V6_RANGES: readonly Range[] = [
   v6('0100', 64, 'discard-only'),
   v6('20010db8', 32, 'documentation'),
   v6('20010000', 32, 'Teredo'),
+  // Дополнение по текущему реестру IANA IPv6 Special-Purpose (SEC-MED-01):
+  // диапазоны с Globally Reachable = False, которых не было в первоначальном
+  // списке. Ручной denylist дрейфует от реестра — снимок сверен 2026-08-13,
+  // источник: iana-ipv6-special-registry.
+  v6('0064ff9b0001', 48, 'local-use IPv4/IPv6 translation (64:ff9b:1::/48)'),
+  v6('0100000000000001', 64, 'dummy prefix (100:0:0:1::/64)'),
+  v6('20010002', 48, 'benchmarking (2001:2::/48)'),
+  v6('3fff', 20, 'documentation (3fff::/20)'),
+  v6('5f00', 16, 'SRv6 SIDs (5f00::/16)'),
 ];
 
 function matches(bytes: Uint8Array, range: Range): boolean {
@@ -211,4 +220,53 @@ export function forbiddenReason(address: string): string | null {
     return V6_RANGES.find((range) => matches(bytes, range))?.reason ?? null;
   }
   return 'не является IP-адресом';
+}
+
+/**
+ * Принадлежит ли адрес одному из CIDR-диапазонов.
+ *
+ * Нужен привязке mTLS-заголовка к доверенному прокси (SEC-CRIT-03): заголовок
+ * с отпечатком сертификата можно принимать только от пира из
+ * `TRUSTED_PROXY_CIDRS` — иначе клиент, дотянувшийся до ядра напрямую, впишет
+ * отпечаток сам. Сравнение — теми же каноническими байтами, что и денилист:
+ * `::ffff:10.0.0.5` и `10.0.0.5` — один адрес в двух записях.
+ */
+export function addressInCidrs(address: string, cidrs: readonly string[]): boolean {
+  const addrBytes = canonical16(address);
+  if (!addrBytes) return false;
+  for (const entry of cidrs) {
+    const [prefixText, bitsText] = entry.split('/');
+    if (!prefixText) continue;
+    const prefixBytes = canonical16(prefixText.trim());
+    if (!prefixBytes) continue;
+    const isV4 = isIP(prefixText.trim()) === 4;
+    const declared = bitsText === undefined ? (isV4 ? 32 : 128) : Number(bitsText);
+    if (!Number.isInteger(declared) || declared < 0) continue;
+    // IPv4-CIDR в 16-байтовом виде смещается на 96 бит mapped-префикса.
+    const bits = isV4 ? Math.min(declared, 32) + 96 : Math.min(declared, 128);
+    if (matches(addrBytes, { prefix: prefixBytes, bits, reason: entry })) return true;
+  }
+  return false;
+}
+
+/** Канонические 16 байт: IPv4 приводится к ::ffff:a.b.c.d. */
+function canonical16(address: string): Uint8Array | null {
+  const version = isIP(address);
+  if (version === 4) {
+    const four = v4Bytes(address);
+    if (!four) return null;
+    const bytes = new Uint8Array(16);
+    bytes[10] = 0xff;
+    bytes[11] = 0xff;
+    bytes.set(four, 12);
+    return bytes;
+  }
+  if (version === 6) {
+    const bytes = v6Bytes(address);
+    if (!bytes) return null;
+    // mapped-IPv4 уже в этой форме; NAT64/6to4 здесь не разворачиваются —
+    // прокси задаётся оператором, а не приходит из недоверенной сети.
+    return bytes;
+  }
+  return null;
 }

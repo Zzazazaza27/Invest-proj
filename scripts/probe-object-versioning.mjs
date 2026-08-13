@@ -60,7 +60,9 @@ function signingKey(secret, shortDate, region, service) {
 }
 
 /** Подписанный запрос SigV4. query — строка вида 'versions=&prefix=x' (уже канонична). */
-async function s3(method, path, query = '', body = null) {
+async function s3(method, path, query = '', body = null, creds = null) {
+  const accessKey = creds?.accessKey ?? ACCESS_KEY;
+  const secretKey = creds?.secretKey ?? SECRET_KEY;
   const url = new URL(`${ENDPOINT}${path}${query ? `?${query}` : ''}`);
   const payload = body ?? Buffer.alloc(0);
   const date = amzDate(new Date());
@@ -91,14 +93,14 @@ async function s3(method, path, query = '', body = null) {
   ].join('\n');
   const scope = `${shortDate}/${REGION}/s3/aws4_request`;
   const stringToSign = [ALGORITHM, date, scope, sha256Hex(canonicalRequest)].join('\n');
-  const signature = createHmac('sha256', signingKey(SECRET_KEY, shortDate, REGION, 's3'))
+  const signature = createHmac('sha256', signingKey(secretKey, shortDate, REGION, 's3'))
     .update(stringToSign, 'utf8')
     .digest('hex');
   return fetch(url.toString(), {
     method,
     headers: {
       ...headers,
-      Authorization: `${ALGORITHM} Credential=${ACCESS_KEY}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      Authorization: `${ALGORITHM} Credential=${accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`,
     },
     body: body ? new Uint8Array(body) : undefined,
     signal: AbortSignal.timeout(15_000),
@@ -160,14 +162,36 @@ if (versionIds.length >= 2) {
   check('текущая версия — перезаписанное содержимое', curBytes.equals(bodyB));
 }
 
-// Уборка: удалить все версии тестового ключа, чтобы зонд не копил мусор.
-for (const vid of versionIds) {
-  await s3('DELETE', objectPath, `versionId=${encodeURIComponent(vid)}`);
+// 4. Учётка ПРИЛОЖЕНИЯ не может удалить версию (Ф36, SEC-MED-02): политика
+// unicorn-app-rw больше не содержит DeleteObjectVersion — иначе компрометация
+// core-кредов удаляла бы и версии, обнуляя защиту SEC-04.
+if (versionIds.length > 0) {
+  const denied = await s3('DELETE', objectPath, `versionId=${encodeURIComponent(versionIds[0])}`);
+  check(
+    'учётка приложения НЕ может удалить версию (403)',
+    denied.status === 403,
+    `status=${denied.status}`,
+  );
 }
-if (versionIds.length === 0) await s3('DELETE', objectPath);
-const after = await s3('GET', `/${BUCKET}`, `versions=&prefix=${encodeURIComponent(key)}`);
-const leftover = ((await after.text()).match(/<VersionId>/g) ?? []).length;
-check('тестовые версии убраны за собой', leftover === 0, `осталось: ${leftover}`);
+
+// Уборка: удалить все версии тестового ключа, чтобы зонд не копил мусор.
+// Версии удаляет ROOT-учётка — у приложения такого права больше нет (и это
+// проверено выше). Без root-кредов уборка честно пропускается.
+const rootCreds =
+  process.env.MINIO_ROOT_USER && process.env.MINIO_ROOT_PASSWORD
+    ? { accessKey: process.env.MINIO_ROOT_USER, secretKey: process.env.MINIO_ROOT_PASSWORD }
+    : null;
+if (rootCreds) {
+  for (const vid of versionIds) {
+    await s3('DELETE', objectPath, `versionId=${encodeURIComponent(vid)}`, null, rootCreds);
+  }
+  if (versionIds.length === 0) await s3('DELETE', objectPath, '', null, rootCreds);
+  const after = await s3('GET', `/${BUCKET}`, `versions=&prefix=${encodeURIComponent(key)}`);
+  const leftover = ((await after.text()).match(/<VersionId>/g) ?? []).length;
+  check('тестовые версии убраны за собой (root)', leftover === 0, `осталось: ${leftover}`);
+} else {
+  console.warn('  ПРОП  уборка версий пропущена: MINIO_ROOT_USER/PASSWORD не заданы');
+}
 
 console.warn(`\n=== ИТОГ: ${ok} OK, ${fail} FAIL ===`);
 // НЕ process.exit: резкий выход при живых keep-alive сокетах fetch роняет

@@ -10,6 +10,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import { INTEGRATION_SCOPES, type IntegrationScope } from '@unicorn/contracts';
 import { errors } from '../common/errors';
+import { addressInCidrs } from '../events/ip-classifier';
 import { getEnv } from '../config/env';
 import { ServiceAccountStateService } from './service-account-state.service';
 
@@ -196,10 +197,29 @@ export class IntegrationGuard implements CanActivate {
  * Возвращает `null`, если проверка не настроена (dev без mTLS). В production
  * пустое имя заголовка не проходит валидацию конфигурации — приложение просто
  * не поднимется, а не начнёт молча пускать по одному лишь секрету.
+ *
+ * Заголовку верим ТОЛЬКО от доверенного прокси (SEC-CRIT-03): если ядро
+ * оказалось доступно напрямую (ошибка security group, SSRF, lateral movement,
+ * port-forward), клиент вписал бы «свой» отпечаток сам — и mTLS-фактор
+ * свёлся бы к известной строке. Непосредственный пир соединения обязан
+ * входить в `TRUSTED_PROXY_CIDRS`; иначе заголовок считается подделкой и
+ * проверка отпечатка проваливается (fail closed), а не пропускается.
  */
 export function clientCertFingerprint(request: FastifyRequest): string | null {
   const env = getEnv();
   if (!env.INTEGRATION_CLIENT_CERT_HEADER) return null;
+
+  const trustedCidrs = env.TRUSTED_PROXY_CIDRS.split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  // Именно socket.remoteAddress, а не request.ip: request.ip уже «развёрнут»
+  // через X-Forwarded-For, то есть сам управляется заголовком. Доверие к
+  // mTLS-заголовку привязывается к НЕПОСРЕДСТВЕННОМУ пиру соединения.
+  const peer = request.socket?.remoteAddress ?? '';
+  if (trustedCidrs.length === 0 || !addressInCidrs(peer, trustedCidrs)) {
+    return '';
+  }
+
   const raw = request.headers[env.INTEGRATION_CLIENT_CERT_HEADER.toLowerCase()];
   const value = Array.isArray(raw) ? raw[0] : raw;
   return typeof value === 'string' && value.length > 0 ? value.toLowerCase() : '';

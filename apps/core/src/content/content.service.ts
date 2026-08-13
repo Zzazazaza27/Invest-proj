@@ -24,10 +24,16 @@ export class ContentService {
     private readonly audit: AuditRepository,
   ) {}
 
-  /** Действующие блоки витрины. Доступно без авторизации. */
+  /**
+   * Действующие блоки витрины. Доступно без авторизации.
+   *
+   * Читается через `app_public_read`, а не через широкую роль приложения
+   * (CODE-MED-05/SEC-MED-04): у анонимного маршрута должна быть и ВТОРАЯ
+   * граница — DB-роль, которая видит только публичные таблицы. Ошибка в этом
+   * запросе тогда упирается в GRANT, а не в весь пул backend-роли.
+   */
   async landing(locale: LandingLocale): Promise<LandingBlock[]> {
-    const anonymous: RequestContext = { userId: null, roles: [], traceId: 'landing' };
-    return this.db.readOnly(anonymous, async (tx) => {
+    return this.db.asPublicRole('landing', async (tx) => {
       const { rows } = await tx.query<BlockRow>(
         `SELECT id, key, locale, title, body, link_url, valid_from, valid_to
            FROM content.landing_blocks

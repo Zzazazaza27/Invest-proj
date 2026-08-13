@@ -166,14 +166,29 @@ services:
         mc version enable "local/$$S3_BUCKET"
         mc version info "local/$$S3_BUCKET"
         # Отдельная учётка приложения (Ф26): core и скрипты не должны ходить в
-        # хранилище под root. Права ограничены СВОИМ бакетом; admin-операций нет.
+        # хранилище под root. Права ограничены СВОИМ бакетом и ЯВНЫМ списком
+        # действий (Ф36, SEC-MED-02): прежний `s3:*` включал DeleteObjectVersion
+        # и управление версионированием — компрометация core-кредов позволяла
+        # удалить версии и выключить защиту SEC-04. Чего в списке НЕТ:
+        # DeleteObjectVersion, PutBucketVersioning, политики, ACL, удаление
+        # бакета. DeleteObject остаётся: им работает уборка брошенных загрузок,
+        # а при включённом версионировании он лишь ставит delete marker.
         # Идемпотентно: повторный запуск обновляет пароль и политику той же учётки.
         if [ -n "$$S3_ACCESS_KEY_ID" ] && [ "$$S3_ACCESS_KEY_ID" != "$$MINIO_ROOT_USER" ] && [ -n "$$S3_SECRET_ACCESS_KEY" ]; then
           # printf вместо sed: в образе mc нет sed
-          printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:*"],"Resource":["arn:aws:s3:::%s","arn:aws:s3:::%s/*"]}]}' "$$S3_BUCKET" "$$S3_BUCKET" > /tmp/app-policy.json
+          # Явный Deny на DeleteObjectVersion обязателен: этот MinIO пропускает
+          # versioned-delete по одному Allow DeleteObject (доказано зондом),
+          # а Deny перекрывает Allow в любом случае — и здесь, и в AWS.
+          printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:GetObject","s3:GetObjectVersion","s3:DeleteObject"],"Resource":["arn:aws:s3:::%s/*"]},{"Effect":"Deny","Action":["s3:DeleteObjectVersion"],"Resource":["arn:aws:s3:::%s/*"]},{"Effect":"Allow","Action":["s3:ListBucket","s3:ListBucketVersions","s3:GetBucketLocation","s3:GetLifecycleConfiguration","s3:PutLifecycleConfiguration"],"Resource":["arn:aws:s3:::%s"]}]}' "$$S3_BUCKET" "$$S3_BUCKET" "$$S3_BUCKET" > /tmp/app-policy.json
           mc admin user add local "$$S3_ACCESS_KEY_ID" "$$S3_SECRET_ACCESS_KEY"
-          mc admin policy create local unicorn-app-rw /tmp/app-policy.json || true
-          mc admin policy attach local unicorn-app-rw --user "$$S3_ACCESS_KEY_ID" || true
+          # `policy create` НЕ обновляет существующую политику, а `|| true`
+          # прятал этот отказ: сужение политики молча не применялось (поймано
+          # зондом версионирования — DeleteObjectVersion остался разрешён).
+          # Поэтому: отцепить -> удалить -> создать заново -> прицепить.
+          mc admin policy detach local unicorn-app-rw --user "$$S3_ACCESS_KEY_ID" || true
+          mc admin policy rm local unicorn-app-rw || true
+          mc admin policy create local unicorn-app-rw /tmp/app-policy.json
+          mc admin policy attach local unicorn-app-rw --user "$$S3_ACCESS_KEY_ID"
           echo "учётка приложения $$S3_ACCESS_KEY_ID готова (политика unicorn-app-rw)"
         else
           echo "ВНИМАНИЕ: S3_ACCESS_KEY_ID совпадает с root или пуст — приложение пойдёт под root-учёткой"
@@ -183,8 +198,11 @@ services:
         if [ -n "$$ARCHIVE_S3_ACCESS_KEY_ID" ] && [ -n "$$ARCHIVE_S3_SECRET_ACCESS_KEY" ]; then
           printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:PutObject","s3:GetObject"],"Resource":["arn:aws:s3:::%s/archive/*"]},{"Effect":"Allow","Action":["s3:ListBucket","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::%s"]}]}' "$$S3_BUCKET" "$$S3_BUCKET" > /tmp/archive-policy.json
           mc admin user add local "$$ARCHIVE_S3_ACCESS_KEY_ID" "$$ARCHIVE_S3_SECRET_ACCESS_KEY"
-          mc admin policy create local unicorn-archive-append /tmp/archive-policy.json || true
-          mc admin policy attach local unicorn-archive-append --user "$$ARCHIVE_S3_ACCESS_KEY_ID" || true
+          # Тот же паттерн обновления, что и у политики приложения (см. выше).
+          mc admin policy detach local unicorn-archive-append --user "$$ARCHIVE_S3_ACCESS_KEY_ID" || true
+          mc admin policy rm local unicorn-archive-append || true
+          mc admin policy create local unicorn-archive-append /tmp/archive-policy.json
+          mc admin policy attach local unicorn-archive-append --user "$$ARCHIVE_S3_ACCESS_KEY_ID"
           echo "учётка архива $$ARCHIVE_S3_ACCESS_KEY_ID готова (политика unicorn-archive-append, без Delete)"
         fi
         echo "бакет $$S3_BUCKET готов"
