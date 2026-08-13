@@ -293,6 +293,7 @@ npm run lint:migrations -w database # expand/contract, RLS, search_path, ден�
 npm run gate:deps                   # npm audit --audit-level=high
 npm run gate:secrets                # gitleaks — вся история коммитов (ожидание: 0)
 npm run gate:secret-reuse           # два секрета не делят одно значение (.env, пример, compose)
+npm run gate:kek                    # KEK-домены: тип, вызовы seal*, карта ротации и колонки БД не расходятся
 npm run probe:secret-leak           # значения из .env в объектах git (ожидание: 0)
 node scripts/security-audit-full.mjs # ВСЕ гейты подряд на одной сборке (~25 мин)
 npm run gate:boundary               # граница фронт↔бэк работает (позитивный контроль)
@@ -381,6 +382,14 @@ npm run rotate:kek -- --domain passport_sensitive                     # осмо
 npm run rotate:kek -- --domain passport_sensitive --generate --test   # ротация с откатом
 npm run rotate:kek -- --domain passport_sensitive --generate --apply --write-env
 ```
+
+Карта «домен → таблица» внутри `rotate-kek.mjs` ведётся вручную, поэтому её
+честность держит гейт `npm run gate:kek`: он сверяет тип `KekDomain`, фактические
+вызовы `seal*` в core, карту ротации и колонки `*_wrapped_dek` в миграциях, а при
+доступной БД проверяет, что зарезервированные схемой колонки (домены
+`kyc_documents`, `nominal_account_evidence`, `billing_documents` — объявлены «на
+вырост», кодом не используются) действительно пусты. Как только код начнёт писать
+в такую колонку, гейт упадёт и потребует внести её в карту ротации.
 
 `--write-env` — предпочтительный способ: скрипт сам подставляет новое значение
 в `.env`. Иначе ключ придётся передать через argv (виден в списке процессов)

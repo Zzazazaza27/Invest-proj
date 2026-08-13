@@ -49,7 +49,9 @@ const TAG_BYTES = 16;
 const DEK_BYTES = 32;
 
 // Соответствие домена и мест хранения обёрнутых DEK. Источник истины —
-// вызовы crypto.seal/sealMany в apps/core/src.
+// вызовы crypto.seal/sealMany в apps/core/src. Карта сверяется гейтом
+// `npm run gate:kek` (scripts/check-kek-domains.mjs): новая колонка
+// *_wrapped_dek или новый вызов seal* без записи здесь роняют гейт.
 const ENVELOPE = {
   passport_sensitive: [
     {
