@@ -53,6 +53,7 @@
 | Ф36  | Сеть: DNS deadline, IANA IPv6, mTLS↔прокси, public-роль, сужение S3        | ✅ завершена 2026-08-13 |
 | Ф37  | Админка: пагинация KYC-очереди; pip pin, чистка build, prettierignore      | ✅ завершена 2026-08-13 |
 | Ф38  | Обнуление guardian.yml: расследование + защита read-only и гейт целостности | ✅ завершена 2026-08-13 |
+| Ф39  | M054: самоактивация подписки, 4-eyes цены, выдача ролей — 3 HIGH аудита №2 | ✅ завершена 2026-08-13 |
 
 ---
 
@@ -115,6 +116,55 @@ CRITICAL/HIGH нет», противореча собственному разд
   25 исторических строк получили размер, ИЗМЕРЕННЫЙ HEAD'ом по живым объектам
   хранилища (путь, названный в M050), — 0 нарушений, ограничение действует на
   всю таблицу.
+
+### 🟡 Из внешнего аудита №2 (audit-sandbox, 2026-08-13) — план Ф39–Ф46
+
+Два отчёта: `АУДИТ_БЕЗОПАСНОСТИ.md` (5 HIGH, 13 MEDIUM) и `АУДИТ_КОДА.md`.
+Часть находок уже была закрыта фазами Ф32–Ф38 до поступления отчётов
+(CI-переменные app_archive — Ф32; сужение s3:* + Deny DeleteObjectVersion —
+Ф36; pip pin — Ф37; аудит частично делался по устаревшей копии). Остальное:
+
+- ~~**Ф39 (3 HIGH RLS)**~~ — ЗАКРЫТО 2026-08-13, M054: самоактивация
+  подписки (триггер переходов), обход 4-eyes цены (политика + сверка с
+  proposals), user_roles_insert WITH CHECK (true) → админ от своего имени /
+  регистрация только founder|investor. 11 RLS-тестов, smoke-billing 44/44,
+  smoke-core 46/46.
+- **Ф40 (HIGH + MEDIUM, периметр):** обход классов rate-limit
+  percent-encoding (классификация по нормализованному пути); троттлинг
+  перебора пароля per-account (Redis) + событие identity.login.failed;
+  register/login в prod — 404 до argon2.
+- **Ф41 (MEDIUM БД):** поколоночные GRANT identity.users для
+  app_investments/app_billing/app_notifications (без password_hash);
+  users_update_self — только профильные колонки; SELECT-политики материалов
+  uploaded_at IS NOT NULL; consents-гейт от плейсхолдерных хешей;
+  has_valid_kyc: sanctions review; has_required_consents на пустой локали;
+  ёмкость оффера при UPDATE; app_integration и client_secret_hash.
+- **Ф42 (MEDIUM/LOW core):** скоупы→verbs вебхуков; гонка decide KYC/KYB;
+  investments: права до S3; finalize early-return; acceptOffer идемпотентный
+  повтор; submit 23505; KEK все 8 доменов на старте; publish advisory-лок;
+  webhook-URL в журнале без пути.
+- **Ф43 (ai-gateway):** analyze в threadpool + limit-concurrency; 401 вместо
+  500 на не-ASCII Authorization; pattern на trace_id; healthz только status;
+  https+allowlist endpoint провайдера; мёртвый BodyTooLarge; source_ref;
+  stage enum; тесты на 401/не-ASCII.
+- **Ф44 (фронтенды):** унификация трёх кабинетов с admin (setCsrf(null),
+  маскировка detail логина); fail-fast BASE_URL в prod-сборке; noindex;
+  encodeURIComponent в admin api + UUID-валидация; VITE_CSRF_COOKIE_NAME в
+  .env.example.
+- **Ф45 (инфра/скрипты):** keycloak realm-launch.json или снять volume;
+  отдельный логин БД для Keycloak; rotate-kek атомарная запись .env;
+  gate-ai --strict; pgvector digest; авто-удаление .env.rotate-backup.
+- **Ф46 (документация/мёртвый код):** README (статус Ф0–Ф38, счётчики,
+  app_archive_user, цифры графа); runbook денежный маршрут;
+  frontend-replacement оговорка OIDC; obsidian 00-Обзор (схемы/таблицы,
+  «15 минут»); мёртвые assertDepth/BodyTooLarge/pino/тернарник;
+  rls-манифест + схема content; check-service-roles: app_investments,
+  app_backend; title LaunchBridge.
+- **Решение владельца (необратимое):** перезапись/удаление истории ветки
+  `entire/checkpoints/v1` на origin (старые скомпрометированные KEK читаемы
+  в объектах remote). Кодом не закрывается; деструктивно — жду явного
+  решения. Python-стек (uvicorn/pydantic минорные апдейты) — при следующем
+  касании шлюза с прогоном гейта.
 
 ### 🟡 Из внешнего аудита 2026-08-13 — открыто, план Ф33–Ф37
 

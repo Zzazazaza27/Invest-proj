@@ -811,3 +811,173 @@ describe('RLS: роль планового обслуживания (M039)', () 
     });
   });
 });
+
+describe('M054: переходы подписки и выдача ролей', () => {
+  /** Своя подписка в статусе pending_payment — фикстура владельцем. */
+  async function pendingSubscription(c: Client, userId: string): Promise<string> {
+    const id = uuidv7();
+    await c.query(
+      `INSERT INTO billing.subscriptions
+         (id, user_id, plan_id, project_id, price_snapshot, terms_version, status)
+       SELECT $1, $2, sp.id, NULL, sp.price, 'v1', 'pending_payment'
+       FROM billing.subscription_plans sp
+       WHERE sp.code = 'investor_membership' AND sp.version = 1`,
+      [id, userId],
+    );
+    return id;
+  }
+
+  it('пользователь НЕ может активировать свою подписку (обход оплаты)', async () => {
+    await inRollbackTx(async (c) => {
+      const investor = await createUser(c, { role: 'investor' });
+      const sub = await pendingSubscription(c, investor.id);
+
+      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
+      await expect(
+        c.query(`UPDATE billing.subscriptions SET status = 'active' WHERE id = $1`, [sub]),
+      ).rejects.toThrow(/только отменить/);
+    });
+  });
+
+  it('пользователь НЕ может занизить себе цену при отмене (только status+canceled_at)', async () => {
+    await inRollbackTx(async (c) => {
+      const investor = await createUser(c, { role: 'investor' });
+      const sub = await pendingSubscription(c, investor.id);
+
+      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `UPDATE billing.subscriptions
+              SET status = 'canceled', canceled_at = now(), price_snapshot = 0.01
+            WHERE id = $1`,
+          [sub],
+        ),
+      ).rejects.toThrow(/только отменить/);
+    });
+  });
+
+  it('отмена своей подписки проходит (позитивный контроль)', async () => {
+    await inRollbackTx(async (c) => {
+      const investor = await createUser(c, { role: 'investor' });
+      const sub = await pendingSubscription(c, investor.id);
+
+      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
+      const { rowCount } = await c.query(
+        `UPDATE billing.subscriptions SET status = 'canceled', canceled_at = now()
+          WHERE id = $1`,
+        [sub],
+      );
+      expect(rowCount).toBe(1);
+    });
+  });
+
+  it('INSERT подписки сразу active отвергается политикой', async () => {
+    await inRollbackTx(async (c) => {
+      const investor = await createUser(c, { role: 'investor' });
+      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO billing.subscriptions
+             (id, user_id, plan_id, price_snapshot, terms_version, status)
+           SELECT $1, $2, sp.id, sp.price, 'v1', 'active'
+           FROM billing.subscription_plans sp
+           WHERE sp.code = 'investor_membership' AND sp.version = 1`,
+          [uuidv7(), investor.id],
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('INSERT подписки с custom_price отвергается (обход 4-eyes)', async () => {
+    await inRollbackTx(async (c) => {
+      const investor = await createUser(c, { role: 'investor' });
+      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO billing.subscriptions
+             (id, user_id, plan_id, price_snapshot, terms_version, status,
+              custom_price, custom_price_set_by, custom_price_approved_by)
+           SELECT $1, $2, sp.id, sp.price, 'v1', 'pending_payment', 0.01, $3, $4
+           FROM billing.subscription_plans sp
+           WHERE sp.code = 'investor_membership' AND sp.version = 1`,
+          [uuidv7(), investor.id, uuidv7(), uuidv7()],
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('админ НЕ может назначить цену без утверждённого предложения', async () => {
+    await inRollbackTx(async (c) => {
+      const admin = await createUser(c, { role: 'admin' });
+      const investor = await createUser(c, { role: 'investor' });
+      const sub = await pendingSubscription(c, investor.id);
+
+      await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `UPDATE billing.subscriptions
+              SET custom_price = 0.01, custom_price_set_by = $2, custom_price_approved_by = $3
+            WHERE id = $1`,
+          [sub, admin.id, investor.id],
+        ),
+      ).rejects.toThrow(/утверждённого предложения/);
+    });
+  });
+
+  it('пользователь НЕ может выдать себе admin', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c, { role: 'founder' });
+      await actAs(c, { userId: user.id, roles: ['founder'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO identity.user_roles (user_id, role, granted_by) VALUES ($1, 'admin', $2)`,
+          [user.id, user.id],
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('админ НЕ может подделать granted_by при выдаче роли', async () => {
+    await inRollbackTx(async (c) => {
+      const admin = await createUser(c, { role: 'admin' });
+      const target = await createUser(c, { role: 'founder' });
+      await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO identity.user_roles (user_id, role, granted_by) VALUES ($1, 'expert', $2)`,
+          [target.id, target.id],
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('админ выдаёт роль от своего имени (позитивный контроль)', async () => {
+    await inRollbackTx(async (c) => {
+      const admin = await createUser(c, { role: 'admin' });
+      const target = await createUser(c, { role: 'founder' });
+      await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
+      const { rowCount } = await c.query(
+        `INSERT INTO identity.user_roles (user_id, role, granted_by) VALUES ($1, 'expert', $2)`,
+        [target.id, admin.id],
+      );
+      expect(rowCount).toBe(1);
+    });
+  });
+
+  it('регистрационный путь: аноним вставляет самовыбираемую роль без granted_by', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c, { role: 'founder' });
+      // Контекст регистрации: пользователь ещё не «вошёл», granted_by пуст.
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_backend' });
+      const { rowCount } = await c.query(
+        `INSERT INTO identity.user_roles (user_id, role) VALUES ($1, 'investor')`,
+        [user.id],
+      );
+      expect(rowCount).toBe(1);
+      // ...но admin этим путём не выдать.
+      await expect(
+        c.query(`INSERT INTO identity.user_roles (user_id, role) VALUES ($1, 'admin')`, [user.id]),
+      ).rejects.toThrow();
+    });
+  });
+});
