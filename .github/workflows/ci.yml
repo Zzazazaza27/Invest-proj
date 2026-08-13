@@ -76,6 +76,11 @@ jobs:
       # (пустота зарезервированных колонок) требует БД и идёт в локальном gate.
       - name: Гейт KEK-доменов (статическая часть)
         run: npm run gate:kek
+      # Согласованность списков логин-ролей БД: bootstrap-roles.ts, границы
+      # ролей, CI env и .env.example не расходятся (Ф32, CODE-HIGH-01 —
+      # роль app_archive появилась в коде, но CI не получил её пароль и URL).
+      - name: Гейт согласованности ролей БД
+        run: npm run gate:roles-env
 
   # ---------------------------------------------------------------- гейт 2
   secrets-scan:
@@ -208,6 +213,7 @@ jobs:
           DB_ROLE_PASSWORD_APP_READONLY: ci_only_role_password_readonly_0
           DB_ROLE_PASSWORD_APP_MAINTENANCE: ci_only_role_password_mainten_0
           DB_ROLE_PASSWORD_APP_AUTH: ci_only_role_password_authstate_0
+          DB_ROLE_PASSWORD_APP_ARCHIVE: ci_only_role_password_archive_00
       - name: Права PUBLIC на функциях SECURITY DEFINER (ожидание 0 нарушений)
         run: node scripts/check-definer-privileges.mjs
       # Строки подключения собираются в шаге, а не лежат литералами: пароль
@@ -222,6 +228,7 @@ jobs:
           export DATABASE_URL_APP_INTEGRATION="postgres://app_integration_user:${PW_INTEGR}@${host}"
           export DATABASE_URL_APP_MAINTENANCE="postgres://app_maintenance_user:${PW_MAINTEN}@${host}"
           export DATABASE_URL_APP_AUTH="postgres://app_auth_user:${PW_AUTH}@${host}"
+          export DATABASE_URL_APP_ARCHIVE="postgres://app_archive_user:${PW_ARCHIVE}@${host}"
           node scripts/check-service-roles.mjs
         env:
           PW_AUTH: ci_only_role_password_authstate_0
@@ -230,6 +237,7 @@ jobs:
           PW_NOTIFY: ci_only_role_password_notify_00
           PW_INTEGR: ci_only_role_password_integr_00
           PW_MAINTEN: ci_only_role_password_mainten_0
+          PW_ARCHIVE: ci_only_role_password_archive_00
 
   # ---------------------------------------------------------------- гейт 6
   unit:

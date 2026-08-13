@@ -295,6 +295,7 @@ npm run gate:deps                   # npm audit --audit-level=high
 npm run gate:secrets                # gitleaks — вся история коммитов (ожидание: 0)
 npm run gate:secret-reuse           # два секрета не делят одно значение (.env, пример, compose)
 npm run gate:kek                    # KEK-домены: тип, вызовы seal*, карта ротации и колонки БД не расходятся
+npm run gate:roles-env              # логин-роли БД: bootstrap, границы ролей, CI env и .env.example не расходятся
 npm run probe:secret-leak           # значения из .env в объектах git (ожидание: 0)
 node scripts/security-audit-full.mjs # ВСЕ гейты подряд на одной сборке (~25 мин)
 npm run gate:boundary               # граница фронт↔бэк работает (позитивный контроль)

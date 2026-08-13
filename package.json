@@ -32,10 +32,11 @@
     "gate:deps": "npm audit --audit-level=high",
     "gate:secret-reuse": "node scripts/check-secret-reuse.mjs",
     "gate:kek": "node scripts/check-kek-domains.mjs",
+    "gate:roles-env": "node scripts/check-role-env-consistency.mjs",
     "rotate:stand-secrets": "node scripts/rotate-stand-secrets.mjs",
     "gate:net": "node scripts/network-audit.mjs",
     "gate:net:strict": "node scripts/network-audit.mjs --strict",
-    "gate": "npm run lint && npm run typecheck && npm run test && npm run gate:boundary && npm run gate:deps && npm run gate:secret-reuse && npm run gate:kek && npm run gate:ai && npm run gate:net:strict",
+    "gate": "npm run lint && npm run typecheck && npm run test && npm run gate:boundary && npm run gate:deps && npm run gate:secret-reuse && npm run gate:kek && npm run gate:roles-env && npm run gate:ai && npm run gate:net:strict",
     "gate:boundary": "node scripts/check-frontend-boundary.mjs",
     "build:packages": "npm run build -w packages/contracts && npm run build -w packages/ui && npm run build -w packages/api-client",
     "gate:ai": "node scripts/gate-ai-gateway.mjs"
