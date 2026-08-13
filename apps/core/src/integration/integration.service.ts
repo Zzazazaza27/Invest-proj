@@ -65,7 +65,7 @@ export class IntegrationService {
     const secret = generateSecret();
     const id = uuidv7();
 
-    return this.db.transaction(ctx, async (tx) => {
+    const created = await this.db.transaction(ctx, async (tx) => {
       try {
         const { rows } = await tx.query<AccountRow>(
           `INSERT INTO integration.service_accounts
@@ -95,7 +95,10 @@ export class IntegrationService {
           traceId: ctx.traceId,
         });
 
-        return { ...mapAccount(rows[0]!), clientSecret: secret };
+        return {
+          account: { ...mapAccount(rows[0]!), clientSecret: secret },
+          epoch: Number(rows[0]!.token_epoch),
+        };
       } catch (error) {
         if ((error as { code?: string }).code === '23505') {
           throw errors.conflict('Такой client_id уже занят');
@@ -106,6 +109,14 @@ export class IntegrationService {
         throw error;
       }
     });
+    // Свежесозданный аккаунт обязан попасть в снимок активных НЕМЕДЛЕННО —
+    // симметрично ротации и смене состояния ниже. Без этого его первый токен
+    // отвергается (integration-account-state) до истечения SNAPSHOT_TTL_MS:
+    // снимок свежий, аккаунта в нём нет. Найдено smoke-integration в Ф30 —
+    // раньше маскировалось порядком прогонов (первое чтение снимка случалось
+    // после создания клиентов).
+    this.accounts.markEpochLocally(id, created.epoch);
+    return created.account;
   }
 
   /**

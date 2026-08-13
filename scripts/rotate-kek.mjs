@@ -10,14 +10,15 @@
 // слепая подстановка нового значения в .env без переобёртки — тогда старые
 // wrapped_dek перестанут открываться. Правильная ротация данные не трогает.
 //
-// Не все домены одинаковы:
+// Не все домены одинаковы — у каждого класса свой режим (Ф30):
 //   • конвертные (passport_sensitive, kyb_documents, investment_documents)
-//     — переобёртка, дёшево, данные не читаются;
-//   • прямые (webhook_secrets) — sealDirect шифрует секрет самим KEK,
-//     нужна ПЕРЕШИФРОВКА строк;
-//   • индексный (search_index) — KEK используется как ключ HMAC для blind
-//     index; смена инвалидирует ВСЕ индексы, их придётся пересчитать из
-//     открытых значений. Это отдельная процедура, здесь не выполняется.
+//     — переобёртка DEK, дёшево, данные не читаются;
+//   • прямой (webhook_secrets) — sealDirect шифрует секрет самим KEK:
+//     ПЕРЕШИФРОВКА каждого secret_ciphertext с контролем на строке;
+//   • индексный (search_index) — KEK служит ключом HMAC blind index:
+//     ПЕРЕСЧЁТ email_hmac/phone_hmac/inn_hmac из расшифрованных значений;
+//     контроль на строке — старый HMAC обязан воспроизвестись. НЕ пересчитываются
+//     consents.request_trace_hash/user_agent_hash: исходники не хранятся.
 //
 // Режимы:
 //   (по умолчанию)  только осмотр: сколько строк затронуто, открывается ли
@@ -37,7 +38,7 @@
 //   node scripts/rotate-kek.mjs --domain passport_sensitive --new-key <base64> --apply
 
 import { readFileSync, existsSync, writeFileSync } from 'node:fs';
-import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'node:crypto';
+import { createCipheriv, createDecipheriv, randomBytes, createHash, createHmac } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pg from 'pg';
@@ -73,15 +74,38 @@ const ENVELOPE = {
   ],
 };
 
-// Домены, которые этим скриптом не ротируются, и почему.
+// Домены, которые ротируются НЕ переобёрткой DEK, а собственными режимами
+// этого же скрипта (Ф30). Ключи карты сверяет гейт `npm run gate:kek`.
 const NOT_ENVELOPE = {
   webhook_secrets:
-    'секрет шифруется KEK напрямую (sealDirect) — нужна перешифровка ' +
-    'integration.webhook_endpoints.secret_ciphertext, а не переобёртка',
+    'секрет шифруется KEK напрямую (sealDirect) — ротация перешифровывает ' +
+    'integration.webhook_endpoints.secret_ciphertext (режим direct этого скрипта)',
   search_index:
-    'KEK служит ключом HMAC для blind index — смена инвалидирует все ' +
-    'email_hmac/phone_hmac/inn_hmac, их нужно пересчитать из открытых значений',
+    'KEK служит ключом HMAC blind index — ротация пересчитывает ' +
+    'email_hmac/phone_hmac/inn_hmac из расшифрованных значений (режим hmac этого скрипта)',
 };
+
+// AAD прямого шифрования секрета вебхука — как в apps/core/src/events
+// (WEBHOOK_SECRET_AAD). Разъезд поймает контроль расшифровки старым ключом.
+const WEBHOOK_SECRET_AAD = 'webhook:signing';
+
+/**
+ * Нормализация значения перед HMAC — копия crypto.service.ts::normalize.
+ * Разъезд с оригиналом ловится контролем «старый HMAC от расшифрованного
+ * значения равен хранимому»: при несовпадении ротация останавливается.
+ */
+function normalizeForIndex(value, kind) {
+  const trimmed = value.trim();
+  if (kind === 'email') return trimmed.toLowerCase();
+  if (kind === 'phone') return trimmed.replace(/[^\d+]/g, '');
+  return trimmed.replace(/\D/g, '');
+}
+
+function blindIndex(kek, value, kind) {
+  return createHmac('sha256', kek)
+    .update(`${kind}:${normalizeForIndex(value, kind)}`, 'utf8')
+    .digest();
+}
 
 const ENV_BY_DOMAIN = {
   kyc_documents: 'KEK_KYC_DOCUMENTS',
@@ -158,13 +182,17 @@ if (!domain) {
   process.exit(1);
 }
 
-if (NOT_ENVELOPE[domain]) {
+// Домены с собственными режимами ротации (Ф30): не переобёртка DEK.
+const DIRECT_DOMAIN = domain === 'webhook_secrets';
+const HMAC_DOMAIN = domain === 'search_index';
+
+if (NOT_ENVELOPE[domain] && !DIRECT_DOMAIN && !HMAC_DOMAIN) {
   console.error(`домен ${domain} этим скриптом не ротируется:`);
   console.error(`  ${NOT_ENVELOPE[domain]}`);
   process.exit(1);
 }
 
-if (!ENVELOPE[domain]) {
+if (!ENVELOPE[domain] && !DIRECT_DOMAIN && !HMAC_DOMAIN) {
   const known = Object.keys(ENV_BY_DOMAIN).includes(domain);
   if (!known) {
     console.error(`неизвестный домен ${domain}`);
@@ -231,6 +259,334 @@ console.warn(
   `режим: ${mode === 'check' ? 'осмотр, без записи' : mode === 'test' ? 'ротация с откатом' : 'РОТАЦИЯ С ФИКСАЦИЕЙ'}`,
 );
 console.warn('');
+
+/**
+ * Общий хвост apply-режима: .env пишется ДО фиксации; срыв фиксации
+ * откатывает и файл, и транзакцию (тот же порядок, что у конвертной ветки).
+ */
+async function commitWithEnv(summaryLine) {
+  if (WRITE_ENV) {
+    let previousEnv;
+    try {
+      previousEnv = writeEnvValue(ENV_BY_DOMAIN[domain], newKek.toString('base64'));
+    } catch (e) {
+      await client.query('ROLLBACK');
+      await client.end();
+      console.error(`не удалось записать .env: ${e.message} — транзакция откачена`);
+      process.exit(1);
+    }
+    try {
+      await client.query('COMMIT');
+    } catch (e) {
+      writeFileSync(resolve(ROOT, '.env'), previousEnv, 'utf8');
+      await client.end();
+      console.error(`фиксация не прошла: ${e.message} — .env возвращён к прежнему значению`);
+      process.exit(1);
+    }
+    console.warn('');
+    console.warn(`зафиксировано: ${summaryLine}`);
+    console.warn(`${ENV_BY_DOMAIN[domain]}: новое значение записано в .env`);
+    console.warn('значение нигде не печаталось — в транскрипт сессии оно не попало');
+    console.warn('');
+    console.warn('ДАЛЬШЕ: npm run secrets:redactors, затем перезапустить ядро.');
+  } else {
+    await client.query('COMMIT');
+    console.warn('');
+    console.warn(`зафиксировано: ${summaryLine}`);
+    console.warn(
+      'ДАЛЬШЕ: заменить значение в .env, npm run secrets:redactors, перезапустить ядро.',
+    );
+    if (generated) {
+      console.warn(`новое значение ${ENV_BY_DOMAIN[domain]} (показывается один раз):`);
+      console.warn(newKek.toString('base64'));
+    }
+  }
+}
+
+/**
+ * Режим direct (webhook_secrets): секрет зашифрован KEK напрямую, ротация —
+ * перешифровка каждого secret_ciphertext. Контроль на каждой строке:
+ * расшифровка старым → шифрование новым → обратная расшифровка совпадает.
+ */
+async function rotateWebhookSecrets() {
+  const table = 'integration.webhook_endpoints';
+  const lock = mode === 'check' ? '' : ' FOR UPDATE';
+  const { rows } = await client.query(
+    `SELECT id, secret_ciphertext FROM ${table} WHERE secret_ciphertext IS NOT NULL${lock}`,
+  );
+  let reencrypted = 0;
+  let bad = 0;
+  for (const row of rows) {
+    let plain;
+    try {
+      plain = decrypt(oldKek, row.secret_ciphertext, WEBHOOK_SECRET_AAD);
+    } catch {
+      bad++;
+      continue;
+    }
+    if (newKek) {
+      const fresh = encrypt(newKek, plain, WEBHOOK_SECRET_AAD);
+      const back = decrypt(newKek, fresh, WEBHOOK_SECRET_AAD);
+      if (digest(back) !== digest(plain)) {
+        bad++;
+        plain.fill(0);
+        continue;
+      }
+      if (mode !== 'check') {
+        await client.query(`UPDATE ${table} SET secret_ciphertext = $1 WHERE id = $2`, [
+          fresh,
+          row.id,
+        ]);
+      }
+      reencrypted++;
+    }
+    plain.fill(0);
+  }
+  console.warn(
+    `${table}.secret_ciphertext: строк ${rows.length}, старым ключом открыто ${rows.length - bad}` +
+      (newKek ? `, перешифровано ${reencrypted}` : ''),
+  );
+  if (bad > 0) {
+    if (mode !== 'check') await client.query('ROLLBACK');
+    console.error(`ОШИБОК: ${bad} — ротация не выполнена`);
+    process.exit(1);
+  }
+  if (mode === 'test') {
+    const { rows: after } = await client.query(
+      `SELECT secret_ciphertext FROM ${table} WHERE secret_ciphertext IS NOT NULL LIMIT 1`,
+    );
+    let newOk = false;
+    let oldRejected = false;
+    if (after.length) {
+      try {
+        decrypt(newKek, after[0].secret_ciphertext, WEBHOOK_SECRET_AAD);
+        newOk = true;
+      } catch {
+        /* остаётся false */
+      }
+      try {
+        decrypt(oldKek, after[0].secret_ciphertext, WEBHOOK_SECRET_AAD);
+      } catch {
+        oldRejected = true;
+      }
+      console.warn(
+        `контроль записанного: новым ключом открывается — ${newOk ? 'да' : 'НЕТ'}; старым отвергается — ${oldRejected ? 'да' : 'НЕТ'}`,
+      );
+      if (!newOk || !oldRejected) {
+        await client.query('ROLLBACK');
+        console.error('контроль не пройден — откат');
+        process.exit(1);
+      }
+    }
+    await client.query('ROLLBACK');
+    console.warn('транзакция откачена: база не изменена');
+  } else if (mode === 'apply') {
+    await commitWithEnv(`перешифровано ${reencrypted} из ${rows.length} секретов вебхуков`);
+  } else {
+    console.warn(`итого строк: ${rows.length}, текущий ключ открывает все секреты`);
+  }
+}
+
+/**
+ * Режим hmac (search_index): blind index пересчитывается из расшифрованных
+ * значений. Контроль на каждой строке ДО записи: HMAC СТАРЫМ ключом от
+ * расшифрованного значения обязан совпасть с хранимым — это доказывает, что
+ * расшифровка и нормализация воспроизводят оригинальный конвейер.
+ *
+ * НЕ пересчитываются consents.request_trace_hash и user_agent_hash: их
+ * исходные значения не хранятся. Историческая связка с журналом остаётся
+ * проверяемой только прежним ключом — свойство названо, а не скрыто.
+ */
+async function rotateSearchIndex() {
+  const passKek = Buffer.from(readEnvValue('KEK_PASSPORT_SENSITIVE') ?? '', 'base64');
+  const kybKek = Buffer.from(readEnvValue('KEK_KYB_DOCUMENTS') ?? '', 'base64');
+  if (passKek.length !== DEK_BYTES || kybKek.length !== DEK_BYTES) {
+    console.error(
+      'для пересчёта нужны KEK_PASSPORT_SENSITIVE и KEK_KYB_DOCUMENTS (32 байта base64)',
+    );
+    process.exit(1);
+  }
+  const lock = mode === 'check' ? '' : ' FOR UPDATE';
+  let total = 0;
+  let recomputed = 0;
+  let bad = 0;
+  let outOfPipeline = 0;
+
+  // Валидная конвертная обёртка — ровно IV(12) + TAG(16) + DEK(32) байта.
+  // Фикстуры смоуков (`smoke-investments`: '\x00' вместо шифртекста, digest
+  // вместо HMAC) в конвейере не участвуют: их blind index не зависит от KEK,
+  // и смена ключа их не трогает. Они считаются ОТДЕЛЬНО и печатаются — но не
+  // валят ротацию. Повреждённая строка с валидной обёрткой — по-прежнему стоп.
+  const WRAP_BYTES = IV_BYTES + TAG_BYTES + DEK_BYTES;
+
+  // identity.users: email_hmac / phone_hmac из контактов (домен passport_sensitive).
+  const { rows: users } = await client.query(
+    `SELECT id, contact_wrapped_dek, email_ciphertext, phone_ciphertext, email_hmac, phone_hmac
+       FROM identity.users WHERE contact_wrapped_dek IS NOT NULL${lock}`,
+  );
+  for (const u of users) {
+    total++;
+    if (u.contact_wrapped_dek.length !== WRAP_BYTES) {
+      outOfPipeline++;
+      continue;
+    }
+    let dek;
+    try {
+      dek = decrypt(passKek, u.contact_wrapped_dek, 'wrap:passport_sensitive');
+    } catch {
+      bad++;
+      continue;
+    }
+    const updates = [];
+    let rowOk = true;
+    for (const [kind, ct, stored, col] of [
+      ['email', u.email_ciphertext, u.email_hmac, 'email_hmac'],
+      ['phone', u.phone_ciphertext, u.phone_hmac, 'phone_hmac'],
+    ]) {
+      if (!ct) continue;
+      let plain;
+      try {
+        plain = decrypt(dek, ct, `field:${kind}`).toString('utf8');
+      } catch {
+        rowOk = false;
+        break;
+      }
+      if (!stored || !blindIndex(oldKek, plain, kind).equals(stored)) {
+        rowOk = false; // старый HMAC не сошёлся — конвейер воспроизведён неверно
+        break;
+      }
+      if (newKek) updates.push([col, blindIndex(newKek, plain, kind)]);
+    }
+    dek.fill(0);
+    if (!rowOk) {
+      bad++;
+      continue;
+    }
+    if (newKek && mode !== 'check' && updates.length) {
+      const sets = updates.map(([col], i) => `${col} = $${i + 2}`).join(', ');
+      await client.query(`UPDATE identity.users SET ${sets} WHERE id = $1`, [
+        u.id,
+        ...updates.map(([, v]) => v),
+      ]);
+    }
+    if (newKek) recomputed++;
+  }
+  const usersSkipped = outOfPipeline;
+  console.warn(
+    `identity.users: строк ${users.length}, в конвейере ${users.length - usersSkipped}, ` +
+      `старый HMAC сошёлся у ${users.length - usersSkipped - bad}` +
+      (newKek ? `, пересчитано ${recomputed}` : ''),
+  );
+
+  // kyc.business_entities: inn_hmac (домен kyb_documents).
+  const { rows: entities } = await client.query(
+    `SELECT id, entity_wrapped_dek, inn_ciphertext, inn_hmac
+       FROM kyc.business_entities WHERE inn_ciphertext IS NOT NULL${lock}`,
+  );
+  let entRecomputed = 0;
+  let entBad = 0;
+  for (const e of entities) {
+    total++;
+    if (e.entity_wrapped_dek.length !== WRAP_BYTES) {
+      outOfPipeline++;
+      continue;
+    }
+    let dek;
+    let plain;
+    try {
+      dek = decrypt(kybKek, e.entity_wrapped_dek, 'wrap:kyb_documents');
+      plain = decrypt(dek, e.inn_ciphertext, 'field:inn').toString('utf8');
+    } catch {
+      entBad++;
+      continue;
+    } finally {
+      if (dek) dek.fill(0);
+    }
+    if (!e.inn_hmac || !blindIndex(oldKek, plain, 'inn').equals(e.inn_hmac)) {
+      entBad++;
+      continue;
+    }
+    if (newKek) {
+      if (mode !== 'check') {
+        await client.query(`UPDATE kyc.business_entities SET inn_hmac = $2 WHERE id = $1`, [
+          e.id,
+          blindIndex(newKek, plain, 'inn'),
+        ]);
+      }
+      entRecomputed++;
+    }
+  }
+  const entSkipped = outOfPipeline - usersSkipped;
+  console.warn(
+    `kyc.business_entities: строк ${entities.length}, в конвейере ${entities.length - entSkipped}, ` +
+      `старый HMAC сошёлся у ${entities.length - entSkipped - entBad}` +
+      (newKek ? `, пересчитано ${entRecomputed}` : ''),
+  );
+  if (outOfPipeline > 0) {
+    console.warn(
+      `вне конвейера (обёртка не ${WRAP_BYTES} байт): ${outOfPipeline} строк — фикстуры смоуков, ` +
+        'их blind index не зависит от KEK и не трогается; в production таких строк быть не должно',
+    );
+  }
+  console.warn(
+    'НЕ пересчитывается: consents.request_trace_hash / user_agent_hash — исходные значения ' +
+      'не хранятся; историческая связка с журналом остаётся на прежнем ключе.',
+  );
+
+  if (bad + entBad > 0) {
+    if (mode !== 'check') await client.query('ROLLBACK');
+    console.error(`ОШИБОК: ${bad + entBad} — ротация не выполнена`);
+    process.exit(1);
+  }
+  if (mode === 'test') {
+    const { rows: after } = await client.query(
+      `SELECT contact_wrapped_dek, email_ciphertext, email_hmac FROM identity.users
+        WHERE email_ciphertext IS NOT NULL LIMIT 1`,
+    );
+    if (after.length) {
+      const dek = decrypt(passKek, after[0].contact_wrapped_dek, 'wrap:passport_sensitive');
+      const plain = decrypt(dek, after[0].email_ciphertext, 'field:email').toString('utf8');
+      dek.fill(0);
+      const newOk = blindIndex(newKek, plain, 'email').equals(after[0].email_hmac);
+      const oldRejected = !blindIndex(oldKek, plain, 'email').equals(after[0].email_hmac);
+      console.warn(
+        `контроль записанного: новым ключом сходится — ${newOk ? 'да' : 'НЕТ'}; старым уже не сходится — ${oldRejected ? 'да' : 'НЕТ'}`,
+      );
+      if (!newOk || !oldRejected) {
+        await client.query('ROLLBACK');
+        console.error('контроль не пройден — откат');
+        process.exit(1);
+      }
+    }
+    await client.query('ROLLBACK');
+    console.warn('транзакция откачена: база не изменена');
+  } else if (mode === 'apply') {
+    await commitWithEnv(`пересчитано ${recomputed + entRecomputed} blind index из ${total} строк`);
+  } else {
+    console.warn(`итого строк: ${total}, старый ключ воспроизводит все хранимые HMAC`);
+  }
+}
+
+if (DIRECT_DOMAIN || HMAC_DOMAIN) {
+  try {
+    if (mode !== 'check') await client.query('BEGIN');
+    if (DIRECT_DOMAIN) await rotateWebhookSecrets();
+    else await rotateSearchIndex();
+  } catch (e) {
+    if (mode !== 'check') {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* соединение могло закрыться */
+      }
+    }
+    console.error(`ошибка: ${e.message}`);
+    process.exitCode = 1;
+  } finally {
+    await client.end();
+  }
+  process.exit(process.exitCode ?? 0);
+}
 
 let totalRows = 0;
 let totalRewrapped = 0;
