@@ -45,7 +45,7 @@ function check(name, ok, detail = '') {
 }
 
 /** Запрос должен УПАСТЬ: проверяем границу прав, а не доступ. */
-async function mustFail(client, name, sql) {
+async function mustFail(client, name, sql, expectedCodes = ['42501', '3F000']) {
   try {
     await client.query(sql);
     check(name, false, 'запрос прошёл, хотя роли это запрещено');
@@ -57,7 +57,9 @@ async function mustFail(client, name, sql) {
       check(name, false, 'объекта не существует — проверка ничего не доказывает');
       return;
     }
-    check(name, code === '42501' || code === '3F000', `отказ ${code}`);
+    // Тип ошибки проверяется, а не только её факт: отказ по другой причине —
+    // это зелёный по неверной причине (RULES.md §4).
+    check(name, expectedCodes.includes(code), `отказ ${code}`);
   }
 }
 
@@ -154,11 +156,34 @@ const ROLES = [
       ['читает журнал целиком', 'SELECT count(*) FROM audit.events'],
       ['читает реестр выгрузок', 'SELECT count(*) FROM audit.event_archives'],
       ['сверяет hash-chain', 'SELECT count(*) FROM audit.verify_event_chain(NULL)'],
+      [
+        'сверяет hash-chain диапазона (M053)',
+        'SELECT count(*) FROM audit.verify_event_chain_range(NULL, now())',
+      ],
     ],
     forbidden: [
       ['не пишет в журнал', "INSERT INTO audit.events (verb) VALUES ('x')"],
       ['не правит журнал', "UPDATE audit.events SET verb = 'x' WHERE false"],
       ['не удаляет из журнала', 'DELETE FROM audit.events WHERE false'],
+      [
+        // M053: прямой INSERT отозван — единственный путь в реестр лежит через
+        // append-функцию с инвариантами непрерывности (CODE-HIGH-10).
+        'не вставляет в реестр напрямую',
+        `INSERT INTO audit.event_archives
+           (period_start, period_end, object_key, event_count, sha256, chain_intact)
+         VALUES (now() - interval '1 day', now() + interval '365 days',
+                 'archive/audit-events/poison', 0, repeat('0', 64), true)`,
+      ],
+      [
+        // P0001 — RAISE EXCEPTION самой функции: отравление отвергнуто
+        // инвариантом, а не правами.
+        'append-функция отвергает границу в будущем',
+        `SELECT audit.append_event_archive(
+           (SELECT coalesce(max(period_end), to_timestamp(0)) FROM audit.event_archives),
+           now() + interval '365 days',
+           'archive/audit-events/poison-future', 1, repeat('0', 64), NULL, NULL, true)`,
+        ['P0001'],
+      ],
       [
         'не правит реестр выгрузок',
         "UPDATE audit.event_archives SET sha256 = repeat('0', 64) WHERE false",
@@ -201,8 +226,8 @@ for (const spec of ROLES) {
         check(name, false, `${error.code ?? ''} ${error.message}`.slice(0, 90));
       }
     }
-    for (const [name, sql] of spec.forbidden) {
-      await mustFail(client, name, sql);
+    for (const [name, sql, codes] of spec.forbidden) {
+      await mustFail(client, name, sql, codes);
     }
   } catch (error) {
     check(`подключение ${spec.role}`, false, error.message.slice(0, 90));

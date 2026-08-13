@@ -73,6 +73,12 @@ function arg(name, fallback) {
 }
 
 const RETENTION_DAYS = arg('days', 90);
+// Порог — конечное неотрицательное число, и отказ ДО первого SQL: NaN или
+// отрицательное значение молча сдвинули бы границу выгрузки.
+if (!Number.isFinite(RETENTION_DAYS) || RETENTION_DAYS < 0) {
+  console.error(`--days обязан быть конечным неотрицательным числом, получено: ${RETENTION_DAYS}`);
+  process.exit(1);
+}
 const DRY_RUN = process.argv.includes('--dry-run');
 /** Сколько событий читается за раз: в памяти живёт партия, а не весь диапазон. */
 const BATCH = 5_000;
@@ -288,7 +294,7 @@ try {
   // Реестр утверждает, что копия существует. Проверяем это, а не верим записи;
   // сверка — по СОДЕРЖИМОМУ, восстановление — из журнала.
   const [previous] = await sql(
-    `SELECT object_key, period_start, period_end, sha256
+    `SELECT object_key, period_start, period_end, sha256, last_event_id
        FROM audit.event_archives ORDER BY exported_at DESC LIMIT 1`,
   );
   if (previous) {
@@ -345,8 +351,15 @@ try {
     throw EXIT;
   }
 
-  // Сверка цепочки ДО выгрузки: копия с повреждённой цепочки архивом не является.
-  const broken = await sql('SELECT broken_event_id FROM audit.verify_event_chain($1)', [lastEnd]);
+  // Сверка цепочки ДО выгрузки: копия с повреждённой цепочки архивом не
+  // является. Диапазонный verifier (M053): верхняя граница — текущий boundary
+  // (события новее не влияют на эту выгрузку), seed — row_hash последнего
+  // события прошлого архива, поэтому СВЯЗЬ нового диапазона с уже
+  // заархивированным проверяется строго, а не пропускается (SEC-HIGH-04).
+  const broken = await sql(
+    'SELECT broken_event_id, reason FROM audit.verify_event_chain_range($1, $2)',
+    [previous?.last_event_id ?? null, boundary],
+  );
   const chainIntact = broken.length === 0;
   console.warn(
     chainIntact
@@ -380,23 +393,20 @@ try {
     `  OK    объект в хранилище: ${objectKey} (${uploaded.size} байт, sha256 сверен чтением обратно)`,
   );
 
-  await sql(
-    `INSERT INTO audit.event_archives
-       (period_start, period_end, object_key, event_count, sha256,
-        first_event_id, last_event_id, chain_intact)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-    [
-      lastEnd,
-      boundary,
-      objectKey,
-      collected.count,
-      collected.sha256,
-      collected.firstEventId,
-      collected.lastEventId,
-      chainIntact,
-    ],
-  );
-  console.warn('  OK    запись в реестре выгрузок создана');
+  // Запись — только через append-функцию (M053): непрерывность диапазонов,
+  // запрет будущей границы и сверку count/first/last с журналом держит БД,
+  // а не дисциплина этого скрипта. Прямой INSERT у роли отозван.
+  await sql(`SELECT audit.append_event_archive($1, $2, $3, $4, $5, $6, $7, $8)`, [
+    lastEnd,
+    boundary,
+    objectKey,
+    collected.count,
+    collected.sha256,
+    collected.firstEventId,
+    collected.lastEventId,
+    chainIntact,
+  ]);
+  console.warn('  OK    запись в реестре выгрузок создана (append-функция M053)');
 
   console.warn(
     `\nВыгружено ${collected.count} событий. События в журнале НЕ удалены: ` +

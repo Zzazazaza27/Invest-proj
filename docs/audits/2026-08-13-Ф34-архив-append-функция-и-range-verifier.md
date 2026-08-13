@@ -1,0 +1,58 @@
+# SESSION AUDIT REPORT — Ф34: архив — append-функция реестра и range-verifier
+
+Дата: 2026-08-13. Закрывает CODE-HIGH-10/SEC-HIGH-05 (отравление реестра
+выгрузок своей же ролью) и CODE-MED-06/SEC-HIGH-04 (verifier без верхней
+границы и без проверки стыка архивов), плюс Low-находку про `--days`.
+
+## Scope
+
+- `database/migrations/M053_archive_append_guard.sql` — REVOKE INSERT у
+  `app_archive`; политика вставки только через транзакционный флаг;
+  `audit.append_event_archive()` (SECURITY DEFINER, `search_path` с `pg_temp`
+  последним, EXECUTE отозван у PUBLIC): непрерывность диапазонов, запрет
+  будущей границы, непустой диапазон, сверка count/first/last с журналом,
+  префикс ключа, advisory-лок; `audit.verify_event_chain_range()` — seed от
+  предшественника, верхняя граница, строгая первая связь.
+- `scripts/archive-events.mjs` — валидация `--days` до SQL; диапазонный
+  verifier; запись через функцию.
+- `scripts/check-service-roles.mjs` — `mustFail` с ожидаемыми кодами ошибок;
+  +3 проверки app_archive.
+- `README.md`, `TODO.md`, заметки — синхронизация (диапазон миграций, счётчики).
+
+## Статус гейтов (доказательства этой сессии)
+
+| Гейт | Результат |
+|---|---|
+| `lint:migrations` | 0 ошибок, 1 прежний осознанный WARN (M051) |
+| Миграция M053 | применена к основной и тестовой БД |
+| Тесты БД | 112/112 |
+| `check-definer-privileges` | 0 нарушений (новая definer-функция в границах) |
+| `check-service-roles` | 42/42 (+3) |
+| Живая выгрузка `--days 0` | 6 событий, sha256 сверен чтением обратно, запись через append-функцию |
+| `probe-event-archive` | 11/11 |
+| Негативные контроли вживую | прямой INSERT → 42501; будущая граница → P0001; разрыв непрерывности → P0001; `--days abc` → exit 1 |
+| ESLint / Prettier | 0 / чисто |
+| `gate:net` | пройден |
+
+## Findings
+
+| Severity | Где | Что | Статус |
+|---|---|---|---|
+| HIGH | M052/archive-events | Роль архива могла отравить реестр строкой с будущей границей (CODE-HIGH-10/SEC-HIGH-05) | FIXED (M053) |
+| HIGH | verify_event_chain | Стык архивов не проверялся, верхней границы не было (CODE-MED-06/SEC-HIGH-04) | FIXED (range-verifier) |
+| MEDIUM | check-service-roles | «Отказ по любой причине» зеленил forbidden-проверку | FIXED (ожидаемые коды) |
+| LOW | archive-events | `--days` не валидировался | FIXED |
+
+## Ограничения
+
+- WORM/Object Lock и внешний якорь архива (SEC-HIGH-06) — свойства
+  production-хранилища, остаются в TODO: против администратора БД+хранилища
+  текущая защита tamper-evident, а не immutable, и так и называется.
+- Exclusion-constraint на пересечение диапазонов не добавлен: непрерывность
+  «start = max(end)» строго сильнее (пересечения и дыры невозможны, пока
+  запись идёт только через функцию), а прямой INSERT отозван у всех ролей
+  приложения.
+
+## Техдолг
+
+- Поставить выгрузку в расписание production-контура (было в TODO, остаётся).
