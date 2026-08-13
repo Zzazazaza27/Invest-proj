@@ -27,7 +27,7 @@
  *
  * Запуск: node scripts/rotate-stand-secrets.mjs [--dry-run]
  */
-import { readFileSync, writeFileSync, copyFileSync, renameSync } from 'node:fs';
+import { readFileSync, writeFileSync, copyFileSync, renameSync, rmSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -164,8 +164,20 @@ if (redactors.status !== 0) {
   process.exit(1);
 }
 
+// 5. Бэкап со СТАРЫМИ секретами удаляется сам: до Ф45 он оставался на диске
+//    в открытом виде до ручной уборки (LOW внешнего аудита №2), а «удалить
+//    после проверки» — это шаг, который забывают. Все проверки, ради которых
+//    он нужен (откат при неудаче ротации), к этому моменту уже пройдены:
+//    ниже по коду откатов нет. `--keep-backup` оставляет файл осознанно.
+if (process.argv.includes('--keep-backup')) {
+  console.warn(`rotate-stand-secrets: бэкап оставлен по --keep-backup: ${BACKUP_PATH}`);
+  console.warn('  Удали его вручную: в нём ПРЕЖНИЕ значения всех секретов стенда.');
+} else {
+  rmSync(BACKUP_PATH, { force: true });
+  console.warn('rotate-stand-secrets: бэкап со старыми секретами удалён');
+}
+
 console.warn('rotate-stand-secrets: ГОТОВО. Дальше обязательно:');
 console.warn('  1. node scripts/dev-seed-test-user.mjs   (пароль тестовой учётки)');
 console.warn('  2. перезапустить core, если он был запущен');
 console.warn('  3. node scripts/check-secret-reuse.mjs   (убедиться, что дублей нет)');
-console.warn(`  4. удалить ${BACKUP_PATH} после проверки стенда`);

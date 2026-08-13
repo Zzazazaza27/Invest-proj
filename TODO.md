@@ -59,6 +59,7 @@
 | Ф42  | Скоупы вебхуков, гонки KYC, порядок S3, M057/M058 (регрессия M056)        | ✅ завершена 2026-08-13 |
 | Ф43  | AI-шлюз: threadpool, 401 на не-ASCII, trace_id, healthz, https-endpoint   | ✅ завершена 2026-08-13 |
 | Ф44  | Фронтенды: setCsrf, маскировка 401, адрес API, noindex, encodeURIComponent | ✅ завершена 2026-08-13 |
+| Ф45  | Инфра: realm Keycloak, своя роль БД IdP, атомарный .env, digest, --strict  | ✅ завершена 2026-08-13 |
 
 ---
 
@@ -176,9 +177,14 @@ CRITICAL/HIGH нет», противореча собственному разд
   проверка на production-сборке (20+17+18+23+13). Остаток: вынос общих
   копий api.ts/App.tsx в packages — отдельная работа; CSP для статики SPA —
   вместе с production-раздачей (нет в репозитории).
-- **Ф45 (инфра/скрипты):** keycloak realm-launch.json или снять volume;
-  отдельный логин БД для Keycloak; rotate-kek атомарная запись .env;
-  gate-ai --strict; pgvector digest; авто-удаление .env.rotate-backup.
+- ~~**Ф45 (инфра/скрипты)**~~ — ЗАКРЫТО 2026-08-13: создан
+  infra/keycloak/realm-launch.json (профиль idp не поднимался вовсе — docker
+  создавал каталог вместо файла); Keycloak переведён со своей роли БД вместо
+  unicorn_owner (+ идемпотентный keycloak-db-init: init-скрипты Postgres
+  работают только при первой инициализации тома); атомарная запись .env в
+  rotate-kek; pip-audit --strict локально; pgvector по дайджесту;
+  автоудаление .env.rotate-backup. Живьём: realm импортирован, discovery 200,
+  JWKS 2 ключа, PKCE S256.
 - **Ф46 (документация/мёртвый код):** README (статус Ф0–Ф38, счётчики,
   app_archive_user, цифры графа); runbook денежный маршрут;
   frontend-replacement оговорка OIDC; obsidian 00-Обзор (схемы/таблицы,

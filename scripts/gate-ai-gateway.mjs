@@ -39,7 +39,18 @@ const steps = [
   { name: 'тесты шлюза', args: ['-m', 'pytest', 'tests', '-q'] },
   {
     name: 'аудит зависимостей (pip-audit)',
-    args: ['-m', 'pip_audit', '-r', 'requirements.txt', '--progress-spinner', 'off'],
+    // `--strict` — как в CI: без него pip-audit возвращает 0, когда какую-то
+    // зависимость не удалось проверить, и локальный гейт был мягче CI
+    // (расхождение поведения между средами, LOW внешнего аудита №2).
+    args: [
+      '-m',
+      'pip_audit',
+      '-r',
+      'requirements.txt',
+      '--strict',
+      '--progress-spinner',
+      'off',
+    ],
   },
 ];
 

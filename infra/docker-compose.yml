@@ -25,6 +25,9 @@ services:
       # .env не должен давать один пароль на несколько служб — привычка к общей
       # схеме переезжает в боевой контур. Гейт: scripts/check-secret-reuse.mjs.
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_only_pg_change_me}
+      # Читается init-скриптом при первой инициализации кластера: он заводит
+      # СВОЮ роль-владельца для БД Keycloak (Ф45).
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-local_dev_only_kc_db_change_me}
       # scram-sha-256 вместо md5 — обязательный минимум
       POSTGRES_INITDB_ARGS: '--auth-host=scram-sha-256 --auth-local=scram-sha-256'
       TZ: UTC
@@ -208,6 +211,46 @@ services:
         echo "бакет $$S3_BUCKET готов"
     restart: 'no'
 
+  # Роль и БД для IdP. Отдельный одноразовый контейнер, а не только init-скрипт
+  # кластера: init-скрипты Postgres выполняются ТОЛЬКО при первой инициализации
+  # тома, поэтому на уже существующем стенде роль не появилась бы вовсе —
+  # проверено фактом (Keycloak падал с «password authentication failed for user
+  # keycloak»). Идемпотентно: повторный запуск обновляет пароль той же роли.
+  keycloak-db-init:
+    image: unicorn/postgres:16
+    container_name: unicorn-keycloak-db-init
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:-local_dev_only_pg_change_me}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-local_dev_only_kc_db_change_me}
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d unicorn_launch <<SQL
+        DO \$\$
+        BEGIN
+          IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'keycloak') THEN
+            EXECUTE format('ALTER ROLE keycloak LOGIN PASSWORD %L', '$KEYCLOAK_DB_PASSWORD');
+          ELSE
+            EXECUTE format('CREATE ROLE keycloak LOGIN PASSWORD %L', '$KEYCLOAK_DB_PASSWORD');
+          END IF;
+        END
+        \$\$;
+        SQL
+        psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d unicorn_launch -tAc \
+          "SELECT 1 FROM pg_database WHERE datname = 'keycloak'" | grep -q 1 || \
+          psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d unicorn_launch \
+            -c "CREATE DATABASE keycloak OWNER keycloak"
+        psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d unicorn_launch \
+          -c "ALTER DATABASE keycloak OWNER TO keycloak"
+        echo "роль и БД keycloak готовы (владелец — keycloak, не unicorn_owner)"
+    profiles: ['idp']
+    restart: 'no'
+
   # Проверенный IdP. Launch НЕ реализует протокол OIDC самостоятельно
   # (Database_Launch.md §2): сессии, refresh-токены, WebAuthn, MFA и ключи
   # подписи живут в БД Keycloak, а не в unicorn_launch.
@@ -221,19 +264,25 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-local_dev_only_kc_change_me}
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
-      KC_DB_USERNAME: unicorn_owner
-      # Тот же пользователь той же БД postgres — интерполяция одной переменной,
-      # а не второй секрет с тем же значением.
-      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_only_pg_change_me}
+      # СВОЯ роль, а не unicorn_owner: владелец схем платформы — это доступ
+      # ко всем данным кластера, включая регулируемый контур. IdP нужна только
+      # его собственная БД (MEDIUM внешнего аудита №2).
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:-local_dev_only_kc_db_change_me}
       KC_HEALTH_ENABLED: 'true'
       KC_HOSTNAME_STRICT: 'false'
     ports:
       - '127.0.0.1:8081:8080'
     volumes:
-      - ./keycloak/realm-launch.json:/opt/keycloak/data/import/realm-launch.json:ro
+      # Каталог с экспортом realm. Монтируется целиком, а не одним файлом:
+      # отсутствующий файл docker создаёт как КАТАЛОГ, и Keycloak падает на
+      # импорте — профиль idp не поднимался вовсе (HIGH внешнего аудита №2).
+      - ./keycloak:/opt/keycloak/data/import:ro
     depends_on:
       postgres:
         condition: service_healthy
+      keycloak-db-init:
+        condition: service_completed_successfully
     profiles: ['idp']
 
   mailpit:

@@ -37,7 +37,7 @@
 //   node scripts/rotate-kek.mjs --domain passport_sensitive --generate --test
 //   node scripts/rotate-kek.mjs --domain passport_sensitive --new-key <base64> --apply
 
-import { readFileSync, existsSync, writeFileSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync, renameSync } from 'node:fs';
 import { createCipheriv, createDecipheriv, randomBytes, createHash, createHmac } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -149,7 +149,14 @@ function writeEnvValue(name, value) {
   const line = new RegExp(`^${name}=.*$`, 'm');
   if (!line.test(text)) throw new Error(`в .env нет строки ${name}=`);
   const updated = text.replace(line, `${name}=${value}`);
-  writeFileSync(path, updated, 'utf8');
+  // Запись во ВРЕМЕННЫЙ файл и переименование, а не правка на месте: срыв
+  // посередине `writeFileSync` оставляет усечённый .env — то есть контур без
+  // части ключей, причём ровно в момент ротации (LOW внешнего аудита №2).
+  // Переименование в пределах одного каталога атомарно. Тот же приём уже
+  // применён в rotate-stand-secrets.mjs — здесь была несогласованность.
+  const tmp = `${path}.rotate-tmp`;
+  writeFileSync(tmp, updated, 'utf8');
+  renameSync(tmp, path);
   return text; // прежнее содержимое — для отката
 }
 
