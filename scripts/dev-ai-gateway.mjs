@@ -14,6 +14,8 @@ import { existsSync, openSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { PORTS } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PYTHON = join(ROOT, 'apps', 'ai-gateway', '.venv', 'Scripts', 'python.exe');
 const PYTHON_POSIX = join(ROOT, 'apps', 'ai-gateway', '.venv', 'bin', 'python');
@@ -59,7 +61,7 @@ if (env.AI_POLICY_PATH && !isAbsolute(env.AI_POLICY_PATH)) {
 const detached = process.argv.includes('--detached');
 // Порт берётся из AI_GATEWAY_URL: два источника правды разошлись бы на первом же
 // изменении, и core стучался бы не туда.
-const url = new URL(env.AI_GATEWAY_URL ?? 'http://127.0.0.1:8100');
+const url = new URL(env.AI_GATEWAY_URL ?? `http://127.0.0.1:${PORTS.aiGateway}`);
 const args = [
   '-m',
   'uvicorn',

@@ -18,7 +18,9 @@
 import { UnicornApi } from '../packages/api-client/dist/index.js';
 import { randomUUID } from 'node:crypto';
 
-const BASE = process.env.CORE_BASE_URL ?? 'http://127.0.0.1:4300/v1';
+import { API_BASE_URL } from './lib/ports.mjs';
+
+const BASE = process.env.CORE_BASE_URL ?? API_BASE_URL;
 
 let passed = 0;
 let failed = 0;

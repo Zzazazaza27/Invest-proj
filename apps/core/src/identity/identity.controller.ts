@@ -1,10 +1,11 @@
-import { Body, Controller, Get, Post, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import {
   AuthSessionSchema,
   ConsentAcceptanceSchema,
   CurrentUserSchema,
   LoginRequestSchema,
+  LocaleSchema,
   LogoutResultSchema,
   RegisterRequestSchema,
   type LogoutResult,
@@ -139,6 +140,24 @@ export class IdentityController {
   @Get('me')
   async me(@Ctx() ctx: RequestContext) {
     return CurrentUserSchema.parse(await this.identity.getCurrentUser(ctx));
+  }
+
+  /**
+   * Действующие версии обязательных документов — ДО регистрации.
+   *
+   * Публичный маршрут по необходимости: регистрация требует передать версию
+   * каждого акцепта, а получить её было неоткуда. Клиенты подставляли версию
+   * наугад, попадали в нарушение внешнего ключа и получали 500 — то есть
+   * зарегистрироваться, не заглянув в таблицу базы, было нельзя.
+   *
+   * Отдаётся отпечаток текста, а не сам текст: тексты лежат в хранилище и
+   * раздаются отдельно, а здесь важно, ЧТО именно принимает пользователь.
+   */
+  @Public()
+  @Get('consents/templates')
+  async consentTemplates(@Query('locale') rawLocale: unknown, @Ctx() ctx: RequestContext) {
+    const locale = parseOrThrow(LocaleSchema.default('ru-RU'), rawLocale ?? 'ru-RU');
+    return { items: await this.identity.consentTemplates(ctx.traceId, locale) };
   }
 
   @Post('consents')

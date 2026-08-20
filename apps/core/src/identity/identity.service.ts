@@ -358,6 +358,48 @@ export class IdentityService {
     });
   }
 
+  /**
+   * Действующие версии обязательных документов.
+   *
+   * Публичный список: без него зарегистрироваться через API нельзя в принципе.
+   * Регистрация требует передать версию каждого акцепта, а узнать её клиенту
+   * было неоткуда — маршрута не существовало, и рабочей оставалась только та
+   * регистрация, автор которой заглянул в таблицу `consent_templates` сам.
+   *
+   * Отдаётся отпечаток текста (`bodySha256`), а не сам текст: он доказывает,
+   * ЧТО именно принял пользователь, и позволяет позже показать расхождение,
+   * если документ подменили.
+   */
+  async consentTemplates(
+    traceId: string,
+    locale: string,
+  ): Promise<
+    { kind: string; version: string; locale: string; bodySha256: string; publishedAt: string }[]
+  > {
+    return this.db.asPublicRole(traceId, async (tx) => {
+      const { rows } = await tx.query<{
+        kind: string;
+        version: string;
+        locale: string;
+        body_sha256: Buffer;
+        published_at: Date;
+      }>(
+        `SELECT kind, version, locale, body_sha256, published_at
+           FROM identity.consent_templates
+          WHERE superseded_at IS NULL AND locale = $1
+          ORDER BY kind`,
+        [locale],
+      );
+      return rows.map((row) => ({
+        kind: row.kind,
+        version: row.version,
+        locale: row.locale,
+        bodySha256: row.body_sha256.toString('hex'),
+        publishedAt: row.published_at.toISOString(),
+      }));
+    });
+  }
+
   /** Список акцептов, которых не хватает до активации. */
   async missingConsents(ctx: RequestContext, locale = 'ru-RU'): Promise<string[]> {
     return this.db.readOnly(ctx, async (tx) => {
@@ -487,6 +529,30 @@ export class IdentityService {
     // писалось в колонку `ip_hash`, и запись о согласии выглядела как
     // доказательство канала, которым она не является (SEC-16, M043).
     const traceHash = this.crypto.contextHash(ctx.traceId);
+
+    // Версия акцепта сверяется с действующими шаблонами ДО вставки.
+    //
+    // Без этой проверки несуществующая версия упиралась в внешний ключ
+    // `consents_template_fk`, и наружу уходила «Внутренняя ошибка» 500 —
+    // хотя ошибся клиент, а не сервер. Регистрация при этом выглядела как
+    // поломка платформы: пользователь видел «Сервер недоступен», а в журнале
+    // лежало нарушение ограничения БД.
+    const { rows: templates } = await tx.query<{ kind: string; version: string; locale: string }>(
+      `SELECT kind, version, locale
+         FROM identity.consent_templates
+        WHERE superseded_at IS NULL`,
+    );
+    const actual = new Set(templates.map((t) => `${t.kind}|${t.version}|${t.locale}`));
+    const unknown = consents.filter((c) => !actual.has(`${c.kind}|${c.version}|${c.locale}`));
+    if (unknown.length > 0) {
+      throw errors.validation(
+        unknown.map((c) => ({
+          path: `consents.${c.kind}`,
+          message: `версия ${c.version} (${c.locale}) не является действующей`,
+        })),
+      );
+    }
+
     for (const consent of consents) {
       await tx.query(
         `INSERT INTO identity.consents (id, user_id, kind, version, locale, request_trace_hash)

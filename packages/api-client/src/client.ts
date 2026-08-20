@@ -162,7 +162,17 @@ export class ApiClient {
   }
 
   #buildUrl(path: string, query?: RequestOptions<unknown>['query']): string {
-    const url = new URL(`${this.#baseUrl}/${path.replace(/^\/+/, '')}`);
+    // Относительный базовый адрес (`/v1`) разрешается от адреса страницы.
+    //
+    // Это нужно для раздачи через обратный прокси: там фронтенд и API живут на
+    // одном origin, и зашивать в сборку абсолютный адрес означало бы пересборку
+    // под каждый домен — а заодно риск увести запросы на чужой хост. В Node
+    // (скрипты, прогоны) `location` нет, и относительный адрес остаётся
+    // ошибкой: там базовый адрес всегда известен явно.
+    const base = this.#baseUrl.startsWith('/')
+      ? `${globalThis.location?.origin ?? ''}${this.#baseUrl}`
+      : this.#baseUrl;
+    const url = new URL(`${base}/${path.replace(/^\/+/, '')}`);
     for (const [key, value] of Object.entries(query ?? {})) {
       if (value !== undefined) url.searchParams.set(key, String(value));
     }

@@ -20,6 +20,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const envFile = join(ROOT, '.env');
 if (existsSync(envFile)) {
@@ -31,7 +33,7 @@ if (existsSync(envFile)) {
   }
 }
 
-const BASE = process.env.CORE_URL ?? 'http://127.0.0.1:4300';
+const BASE = process.env.CORE_URL ?? CORE_URL;
 // Число попыток берётся из фактического лимита, а не из числа «45»: при
 // поднятом для разработки лимите фиксированные 45 попыток не дошли бы до
 // границы, и проверка зеленела бы, ничего не проверив.

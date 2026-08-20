@@ -9,9 +9,21 @@ import { ApiError, UnicornApi } from '@unicorn/api-client';
  * запрос не отправляется, и это выглядит как «вход не работает» при исправном
  * сервере (проверено рендером в Ф10a).
  */
+/**
+ * Адрес API.
+ *
+ * Порта в адресе страницы нет — значит приложение раздаётся через единую точку
+ * входа, и API живёт на том же origin по пути `/v1`. Тогда относительный адрес
+ * не просто короче: он избавляет от списка разрешённых origin в CORS и не
+ * требует пересборки под каждый домен.
+ *
+ * Порт есть — это прямой запуск dev-сервером, и ядро слушает отдельный порт.
+ */
 const BASE_URL =
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  `${window.location.protocol}//${window.location.hostname}:4300/v1`;
+  (window.location.port === ''
+    ? '/v1'
+    : `${window.location.protocol}//${window.location.hostname}:4300/v1`);
 
 /**
  * Адрес API обязателен всюду, кроме локальной машины.
@@ -21,13 +33,21 @@ const BASE_URL =
  * открытый канал (LOW внешнего аудита №2). Поэтому на не-локальном хосте это
  * ошибка запуска, а не «работает как-нибудь».
  *
- * Проверяется именно ХОСТ, а не `import.meta.env.PROD`: локальные
+ * Условие смотрит и на ПОРТ: пустой порт означает единую точку входа —
+ * API там на том же origin по пути `/v1`, и угадывать нечего. Опасен
+ * именно случай, когда приложение вынуждено подставить чужой порт.
+ *
+ * Проверяется ХОСТ, а не `import.meta.env.PROD`: локальные
  * браузерные прогоны поднимают ровно production-сборку, и жёсткая проверка
  * по PROD ломала бы их, ничего не защищая — на localhost адрес и так
  * локальный.
  */
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
-if (!import.meta.env.VITE_API_BASE_URL && !LOCAL_HOSTS.has(window.location.hostname)) {
+if (
+  !import.meta.env.VITE_API_BASE_URL &&
+  window.location.port !== '' &&
+  !LOCAL_HOSTS.has(window.location.hostname)
+) {
   throw new Error('VITE_API_BASE_URL обязателен: адрес API не может выводиться из адреса страницы');
 }
 

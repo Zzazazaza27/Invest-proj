@@ -26,6 +26,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Молчаливая смерть прогона неотличима от «ничего не проверено».
@@ -51,7 +53,7 @@ function loadDotEnv() {
   }
 }
 
-const BASE = process.env.CORE_URL ?? 'http://127.0.0.1:4300';
+const BASE = process.env.CORE_URL ?? CORE_URL;
 
 let passed = 0;
 let failed = 0;

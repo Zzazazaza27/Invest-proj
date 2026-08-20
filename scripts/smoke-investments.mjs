@@ -20,10 +20,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
-const BASE = 'http://127.0.0.1:4300';
+const BASE = CORE_URL;
 const SESSION_COOKIE = process.env.SESSION_COOKIE_NAME ?? 'ul_session';
 const CSRF_COOKIE = process.env.CSRF_COOKIE_NAME ?? 'ul_csrf';
 

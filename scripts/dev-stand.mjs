@@ -22,6 +22,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL, PORTS, frontendUrl, publicUrl } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
@@ -175,8 +177,22 @@ for (const person of [founder, investor]) {
 // ------------------------------------------------------------------- сезон
 console.warn('\n--- данные стенда ---');
 
+// Сезон ищется по названию И ПО СТАТУСУ, а не по одному названию.
+//
+// Прогоны, которые двигают воронку (`e2e-full-cycle`, ручные проверки),
+// оставляют сезон стенда в `review` или `closed`. Прежний поиск находил такой
+// сезон, считал стенд готовым и печатал «приём заявок открыт» — а подача
+// заявки отвечала 409 «Приём заявок в сезон сейчас закрыт». Сообщение
+// утверждало состояние, которого не было, и искать причину шли в код подачи.
+//
+// Вернуть закрытый сезон в приём нельзя: статусная машина такого перехода не
+// предусматривает, и обходить её здесь означало бы проверять стенд на
+// состоянии, недостижимом в жизни. Поэтому заводится СЛЕДУЮЩИЙ сезон —
+// ровно так, как это происходит на платформе.
 let [season] = await sql(
-  `SELECT id, number FROM seasons.seasons WHERE title = 'Стенд · сезон' LIMIT 1`,
+  `SELECT id, number FROM seasons.seasons
+    WHERE title = 'Стенд · сезон' AND status = 'applications_open'
+    ORDER BY number DESC LIMIT 1`,
 );
 if (!season) {
   [season] = await sql(
@@ -286,13 +302,16 @@ console.warn('  эксперту назначена рецензия на про
 console.warn('\n--- сервисы ---');
 
 const SERVICES = [
-  ['ядро API', 'http://127.0.0.1:4300/v1/health'],
-  ['AI-шлюз', 'http://127.0.0.1:8100/healthz'],
-  ['витрина', 'http://127.0.0.1:5173/'],
-  ['админка', 'http://127.0.0.1:5174/'],
-  ['кабинет основателя', 'http://127.0.0.1:5175/'],
-  ['кабинет инвестора', 'http://127.0.0.1:5176/'],
-  ['кабинет эксперта', 'http://127.0.0.1:5177/'],
+  ['ядро API', `${CORE_URL}/v1/health`],
+  ['AI-шлюз', `http://127.0.0.1:${PORTS.aiGateway}/healthz`],
+  ['витрина', frontendUrl('webPublic')],
+  ['админка', frontendUrl('admin')],
+  ['кабинет основателя', frontendUrl('lab')],
+  ['кабинет инвестора', frontendUrl('investor')],
+  ['кабинет эксперта', frontendUrl('expert')],
+  ['консоль API', frontendUrl('console')],
+  ['вход и регистрация', frontendUrl('auth')],
+  ['единая точка входа', publicUrl('webPublic')],
 ];
 
 let down = 0;
@@ -315,14 +334,41 @@ for (const [name, url] of SERVICES) {
 }
 
 console.warn('\n=== КАК ВОЙТИ ===\n');
-console.warn(`  Пароль у всех учётных записей один: ${PASSWORD}`);
+// Пароль стенда по умолчанию НЕ печатается.
+//
+// Он берётся из `.env` и является таким же секретом стенда, как пароли БД:
+// напечатанный, он оседает в логах терминала, в записи сессии и в транскриптах
+// — тем же путём, каким в Ф47 утёк пароль владельца кластера (там его в текст
+// ошибки положил docker, здесь его печатал бы этот скрипт).
+//
+// Тому, кто заходит руками, значение нужно — поэтому есть явный флаг. Это
+// осознанное действие человека, а не побочный эффект запуска сида.
+if (process.argv.includes('--show-password')) {
+  console.warn(`  Пароль у всех учётных записей один: ${PASSWORD}`);
+} else {
+  console.warn('  Пароль у всех учётных записей один: DEV_TEST_USER_PASSWORD из .env');
+  console.warn('  Показать значение: node scripts/dev-stand.mjs --show-password');
+}
 console.warn('  В поле входа достаточно короткого логина — домен подставляется сам.\n');
-console.warn('  http://127.0.0.1:5176/   кабинет инвестора    → stand-investor');
-console.warn('  http://127.0.0.1:5175/   кабинет основателя   → stand-founder');
-console.warn('  http://127.0.0.1:5177/   кабинет эксперта     → stand-expert');
-console.warn('  http://127.0.0.1:5174/   админка              → stand-admin');
-console.warn('  http://127.0.0.1:5174/   воронка сезона       → stand-organizer (только чтение)');
-console.warn('  http://127.0.0.1:5173/   публичная витрина    → без входа\n');
+// Человеку показывается ЕДИНАЯ ТОЧКА ВХОДА — адрес без номеров портов. Порты
+// остаются ниже отдельным блоком: они нужны разработчику, когда прокси не
+// поднят, но начинать знакомство со стендом с пятизначных чисел незачем.
+console.warn(`  ${publicUrl('webPublic')}          витрина, вход и регистрация`);
+console.warn(`  ${publicUrl('auth')}     вход: кабинет открывается по роли\n`);
+console.warn('  Учётные записи (в кабинетах достаточно короткого имени):\n');
+console.warn('    stand-founder     кабинет основателя');
+console.warn('    stand-investor    кабинет инвестора');
+console.warn('    stand-expert      кабинет эксперта');
+console.warn('    stand-admin       админка');
+console.warn('    stand-organizer   воронка сезона (только чтение)\n');
+console.warn('  Прямой доступ без прокси (разработка):\n');
+console.warn(`    ${frontendUrl('webPublic')}   витрина`);
+console.warn(`    ${frontendUrl('lab')}   кабинет основателя`);
+console.warn(`    ${frontendUrl('investor')}   кабинет инвестора`);
+console.warn(`    ${frontendUrl('expert')}   кабинет эксперта`);
+console.warn(`    ${frontendUrl('admin')}   админка`);
+console.warn(`    ${frontendUrl('auth')}   вход и регистрация`);
+console.warn(`    ${frontendUrl('console')}   консоль API — все операции\n`);
 console.warn('  Учётка со ВСЕМИ ролями сразу: ssurgut (node scripts/dev-seed-test-user.mjs)\n');
 
 if (down > 0) {

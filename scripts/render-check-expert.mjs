@@ -8,7 +8,7 @@
  * и кабинет обязан показывать его отказ, а не обходить.
  *
  * Запуск: node scripts/render-check-expert.mjs
- * Требуется: core на 4300 и кабинет на 5177.
+ * Требуется: core и кабинет подняты (порты — из .env).
  */
 import { chromium } from 'playwright';
 import pg from 'pg';
@@ -17,11 +17,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
-const APP_URL = process.env.EXPERT_URL ?? 'http://127.0.0.1:5177/';
-const CORE_URL = process.env.CORE_URL ?? 'http://127.0.0.1:4300';
+const APP_URL = process.env.EXPERT_URL ?? frontendUrl('expert');
+const CORE_URL = process.env.CORE_URL ?? DEFAULT_CORE_URL;
 
 let passed = 0;
 let failed = 0;

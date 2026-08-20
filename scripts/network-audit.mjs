@@ -16,6 +16,8 @@ import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL, PORTS } from './lib/ports.mjs';
+
 const ROOT = join(fileURLToPath(new URL('.', import.meta.url)), '..');
 
 /** @type {{severity:string, check:string, detail:string}[]} */
@@ -503,10 +505,10 @@ function checkInfraCredentials() {
 // Прогон и отчёт
 // ---------------------------------------------------------------------------
 const apiArgIndex = process.argv.indexOf('--api');
-const apiBase = apiArgIndex >= 0 ? process.argv[apiArgIndex + 1] : 'http://localhost:4300';
+const apiBase = apiArgIndex >= 0 ? process.argv[apiArgIndex + 1] : CORE_URL;
 const gatewayArgIndex = process.argv.indexOf('--gateway');
 const gatewayBase =
-  gatewayArgIndex >= 0 ? process.argv[gatewayArgIndex + 1] : 'http://127.0.0.1:8100';
+  gatewayArgIndex >= 0 ? process.argv[gatewayArgIndex + 1] : `http://127.0.0.1:${PORTS.aiGateway}`;
 
 checkContainerPortBindings();
 checkComposeManifests();

@@ -69,6 +69,12 @@ export default tseslint.config(
       'apps/investor/**/*.{js,jsx,ts,tsx}',
       'apps/expert/**/*.{js,jsx,ts,tsx}',
       'apps/admin/**/*.{js,jsx,ts,tsx}',
+      // Консоль разработки — тоже фронтенд: она ходит в то же публичное API и
+      // прямого доступа к БД, очередям и хранилищу иметь не должна. Пропуск её
+      // здесь оставлял бы в границе дыру ровно там, где удобнее всего срезать
+      // угол (ADR-002).
+      'apps/console/**/*.{js,jsx,ts,tsx}',
+      'apps/auth/**/*.{js,jsx,ts,tsx}',
     ],
     languageOptions: {
       globals: { ...globals.browser, ...globals.es2023 },
@@ -110,6 +116,8 @@ export default tseslint.config(
                 '**/apps/investor/**',
                 '**/apps/expert/**',
                 '**/apps/admin/**',
+                '**/apps/console/**',
+                '**/apps/auth/**',
                 '@unicorn/ui',
                 '@unicorn/ui/*',
                 'react',

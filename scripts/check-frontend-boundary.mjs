@@ -31,8 +31,11 @@ const ALLOWED_CASE = {
   code: "import { API_VERSION } from '@unicorn/contracts';\nexport const x = API_VERSION;\n",
 };
 
-const FRONTEND_APPS = ['web-public', 'lab', 'investor', 'expert', 'admin'].filter((app) =>
-  existsSync(join(ROOT, 'apps', app)),
+// Консоль разработки — такой же фронтенд с точки зрения границы: она обращается
+// к тому же публичному API и не имеет права ходить в БД, очереди и хранилище
+// напрямую. Забыть её здесь означало бы оставить дыру в проверке (ADR-002).
+const FRONTEND_APPS = ['web-public', 'lab', 'investor', 'expert', 'admin', 'console', 'auth'].filter(
+  (app) => existsSync(join(ROOT, 'apps', app)),
 );
 
 if (FRONTEND_APPS.length === 0) {

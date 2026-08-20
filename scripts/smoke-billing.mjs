@@ -18,11 +18,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
 const apiIndex = process.argv.indexOf('--api');
-const BASE = apiIndex >= 0 ? process.argv[apiIndex + 1] : 'http://127.0.0.1:4300';
+const BASE = apiIndex >= 0 ? process.argv[apiIndex + 1] : CORE_URL;
 
 let passed = 0;
 let failed = 0;

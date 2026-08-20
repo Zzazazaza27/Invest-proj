@@ -1,0 +1,232 @@
+/*
+ * Оформление консоли.
+ *
+ * Цвета и отступы берутся из токенов `@unicorn/ui`, а не задаются числами:
+ * консоль служебная, но расхождение с кабинетами по виду мешает — глаз
+ * привыкает к одному набору состояний.
+ */
+
+body {
+  margin: 0;
+  background: var(--u-bg);
+  color: var(--u-text);
+  font-family:
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+}
+
+.console-layout {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  min-height: 100vh;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .console-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.console-sidebar {
+  position: sticky;
+  top: 0;
+  max-height: 100vh;
+  overflow-y: auto;
+  padding: var(--u-space-4);
+  border-right: 1px solid var(--u-border);
+  background: var(--u-bg-inset);
+}
+
+.console-title {
+  margin: 0;
+  font-size: var(--u-text-lg);
+}
+
+.console-subtitle {
+  margin: var(--u-space-1) 0 var(--u-space-3);
+  font-size: var(--u-text-xs);
+  color: var(--u-text-muted);
+}
+
+.console-session {
+  margin-bottom: var(--u-space-4);
+  padding-bottom: var(--u-space-3);
+  border-bottom: 1px solid var(--u-border);
+}
+
+.console-session-name {
+  margin: var(--u-space-2) 0 0;
+  font-weight: 600;
+}
+
+.console-session-roles {
+  margin: 0;
+  font-size: var(--u-text-xs);
+  color: var(--u-text-muted);
+}
+
+.console-group {
+  margin-bottom: var(--u-space-4);
+}
+
+.console-group-title {
+  margin: 0;
+  font-size: var(--u-text-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--u-text-muted);
+}
+
+.console-group-note {
+  margin: var(--u-space-1) 0 var(--u-space-2);
+  font-size: var(--u-text-xs);
+  color: var(--u-text-muted);
+}
+
+.console-op-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.console-op {
+  display: flex;
+  gap: var(--u-space-2);
+  align-items: baseline;
+  width: 100%;
+  min-height: 36px;
+  padding: var(--u-space-2);
+  border: 0;
+  border-radius: var(--u-radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.console-op:hover {
+  background: var(--u-surface);
+}
+
+.console-op--active {
+  background: var(--u-accent-subtle);
+  color: var(--u-accent);
+  font-weight: 600;
+}
+
+/* Метод виден до нажатия: он задаёт цену ошибки — GET читает, DELETE удаляет. */
+.console-method {
+  flex: 0 0 auto;
+  min-width: 46px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--u-text-muted);
+}
+
+.console-method--post,
+.console-method--patch,
+.console-method--put {
+  color: var(--u-warning);
+}
+
+.console-method--delete {
+  color: var(--u-danger);
+}
+
+.console-main {
+  display: grid;
+  gap: var(--u-space-4);
+  padding: var(--u-space-4);
+  max-width: 900px;
+}
+
+.console-path {
+  margin: 0 0 var(--u-space-2);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: var(--u-text-sm);
+  color: var(--u-text-muted);
+}
+
+.console-summary {
+  margin: 0 0 var(--u-space-3);
+  color: var(--u-text-muted);
+  font-size: var(--u-text-sm);
+}
+
+.console-warning {
+  margin: 0 0 var(--u-space-3);
+  padding: var(--u-space-2) var(--u-space-3);
+  border-radius: var(--u-radius-md);
+  background: var(--u-warning-subtle);
+  color: var(--u-warning);
+  font-size: var(--u-text-sm);
+}
+
+.console-help {
+  margin: var(--u-space-1) 0 0;
+  font-size: var(--u-text-xs);
+  color: var(--u-text-muted);
+}
+
+.console-control {
+  width: 100%;
+  min-height: 44px;
+  padding: var(--u-space-2) var(--u-space-3);
+  border: 1px solid var(--u-border-strong);
+  border-radius: var(--u-radius-md);
+  background: var(--u-surface);
+  color: var(--u-text);
+  font-family: inherit;
+  font-size: var(--u-text-md);
+}
+
+textarea.console-control {
+  min-height: 88px;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: var(--u-text-sm);
+  resize: vertical;
+}
+
+/* Ответ показывается целиком и прокручивается сам: обрезанное тело скрывает
+   ровно то поле, ради которого вызов и делался. */
+.console-json {
+  max-height: 420px;
+  overflow: auto;
+  margin: 0;
+  padding: var(--u-space-3);
+  border-radius: var(--u-radius-md);
+  background: var(--u-bg-inset);
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-size: var(--u-text-sm);
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.console-table {
+  width: 100%;
+  margin-bottom: var(--u-space-3);
+  border-collapse: collapse;
+  font-size: var(--u-text-sm);
+}
+
+.console-table th,
+.console-table td {
+  padding: var(--u-space-2);
+  border-bottom: 1px solid var(--u-border);
+  text-align: left;
+}
+
+.console-table th {
+  width: 180px;
+  font-weight: 600;
+  color: var(--u-text-muted);
+}

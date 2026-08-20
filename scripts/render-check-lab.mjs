@@ -9,7 +9,7 @@
  * глазами интерфейса.
  *
  * Запуск: node scripts/render-check-lab.mjs
- * Требуется: core на 4300 и кабинет на 5175.
+ * Требуется: core и кабинет подняты (порты — из .env).
  */
 import { chromium } from 'playwright';
 import pg from 'pg';
@@ -18,11 +18,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
-const LAB_URL = process.env.LAB_URL ?? 'http://127.0.0.1:5175/';
-const CORE_URL = process.env.CORE_URL ?? 'http://127.0.0.1:4300';
+const LAB_URL = process.env.LAB_URL ?? frontendUrl('lab');
+const CORE_URL = process.env.CORE_URL ?? DEFAULT_CORE_URL;
 
 let passed = 0;
 let failed = 0;

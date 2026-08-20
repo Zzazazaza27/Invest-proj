@@ -8,7 +8,16 @@ import { UnicornApi } from '@unicorn/api-client';
  * метроном сезона). Появление здесь аутентификации означало бы, что витрина
  * начала показывать чужие данные.
  */
-const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4300/v1';
+/**
+ * Порта в адресе страницы нет — витрина раздаётся через единую точку входа, и
+ * API живёт на том же origin по пути `/v1`. Порт есть — прямой запуск
+ * dev-сервером, и ядро слушает отдельный порт.
+ */
+const baseUrl =
+  import.meta.env.VITE_API_BASE_URL ??
+  (window.location.port === ''
+    ? '/v1'
+    : `${window.location.protocol}//${window.location.hostname}:4300/v1`);
 
 /**
  * Адрес API обязателен всюду, кроме локальной машины.
@@ -18,13 +27,21 @@ const baseUrl = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:4300/v1';
  * открытый канал (LOW внешнего аудита №2). Поэтому на не-локальном хосте это
  * ошибка запуска, а не «работает как-нибудь».
  *
- * Проверяется именно ХОСТ, а не `import.meta.env.PROD`: локальные
+ * Условие смотрит и на ПОРТ: пустой порт означает единую точку входа —
+ * API там на том же origin по пути `/v1`, и угадывать нечего. Опасен
+ * именно случай, когда приложение вынуждено подставить чужой порт.
+ *
+ * Проверяется ХОСТ, а не `import.meta.env.PROD`: локальные
  * браузерные прогоны поднимают ровно production-сборку, и жёсткая проверка
  * по PROD ломала бы их, ничего не защищая — на localhost адрес и так
  * локальный.
  */
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1']);
-if (!import.meta.env.VITE_API_BASE_URL && !LOCAL_HOSTS.has(window.location.hostname)) {
+if (
+  !import.meta.env.VITE_API_BASE_URL &&
+  window.location.port !== '' &&
+  !LOCAL_HOSTS.has(window.location.hostname)
+) {
   throw new Error('VITE_API_BASE_URL обязателен: адрес API не может выводиться из адреса страницы');
 }
 

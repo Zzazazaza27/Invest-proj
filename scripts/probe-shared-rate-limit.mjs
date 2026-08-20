@@ -21,6 +21,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Redis from 'ioredis';
 
+import { CORE_URL } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // Молчаливая смерть прогона неотличима от «ничего не проверено»: в глобальном
@@ -50,7 +52,7 @@ function loadDotEnv() {
   return env;
 }
 
-const PRIMARY = process.env.CORE_URL ?? 'http://127.0.0.1:4300';
+const PRIMARY = process.env.CORE_URL ?? CORE_URL;
 const SECOND_PORT = Number(process.env.CORE_SECOND_PORT ?? 4301);
 const SECOND = `http://127.0.0.1:${SECOND_PORT}`;
 const AUTH_LIMIT = Number(ENV.RATE_LIMIT_AUTH_PER_MIN ?? 30);

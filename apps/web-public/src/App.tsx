@@ -66,18 +66,44 @@ function Header() {
           alignItems: 'center',
           justifyContent: 'space-between',
           minHeight: 64,
-          gap: 'var(--u-space-4)',
+          gap: 'var(--u-space-3)',
+          // Перенос обязателен: с появлением «Войти» и «Регистрация» шапка
+          // перестала помещаться на узком экране и давала горизонтальную
+          // прокрутку всей страницы (поймано рендер-проверкой на 390px).
+          flexWrap: 'wrap',
         }}
       >
         <strong style={{ fontSize: 'var(--u-text-lg)', letterSpacing: '-0.02em' }}>
           UNICORN LAUNCH
         </strong>
-        <nav aria-label="Основная навигация" style={{ display: 'flex', gap: 'var(--u-space-5)' }}>
+        <nav
+          aria-label="Основная навигация"
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 'var(--u-space-3)',
+          }}
+        >
           <a href="#catalog" style={linkStyle}>
             Каталог
           </a>
           <a href="#pricing" style={linkStyle}>
             Тарифы
+          </a>
+          {/*
+            Вход и регистрация — ССЫЛКИ на отдельное приложение, а не форма
+            здесь. Витрина анонимна по построению (`auth: { kind: 'none' }` в
+            api.ts): появление на ней сессии означало бы, что публичная
+            страница начала работать с чужими данными. Куда идти после входа,
+            решает роль, полученная от сервера, — поэтому кабинет в этих
+            ссылках не указан.
+          */}
+          <a href="/login/" style={linkStyle}>
+            Войти
+          </a>
+          <a href="/login/" style={registerStyle}>
+            Регистрация
           </a>
         </nav>
       </Container>
@@ -90,6 +116,21 @@ const linkStyle: React.CSSProperties = {
   textDecoration: 'none',
   fontSize: 'var(--u-text-sm)',
   fontWeight: 600,
+};
+
+/** Регистрация — основное действие витрины, поэтому выделена, а не просто ссылка. */
+const registerStyle: React.CSSProperties = {
+  ...linkStyle,
+  // Не меньше 44px по высоте области нажатия — основная цель на телефоне.
+  display: 'inline-flex',
+  alignItems: 'center',
+  minHeight: 44,
+  padding: '0 var(--u-space-4)',
+  borderRadius: 'var(--u-radius-md)',
+  background: 'var(--u-accent)',
+  // Токена «контрастный к акценту» в наборе нет; акцент в обеих темах —
+  // насыщенный синий, на нём читается белый.
+  color: '#fff',
 };
 
 /**

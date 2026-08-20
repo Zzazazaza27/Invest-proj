@@ -10,6 +10,8 @@
  * Запуск: node scripts/check-stand.mjs (после node scripts/dev-stand.mjs)
  */
 import { chromium } from 'playwright';
+
+import { frontendUrl } from './lib/ports.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -97,7 +99,7 @@ console.warn('--- публичная витрина ---');
 {
   const context = await browser.newContext();
   const page = await context.newPage();
-  await page.goto('http://127.0.0.1:5173/', { waitUntil: 'networkidle', timeout: 30_000 });
+  await page.goto(frontendUrl('webPublic'), { waitUntil: 'networkidle', timeout: 30_000 });
   // Каталог отсортирован по времени публикации, и его наполняют другие прогоны:
   // ждать проект стенда на первой странице — значит проверять, кто публиковался
   // последним. Поэтому ищем его поиском, как это сделал бы человек.
@@ -117,7 +119,7 @@ console.warn('--- публичная витрина ---');
 console.warn('\n--- кабинет инвестора (stand-investor) ---');
 {
   const { page, context, text, errors } = await enter(
-    'http://127.0.0.1:5176/',
+    frontendUrl('investor'),
     'stand-investor',
     'Каталог',
   );
@@ -165,7 +167,7 @@ console.warn('\n--- кабинет инвестора (stand-investor) ---');
 console.warn('\n--- кабинет основателя (stand-founder) ---');
 {
   const { page, context, text, errors } = await enter(
-    'http://127.0.0.1:5175/',
+    frontendUrl('lab'),
     'stand-founder',
     'Мои проекты',
   );
@@ -196,7 +198,7 @@ console.warn('\n--- кабинет основателя (stand-founder) ---');
 console.warn('\n--- кабинет эксперта (stand-expert) ---');
 {
   const { page, context, text, errors } = await enter(
-    'http://127.0.0.1:5177/',
+    frontendUrl('expert'),
     'stand-expert',
     'Мои назначения',
   );
@@ -218,7 +220,7 @@ console.warn('\n--- кабинет эксперта (stand-expert) ---');
 console.warn('\n--- админка (stand-admin) ---');
 {
   const { page, context, text, errors } = await enter(
-    'http://127.0.0.1:5174/',
+    frontendUrl('admin'),
     'stand-admin',
     'Тарифы',
   );
@@ -240,7 +242,7 @@ console.warn('\n--- админка (stand-admin) ---');
 // ----------------------------------------------------------------- организатор
 console.warn('\n--- организатор (stand-organizer) ---');
 {
-  const { context, text } = await enter('http://127.0.0.1:5174/', 'stand-organizer', 'Тарифы');
+  const { context, text } = await enter(frontendUrl('admin'), 'stand-organizer', 'Тарифы');
   // Организатор — не администратор: кабинет обязан сказать это прямо, а не
   // молча показать экраны, действия на которых сервер отклонит.
   check(

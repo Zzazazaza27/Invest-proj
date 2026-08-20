@@ -20,11 +20,13 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
 const apiIndex = process.argv.indexOf('--api');
-const BASE = apiIndex >= 0 ? process.argv[apiIndex + 1] : 'http://127.0.0.1:4300';
+const BASE = apiIndex >= 0 ? process.argv[apiIndex + 1] : CORE_URL;
 
 let passed = 0;
 let failed = 0;
@@ -318,7 +320,31 @@ let projectId = null;
 // статусная машина не даёт — и семь проверок падали не потому, что сломан
 // код. Свой сезон убирает эту связь: односторонность машины по-прежнему
 // проверяется, но на предсказуемом входе.
+// Чужие открытые сезоны гасятся временно и ВОЗВРАЩАЮТСЯ в конце прогона.
+//
+// Без возврата прогон ломал стенд: сезон `Стенд · сезон` оставался в `draft`,
+// подача заявки из кабинета основателя отвечала 409 «Приём заявок закрыт», а
+// следующий `dev-stand.mjs` заводил ещё один сезон — по одному на каждый
+// прогон. Прогон обязан оставлять окружение таким, каким его застал.
+const suspendedSeasons = await sql(
+  `SELECT id FROM seasons.seasons WHERE status = 'applications_open'`,
+);
 await sql(`UPDATE seasons.seasons SET status = 'draft' WHERE status = 'applications_open'`);
+
+/**
+ * Возврат чужих сезонов в приём.
+ *
+ * Вызывается в конце прогона. Если прогон упал раньше — сезоны останутся в
+ * `draft`; лечится повторным `node scripts/dev-stand.mjs`. Оборачивать весь
+ * скрипт в try/finally ради этого не стали: упавший прогон и так требует
+ * разбора, а тихое восстановление скрыло бы, на чём он упал.
+ */
+async function restoreSuspendedSeasons() {
+  if (suspendedSeasons.length === 0) return;
+  await sql(`UPDATE seasons.seasons SET status = 'applications_open' WHERE id = ANY($1::uuid[])`, [
+    suspendedSeasons.map((row) => row.id),
+  ]);
+}
 
 let seasonId;
 {
@@ -965,6 +991,10 @@ let ticket;
     `партиций ${parts[0]?.n}`,
   );
 }
+
+// Свой сезон прогон оставляет как есть — он одноразовый; а вот чужие
+// возвращает в то состояние, в котором застал.
+await restoreSuspendedSeasons();
 
 console.warn(`\nИтог: ${passed} проверок пройдено, ${failed} провалено.\n`);
 await pool.end();

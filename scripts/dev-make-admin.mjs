@@ -20,6 +20,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { CORE_URL } from './lib/ports.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
@@ -55,7 +57,7 @@ function loadDotEnv() {
   }
 }
 
-const API = process.env.CORE_PUBLIC_URL ?? 'http://127.0.0.1:4300';
+const API = process.env.CORE_PUBLIC_URL ?? CORE_URL;
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER, max: 2 });
 
 function blindIndex(value) {

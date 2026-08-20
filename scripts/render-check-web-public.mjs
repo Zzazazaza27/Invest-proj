@@ -9,11 +9,13 @@
  * пустым местом.
  *
  * Запуск: node scripts/render-check-web-public.mjs
- * Требуется: витрина на 5173 (`npm run preview -w apps/web-public`).
+ * Требуется: витрина поднята (порт — из .env) (`npm run preview -w apps/web-public`).
  */
 import { chromium } from 'playwright';
 
-const URL = process.env.WEB_PUBLIC_URL ?? 'http://127.0.0.1:5173/';
+import { frontendUrl } from './lib/ports.mjs';
+
+const URL = process.env.WEB_PUBLIC_URL ?? frontendUrl('webPublic');
 
 let passed = 0;
 let failed = 0;

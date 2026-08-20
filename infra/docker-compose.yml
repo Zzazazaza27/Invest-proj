@@ -11,6 +11,40 @@
 name: unicorn-launch
 
 services:
+  # Единая точка входа: витрина, кабинеты и API на одном адресе без портов.
+  #
+  # Раздаёт СОБРАННУЮ статику из `apps/*/dist` — то есть ровно то, что уйдёт в
+  # боевой контур. Если каталог не собран, nginx ответит 404 на этот раздел, а
+  # не поднимет старую версию: пустой ответ честнее, чем вчерашняя сборка.
+  #
+  # Запускается отдельным профилем: инфраструктуре (БД, очереди, хранилище)
+  # прокси не нужен, и поднимать его при каждом `infra:up` незачем.
+  web:
+    image: nginx:1.27-alpine
+    container_name: unicorn-web
+    restart: unless-stopped
+    profiles: ['web']
+    ports:
+      - '127.0.0.1:${WEB_PORT:-80}:80'
+    volumes:
+      - ../infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../apps/web-public/dist:/srv/web-public:ro
+      - ../apps/lab/dist:/srv/lab:ro
+      - ../apps/investor/dist:/srv/investor:ro
+      - ../apps/expert/dist:/srv/expert:ro
+      - ../apps/admin/dist:/srv/admin:ro
+      - ../apps/auth/dist:/srv/auth:ro
+    # Ядро запускается процессом на хосте, а не контейнером: маршрут /v1/
+    # проксируется на host.docker.internal, и на Linux этого имени по умолчанию
+    # нет — поэтому оно объявлено явно.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1/ >/dev/null || exit 1']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   postgres:
     build:
       context: ./postgres
@@ -51,7 +85,7 @@ services:
       - -c
       - timezone=UTC
     ports:
-      - '127.0.0.1:5433:5432'
+      - '127.0.0.1:${POSTGRES_PORT:-5433}:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
@@ -73,7 +107,7 @@ services:
       - --maxmemory-policy
       - noeviction
     ports:
-      - '127.0.0.1:6380:6379'
+      - '127.0.0.1:${REDIS_PORT:-6380}:6379'
     volumes:
       - redisdata:/data
     healthcheck:
@@ -103,8 +137,8 @@ services:
       - '--pass'
       - '${NATS_PASSWORD:-local_dev_only_nats_change_me}'
     ports:
-      - '127.0.0.1:4222:4222'
-      - '127.0.0.1:8222:8222'
+      - '127.0.0.1:${NATS_PORT:-4222}:4222'
+      - '127.0.0.1:${NATS_MONITOR_PORT:-8222}:8222'
     volumes:
       - natsdata:/data
     healthcheck:
@@ -122,8 +156,8 @@ services:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-unicorn_minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-local_dev_only_minio_change_me}
     ports:
-      - '127.0.0.1:9000:9000'
-      - '127.0.0.1:9001:9001'
+      - '127.0.0.1:${S3_PORT:-9000}:9000'
+      - '127.0.0.1:${S3_CONSOLE_PORT:-9001}:9001'
     volumes:
       - miniodata:/data
     healthcheck:
@@ -272,7 +306,7 @@ services:
       KC_HEALTH_ENABLED: 'true'
       KC_HOSTNAME_STRICT: 'false'
     ports:
-      - '127.0.0.1:8081:8080'
+      - '127.0.0.1:${KEYCLOAK_PORT:-8081}:8080'
     volumes:
       # Каталог с экспортом realm. Монтируется целиком, а не одним файлом:
       # отсутствующий файл docker создаёт как КАТАЛОГ, и Keycloak падает на
@@ -290,8 +324,8 @@ services:
     container_name: unicorn-mailpit
     restart: unless-stopped
     ports:
-      - '127.0.0.1:1025:1025'
-      - '127.0.0.1:8025:8025'
+      - '127.0.0.1:${SMTP_PORT:-1025}:1025'
+      - '127.0.0.1:${SMTP_UI_PORT:-8025}:8025'
     profiles: ['idp', 'full']
 
 volumes:
