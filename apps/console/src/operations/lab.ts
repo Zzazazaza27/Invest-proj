@@ -243,7 +243,15 @@ export const materialsGroup: OperationGroup = {
         for (const [key, value] of Object.entries(formFields)) form.append(key, value);
         form.append('file', file);
 
-        const upload = await fetch(uploadUrl, { method: 'POST', body: form });
+        // Таймаут обязателен на КАЖДОМ внешнем вызове (RULES.md §3.1): без него
+        // молчащее хранилище подвешивает консоль навсегда, и человек видит
+        // вечную «загрузку» вместо отказа. Две минуты — с запасом на предельный
+        // размер материала, но конечны.
+        const upload = await fetch(uploadUrl, {
+          method: 'POST',
+          body: form,
+          signal: AbortSignal.timeout(120_000),
+        });
         if (!upload.ok) {
           throw new Error(
             `Хранилище отклонило файл: HTTP ${upload.status}. ` +

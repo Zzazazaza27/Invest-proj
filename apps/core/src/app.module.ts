@@ -32,6 +32,8 @@ import { HealthController } from './health/health.controller';
 import { OpenApiController } from './health/openapi.controller';
 import { IdentityController } from './identity/identity.controller';
 import { IdentityService } from './identity/identity.service';
+import { PublicationConsentsController } from './identity/publication-consents.controller';
+import { PublicationConsentsService } from './identity/publication-consents.service';
 import {
   IntegrationController,
   IntegrationTokenController,
@@ -74,6 +76,7 @@ import { S3Service } from './storage/s3.service';
     ContentController,
     AdminContentController,
     IdentityController,
+    PublicationConsentsController,
     KycController,
     ProjectsController,
     CatalogController,
@@ -101,6 +104,7 @@ import { S3Service } from './storage/s3.service';
     LoginThrottleService,
     S3Service,
     IdentityService,
+    PublicationConsentsService,
     KycService,
     ProjectsService,
     CatalogService,

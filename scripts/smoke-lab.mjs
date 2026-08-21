@@ -992,6 +992,182 @@ let ticket;
   );
 }
 
+// ------------------------------------------- согласия на публичный контур (Ф50)
+//
+// До Ф50 этих маршрутов не существовало: клиент их звал, ядро отвечало 404.
+// Здесь проверяется не «ручка отвечает 200», а четыре свойства, ради которых
+// она написана: чужой проект недоступен, документ берётся с сервера, повтор не
+// переписывает прежнее согласие, отзыв называет срок удаления проекции.
+let consentId = null;
+const activeDoc = (
+  await sql(
+    `SELECT version, encode(body_sha256, 'hex') AS sha
+       FROM identity.consent_templates
+      WHERE kind = 'pdn_biometric' AND locale = 'ru-RU' AND superseded_at IS NULL`,
+  )
+)[0];
+check('документ согласия на публичность опубликован', Boolean(activeDoc), activeDoc?.version ?? 'нет');
+
+{
+  const { response } = await founderB.client.call('/v1/publication-consents', {
+    method: 'POST',
+    body: {
+      projectId,
+      scope: 'episode_selection',
+      disclosedFields: ['project_title'],
+      documentVersion: activeDoc?.version ?? 'v1',
+    },
+  });
+  // 404, а не 403: иначе ответ подтверждает существование чужого проекта.
+  check('чужой проект: согласие не выдаётся', response.status === 404, `статус ${response.status}`);
+}
+
+{
+  const { response, json } = await founderA.client.call('/v1/publication-consents', {
+    method: 'POST',
+    body: {
+      projectId,
+      scope: 'episode_selection',
+      disclosedFields: ['project_title'],
+      documentVersion: '1.0.0',
+    },
+  });
+  check(
+    'недействующая версия документа: 400, а не 500',
+    response.status === 400,
+    `статус ${response.status}`,
+  );
+  // Проверяется именно поле ошибки, а не всё тело: 'v1' встречается в ответе и
+  // по другим поводам, и совпадение по всему JSON зеленело бы по неверной
+  // причине. Клиенту нужна ПОДСКАЗКА, что подставить вместо неверной версии.
+  // Поле ответа называется `errors`: наружу уходит problem+json (RFC 9457), а
+  // не внутренняя форма ошибки.
+  const versionError = (json?.errors ?? []).find((e) => e.path === 'documentVersion');
+  check(
+    'ответ называет действующую версию в поле documentVersion',
+    Boolean(versionError?.message?.includes(`действует ${activeDoc?.version}`)),
+    versionError?.message ?? JSON.stringify(json ?? {}).slice(0, 160),
+  );
+}
+
+{
+  const { response } = await founderA.client.call('/v1/publication-consents', {
+    method: 'POST',
+    body: {
+      projectId,
+      scope: 'episode_selection',
+      disclosedFields: ['passport_scan'],
+      documentVersion: activeDoc?.version ?? 'v1',
+    },
+  });
+  check(
+    'поле вне словаря раскрытия отвергнуто',
+    response.status === 400,
+    `статус ${response.status}`,
+  );
+}
+
+{
+  const { response, json } = await founderA.client.call('/v1/publication-consents', {
+    method: 'POST',
+    body: {
+      projectId,
+      scope: 'episode_selection',
+      disclosedFields: ['project_title', 'founder_photo'],
+      documentVersion: activeDoc?.version ?? 'v1',
+    },
+  });
+  consentId = json?.id ?? null;
+  check(
+    'согласие на публикацию выдано',
+    response.status === 201 || response.status === 200,
+    `статус ${response.status}`,
+  );
+  check(
+    'отпечаток документа взят с сервера, а не из тела запроса',
+    json?.documentSha256 === activeDoc?.sha,
+    `${String(json?.documentSha256).slice(0, 16)}… против ${String(activeDoc?.sha).slice(0, 16)}…`,
+  );
+  check(
+    'раскрываемые поля сохранены как переданы',
+    JSON.stringify(json?.disclosedFields) === JSON.stringify(['project_title', 'founder_photo']),
+    JSON.stringify(json?.disclosedFields),
+  );
+  check('действующее согласие без даты отзыва', json?.revokedAt === null, String(json?.revokedAt));
+}
+
+{
+  const { response } = await founderA.client.call('/v1/publication-consents', {
+    method: 'POST',
+    body: {
+      projectId,
+      scope: 'episode_selection',
+      disclosedFields: ['project_title'],
+      documentVersion: activeDoc?.version ?? 'v1',
+    },
+  });
+  // Повтор не переписывает прежнее согласие: у него своя дата и своя версия
+  // документа, и подмена стёрла бы доказательство принятого.
+  check('повторное согласие на ту же область — 409', response.status === 409, `статус ${response.status}`);
+}
+
+{
+  const rows = await sql(
+    `SELECT scope, granted_at FROM integration.active_publication_consent($1, 'episode_selection')`,
+    [projectId],
+  );
+  check('медиаконтур видит действующее согласие', rows.length === 1, `строк ${rows.length}`);
+}
+
+{
+  const { response, json } = await founderA.client.call('/v1/publication-consents');
+  check('список согласий доступен автору', response.status === 200, `статус ${response.status}`);
+  check(
+    'выданное согласие есть в списке',
+    (json?.items ?? []).some((item) => item.id === consentId),
+    `записей ${json?.items?.length ?? 0}`,
+  );
+}
+
+{
+  const { response, json } = await founderA.client.call(
+    `/v1/publication-consents/${consentId}`,
+    { method: 'DELETE' },
+  );
+  check('согласие отозвано', response.status === 200, `статус ${response.status}`);
+  const deadlineGap =
+    json?.revokedAt && json?.deletionDeadline
+      ? (Date.parse(json.deletionDeadline) - Date.parse(json.revokedAt)) / 60000
+      : null;
+  check('крайний срок удаления проекции — 15 минут от отзыва', deadlineGap === 15, `${deadlineGap} мин`);
+}
+
+{
+  const rows = await sql(
+    `SELECT scope FROM integration.active_publication_consent($1, 'episode_selection')`,
+    [projectId],
+  );
+  check('после отзыва медиаконтур не видит согласия', rows.length === 0, `строк ${rows.length}`);
+}
+
+{
+  const { response } = await founderA.client.call(`/v1/publication-consents/${consentId}`, {
+    method: 'DELETE',
+  });
+  check('повторный отзыв не является ошибкой', response.status === 200, `статус ${response.status}`);
+  const events = await sql(
+    `SELECT event_type, count(*)::int AS n FROM audit.outbox_events
+      WHERE aggregate_id = $1 GROUP BY event_type ORDER BY event_type`,
+    [consentId],
+  );
+  const revoked = events.find((e) => e.event_type === 'lab.consent.publication_revoked');
+  const granted = events.find((e) => e.event_type === 'lab.consent.publication_granted');
+  check('выдача попала в outbox', granted?.n === 1, `записей ${granted?.n ?? 0}`);
+  // Второе событие отзыва запустило бы у потребителя новый пятнадцатиминутный
+  // срок удаления того, что он уже удалил.
+  check('повтор отзыва не публикует второе событие', revoked?.n === 1, `записей ${revoked?.n ?? 0}`);
+}
+
 // Свой сезон прогон оставляет как есть — он одноразовый; а вот чужие
 // возвращает в то состояние, в котором застал.
 await restoreSuspendedSeasons();

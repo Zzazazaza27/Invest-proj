@@ -311,6 +311,39 @@ check(
   linkNotice.slice(0, 70),
 );
 
+// ------------------------------------------- согласия на публичный контур
+//
+// Проверяется не наличие карточки, а рабочий путь: выдал — видно «выдано» и
+// состав раскрытия; отозвал — назван крайний срок удаления проекции. До Ф50
+// маршрута не существовало вовсе, и любая кнопка здесь отвечала бы 404.
+console.warn('\n[3c] Согласия на публичный контур');
+const consentRow = page.locator('li').filter({ hasText: 'Выпуск отбора' }).first();
+check('области согласия перечислены по отдельности', (await consentRow.count()) === 1);
+
+await page.getByLabel('Название проекта').check();
+await consentRow.getByRole('button', { name: 'Дать согласие' }).click();
+await page.waitForTimeout(2000);
+check(
+  'согласие выдано и отмечено в интерфейсе',
+  (await consentRow.getByText('выдано').count()) > 0,
+  (await consentRow.innerText()).replace(/\s+/g, ' ').slice(0, 90),
+);
+check(
+  'состав раскрытия виден, а не спрятан в документе',
+  (await consentRow.getByText('Название проекта').count()) > 0,
+);
+
+await consentRow.getByRole('button', { name: 'Отозвать' }).click();
+await page.waitForTimeout(2000);
+const revokedSummary = page.getByText('Отозванные согласия').first();
+check('отозванные согласия показаны отдельно', (await revokedSummary.count()) > 0);
+await revokedSummary.click();
+await page.waitForTimeout(300);
+check(
+  'после отзыва назван крайний срок удаления проекции',
+  (await page.getByText('удаление проекции до').count()) > 0,
+);
+
 // -------------------------------------------------------------- доступность
 console.warn('\n[4] Доступность и раскладка');
 check('ровно один h1', (await page.locator('h1').count()) === 1);

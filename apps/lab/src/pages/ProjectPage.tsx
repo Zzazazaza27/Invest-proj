@@ -4,6 +4,7 @@ import type { InvestmentPassport, ProjectFull, ReadinessEntry } from '@unicorn/c
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
 import { MaterialsCard, RoadmapCard } from './MaterialsCard';
+import { PublicationConsentsCard } from './PublicationConsentsCard';
 
 /**
  * Карточка проекта: состояние, действия и результат анализа.
@@ -178,6 +179,7 @@ export function ProjectPage({ projectId, onBack }: { projectId: string; onBack: 
       <MaterialsCard projectId={project.id} />
       <PassportCard projectId={project.id} />
       <ReadinessCard projectId={project.id} />
+      <PublicationConsentsCard projectId={project.id} />
     </Stack>
   );
 }

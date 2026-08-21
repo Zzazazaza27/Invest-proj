@@ -163,10 +163,64 @@ export const PublicationScopeSchema = z.enum([
   'top100_public',
 ]);
 
+/**
+ * Что именно раскрывается в публичный контур.
+ *
+ * Перечисление, а не свободная строка. Прежний контракт принимал любые 50 строк
+ * по 64 символа — а этот список читает медиаконтур и решает по нему, что можно
+ * показать. Свободный текст означал бы, что согласие описывает раскрытие
+ * словами, которые никто не сверяет: `founder_photo` и `фото основателя` — для
+ * потребителя разные значения, а `passport_scan` он не поймёт вовсе и может
+ * счесть разрешением. Закрытый словарь — единственная форма, в которой такой
+ * список можно исполнить, а не пересказать.
+ */
+export const PublicationDisclosableFieldSchema = z.enum([
+  'project_title',
+  'project_tagline',
+  'project_description',
+  'project_stage',
+  'project_geo',
+  'investment_ask',
+  'founder_display_name',
+  'founder_photo',
+  'founder_video',
+  'team_members',
+  'metrics',
+  'pitch_deck',
+]);
+export type PublicationDisclosableField = z.infer<typeof PublicationDisclosableFieldSchema>;
+
 export const PublicationConsentRequestSchema = z.object({
   projectId: UuidSchema,
   scope: PublicationScopeSchema,
-  disclosedFields: z.array(boundedString(1, 64)).max(50),
+  /** Пустой список — законное согласие «снимать можно, данные проекта не раскрывать». */
+  disclosedFields: z.array(PublicationDisclosableFieldSchema).max(12),
+  /**
+   * Версия документа, который человек принял.
+   *
+   * Сверяется с действующим шаблоном `pdn_biometric` на сервере: отпечаток
+   * текста берётся оттуда же и в тело запроса не принимается. Клиент, который
+   * прислал бы и версию, и хеш, доказывал бы этим только сам себя.
+   */
   documentVersion: boundedString(1, 32),
 });
 export type PublicationConsentRequest = z.infer<typeof PublicationConsentRequestSchema>;
+
+/** Выданное согласие в том виде, в каком его возвращает API. */
+export const PublicationConsentSchema = z.object({
+  id: UuidSchema,
+  projectId: UuidSchema,
+  scope: PublicationScopeSchema,
+  disclosedFields: z.array(PublicationDisclosableFieldSchema),
+  documentVersion: z.string(),
+  /** hex sha256 текста документа — доказательство, ЧТО именно было принято. */
+  documentSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  acceptedAt: IsoDateTimeSchema,
+  revokedAt: IsoDateTimeSchema.nullable(),
+  /**
+   * Крайний срок удаления публичной проекции. Не null только у отозванного
+   * согласия: пока согласие действует, удалять нечего.
+   */
+  deletionDeadline: IsoDateTimeSchema.nullable(),
+});
+export type PublicationConsent = z.infer<typeof PublicationConsentSchema>;

@@ -100,6 +100,21 @@ export const CommissionAccruedPayloadSchema = z.object({
   issuerFeePct: z.string(),
 });
 
+/**
+ * Выдача согласия на публичность: медиаконтуру разрешено снимать и показывать.
+ *
+ * `disclosedFields` — закрытый словарь (`PublicationDisclosableFieldSchema`), а
+ * не свободный список: потребитель обязан исполнять его, а не толковать.
+ */
+export const PublicationConsentGrantedPayloadSchema = z.object({
+  projectId: UuidSchema,
+  userId: UuidSchema,
+  scope: z.string(),
+  disclosedFields: z.array(z.string()),
+  documentVersion: z.string(),
+  grantedAt: IsoDateTimeSchema,
+});
+
 /** Отзыв согласия на публичность: медиаконтур обязан удалить проекцию ≤15 мин. */
 export const PublicationConsentRevokedPayloadSchema = z.object({
   projectId: UuidSchema,
@@ -117,6 +132,7 @@ export const EVENT_PAYLOAD_SCHEMAS = {
   [EventVerb.FIRST_TRANCHE_CONFIRMED]: FirstTrancheConfirmedPayloadSchema,
   [EventVerb.AGREEMENT_EFFECTIVE]: AgreementEffectivePayloadSchema,
   [EventVerb.COMMISSION_ACCRUED]: CommissionAccruedPayloadSchema,
+  [EventVerb.CONSENT_PUBLICATION_GRANTED]: PublicationConsentGrantedPayloadSchema,
   [EventVerb.CONSENT_PUBLICATION_REVOKED]: PublicationConsentRevokedPayloadSchema,
 } as const;
 

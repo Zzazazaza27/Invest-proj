@@ -3,6 +3,7 @@ import {
   AuthSessionSchema,
   BusinessEntitySchema,
   CommissionAccrualSchema,
+  ConsentTemplateSchema,
   CurrentUserSchema,
   ExpertAssignmentSchema,
   HealthSchema,
@@ -22,6 +23,7 @@ import {
   ProjectSummarySchema,
   ProjectVersionSchema,
   ProjectTeaserSchema,
+  PublicationConsentSchema,
   RatingEntrySchema,
   ReadinessEntrySchema,
   RoadmapSchema,
@@ -193,6 +195,19 @@ export class UnicornApi {
       this.http.request({ method: 'POST', path: '/auth/logout', schema: LogoutResultSchema }),
 
     me: () => this.http.request({ path: '/auth/me', schema: CurrentUserSchema }),
+
+    /**
+     * Действующие версии документов. Публичный маршрут: без него нельзя ни
+     * зарегистрироваться, ни выдать согласие — версию акцепта неоткуда взять,
+     * а подставленная наугад отвергается сервером (Ф49).
+     */
+    consentTemplates: (locale = 'ru-RU') =>
+      this.http
+        .request({
+          path: `/auth/consents/templates?locale=${encodeURIComponent(locale)}`,
+          schema: z.object({ items: z.array(ConsentTemplateSchema) }),
+        })
+        .then((response) => response.items),
 
     /** Акцепт новых версий документов при `reacceptRequired`. */
     acceptConsents: (consents: { kind: string; version: string; locale: string }[]) =>
@@ -574,11 +589,39 @@ export class UnicornApi {
   };
 
   // ------------------------------------------------------------- согласия
+  /**
+   * Согласия на публичный контур.
+   *
+   * До Ф50 этих маршрутов в ядре не существовало: клиент их звал, сервер
+   * отвечал 404. Расхождение нашёл прогон консоли, а не чтение кода — поэтому
+   * ответы здесь разбираются схемой, а не остаются `unknown`.
+   */
   readonly publication = {
+    list: (projectId?: string) =>
+      this.http
+        .request({
+          path: projectId
+            ? `/publication-consents?projectId=${encodeURIComponent(projectId)}`
+            : '/publication-consents',
+          schema: z.object({ items: z.array(PublicationConsentSchema) }),
+        })
+        .then((response) => response.items),
+
     grant: (body: PublicationConsentRequest) =>
-      this.http.request({ method: 'POST', path: '/publication-consents', body }),
+      this.http.request({
+        method: 'POST',
+        path: '/publication-consents',
+        body,
+        schema: PublicationConsentSchema,
+      }),
+
+    /** Отзыв. Строка согласия остаётся — отменяется разрешение, не факт акцепта. */
     revoke: (id: string) =>
-      this.http.request({ method: 'DELETE', path: `/publication-consents/${id}` }),
+      this.http.request({
+        method: 'DELETE',
+        path: `/publication-consents/${encodeURIComponent(id)}`,
+        schema: PublicationConsentSchema,
+      }),
   };
 }
 

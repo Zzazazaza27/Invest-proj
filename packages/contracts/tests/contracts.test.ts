@@ -8,6 +8,9 @@ import {
   MATERIAL_UPLOAD_RULES,
   MoneyAmountSchema,
   NotificationPreferenceSchema,
+  EVENT_PAYLOAD_SCHEMAS,
+  EventVerb,
+  PublicationConsentRequestSchema,
   RegisterRequestSchema,
   RequestUploadSchema,
   REQUIRED_CONSENT_KINDS,
@@ -338,5 +341,61 @@ describe('Скоупы вебхуков: событие доступно тол�
 
   it('пустой набор скоупов не открывает ничего', () => {
     expect(verbAllowedByScopes('lab.project.graduated', [])).toBe(false);
+  });
+});
+
+/**
+ * Согласие на публичный контур.
+ *
+ * Список раскрываемых полей до Ф50 был свободным текстом: пятьдесят строк по
+ * 64 символа. Его читает медиаконтур и исполняет — значит он обязан быть
+ * словарём, а не пересказом.
+ */
+describe('согласие на публикацию', () => {
+  const base = {
+    projectId: uuidv7(),
+    scope: 'final_live' as const,
+    documentVersion: 'v1',
+  };
+
+  it('поле вне словаря раскрытия не принимается', () => {
+    const parsed = PublicationConsentRequestSchema.safeParse({
+      ...base,
+      disclosedFields: ['passport_scan'],
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it('известные поля принимаются, пустой список — тоже', () => {
+    // Позитивный контроль: отказ выше означает «слово не из словаря», а не
+    // «схема отвергает любой список».
+    expect(
+      PublicationConsentRequestSchema.safeParse({
+        ...base,
+        disclosedFields: ['project_title', 'founder_photo'],
+      }).success,
+    ).toBe(true);
+    // Пустой список — законное «снимать можно, данные проекта не раскрывать».
+    expect(PublicationConsentRequestSchema.safeParse({ ...base, disclosedFields: [] }).success).toBe(
+      true,
+    );
+  });
+
+  it('неизвестная область согласия отвергается', () => {
+    expect(
+      PublicationConsentRequestSchema.safeParse({
+        ...base,
+        scope: 'everywhere',
+        disclosedFields: [],
+      }).success,
+    ).toBe(false);
+  });
+
+  it('у обоих событий согласия есть схема полезной нагрузки', () => {
+    // Реестр объявляет: verb без схемы не публикуется. Выдача согласия жила в
+    // перечислении verb'ов без схемы — то есть по собственному правилу реестра
+    // публикации не подлежала.
+    expect(EVENT_PAYLOAD_SCHEMAS[EventVerb.CONSENT_PUBLICATION_GRANTED]).toBeDefined();
+    expect(EVENT_PAYLOAD_SCHEMAS[EventVerb.CONSENT_PUBLICATION_REVOKED]).toBeDefined();
   });
 });

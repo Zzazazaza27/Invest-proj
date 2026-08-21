@@ -100,7 +100,10 @@ export const identityGroup: OperationGroup = {
       remembers: { userId: 'user.id' },
       run: async (values, { api, setCsrf, refreshSession }) => {
         const locale = str(values, 'locale') || 'ru-RU';
-        const version = str(values, 'consentVersion') || '1.0.0';
+        // Запасное значение совпадает с defaultValue поля. Прежнее '1.0.0'
+        // было тем самым несуществующим номером, из-за которого регистрация
+        // отвечала 500 до Ф49: пустое поле возвращало ту же ошибку обратно.
+        const version = str(values, 'consentVersion') || 'v1';
         const session = await api.auth.register({
           email: optionalStr(values, 'email'),
           phone: optionalStr(values, 'phone'),
@@ -212,7 +215,7 @@ export const identityGroup: OperationGroup = {
       method: 'POST',
       path: '/v1/publication-consents',
       summary:
-        'ВНИМАНИЕ: метод есть в клиенте, но контроллера с таким маршрутом в ядре не найдено — ожидается 404. Прогон нужен, чтобы подтвердить расхождение фактом.',
+        'Разрешение медиаконтуру снимать и показывать. Даёт только участник проекта и только за себя. Версию документа подставь из «Действующие документы» (kind = pdn_biometric): отпечаток текста сервер берёт сам.',
       needsAuth: true,
       fields: [
         idField('projectId', 'Проект'),
@@ -233,15 +236,19 @@ export const identityGroup: OperationGroup = {
           name: 'disclosedFields',
           label: 'Раскрываемые поля',
           kind: 'text',
-          placeholder: 'title,tagline',
-          help: 'Через запятую, до 50 значений.',
+          placeholder: 'project_title,founder_photo',
+          help:
+            'Через запятую, до 12 значений из закрытого словаря: project_title, project_tagline, ' +
+            'project_description, project_stage, project_geo, investment_ask, founder_display_name, ' +
+            'founder_photo, founder_video, team_members, metrics, pitch_deck. Значение вне словаря — 400.',
         },
         {
           name: 'documentVersion',
           label: 'Версия документа',
           kind: 'text',
           required: true,
-          defaultValue: '1.0.0',
+          defaultValue: 'v1',
+          help: 'Действующая версия pdn_biometric. Неверная — 400 с названием действующей, не 500.',
         },
       ],
       run: (values, { api }) =>
@@ -251,9 +258,30 @@ export const identityGroup: OperationGroup = {
           disclosedFields: str(values, 'disclosedFields')
             .split(',')
             .map((s) => s.trim())
-            .filter(Boolean),
+            .filter(Boolean) as never,
           documentVersion: str(values, 'documentVersion'),
         }),
+    },
+    {
+      id: 'publication-list',
+      title: 'Мои согласия на публикацию',
+      method: 'GET',
+      path: '/v1/publication-consents',
+      summary: 'Свои согласия, включая отозванные. Идентификатор нужен для отзыва.',
+      needsAuth: true,
+      fields: [{ ...idField('projectId', 'Проект'), required: false }],
+      run: (values, { api }) => api.publication.list(optionalStr(values, 'projectId')),
+    },
+    {
+      id: 'publication-revoke',
+      title: 'Отозвать согласие',
+      method: 'DELETE',
+      path: '/v1/publication-consents/{id}',
+      summary:
+        'Строка согласия остаётся: отменяется разрешение, а не факт акцепта. В ответе — крайний срок удаления публичной проекции (15 минут). Повторный отзыв отвечает тем же состоянием и второго события не публикует.',
+      needsAuth: true,
+      fields: [idField('id', 'Согласие')],
+      run: (values, { api }) => api.publication.revoke(str(values, 'id')),
     },
   ],
 };

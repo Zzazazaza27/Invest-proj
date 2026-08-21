@@ -60,12 +60,6 @@ function toAddress(value: string): string {
   return trimmed.includes('@') ? trimmed : `${trimmed}@${INTERNAL_DOMAIN}`;
 }
 
-interface ConsentTemplate {
-  kind: string;
-  version: string;
-  locale: string;
-}
-
 type Mode = 'login' | 'register';
 
 interface SessionUser {
@@ -154,11 +148,12 @@ export default function App() {
   async function requiredConsents(): Promise<
     { kind: (typeof REQUIRED_CONSENTS)[number]; version: string; locale: typeof LOCALE }[]
   > {
-    const response = (await api.http.request({
-      path: `/auth/consents/templates?locale=${encodeURIComponent(LOCALE)}`,
-    })) as { items?: ConsentTemplate[] };
+    // Типизированный метод клиента вместо сырого запроса: ответ разбирается
+    // схемой, и опечатка в имени поля ловится здесь, а не отказом сервера на
+    // акцепте с версией `undefined`.
+    const templates = await api.auth.consentTemplates(LOCALE);
 
-    const byKind = new Map((response.items ?? []).map((item) => [item.kind, item]));
+    const byKind = new Map(templates.map((item) => [item.kind, item]));
     // Локаль берётся своя, а не из ответа: запрашивали конкретную, и подстановка
     // чужой означала бы акцепт документа на языке, которого человек не видел.
     return REQUIRED_CONSENTS.map((kind) => {

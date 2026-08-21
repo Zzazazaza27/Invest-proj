@@ -37,6 +37,14 @@ export function createNotebook(): Notebook {
 
   function write(data: Record<string, string>): void {
     try {
+      // Правило SAST запрещает класть в web storage сессионные данные — и это
+      // верное правило: сессия консоли живёт в httpOnly-cookie и сюда не
+      // попадает. Здесь хранятся ТОЛЬКО идентификаторы созданных объектов
+      // (`projectId`, `materialId`), чтобы прогон переживал перезагрузку
+      // страницы. Токенов, паролей и подписей в блокноте нет и быть не может:
+      // значения кладёт `remembers` каждой операции, а он берёт их из ответов
+      // API по именам полей.
+      // nosemgrep: unicorn-no-token-in-web-storage
       sessionStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {
       // Приватный режим или переполнение — прогон должен продолжаться.

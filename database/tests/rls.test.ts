@@ -521,6 +521,77 @@ describe('RLS: граница интеграционного контура', ()
     });
   });
 
+  /**
+   * Граница проекта у согласия на публичность (M059).
+   *
+   * Прежняя политика проверяла только «согласие выдано ОТ СЕБЯ», но не то, что
+   * человек имеет отношение к проекту: строку согласия на чужой проект мог
+   * оставить кто угодно, а медиаконтур читает эти строки как разрешение снимать.
+   */
+  it('согласие на публичность нельзя выдать на чужой проект', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const stranger = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+
+      await actAs(c, { userId: stranger.id, roles: ['founder'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO identity.publication_consents
+             (id, user_id, project_id, scope, document_version, document_sha256)
+           VALUES ($1, $2, $3, 'final_live', 'v1', digest('doc','sha256'))`,
+          [uuidv7(), stranger.id, projectId],
+        ),
+      ).rejects.toThrow();
+    });
+  });
+
+  it('участник проекта выдаёт согласие на публичность сам', async () => {
+    // Позитивный контроль к предыдущему тесту: отказ выше обязан означать
+    // «не участник», а не «политика запрещает всем».
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+
+      await actAs(c, { userId: owner.id, roles: ['founder'], dbRole: 'app_backend' });
+      const { rowCount } = await c.query(
+        `INSERT INTO identity.publication_consents
+           (id, user_id, project_id, scope, document_version, document_sha256)
+         VALUES ($1, $2, $3, 'final_live', 'v1', digest('doc','sha256'))`,
+        [uuidv7(), owner.id, projectId],
+      );
+      expect(rowCount).toBe(1);
+    });
+  });
+
+  it('вышедший из проекта отзывает собственное согласие', async () => {
+    // Требование членства стоит только на ВЫДАЧЕ. Если бы оно попало и в отзыв,
+    // человек, выбывший из проекта, не смог бы отозвать согласие на съёмку —
+    // а право отозвать согласие (152-ФЗ ст. 9) не зависит от состава команды.
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      const consentId = uuidv7();
+      await c.query(
+        `INSERT INTO identity.publication_consents
+           (id, user_id, project_id, scope, document_version, document_sha256)
+         VALUES ($1, $2, $3, 'episode_bootcamp', 'v1', digest('doc','sha256'))`,
+        [consentId, owner.id, projectId],
+      );
+      await c.query('DELETE FROM lab.founders_projects WHERE project_id = $1 AND user_id = $2', [
+        projectId,
+        owner.id,
+      ]);
+
+      await actAs(c, { userId: owner.id, roles: ['founder'], dbRole: 'app_backend' });
+      const { rowCount } = await c.query(
+        'UPDATE identity.publication_consents SET revoked_at = now() WHERE id = $1',
+        [consentId],
+      );
+      expect(rowCount).toBe(1);
+    });
+  });
+
   it('момент выпуска проставляется триггером и не переписывается', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c, { role: 'founder' });

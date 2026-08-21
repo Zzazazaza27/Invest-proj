@@ -229,6 +229,7 @@ jobs:
         run: |
           host="localhost:5432/unicorn_test"
           export DATABASE_URL="postgres://app_backend_user:${PW_BACKEND}@${host}"
+          export DATABASE_URL_APP_INVESTMENTS="postgres://app_investments_user:${PW_INVEST}@${host}"
           export DATABASE_URL_APP_BILLING="postgres://app_billing_user:${PW_BILLING}@${host}"
           export DATABASE_URL_APP_NOTIFICATIONS="postgres://app_notifications_user:${PW_NOTIFY}@${host}"
           export DATABASE_URL_APP_INTEGRATION="postgres://app_integration_user:${PW_INTEGR}@${host}"
@@ -244,6 +245,7 @@ jobs:
           PW_INTEGR: ci_only_role_password_integr_00
           PW_MAINTEN: ci_only_role_password_mainten_0
           PW_ARCHIVE: ci_only_role_password_archive_00
+          PW_INVEST: ci_only_role_password_invest_00
 
   # ---------------------------------------------------------------- гейт 6
   unit:

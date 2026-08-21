@@ -109,7 +109,11 @@ const badgeText = await page.locator('span:has-text("успех"), span:has-text
 check('исход помечен успехом или отказом', badgeText > 0);
 
 console.warn('\n[4] Блокнот переживает перезагрузку страницы');
+// Прогон подкладывает блокнот руками, чтобы проверить, что он переживает
+// перезагрузку. В хранилище идут идентификаторы объектов, а не сессия: сессия
+// консоли живёт в httpOnly-cookie и коду страницы недоступна.
 await page.evaluate(() =>
+  // nosemgrep: unicorn-no-token-in-web-storage
   sessionStorage.setItem(
     'unicorn-console-notebook',
     JSON.stringify({ projectId: '01920000-0000-7000-8000-000000000001' }),
