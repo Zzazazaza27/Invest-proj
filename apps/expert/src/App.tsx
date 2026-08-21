@@ -10,7 +10,8 @@ import {
   Stack,
   UI_KEYFRAMES,
 } from '@unicorn/ui';
-import type { CurrentUser } from '@unicorn/contracts';
+import type { CurrentUser, NotificationPreference } from '@unicorn/contracts';
+import { NotificationsCard } from '@unicorn/cabinet';
 import { ApiError, api, setCsrf } from './api';
 import { AssignmentsPage } from './pages/AssignmentsPage';
 
@@ -41,6 +42,19 @@ function toAddress(input: string): string {
   const value = input.trim();
   return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
 }
+
+
+/**
+ * Транспорт для общих блоков кабинета.
+ *
+ * Пакет `@unicorn/cabinet` намеренно не знает про HTTP: сюда передаются три
+ * функции, и граница «в сеть — только через свой клиент» видна в сигнатуре.
+ */
+const notificationsPort = {
+  list: (limit: number) => api.notifications.list({ limit }),
+  preferences: () => api.notifications.preferences(),
+  savePreferences: (items: NotificationPreference[]) => api.notifications.updatePreferences(items),
+};
 
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
@@ -105,7 +119,16 @@ export default function App() {
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
           {!checking && !me ? <LoginPage onLoggedIn={() => void load()} /> : null}
-          {!checking && me ? <AssignmentsPage /> : null}
+          {!checking && me ? (
+            <Stack gap="var(--u-space-6)">
+              <AssignmentsPage />
+              {/*
+                Уведомления эксперту важнее, чем кому-либо: назначение приходит
+                со сроком, и пропущенное письмо означает просроченную рецензию.
+              */}
+              <NotificationsCard port={notificationsPort} />
+            </Stack>
+          ) : null}
         </Container>
       </main>
     </>

@@ -15,6 +15,8 @@ import {
 } from '@unicorn/ui';
 import type { CurrentUser, ProjectFull } from '@unicorn/contracts';
 import { ApiError, api, setCsrf } from './api';
+import { NotificationsCard } from '@unicorn/cabinet';
+import type { NotificationPreference } from '@unicorn/contracts';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectPage } from './pages/ProjectPage';
 
@@ -43,6 +45,20 @@ function toAddress(input: string): string {
   const value = input.trim();
   return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
 }
+
+
+/**
+ * Транспорт для общих блоков кабинета.
+ *
+ * Пакет `@unicorn/cabinet` намеренно не знает про HTTP: сюда передаются три
+ * функции, и граница «в сеть — только через свой клиент» видна в сигнатуре.
+ */
+const notificationsPort = {
+  list: (limit: number) => api.notifications.list({ limit }),
+  preferences: () => api.notifications.preferences(),
+  savePreferences: (items: NotificationPreference[]) =>
+    api.notifications.updatePreferences(items),
+};
 
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
@@ -88,7 +104,10 @@ export default function App() {
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
           {!checking && !me ? <LoginPage onLoggedIn={() => void load()} /> : null}
           {!checking && me && openProject === null ? (
-            <ProjectsPage onOpen={(id) => setOpenProject(id)} />
+            <Stack gap="var(--u-space-6)">
+              <ProjectsPage onOpen={(id) => setOpenProject(id)} />
+              <NotificationsCard port={notificationsPort} />
+            </Stack>
           ) : null}
           {!checking && me && openProject !== null ? (
             <ProjectPage projectId={openProject} onBack={() => setOpenProject(null)} />

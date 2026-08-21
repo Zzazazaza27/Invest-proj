@@ -106,6 +106,17 @@ console.warn('\n=== РЕНДЕР-ПРОВЕРКА: КАБИНЕТ ОСНОВАТ
 const owner = await register('owner');
 const stranger = await register('stranger');
 
+// Настройки уведомлений владельца: без них список переключателей пуст, и
+// проверка «неотключаемое действительно заблокировано» была бы зелёной просто
+// потому, что проверять нечего. Тема security выбрана намеренно — схема (M008)
+// не даёт её выключить, и интерфейс обязан это показывать, а не притворяться.
+await sql(
+  `INSERT INTO comms.notification_preferences (user_id, channel, topic, enabled)
+   VALUES ($1, 'email', 'projects', true), ($1, 'email', 'security', true)
+   ON CONFLICT (user_id, channel, topic) DO NOTHING`,
+  [owner.userId],
+);
+
 // Чужой проект: он не должен появиться в кабинете первого пользователя.
 const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
 const [strangerProject] = await sql(
@@ -222,6 +233,54 @@ check(
   'чужой проект в кабинете не виден',
   !(await page.locator('body').innerText()).includes(strangerProject.title),
 );
+
+// ------------------------------------------------------ уведомления (Ф53)
+//
+// Блок общий для кабинетов (`@unicorn/cabinet`): четыре копии одного экрана в
+// этом проекте уже расходились по одной за раз. У уведомлений цена расхождения
+// выше обычной — они про то, о чём человека предупредят, а о чём нет.
+console.warn('\n[2b] Уведомления и настройки каналов');
+const notificationsText = await page.locator('main').innerText();
+check(
+  'блок уведомлений есть в кабинете',
+  notificationsText.includes('Уведомления'),
+);
+check(
+  'пустая лента объяснена словами',
+  notificationsText.includes('Уведомлений нет'),
+);
+// Безопасность и счета отключить нельзя — это ограничение СХЕМЫ (M008), а не
+// каприз интерфейса. Переключатель, который сервер отвергнет, обещал бы
+// управление, которого нет.
+check(
+  'неотключаемые темы названы прямо',
+  notificationsText.includes('отключить нельзя'),
+);
+const securityToggle = page.locator('#pref-email-security');
+const projectsToggle = page.locator('#pref-email-projects');
+check(
+  'настройка темы «безопасность» заблокирована',
+  await securityToggle.isDisabled(),
+);
+// Позитивный контроль: блокировка выше — про КОНКРЕТНУЮ тему, а не про то,
+// что переключатели не работают вовсе.
+check('обычная тема переключается', !(await projectsToggle.isDisabled()));
+// `click`, а не `uncheck`: состояние переключателя контролирует React и
+// меняет его только ПОСЛЕ ответа сервера, а `uncheck` требует, чтобы галочка
+// снялась немедленно, и падает на исправном коде.
+await projectsToggle.click();
+await page.waitForTimeout(2000);
+check(
+  'изменение настройки сохранено сервером',
+  (await page.getByText('Настройка сохранена').count()) > 0,
+);
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(1500);
+check(
+  'выключенная тема осталась выключенной после перезагрузки',
+  !(await page.locator('#pref-email-projects').isChecked()),
+);
+
 
 await page.getByRole('button', { name: 'Новая заявка' }).first().click();
 await page.waitForSelector('#title', { timeout: 10_000 });

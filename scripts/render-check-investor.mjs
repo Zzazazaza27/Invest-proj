@@ -175,6 +175,21 @@ check(
 );
 
 
+console.warn('\n[3c] Уведомления');
+await page.getByRole('button', { name: 'Уведомления' }).click();
+await page.waitForTimeout(1500);
+const notifyText = await page.locator('main').innerText();
+check(
+  'лента уведомлений открывается',
+  notifyText.includes('Уведомлений нет') || notifyText.includes('Показаны последние'),
+  notifyText.replace(/\s+/g, ' ').slice(0, 90),
+);
+check(
+  'неотключаемые темы названы прямо',
+  notifyText.includes('отключить нельзя'),
+);
+
+
 console.warn('\n[4] Выключенный регулируемый контур');
 await page.getByRole('button', { name: 'Предложения' }).click();
 await page.waitForSelector('h1:text("Инвестиционные предложения")', { timeout: 15_000 });

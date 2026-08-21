@@ -16,6 +16,8 @@ import { CatalogPage } from './pages/CatalogPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
 import { OffersPage } from './pages/OffersPage';
 import { BillingPage } from './pages/BillingPage';
+import { NotificationsCard } from '@unicorn/cabinet';
+import type { NotificationPreference } from '@unicorn/contracts';
 import { VerificationPage } from './pages/VerificationPage';
 
 /**
@@ -27,7 +29,7 @@ import { VerificationPage } from './pages/VerificationPage';
  * реестр ОИП — и кабинет говорит об этом прямо, а не показывает пустой список,
  * из которого можно заключить «предложений нет».
  */
-type Tab = 'catalog' | 'subscription' | 'billing' | 'verification' | 'offers';
+type Tab = 'catalog' | 'subscription' | 'billing' | 'verification' | 'offers' | 'notifications';
 
 /**
  * Короткое имя входа дополняется внутренним доменом.
@@ -46,6 +48,19 @@ function toAddress(input: string): string {
   const value = input.trim();
   return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
 }
+
+
+/**
+ * Транспорт для общих блоков кабинета.
+ *
+ * Пакет `@unicorn/cabinet` намеренно не знает про HTTP: сюда передаются три
+ * функции, и граница «в сеть — только через свой клиент» видна в сигнатуре.
+ */
+const notificationsPort = {
+  list: (limit: number) => api.notifications.list({ limit }),
+  preferences: () => api.notifications.preferences(),
+  savePreferences: (items: NotificationPreference[]) => api.notifications.updatePreferences(items),
+};
 
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
@@ -111,6 +126,9 @@ export default function App() {
                 <TabButton active={tab === 'verification'} onClick={() => setTab('verification')}>
                   Верификация
                 </TabButton>
+                <TabButton active={tab === 'notifications'} onClick={() => setTab('notifications')}>
+                  Уведомления
+                </TabButton>
                 <TabButton active={tab === 'offers'} onClick={() => setTab('offers')}>
                   Предложения
                 </TabButton>
@@ -144,6 +162,9 @@ export default function App() {
           {!checking && me && tab === 'billing' ? <BillingPage /> : null}
           {!checking && me && tab === 'verification' ? <VerificationPage /> : null}
           {!checking && me && tab === 'offers' ? <OffersPage /> : null}
+          {!checking && me && tab === 'notifications' ? (
+            <NotificationsCard port={notificationsPort} />
+          ) : null}
         </Container>
       </main>
     </>

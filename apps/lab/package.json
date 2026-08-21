@@ -15,7 +15,8 @@
     "@unicorn/contracts": "*",
     "@unicorn/ui": "*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "@unicorn/cabinet": "*"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

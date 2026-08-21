@@ -45,7 +45,7 @@
     "gate:net:strict": "node scripts/network-audit.mjs --strict",
     "gate": "npm run lint && npm run typecheck && npm run test && npm run gate:boundary && npm run gate:deps && npm run gate:secret-reuse && npm run gate:kek && npm run gate:roles-env && npm run gate:sast-config && npm run gate:ai && npm run gate:net:strict",
     "gate:boundary": "node scripts/check-frontend-boundary.mjs",
-    "build:packages": "npm run build -w packages/contracts && npm run build -w packages/ui && npm run build -w packages/api-client",
+    "build:packages": "npm run build -w packages/contracts && npm run build -w packages/ui && npm run build -w packages/cabinet && npm run build -w packages/api-client",
     "gate:ai": "node scripts/gate-ai-gateway.mjs"
   },
   "devDependencies": {
