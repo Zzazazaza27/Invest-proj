@@ -17,6 +17,7 @@ import {
   type AdminSubscription,
   type AuthSession,
   type ClosePlanRequest,
+  type CreateServiceAccountRequest,
   type FeatureFlag,
   type KycVerification,
   type NotificationTemplate,
@@ -369,6 +370,40 @@ export const api = {
       method: 'GET',
       path: '/v1/admin/service-accounts',
       schema: z.object({ items: z.array(ServiceAccountSchema) }),
+    });
+  },
+
+  /**
+   * Новый клиент Integration API.
+   *
+   * Секрет возвращается ОДИН раз — в базе только Argon2id-хеш, «показать ещё
+   * раз» невозможно by design. До Ф55 создать клиента из админки было нельзя:
+   * список и ротация были, а завести первый аккаунт можно было только через
+   * служебную консоль.
+   */
+  createServiceAccount(body: CreateServiceAccountRequest): Promise<ServiceAccountWithSecret> {
+    return client.request({
+      method: 'POST',
+      path: '/v1/admin/service-accounts',
+      body,
+      schema: ServiceAccountWithSecretSchema,
+    });
+  },
+
+  /**
+   * Приостановка и возобновление доступа внешней системы.
+   *
+   * Приостановка — не удаление: выданные токены перестают действовать по
+   * эпохе, а сам клиент со своими скоупами остаётся, и доступ возвращается
+   * одним действием. Удаление клиента, которого приостановили на время
+   * разбирательства, стоило бы перевыпуска секрета на стороне контрагента.
+   */
+  setServiceAccountStatus(id: string, status: 'active' | 'suspended'): Promise<ServiceAccount> {
+    return client.request({
+      method: 'POST',
+      path: `/v1/admin/service-accounts/${encodeURIComponent(id)}/status`,
+      body: { status },
+      schema: ServiceAccountSchema,
     });
   },
 

@@ -185,6 +185,10 @@ function ServiceAccountsSection() {
     | { status: 'error'; message: string }
   >({ status: 'loading' });
   const [secret, setSecret] = useState<string | null>(null);
+  const [name, setName] = useState('');
+  const [clientId, setClientId] = useState('');
+  const [scopes, setScopes] = useState('graduates:read');
+  const [fingerprint, setFingerprint] = useState('');
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -269,11 +273,116 @@ function ServiceAccountsSection() {
                   >
                     Ротировать секрет
                   </Button>
+                  {/*
+                    Приостановка — не удаление. Выданные токены перестают
+                    действовать по эпохе, а сам клиент со скоупами остаётся, и
+                    доступ возвращается одним действием. Удалять клиента,
+                    которого приостановили на время разбирательства, значило бы
+                    заставить контрагента перевыпускать секрет.
+                  */}
+                  <Button
+                    variant={account.status === 'active' ? 'danger' : 'secondary'}
+                    onClick={async () => {
+                      try {
+                        await api.setServiceAccountStatus(
+                          account.id,
+                          account.status === 'active' ? 'suspended' : 'active',
+                        );
+                        await load();
+                      } catch (error) {
+                        setState({
+                          status: 'error',
+                          message:
+                            error instanceof ApiError
+                              ? (error.problem?.detail ?? error.message)
+                              : 'Сервис недоступен',
+                        });
+                      }
+                    }}
+                  >
+                    {account.status === 'active' ? 'Приостановить' : 'Возобновить'}
+                  </Button>
                 </div>
               </li>
             ))}
           </ul>
         ) : null}
+
+        <div
+          style={{
+            borderTop: '1px solid var(--u-border)',
+            paddingTop: 'var(--u-space-3)',
+            display: 'grid',
+            gap: 'var(--u-space-2)',
+          }}
+        >
+          <strong>Новый клиент</strong>
+          <Field label="Название" htmlFor="sa-name">
+            <Input id="sa-name" value={name} onChange={(e) => setName(e.target.value)} />
+          </Field>
+          <Field
+            label="Идентификатор клиента"
+            htmlFor="sa-client-id"
+            hint="Строчные латинские буквы, цифры и . _ - ; 3–64 символа"
+          >
+            <Input
+              id="sa-client-id"
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+            />
+          </Field>
+          <Field
+            label="Скоупы"
+            htmlFor="sa-scopes"
+            hint="Через запятую. Скоуп — это право на конкретные события и данные, а не на всё сразу."
+          >
+            <Input id="sa-scopes" value={scopes} onChange={(e) => setScopes(e.target.value)} />
+          </Field>
+          <Field
+            label="Отпечаток клиентского сертификата"
+            htmlFor="sa-fingerprint"
+            hint="sha256 в hex, 64 символа. Без mTLS клиент к Integration API не допускается."
+          >
+            <Input
+              id="sa-fingerprint"
+              value={fingerprint}
+              onChange={(e) => setFingerprint(e.target.value)}
+            />
+          </Field>
+          <Button
+            onClick={async () => {
+              try {
+                const created = await api.createServiceAccount({
+                  name: name.trim(),
+                  clientId: clientId.trim(),
+                  scopes: scopes
+                    .split(',')
+                    .map((item) => item.trim())
+                    .filter(Boolean),
+                  mtlsCertFingerprint: fingerprint.trim(),
+                });
+                // Секрет показывается ОДИН раз — здесь же, где и после ротации.
+                setSecret(created.clientSecret);
+                setName('');
+                setClientId('');
+                setScopes('');
+                setFingerprint('');
+                await load();
+              } catch (error) {
+                setSecret(null);
+                setState({
+                  status: 'error',
+                  message:
+                    error instanceof ApiError
+                      ? (error.problem?.detail ?? error.message)
+                      : 'Сервис недоступен',
+                });
+              }
+            }}
+          >
+            Создать клиента
+          </Button>
+        </div>
 
         {secret ? (
           <div

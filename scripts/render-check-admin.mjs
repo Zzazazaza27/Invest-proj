@@ -227,6 +227,55 @@ await page.getByText('Доступ', { exact: true }).click();
 await page.waitForSelector('#role-user', { timeout: 15_000 });
 check('раздел клиентов отрисован', (await page.getByText('Клиенты Integration API').count()) === 1);
 
+// Создание клиента из админки появилось в Ф55: до него список и ротация были, а
+// завести ПЕРВОГО клиента можно было только через служебную консоль.
+const saSuffix = `${Date.now() % 1e8}`;
+await page.fill('#sa-name', `Прогон ${saSuffix}`);
+await page.fill('#sa-client-id', `probe-${saSuffix}`);
+await page.fill('#sa-scopes', 'graduates:read');
+// Отпечаток сертификата — 64 hex-символа. Неверный обязан отвергаться сервером,
+// а не «подставляться как есть»: без mTLS клиент к Integration API не допускается.
+await page.fill('#sa-fingerprint', 'zz');
+await page.getByRole('button', { name: 'Создать клиента' }).click();
+await page.waitForTimeout(1500);
+check(
+  'неверный отпечаток сертификата отвергнут',
+  (await page.getByText('Секрет клиента').count()) === 0,
+);
+// Этот отказ 400 вызван прогоном НАМЕРЕННО, и он не должен краснить проверку
+// «ошибок в консоли нет». Вычищается РОВНО ОДНА ожидаемая запись, а не все 400
+// подряд: иначе прогон перестал бы замечать чужие отказы того же кода.
+const deliberate = consoleErrors.findIndex((message) => message.includes('400'));
+if (deliberate >= 0) consoleErrors.splice(deliberate, 1);
+
+await page.fill('#sa-fingerprint', 'a'.repeat(64));
+await page.getByRole('button', { name: 'Создать клиента' }).click();
+await page.waitForTimeout(2000);
+check('клиент создан из админки', (await page.getByText('Секрет клиента').count()) > 0);
+check(
+  'сказано, что секрет больше не покажут',
+  (await page.getByText('Повторно он не отображается').count()) > 0,
+);
+check(
+  'новый клиент появился в списке',
+  (await page.getByText(`probe-${saSuffix}`).count()) > 0,
+);
+
+await page
+  .getByRole('button', { name: 'Приостановить' })
+  .last()
+  .click();
+await page.waitForTimeout(1500);
+// Приостановка — не удаление: клиент остаётся в списке, меняется состояние.
+check(
+  'приостановленный клиент остаётся в списке',
+  (await page.getByText(`probe-${saSuffix}`).count()) > 0,
+);
+check(
+  'состояние клиента изменилось на приостановленное',
+  (await page.getByRole('button', { name: 'Возобновить' }).count()) > 0,
+);
+
 console.warn('\n[5] Доступность и раскладка');
 check('ровно один h1', (await page.locator('h1').count()) === 1);
 const unlabeled = await page
