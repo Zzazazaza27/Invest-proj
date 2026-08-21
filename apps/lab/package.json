@@ -11,7 +11,6 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@fontsource-variable/manrope": "5.3.0",
     "@unicorn/api-client": "*",
     "@unicorn/cabinet": "*",
     "@unicorn/contracts": "*",

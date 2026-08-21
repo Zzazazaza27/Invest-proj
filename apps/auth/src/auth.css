@@ -4,12 +4,8 @@ body {
   margin: 0;
   background: var(--u-bg);
   color: var(--u-text);
-  font-family:
-    system-ui,
-    -apple-system,
-    'Segoe UI',
-    Roboto,
-    sans-serif;
+  /* Шрифт берётся из токенов: своя строка здесь перебивала бы тему. */
+  font-family: var(--u-font);
 }
 
 .auth-shell {
@@ -176,4 +172,25 @@ body {
   margin-top: 2px;
   font-size: var(--u-text-xs);
   color: var(--u-text-muted);
+}
+
+/* --- Тема Nova ------------------------------------------------------------ *
+ * Экран входа — первый экран продукта; знак платформы и заголовок стоят по
+ * центру, чтобы форма читалась как вход, а не как ещё одна анкета.
+ */
+
+.auth-head {
+  display: grid;
+  justify-items: center;
+  gap: var(--u-space-2);
+  text-align: center;
+}
+
+.auth-head .auth-title {
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.auth-head .auth-subtitle {
+  max-width: 34ch;
 }

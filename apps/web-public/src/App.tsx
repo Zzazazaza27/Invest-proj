@@ -6,6 +6,7 @@ import {
   Container,
   EmptyState,
   ErrorState,
+  IconTile,
   Input,
   LoadingState,
   OfflineBanner,
@@ -73,9 +74,12 @@ function Header() {
           flexWrap: 'wrap',
         }}
       >
-        <strong style={{ fontSize: 'var(--u-text-lg)', letterSpacing: '-0.02em' }}>
-          UNICORN LAUNCH
-        </strong>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--u-space-3)' }}>
+          <IconTile name="rocket" variant="solid" size={40} />
+          <strong style={{ fontSize: 'var(--u-text-lg)', letterSpacing: '-0.02em' }}>
+            UNICORN LAUNCH
+          </strong>
+        </span>
         <nav
           aria-label="Основная навигация"
           style={{
@@ -126,10 +130,13 @@ const registerStyle: React.CSSProperties = {
   alignItems: 'center',
   minHeight: 44,
   padding: '0 var(--u-space-4)',
-  borderRadius: 'var(--u-radius-md)',
-  background: 'var(--u-accent)',
-  // Токена «контрастный к акценту» в наборе нет; акцент в обеих темах —
-  // насыщенный синий, на нём читается белый.
+  borderRadius: 'var(--u-radius-pill)',
+  // Градиент темы с запасным сплошным акцентом: без темы переменной нет, и
+  // кнопка обязана остаться кнопкой, а не прозрачным местом.
+  background: 'var(--u-brand-gradient, var(--u-accent))',
+  fontWeight: 700,
+  // Токена «контрастный к акценту» в наборе нет; акцент и градиент в обеих
+  // темах насыщенные, на них читается белый.
   color: '#fff',
 };
 

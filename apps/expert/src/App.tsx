@@ -4,8 +4,11 @@ import {
   Card,
   Container,
   Field,
+  Icon,
+  IconTile,
   Input,
   LoadingState,
+  NovaTopBar,
   OfflineBanner,
   Stack,
   UI_KEYFRAMES,
@@ -84,20 +87,25 @@ export default function App() {
         Перейти к содержимому
       </a>
       <OfflineBanner />
-      <header style={{ borderBottom: '1px solid var(--u-border)', background: 'var(--u-surface)' }}>
-        <Container
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            minHeight: 64,
-            gap: 'var(--u-space-4)',
-          }}
-        >
-          <strong>Кабинет эксперта</strong>
-          {me ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--u-space-3)' }}>
-              <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+      <NovaTopBar
+        title="UNICORN LAUNCH"
+        subtitle="Кабинет эксперта"
+        icon="check"
+        actions={
+          me ? (
+            <>
+              {/* Имя — справка, оно уступает место действию на узком экране. */}
+              <span
+                className="u-hide-narrow"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 'var(--u-space-2)',
+                  color: 'var(--u-text-muted)',
+                  fontSize: 'var(--u-text-sm)',
+                }}
+              >
+                <IconTile name="user" size={32} />
                 {me.displayName}
               </span>
               <Button
@@ -108,12 +116,13 @@ export default function App() {
                   setMe(null);
                 }}
               >
+                <Icon name="logout" size={16} />
                 Выйти
               </Button>
-            </div>
-          ) : null}
-        </Container>
-      </header>
+            </>
+          ) : null
+        }
+      />
 
       <main id="content">
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>

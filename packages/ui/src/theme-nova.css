@@ -24,7 +24,12 @@
  * который CSP боевого контура обязана была бы разрешить. Вариативная версия
  * даёт весь диапазон весов одним файлом, кириллица отделена unicode-range и
  * грузится только когда нужна.
+ *
+ * Импорт живёт ЗДЕСЬ, а не в семи приложениях: шрифт — часть темы, и
+ * подключать его отдельной строкой в каждом фронтенде значит семь мест, где
+ * его можно забыть. Зависимость объявлена у `@unicorn/ui`.
  */
+@import '@fontsource-variable/manrope/index.css';
 
 [data-brand='nova'] {
   /* --- Палитра ---------------------------------------------------------- */
@@ -43,6 +48,7 @@
   --u-accent: #4b2ee0;
   --u-accent-hover: #3a1fc4;
   --u-accent-subtle: #eeeafe;
+  --u-on-accent: #ffffff;
 
   /*
    * Статусные цвета сдвинуты в ту же холодную гамму, но контраст к белому
@@ -108,6 +114,8 @@
     --u-accent: #9b86ff;
     --u-accent-hover: #b3a3ff;
     --u-accent-subtle: #211f4d;
+    /* Акцент в тёмной теме светлый — надпись на нём обязана быть тёмной. */
+    --u-on-accent: #12102b;
 
     --u-success: #47cf98;
     --u-success-subtle: #0e3327;
@@ -120,8 +128,8 @@
     --u-shadow-md: 0 12px 32px rgba(0, 0, 0, 0.55);
     --u-shadow-lift: 0 18px 42px rgba(0, 0, 0, 0.65);
 
-    --u-brand-gradient: linear-gradient(135deg, #6a45f5 0%, #9057ff 100%);
-    --u-brand-gradient-hover: linear-gradient(135deg, #7c5bff 0%, #a06dff 100%);
+    --u-brand-gradient: linear-gradient(135deg, #4f2ad6 0%, #6d33e8 100%);
+    --u-brand-gradient-hover: linear-gradient(135deg, #5d38e6 0%, #7c45f5 100%);
     --u-brand-gradient-deep: linear-gradient(115deg, #1a1150 0%, #3b1f9e 52%, #5c2ac9 100%);
     --u-tile-bg: linear-gradient(160deg, #23204a 0%, #1b1a3a 100%);
     --u-tile-fg: #b3a3ff;

@@ -117,9 +117,9 @@ packages/
   contracts/     zod-схемы DTO и событий — единственный источник правды контрактов
   api-client/    Типизированный HTTP-клиент (без React), общий для всех фронтов
   ui/            Дизайн-токены, примитивы, иконки и тема «Nova»
-                 (Nova включена только в кабинете основателя — атрибут
-                 data-brand="nova" в apps/lab/index.html; остальные кабинеты
-                 на базовой теме)
+                 (Nova включена во всех семи фронтендах — атрибут
+                 data-brand="nova" в index.html + импорт theme-nova.css;
+                 шрифт Manrope тема тянет сама)
 database/        Миграции M000–M058, RLS-политики, сиды, негативные тесты
 infra/           docker-compose локального контура и образ PostgreSQL.
                  Terraform/Helm production-контура ещё НЕТ — см. TODO.md

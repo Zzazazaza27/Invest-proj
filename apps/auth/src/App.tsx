@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Badge, Button, Card, Container, Field, Input, Stack } from '@unicorn/ui';
+import { Badge, Button, Card, Container, Field, IconTile, Input, Stack } from '@unicorn/ui';
 import { ApiError, api, setCsrf } from './api';
 import { cabinetUrl, cabinetsForRoles, type Cabinet } from './routing';
 import './auth.css';
@@ -461,7 +461,7 @@ export default function App() {
                   </p>
                 ) : null}
 
-                <Button type="submit" loading={busy} disabled={busy || password.length < 12}>
+                <Button type="submit" variant="brand" loading={busy} disabled={busy || password.length < 12}>
                   Сменить пароль
                 </Button>
 
@@ -518,7 +518,7 @@ export default function App() {
                   </p>
                 ) : null}
 
-                <Button type="submit" loading={busy} disabled={busy || email.trim().length === 0}>
+                <Button type="submit" variant="brand" loading={busy} disabled={busy || email.trim().length === 0}>
                   Прислать ссылку
                 </Button>
 
@@ -548,7 +548,8 @@ export default function App() {
         <Card>
           <form onSubmit={(e) => void submit(e)} noValidate>
             <Stack>
-              <div>
+              <div className="auth-head">
+                <IconTile name="rocket" variant="solid" size={56} />
                 <h1 className="auth-title">{mode === 'login' ? 'Вход' : 'Регистрация'}</h1>
                 <p className="auth-subtitle">
                   {mode === 'login'
@@ -655,6 +656,7 @@ export default function App() {
 
               <Button
                 type="submit"
+                variant="brand"
                 loading={busy}
                 disabled={busy || (mode === 'register' && !consentGiven)}
               >

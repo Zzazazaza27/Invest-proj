@@ -4,8 +4,11 @@ import {
   Card,
   Container,
   Field,
+  Icon,
+  IconTile,
   Input,
   LoadingState,
+  NovaTopBar,
   OfflineBanner,
   Stack,
   UI_KEYFRAMES,
@@ -109,67 +112,81 @@ export default function App() {
         Перейти к содержимому
       </a>
       <OfflineBanner />
-      <header style={{ borderBottom: '1px solid var(--u-border)', background: 'var(--u-surface)' }}>
-        <Container
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            minHeight: 64,
-            gap: 'var(--u-space-4)',
-            flexWrap: 'wrap',
-          }}
-        >
-          <strong>Кабинет инвестора</strong>
-          {me ? (
+      <NovaTopBar
+        title="UNICORN LAUNCH"
+        subtitle="Кабинет инвестора"
+        icon="chart"
+        actions={
+          me ? (
             <>
-              {/*
-                Разделов четыре, и на узком экране они перестают помещаться в
-                строку. Перенос вместо горизонтальной прокрутки страницы:
-                прокрутка увела бы вправо весь кабинет, а не только меню.
-              */}
-              <nav
-                aria-label="Разделы"
-                style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}
+              {/* Имя — справка, оно уступает место действию на узком экране. */}
+              <span
+                className="u-hide-narrow"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 'var(--u-space-2)',
+                  color: 'var(--u-text-muted)',
+                  fontSize: 'var(--u-text-sm)',
+                }}
               >
-                <TabButton active={tab === 'catalog'} onClick={() => setTab('catalog')}>
-                  Каталог
-                </TabButton>
-                <TabButton active={tab === 'subscription'} onClick={() => setTab('subscription')}>
-                  Подписка
-                </TabButton>
-                <TabButton active={tab === 'billing'} onClick={() => setTab('billing')}>
-                  Счета
-                </TabButton>
-                <TabButton active={tab === 'verification'} onClick={() => setTab('verification')}>
-                  Верификация
-                </TabButton>
-                <TabButton active={tab === 'notifications'} onClick={() => setTab('notifications')}>
-                  Уведомления
-                </TabButton>
-                <TabButton active={tab === 'offers'} onClick={() => setTab('offers')}>
-                  Предложения
-                </TabButton>
-              </nav>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--u-space-3)' }}>
-                <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-                  {me.displayName}
-                </span>
-                <Button
-                  variant="secondary"
-                  onClick={async () => {
-                    await api.auth.logout().catch(() => undefined);
-                    setCsrf(null);
-                    setMe(null);
-                  }}
-                >
-                  Выйти
-                </Button>
-              </div>
+                <IconTile name="user" size={32} />
+                {me.displayName}
+              </span>
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  await api.auth.logout().catch(() => undefined);
+                  setCsrf(null);
+                  setMe(null);
+                }}
+              >
+                <Icon name="logout" size={16} />
+                Выйти
+              </Button>
             </>
-          ) : null}
-        </Container>
-      </header>
+          ) : null
+        }
+      />
+      {/*
+        Разделы вынесены из шапки в свою полосу: шести вкладкам рядом с именем
+        и выходом тесно уже на ноутбуке, а перенос строки внутри шапки ломал её
+        высоту. Здесь они переносятся, не задевая ничего вокруг.
+      */}
+      {me ? (
+        <div style={{ borderBottom: '1px solid var(--u-border)', background: 'var(--u-surface)' }}>
+          <Container>
+            <nav
+              aria-label="Разделы"
+              style={{
+                display: 'flex',
+                gap: 'var(--u-space-2)',
+                flexWrap: 'wrap',
+                padding: 'var(--u-space-2) 0',
+              }}
+            >
+              <TabButton active={tab === 'catalog'} onClick={() => setTab('catalog')}>
+                Каталог
+              </TabButton>
+              <TabButton active={tab === 'subscription'} onClick={() => setTab('subscription')}>
+                Подписка
+              </TabButton>
+              <TabButton active={tab === 'billing'} onClick={() => setTab('billing')}>
+                Счета
+              </TabButton>
+              <TabButton active={tab === 'verification'} onClick={() => setTab('verification')}>
+                Верификация
+              </TabButton>
+              <TabButton active={tab === 'notifications'} onClick={() => setTab('notifications')}>
+                Уведомления
+              </TabButton>
+              <TabButton active={tab === 'offers'} onClick={() => setTab('offers')}>
+                Предложения
+              </TabButton>
+            </nav>
+          </Container>
+        </div>
+      ) : null}
 
       <main id="content">
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
@@ -217,10 +234,12 @@ function TabButton({
       style={{
         minHeight: 44,
         padding: '0 var(--u-space-4)',
-        borderRadius: 'var(--u-radius-md)',
+        borderRadius: 'var(--u-radius-pill)',
         border: 'none',
-        background: active ? 'var(--u-accent-subtle)' : 'transparent',
-        color: active ? 'var(--u-accent)' : 'var(--u-text)',
+        // Активная вкладка — брендовая «таблетка»; остальные не соревнуются с
+        // ней за внимание и остаются прозрачными.
+        background: active ? 'var(--u-brand-gradient, var(--u-accent))' : 'transparent',
+        color: active ? '#ffffff' : 'var(--u-text-muted)',
         font: 'inherit',
         fontWeight: 600,
         fontSize: 'var(--u-text-sm)',

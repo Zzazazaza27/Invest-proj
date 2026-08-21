@@ -51,7 +51,7 @@ export function Button({
   ...rest
 }: ButtonProps): React.ReactElement {
   const palette: Record<string, React.CSSProperties> = {
-    primary: { background: 'var(--u-accent)', color: 'var(--u-text-inverse)', border: 'none' },
+    primary: { background: 'var(--u-accent)', color: 'var(--u-on-accent)', border: 'none' },
     brand: { background: 'var(--u-accent)', color: '#ffffff', border: 'none' },
     secondary: {
       background: 'var(--u-surface)',
@@ -59,7 +59,7 @@ export function Button({
       border: '1px solid var(--u-border-strong)',
     },
     ghost: { background: 'transparent', color: 'var(--u-accent)', border: 'none' },
-    danger: { background: 'var(--u-danger)', color: 'var(--u-text-inverse)', border: 'none' },
+    danger: { background: 'var(--u-danger)', color: 'var(--u-on-accent)', border: 'none' },
   };
 
   return (
@@ -198,6 +198,13 @@ export function Badge({
     <span
       style={{
         display: 'inline-block',
+        /*
+         * Прямой ребёнок grid-контейнера по умолчанию растягивается на всю
+         * колонку, и значок статуса превращался в полосу во всю карточку
+         * (видно в каталоге инвестора). Во flex-контейнере свойство просто
+         * игнорируется, поэтому правка безопасна для остальных мест.
+         */
+        justifySelf: 'start',
         padding: '2px var(--u-space-3)',
         borderRadius: 'var(--u-radius-pill)',
         background: bg,
