@@ -333,10 +333,13 @@ describe('Транспорт до внутренних систем в productio
     KMS_MODE: 'kms',
     SESSION_COOKIE_NAME: '__Host-ul_session',
     CSRF_COOKIE_NAME: '__Host-ul_csrf',
-    // Переменная называется CORE_PUBLIC_URL. Здесь стояло несуществующее
-    // PUBLIC_BASE_URL, и набор оставался зелёным только потому, что проверял
-    // конкретное сообщение об ошибке, а не сам факт отказа.
+    // Две разные переменные, и путать их нельзя: CORE_PUBLIC_URL — адрес API,
+    // PUBLIC_BASE_URL — адрес, по которому платформу открывает человек (из него
+    // собираются ссылки в письмах, Ф51). Когда-то здесь стояло только имя
+    // PUBLIC_BASE_URL при несуществующей тогда переменной, и набор оставался
+    // зелёным потому, что проверял текст ошибки, а не факт отказа.
     CORE_PUBLIC_URL: 'https://unicorn.example.org',
+    PUBLIC_BASE_URL: 'https://unicorn.example.org',
     CORS_ALLOWED_ORIGINS: 'https://unicorn.example.org',
     DATABASE_SSL: 'true',
   };
@@ -569,6 +572,9 @@ describe('Реконнесанс-поверхность (SEC-21)', () => {
     SESSION_COOKIE_NAME: '__Host-ul_session',
     CSRF_COOKIE_NAME: '__Host-ul_csrf',
     CORE_PUBLIC_URL: 'https://unicorn.example.org',
+    // Адрес, по которому платформу открывает человек: из него собираются
+    // ссылки в письмах, и в production он обязан быть https (Ф51).
+    PUBLIC_BASE_URL: 'https://unicorn.example.org',
     CORS_ALLOWED_ORIGINS: 'https://unicorn.example.org',
     DATABASE_SSL: 'true',
     REDIS_URL: 'rediss://cache.internal:6379',

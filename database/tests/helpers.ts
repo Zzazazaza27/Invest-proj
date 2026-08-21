@@ -98,6 +98,9 @@ export async function actAs(
       'app_billing',
       'app_readonly',
       'app_maintenance',
+      // Роль состояния аутентификации (M046). Через неё идут анонимные пути:
+      // проверка рубежа сессий и работа со ссылками подтверждения (M060).
+      'app_auth',
     ]);
     if (!allowed.has(opts.dbRole)) throw new Error(`Неизвестная роль БД: ${opts.dbRole}`);
     await client.query(`SET LOCAL ROLE ${opts.dbRole}`);

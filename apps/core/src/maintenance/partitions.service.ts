@@ -36,11 +36,13 @@ export class PartitionMaintenanceService implements OnModuleInit, OnModuleDestro
     await this.runOnce();
     await this.purgeRevocations();
     await this.purgeAbandonedUploads();
+    await this.purgeVerificationTokens();
 
     this.timer = setInterval(() => {
       void this.runOnce();
       void this.purgeRevocations();
       void this.purgeAbandonedUploads();
+      void this.purgeVerificationTokens();
     }, env.PARTITION_MAINTENANCE_INTERVAL_HOURS * 3_600_000);
     // Таймер не должен удерживать процесс при штатном завершении.
     this.timer.unref();
@@ -95,6 +97,42 @@ export class PartitionMaintenanceService implements OnModuleInit, OnModuleDestro
     } catch (error) {
       this.logger.error({
         msg: 'уборка реестра отозванных токенов не выполнена',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return 0;
+    }
+  }
+
+  /**
+   * Уборка отработавших токенов подтверждения (M060).
+   *
+   * Убираются ТОЛЬКО просроченные и уже использованные — это же условие стоит
+   * в политике роли обслуживания. Живой токен уборщик не трогает: удалить его
+   * значило бы молча сломать восстановление доступа тому, кто как раз идёт по
+   * ссылке.
+   *
+   * Роль `app_maintenance`, а не `app_backend`: у уборки нет пользовательского
+   * контекста, и выдавать право удаления роли, обслуживающей запросы людей,
+   * незачем (M039).
+   */
+  async purgeVerificationTokens(): Promise<number> {
+    try {
+      const removed = await this.db.asServiceRole(
+        'app_maintenance',
+        { traceId: `verification-purge-${randomUUID()}` },
+        async (tx) => {
+          const { rowCount } = await tx.query(
+            `DELETE FROM identity.verification_tokens
+              WHERE expires_at < now() - interval '7 days' OR used_at < now() - interval '7 days'`,
+          );
+          return rowCount ?? 0;
+        },
+      );
+      if (removed > 0) this.logger.log(`убрано отработавших ссылок подтверждения: ${removed}`);
+      return removed;
+    } catch (error) {
+      this.logger.error({
+        msg: 'уборка ссылок подтверждения не выполнена',
         error: error instanceof Error ? error.message : String(error),
       });
       return 0;

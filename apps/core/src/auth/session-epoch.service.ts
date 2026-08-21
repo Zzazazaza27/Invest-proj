@@ -63,6 +63,19 @@ export class SessionEpochService {
     this.cache.delete(userId);
   }
 
+  /**
+   * Забыть закешированную отметку.
+   *
+   * Нужна там, где рубеж сдвинут НЕ через `invalidate` — например, внутри
+   * функции БД, которая меняет пароль по ссылке из письма одной операцией
+   * (M060). Без сброса кеша старая сессия продолжала бы работать до конца окна
+   * кеша: сброс пароля, после которого чужая вкладка ещё пять секунд жива, —
+   * это не восстановление доступа.
+   */
+  forget(userId: string): void {
+    this.cache.delete(userId);
+  }
+
   private async validFrom(userId: string): Promise<number | null> {
     const cached = this.cache.get(userId);
     if (cached && Date.now() - cached.readAt < CACHE_TTL_MS) return cached.validFrom;

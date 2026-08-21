@@ -1,10 +1,12 @@
 import {
+  AcceptedSchema,
   AnalysisRunSchema,
   AuthSessionSchema,
   BusinessEntitySchema,
   CommissionAccrualSchema,
   ConsentTemplateSchema,
   CurrentUserSchema,
+  EmailVerificationStatusSchema,
   ExpertAssignmentSchema,
   HealthSchema,
   InvestmentAgreementSchema,
@@ -208,6 +210,53 @@ export class UnicornApi {
           schema: z.object({ items: z.array(ConsentTemplateSchema) }),
         })
         .then((response) => response.items),
+
+    /**
+     * Запрос ссылки на смену пароля.
+     *
+     * Ответ ОДИН И ТОТ ЖЕ независимо от того, существует ли адрес: сервер не
+     * даёт клиенту способа различить, а клиент — не пытается. Показывать
+     * «такого адреса нет» здесь было бы перечислением пользователей.
+     */
+    passwordForgot: (email: string) =>
+      this.http.request({
+        method: 'POST',
+        path: '/auth/password/forgot',
+        body: { email },
+        schema: AcceptedSchema,
+      }),
+
+    /** Смена пароля по ссылке из письма. Сессию НЕ открывает. */
+    passwordReset: (token: string, password: string) =>
+      this.http.request({
+        method: 'POST',
+        path: '/auth/password/reset',
+        body: { token, password },
+        schema: z.object({ ok: z.literal(true) }),
+      }),
+
+    /** Письмо с подтверждением своего адреса. Нужна открытая сессия. */
+    requestEmailVerification: () =>
+      this.http.request({
+        method: 'POST',
+        path: '/auth/email/verify/request',
+        schema: z.object({ expiresAt: z.string() }),
+      }),
+
+    /** Переход по ссылке подтверждения: сессия не нужна. */
+    confirmEmail: (token: string) =>
+      this.http.request({
+        method: 'POST',
+        path: '/auth/email/verify/confirm',
+        body: { token },
+        schema: z.object({ verified: z.literal(true) }),
+      }),
+
+    emailVerificationStatus: () =>
+      this.http.request({
+        path: '/auth/email/verify/status',
+        schema: EmailVerificationStatusSchema,
+      }),
 
     /** Акцепт новых версий документов при `reacceptRequired`. */
     acceptConsents: (consents: { kind: string; version: string; locale: string }[]) =>

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, Logger, Post, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import {
   AuthSessionSchema,
@@ -18,6 +18,7 @@ import { Ctx, Public, type AuthenticatedRequest } from '../auth/guards';
 import { TokenVerifier } from '../auth/token.verifier';
 import type { RequestContext } from '../db/unit-of-work';
 import { IdentityService } from './identity.service';
+import { VerificationService } from './verification.service';
 
 /**
  * Аутентификация и профиль.
@@ -46,9 +47,12 @@ function assertLocalAuthAvailable(): void {
 
 @Controller('auth')
 export class IdentityController {
+  private readonly logger = new Logger(IdentityController.name);
+
   constructor(
     private readonly identity: IdentityService,
     private readonly verifier: TokenVerifier,
+    private readonly verification: VerificationService,
   ) {}
 
   @Public()
@@ -71,6 +75,22 @@ export class IdentityController {
       mfaEnabled: false,
     });
     this.setSessionCookies(reply, userId, roles, csrfToken);
+
+    // Письмо с подтверждением адреса уходит СРАЗУ, а не по кнопке в кабинете:
+    // иначе подтверждение остаётся функцией, о которой знает только тот, кто
+    // её искал. Ошибка отправки не отменяет регистрацию — аккаунт создан, и
+    // ронять ответ из-за почты значило бы потерять его вместе с акцептами;
+    // повторить письмо можно из того же экрана входа.
+    await this.verification
+      .requestEmailVerification({ ...ctx, userId, roles })
+      .catch((error: unknown) => {
+        this.logger.warn({
+          msg: 'письмо подтверждения при регистрации не отправлено',
+          reason: error instanceof Error ? error.message : 'unknown',
+          traceId: ctx.traceId,
+        });
+      });
+
     return AuthSessionSchema.parse(session);
   }
 

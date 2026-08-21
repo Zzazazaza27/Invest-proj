@@ -100,6 +100,51 @@ export const LoginRequestSchema = z.object({
 export type LoginRequest = z.infer<typeof LoginRequestSchema>;
 
 /**
+ * Восстановление пароля и подтверждение адреса.
+ *
+ * Ответ на запрос ссылки — всегда один и тот же (`accepted`), независимо от
+ * того, существует ли такой адрес. Разные ответы превратили бы форму «забыли
+ * пароль» в инструмент перечисления пользователей: она для этого удобнее формы
+ * входа, потому что не требует пароля.
+ */
+export const PasswordForgotRequestSchema = z.object({
+  email: z.email().max(254),
+});
+export type PasswordForgotRequest = z.infer<typeof PasswordForgotRequestSchema>;
+
+export const PasswordResetRequestSchema = z.object({
+  /** 32 случайных байта в base64url. Длина проверяется, чтобы не гонять argon2 на мусоре. */
+  token: boundedString(32, 128),
+  password: z
+    .string()
+    .min(12, 'минимум 12 символов')
+    .max(256, 'максимум 256 символов — иначе хеширование становится вектором отказа'),
+});
+export type PasswordResetRequest = z.infer<typeof PasswordResetRequestSchema>;
+
+export const EmailVerifyRequestSchema = z.object({
+  token: boundedString(32, 128),
+});
+export type EmailVerifyRequest = z.infer<typeof EmailVerifyRequestSchema>;
+
+/** Состояние подтверждения адреса — для интерфейса. */
+export const EmailVerificationStatusSchema = z.object({
+  verified: z.boolean(),
+  /** Срок действия уже отправленной ссылки; null — живой ссылки нет. */
+  pendingUntil: IsoDateTimeSchema.nullable(),
+  /**
+   * Подключён ли канал отправки. false — почтового сервера ещё нет, и
+   * интерфейс обязан сказать это словами, а не показывать кнопку, которая
+   * ответит отказом.
+   */
+  mailAvailable: z.boolean(),
+});
+export type EmailVerificationStatus = z.infer<typeof EmailVerificationStatusSchema>;
+
+/** Ответ на запрос письма: одинаковый во всех случаях. */
+export const AcceptedSchema = z.object({ status: z.literal('accepted') });
+
+/**
  * Ответ аутентификации. Токен здесь НЕ передаётся: он уходит в httpOnly-cookie.
  * Клиенты с Bearer получают токен напрямую от IdP по OAuth PKCE (ADR-003).
  */

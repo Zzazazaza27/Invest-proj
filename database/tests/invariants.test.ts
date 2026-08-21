@@ -18,6 +18,8 @@ import {
   uuidv7,
 } from './helpers.ts';
 import { readdirSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import type { Client } from 'pg';
 import { MIGRATIONS_DIR } from '../src/env.ts';
 
 afterAll(async () => {
@@ -888,5 +890,172 @@ describe('Тестовая БД соответствует дереву мигр
       missing,
       'не применены миграции — прогони NODE_ENV=test npm run migrate -w database',
     ).toEqual([]);
+  });
+});
+
+/**
+ * Ссылки восстановления и подтверждения (M060).
+ *
+ * Проверяется не «функция вернула id», а свойства, ради которых она устроена
+ * именно так: однократность на уровне БД, изоляция целей токена, гашение
+ * прежних ссылок и сдвиг рубежа сессий вместе с паролем.
+ */
+describe('Ссылки восстановления и подтверждения', () => {
+  const sha = (value: string) => createHash('sha256').update(value, 'utf8').digest();
+
+  async function issue(c: Client, emailHmac: Buffer, token: string, purpose: string) {
+    const { rows } = await c.query<{ user_id: string | null }>(
+      'SELECT identity.issue_verification_token($1, $2, $3, $4, $5, NULL) AS user_id',
+      [uuidv7(), purpose, emailHmac, sha(token), 1800],
+    );
+    return rows[0]!.user_id;
+  }
+
+  async function emailHmacOf(c: Client, userId: string): Promise<Buffer> {
+    const { rows } = await c.query<{ email_hmac: Buffer }>(
+      'SELECT email_hmac FROM identity.users WHERE id = $1',
+      [userId],
+    );
+    return rows[0]!.email_hmac;
+  }
+
+  it('несуществующий контакт не отличается ошибкой от существующего', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c);
+      const known = await issue(c, await emailHmacOf(c, user.id), 't-known', 'password_reset');
+      // NULL, а не исключение: разное поведение и есть перечисление
+      // пользователей, ради предотвращения которого весь сценарий и построен.
+      const unknown = await issue(c, Buffer.alloc(32, 3), 't-unknown', 'password_reset');
+      expect(known).toBe(user.id);
+      expect(unknown).toBeNull();
+    });
+  });
+
+  it('ссылка срабатывает ровно один раз', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c);
+      await issue(c, await emailHmacOf(c, user.id), 't-once', 'password_reset');
+
+      const first = await c.query<{ user_id: string | null }>(
+        'SELECT identity.reset_password_with_token($1, $2) AS user_id',
+        [sha('t-once'), 'argon2-hash-1'],
+      );
+      const second = await c.query<{ user_id: string | null }>(
+        'SELECT identity.reset_password_with_token($1, $2) AS user_id',
+        [sha('t-once'), 'argon2-hash-2'],
+      );
+      expect(first.rows[0]!.user_id).toBe(user.id);
+      expect(second.rows[0]!.user_id).toBeNull();
+
+      const { rows } = await c.query<{ password_hash: string }>(
+        'SELECT password_hash FROM identity.users WHERE id = $1',
+        [user.id],
+      );
+      // Второй вызов не должен был перезаписать пароль первым... то есть
+      // вторым: сохранился результат ПЕРВОГО срабатывания.
+      expect(rows[0]!.password_hash).toBe('argon2-hash-1');
+    });
+  });
+
+  it('смена пароля сдвигает рубеж сессий', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c);
+      const before = await c.query<{ sessions_valid_from: Date }>(
+        'SELECT sessions_valid_from FROM identity.users WHERE id = $1',
+        [user.id],
+      );
+      await issue(c, await emailHmacOf(c, user.id), 't-epoch', 'password_reset');
+      await c.query('SELECT identity.reset_password_with_token($1, $2)', [
+        sha('t-epoch'),
+        'argon2-hash',
+      ]);
+      const after = await c.query<{ sessions_valid_from: Date }>(
+        'SELECT sessions_valid_from FROM identity.users WHERE id = $1',
+        [user.id],
+      );
+      // Восстановление доступа, после которого чужая открытая сессия
+      // продолжает работать, доступ не восстанавливает.
+      expect(after.rows[0]!.sessions_valid_from.getTime()).toBeGreaterThan(
+        before.rows[0]!.sessions_valid_from.getTime(),
+      );
+    });
+  });
+
+  it('токен подтверждения почты не годится для смены пароля', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c);
+      await issue(c, await emailHmacOf(c, user.id), 't-cross', 'email_verify');
+      const { rows } = await c.query<{ user_id: string | null }>(
+        'SELECT identity.reset_password_with_token($1, $2) AS user_id',
+        [sha('t-cross'), 'argon2-hash'],
+      );
+      // Цель токена — граница, а не подпись в комментарии.
+      expect(rows[0]!.user_id).toBeNull();
+    });
+  });
+
+  it('новая ссылка гасит прежнюю живую', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c);
+      const hmac = await emailHmacOf(c, user.id);
+      await issue(c, hmac, 't-old', 'password_reset');
+      await issue(c, hmac, 't-new', 'password_reset');
+
+      const stale = await c.query<{ user_id: string | null }>(
+        'SELECT identity.reset_password_with_token($1, $2) AS user_id',
+        [sha('t-old'), 'argon2-hash'],
+      );
+      const fresh = await c.query<{ user_id: string | null }>(
+        'SELECT identity.reset_password_with_token($1, $2) AS user_id',
+        [sha('t-new'), 'argon2-hash'],
+      );
+      // Иначе у человека, чью почту читает посторонний, накапливался бы веер
+      // рабочих ссылок, и отозвать их разом было бы нечем.
+      expect(stale.rows[0]!.user_id).toBeNull();
+      expect(fresh.rows[0]!.user_id).toBe(user.id);
+    });
+  });
+
+  it('просроченная ссылка не срабатывает', async () => {
+    await inRollbackTx(async (c) => {
+      const user = await createUser(c);
+      await issue(c, await emailHmacOf(c, user.id), 't-expired', 'password_reset');
+      // Сдвигается и `created_at`: ограничение `expires_at > created_at`
+      // не даёт «просрочить» ссылку, оставив её созданной в будущем — и это
+      // правильно, иначе в таблице заводились бы заведомо мёртвые строки.
+      await c.query(
+        `UPDATE identity.verification_tokens
+            SET created_at = now() - interval '2 hours',
+                expires_at = now() - interval '1 minute'
+          WHERE user_id = $1`,
+        [user.id],
+      );
+      const { rows } = await c.query<{ user_id: string | null }>(
+        'SELECT identity.reset_password_with_token($1, $2) AS user_id',
+        [sha('t-expired'), 'argon2-hash'],
+      );
+      expect(rows[0]!.user_id).toBeNull();
+    });
+  });
+
+  it('роль запросов не видит ни чужих ссылок, ни отпечатка своей', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c);
+      const stranger = await createUser(c);
+      await issue(c, await emailHmacOf(c, owner.id), 't-visible', 'email_verify');
+
+      await actAs(c, { userId: stranger.id, roles: ['founder'], dbRole: 'app_backend' });
+      const foreign = await c.query('SELECT id FROM identity.verification_tokens');
+      expect(foreign.rows).toHaveLength(0);
+
+      await actAs(c, { userId: owner.id, roles: ['founder'], dbRole: 'app_backend' });
+      const own = await c.query('SELECT id, purpose FROM identity.verification_tokens');
+      expect(own.rows).toHaveLength(1);
+      // Отпечаток не входит в GRANT: даже владелец строки его не читает —
+      // права выданы поколоночно, и `SELECT *` здесь тоже упадёт.
+      await expect(
+        c.query('SELECT token_sha256 FROM identity.verification_tokens'),
+      ).rejects.toThrow();
+    });
   });
 });

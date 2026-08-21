@@ -38,8 +38,13 @@ const AUDITABLE_ACTOR_ROLES = new Set(['founder', 'investor', 'expert', 'organiz
 /**
  * Параметры Argon2id. OWASP-минимум: 19 МБ памяти, 2 итерации, параллелизм 1.
  * Память здесь важнее итераций: она делает атаку на GPU дорогой.
+ *
+ * Экспортируются, чтобы восстановление пароля хешировало ТЕМИ ЖЕ параметрами.
+ * Вторая копия чисел означала бы, что пароль, заданный по ссылке из письма,
+ * однажды окажется защищён слабее заданного при регистрации, — и заметить это
+ * будет негде.
  */
-const ARGON2_OPTIONS: argon2.Options = {
+export const ARGON2_OPTIONS: argon2.Options = {
   type: argon2.argon2id,
   memoryCost: 19_456,
   timeCost: 2,

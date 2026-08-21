@@ -210,6 +210,80 @@ export const identityGroup: OperationGroup = {
       },
     },
     {
+      id: 'password-forgot',
+      title: 'Забыли пароль: запросить ссылку',
+      method: 'POST',
+      path: '/v1/auth/password/forgot',
+      summary:
+        'Ответ ВСЕГДА 202 accepted — и для существующего адреса, и для чужого. Отличить одно от другого нельзя намеренно: иначе форма перечисляет пользователей. Куда ушло письмо, смотри по MAIL_TRANSPORT (file — в MAIL_OUTBOX_DIR).',
+      fields: [
+        {
+          name: 'email',
+          label: 'Почта',
+          kind: 'text',
+          required: true,
+          placeholder: 'user@example.com',
+        },
+      ],
+      run: (values, { api }) => api.auth.passwordForgot(str(values, 'email')),
+    },
+    {
+      id: 'password-reset',
+      title: 'Сменить пароль по ссылке',
+      method: 'POST',
+      path: '/v1/auth/password/reset',
+      summary:
+        'Токен берётся из письма. Срабатывает один раз, гасит все открытые сессии пользователя и НЕ открывает новую: смена пароля — не вход.',
+      fields: [
+        {
+          name: 'token',
+          label: 'Токен из письма',
+          kind: 'text',
+          required: true,
+          help: '32 байта в base64url — то, что стоит после #reset= в ссылке.',
+        },
+        {
+          name: 'password',
+          label: 'Новый пароль',
+          kind: 'password',
+          required: true,
+          help: 'Минимум 12 символов.',
+        },
+      ],
+      run: (values, { api }) =>
+        api.auth.passwordReset(str(values, 'token'), str(values, 'password')),
+    },
+    {
+      id: 'email-verify-status',
+      title: 'Состояние подтверждения почты',
+      method: 'GET',
+      path: '/v1/auth/email/verify/status',
+      summary:
+        'Подтверждён ли адрес, есть ли живая ссылка и подключён ли канал отправки. mailAvailable=false означает, что почтового сервера нет и маршруты отправки отвечают 503.',
+      needsAuth: true,
+      run: (_values, { api }) => api.auth.emailVerificationStatus(),
+    },
+    {
+      id: 'email-verify-request',
+      title: 'Запросить письмо подтверждения',
+      method: 'POST',
+      path: '/v1/auth/email/verify/request',
+      summary:
+        'Адрес берётся из профиля, а не из формы: подтверждать надо тот, что записан в аккаунте. Письмо уходит и само — при регистрации.',
+      needsAuth: true,
+      run: (_values, { api }) => api.auth.requestEmailVerification(),
+    },
+    {
+      id: 'email-verify-confirm',
+      title: 'Подтвердить почту по ссылке',
+      method: 'POST',
+      path: '/v1/auth/email/verify/confirm',
+      summary:
+        'Сессия не нужна: письмо открывают в том браузере, куда оно пришло. Токен подтверждения не работает как ссылка смены пароля — цель токена проверяется.',
+      fields: [{ name: 'token', label: 'Токен из письма', kind: 'text', required: true }],
+      run: (values, { api }) => api.auth.confirmEmail(str(values, 'token')),
+    },
+    {
       id: 'publication-grant',
       title: 'Согласие на публикацию',
       method: 'POST',

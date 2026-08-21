@@ -60,7 +60,33 @@ function toAddress(value: string): string {
   return trimmed.includes('@') ? trimmed : `${trimmed}@${INTERNAL_DOMAIN}`;
 }
 
-type Mode = 'login' | 'register';
+/**
+ * Экраны приложения входа.
+ *
+ * `reset` и `verify` открываются НЕ кнопкой, а переходом по ссылке из письма:
+ * токен приходит во фрагменте адреса (`#reset=…`). Фрагмент выбран намеренно —
+ * он не уходит на сервер и не попадает ни в логи прокси, ни в заголовок
+ * Referer, в отличие от параметра запроса.
+ */
+type Mode = 'login' | 'register' | 'forgot' | 'reset' | 'verify';
+
+/** Токен из фрагмента адреса. Возвращает и режим, который он открывает. */
+function tokenFromHash(): { mode: Mode; token: string } | null {
+  const match = /^#(reset|verify)=([A-Za-z0-9_-]{32,128})$/.exec(window.location.hash);
+  if (!match) return null;
+  return { mode: match[1] === 'reset' ? 'reset' : 'verify', token: match[2]! };
+}
+
+/**
+ * Убрать токен из адресной строки.
+ *
+ * Ссылка из письма остаётся в истории браузера и в заголовке окна; после того
+ * как токен использован, держать его на виду незачем — а до использования
+ * фрагмент всё равно уже прочитан приложением.
+ */
+function forgetHash(): void {
+  window.history.replaceState(null, '', window.location.pathname + window.location.search);
+}
 
 interface SessionUser {
   displayName?: string;
@@ -68,7 +94,10 @@ interface SessionUser {
 }
 
 export default function App() {
-  const [mode, setMode] = useState<Mode>('login');
+  const initial = tokenFromHash();
+  const [mode, setMode] = useState<Mode>(initial?.mode ?? 'login');
+  const [linkToken, setLinkToken] = useState<string>(initial?.token ?? '');
+  const [notice, setNotice] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
   const [user, setUser] = useState<SessionUser | null>(null);
   const [cabinets, setCabinets] = useState<Cabinet[]>([]);
@@ -80,6 +109,7 @@ export default function App() {
   const [displayName, setDisplayName] = useState('');
   const [role, setRole] = useState<'founder' | 'investor'>('founder');
   const [consentGiven, setConsentGiven] = useState(false);
+  const [passwordRepeat, setPasswordRepeat] = useState('');
 
   /**
    * Уже вошедшего человека не заставляем входить снова.
@@ -87,9 +117,43 @@ export default function App() {
    * 401 здесь — законный ответ «никто», а не сбой: страница входа обязана
    * открываться у неаутентифицированного пользователя.
    */
+  /**
+   * Ссылка из письма, открытая при уже загруженной странице.
+   *
+   * Смена только фрагмента адреса НЕ перезагружает документ: человек, у
+   * которого вкладка со входом уже открыта, щёлкнул бы по ссылке из письма и
+   * увидел прежний экран. Браузер об этом сообщает событием `hashchange` — на
+   * него и подписываемся, иначе ссылка работает только в новой вкладке.
+   */
+  useEffect(() => {
+    function onHashChange(): void {
+      const found = tokenFromHash();
+      if (!found) return;
+      setLinkToken(found.token);
+      setError(null);
+      setNotice(null);
+      if (found.mode === 'verify') void confirmEmailLink(found.token);
+      else setMode('reset');
+    }
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+    // Пустой список зависимостей намеренно: обработчик читает адрес и зовёт
+    // сеттеры состояния, которые React гарантирует стабильными. Подписка
+    // ставится один раз на жизнь экрана.
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     void (async () => {
+      // Переход по ссылке из письма обрабатывается ДО проверки сессии: у
+      // человека, меняющего пароль, сессии обычно нет, а если есть — она всё
+      // равно перестанет действовать после смены. Отправить его в кабинет,
+      // не дав закончить начатое, значило бы потерять ссылку.
+      if (initial) {
+        setChecking(false);
+        if (initial.mode === 'verify') await confirmEmailLink(initial.token);
+        return;
+      }
       try {
         const me = (await api.auth.me()) as SessionUser;
         if (cancelled) return;
@@ -201,6 +265,85 @@ export default function App() {
     }
   }
 
+  /**
+   * Переход по ссылке подтверждения адреса.
+   *
+   * Сессия не нужна: письмо открывают в том браузере, где оно пришло, и это
+   * почти никогда не тот, где открыт кабинет.
+   */
+  async function confirmEmailLink(token: string): Promise<void> {
+    setBusy(true);
+    try {
+      await api.auth.confirmEmail(token);
+      setNotice('Адрес подтверждён. Теперь можно войти.');
+      setMode('login');
+    } catch (err) {
+      setError(describe(err));
+      setMode('login');
+    } finally {
+      forgetHash();
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Запрос ссылки на смену пароля.
+   *
+   * Сообщение об успехе одинаково для существующего и несуществующего адреса —
+   * потому что и ответ сервера одинаков. «Такого адреса нет» здесь было бы
+   * перечислением пользователей, причём удобнее формы входа: пароль не нужен.
+   */
+  async function submitForgot(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    setError(null);
+    setBusy(true);
+    try {
+      await api.auth.passwordForgot(toAddress(email));
+      setNotice(
+        'Если такой адрес зарегистрирован, письмо со ссылкой отправлено. ' +
+          'Ссылка действует ограниченное время и срабатывает один раз.',
+      );
+      setMode('login');
+    } catch (err) {
+      setError(describe(err));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Смена пароля по ссылке. Сессия НЕ открывается — человек входит заново. */
+  async function submitReset(event: React.FormEvent): Promise<void> {
+    event.preventDefault();
+    setError(null);
+    // Совпадение паролей проверяется здесь, а не сервером: серверу второе поле
+    // не нужно, а человеку нужно, чтобы опечатка не стоила ещё одного письма.
+    if (password !== passwordRepeat) {
+      setError('Пароли не совпадают');
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.auth.passwordReset(linkToken, password);
+      setNotice('Пароль изменён. Войдите с новым паролем.');
+      setPassword('');
+      setPasswordRepeat('');
+      setMode('login');
+      forgetHash();
+    } catch (err) {
+      // Просроченная, использованная и поддельная ссылка отвечают одинаково —
+      // и текст здесь тоже один. Разные формулировки подсказывали бы
+      // подбирающему, что он близко, а человеку всё равно нужно одно и то же:
+      // запросить письмо заново.
+      setError(
+        err instanceof ApiError && (err.status === 400 || err.status === 422)
+          ? 'Ссылка недействительна или устарела. Запросите новую.'
+          : describe(err),
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function logout(): Promise<void> {
     try {
       await api.auth.logout();
@@ -269,6 +412,130 @@ export default function App() {
                 Выйти
               </Button>
             </Stack>
+          </Card>
+        </div>
+      </Container>
+    );
+  }
+
+  // Ссылка из письма: смена пароля. Экран отдельный, потому что здесь нет
+  // почты и нет входа — только новый пароль и подтверждение опечатки.
+  if (mode === 'reset') {
+    return (
+      <Container>
+        <div className="auth-shell">
+          <Card>
+            <form onSubmit={(e) => void submitReset(e)} noValidate>
+              <Stack>
+                <div>
+                  <h1 className="auth-title">Новый пароль</h1>
+                  <p className="auth-subtitle">
+                    Ссылка срабатывает один раз. После смены пароля все открытые сессии
+                    закрываются — на других устройствах придётся войти заново.
+                  </p>
+                </div>
+
+                <Field label="Новый пароль" htmlFor="new-password" hint="Не короче 12 символов">
+                  <Input
+                    id="new-password"
+                    type="password"
+                    value={password}
+                    autoComplete="new-password"
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </Field>
+
+                <Field label="Повторите пароль" htmlFor="repeat-password">
+                  <Input
+                    id="repeat-password"
+                    type="password"
+                    value={passwordRepeat}
+                    autoComplete="new-password"
+                    onChange={(e) => setPasswordRepeat(e.target.value)}
+                  />
+                </Field>
+
+                {error ? (
+                  <p className="auth-error" role="alert">
+                    {error}
+                  </p>
+                ) : null}
+
+                <Button type="submit" loading={busy} disabled={busy || password.length < 12}>
+                  Сменить пароль
+                </Button>
+
+                <p className="auth-switch">
+                  <button
+                    type="button"
+                    className="auth-link"
+                    onClick={() => {
+                      setMode('login');
+                      setError(null);
+                      forgetHash();
+                    }}
+                  >
+                    Вернуться ко входу
+                  </button>
+                </p>
+              </Stack>
+            </form>
+          </Card>
+        </div>
+      </Container>
+    );
+  }
+
+  // Запрос ссылки. Отдельный экран, а не поле в форме входа: пароль здесь не
+  // нужен вовсе, и общая форма заставляла бы браузер предлагать его сохранить.
+  if (mode === 'forgot') {
+    return (
+      <Container>
+        <div className="auth-shell">
+          <Card>
+            <form onSubmit={(e) => void submitForgot(e)} noValidate>
+              <Stack>
+                <div>
+                  <h1 className="auth-title">Восстановление доступа</h1>
+                  <p className="auth-subtitle">
+                    Укажите адрес почты. Если он зарегистрирован, придёт письмо со ссылкой на
+                    смену пароля.
+                  </p>
+                </div>
+
+                <Field label="Почта" htmlFor="forgot-email">
+                  <Input
+                    id="forgot-email"
+                    value={email}
+                    autoComplete="username"
+                    onChange={(e) => setEmail(e.target.value)}
+                  />
+                </Field>
+
+                {error ? (
+                  <p className="auth-error" role="alert">
+                    {error}
+                  </p>
+                ) : null}
+
+                <Button type="submit" loading={busy} disabled={busy || email.trim().length === 0}>
+                  Прислать ссылку
+                </Button>
+
+                <p className="auth-switch">
+                  <button
+                    type="button"
+                    className="auth-link"
+                    onClick={() => {
+                      setMode('login');
+                      setError(null);
+                    }}
+                  >
+                    Вернуться ко входу
+                  </button>
+                </p>
+              </Stack>
+            </form>
           </Card>
         </div>
       </Container>
@@ -374,6 +641,12 @@ export default function App() {
                 </label>
               ) : null}
 
+              {notice ? (
+                <p className="auth-notice" role="status">
+                  {notice}
+                </p>
+              ) : null}
+
               {error ? (
                 <p className="auth-error" role="alert">
                   {error}
@@ -387,6 +660,22 @@ export default function App() {
               >
                 {mode === 'login' ? 'Войти' : 'Создать аккаунт'}
               </Button>
+
+              {mode === 'login' ? (
+                <p className="auth-switch">
+                  <button
+                    type="button"
+                    className="auth-link"
+                    onClick={() => {
+                      setMode('forgot');
+                      setError(null);
+                      setNotice(null);
+                    }}
+                  >
+                    Забыли пароль?
+                  </button>
+                </p>
+              ) : null}
 
               <p className="auth-switch">
                 {mode === 'login' ? 'Ещё нет аккаунта? ' : 'Уже зарегистрированы? '}

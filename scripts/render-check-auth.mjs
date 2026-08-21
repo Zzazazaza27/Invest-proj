@@ -164,6 +164,71 @@ check(
   `пароль: «${wrongPassword.trim()}» · аккаунт: «${noAccount.trim()}»`,
 );
 
+// ------------------------------------------- восстановление пароля (Ф51)
+//
+// Проверяется путь, который человек проходит целиком: ссылка «Забыли пароль?»
+// → форма адреса → одинаковое сообщение независимо от того, зарегистрирован ли
+// адрес. Токен из письма здесь не берётся — это дело смоук-прогона; браузеру
+// важно, что экран есть, отвечает и ничего не выдаёт.
+console.warn('\n[8] Восстановление пароля');
+const p3 = await (await browser.newContext()).newPage();
+await p3.goto(`${BASE}/login/`, { waitUntil: 'networkidle' });
+await p3.getByRole('button', { name: 'Забыли пароль?' }).click();
+await p3.waitForTimeout(400);
+check('экран восстановления открылся', (await p3.locator('#forgot-email').count()) === 1);
+check(
+  'на экране восстановления нет поля пароля',
+  (await p3.locator('#password').count()) === 0,
+);
+
+await p3.locator('#forgot-email').fill('stand-founder@unicorn.local');
+await p3.getByRole('button', { name: 'Прислать ссылку' }).click();
+await p3.waitForTimeout(1500);
+const knownNotice = ((await p3.locator('[role="status"]').first().textContent()) ?? '').trim();
+
+await p3.getByRole('button', { name: 'Забыли пароль?' }).click();
+await p3.waitForTimeout(300);
+await p3.locator('#forgot-email').fill('no-such-account-91745@unicorn.local');
+await p3.getByRole('button', { name: 'Прислать ссылку' }).click();
+await p3.waitForTimeout(1500);
+const unknownNotice = ((await p3.locator('[role="status"]').first().textContent()) ?? '').trim();
+
+// Разные сообщения здесь — это перечисление пользователей, причём удобнее
+// формы входа: пароль не нужен вовсе.
+check(
+  'сообщение одинаково для зарегистрированного и чужого адреса',
+  knownNotice === unknownNotice && knownNotice.length > 0,
+  `«${knownNotice.slice(0, 60)}» против «${unknownNotice.slice(0, 60)}»`,
+);
+
+// Ссылка из письма открывает форму нового пароля. Токен заведомо недействующий:
+// проверяется экран, а не смена пароля — её проверяет смоук-прогон.
+await p3.goto(`${BASE}/login/#reset=${'z'.repeat(43)}`, { waitUntil: 'networkidle' });
+await p3.waitForTimeout(500);
+check('ссылка из письма открывает форму нового пароля', (await p3.locator('#new-password').count()) === 1);
+await p3.locator('#new-password').fill('Some-long-passw0rd!');
+await p3.locator('#repeat-password').fill('Other-long-passw0rd!');
+await p3.getByRole('button', { name: 'Сменить пароль' }).click();
+await p3.waitForTimeout(400);
+check(
+  'несовпадение паролей ловится до отправки',
+  ((await p3.locator('[role="alert"]').first().textContent()) ?? '').includes('не совпадают'),
+);
+
+await p3.locator('#repeat-password').fill('Some-long-passw0rd!');
+await p3.getByRole('button', { name: 'Сменить пароль' }).click();
+await p3.waitForTimeout(1500);
+const resetError = ((await p3.locator('[role="alert"]').first().textContent()) ?? '').trim();
+check(
+  'недействующая ссылка объяснена словами и предлагает выход',
+  resetError.includes('недействительна') && resetError.includes('новую'),
+  resetError.slice(0, 70),
+);
+
+const inputsWithoutLabel = await p3.locator('input:not([id]):not([aria-label])').count();
+check('поля восстановления имеют подписи', inputsWithoutLabel === 0, `без подписи: ${inputsWithoutLabel}`);
+
+
 check('исключений на страницах нет', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 
 await browser.close();

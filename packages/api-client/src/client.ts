@@ -169,9 +169,18 @@ export class ApiClient {
     // под каждый домен — а заодно риск увести запросы на чужой хост. В Node
     // (скрипты, прогоны) `location` нет, и относительный адрес остаётся
     // ошибкой: там базовый адрес всегда известен явно.
-    const base = this.#baseUrl.startsWith('/')
-      ? `${globalThis.location?.origin ?? ''}${this.#baseUrl}`
-      : this.#baseUrl;
+    //
+    // ПУСТАЯ строка — тоже относительный адрес, и обрабатывается так же.
+    // Раньше она проваливалась мимо этой ветки и уходила в `new URL('/v1/…')`
+    // без базы — конструктор бросал TypeError ДО единого сетевого запроса.
+    // Административный кабинет задаёт базой именно пустую строку (пути в нём
+    // уже содержат `/v1/`), и за единой точкой входа вход в него не работал
+    // вовсе: браузер показывал «не удалось войти», хотя сервер об этой попытке
+    // не знал. Найдено рендер-прогоном, а не чтением кода.
+    const base =
+      this.#baseUrl === '' || this.#baseUrl.startsWith('/')
+        ? `${globalThis.location?.origin ?? ''}${this.#baseUrl}`
+        : this.#baseUrl;
     const url = new URL(`${base}/${path.replace(/^\/+/, '')}`);
     for (const [key, value] of Object.entries(query ?? {})) {
       if (value !== undefined) url.searchParams.set(key, String(value));

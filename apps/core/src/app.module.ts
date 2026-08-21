@@ -34,6 +34,10 @@ import { IdentityController } from './identity/identity.controller';
 import { IdentityService } from './identity/identity.service';
 import { PublicationConsentsController } from './identity/publication-consents.controller';
 import { PublicationConsentsService } from './identity/publication-consents.service';
+import { VerificationController } from './identity/verification.controller';
+import { VerificationService } from './identity/verification.service';
+import { MailThrottleService } from './auth/mail-throttle.service';
+import { MailTransport, createMailTransport } from './comms/mail.transport';
 import {
   IntegrationController,
   IntegrationTokenController,
@@ -77,6 +81,7 @@ import { S3Service } from './storage/s3.service';
     AdminContentController,
     IdentityController,
     PublicationConsentsController,
+    VerificationController,
     KycController,
     ProjectsController,
     CatalogController,
@@ -105,6 +110,12 @@ import { S3Service } from './storage/s3.service';
     S3Service,
     IdentityService,
     PublicationConsentsService,
+    VerificationService,
+    MailThrottleService,
+    // Реализация выбирается по MAIL_TRANSPORT: почтового сервера у платформы
+    // ещё нет, и это состояние названо явно — маршруты отвечают 503, а не
+    // изображают отправку.
+    { provide: MailTransport, useFactory: createMailTransport },
     KycService,
     ProjectsService,
     CatalogService,

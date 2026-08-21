@@ -124,6 +124,33 @@ describe('Транспорт: заголовки и учётные данные'
     await client.request({ path: '///pricing' });
     expect(callArgs(fetchImpl).url).toBe('https://api.test/v1/pricing');
   });
+
+  /**
+   * Пустой базовый адрес — это «тот же origin, что и страница».
+   *
+   * Так его задаёт административный кабинет: пути в нём уже содержат `/v1/`.
+   * Пустая строка не начинается со слэша и раньше проваливалась мимо ветки
+   * относительного адреса — `new URL('/v1/auth/login')` без базы бросал
+   * TypeError ДО единого сетевого запроса, и за единой точкой входа вход в
+   * кабинет не работал вовсе. Найдено рендер-прогоном в Ф51.
+   */
+  it('пустой базовый адрес разрешается от адреса страницы', async () => {
+    // В Node `location` нет — подставляем её, потому что проверяется поведение
+    // именно в браузере. Без подстановки относительный адрес остаётся ошибкой,
+    // и это правильно: в прогонах базовый адрес всегда известен явно.
+    vi.stubGlobal('location', { origin: 'https://app.test' });
+    try {
+      const fetchImpl = mockFetch(async () => jsonResponse({ ok: true }));
+      const client = new ApiClient({
+        baseUrl: '',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      await client.request({ path: '/v1/auth/me' });
+      expect(callArgs(fetchImpl).url).toBe('https://app.test/v1/auth/me');
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe('Обработка ошибок RFC 9457', () => {

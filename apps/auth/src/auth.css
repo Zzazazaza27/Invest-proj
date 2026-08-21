@@ -102,6 +102,20 @@ body {
   font-size: var(--u-text-sm);
 }
 
+/*
+  Успешное сообщение отличается от ошибки не только цветом: у него роль
+  `status`, а не `alert`. Экранный диктор объявляет их по-разному, и «письмо
+  отправлено», прочитанное как тревога, сбивает с толку сильнее, чем молчание.
+*/
+.auth-notice {
+  margin: 0;
+  padding: var(--u-space-2) var(--u-space-3);
+  border-radius: var(--u-radius-md);
+  background: var(--u-success-subtle);
+  color: var(--u-success);
+  font-size: var(--u-text-sm);
+}
+
 /* --- переключение режима и возврат --- */
 
 .auth-switch,
