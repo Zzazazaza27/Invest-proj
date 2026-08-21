@@ -15,8 +15,12 @@ import {
 } from '@unicorn/ui';
 import type { CurrentUser, ProjectFull } from '@unicorn/contracts';
 import { ApiError, api, setCsrf } from './api';
-import { NotificationsCard } from '@unicorn/cabinet';
-import type { NotificationPreference } from '@unicorn/contracts';
+import { BusinessEntitiesCard, NotificationsCard } from '@unicorn/cabinet';
+import type {
+  AddEntityMemberRequest,
+  CreateEntityRequest,
+  NotificationPreference,
+} from '@unicorn/contracts';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectPage } from './pages/ProjectPage';
 
@@ -58,6 +62,20 @@ const notificationsPort = {
   preferences: () => api.notifications.preferences(),
   savePreferences: (items: NotificationPreference[]) =>
     api.notifications.updatePreferences(items),
+};
+
+
+/**
+ * Транспорт для карточки юрлиц. Тот же приём, что и у уведомлений: пакет не
+ * знает про HTTP, а кабинет остаётся при своём клиенте.
+ */
+const entitiesPort = {
+  list: () => api.kyc.entities(),
+  create: (body: CreateEntityRequest) => api.kyc.createEntity(body),
+  addMember: (entityId: string, body: AddEntityMemberRequest) =>
+    api.kyc.addMember(entityId, body),
+  startKyb: (entityId: string, kind: 'registry_check' | 'beneficial_owners') =>
+    api.kyc.startKyb(entityId, kind),
 };
 
 export default function App() {
@@ -106,6 +124,12 @@ export default function App() {
           {!checking && me && openProject === null ? (
             <Stack gap="var(--u-space-6)">
               <ProjectsPage onOpen={(id) => setOpenProject(id)} />
+              {/*
+                Юрлицо основателю нужно раньше, чем предложение: без
+                проверенной компании выпуск закрыт. Поэтому карточка стоит в
+                списке проектов, а не прячется внутри одного из них.
+              */}
+              <BusinessEntitiesCard port={entitiesPort} />
               <NotificationsCard port={notificationsPort} />
             </Stack>
           ) : null}

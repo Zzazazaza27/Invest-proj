@@ -175,6 +175,20 @@ check(
 );
 
 
+// Юрлицо инвестора: сделка от компании требует проверенной организации, и это
+// часть той же верификации, а не отдельный раздел.
+console.warn('\n[4c] Юрлицо инвестора');
+await page.getByRole('button', { name: 'Верификация' }).click();
+await page.waitForTimeout(1500);
+const entityText = await page.locator('main').innerText();
+check('карточка юрлиц есть в верификации', entityText.includes('Юрлица и проверка KYB'));
+check(
+  'зачем нужно юрлицо — объяснено',
+  entityText.includes('сделок от организации') || entityText.includes('сделок от компании'),
+  entityText.replace(/\s+/g, ' ').slice(0, 90),
+);
+
+
 console.warn('\n[3c] Уведомления');
 await page.getByRole('button', { name: 'Уведомления' }).click();
 await page.waitForTimeout(1500);

@@ -16,8 +16,12 @@ import { CatalogPage } from './pages/CatalogPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
 import { OffersPage } from './pages/OffersPage';
 import { BillingPage } from './pages/BillingPage';
-import { NotificationsCard } from '@unicorn/cabinet';
-import type { NotificationPreference } from '@unicorn/contracts';
+import { BusinessEntitiesCard, NotificationsCard } from '@unicorn/cabinet';
+import type {
+  AddEntityMemberRequest,
+  CreateEntityRequest,
+  NotificationPreference,
+} from '@unicorn/contracts';
 import { VerificationPage } from './pages/VerificationPage';
 
 /**
@@ -60,6 +64,20 @@ const notificationsPort = {
   list: (limit: number) => api.notifications.list({ limit }),
   preferences: () => api.notifications.preferences(),
   savePreferences: (items: NotificationPreference[]) => api.notifications.updatePreferences(items),
+};
+
+
+/**
+ * Транспорт для карточки юрлиц. Тот же приём, что и у уведомлений: пакет не
+ * знает про HTTP, а кабинет остаётся при своём клиенте.
+ */
+const entitiesPort = {
+  list: () => api.kyc.entities(),
+  create: (body: CreateEntityRequest) => api.kyc.createEntity(body),
+  addMember: (entityId: string, body: AddEntityMemberRequest) =>
+    api.kyc.addMember(entityId, body),
+  startKyb: (entityId: string, kind: 'registry_check' | 'beneficial_owners') =>
+    api.kyc.startKyb(entityId, kind),
 };
 
 export default function App() {
@@ -160,7 +178,17 @@ export default function App() {
           {!checking && me && tab === 'catalog' ? <CatalogPage /> : null}
           {!checking && me && tab === 'subscription' ? <SubscriptionPage /> : null}
           {!checking && me && tab === 'billing' ? <BillingPage /> : null}
-          {!checking && me && tab === 'verification' ? <VerificationPage /> : null}
+          {!checking && me && tab === 'verification' ? (
+            <Stack gap="var(--u-space-6)">
+              <VerificationPage />
+              {/*
+                Инвестор участвует в сделке лично или от компании. Второй путь
+                требует проверенного юрлица — и это часть той же верификации, а
+                не отдельный раздел.
+              */}
+              <BusinessEntitiesCard port={entitiesPort} />
+            </Stack>
+          ) : null}
           {!checking && me && tab === 'offers' ? <OffersPage /> : null}
           {!checking && me && tab === 'notifications' ? (
             <NotificationsCard port={notificationsPort} />

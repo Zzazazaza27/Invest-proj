@@ -12,3 +12,4 @@
  * клиент» видна в сигнатуре, а не держится на договорённости.
  */
 export { NotificationsCard, type NotificationsPort } from './NotificationsCard';
+export { BusinessEntitiesCard, type EntitiesPort } from './BusinessEntitiesCard';

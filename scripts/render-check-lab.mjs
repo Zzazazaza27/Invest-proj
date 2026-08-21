@@ -239,6 +239,52 @@ check(
 // Блок общий для кабинетов (`@unicorn/cabinet`): четыре копии одного экрана в
 // этом проекте уже расходились по одной за раз. У уведомлений цена расхождения
 // выше обычной — они про то, о чём человека предупредят, а о чём нет.
+// ------------------------------------------------------------ юрлица (Ф54)
+//
+// Без проверенного юрлица основатель не допускается к выпуску. До Ф54 завести
+// компанию можно было только через служебную консоль: обязательный шаг
+// существовал в API и отсутствовал в продукте.
+console.warn('\n[2a] Юрлица и KYB');
+const entitiesText = await page.locator('main').innerText();
+check('карточка юрлиц есть в кабинете', entitiesText.includes('Юрлица и проверка KYB'));
+check('отсутствие юрлиц объяснено словами', entitiesText.includes('Юрлиц нет'));
+check(
+  'сказано, что проверку проводит комплаенс, а не платформа',
+  entitiesText.includes('Проверку проводит'),
+);
+
+const entitySuffix = `${Date.now() % 1e8}`;
+await page.fill('#entity-name', `ООО Прогон ${entitySuffix}`);
+await page.fill('#entity-inn', `77${entitySuffix.padStart(8, '0').slice(-8)}`);
+await page.fill('#entity-ogrn', `1${entitySuffix.padStart(12, '0').slice(-12)}`);
+await page.getByRole('button', { name: 'Добавить юрлицо' }).click();
+await page.waitForTimeout(2500);
+check(
+  'юрлицо создано из кабинета',
+  (await page.getByText('Юрлицо добавлено').count()) > 0,
+);
+check(
+  'состояние KYB показано сразу и честно',
+  (await page.getByText('KYB не пройден').count()) > 0,
+);
+// ИНН приходит обратно МАСКИРОВАННЫМ: полное значение шифруется и наружу не
+// выдаётся. Интерфейс показывает то, что отдал сервер, а не то, что ввели.
+const entityRow = await page.locator('main').innerText();
+check(
+  'ИНН показан маской, а не введённым значением',
+  !entityRow.includes(`77${entitySuffix.padStart(8, '0').slice(-8)}`),
+);
+
+await page.getByRole('button', { name: 'Проверка по реестру' }).first().click();
+await page.waitForTimeout(2500);
+// Требуется ИМЕННО подтверждение запуска: «любой alert на странице» зеленел бы
+// и на отказе, то есть проверял бы наличие сообщения, а не работу проверки.
+check(
+  'проверка юрлица по реестру запущена',
+  (await page.getByText('Проверка по реестру запрошена').count()) > 0,
+);
+
+
 console.warn('\n[2b] Уведомления и настройки каналов');
 const notificationsText = await page.locator('main').innerText();
 check(

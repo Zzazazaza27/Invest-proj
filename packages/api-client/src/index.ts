@@ -7,12 +7,14 @@ import {
   ConsentTemplateSchema,
   CurrentUserSchema,
   EmailVerificationStatusSchema,
+  EntityMemberSchema,
   ExpertAssignmentSchema,
   HealthSchema,
   InvestmentAgreementSchema,
   InvestmentOfferSchema,
   InvestmentPassportSchema,
   InvoiceSchema,
+  KybVerificationSchema,
   KycVerificationSchema,
   LogoutResultSchema,
   NotificationPreferenceSchema,
@@ -43,7 +45,9 @@ import {
   type AdvanceProjectStageRequest,
   type AddProductLink,
   type CatalogFilter,
+  type AddEntityMemberRequest,
   type CreateEntityRequest,
+  type StartKybRequest,
   type CreateOfferRequest,
   type CreatePaymentRequest,
   type CreateProjectRequest,
@@ -306,6 +310,32 @@ export class UnicornApi {
           schema: z.object({ items: z.array(BusinessEntitySchema) }),
         })
         .then((response) => response.items),
+
+    /**
+     * Участник или бенефициар юрлица.
+     *
+     * Участник — существующий пользователь платформы (`userId`), а не строка с
+     * именем: раскрытие бенефициаров имеет смысл только тогда, когда за каждым
+     * стоит проверяемое лицо. Служебная консоль до Ф54 слала сюда
+     * `{ fullName, role, sharePercent }` — полей с такими именами сервер не
+     * принимает вовсе, и операция не могла отработать ни разу.
+     */
+    addMember: (entityId: string, body: AddEntityMemberRequest) =>
+      this.http.request({
+        method: 'POST',
+        path: `/kyc/entities/${encodeURIComponent(entityId)}/members`,
+        body,
+        schema: EntityMemberSchema,
+      }),
+
+    /** Запустить проверку юрлица. Без неё эмитент не допускается к выпуску. */
+    startKyb: (entityId: string, kind: StartKybRequest['kind']) =>
+      this.http.request({
+        method: 'POST',
+        path: `/kyc/entities/${encodeURIComponent(entityId)}/kyb`,
+        body: { kind },
+        schema: KybVerificationSchema,
+      }),
   };
 
   // -------------------------------------------------------------- проекты

@@ -125,7 +125,13 @@ mkdirSync(MAIL_DIR, { recursive: true });
 // ------------------------------------------------------------- подготовка
 const suffix = `${Date.now() % 1e9}`;
 const EMAIL = `recovery-${suffix}@test.local`;
+// Пароли учётной записи, которую прогон создаёт сам и бросает через минуту.
+// Правило SAST срабатывает на имя переменной; здесь нет ни чужого пароля, ни
+// значения, действующего где-то ещё, — сценарий требует ИМЕННО пары «старый и
+// новый», иначе проверять «старый больше не подходит» было бы нечем.
+// nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_password
 const OLD_PASSWORD = 'Recovery-old-passw0rd!';
+// nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_password
 const NEW_PASSWORD = 'Recovery-new-passw0rd!';
 
 const consents = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind) => ({

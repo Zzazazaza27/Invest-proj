@@ -87,6 +87,12 @@ const NOT_ENVELOPE = {
 
 // AAD прямого шифрования секрета вебхука — как в apps/core/src/events
 // (WEBHOOK_SECRET_AAD). Разъезд поймает контроль расшифровки старым ключом.
+//
+// Правило SAST срабатывает на ИМЯ константы. Это метка связанных данных
+// шифрования, а не секрет: она обязана быть одинаковой у шифрующего и
+// расшифровывающего, и её раскрытие ничего не даёт. Та же оговорка стоит у
+// одноимённой константы в ядре.
+// nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
 const WEBHOOK_SECRET_AAD = 'webhook:signing';
 
 /**

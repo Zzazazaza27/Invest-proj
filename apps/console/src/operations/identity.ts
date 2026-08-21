@@ -484,45 +484,61 @@ export const kycGroup: OperationGroup = {
       path: '/v1/kyc/entities/:id/kyb',
       summary: 'Проверка юрлица (KYB). Без неё эмитент не допускается к выпуску.',
       needsAuth: true,
-      fields: [idField('entityId', 'Юрлицо')],
+      fields: [
+        idField('entityId', 'Юрлицо'),
+        {
+          name: 'kind',
+          label: 'Вид проверки',
+          kind: 'select',
+          required: true,
+          defaultValue: 'registry_check',
+          options: [
+            { value: 'registry_check', label: 'registry_check — по реестру' },
+            { value: 'beneficial_owners', label: 'beneficial_owners — бенефициары' },
+            { value: 'accreditation', label: 'accreditation — аккредитация' },
+            { value: 'annual_review', label: 'annual_review — ежегодный пересмотр' },
+          ],
+        },
+      ],
       run: (values, { api }) =>
-        api.http.request({
-          method: 'POST',
-          path: `/kyc/entities/${str(values, 'entityId')}/kyb`,
-          body: {},
-        }),
+        api.kyc.startKyb(str(values, 'entityId'), str(values, 'kind') as never),
     },
     {
       id: 'kyb-member',
-      title: 'Добавить бенефициара',
+      title: 'Добавить участника юрлица',
       method: 'POST',
       path: '/v1/kyc/entities/:id/members',
-      summary: 'Участник или бенефициар юрлица — часть обязательного раскрытия.',
+      summary:
+        'Участник или бенефициар — часть обязательного раскрытия. Участник это ПОЛЬЗОВАТЕЛЬ платформы, а не строка с именем: раскрытие имеет смысл, только если за каждым стоит проверяемое лицо. До Ф54 операция слала поля fullName/role/sharePercent, которых сервер не принимает вовсе, — отработать она не могла ни разу.',
       needsAuth: true,
       fields: [
         idField('entityId', 'Юрлицо'),
-        { name: 'fullName', label: 'ФИО', kind: 'text', required: true },
+        idField('userId', 'Пользователь'),
         {
-          name: 'role',
-          label: 'Роль',
-          kind: 'text',
+          name: 'memberRole',
+          label: 'Роль в компании',
+          kind: 'select',
           required: true,
-          defaultValue: 'beneficiary',
-          help: 'Например: beneficiary, director, founder.',
+          defaultValue: 'signatory',
+          options: [
+            { value: 'signatory', label: 'signatory — подписант' },
+            { value: 'beneficial_owner', label: 'beneficial_owner — бенефициар' },
+            { value: 'representative', label: 'representative — представитель' },
+          ],
         },
-        { name: 'sharePercent', label: 'Доля, %', kind: 'number', placeholder: '100' },
+        {
+          name: 'sharePct',
+          label: 'Доля, %',
+          kind: 'text',
+          placeholder: '100',
+          help: 'Для бенефициара обязательна: до 100 с двумя знаками. Иначе — 400.',
+        },
       ],
       run: (values, { api }) =>
-        api.http.request({
-          method: 'POST',
-          path: `/kyc/entities/${str(values, 'entityId')}/members`,
-          body: {
-            fullName: str(values, 'fullName'),
-            role: str(values, 'role'),
-            sharePercent: optionalStr(values, 'sharePercent')
-              ? Number(str(values, 'sharePercent'))
-              : undefined,
-          },
+        api.kyc.addMember(str(values, 'entityId'), {
+          userId: str(values, 'userId'),
+          memberRole: str(values, 'memberRole') as never,
+          sharePct: optionalStr(values, 'sharePct'),
         }),
     },
   ],
