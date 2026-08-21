@@ -11,7 +11,8 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./tokens.css": "./src/tokens.css"
+    "./tokens.css": "./src/tokens.css",
+    "./theme-nova.css": "./src/theme-nova.css"
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",

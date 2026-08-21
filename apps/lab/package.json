@@ -11,12 +11,13 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@fontsource-variable/manrope": "5.3.0",
     "@unicorn/api-client": "*",
+    "@unicorn/cabinet": "*",
     "@unicorn/contracts": "*",
     "@unicorn/ui": "*",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "@unicorn/cabinet": "*"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

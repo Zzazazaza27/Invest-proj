@@ -27,3 +27,23 @@ export {
   type ButtonProps,
   type FieldProps,
 } from './primitives';
+
+/**
+ * Иконки и крупные формы темы Nova.
+ *
+ * Экспортируются отсюда, но НЕ включаются сами собой: без импорта
+ * `@unicorn/ui/theme-nova.css` компоненты отрисуются базовыми токенами —
+ * бледнее, но целиком рабочими. Это и есть цена отката: одна строка импорта.
+ */
+export { Icon, IconTile, type IconName, type IconProps } from './icons';
+
+export {
+  HeroBanner,
+  NovaTopBar,
+  PageHeading,
+  SectionCard,
+  StatCard,
+  TileCard,
+  TileGrid,
+  TrustStrip,
+} from './nova';

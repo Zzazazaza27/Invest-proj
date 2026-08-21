@@ -26,7 +26,13 @@ const TONE_VARS: Record<Tone, { fg: string; bg: string }> = {
 // --------------------------------------------------------------------- кнопка
 
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  /**
+   * `brand` — тот же primary, но с градиентной заливкой темы: она объявлена
+   * классом в `theme-nova.css`, потому что градиент с наведением inline-стилем
+   * не описывается. Без темы вариант деградирует до сплошного акцента, а не
+   * до прозрачной кнопки.
+   */
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'brand';
   /**
    * Кнопка в работе. Блокируется и объявляет это ассистивным технологиям:
    * `aria-busy` — не украшение, без него скринридер сообщит «кнопка», как будто
@@ -41,10 +47,12 @@ export function Button({
   disabled,
   children,
   style,
+  className,
   ...rest
 }: ButtonProps): React.ReactElement {
   const palette: Record<string, React.CSSProperties> = {
     primary: { background: 'var(--u-accent)', color: 'var(--u-text-inverse)', border: 'none' },
+    brand: { background: 'var(--u-accent)', color: '#ffffff', border: 'none' },
     secondary: {
       background: 'var(--u-surface)',
       color: 'var(--u-text)',
@@ -57,6 +65,10 @@ export function Button({
   return (
     <button
       {...rest}
+      className={
+        [variant === 'brand' ? 'u-btn-brand' : null, className].filter(Boolean).join(' ') ||
+        undefined
+      }
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       style={{

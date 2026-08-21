@@ -1,0 +1,250 @@
+/*
+ * Тема «Nova» — брендовый слой поверх базовых токенов.
+ *
+ * Зачем отдельным файлом, а не правкой `tokens.css`: базовая тема обслуживает
+ * ПЯТЬ фронтендов сразу, и смена палитры в ней означала бы смену бренда всей
+ * платформы одним движением. Nova включается точечно — атрибутом `data-brand`
+ * на корневом элементе того приложения, где её решили попробовать. Снять тему
+ * = убрать атрибут и импорт; ни один компонент при этом не меняется, потому
+ * что все они читают те же самые переменные.
+ *
+ * Подключение:
+ *   import '@unicorn/ui/tokens.css';
+ *   import '@unicorn/ui/theme-nova.css';
+ *   document.documentElement.dataset.brand = 'nova';
+ *
+ * Правило прежнее: магических значений в компонентах нет. Всё, что добавляет
+ * Nova сверх базовых токенов (градиенты, подложки плиток, «поднятая» тень),
+ * объявлено здесь и только здесь.
+ */
+
+/* --- Шрифт --------------------------------------------------------------- *
+ * Manrope самохостится пакетом `@fontsource-variable/manrope`: подключение с
+ * внешнего CDN — это сторонний домен в критическом пути отрисовки и запрос,
+ * который CSP боевого контура обязана была бы разрешить. Вариативная версия
+ * даёт весь диапазон весов одним файлом, кириллица отделена unicode-range и
+ * грузится только когда нужна.
+ */
+
+[data-brand='nova'] {
+  /* --- Палитра ---------------------------------------------------------- */
+  --u-bg: #eceffa;
+  --u-bg-subtle: #f6f7fd;
+  --u-bg-inset: #ecebfe;
+  --u-surface: #ffffff;
+  --u-surface-raised: #ffffff;
+  --u-border: #e6e8f7;
+  --u-border-strong: #d2d6ee;
+
+  --u-text: #121737;
+  --u-text-muted: #6a7099;
+  --u-text-inverse: #ffffff;
+
+  --u-accent: #4b2ee0;
+  --u-accent-hover: #3a1fc4;
+  --u-accent-subtle: #eeeafe;
+
+  /*
+   * Статусные цвета сдвинуты в ту же холодную гамму, но контраст к белому
+   * проверялся по тексту, а не по вкусу: ниже 4,5:1 не опускаемся — иначе
+   * «фирменный» оттенок отбирает у пользователя возможность прочитать статус.
+   */
+  --u-success: #0b7a52;
+  --u-success-subtle: #e2f7ee;
+  --u-warning: #8a4b00;
+  --u-warning-subtle: #fdf1e3;
+  --u-danger: #c0233a;
+  --u-danger-subtle: #fdebee;
+
+  /* --- Форма ------------------------------------------------------------- */
+  --u-radius-sm: 8px;
+  --u-radius-md: 12px;
+  --u-radius-lg: 20px;
+  --u-radius-xl: 28px;
+  --u-radius-pill: 999px;
+
+  --u-shadow-sm: 0 1px 2px rgba(18, 23, 55, 0.06);
+  --u-shadow-md: 0 10px 30px rgba(40, 26, 122, 0.1);
+  /* Тень «поднятой» карточки: только для наведения и активных плиток. */
+  --u-shadow-lift: 0 18px 42px rgba(58, 32, 196, 0.18);
+
+  /* --- Типографика ------------------------------------------------------- */
+  --u-font:
+    'Manrope Variable', 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+
+  --u-text-2xl: 44px;
+  --u-leading-tight: 1.15;
+
+  /* --- Брендовые слои Nova ---------------------------------------------- */
+  --u-brand-gradient: linear-gradient(135deg, #5330e8 0%, #7c3ff2 100%);
+  --u-brand-gradient-hover: linear-gradient(135deg, #4526d2 0%, #6c31e0 100%);
+  /* Глубокий вариант — для тёмных полос и баннеров, где текст белый. */
+  --u-brand-gradient-deep: linear-gradient(115deg, #201679 0%, #4423c4 52%, #6d2fe8 100%);
+  /* Подложка иконочной плитки: светлая, чтобы иконка читалась контуром. */
+  --u-tile-bg: linear-gradient(160deg, #f2eeff 0%, #e6e1ff 100%);
+  --u-tile-fg: #4b2ee0;
+  /* Фон страницы: два мягких пятна, а не плоская заливка. */
+  --u-page-bg:
+    radial-gradient(1200px 620px at 12% -8%, #e6e9ff 0%, rgba(230, 233, 255, 0) 60%),
+    radial-gradient(900px 520px at 92% 0%, #efe6ff 0%, rgba(239, 230, 255, 0) 55%), #eceffa;
+
+  --u-focus-ring: 0 0 0 3px rgba(75, 46, 224, 0.22);
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-brand='nova']:not([data-force-theme='light']) {
+    --u-bg: #0b0d1c;
+    --u-bg-subtle: #121529;
+    --u-bg-inset: #1b1c3d;
+    --u-surface: #14172c;
+    --u-surface-raised: #191d36;
+    --u-border: #262a48;
+    --u-border-strong: #3a3f66;
+
+    --u-text: #eceefb;
+    --u-text-muted: #9ba2ca;
+
+    --u-accent: #9b86ff;
+    --u-accent-hover: #b3a3ff;
+    --u-accent-subtle: #211f4d;
+
+    --u-success: #47cf98;
+    --u-success-subtle: #0e3327;
+    --u-warning: #e2a95f;
+    --u-warning-subtle: #33240f;
+    --u-danger: #ff7183;
+    --u-danger-subtle: #3c1520;
+
+    --u-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
+    --u-shadow-md: 0 12px 32px rgba(0, 0, 0, 0.55);
+    --u-shadow-lift: 0 18px 42px rgba(0, 0, 0, 0.65);
+
+    --u-brand-gradient: linear-gradient(135deg, #6a45f5 0%, #9057ff 100%);
+    --u-brand-gradient-hover: linear-gradient(135deg, #7c5bff 0%, #a06dff 100%);
+    --u-brand-gradient-deep: linear-gradient(115deg, #1a1150 0%, #3b1f9e 52%, #5c2ac9 100%);
+    --u-tile-bg: linear-gradient(160deg, #23204a 0%, #1b1a3a 100%);
+    --u-tile-fg: #b3a3ff;
+    --u-page-bg:
+      radial-gradient(1200px 620px at 12% -8%, #17193a 0%, rgba(23, 25, 58, 0) 60%),
+      radial-gradient(900px 520px at 92% 0%, #1d1640 0%, rgba(29, 22, 64, 0) 55%), #0b0d1c;
+
+    --u-focus-ring: 0 0 0 3px rgba(155, 134, 255, 0.3);
+  }
+}
+
+/*
+ * Фон страницы задаётся здесь, а не в компоненте: приложение не должно знать,
+ * что бренд решил положить под контент градиент вместо заливки.
+ */
+[data-brand='nova'] body {
+  background: var(--u-page-bg);
+  background-attachment: fixed;
+  /*
+   * Кириллица Manrope в обычном весе на светлом фоне выглядит тонковато;
+   * 450 — компромисс между читаемостью и «воздушностью» референса. Доступно
+   * только потому, что шрифт вариативный: отдельного файла это не стоит.
+   */
+  font-weight: 450;
+}
+
+[data-brand='nova'] h1,
+[data-brand='nova'] h2,
+[data-brand='nova'] h3 {
+  letter-spacing: -0.02em;
+  line-height: var(--u-leading-tight);
+}
+
+/* --- Крупные формы Nova --------------------------------------------------- *
+ * Классы описывают только то, чего не умеет inline-стиль: наведение, переходы
+ * и прилипание. Базовый вид компонента остаётся в самом компоненте, поэтому
+ * потеря этого файла ломает эффект, а не раскладку.
+ */
+
+.u-topbar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: color-mix(in srgb, var(--u-surface) 82%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px);
+  border-bottom: 1px solid var(--u-border);
+}
+
+.u-topbar__inner {
+  width: 100%;
+  max-width: var(--u-container);
+  margin: 0 auto;
+  padding: var(--u-space-3) var(--u-space-4);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--u-space-4);
+  min-height: 64px;
+}
+
+.u-tile-card {
+  transition:
+    transform var(--u-transition),
+    box-shadow var(--u-transition),
+    border-color var(--u-transition);
+}
+
+.u-tile-card:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: var(--u-shadow-lift, var(--u-shadow-md));
+  border-color: color-mix(in srgb, var(--u-accent) 40%, var(--u-border));
+}
+
+.u-tile-card:active:not(:disabled) {
+  transform: translateY(0);
+}
+
+/* Пользователь, попросивший систему не анимировать, имел в виду и подъём тоже. */
+@media (prefers-reduced-motion: reduce) {
+  .u-tile-card,
+  .u-tile-card:hover:not(:disabled) {
+    transform: none;
+  }
+}
+
+.u-hero {
+  position: relative;
+  overflow: hidden;
+}
+
+/* Блик поверх градиента: только декорация, поэтому вне потока и без событий. */
+.u-hero::after {
+  content: '';
+  position: absolute;
+  inset: -40% -10% auto auto;
+  width: 260px;
+  height: 260px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.22) 0%, rgba(255, 255, 255, 0) 65%);
+  pointer-events: none;
+}
+
+/* Кнопка брендового варианта: градиент живёт здесь, hover — тоже. */
+.u-btn-brand {
+  background: var(--u-brand-gradient, var(--u-accent)) !important;
+  box-shadow: 0 8px 22px rgba(75, 46, 224, 0.28);
+  transition:
+    filter var(--u-transition),
+    box-shadow var(--u-transition);
+}
+
+.u-btn-brand:hover:not(:disabled) {
+  background: var(--u-brand-gradient-hover, var(--u-accent-hover)) !important;
+  box-shadow: 0 10px 26px rgba(75, 46, 224, 0.34);
+}
+
+/*
+ * Второстепенная подпись, которая на телефоне уступает место действию.
+ * Скрывается ТОЛЬКО справочный текст: прятать так интерактивные элементы
+ * значит делать функцию недоступной на узком экране.
+ */
+@media (max-width: 640px) {
+  .u-hide-narrow {
+    display: none !important;
+  }
+}

@@ -7,10 +7,14 @@ import {
   EmptyState,
   ErrorState,
   Field,
+  Icon,
+  IconTile,
   Input,
   LoadingState,
+  NovaTopBar,
   OfflineBanner,
   Stack,
+  TrustStrip,
   UI_KEYFRAMES,
 } from '@unicorn/ui';
 import type { CurrentUser, ProjectFull } from '@unicorn/contracts';
@@ -136,6 +140,17 @@ export default function App() {
           {!checking && me && openProject !== null ? (
             <ProjectPage projectId={openProject} onBack={() => setOpenProject(null)} />
           ) : null}
+          {me ? (
+            <div
+              style={{
+                marginTop: 'var(--u-space-7)',
+                paddingTop: 'var(--u-space-5)',
+                borderTop: '1px solid var(--u-border)',
+              }}
+            >
+              <TrustStrip items={TRUST_ITEMS} />
+            </div>
+          ) : null}
         </Container>
       </main>
     </>
@@ -144,31 +159,65 @@ export default function App() {
 
 function Header({ me, onLogout }: { me: CurrentUser | null; onLogout: () => void }) {
   return (
-    <header style={{ borderBottom: '1px solid var(--u-border)', background: 'var(--u-surface)' }}>
-      <Container
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          minHeight: 64,
-          gap: 'var(--u-space-4)',
-        }}
-      >
-        <strong>Кабинет основателя</strong>
-        {me ? (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--u-space-4)' }}>
-            <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+    <NovaTopBar
+      title="UNICORN LAUNCH"
+      subtitle="Кабинет основателя"
+      icon="rocket"
+      actions={
+        me ? (
+          <>
+            {/*
+              Имя прячется на узком экране, кнопка выхода — нет: подпись это
+              справка, а выход — действие, и терять его на телефоне нельзя.
+            */}
+            <span
+              className="u-hide-narrow"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--u-space-2)',
+                color: 'var(--u-text-muted)',
+                fontSize: 'var(--u-text-sm)',
+              }}
+            >
+              <IconTile name="user" size={32} />
               {me.displayName}
             </span>
             <Button variant="secondary" onClick={onLogout}>
+              <Icon name="logout" size={16} />
               Выйти
             </Button>
-          </div>
-        ) : null}
-      </Container>
-    </header>
+          </>
+        ) : null
+      }
+    />
   );
 }
+
+/**
+ * Полоса под содержимым кабинета.
+ *
+ * Не украшение: три строки отвечают на вопросы, которые основатель задаёт
+ * перед тем, как отдать платформе документы компании, — кто это увидит, что
+ * происходит с деньгами и к кому идти, если что-то пойдёт не так.
+ */
+const TRUST_ITEMS = [
+  {
+    icon: 'shield' as const,
+    title: 'Проверенные эксперты',
+    description: 'Оценку дают эксперты с подтверждённой квалификацией',
+  },
+  {
+    icon: 'lock' as const,
+    title: 'Документы под шифрованием',
+    description: 'Реквизиты и файлы компании доступны только вам и комплаенсу',
+  },
+  {
+    icon: 'chat' as const,
+    title: 'Ответ на обращение',
+    description: 'Вопрос по заявке — через уведомления кабинета',
+  },
+];
 
 function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [email, setEmail] = useState('');
@@ -177,7 +226,18 @@ function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
   const [error, setError] = useState<string | null>(null);
 
   return (
-    <Card style={{ maxWidth: 420, margin: '0 auto' }}>
+    <Card
+      style={{
+        maxWidth: 440,
+        margin: 'var(--u-space-7) auto',
+        padding: 'var(--u-space-6)',
+        borderRadius: 'var(--u-radius-xl, var(--u-radius-lg))',
+        boxShadow: 'var(--u-shadow-md)',
+      }}
+    >
+      <div style={{ display: 'grid', justifyItems: 'center', gap: 'var(--u-space-2)' }}>
+        <IconTile name="rocket" variant="solid" size={56} />
+      </div>
       <form
         onSubmit={async (event) => {
           event.preventDefault();
@@ -209,7 +269,14 @@ function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
         }}
       >
         <Stack>
-          <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Вход</h1>
+          <div style={{ textAlign: 'center', display: 'grid', gap: 4 }}>
+            <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)', fontWeight: 800 }}>
+              Вход в кабинет
+            </h1>
+            <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+              Заявки, материалы и статус проектов
+            </span>
+          </div>
           <Field
             label="Почта или логин"
             htmlFor="email"
@@ -240,7 +307,7 @@ function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
               {error}
             </div>
           ) : null}
-          <Button type="submit" loading={busy}>
+          <Button type="submit" variant="brand" loading={busy}>
             Войти
           </Button>
         </Stack>
