@@ -180,6 +180,23 @@ export class BillingService {
 
   // ------------------------------------------------------------------ private
 
+  /**
+   * Приём платежей включён?
+   *
+   * Флаг живёт в `audit.feature_flags` — там же, где выключен регулируемый
+   * контур. Отсутствие строки трактуется как «выключено»: неизвестное
+   * состояние денежной функции обязано означать отказ, а не приём.
+   */
+  async assertPaymentsEnabled(ctx: RequestContext): Promise<void> {
+    const enabled = await this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<{ enabled: boolean }>(
+        `SELECT enabled FROM audit.feature_flags WHERE key = 'billing.payments.enabled'`,
+      );
+      return rows[0]?.enabled ?? false;
+    });
+    if (!enabled) throw errors.featureDisabled('billing.payments.enabled');
+  }
+
   private async resolveFounderPlanForProject(
     tx: Tx,
     projectId: string,

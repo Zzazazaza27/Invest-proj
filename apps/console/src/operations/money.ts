@@ -368,7 +368,8 @@ export const billingGroup: OperationGroup = {
       title: 'Оплатить счёт',
       method: 'POST',
       path: '/v1/billing/payments',
-      summary: 'Создаёт платёж по счёту. Повтор с тем же ключом обязан вернуть тот же платёж.',
+      summary:
+        'Приём платежей ВЫКЛЮЧЕН флагом billing.payments.enabled — платёжный провайдер не подключён, и маршрут отвечает 503 feature_disabled. До Ф52 он отвечал 404: метод клиента был ловушкой. Тело всё равно проверяется схемой, поэтому невалидный запрос даст 400, а не «функция выключена».',
       needsAuth: true,
       fields: [
         idField('invoiceId', 'Счёт'),

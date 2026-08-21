@@ -15,6 +15,7 @@ import { ApiError, api, setCsrf } from './api';
 import { CatalogPage } from './pages/CatalogPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
 import { OffersPage } from './pages/OffersPage';
+import { BillingPage } from './pages/BillingPage';
 import { VerificationPage } from './pages/VerificationPage';
 
 /**
@@ -26,7 +27,7 @@ import { VerificationPage } from './pages/VerificationPage';
  * реестр ОИП — и кабинет говорит об этом прямо, а не показывает пустой список,
  * из которого можно заключить «предложений нет».
  */
-type Tab = 'catalog' | 'subscription' | 'verification' | 'offers';
+type Tab = 'catalog' | 'subscription' | 'billing' | 'verification' | 'offers';
 
 /**
  * Короткое имя входа дополняется внутренним доменом.
@@ -104,6 +105,9 @@ export default function App() {
                 <TabButton active={tab === 'subscription'} onClick={() => setTab('subscription')}>
                   Подписка
                 </TabButton>
+                <TabButton active={tab === 'billing'} onClick={() => setTab('billing')}>
+                  Счета
+                </TabButton>
                 <TabButton active={tab === 'verification'} onClick={() => setTab('verification')}>
                   Верификация
                 </TabButton>
@@ -137,6 +141,7 @@ export default function App() {
           {!checking && !me ? <LoginPage onLoggedIn={() => void load()} /> : null}
           {!checking && me && tab === 'catalog' ? <CatalogPage /> : null}
           {!checking && me && tab === 'subscription' ? <SubscriptionPage /> : null}
+          {!checking && me && tab === 'billing' ? <BillingPage /> : null}
           {!checking && me && tab === 'verification' ? <VerificationPage /> : null}
           {!checking && me && tab === 'offers' ? <OffersPage /> : null}
         </Container>

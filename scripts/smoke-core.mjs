@@ -121,6 +121,23 @@ console.warn('\n=== ДЫМОВАЯ ПРОВЕРКА CORE ===\n');
   check('ответ несёт traceId', typeof json?.traceId === 'string');
 }
 
+// -------------------------------------------- деньги закрыты по умолчанию
+{
+  // Маршрут появился в Ф52: прежде клиент звал его и получал 404, то есть
+  // «оплата не удалась» вместо «сервер о такой операции не знает».
+  const { response, json } = await req('/v1/billing/payments', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  });
+  check(
+    'оплата счёта закрыта без токена',
+    response.status === 401,
+    `получено ${response.status}`,
+  );
+  check('отказ оплаты в формате problem+json', json?.code === 'unauthenticated');
+}
+
 // ------------------------------------------------------------------- CORS
 {
   const { response } = await req('/v1/health', { headers: { Origin: 'https://evil.example' } });

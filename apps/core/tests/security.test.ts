@@ -5,7 +5,7 @@ import { TokenVerifier } from '../src/auth/token.verifier';
 import { TokenRevocationService } from '../src/auth/token-revocation.service';
 import { createHmac } from 'node:crypto';
 import { OpenApiController } from '../src/health/openapi.controller';
-import { normalizedPath } from '../src/common/request-path';
+import { normalizedPath, rateLimitClass } from '../src/common/request-path';
 
 /**
  * Юнит-тесты периметра безопасности. Проверяют то, что нельзя увидеть в
@@ -669,5 +669,47 @@ describe('Классификация rate-limit по нормализованн�
     // которое уронило бы вычисление лимита (и, значит, сам лимит).
     expect(() => normalizedPath('/v1/auth/%zz')).not.toThrow();
     expect(normalizedPath('/v1/auth/%zz').startsWith('/v1/auth/')).toBe(true);
+  });
+});
+
+/**
+ * Класс входит в КЛЮЧ ведра, а не только в порог (Ф52).
+ *
+ * Плагин ограничения частоты держит один счётчик на ключ и сравнивает его с
+ * порогом текущего запроса. Пока класс в ключ не входил, обычные чтения
+ * кабинета набивали тот же счётчик, с которым потом сравнивался денежный порог
+ * 10: одиннадцать безобидных `GET /v1/billing/subscriptions` — и ПЕРВОЕ
+ * оформление подписки отвечало 429.
+ */
+describe('Классы ограничения частоты (Ф52)', () => {
+  it('вход и выдача сервисного токена — класс auth', () => {
+    expect(rateLimitClass('/v1/auth/login', 'POST')).toBe('auth');
+    expect(rateLimitClass('/v1/integration/token', 'POST')).toBe('auth');
+    // Чтение профиля — тоже auth: класс определяется путём, не методом.
+    expect(rateLimitClass('/v1/auth/me', 'GET')).toBe('auth');
+  });
+
+  it('денежный класс — только мутации', () => {
+    expect(rateLimitClass('/v1/billing/subscriptions', 'POST')).toBe('money');
+    expect(rateLimitClass('/v1/billing/payments', 'POST')).toBe('money');
+    expect(rateLimitClass('/v1/investments/agreements', 'POST')).toBe('money');
+    expect(rateLimitClass('/v1/investments/tranches/confirm', 'POST')).toBe('money');
+    // Чтение своих счетов и подписок в денежный класс НЕ попадает: иначе
+    // пользователь упирался бы в 429 на обычном просмотре кабинета.
+    expect(rateLimitClass('/v1/billing/subscriptions', 'GET')).toBe('default');
+    expect(rateLimitClass('/v1/billing/invoices', 'GET')).toBe('default');
+  });
+
+  it('административный и общий классы различаются', () => {
+    expect(rateLimitClass('/v1/admin/plans', 'GET')).toBe('admin');
+    expect(rateLimitClass('/v1/projects', 'GET')).toBe('default');
+  });
+
+  it('класс денег и класс чтения — РАЗНЫЕ, поэтому и вёдра разные', () => {
+    // Это и есть суть исправления: пока оба класса совпадали бы, чтения и
+    // мутации делили бы один счётчик.
+    expect(rateLimitClass('/v1/billing/subscriptions', 'GET')).not.toBe(
+      rateLimitClass('/v1/billing/subscriptions', 'POST'),
+    );
   });
 });

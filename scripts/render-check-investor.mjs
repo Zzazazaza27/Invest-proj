@@ -149,6 +149,32 @@ check(
 );
 check('условие активации названо честно', subText.includes('Активацию подтверждает оператор'));
 
+console.warn('\n[3b] Счета и вознаграждение');
+await page.getByRole('button', { name: 'Счета' }).click();
+await page.waitForSelector('h1:text("Счета и вознаграждение")', { timeout: 15_000 });
+await page.waitForTimeout(1500);
+const billingText = await page.locator('main').innerText();
+check(
+  'пустые счета объяснены словами, а не пустым местом',
+  billingText.includes('Счетов нет'),
+  billingText.replace(/\s+/g, ' ').slice(0, 90),
+);
+check(
+  'сказано, откуда берётся счёт',
+  billingText.includes('подписки') && billingText.includes('вознаграждения'),
+);
+check(
+  'начисление объяснено как однократное',
+  billingText.includes('один раз'),
+);
+// Оплата картой не подключена — интерфейс обязан сказать это, а не показывать
+// кнопку, ведущую в отказ.
+check(
+  'неподключённая оплата названа прямо',
+  billingText.includes('не подключён'),
+);
+
+
 console.warn('\n[4] Выключенный регулируемый контур');
 await page.getByRole('button', { name: 'Предложения' }).click();
 await page.waitForSelector('h1:text("Инвестиционные предложения")', { timeout: 15_000 });

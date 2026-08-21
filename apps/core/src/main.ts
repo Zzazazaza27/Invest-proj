@@ -13,7 +13,7 @@ import { ProblemDetailsFilter } from './common/problem.filter';
 import { MAX_BODY_BYTES } from './common/validation';
 import { createRateLimitRedis } from './cache/redis.client';
 import { registerIpCeiling } from './cache/ip-ceiling';
-import { normalizedPath } from './common/request-path';
+import { normalizedPath, rateLimitClass } from './common/request-path';
 
 /**
  * Запрет мощных возможностей браузера. Пустой список источников `()` означает
@@ -195,35 +195,14 @@ async function bootstrap(): Promise<void> {
       // по сырому url класс auth не распознавал — применялся default
       // (120/мин вместо 30), в 4 раза ослабляя защиту от перебора пароля
       // (HIGH внешнего аудита №2). То же уводило деньги из 10/мин в общий.
-      const url = normalizedPath(request.url);
-      const isMutation = request.method !== 'GET' && request.method !== 'HEAD';
-
-      // Выдача токена — тот же класс, что и вход человека: это проверка
-      // секрета, и перебор по ней ограничивается так же жёстко.
-      if (url.startsWith('/v1/auth/') || url.startsWith('/v1/integration/token')) {
-        return env.RATE_LIMIT_AUTH_PER_MIN;
-      }
-
-      // Денежный класс — только МУТАЦИИ: перевод денег и оформление подписки.
-      // Чтение своих счетов ограничивать так же жёстко нет смысла, а вреда от
-      // этого больше: пользователь упирается в 429 на обычном просмотре.
-      if (
-        isMutation &&
-        (url.startsWith('/v1/billing/payments') ||
-          url.startsWith('/v1/investments/agreements') ||
-          // Подтверждение транша создаёт начисление вознаграждения — это
-          // денежная мутация, даже если её инициирует оператор, а не клиент.
-          url.startsWith('/v1/investments/tranches') ||
-          url.startsWith('/v1/billing/subscriptions'))
-      ) {
-        return env.RATE_LIMIT_MONEY_PER_MIN;
-      }
-
-      // Административный класс. Операции с тарифами и персональными ценами
-      // чувствительны, поэтому лимит ниже общего, но выше денежного: оператор
-      // за минуту делает и просмотры, и несколько изменений подряд.
-      if (url.startsWith('/v1/admin/')) return env.RATE_LIMIT_ADMIN_PER_MIN;
-
+      //
+      // Сам классификатор живёт в `common/request-path.ts` и используется ещё
+      // и при построении ключа ведра: порог и ведро обязаны определяться ОДНИМ
+      // правилом, иначе они расходятся молча.
+      const cls = rateLimitClass(normalizedPath(request.url), request.method);
+      if (cls === 'auth') return env.RATE_LIMIT_AUTH_PER_MIN;
+      if (cls === 'money') return env.RATE_LIMIT_MONEY_PER_MIN;
+      if (cls === 'admin') return env.RATE_LIMIT_ADMIN_PER_MIN;
       return env.RATE_LIMIT_DEFAULT_PER_MIN;
     },
     timeWindow: '1 minute',
@@ -255,13 +234,20 @@ async function bootstrap(): Promise<void> {
     // всё равно проходит авторизацию: лимит защищает от шторма, а не заменяет
     // проверку прав. Размен назван осознанно и записан в TODO.
     keyGenerator: (request) => {
-      // Тот же нормализованный путь, что и в классификаторе: иначе
-      // percent-encoded auth-запрос попал бы в ветку «адрес + подсказка
+      // Тот же нормализованный путь и тот же классификатор, что и у порога:
+      // иначе percent-encoded auth-запрос попал бы в ветку «адрес + подсказка
       // сессии» и снова получил бы свежее ведро на подделанную cookie.
-      const url = normalizedPath(request.url ?? '');
-      const unauthenticated =
-        url.startsWith('/v1/auth/') || url.startsWith('/v1/integration/token');
-      return unauthenticated ? request.ip : `${request.ip}|${sessionHint(request) ?? 'anon'}`;
+      const cls = rateLimitClass(normalizedPath(request.url ?? ''), request.method);
+      const identity =
+        cls === 'auth' ? request.ip : `${request.ip}|${sessionHint(request) ?? 'anon'}`;
+      // КЛАСС — часть ключа, и это исправление конкретного дефекта, а не
+      // украшение. Плагин держит один счётчик на ключ, а порог считает на
+      // каждый запрос: пока класс в ключ не входил, обычные чтения кабинета
+      // набивали тот же счётчик, с которым потом сравнивался денежный порог 10.
+      // Воспроизведено: одиннадцать `GET /v1/billing/subscriptions`, затем
+      // ПЕРВОЕ оформление подписки — 429. «Денежный класс 10/мин» означал на
+      // деле «любые десять запросов, и деньги закрыты на минуту».
+      return `${cls}|${identity}`;
     },
     // Заголовки лимита наружу НЕ выдаются. Они сообщают атакующему точный
     // порог и остаток на каждый класс операций — то есть позволяют подобрать

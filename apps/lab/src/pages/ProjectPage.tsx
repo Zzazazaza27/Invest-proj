@@ -5,6 +5,7 @@ import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
 import { MaterialsCard, RoadmapCard } from './MaterialsCard';
 import { PublicationConsentsCard } from './PublicationConsentsCard';
+import { BillingCard } from './BillingCard';
 
 /**
  * Карточка проекта: состояние, действия и результат анализа.
@@ -175,6 +176,7 @@ export function ProjectPage({ projectId, onBack }: { projectId: string; onBack: 
         </Stack>
       </Card>
 
+      <BillingCard projectId={project.id} requiredPlanId={project.requiredPlanId ?? null} />
       <RoadmapCard projectId={project.id} status={project.status} />
       <MaterialsCard projectId={project.id} />
       <PassportCard projectId={project.id} />
