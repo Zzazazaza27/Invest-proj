@@ -77,19 +77,46 @@ const sql = async (text, params = []) => (await pool.query(text, params)).rows;
  * Только для локального прогона: в CI шлюз поднимается тем же скриптом.
  */
 function stopGateway() {
+  // `netstat -ano` и `taskkill` есть только в Windows. На Linux эта ветка
+  // молча возвращала false, и единственная проверка отказа зависимости не
+  // выполнялась вовсе — прогон на сервере давал FAIL «не нашёл слушателя»
+  // там, где шлюз был поднят и слушал (найдено при развёртывании на ВПС).
+  const pid = process.platform === 'win32' ? gatewayPidWindows() : gatewayPidPosix();
+  if (!pid) return false;
+  try {
+    // Аргументы передаются массивом, без оболочки: строка команды с
+    // подстановкой — это инъекция, даже когда подставляется вывод netstat.
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', pid, '/F'], { stdio: 'ignore' });
+    } else {
+      execFileSync('kill', ['-9', pid], { stdio: 'ignore' });
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function gatewayPidWindows() {
   try {
     const out = execFileSync('netstat', ['-ano'], { encoding: 'utf8' });
     const line = out
       .split('\n')
       .find((l) => l.includes('127.0.0.1:8100') && l.includes('LISTENING'));
-    if (!line) return false;
-    const pid = line.trim().split(/\s+/).pop();
-    // Аргументы передаются массивом, без оболочки: строка команды с
-    // подстановкой — это инъекция, даже когда подставляется вывод netstat.
-    execFileSync('taskkill', ['/PID', pid, '/F'], { stdio: 'ignore' });
-    return true;
+    return line ? line.trim().split(/\s+/).pop() : null;
   } catch {
-    return false;
+    return null;
+  }
+}
+
+function gatewayPidPosix() {
+  try {
+    // `ss -tlnp` печатает владельца сокета как `users:(("python",pid=123,fd=6))`.
+    const out = execFileSync('ss', ['-tlnp'], { encoding: 'utf8' });
+    const line = out.split('\n').find((l) => l.includes('127.0.0.1:8100'));
+    return line ? (/pid=(\d+)/.exec(line)?.[1] ?? null) : null;
+  } catch {
+    return null;
   }
 }
 
