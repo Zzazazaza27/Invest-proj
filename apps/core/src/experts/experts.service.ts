@@ -6,6 +6,8 @@ import {
   uuidv7,
   type ExpertAssignment,
   type ExpertConflict,
+  type ExpertHistoryEntry,
+  type ExpertNote,
   type ExpertReview,
   type ReviewConsensus,
   type SubmitReviewRequest,
@@ -45,7 +47,12 @@ export class ExpertsService {
   async myAssignments(ctx: RequestContext): Promise<ExpertAssignment[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<AssignmentRow>(
-        `SELECT a.id, a.project_id, p.title, a.status, a.due_at, a.created_at
+        `SELECT a.id, a.project_id, p.title, a.status, a.due_at, a.created_at,
+                p.status AS project_status,
+                EXISTS (SELECT 1 FROM experts.expert_reviews r
+                         WHERE r.assignment_id = a.id) AS review_submitted,
+                EXISTS (SELECT 1 FROM experts.review_consensus rc
+                         WHERE rc.project_id = a.project_id) AS consensus_decided
            FROM experts.expert_assignments a
            JOIN lab.projects p ON p.id = a.project_id
           WHERE a.expert_id = $1
@@ -186,6 +193,49 @@ export class ExpertsService {
   // ---------------------------------------------------------------- рецензии
 
   /**
+   * Следующий номер версии агрегата для события по назначению.
+   *
+   * Версия обязана быть УНИКАЛЬНОЙ в пределах (агрегат, версия, тип события):
+   * это ограничение outbox, и оно защищает от двух копий одного факта. Пока
+   * событие по назначению случалось ровно один раз каждого вида, номер можно
+   * было писать константой — назначение 1, закрытие 2, рецензия 3.
+   *
+   * Пересмотр рецензии и заметка происходят МНОГОКРАТНО, и константа здесь
+   * означала бы, что второй пересмотр падает нарушением уникальности. Поймано
+   * прогоном: вторая попытка возвращала 409 вместо 200.
+   *
+   * Номер считается по журналу того же назначения: он монотонен и не зависит
+   * от того, сколько видов событий появится дальше.
+   */
+  private async nextAggregateVersion(tx: Tx, assignmentId: string): Promise<number> {
+    const { rows } = await tx.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM audit.events
+        WHERE subject_type = 'expert_assignment' AND subject_id = $1`,
+      [assignmentId],
+    );
+    return Number(rows[0]?.n ?? 0) + 1;
+  }
+
+  /**
+   * Отрицательный исход обязан быть объяснён.
+   *
+   * ТЗ: «Если проект отправлен на доработку, должна сохраняться
+   * причина/комментарий эксперта». Требование шире доработки: `fail` без
+   * объяснения так же бесполезен автору проекта и так же не даёт организатору
+   * основания для решения. `pass` объяснять не обязательно.
+   */
+  private assertReasonGiven(recommendation: string, comment?: string | null): void {
+    if (recommendation === 'pass') return;
+    if ((comment ?? '').trim().length > 0) return;
+    throw errors.validation([
+      {
+        path: 'comment',
+        message: 'при рекомендации «доработать» или «отклонить» причина обязательна',
+      },
+    ]);
+  }
+
+  /**
    * Подать рецензию. Назначение переводится в `completed` той же транзакцией:
    * рецензия без закрытого назначения означала бы, что эксперту всё ещё
    * «нужно поработать» над тем, что он уже сделал.
@@ -211,6 +261,7 @@ export class ExpertsService {
           'Рецензию можно подать только по принятому и незавершённому назначению',
         );
       }
+      this.assertReasonGiven(input.recommendation, input.comment);
 
       let review: ExpertReview;
       try {
@@ -250,6 +301,189 @@ export class ExpertsService {
       });
 
       return review;
+    });
+  }
+
+  /**
+   * Пересмотреть собственную рецензию.
+   *
+   * ТЗ требует «изменить результат рассмотрения в пределах разрешённого
+   * workflow». Предел здесь один и он объективный: пока по проекту НЕ принято
+   * решение консенсуса. После решения рецензия — основание уже принятого
+   * решения, и переписывать её значит переписывать историю.
+   *
+   * Границу держит триггер `expert_reviews_revision_window` в самой БД, а не
+   * эта функция: проверку в коде обходит любой прямой доступ. Здесь остаётся
+   * только перевод отказа БД в понятный человеку ответ.
+   *
+   * Статус назначения при пересмотре НЕ меняется: оно как было `completed`,
+   * так и остаётся — работа сделана, изменилось её содержание.
+   */
+  async reviseReview(
+    ctx: RequestContext,
+    assignmentId: string,
+    input: {
+      rubricScores: Record<string, number>;
+      comment?: string;
+      recommendation: 'pass' | 'fail' | 'needs_review';
+    },
+  ): Promise<ExpertReview> {
+    this.assertReasonGiven(input.recommendation, input.comment);
+
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows } = await tx.query<{ project_id: string; expert_id: string }>(
+        `SELECT project_id, expert_id FROM experts.expert_assignments WHERE id = $1 FOR UPDATE`,
+        [assignmentId],
+      );
+      const assignment = rows[0];
+      // Чужое назначение политикой не видно — ответ такой же, как для
+      // несуществующего.
+      if (!assignment || assignment.expert_id !== ctx.userId) {
+        throw errors.notFound({ subject: 'assignment' });
+      }
+
+      let review: ExpertReview;
+      try {
+        const { rows: updated } = await tx.query<ReviewRow>(
+          `UPDATE experts.expert_reviews
+              SET rubric_scores_jsonb = $2::jsonb,
+                  comment             = $3,
+                  recommendation      = $4,
+                  submitted_at        = now()
+            WHERE assignment_id = $1
+        RETURNING assignment_id, rubric_scores_jsonb, comment, recommendation, submitted_at`,
+          [
+            assignmentId,
+            JSON.stringify(input.rubricScores),
+            input.comment ?? null,
+            input.recommendation,
+          ],
+        );
+        if (updated.length === 0) {
+          throw errors.stateTransition('Рецензия ещё не подана — пересматривать нечего');
+        }
+        review = mapReview({ ...updated[0]!, expert_id: ctx.userId! });
+      } catch (error) {
+        throw this.translate(error);
+      }
+
+      await this.audit.record(tx, {
+        verb: EventVerb.EXPERT_REVIEW_REVISED,
+        actorId: ctx.userId,
+        actorRole: 'expert',
+        aggregateType: 'expert_assignment',
+        aggregateId: assignmentId,
+        aggregateVersion: await this.nextAggregateVersion(tx, assignmentId),
+        // Как и при подаче: наружу факт и рекомендация, рубрики остаются
+        // внутренней кухней совета.
+        payload: { projectId: assignment.project_id, recommendation: input.recommendation },
+        traceId: ctx.traceId,
+      });
+
+      return review;
+    });
+  }
+
+  // ------------------------------------------------------ ход рассмотрения
+
+  /**
+   * Внутренняя заметка по ходу рассмотрения.
+   *
+   * Автору проекта не видна — как и рубричные оценки. Это рабочая запись
+   * эксперта, а не сообщение основателю; путать их означало бы, что эксперт
+   * либо перестанет писать честно, либо случайно напишет автору.
+   */
+  async addNote(ctx: RequestContext, assignmentId: string, body: string): Promise<ExpertNote> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows: found } = await tx.query<{ project_id: string; expert_id: string }>(
+        `SELECT project_id, expert_id FROM experts.expert_assignments WHERE id = $1`,
+        [assignmentId],
+      );
+      const assignment = found[0];
+      if (!assignment || assignment.expert_id !== ctx.userId) {
+        throw errors.notFound({ subject: 'assignment' });
+      }
+
+      let note: ExpertNote;
+      try {
+        const { rows } = await tx.query<NoteRow>(
+          `INSERT INTO experts.expert_notes (id, assignment_id, author_id, body)
+                VALUES ($1, $2, $3, $4)
+             RETURNING id, body, created_at`,
+          [uuidv7(), assignmentId, ctx.userId, body],
+        );
+        note = {
+          id: rows[0]!.id,
+          body: rows[0]!.body,
+          createdAt: rows[0]!.created_at.toISOString(),
+        };
+      } catch (error) {
+        throw this.translate(error);
+      }
+
+      await this.audit.record(tx, {
+        verb: EventVerb.EXPERT_NOTE_ADDED,
+        actorId: ctx.userId,
+        actorRole: 'expert',
+        aggregateType: 'expert_assignment',
+        aggregateId: assignmentId,
+        aggregateVersion: await this.nextAggregateVersion(tx, assignmentId),
+        // Текст заметки в журнал НЕ кладётся: журнал хеш-сцеплен и неизменяем,
+        // а свободный текст оттуда потом не убрать. В событии — только факт.
+        payload: { projectId: assignment.project_id },
+        traceId: ctx.traceId,
+      });
+
+      return note;
+    });
+  }
+
+  async listNotes(ctx: RequestContext, assignmentId: string): Promise<ExpertNote[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<NoteRow>(
+        // Фильтра по автору нет намеренно: его ставит политика. Условие в
+        // запросе выглядело бы защитой, но прямой доступ к БД не покрывает.
+        `SELECT id, body, created_at FROM experts.expert_notes
+          WHERE assignment_id = $1
+          ORDER BY created_at`,
+        [assignmentId],
+      );
+      return rows.map((row) => ({
+        id: row.id,
+        body: row.body,
+        createdAt: row.created_at.toISOString(),
+      }));
+    });
+  }
+
+  /**
+   * История рассмотрения — из журнала `audit.events`.
+   *
+   * Отдельной таблицы истории нет и не заводится: журнал уже пишет каждое
+   * действие эксперта, хеш-сцеплен и неизменяем. Вторая история рядом с ним
+   * расходилась бы с ним при первой же ошибке — и молча.
+   *
+   * Наружу отдаётся РОЛЬ действующего лица, а не его идентификатор: эксперту
+   * важно, что назначение сделал организатор, а не кто именно.
+   */
+  async history(ctx: RequestContext, assignmentId: string): Promise<ExpertHistoryEntry[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<HistoryRow>(
+        `SELECT ts, verb, actor_role, context_jsonb
+           FROM audit.events
+          WHERE subject_type = 'expert_assignment' AND subject_id = $1
+          ORDER BY ts`,
+        [assignmentId],
+      );
+      return rows.map((row) => ({
+        at: row.ts.toISOString(),
+        verb: row.verb,
+        actorRole: row.actor_role,
+        // Из полезной нагрузки берутся только безопасные поля. Слепое
+        // проксирование payload означало бы, что новое поле в событии
+        // однажды уедет в кабинет само собой.
+        details: pickSafeDetails(row.context_jsonb),
+      }));
     });
   }
 
@@ -539,6 +773,14 @@ interface AssignmentRow {
   status: ExpertAssignment['status'];
   due_at: Date;
   created_at: Date;
+  /**
+   * Поля состояния рассмотрения. Необязательные потому, что часть запросов
+   * (создание назначения, ответ на него) их не выбирает: там состояние
+   * известно из самой операции, и лишний JOIN был бы работой ради формы.
+   */
+  project_status?: string;
+  review_submitted?: boolean;
+  consensus_decided?: boolean;
 }
 
 function mapAssignment(row: AssignmentRow): ExpertAssignment {
@@ -549,7 +791,36 @@ function mapAssignment(row: AssignmentRow): ExpertAssignment {
     status: row.status,
     dueAt: row.due_at.toISOString(),
     createdAt: row.created_at.toISOString(),
+    projectStatus: row.project_status ?? 'unknown',
+    reviewSubmitted: row.review_submitted === true,
+    // Пересмотр закрыт, когда по проекту принято решение консенсуса. Значение
+    // по умолчанию — «можно»: запросы, не выбирающие это поле, относятся к
+    // моментам, когда решения заведомо ещё нет.
+    revisable: row.consensus_decided !== true,
   };
+}
+
+interface NoteRow {
+  id: string;
+  body: string;
+  created_at: Date;
+}
+
+interface HistoryRow {
+  ts: Date;
+  verb: string;
+  actor_role: string;
+  context_jsonb: Record<string, unknown> | null;
+}
+
+/** Из полезной нагрузки события — только перечисленные поля, и только строками. */
+function pickSafeDetails(payload: Record<string, unknown> | null): Record<string, unknown> {
+  const details: Record<string, unknown> = {};
+  for (const key of ['status', 'recommendation', 'dueAt'] as const) {
+    const value = payload?.[key];
+    if (typeof value === 'string') details[key] = value;
+  }
+  return details;
 }
 
 interface ReviewRow {

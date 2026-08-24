@@ -34,6 +34,8 @@ export const EventVerb = {
   EXPERT_ASSIGNED: 'lab.expert.assigned',
   EXPERT_ASSIGNMENT_CLOSED: 'lab.expert.assignment_closed',
   EXPERT_REVIEW_SUBMITTED: 'lab.expert.review_submitted',
+  EXPERT_REVIEW_REVISED: 'lab.expert.review_revised',
+  EXPERT_NOTE_ADDED: 'lab.expert.note_added',
   EXPERT_CONFLICT_DECLARED: 'lab.expert.conflict_declared',
   EXPERT_CONFLICT_RESOLVED: 'lab.expert.conflict_resolved',
   GOLDEN_TICKET_GRANTED: 'lab.golden_ticket.granted',

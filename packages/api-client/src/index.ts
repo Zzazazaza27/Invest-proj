@@ -9,6 +9,8 @@ import {
   EmailVerificationStatusSchema,
   EntityMemberSchema,
   ExpertAssignmentSchema,
+  ExpertHistoryEntrySchema,
+  ExpertNoteSchema,
   FavoriteProjectSchema,
   HealthSchema,
   InvestmentAgreementSchema,
@@ -617,6 +619,42 @@ export class UnicornApi {
 
     declareConflict: (body: { projectId: string; description: string }) =>
       this.http.request({ method: 'POST', path: '/experts/conflicts', body }),
+
+    /**
+     * Пересмотр уже поданной рецензии. Идентификатор назначения — в пути, а
+     * не в теле: два источника правды об одном не нужны.
+     */
+    reviseReview: (assignmentId: string, body: Omit<SubmitReviewRequest, 'assignmentId'>) =>
+      this.http.request({
+        method: 'PATCH',
+        path: `/experts/assignments/${encodeURIComponent(assignmentId)}/review`,
+        body,
+      }),
+
+    notes: (assignmentId: string) =>
+      this.http
+        .request({
+          path: `/experts/assignments/${encodeURIComponent(assignmentId)}/notes`,
+          schema: z.object({ items: z.array(ExpertNoteSchema) }),
+        })
+        .then((response) => response.items),
+
+    addNote: (assignmentId: string, body: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/experts/assignments/${encodeURIComponent(assignmentId)}/notes`,
+        body: { body },
+        schema: ExpertNoteSchema,
+      }),
+
+    /** История рассмотрения из журнала событий. */
+    history: (assignmentId: string) =>
+      this.http
+        .request({
+          path: `/experts/assignments/${encodeURIComponent(assignmentId)}/history`,
+          schema: z.object({ items: z.array(ExpertHistoryEntrySchema) }),
+        })
+        .then((response) => response.items),
   };
 
   // ----------------------------------------------------------- уведомления

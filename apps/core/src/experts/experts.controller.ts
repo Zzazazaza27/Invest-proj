@@ -1,11 +1,14 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import {
+  AddExpertNoteRequestSchema,
   AssignmentDecisionRequestSchema,
   CreateAssignmentsRequestSchema,
   DecideConsensusRequestSchema,
   DeclareConflictRequestSchema,
   ExpertAssignmentSchema,
   ExpertConflictSchema,
+  ExpertHistoryEntrySchema,
+  ExpertNoteSchema,
   ExpertReviewSchema,
   ResolveConflictRequestSchema,
   ReviewConsensusSchema,
@@ -59,6 +62,56 @@ export class ExpertsController {
   async submitReview(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
     const input = parseOrThrow(SubmitReviewRequestSchema, rawBody);
     return ExpertReviewSchema.parse(await this.experts.submitReview(ctx, input));
+  }
+
+  /**
+   * Пересмотр собственной рецензии.
+   *
+   * Не второй способ подать рецензию: маршрут работает только там, где она уже
+   * есть, и только пока по проекту не принято решение консенсуса. Предел
+   * держит триггер в БД — здесь он не дублируется, чтобы две проверки не
+   * разошлись.
+   */
+  @Roles('expert')
+  @Patch('assignments/:id/review')
+  async reviseReview(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const assignmentId = parseOrThrow(UuidSchema, rawId);
+    // Схема подачи без идентификатора назначения: он в пути, и принимать его
+    // ещё и в теле означало бы два источника правды об одном.
+    const input = parseOrThrow(SubmitReviewRequestSchema.omit({ assignmentId: true }), rawBody);
+    return ExpertReviewSchema.parse(await this.experts.reviseReview(ctx, assignmentId, input));
+  }
+
+  @Roles('expert')
+  @Post('assignments/:id/notes')
+  async addNote(@Param('id') rawId: string, @Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const assignmentId = parseOrThrow(UuidSchema, rawId);
+    const input = parseOrThrow(AddExpertNoteRequestSchema, rawBody);
+    return ExpertNoteSchema.parse(await this.experts.addNote(ctx, assignmentId, input.body));
+  }
+
+  @Roles('expert', 'admin', 'organizer')
+  @Get('assignments/:id/notes')
+  async listNotes(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+    const assignmentId = parseOrThrow(UuidSchema, rawId);
+    const items = await this.experts.listNotes(ctx, assignmentId);
+    return { items: items.map((item) => ExpertNoteSchema.parse(item)) };
+  }
+
+  /**
+   * История рассмотрения. Читается из журнала событий, а не из отдельной
+   * таблицы: журнал уже пишет каждое действие и хеш-сцеплен.
+   */
+  @Roles('expert', 'admin', 'organizer')
+  @Get('assignments/:id/history')
+  async history(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+    const assignmentId = parseOrThrow(UuidSchema, rawId);
+    const items = await this.experts.history(ctx, assignmentId);
+    return { items: items.map((item) => ExpertHistoryEntrySchema.parse(item)) };
   }
 
   @Roles('admin', 'organizer')

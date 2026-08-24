@@ -348,7 +348,14 @@ console.warn('\n[3] Консенсус');
 {
   const { response } = await expert2.client.call('/v1/experts/reviews', {
     method: 'POST',
-    body: { assignmentId: assignment2.id, rubricScores: LOW_RUBRIC, recommendation: 'fail' },
+    // Причина обязательна с M064: отрицательный исход без объяснения не даёт
+    // организатору основания для решения, а автору — понимания, что править.
+    body: {
+      assignmentId: assignment2.id,
+      rubricScores: LOW_RUBRIC,
+      recommendation: 'fail',
+      comment: 'Юнит-экономика не сходится: CAC выше LTV на горизонте 18 месяцев.',
+    },
   });
   check(
     'вторая рецензия принята',
@@ -675,6 +682,288 @@ let deviceId;
     leaking.length === 0,
     `подозрительные ключи: ${leaking.join(',') || 'нет'}`,
   );
+}
+
+// -------------------------------------------------- рабочая зона эксперта (M064)
+//
+// Проверяется то, чего в workflow не хватало по ТЗ №8: причина при
+// отрицательном исходе, внутренние заметки, пересмотр результата и история
+// рассмотрения.
+//
+// Раздел работает на СВОЁМ проекте и своём назначении: разделы выше опираются
+// на состояние своих фикстур (сколько рецензий подано, принято ли решение), и
+// переиспользование чужого назначения красит их по неверной причине.
+console.warn('\n[7] Рабочая зона эксперта');
+
+const [wsProject] = await sql(
+  `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask,
+                             required_plan_id)
+   VALUES (public.uuid_generate_v7(), $1, $2, 'Проект рабочей зоны', 'mvp', 'expert_review',
+           3000000, billing.resolve_founder_plan(3000000))
+   RETURNING id`,
+  [taxonomy.id, season.id],
+);
+await sql(
+  `INSERT INTO lab.founders_projects (project_id, user_id, role) VALUES ($1, $2, 'owner')`,
+  [wsProject.id, founder.userId],
+);
+
+let wsAssignment;
+{
+  const { response, json } = await organizer.client.call('/v1/experts/assignments', {
+    method: 'POST',
+    body: { projectId: wsProject.id, expertIds: [expert3.userId], dueAt, reason: 'manual' },
+  });
+  check('назначение для рабочей зоны создано', response.status === 201, `HTTP ${response.status}`);
+  wsAssignment = (json?.items ?? [])[0];
+  await expert3.client.call(`/v1/experts/assignments/${wsAssignment.id}/decision`, {
+    method: 'POST',
+    body: { decision: 'accepted' },
+  });
+}
+
+// --- причина при отрицательном исходе обязательна
+{
+  const { response } = await expert3.client.call('/v1/experts/reviews', {
+    method: 'POST',
+    body: { assignmentId: wsAssignment.id, rubricScores: RUBRIC, recommendation: 'needs_review' },
+  });
+  check('доработка без причины отвергнута', response.status === 400, `HTTP ${response.status}`);
+}
+{
+  const { response } = await expert3.client.call('/v1/experts/reviews', {
+    method: 'POST',
+    body: {
+      assignmentId: wsAssignment.id,
+      rubricScores: RUBRIC,
+      recommendation: 'needs_review',
+      comment: 'Нет финансовой модели на 3 года и не раскрыта структура владения.',
+    },
+  });
+  check('доработка с причиной принята', response.status === 201, `HTTP ${response.status}`);
+}
+{
+  const [row] = await sql(`SELECT comment FROM experts.expert_reviews WHERE assignment_id = $1`, [
+    wsAssignment.id,
+  ]);
+  check(
+    'причина доработки сохранена',
+    (row?.comment ?? '').includes('финансовой модели'),
+    (row?.comment ?? '').slice(0, 40),
+  );
+}
+
+// --- внутренние заметки
+{
+  const { response, json } = await expert3.client.call(
+    `/v1/experts/assignments/${wsAssignment.id}/notes`,
+    { method: 'POST', body: { body: 'Запросил у организатора доступ к финмодели.' } },
+  );
+  check('заметка сохранена', response.status === 201, `HTTP ${response.status}`);
+  check('заметка вернулась с моментом', typeof json?.createdAt === 'string', json?.createdAt);
+}
+{
+  const { json } = await expert3.client.call(`/v1/experts/assignments/${wsAssignment.id}/notes`);
+  check('своя заметка видна автору', (json?.items ?? []).length === 1, `${(json?.items ?? []).length}`);
+}
+{
+  const { json } = await expert1.client.call(`/v1/experts/assignments/${wsAssignment.id}/notes`);
+  // Чужое назначение политикой не видно — список пуст, а не отказ: сам факт
+  // существования чужого назначения тоже не подтверждается.
+  check('чужие заметки не видны', (json?.items ?? []).length === 0, `${(json?.items ?? []).length}`);
+}
+{
+  const { response } = await expert1.client.call(
+    `/v1/experts/assignments/${wsAssignment.id}/notes`,
+    { method: 'POST', body: { body: 'Заметка в чужое рассмотрение' } },
+  );
+  check('в чужое рассмотрение не написать', response.status === 404, `HTTP ${response.status}`);
+}
+{
+  const { response } = await outsider.client.call(
+    `/v1/experts/assignments/${wsAssignment.id}/notes`,
+    { method: 'POST', body: { body: 'Посторонний' } },
+  );
+  check('посторонний без роли эксперта — 403', response.status === 403, `HTTP ${response.status}`);
+}
+{
+  const [row] = await sql(
+    `SELECT count(*)::int AS n FROM audit.events
+      WHERE verb = 'lab.expert.note_added' AND subject_id = $1`,
+    [wsAssignment.id],
+  );
+  check('заметка попала в журнал', row.n === 1, `записей: ${row.n}`);
+  const [text] = await sql(
+    `SELECT count(*)::int AS n FROM audit.events
+      WHERE verb = 'lab.expert.note_added' AND context_jsonb::text ILIKE '%финмодели%'`,
+  );
+  // Текст заметки в журнал не кладётся: журнал хеш-сцеплен, оттуда потом
+  // ничего не убрать.
+  check('текста заметки в журнале нет', text.n === 0, `записей: ${text.n}`);
+}
+
+// --- пересмотр результата до решения
+{
+  const { response, json } = await expert3.client.call(
+    `/v1/experts/assignments/${wsAssignment.id}/review`,
+    { method: 'PATCH', body: { rubricScores: RUBRIC, recommendation: 'pass' } },
+  );
+  check('пересмотр принят до решения', response.status === 200, `HTTP ${response.status}`);
+  check('рекомендация изменилась', json?.recommendation === 'pass', String(json?.recommendation));
+}
+{
+  // ВТОРОЙ пересмотр подряд. Проверка появилась по факту падения: версия
+  // агрегата в событии стояла константой, и второй пересмотр нарушал
+  // уникальность (agg_type, agg_id, agg_version, event_type) в outbox — 409
+  // вместо 200. То же касалось и второй заметки.
+  const { response, json } = await expert3.client.call(
+    `/v1/experts/assignments/${wsAssignment.id}/review`,
+    {
+      method: 'PATCH',
+      body: {
+        rubricScores: RUBRIC,
+        recommendation: 'needs_review',
+        comment: 'После уточнения: доработать раздел про структуру владения.',
+      },
+    },
+  );
+  check('второй пересмотр подряд принят', response.status === 200, `HTTP ${response.status}`);
+  check('рекомендация снова изменилась', json?.recommendation === 'needs_review');
+  // Возврат к предыдущему исходу — чтобы дальнейшие проверки шли от известного
+  // состояния.
+  await expert3.client.call(`/v1/experts/assignments/${wsAssignment.id}/review`, {
+    method: 'PATCH',
+    body: { rubricScores: RUBRIC, recommendation: 'pass' },
+  });
+}
+{
+  const { response } = await expert3.client.call(
+    `/v1/experts/assignments/${wsAssignment.id}/notes`,
+    { method: 'POST', body: { body: 'Финмодель получена, считаю заново.' } },
+  );
+  check('вторая заметка подряд принята', response.status === 201, `HTTP ${response.status}`);
+}
+{
+  const { response } = await expert1.client.call(
+    `/v1/experts/assignments/${wsAssignment.id}/review`,
+    { method: 'PATCH', body: { rubricScores: RUBRIC, recommendation: 'fail', comment: 'Чужая' } },
+  );
+  check('чужую рецензию не пересмотреть', response.status === 404, `HTTP ${response.status}`);
+}
+{
+  const [row] = await sql(`SELECT status FROM experts.expert_assignments WHERE id = $1`, [
+    wsAssignment.id,
+  ]);
+  check('пересмотр не открывает назначение заново', row.status === 'completed', row.status);
+}
+{
+  const [row] = await sql(
+    `SELECT count(*)::int AS n FROM audit.events
+      WHERE verb = 'lab.expert.review_revised' AND subject_id = $1`,
+    [wsAssignment.id],
+  );
+  // Три пересмотра: первый, второй подряд и возврат к прежнему исходу. Каждый
+  // обязан оставить СВОЮ запись — именно это и ломала константная версия
+  // агрегата, гасившая второе событие.
+  check('каждый пересмотр попал в журнал', row.n === 3, `записей: ${row.n}`);
+}
+
+// --- история рассмотрения
+{
+  const { response, json } = await expert3.client.call(
+    `/v1/experts/assignments/${wsAssignment.id}/history`,
+  );
+  check('история отдаётся', response.status === 200, `HTTP ${response.status}`);
+  const verbs = (json?.items ?? []).map((item) => item.verb);
+  check(
+    'в истории есть назначение — видно и чужое действие по своему назначению',
+    verbs.includes('lab.expert.assigned'),
+    verbs.join(', ').slice(0, 100),
+  );
+  check('в истории есть подача рецензии', verbs.includes('lab.expert.review_submitted'));
+  check('в истории есть пересмотр', verbs.includes('lab.expert.review_revised'));
+  check(
+    'история упорядочена по времени',
+    (json?.items ?? []).every(
+      (item, i, all) => i === 0 || Date.parse(item.at) >= Date.parse(all[i - 1].at),
+    ),
+  );
+  const details = JSON.stringify((json?.items ?? []).map((item) => item.details));
+  check(
+    'в истории нет рубричных оценок и идентификаторов людей',
+    !/team|product|scalability|expertId|actorId/.test(details),
+    details.slice(0, 90),
+  );
+}
+{
+  const { json } = await expert1.client.call(`/v1/experts/assignments/${wsAssignment.id}/history`);
+  check(
+    'история чужого назначения пуста',
+    (json?.items ?? []).length === 0,
+    `${(json?.items ?? []).length}`,
+  );
+}
+{
+  const { json } = await expert3.client.call('/v1/experts/assignments');
+  const mine = (json?.items ?? []).find((item) => item.id === wsAssignment.id);
+  check('в назначении виден этап проекта', mine?.projectStatus === 'expert_review', mine?.projectStatus);
+  check('видно, что рецензия подана', mine?.reviewSubmitted === true);
+  check('пересмотр пока разрешён', mine?.revisable === true);
+}
+
+// --- после решения окно пересмотра закрывается
+{
+  // Решение принимается не менее чем по двум рецензиям — это правило раздела
+  // «Консенсус», и его надо соблюсти, а не обойти: без второй рецензии
+  // консенсуса нет, и проверка «после решения пересмотр закрыт» была бы
+  // зелёной по неверной причине (поймано прогоном: 409 на решении и всё равно
+  // 409 на пересмотре).
+  const { json: second } = await organizer.client.call('/v1/experts/assignments', {
+    method: 'POST',
+    body: { projectId: wsProject.id, expertIds: [expert2.userId], dueAt, reason: 'manual' },
+  });
+  const secondAssignment = (second?.items ?? [])[0];
+  await expert2.client.call(`/v1/experts/assignments/${secondAssignment.id}/decision`, {
+    method: 'POST',
+    body: { decision: 'accepted' },
+  });
+  await expert2.client.call('/v1/experts/reviews', {
+    method: 'POST',
+    body: { assignmentId: secondAssignment.id, rubricScores: RUBRIC, recommendation: 'pass' },
+  });
+
+  const { response } = await organizer.client.call('/v1/experts/consensus', {
+    method: 'POST',
+    body: { projectId: wsProject.id, finalDecision: 'needs_review' },
+  });
+  // Позитивный контроль: решение обязано пройти, иначе следующая проверка была
+  // бы зелёной просто потому, что решения нет.
+  check('организатор принял решение', response.status === 201, `HTTP ${response.status}`);
+}
+{
+  const { response } = await expert3.client.call(
+    `/v1/experts/assignments/${wsAssignment.id}/review`,
+    {
+      method: 'PATCH',
+      body: { rubricScores: RUBRIC, recommendation: 'fail', comment: 'Передумал после решения' },
+    },
+  );
+  check(
+    'после решения пересмотр закрыт',
+    response.status === 403 || response.status === 409,
+    `HTTP ${response.status}`,
+  );
+  const [row] = await sql(
+    `SELECT recommendation FROM experts.expert_reviews WHERE assignment_id = $1`,
+    [wsAssignment.id],
+  );
+  check('рецензия осталась прежней', row.recommendation === 'pass', row.recommendation);
+}
+{
+  const { json } = await expert3.client.call('/v1/experts/assignments');
+  const mine = (json?.items ?? []).find((item) => item.id === wsAssignment.id);
+  // Кабинет обязан ЗНАТЬ о закрытии окна, а не выяснять его отказом на кнопке.
+  check('кабинет знает, что пересмотр закрыт', mine?.revisable === false, String(mine?.revisable));
 }
 
 console.warn(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===\n`);

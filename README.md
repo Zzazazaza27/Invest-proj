@@ -654,6 +654,9 @@ graphify, отказавшись перезаписывать граф мень�
 | `GET /investor/favorites`                       | сессия               | Избранные проекты инвестора карточками                    |
 | `GET /investor/favorites/ids`                   | сессия               | Только идентификаторы — отметки на карточках каталога     |
 | `PUT/DELETE /investor/favorites/:projectId`     | `investor`           | Поставить и снять отметку; обе операции идемпотентны      |
+| `PATCH /experts/assignments/:id/review`         | `expert`             | Пересмотр своей рецензии — пока по проекту нет решения    |
+| `GET/POST /experts/assignments/:id/notes`       | `expert`             | Внутренние заметки по ходу рассмотрения; автору не видны  |
+| `GET /experts/assignments/:id/history`          | `expert`             | История рассмотрения из журнала событий                   |
 | `POST /admin/service-accounts`                  | `admin`              | Клиент внешней системы; секрет выдаётся один раз          |
 | `POST …/service-accounts/:id/rotation`          | `admin`              | Ротация секрета клиента                                   |
 | `POST …/service-accounts/:id/status`            | `admin`              | Приостановка и возобновление клиента                      |

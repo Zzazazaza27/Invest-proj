@@ -230,6 +230,92 @@ check(
   reviewRow !== undefined && Object.keys(reviewRow.rubric_scores_jsonb).length === 6,
 );
 
+console.warn('\n[3a] Рабочая зона: ход рассмотрения и пересмотр (M064)');
+
+// --- этап проекта виден рядом со статусом назначения
+{
+  const text = await page.locator('main').innerText();
+  check(
+    'этап проекта показан эксперту',
+    text.includes('проект: на экспертизе'),
+    text.replace(/\s+/g, ' ').slice(0, 120),
+  );
+}
+
+// --- внутренние заметки
+await page.getByRole('button', { name: 'Ход рассмотрения' }).first().click();
+await page.waitForSelector(`#note-${assignment.id}`, { timeout: 10_000 });
+{
+  const text = await page.locator('main').innerText();
+  check('панель хода рассмотрения открылась', text.includes('Внутренние заметки'));
+  check(
+    'сказано, кому заметки видны, а кому нет',
+    text.includes('Автору проекта — нет'),
+    text.replace(/\s+/g, ' ').slice(0, 160),
+  );
+  check('история рассмотрения показана', text.includes('История рассмотрения'));
+  // Записи «Назначение на рецензию» здесь НЕТ и быть не должно: фикстура
+  // заводит назначение прямым INSERT'ом мимо API, а журнал пишет ядро. Что
+  // событие назначения в историю попадает, доказывает живой прогон
+  // (smoke-experts, раздел «Рабочая зона эксперта»), где назначение создаёт
+  // организатор через маршрут.
+  check('в истории есть ответ на назначение', text.includes('Ответ на назначение'));
+  check('в истории есть подача рецензии', text.includes('Рецензия подана'));
+  check(
+    'действующее лицо названо ролью, а не идентификатором',
+    /организатор|эксперт/.test(text) && !/[0-9a-f]{8}-[0-9a-f]{4}/.test(text),
+  );
+}
+
+await page.fill(`#note-${assignment.id}`, 'Запросил у основателя финмодель на три года.');
+await page.getByRole('button', { name: 'Сохранить заметку' }).click();
+await page.waitForTimeout(2500);
+{
+  const text = await page.locator('main').innerText();
+  check('заметка появилась в списке', text.includes('Запросил у основателя финмодель'));
+  check('заметка попала в историю', text.includes('Заметка по ходу работы'));
+}
+{
+  const [row] = await sql(
+    `SELECT body FROM experts.expert_notes WHERE assignment_id = $1`,
+    [assignment.id],
+  );
+  check('заметка записана в БД', (row?.body ?? '').includes('финмодель'), (row?.body ?? '').slice(0, 40));
+}
+
+// --- пересмотр результата до решения
+{
+  check(
+    'кнопка пересмотра доступна до решения',
+    (await page.getByRole('button', { name: 'Пересмотреть результат' }).count()) === 1,
+  );
+}
+await page.getByRole('button', { name: 'Пересмотреть результат' }).first().click();
+await page.waitForSelector('#score-team', { timeout: 10_000 });
+for (const key of ['team', 'product', 'strategy', 'legal', 'finmodel', 'scalability']) {
+  await page.fill(`#score-${key}`, '4');
+}
+await page.fill('#comment', 'После проверки финмодели: отправляю на доработку.');
+await page.selectOption('#recommendation', 'needs_review');
+await page.getByRole('button', { name: 'Отправить рецензию' }).click();
+await page.waitForTimeout(3000);
+{
+  const text = await page.locator('main').innerText();
+  check('пересмотр принят', text.includes('Результат пересмотрен'), text.slice(0, 80));
+}
+{
+  const [row] = await sql(
+    `SELECT recommendation, comment FROM experts.expert_reviews WHERE assignment_id = $1`,
+    [assignment.id],
+  );
+  check('результат в БД изменился', row?.recommendation === 'needs_review', row?.recommendation);
+  check(
+    'причина доработки сохранена',
+    (row?.comment ?? '').includes('на доработку'),
+    (row?.comment ?? '').slice(0, 40),
+  );
+}
+
 console.warn('\n[4] Конфликт интересов');
 await page.getByRole('button', { name: 'Заявить конфликт интересов' }).first().click();
 await page.waitForSelector(`#conflict-${assignment.id}`, { timeout: 10_000 });

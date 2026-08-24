@@ -305,6 +305,23 @@ export const ExpertAssignmentSchema = z.object({
   status: z.enum(['assigned', 'accepted', 'declined', 'completed', 'expired']),
   dueAt: IsoDateTimeSchema,
   createdAt: IsoDateTimeSchema,
+  /**
+   * Этап проекта в воронке платформы. Состояние рассмотрения складывается из
+   * ДВУХ вещей — статуса назначения и этапа проекта, — и показывать только
+   * первое означало бы, что эксперт не видит, что стало с проектом после его
+   * рецензии.
+   */
+  projectStatus: z.string(),
+  /** Подана ли рецензия по этому назначению. */
+  reviewSubmitted: z.boolean(),
+  /**
+   * Можно ли ещё пересмотреть результат.
+   *
+   * `false` означает, что по проекту принято решение консенсуса: рецензия
+   * стала основанием принятого решения, и переписывать её нельзя. Кабинет
+   * обязан это показывать, а не выяснять отказом на кнопке.
+   */
+  revisable: z.boolean(),
 });
 export type ExpertAssignment = z.infer<typeof ExpertAssignmentSchema>;
 
@@ -352,6 +369,39 @@ export const ResolveConflictRequestSchema = z.object({
 export type ResolveConflictRequest = z.infer<typeof ResolveConflictRequestSchema>;
 
 /** Рецензия в сводке для организатора. Имя эксперта не раскрывается основателю. */
+/** Внутренняя заметка эксперта по ходу рассмотрения. */
+export const ExpertNoteSchema = z.object({
+  id: UuidSchema,
+  body: z.string(),
+  createdAt: IsoDateTimeSchema,
+});
+export type ExpertNote = z.infer<typeof ExpertNoteSchema>;
+
+export const AddExpertNoteRequestSchema = z.object({
+  body: boundedString(1, 4000),
+});
+export type AddExpertNoteRequest = z.infer<typeof AddExpertNoteRequestSchema>;
+
+/**
+ * Запись истории рассмотрения.
+ *
+ * Берётся из журнала `audit.events`, а не из отдельной таблицы: журнал уже
+ * пишет каждое действие эксперта и хеш-сцеплен, то есть его нельзя
+ * отредактировать задним числом. Вторая история рядом с ним расходилась бы с
+ * ним при первой же ошибке.
+ *
+ * Наружу отдаётся РОЛЬ действующего лица, а не его идентификатор: эксперту
+ * важно, что назначение сделал организатор, а не кто именно из них.
+ */
+export const ExpertHistoryEntrySchema = z.object({
+  at: IsoDateTimeSchema,
+  verb: z.string(),
+  actorRole: z.string(),
+  /** Только безопасные поля: статус, рекомендация. Оценок здесь нет. */
+  details: z.record(z.string(), z.unknown()),
+});
+export type ExpertHistoryEntry = z.infer<typeof ExpertHistoryEntrySchema>;
+
 export const ExpertReviewSchema = z.object({
   assignmentId: UuidSchema,
   expertId: UuidSchema,

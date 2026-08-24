@@ -13,6 +13,8 @@ import {
 import {
   RUBRIC_KEYS,
   type ExpertAssignment,
+  type ExpertHistoryEntry,
+  type ExpertNote,
   type ProjectMaterial,
   type ProjectVersion,
 } from '@unicorn/contracts';
@@ -38,6 +40,8 @@ export function AssignmentsPage() {
   const [conflictFor, setConflictFor] = useState<ExpertAssignment | null>(null);
   /** Проект, чьи материалы раскрыты. Раскрыт максимум один — иначе список нечитаем. */
   const [materialsFor, setMaterialsFor] = useState<string | null>(null);
+  /** Назначение, чей ход рассмотрения раскрыт: заметки и история. */
+  const [workspaceFor, setWorkspaceFor] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -135,6 +139,18 @@ export function AssignmentsPage() {
                     {STATUS_LABEL[assignment.status] ?? assignment.status}
                   </Badge>
                   <Badge>до {new Date(assignment.dueAt).toLocaleDateString('ru-RU')}</Badge>
+                  {/*
+                    Этап проекта — вторая половина состояния рассмотрения.
+                    Без него эксперт видит только свою часть работы и не
+                    знает, что стало с проектом после его рецензии.
+                  */}
+                  <Badge>
+                    проект: {PROJECT_STATUS_LABEL[assignment.projectStatus] ??
+                      assignment.projectStatus}
+                  </Badge>
+                  {assignment.reviewSubmitted && !assignment.revisable ? (
+                    <Badge tone="success">решение принято</Badge>
+                  ) : null}
                 </div>
                 <strong style={{ fontSize: 'var(--u-text-lg)' }}>{assignment.projectTitle}</strong>
 
@@ -173,6 +189,29 @@ export function AssignmentsPage() {
                     <Button onClick={() => setReviewFor(assignment)}>Написать рецензию</Button>
                   ) : null}
 
+                  {/*
+                    Пересмотр доступен, только пока решение не принято. Кабинет
+                    ЗНАЕТ об этом от сервера (`revisable`), а не выясняет
+                    отказом на кнопке: кнопка, которая всегда отвечает ошибкой,
+                    хуже отсутствующей.
+                  */}
+                  {assignment.reviewSubmitted && assignment.revisable ? (
+                    <Button variant="secondary" onClick={() => setReviewFor(assignment)}>
+                      Пересмотреть результат
+                    </Button>
+                  ) : null}
+
+                  <Button
+                    variant="ghost"
+                    onClick={() =>
+                      setWorkspaceFor((current) =>
+                        current === assignment.id ? null : assignment.id,
+                      )
+                    }
+                  >
+                    {workspaceFor === assignment.id ? 'Скрыть ход работы' : 'Ход рассмотрения'}
+                  </Button>
+
                   <Button variant="ghost" onClick={() => setConflictFor(assignment)}>
                     Заявить конфликт интересов
                   </Button>
@@ -195,9 +234,14 @@ export function AssignmentsPage() {
                   <MaterialsPanel projectId={assignment.projectId} />
                 ) : null}
 
+                {workspaceFor === assignment.id ? (
+                  <WorkspacePanel assignmentId={assignment.id} />
+                ) : null}
+
                 {reviewFor?.id === assignment.id ? (
                   <ReviewForm
                     assignment={assignment}
+                    mode={assignment.reviewSubmitted ? 'revise' : 'submit'}
                     onCancel={() => setReviewFor(null)}
                     onDone={(text, tone) => {
                       setReviewFor(null);
@@ -243,6 +287,203 @@ const STATUS_TONE: Record<string, 'neutral' | 'accent' | 'success' | 'warning'> 
   expired: 'warning',
 };
 
+/**
+ * Этапы проекта в воронке платформы. Незнакомый статус не прячется — покажется
+ * сам код: скрыть строку значило бы, что эксперт не видит состояние, которое
+ * на самом деле есть.
+ */
+const PROJECT_STATUS_LABEL: Record<string, string> = {
+  draft: 'черновик',
+  submitted: 'подан',
+  ai_review: 'проверка ИИ',
+  expert_review: 'на экспертизе',
+  bootcamp: 'буткемп',
+  finalist: 'финалист',
+  graduated: 'выпускник',
+  rejected: 'отклонён',
+  archived: 'в архиве',
+};
+
+/** Понятные названия действий из журнала. */
+const HISTORY_LABEL: Record<string, string> = {
+  'lab.expert.assigned': 'Назначение на рецензию',
+  'lab.expert.assignment_closed': 'Ответ на назначение',
+  'lab.expert.review_submitted': 'Рецензия подана',
+  'lab.expert.review_revised': 'Результат пересмотрен',
+  'lab.expert.note_added': 'Заметка по ходу работы',
+};
+
+const ACTOR_ROLE_LABEL: Record<string, string> = {
+  expert: 'эксперт',
+  organizer: 'организатор',
+  admin: 'администратор',
+  system: 'система',
+};
+
+/**
+ * Ход рассмотрения: внутренние заметки и история действий.
+ *
+ * История берётся из журнала событий, а не из отдельной таблицы: журнал уже
+ * пишет каждое действие и хеш-сцеплен, то есть задним числом его не поправить.
+ *
+ * Заметки автору проекта НЕ видны — это рабочие записи эксперта, как и
+ * рубричные оценки.
+ */
+function WorkspacePanel({ assignmentId }: { assignmentId: string }) {
+  const [notes, setNotes] = useState<ExpertNote[] | null>(null);
+  const [history, setHistory] = useState<ExpertHistoryEntry[] | null>(null);
+  const [draft, setDraft] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    try {
+      const [loadedNotes, loadedHistory] = await Promise.all([
+        api.experts.notes(assignmentId),
+        api.experts.history(assignmentId),
+      ]);
+      setNotes(loadedNotes);
+      setHistory(loadedHistory);
+    } catch (cause) {
+      setError(
+        cause instanceof ApiError
+          ? (cause.problem?.detail ?? cause.message)
+          : 'Не удалось загрузить ход рассмотрения',
+      );
+    }
+  }, [assignmentId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  if (error) return <ErrorState description={error} onRetry={() => void load()} />;
+  if (!notes || !history) return <LoadingState label="Загружаем ход рассмотрения" />;
+
+  return (
+    <div
+      style={{
+        display: 'grid',
+        gap: 'var(--u-space-4)',
+        padding: 'var(--u-space-4)',
+        borderRadius: 'var(--u-radius-md)',
+        border: '1px solid var(--u-border)',
+      }}
+    >
+      <div>
+        <h3 style={{ margin: '0 0 var(--u-space-2)', fontSize: 'var(--u-text-md)' }}>
+          Внутренние заметки
+        </h3>
+        <p style={{ margin: '0 0 var(--u-space-3)', color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+          Видны вам, организатору и администратору. Автору проекта — нет.
+        </p>
+        {notes.length === 0 ? (
+          <p style={{ margin: 0, color: 'var(--u-text-muted)' }}>Заметок пока нет.</p>
+        ) : (
+          <Stack gap="var(--u-space-2)">
+            {notes.map((note) => (
+              <div
+                key={note.id}
+                style={{
+                  padding: 'var(--u-space-3)',
+                  borderRadius: 'var(--u-radius-md)',
+                  border: '1px solid var(--u-border)',
+                }}
+              >
+                <div style={{ fontSize: 'var(--u-text-xs)', color: 'var(--u-text-muted)' }}>
+                  {new Date(note.createdAt).toLocaleString('ru-RU')}
+                </div>
+                <div style={{ whiteSpace: 'pre-wrap' }}>{note.body}</div>
+              </div>
+            ))}
+          </Stack>
+        )}
+
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true);
+            setError(null);
+            try {
+              await api.experts.addNote(assignmentId, draft.trim());
+              setDraft('');
+              await load();
+            } catch (cause) {
+              setError(
+                cause instanceof ApiError
+                  ? (cause.problem?.detail ?? cause.message)
+                  : 'Заметка не сохранена',
+              );
+            } finally {
+              setBusy(false);
+            }
+          }}
+          style={{ marginTop: 'var(--u-space-3)', display: 'grid', gap: 'var(--u-space-2)' }}
+        >
+          <Field label="Новая заметка" htmlFor={`note-${assignmentId}`}>
+            <textarea
+              id={`note-${assignmentId}`}
+              rows={3}
+              maxLength={4000}
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              style={{
+                padding: 'var(--u-space-3)',
+                borderRadius: 'var(--u-radius-md)',
+                border: '1px solid var(--u-border-strong)',
+                background: 'var(--u-surface)',
+                color: 'var(--u-text)',
+                fontSize: 'var(--u-text-md)',
+                fontFamily: 'inherit',
+                width: '100%',
+                resize: 'vertical',
+              }}
+            />
+          </Field>
+          <div>
+            <Button type="submit" loading={busy} disabled={busy || draft.trim().length === 0}>
+              Сохранить заметку
+            </Button>
+          </div>
+        </form>
+      </div>
+
+      <div>
+        <h3 style={{ margin: '0 0 var(--u-space-2)', fontSize: 'var(--u-text-md)' }}>
+          История рассмотрения
+        </h3>
+        {history.length === 0 ? (
+          <p style={{ margin: 0, color: 'var(--u-text-muted)' }}>Записей пока нет.</p>
+        ) : (
+          <ol style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
+            {history.map((entry, index) => (
+              <li key={`${entry.at}-${index}`} style={{ marginBottom: 'var(--u-space-2)' }}>
+                <strong>{HISTORY_LABEL[entry.verb] ?? entry.verb}</strong>
+                {' — '}
+                {ACTOR_ROLE_LABEL[entry.actorRole] ?? entry.actorRole}
+                {', '}
+                {new Date(entry.at).toLocaleString('ru-RU')}
+                {typeof entry.details.recommendation === 'string'
+                  ? ` · итог: ${RECOMMENDATION_LABEL[entry.details.recommendation] ?? entry.details.recommendation}`
+                  : ''}
+                {typeof entry.details.status === 'string'
+                  ? ` · ${STATUS_LABEL[entry.details.status] ?? entry.details.status}`
+                  : ''}
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const RECOMMENDATION_LABEL: Record<string, string> = {
+  pass: 'пройти дальше',
+  fail: 'отклонить',
+  needs_review: 'на доработку',
+};
+
 const RUBRIC_LABEL: Record<string, string> = {
   team: 'Команда',
   product: 'Продукт',
@@ -261,10 +502,17 @@ const RUBRIC_LABEL: Record<string, string> = {
  */
 function ReviewForm({
   assignment,
+  mode,
   onCancel,
   onDone,
 }: {
   assignment: ExpertAssignment;
+  /**
+   * `submit` — первая подача, `revise` — пересмотр уже поданной рецензии.
+   * Форма одна: две формы для одних и тех же шести осей расходятся так же,
+   * как расходились четыре копии одного экрана в кабинетах.
+   */
+  mode: 'submit' | 'revise';
   onCancel: () => void;
   onDone: (text: string, tone: 'ok' | 'error') => void;
 }) {
@@ -281,15 +529,24 @@ function ReviewForm({
         event.preventDefault();
         setBusy(true);
         try {
-          await api.experts.submitReview({
-            assignmentId: assignment.id,
-            rubricScores: Object.fromEntries(
-              RUBRIC_KEYS.map((key) => [key, Number(scores[key])]),
-            ) as Record<(typeof RUBRIC_KEYS)[number], number>,
-            comment: comment || undefined,
-            recommendation,
-          });
-          onDone('Рецензия отправлена', 'ok');
+          const rubricScores = Object.fromEntries(
+            RUBRIC_KEYS.map((key) => [key, Number(scores[key])]),
+          ) as Record<(typeof RUBRIC_KEYS)[number], number>;
+          if (mode === 'revise') {
+            await api.experts.reviseReview(assignment.id, {
+              rubricScores,
+              comment: comment || undefined,
+              recommendation,
+            });
+          } else {
+            await api.experts.submitReview({
+              assignmentId: assignment.id,
+              rubricScores,
+              comment: comment || undefined,
+              recommendation,
+            });
+          }
+          onDone(mode === 'revise' ? 'Результат пересмотрен' : 'Рецензия отправлена', 'ok');
         } catch (error) {
           onDone(
             error instanceof ApiError

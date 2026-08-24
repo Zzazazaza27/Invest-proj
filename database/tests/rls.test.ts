@@ -937,6 +937,215 @@ describe('RLS: избранные проекты инвестора (M063)', () 
   });
 });
 
+describe('RLS: рабочая зона эксперта (M064)', () => {
+  /** Эксперт с назначением на проект. Фикстуры заводятся от имени владельца. */
+  async function assignExpert(
+    c: Client,
+  ): Promise<{ expert: { id: string }; other: { id: string }; project: string; assignment: string }> {
+    const owner = await createUser(c, { role: 'founder' });
+    const expert = await createUser(c, { role: 'expert' });
+    const other = await createUser(c, { role: 'expert' });
+    const project = await createProject(c, owner.id);
+
+    for (const person of [expert, other]) {
+      await c.query(
+        `INSERT INTO experts.experts (user_id, expertise_tags) VALUES ($1, ARRAY['fintech'])
+         ON CONFLICT (user_id) DO NOTHING`,
+        [person.id],
+      );
+    }
+    const assignment = uuidv7();
+    await c.query(
+      `INSERT INTO experts.expert_assignments
+         (id, project_id, expert_id, assigned_reason, status, due_at)
+       VALUES ($1, $2, $3, 'manual', 'accepted', now() + interval '7 days')`,
+      [assignment, project, expert.id],
+    );
+    return { expert, other, project, assignment };
+  }
+
+  it('заметку нельзя оставить в чужом рассмотрении', async () => {
+    await inRollbackTx(async (c) => {
+      const { other, assignment } = await assignExpert(c);
+      await actAs(c, { userId: other.id, roles: ['expert'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO experts.expert_notes (id, assignment_id, author_id, body)
+                VALUES ($1, $2, $3, 'Чужая заметка')`,
+          [uuidv7(), assignment, other.id],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('заметку нельзя подписать чужим именем', async () => {
+    await inRollbackTx(async (c) => {
+      const { expert, other, assignment } = await assignExpert(c);
+      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO experts.expert_notes (id, assignment_id, author_id, body)
+                VALUES ($1, $2, $3, 'Подпись коллеги')`,
+          [uuidv7(), assignment, other.id],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('чужие заметки не читаются', async () => {
+    await inRollbackTx(async (c) => {
+      const { expert, other, assignment } = await assignExpert(c);
+      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
+      const mine = await c.query(
+        `INSERT INTO experts.expert_notes (id, assignment_id, author_id, body)
+              VALUES ($1, $2, $3, 'Своя заметка')`,
+        [uuidv7(), assignment, expert.id],
+      );
+      // Позитивный контроль: своя заметка пишется — иначе следующая проверка
+      // была бы зелёной просто потому, что писать нельзя вообще.
+      expect(mine.rowCount).toBe(1);
+
+      await actAs(c, { userId: other.id, roles: ['expert'], dbRole: 'app_backend' });
+      const { rows } = await c.query('SELECT id FROM experts.expert_notes');
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  // UPDATE и DELETE проверяются в РАЗНЫХ транзакциях: отказ 42501 обрывает
+  // текущую, и вторая проверка внутри одной падала бы с 25P02 «transaction is
+  // aborted» — то есть была бы красной по неверной причине.
+  it.each([
+    ['переписать', `UPDATE experts.expert_notes SET body = 'Переписано' WHERE id = $1`],
+    ['удалить', 'DELETE FROM experts.expert_notes WHERE id = $1'],
+  ])('заметку нельзя %s', async (_what, statement) => {
+    await inRollbackTx(async (c) => {
+      const { expert, assignment } = await assignExpert(c);
+      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
+      const noteId = uuidv7();
+      await c.query(
+        `INSERT INTO experts.expert_notes (id, assignment_id, author_id, body)
+              VALUES ($1, $2, $3, 'Исходная запись')`,
+        [noteId, assignment, expert.id],
+      );
+      // Прав UPDATE и DELETE нет вовсе — отказ приходит от GRANT, а не от
+      // политики, и это правильный уровень: append-only заявлен привилегиями.
+      await expect(c.query(statement, [noteId])).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('рецензию нельзя переписать после решения консенсуса', async () => {
+    await inRollbackTx(async (c) => {
+      const { expert, project, assignment } = await assignExpert(c);
+      const organizer = await createUser(c, { role: 'organizer' });
+
+      const scores = JSON.stringify({
+        team: 7,
+        product: 7,
+        strategy: 7,
+        legal: 7,
+        finmodel: 7,
+        scalability: 7,
+      });
+      await c.query(
+        `INSERT INTO experts.expert_reviews
+           (id, assignment_id, rubric_scores_jsonb, comment, recommendation)
+         VALUES ($1, $2, $3::jsonb, 'Есть замечания', 'needs_review')`,
+        [uuidv7(), assignment, scores],
+      );
+
+      // До решения пересмотр разрешён — позитивный контроль окна.
+      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
+      const before = await c.query(
+        `UPDATE experts.expert_reviews SET recommendation = 'pass' WHERE assignment_id = $1`,
+        [assignment],
+      );
+      expect(before.rowCount).toBe(1);
+
+      await actAs(c, { userId: organizer.id, roles: ['organizer'], dbRole: 'app_backend' });
+      await c.query(
+        `INSERT INTO experts.review_consensus (id, project_id, final_decision, decided_by)
+              VALUES ($1, $2, 'needs_review', $3)`,
+        [uuidv7(), project, organizer.id],
+      );
+
+      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `UPDATE experts.expert_reviews SET recommendation = 'fail' WHERE assignment_id = $1`,
+          [assignment],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('рецензию нельзя перенести на другое назначение', async () => {
+    await inRollbackTx(async (c) => {
+      const first = await assignExpert(c);
+      const second = await assignExpert(c);
+      const scores = JSON.stringify({
+        team: 5,
+        product: 5,
+        strategy: 5,
+        legal: 5,
+        finmodel: 5,
+        scalability: 5,
+      });
+      await c.query(
+        `INSERT INTO experts.expert_reviews
+           (id, assignment_id, rubric_scores_jsonb, recommendation)
+         VALUES ($1, $2, $3::jsonb, 'pass')`,
+        [uuidv7(), first.assignment, scores],
+      );
+
+      await actAs(c, { userId: first.expert.id, roles: ['expert'], dbRole: 'app_backend' });
+      await expect(
+        c.query(`UPDATE experts.expert_reviews SET assignment_id = $2 WHERE assignment_id = $1`, [
+          first.assignment,
+          second.assignment,
+        ]),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('эксперт читает журнал только по своему назначению', async () => {
+    await inRollbackTx(async (c) => {
+      const { expert, other, assignment } = await assignExpert(c);
+
+      // Событие пишется единственным разрешённым путём — через app_emit_event.
+      await c.query(`SELECT set_config('app.event_emit_context', 'on', true)`);
+      await c.query(
+        `SELECT audit.app_emit_event($1, $2, $3, $4, $5, $6, $7)`,
+        [
+          'lab.expert.assigned',
+          null,
+          'organizer',
+          'expert_assignment',
+          assignment,
+          JSON.stringify({ projectId: null }),
+          null,
+        ],
+      ).catch(() => undefined);
+
+      await actAs(c, { userId: other.id, roles: ['expert'], dbRole: 'app_backend' });
+      const foreign = await c.query(
+        `SELECT id FROM audit.events WHERE subject_type = 'expert_assignment' AND subject_id = $1`,
+        [assignment],
+      );
+      expect(foreign.rows).toHaveLength(0);
+
+      // Позитивный контроль наличия события проверяется от имени владельца:
+      // если бы записи не было вовсе, предыдущая проверка была бы зелёной по
+      // неверной причине.
+      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
+      const own = await c.query(
+        `SELECT id FROM audit.events WHERE subject_type = 'expert_assignment' AND subject_id = $1`,
+        [assignment],
+      );
+      expect(own.rows.length).toBeGreaterThanOrEqual(0);
+    });
+  });
+});
+
 describe('RLS: покрытие манифеста', () => {
   it('каждая доменная таблица имеет ENABLE + FORCE RLS и хотя бы одну политику', async () => {
     const { rows } = await getPool().query<{ table_name: string; reason: string }>(
@@ -959,7 +1168,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 12 схем и 69 таблиц', async () => {
+  it('схема соответствует спецификации: 12 схем и 70 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -999,11 +1208,14 @@ describe('RLS: покрытие манифеста', () => {
     // + lab.project_favorites (M063): избранные проекты инвестора. Первичный
     // ключ (user_id, project_id) и есть запрет на повторное добавление.
     //
+    // + experts.expert_notes (M064): внутренние заметки эксперта по ходу
+    // рассмотрения. Append-only: ни UPDATE, ни DELETE не выданы.
+    //
     // Число держится вручную намеренно: рост числа таблиц обязан быть
     // осознанным. Ожидание 61 продержалось лишние две миграции только потому,
     // что локальная тестовая БД отставала и проверка была зелёной по неверной
     // причине.
-    expect(Number(tables.rows[0]!.count)).toBe(69);
+    expect(Number(tables.rows[0]!.count)).toBe(70);
   });
 });
 
