@@ -1,0 +1,94 @@
+{
+  "$comment": [
+    "Демонстрационные учётные записи UNICORN LAUNCH.",
+    "",
+    "Логины и имена — правдоподобные, а не «Test User 1»: на таком наборе видно,",
+    "что кабинеты разные у разных ролей, а не что скрипт умеет вставлять строки.",
+    "",
+    "Пароль здесь НЕ хранится. Он берётся из DEMO_USER_PASSWORD или, если её нет,",
+    "из DEV_TEST_USER_PASSWORD в .env: пароль в репозитории — это пароль, который",
+    "утёк, даже если он «всего лишь демонстрационный».",
+    "",
+    "primaryRole — роль в профиле, roles — фактически выданные права. Они",
+    "различаются намеренно: эксперт и организатор в этой модели заводятся как",
+    "founder с дополнительным правом, ровно как в dev-stand."
+  ],
+  "people": [
+    {
+      "key": "admin",
+      "login": "demo-admin",
+      "displayName": "Ирина Соколова",
+      "primaryRole": "founder",
+      "roles": ["admin"],
+      "about": "Администратор платформы: тарифы, комплаенс, поддержка"
+    },
+    {
+      "key": "organizer",
+      "login": "demo-organizer",
+      "displayName": "Павел Ерохин",
+      "primaryRole": "founder",
+      "roles": ["organizer"],
+      "about": "Организатор сезона: воронка отбора и состав рецензентов"
+    },
+    {
+      "key": "expert-fintech",
+      "login": "demo-expert-fin",
+      "displayName": "Марина Голубева",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["fintech", "saas"],
+      "about": "Эксперт по финтеху, 11 лет в платёжных сервисах"
+    },
+    {
+      "key": "expert-industry",
+      "login": "demo-expert-ind",
+      "displayName": "Артём Валиев",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["industrial", "hardware"],
+      "about": "Эксперт по промышленным решениям и приборостроению"
+    },
+    {
+      "key": "founder-aeroseed",
+      "login": "demo-founder-aero",
+      "displayName": "Дмитрий Крюков",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "Основатель «Аэросид» и «Полевого журнала»"
+    },
+    {
+      "key": "founder-tochka",
+      "login": "demo-founder-tochka",
+      "displayName": "Алия Хабибуллина",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "Основатель «Точка сборки»"
+    },
+    {
+      "key": "founder-ritm",
+      "login": "demo-founder-ritm",
+      "displayName": "Сергей Панин",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "Основатель «Ритм-Диагностика»"
+    },
+    {
+      "key": "investor-active",
+      "login": "demo-investor",
+      "displayName": "Наталья Ведерникова",
+      "primaryRole": "investor",
+      "roles": ["investor"],
+      "subscription": "active",
+      "about": "Инвестор с действующей подпиской: каталог открыт полностью"
+    },
+    {
+      "key": "investor-trial",
+      "login": "demo-investor-trial",
+      "displayName": "Роман Ковалёв",
+      "primaryRole": "investor",
+      "roles": ["investor"],
+      "subscription": "none",
+      "about": "Инвестор без подписки: видит тизеры, полная карточка закрыта"
+    }
+  ]
+}
