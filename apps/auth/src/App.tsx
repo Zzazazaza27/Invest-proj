@@ -78,6 +78,40 @@ function tokenFromHash(): { mode: Mode; token: string } | null {
 }
 
 /**
+ * Экран, названный фрагментом адреса: `#register` и `#login`.
+ *
+ * Витрина ведёт на это приложение двумя разными кнопками, и до Ф60 обе
+ * открывали вход: кнопка «Регистрация» вводила в заблуждение — форма
+ * регистрации существовала, но попасть на неё можно было только переключателем
+ * внизу. Фрагмент выбран по той же причине, что и для токенов: он не уходит на
+ * сервер, поэтому его добавление не меняет ни кэширование статики, ни маршрут
+ * прокси — с точки зрения nginx это тот же `/login/`.
+ *
+ * Ничего, кроме двух известных значений, не принимается: режимы `reset` и
+ * `verify` открываются только вместе с токеном, а `forgot` — осознанным
+ * действием человека, а не ссылкой со стороны.
+ */
+function modeFromHash(): Mode | null {
+  const hash = window.location.hash;
+  if (hash === '#register') return 'register';
+  if (hash === '#login') return 'login';
+  return null;
+}
+
+/**
+ * Держать фрагмент в согласии с открытым экраном.
+ *
+ * Иначе после переключения «Ещё нет аккаунта? → Зарегистрироваться» обновление
+ * страницы вернуло бы человека на вход: в адресе остался бы прежний `#login`.
+ * `replaceState` — чтобы переключатель не засорял историю браузера и «назад»
+ * вело на витрину, а не на предыдущий режим той же формы.
+ */
+function rememberMode(mode: 'login' | 'register'): void {
+  const next = `${window.location.pathname}${window.location.search}#${mode}`;
+  window.history.replaceState(null, '', next);
+}
+
+/**
  * Убрать токен из адресной строки.
  *
  * Ссылка из письма остаётся в истории браузера и в заголовке окна; после того
@@ -95,7 +129,7 @@ interface SessionUser {
 
 export default function App() {
   const initial = tokenFromHash();
-  const [mode, setMode] = useState<Mode>(initial?.mode ?? 'login');
+  const [mode, setMode] = useState<Mode>(initial?.mode ?? modeFromHash() ?? 'login');
   const [linkToken, setLinkToken] = useState<string>(initial?.token ?? '');
   const [notice, setNotice] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
@@ -685,7 +719,9 @@ export default function App() {
                   type="button"
                   className="auth-link"
                   onClick={() => {
-                    setMode(mode === 'login' ? 'register' : 'login');
+                    const next = mode === 'login' ? 'register' : 'login';
+                    setMode(next);
+                    rememberMode(next);
                     setError(null);
                   }}
                 >

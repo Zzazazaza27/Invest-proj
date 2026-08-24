@@ -81,9 +81,41 @@ check(
 console.warn('\n[2] Экран входа');
 await page.getByRole('link', { name: 'Войти' }).click();
 await page.waitForLoadState('networkidle');
-check('открылся /login/', page.url().endsWith('/login/'), page.url());
+check('открылся /login/', page.url().startsWith(`${BASE}/login/`), page.url());
+// Кнопка «Войти» обязана открыть именно вход. Отличие экранов — выбор роли:
+// он есть только в регистрации, поэтому его отсутствие и есть признак входа.
+check('открыт вход, а не регистрация', (await page.locator('.auth-role-title').count()) === 0);
+
+// --------------------------------------------------- две кнопки — два экрана (Ф60)
+//
+// До Ф60 «Войти» и «Регистрация» вели на один и тот же `/login/`, то есть обе
+// открывали вход: кнопка обещала регистрацию и её не давала, хотя форма
+// регистрации в приложении есть с Ф49. Проверяется ровно то, что было сломано,
+// — какой экран открывается по КАЖДОЙ кнопке, — и вдобавок обновление
+// страницы: режим должен пережить F5, иначе человек, заполнявший регистрацию,
+// после перезагрузки оказывается на входе.
+console.warn('\n[2a] Кнопка «Регистрация» открывает регистрацию');
+await page.goto(`${BASE}/`, { waitUntil: 'networkidle', timeout: 30_000 });
+await page.getByRole('link', { name: 'Регистрация' }).click();
+await page.waitForLoadState('networkidle');
+await page.waitForTimeout(400);
+check('адрес называет экран регистрации', page.url().endsWith('/login/#register'), page.url());
+check(
+  'открыта форма регистрации',
+  (await page.getByRole('button', { name: 'Создать аккаунт' }).count()) === 1,
+);
+await page.reload({ waitUntil: 'networkidle' });
+await page.waitForTimeout(400);
+check(
+  'обновление страницы не сбрасывает на вход',
+  (await page.getByRole('button', { name: 'Создать аккаунт' }).count()) === 1,
+  page.url(),
+);
 
 console.warn('\n[3] Регистрация: роли и согласия');
+// Дальше прогон идёт прежним путём — с чистого `/login/` и переключателем
+// внизу формы: он тоже обязан работать, и его поломку [2a] не поймает.
+await page.goto(`${BASE}/login/`, { waitUntil: 'networkidle', timeout: 30_000 });
 await page.getByRole('button', { name: 'Зарегистрироваться' }).click();
 await page.waitForTimeout(300);
 const roles = await page.locator('.auth-role-title').allTextContents();
