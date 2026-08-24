@@ -13,8 +13,8 @@ import {
   Stack,
   UI_KEYFRAMES,
 } from '@unicorn/ui';
-import type { CurrentUser, NotificationPreference } from '@unicorn/contracts';
-import { NotificationsCard } from '@unicorn/cabinet';
+import type { CreateSupportTicketRequest, CurrentUser, NotificationPreference, SupportTicketStatus } from '@unicorn/contracts';
+import { BugReportWidget, NotificationsCard, SupportCard } from '@unicorn/cabinet';
 import { ApiError, api, setCsrf } from './api';
 import { AssignmentsPage } from './pages/AssignmentsPage';
 
@@ -57,6 +57,33 @@ const notificationsPort = {
   list: (limit: number) => api.notifications.list({ limit }),
   preferences: () => api.notifications.preferences(),
   savePreferences: (items: NotificationPreference[]) => api.notifications.updatePreferences(items),
+};
+
+/**
+ * Транспорт поддержки и сообщений об ошибках.
+ *
+ * Тот же приём, что у уведомлений: общий пакет кабинетов не знает про HTTP, а
+ * кабинет остаётся при своём клиенте и своей схеме аутентификации.
+ */
+const supportPort = {
+  list: () => api.support.list(),
+  detail: (id: string) => api.support.detail(id),
+  open: (input: { subject: string; body: string }) =>
+    api.support.open({ kind: 'support' as const, ...input }),
+  reply: (id: string, body: string) => api.support.reply(id, body),
+  update: (id: string, input: { status?: SupportTicketStatus; assignToMe?: boolean }) =>
+    api.support.update(id, input),
+};
+
+/**
+ * Версия сборки, подставленная Vite (`define`). Объявляется здесь, потому что
+ * в браузере такой переменной нет — она заменяется значением при сборке.
+ */
+declare const __APP_VERSION__: string;
+
+/** Сообщение об ошибке уходит тем же маршрутом — различает их вид обращения. */
+const bugReportPort = {
+  open: (input: CreateSupportTicketRequest) => api.support.open(input),
 };
 
 export default function App() {
@@ -136,10 +163,16 @@ export default function App() {
                 со сроком, и пропущенное письмо означает просроченную рецензию.
               */}
               <NotificationsCard port={notificationsPort} />
+              <SupportCard port={supportPort} />
             </Stack>
           ) : null}
         </Container>
       </main>
+      {/*
+        Форма сообщения об ошибке доступна везде, а не на отдельной странице:
+        о проблеме сообщают там, где её увидели.
+      */}
+      {me ? <BugReportWidget port={bugReportPort} appVersion={__APP_VERSION__} /> : null}
     </>
   );
 }

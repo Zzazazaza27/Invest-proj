@@ -11,6 +11,9 @@ import {
   SeasonSchema,
   SeasonStageOccupancySchema,
   ServiceAccountSchema,
+  SupportMessageSchema,
+  SupportTicketDetailSchema,
+  SupportTicketSchema,
   ServiceAccountWithSecretSchema,
   type AdminPlan,
   type AdvanceProjectStageRequest,
@@ -28,6 +31,10 @@ import {
   type SeasonFunnelConfig,
   type SeasonStageOccupancy,
   type ServiceAccount,
+  type CreateSupportTicketRequest,
+  type SupportTicket,
+  type SupportTicketDetail,
+  type UpdateSupportTicketRequest,
   type ServiceAccountWithSecret,
   type UpdateDraftPlanRequest,
   type UpsertNotificationTemplate,
@@ -484,6 +491,56 @@ export const api = {
       method: 'DELETE',
       path: `/v1/admin/notification-templates/${id}`,
       schema: NotificationTemplateSchema,
+    });
+  },
+
+  // ------------------------------------------------------------- поддержка
+  //
+  // Отдельного «админского» маршрута поддержки нет и не нужно: сотрудник
+  // ходит по тем же `/v1/support/*`, а границу видимости задаёт политика БД.
+  // Второй набор маршрутов «для админа» означал бы второе место, где решается
+  // доступ, — и они разошлись бы.
+  async supportTickets(): Promise<SupportTicket[]> {
+    const { items } = await client.request({
+      method: 'GET',
+      path: '/v1/support/tickets',
+      schema: z.object({ items: z.array(SupportTicketSchema) }),
+    });
+    return items;
+  },
+
+  supportTicket(id: string): Promise<SupportTicketDetail> {
+    return client.request({
+      method: 'GET',
+      path: `/v1/support/tickets/${encodeURIComponent(id)}`,
+      schema: SupportTicketDetailSchema,
+    });
+  },
+
+  openSupportTicket(body: CreateSupportTicketRequest): Promise<SupportTicketDetail> {
+    return client.request({
+      method: 'POST',
+      path: '/v1/support/tickets',
+      body,
+      schema: SupportTicketDetailSchema,
+    });
+  },
+
+  replySupportTicket(id: string, body: string) {
+    return client.request({
+      method: 'POST',
+      path: `/v1/support/tickets/${encodeURIComponent(id)}/messages`,
+      body: { body },
+      schema: SupportMessageSchema,
+    });
+  },
+
+  updateSupportTicket(id: string, body: UpdateSupportTicketRequest): Promise<SupportTicketDetail> {
+    return client.request({
+      method: 'PATCH',
+      path: `/v1/support/tickets/${encodeURIComponent(id)}`,
+      body,
+      schema: SupportTicketDetailSchema,
     });
   },
 };

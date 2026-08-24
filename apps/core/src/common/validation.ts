@@ -22,7 +22,10 @@ export function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
   assertDepth(input);
   const effective = schema instanceof z.ZodObject ? strict(schema) : schema;
   const result = effective.safeParse(input);
-  if (result.success) return result.data as T;
+  if (result.success) {
+    assertNothingDropped(input, result.data);
+    return result.data as T;
+  }
 
   throw errors.validation(
     result.error.issues.map((issue) => ({
@@ -33,13 +36,56 @@ export function parseOrThrow<T>(schema: z.ZodType<T>, input: unknown): T {
 }
 
 /**
- * Делает объектную схему строгой рекурсивно.
+ * Делает объектную схему строгой.
  *
  * zod по умолчанию отбрасывает лишние ключи молча. Для API это плохо: клиент,
  * отправивший `amout` вместо `amount`, получит 200 и неверный результат.
+ *
+ * ВАЖНО: `.strict()` в zod действует ТОЛЬКО на верхний уровень. Комментарий
+ * здесь долго обещал рекурсию, которой не было: вложенный объект по-прежнему
+ * молча терял неизвестные ключи. Найдено живым прогоном поддержки (Ф61):
+ * `context: { cookie: '…' }` принимался ответом 201, хотя поля `cookie` в
+ * схеме нет. Рекурсию доделывает `assertNothingDropped` ниже.
  */
 export function strict<T extends z.ZodObject<z.ZodRawShape>>(schema: T): T {
   return schema.strict() as unknown as T;
+}
+
+/**
+ * Ни одно поле входа не должно исчезнуть при разборе.
+ *
+ * Проверка сравнивает ВХОД с РЕЗУЛЬТАТОМ, а не разбирает схему. Так она не
+ * зависит ни от версии zod, ни от того, какими комбинаторами описан конкретный
+ * контракт: любое поле, которое схема отбросила молча, видно как ключ, который
+ * был во входе и не дошёл до результата.
+ *
+ * Условие корректности у такого способа одно: контракты не должны менять форму
+ * данных при разборе (`.transform()`, `.pipe()`), иначе легальное изменение
+ * выглядело бы потерей. Преобразований в `@unicorn/contracts` нет — пакет
+ * описывает форму, а не преобразует её; это его заявленное свойство.
+ *
+ * Обратное направление (ключ есть в результате, но не во входе) не ошибка:
+ * так работают значения по умолчанию.
+ */
+export function assertNothingDropped(input: unknown, parsed: unknown, path: string[] = []): void {
+  if (Array.isArray(input)) {
+    if (!Array.isArray(parsed)) return;
+    for (let i = 0; i < input.length && i < parsed.length; i += 1) {
+      assertNothingDropped(input[i], parsed[i], [...path, String(i)]);
+    }
+    return;
+  }
+  if (input === null || typeof input !== 'object') return;
+  if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return;
+
+  const kept = parsed as Record<string, unknown>;
+  for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
+    if (!(key in kept)) {
+      const where = [...path, key].join('.');
+      throw errors.validation([{ path: where, message: 'неизвестное поле' }]);
+    }
+    assertNothingDropped(value, kept[key], [...path, key]);
+  }
 }
 
 /** Ограничение размера тела запроса. Больше — отказ до разбора JSON. */

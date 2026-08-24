@@ -36,6 +36,9 @@ import {
   SeasonSchema,
   SeasonStageOccupancySchema,
   SubscriptionSchema,
+  SupportMessageSchema,
+  SupportTicketDetailSchema,
+  SupportTicketSchema,
   TaxonomyNodeSchema,
   UploadTicketSchema,
   UserDeviceSchema,
@@ -52,12 +55,14 @@ import {
   type CreatePaymentRequest,
   type CreateProjectRequest,
   type CreateSubscriptionRequest,
+  type CreateSupportTicketRequest,
   type LoginRequest,
   type NotificationPreference,
   type PublicationConsentRequest,
   type RegisterDeviceRequest,
   type RegisterRequest,
   type RequestUpload,
+  type UpdateSupportTicketRequest,
   type SeasonFunnelConfig,
   type SignAgreementRequest,
   type StartKycRequest,
@@ -665,6 +670,55 @@ export class UnicornApi {
 
     revokeDevice: (id: string) =>
       this.http.request({ method: 'DELETE', path: `/notifications/devices/${id}` }),
+  };
+
+  // -------------------------------------------------------------- поддержка
+  /**
+   * Обращения в поддержку и сообщения об ошибках — одна сущность, различает
+   * `kind`. Отдельного клиента «баг-репортов» нет намеренно: два клиента к
+   * одному маршруту расходятся так же, как расходились четыре копии экрана.
+   */
+  readonly support = {
+    /** Свои обращения; сотруднику поддержки политика БД отдаёт все. */
+    list: (query: { limit?: number } = {}) =>
+      this.http
+        .request({
+          path: '/support/tickets',
+          query,
+          schema: z.object({ items: z.array(SupportTicketSchema) }),
+        })
+        .then((response) => response.items),
+
+    detail: (id: string) =>
+      this.http.request({
+        path: `/support/tickets/${encodeURIComponent(id)}`,
+        schema: SupportTicketDetailSchema,
+      }),
+
+    open: (body: CreateSupportTicketRequest) =>
+      this.http.request({
+        method: 'POST',
+        path: '/support/tickets',
+        body,
+        schema: SupportTicketDetailSchema,
+      }),
+
+    reply: (id: string, body: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/support/tickets/${encodeURIComponent(id)}/messages`,
+        body: { body },
+        schema: SupportMessageSchema,
+      }),
+
+    /** Взять в работу и закрыть. Право проверяет сервер, не клиент. */
+    update: (id: string, body: UpdateSupportTicketRequest) =>
+      this.http.request({
+        method: 'PATCH',
+        path: `/support/tickets/${encodeURIComponent(id)}`,
+        body,
+        schema: SupportTicketDetailSchema,
+      }),
   };
 
   // ------------------------------------------------------------- согласия

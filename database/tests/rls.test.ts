@@ -627,6 +627,199 @@ describe('RLS: граница интеграционного контура', ()
   });
 });
 
+describe('RLS: обращения в поддержку (M062)', () => {
+  /** Обращение автора `owner`. Заводится под самим автором — как это делает ядро. */
+  async function openTicket(c: Client, owner: string, kind = 'support'): Promise<string> {
+    await actAs(c, { userId: owner, roles: ['founder'], dbRole: 'app_backend' });
+    const id = uuidv7();
+    await c.query(
+      `INSERT INTO comms.support_tickets (id, user_id, kind, subject)
+            VALUES ($1, $2, $3, 'Не открывается страница проекта')`,
+      [id, owner, kind],
+    );
+    return id;
+  }
+
+  it('пользователь не видит чужое обращение', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const bob = await createUser(c, { role: 'founder' });
+      const ticket = await openTicket(c, alice.id);
+
+      await actAs(c, { userId: bob.id, roles: ['founder'], dbRole: 'app_backend' });
+      const { rows } = await c.query('SELECT id FROM comms.support_tickets WHERE id = $1', [ticket]);
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  it('сотрудник поддержки видит чужое обращение', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const admin = await createUser(c, { role: 'admin' });
+      const ticket = await openTicket(c, alice.id);
+
+      await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
+      const { rows } = await c.query('SELECT id FROM comms.support_tickets WHERE id = $1', [ticket]);
+      expect(rows).toHaveLength(1);
+    });
+  });
+
+  it('обращение нельзя завести от чужого имени', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const bob = await createUser(c, { role: 'founder' });
+
+      await actAs(c, { userId: bob.id, roles: ['founder'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO comms.support_tickets (id, user_id, kind, subject)
+                VALUES ($1, $2, 'support', 'Обращение от чужого имени')`,
+          [uuidv7(), alice.id],
+        ),
+        // Тип ошибки проверяется намеренно: зелёный тест по любой ошибке был бы
+        // зелёным и при опечатке в имени колонки.
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('обращение нельзя завести сразу назначенным на сотрудника', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const admin = await createUser(c, { role: 'admin' });
+
+      await actAs(c, { userId: alice.id, roles: ['founder'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO comms.support_tickets (id, user_id, kind, subject, assigned_to)
+                VALUES ($1, $2, 'support', 'Назначить себе исполнителя', $3)`,
+          [uuidv7(), alice.id, admin.id],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('автор не может закрыть собственное обращение', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const ticket = await openTicket(c, alice.id);
+
+      await actAs(c, { userId: alice.id, roles: ['founder'], dbRole: 'app_backend' });
+      const { rowCount } = await c.query(
+        `UPDATE comms.support_tickets SET status = 'closed', closed_at = now() WHERE id = $1`,
+        [ticket],
+      );
+      // Строка не отвергается ошибкой, а просто не находится: UPDATE без
+      // подходящей политики видит ноль строк. Молчаливый ноль — тоже отказ,
+      // и проверять надо именно его.
+      expect(rowCount).toBe(0);
+    });
+  });
+
+  it('пользователь не может выдать своё сообщение за ответ поддержки', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const ticket = await openTicket(c, alice.id);
+
+      await actAs(c, { userId: alice.id, roles: ['founder'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO comms.support_messages (id, ticket_id, author_id, author_kind, body)
+                VALUES ($1, $2, $3, 'staff', 'Ваше обращение решено, деньги отправлены')`,
+          [uuidv7(), ticket, alice.id],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('пользователь не может писать в чужое обращение', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const bob = await createUser(c, { role: 'founder' });
+      const ticket = await openTicket(c, alice.id);
+
+      await actAs(c, { userId: bob.id, roles: ['founder'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO comms.support_messages (id, ticket_id, author_id, author_kind, body)
+                VALUES ($1, $2, $3, 'user', 'Добавлю к чужому обращению')`,
+          [uuidv7(), ticket, bob.id],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('в закрытое обращение писать нельзя', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const admin = await createUser(c, { role: 'admin' });
+      const ticket = await openTicket(c, alice.id);
+
+      await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
+      const closed = await c.query(
+        `UPDATE comms.support_tickets SET status = 'closed', closed_at = now() WHERE id = $1`,
+        [ticket],
+      );
+      // Позитивный контроль: закрыть обращение сотрудник ОБЯЗАН уметь, иначе
+      // следующая проверка была бы зелёной просто потому, что закрытия не было.
+      expect(closed.rowCount).toBe(1);
+
+      await actAs(c, { userId: alice.id, roles: ['founder'], dbRole: 'app_backend' });
+      await expect(
+        c.query(
+          `INSERT INTO comms.support_messages (id, ticket_id, author_id, author_kind, body)
+                VALUES ($1, $2, $3, 'user', 'Дополнение к закрытому')`,
+          [uuidv7(), ticket, alice.id],
+        ),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('переписка чужого обращения не читается по идентификатору', async () => {
+    await inRollbackTx(async (c) => {
+      const alice = await createUser(c, { role: 'founder' });
+      const bob = await createUser(c, { role: 'founder' });
+      const ticket = await openTicket(c, alice.id);
+
+      await actAs(c, { userId: alice.id, roles: ['founder'], dbRole: 'app_backend' });
+      await c.query(
+        `INSERT INTO comms.support_messages (id, ticket_id, author_id, author_kind, body)
+              VALUES ($1, $2, $3, 'user', 'Подробности проблемы')`,
+        [uuidv7(), ticket, alice.id],
+      );
+
+      await actAs(c, { userId: bob.id, roles: ['founder'], dbRole: 'app_backend' });
+      const { rows } = await c.query(
+        'SELECT id FROM comms.support_messages WHERE ticket_id = $1',
+        [ticket],
+      );
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  it.each([
+    ['автору', 'founder'],
+    ['сотруднику поддержки', 'admin'],
+  ])('удаление обращения не выдано %s', async (_who, role) => {
+    // Каждая роль проверяется в СВОЕЙ транзакции: отказ 42501 обрывает
+    // текущую, и вторая проверка внутри одной транзакции падала бы с
+    // «current transaction is aborted» — то есть была бы красной по неверной
+    // причине (поймано первым прогоном).
+    await inRollbackTx(async (c) => {
+      // Фикстуры заводятся ДО первого actAs: он переключает сессию на
+      // app_backend, а под ней выдача роли `admin` запрещена политикой
+      // (M054 — регистрация даёт только founder|investor).
+      const alice = await createUser(c, { role: 'founder' });
+      const actor = role === 'admin' ? await createUser(c, { role: 'admin' }) : alice;
+      const ticket = await openTicket(c, alice.id);
+
+      await actAs(c, { userId: actor.id, roles: [role], dbRole: 'app_backend' });
+      await expect(
+        c.query('DELETE FROM comms.support_tickets WHERE id = $1', [ticket]),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+});
+
 describe('RLS: покрытие манифеста', () => {
   it('каждая доменная таблица имеет ENABLE + FORCE RLS и хотя бы одну политику', async () => {
     const { rows } = await getPool().query<{ table_name: string; reason: string }>(
@@ -649,7 +842,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 12 схем и 66 таблиц', async () => {
+  it('схема соответствует спецификации: 12 схем и 68 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -682,11 +875,15 @@ describe('RLS: покрытие манифеста', () => {
     // подтверждения адреса. В таблице только SHA-256 токена — сам токен живёт
     // в письме, и чтение таблицы не даёт войти ни в один аккаунт.
     //
+    // + comms.support_tickets и comms.support_messages (M062): обращения в
+    // поддержку и сообщения об ошибках. Одна сущность на две задачи — их
+    // различает `kind`, жизненный цикл у них общий.
+    //
     // Число держится вручную намеренно: рост числа таблиц обязан быть
     // осознанным. Ожидание 61 продержалось лишние две миграции только потому,
     // что локальная тестовая БД отставала и проверка была зелёной по неверной
     // причине.
-    expect(Number(tables.rows[0]!.count)).toBe(66);
+    expect(Number(tables.rows[0]!.count)).toBe(68);
   });
 });
 

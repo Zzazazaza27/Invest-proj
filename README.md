@@ -647,6 +647,10 @@ graphify, отказавшись перезаписывать граф мень�
 | `GET /notifications`                            | сессия               | Своя лента уведомлений                                    |
 | `POST/GET/DELETE …/devices`                     | сессия               | Устройства для push                                       |
 | `GET/PUT /notifications/preferences`            | сессия               | Каналы и темы уведомлений                                 |
+| `GET/POST /support/tickets`                     | сессия               | Обращения в поддержку и сообщения об ошибках              |
+| `GET /support/tickets/:id`                      | сессия               | Обращение с перепиской; чужое — 404, а не 403             |
+| `POST /support/tickets/:id/messages`            | сессия               | Сообщение в обращение; сторону разговора решает сервер    |
+| `PATCH /support/tickets/:id`                    | `admin`              | Взять в работу, закрыть, вернуть в работу                 |
 | `POST /admin/service-accounts`                  | `admin`              | Клиент внешней системы; секрет выдаётся один раз          |
 | `POST …/service-accounts/:id/rotation`          | `admin`              | Ротация секрета клиента                                   |
 | `POST …/service-accounts/:id/status`            | `admin`              | Приостановка и возобновление клиента                      |

@@ -13,13 +13,13 @@ import {
   Stack,
   UI_KEYFRAMES,
 } from '@unicorn/ui';
-import type { CurrentUser } from '@unicorn/contracts';
+import type { CreateSupportTicketRequest, CurrentUser, SupportTicketStatus } from '@unicorn/contracts';
 import { ApiError, api, setCsrf } from './api';
 import { CatalogPage } from './pages/CatalogPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
 import { OffersPage } from './pages/OffersPage';
 import { BillingPage } from './pages/BillingPage';
-import { BusinessEntitiesCard, NotificationsCard } from '@unicorn/cabinet';
+import { BugReportWidget, BusinessEntitiesCard, NotificationsCard, SupportCard } from '@unicorn/cabinet';
 import type {
   AddEntityMemberRequest,
   CreateEntityRequest,
@@ -36,7 +36,14 @@ import { VerificationPage } from './pages/VerificationPage';
  * реестр ОИП — и кабинет говорит об этом прямо, а не показывает пустой список,
  * из которого можно заключить «предложений нет».
  */
-type Tab = 'catalog' | 'subscription' | 'billing' | 'verification' | 'offers' | 'notifications';
+type Tab =
+  | 'catalog'
+  | 'subscription'
+  | 'billing'
+  | 'verification'
+  | 'offers'
+  | 'notifications'
+  | 'support';
 
 /**
  * Короткое имя входа дополняется внутренним доменом.
@@ -81,6 +88,33 @@ const entitiesPort = {
     api.kyc.addMember(entityId, body),
   startKyb: (entityId: string, kind: 'registry_check' | 'beneficial_owners') =>
     api.kyc.startKyb(entityId, kind),
+};
+
+/**
+ * Транспорт поддержки и сообщений об ошибках.
+ *
+ * Тот же приём, что у уведомлений: общий пакет кабинетов не знает про HTTP, а
+ * кабинет остаётся при своём клиенте и своей схеме аутентификации.
+ */
+const supportPort = {
+  list: () => api.support.list(),
+  detail: (id: string) => api.support.detail(id),
+  open: (input: { subject: string; body: string }) =>
+    api.support.open({ kind: 'support' as const, ...input }),
+  reply: (id: string, body: string) => api.support.reply(id, body),
+  update: (id: string, input: { status?: SupportTicketStatus; assignToMe?: boolean }) =>
+    api.support.update(id, input),
+};
+
+/**
+ * Версия сборки, подставленная Vite (`define`). Объявляется здесь, потому что
+ * в браузере такой переменной нет — она заменяется значением при сборке.
+ */
+declare const __APP_VERSION__: string;
+
+/** Сообщение об ошибке уходит тем же маршрутом — различает их вид обращения. */
+const bugReportPort = {
+  open: (input: CreateSupportTicketRequest) => api.support.open(input),
 };
 
 export default function App() {
@@ -183,6 +217,9 @@ export default function App() {
               <TabButton active={tab === 'offers'} onClick={() => setTab('offers')}>
                 Предложения
               </TabButton>
+              <TabButton active={tab === 'support'} onClick={() => setTab('support')}>
+                Поддержка
+              </TabButton>
             </nav>
           </Container>
         </div>
@@ -210,8 +247,15 @@ export default function App() {
           {!checking && me && tab === 'notifications' ? (
             <NotificationsCard port={notificationsPort} />
           ) : null}
+          {!checking && me && tab === 'support' ? <SupportCard port={supportPort} /> : null}
         </Container>
       </main>
+      {/*
+        Форма сообщения об ошибке доступна везде и всегда, а не на отдельной
+        странице: о проблеме сообщают там, где её увидели. Комбинация клавиш —
+        для тестировщика, малозаметная кнопка — для всех остальных.
+      */}
+      {me ? <BugReportWidget port={bugReportPort} appVersion={__APP_VERSION__} /> : null}
     </>
   );
 }

@@ -19,6 +19,8 @@ import { AuditRepository } from './audit/audit.repository';
 import { BillingController } from './billing/billing.controller';
 import { BillingService } from './billing/billing.service';
 import { NotificationsController } from './comms/notifications.controller';
+import { SupportController } from './comms/support.controller';
+import { SupportService } from './comms/support.service';
 import { NotificationsService } from './comms/notifications.service';
 import { CryptoService } from './crypto/crypto.service';
 import { Database } from './db/unit-of-work';
@@ -92,6 +94,7 @@ import { S3Service } from './storage/s3.service';
     AnalysisController,
     ExpertsController,
     NotificationsController,
+    SupportController,
     IntegrationController,
     IntegrationTokenController,
     ServiceAccountsController,
@@ -129,6 +132,7 @@ import { S3Service } from './storage/s3.service';
     AnalysisService,
     ExpertsService,
     NotificationsService,
+    SupportService,
     IntegrationService,
     ServiceAccountStateService,
     ContentService,

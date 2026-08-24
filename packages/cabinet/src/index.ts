@@ -13,3 +13,9 @@
  */
 export { NotificationsCard, type NotificationsPort } from './NotificationsCard';
 export { BusinessEntitiesCard, type EntitiesPort } from './BusinessEntitiesCard';
+export { SupportCard, type SupportPort } from './SupportCard';
+export {
+  BugReportWidget,
+  BUG_REPORT_HOTKEY_LABEL,
+  type BugReportPort,
+} from './BugReportWidget';

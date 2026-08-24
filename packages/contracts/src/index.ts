@@ -22,6 +22,7 @@ export * from './domain/content';
 export * from './domain/billing';
 export * from './domain/investments';
 export * from './domain/integration';
+export * from './domain/support';
 export * from './domain/misc';
 
 export * from './events';
