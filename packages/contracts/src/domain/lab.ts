@@ -139,6 +139,19 @@ export const ProjectTeaserSchema = z.object({
 });
 export type ProjectTeaser = z.infer<typeof ProjectTeaserSchema>;
 
+/**
+ * Избранный проект инвестора.
+ *
+ * Это ТОТ ЖЕ тизер, что и в каталоге, плюс момент добавления. Отдельной,
+ * более подробной формы у избранного нет намеренно: закладка не открывает
+ * доступ к данным, которых инвестор без неё не видит, — иначе «добавить в
+ * избранное» стало бы способом обойти подписку.
+ */
+export const FavoriteProjectSchema = ProjectTeaserSchema.extend({
+  favoritedAt: IsoDateTimeSchema,
+});
+export type FavoriteProject = z.infer<typeof FavoriteProjectSchema>;
+
 /** Полная карточка — только владельцу, эксперту по назначению и инвестору с подпиской. */
 export const ProjectFullSchema = ProjectTeaserSchema.extend({
   description: z.string().nullable(),

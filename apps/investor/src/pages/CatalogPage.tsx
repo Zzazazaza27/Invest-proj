@@ -29,6 +29,16 @@ export function CatalogPage() {
     | { status: 'error'; message: string; traceId: string | null }
   >({ status: 'loading' });
   const [details, setDetails] = useState<{ id: string; text: string } | null>(null);
+  /**
+   * Отметки избранного.
+   *
+   * Хранятся на сервере; здесь — только копия для отрисовки. Список
+   * идентификаторов берётся ОДНИМ запросом на всю страницу: спрашивать
+   * «в избранном ли этот проект» по карточке означало бы двадцать четыре
+   * запроса на открытие каталога.
+   */
+  const [favorites, setFavorites] = useState<Set<string>>(new Set());
+  const [favoriteBusy, setFavoriteBusy] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -50,6 +60,51 @@ export function CatalogPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    // Отказ здесь не ломает каталог: у пользователя может не быть роли
+    // инвестора, и тогда отметок просто нет. Каталог обязан открыться и без них.
+    api.favorites
+      .ids()
+      .then((ids) => setFavorites(new Set(ids)))
+      .catch(() => setFavorites(new Set()));
+  }, []);
+
+  /**
+   * Переключение отметки.
+   *
+   * Состояние читается из СЕРВЕРНОГО ответа, а не выводится из предыдущего:
+   * оптимистичное переключение при отказе оставляло бы на экране отметку,
+   * которой в базе нет.
+   */
+  const toggleFavorite = useCallback(
+    async (projectId: string) => {
+      setFavoriteBusy(projectId);
+      const wasFavorite = favorites.has(projectId);
+      try {
+        const result = wasFavorite
+          ? await api.favorites.remove(projectId)
+          : await api.favorites.add(projectId);
+        setFavorites((current) => {
+          const next = new Set(current);
+          if (result.favorited) next.add(projectId);
+          else next.delete(projectId);
+          return next;
+        });
+      } catch (error) {
+        setDetails({
+          id: projectId,
+          text:
+            error instanceof ApiError
+              ? (error.problem?.detail ?? error.message)
+              : 'Не удалось изменить избранное',
+        });
+      } finally {
+        setFavoriteBusy(null);
+      }
+    },
+    [favorites],
+  );
 
   /** Полная карточка: доступ проверяет сервер, а не эта функция. */
   const openDetails = useCallback(async (id: string) => {
@@ -154,9 +209,25 @@ export function CatalogPage() {
                 <span style={{ fontWeight: 600 }}>
                   {teaser.investmentAsk} {teaser.askCurrency}
                 </span>
-                <Button variant="secondary" onClick={() => void openDetails(teaser.id)}>
-                  Подробнее
-                </Button>
+                <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
+                  <Button variant="secondary" onClick={() => void openDetails(teaser.id)}>
+                    Подробнее
+                  </Button>
+                  {/*
+                    Состояние отметки объявлено ТЕКСТОМ и `aria-pressed`, а не
+                    только цветом звезды: «жёлтая звезда = в избранном» не
+                    существует для того, кто пользуется экранным диктором.
+                  */}
+                  <Button
+                    variant={favorites.has(teaser.id) ? 'primary' : 'secondary'}
+                    aria-pressed={favorites.has(teaser.id)}
+                    loading={favoriteBusy === teaser.id}
+                    disabled={favoriteBusy === teaser.id}
+                    onClick={() => void toggleFavorite(teaser.id)}
+                  >
+                    {favorites.has(teaser.id) ? '★ В избранном' : '☆ В избранное'}
+                  </Button>
+                </div>
                 {details?.id === teaser.id ? (
                   <div
                     role="status"

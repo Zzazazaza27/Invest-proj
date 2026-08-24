@@ -216,6 +216,7 @@ console.warn('\n[8] Телефон');
   await small.waitForTimeout(1200);
 
   const overflow = await small.evaluate(
+    // eslint-disable-next-line no-undef -- код исполняется в браузере, не в Node
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   check('страница не едет по горизонтали', overflow <= 1, `перелив ${overflow}px`);
@@ -225,6 +226,7 @@ console.warn('\n[8] Телефон');
   const box = await small.locator('#bug-subject').boundingBox();
   check('форма помещается в экран телефона', box !== null && box.width <= 390, JSON.stringify(box));
   const overflowDialog = await small.evaluate(
+    // eslint-disable-next-line no-undef -- код исполняется в браузере, не в Node
     () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
   );
   check('открытая форма не рвёт вёрстку', overflowDialog <= 1, `перелив ${overflowDialog}px`);

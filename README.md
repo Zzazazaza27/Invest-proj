@@ -651,6 +651,9 @@ graphify, отказавшись перезаписывать граф мень�
 | `GET /support/tickets/:id`                      | сессия               | Обращение с перепиской; чужое — 404, а не 403             |
 | `POST /support/tickets/:id/messages`            | сессия               | Сообщение в обращение; сторону разговора решает сервер    |
 | `PATCH /support/tickets/:id`                    | `admin`              | Взять в работу, закрыть, вернуть в работу                 |
+| `GET /investor/favorites`                       | сессия               | Избранные проекты инвестора карточками                    |
+| `GET /investor/favorites/ids`                   | сессия               | Только идентификаторы — отметки на карточках каталога     |
+| `PUT/DELETE /investor/favorites/:projectId`     | `investor`           | Поставить и снять отметку; обе операции идемпотентны      |
 | `POST /admin/service-accounts`                  | `admin`              | Клиент внешней системы; секрет выдаётся один раз          |
 | `POST …/service-accounts/:id/rotation`          | `admin`              | Ротация секрета клиента                                   |
 | `POST …/service-accounts/:id/status`            | `admin`              | Приостановка и возобновление клиента                      |

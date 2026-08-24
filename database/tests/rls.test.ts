@@ -820,6 +820,123 @@ describe('RLS: обращения в поддержку (M062)', () => {
   });
 });
 
+describe('RLS: избранные проекты инвестора (M063)', () => {
+  /** Отметка ставится под самим инвестором — как это делает ядро. */
+  async function favorite(c: Client, userId: string, projectId: string): Promise<void> {
+    await actAs(c, { userId, roles: ['investor'], dbRole: 'app_backend' });
+    await c.query(`INSERT INTO lab.project_favorites (user_id, project_id) VALUES ($1, $2)`, [
+      userId,
+      projectId,
+    ]);
+  }
+
+  it('инвестор не видит чужое избранное', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const alice = await createUser(c, { role: 'investor' });
+      const bob = await createUser(c, { role: 'investor' });
+      const project = await createProject(c, owner.id);
+      await favorite(c, alice.id, project);
+
+      await actAs(c, { userId: bob.id, roles: ['investor'], dbRole: 'app_backend' });
+      const { rows } = await c.query('SELECT project_id FROM lab.project_favorites');
+      expect(rows).toHaveLength(0);
+    });
+  });
+
+  it('отметку нельзя поставить от чужого имени', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const alice = await createUser(c, { role: 'investor' });
+      const bob = await createUser(c, { role: 'investor' });
+      const project = await createProject(c, owner.id);
+
+      await actAs(c, { userId: bob.id, roles: ['investor'], dbRole: 'app_backend' });
+      await expect(
+        c.query(`INSERT INTO lab.project_favorites (user_id, project_id) VALUES ($1, $2)`, [
+          alice.id,
+          project,
+        ]),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('без роли инвестора добавить нельзя', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c, { role: 'founder' });
+      const project = await createProject(c, founder.id);
+
+      await actAs(c, { userId: founder.id, roles: ['founder'], dbRole: 'app_backend' });
+      await expect(
+        c.query(`INSERT INTO lab.project_favorites (user_id, project_id) VALUES ($1, $2)`, [
+          founder.id,
+          project,
+        ]),
+      ).rejects.toMatchObject({ code: '42501' });
+    });
+  });
+
+  it('чужую отметку нельзя снять', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const alice = await createUser(c, { role: 'investor' });
+      const bob = await createUser(c, { role: 'investor' });
+      const project = await createProject(c, owner.id);
+      await favorite(c, alice.id, project);
+
+      await actAs(c, { userId: bob.id, roles: ['investor'], dbRole: 'app_backend' });
+      const { rowCount } = await c.query('DELETE FROM lab.project_favorites WHERE project_id = $1', [
+        project,
+      ]);
+      // Молчаливый ноль — тоже отказ, и проверять надо именно его.
+      expect(rowCount).toBe(0);
+
+      // Позитивный контроль: своя отметка снимается — иначе предыдущая
+      // проверка была бы зелёной просто потому, что DELETE не работает вовсе.
+      await actAs(c, { userId: alice.id, roles: ['investor'], dbRole: 'app_backend' });
+      const mine = await c.query('DELETE FROM lab.project_favorites WHERE project_id = $1', [
+        project,
+      ]);
+      expect(mine.rowCount).toBe(1);
+    });
+  });
+
+  it('один проект нельзя добавить дважды', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const alice = await createUser(c, { role: 'investor' });
+      const project = await createProject(c, owner.id);
+      await favorite(c, alice.id, project);
+
+      // 23505 — нарушение первичного ключа: запрет живёт в схеме, а не в коде,
+      // который делает ON CONFLICT DO NOTHING.
+      await expect(
+        c.query(`INSERT INTO lab.project_favorites (user_id, project_id) VALUES ($1, $2)`, [
+          alice.id,
+          project,
+        ]),
+      ).rejects.toMatchObject({ code: '23505' });
+    });
+  });
+
+  it('отметку можно снять и после потери роли инвестора', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const alice = await createUser(c, { role: 'investor' });
+      const project = await createProject(c, owner.id);
+      await favorite(c, alice.id, project);
+
+      // Роль снята: добавлять больше нельзя, но собственная строка не должна
+      // становиться неудаляемой.
+      await actAs(c, { userId: alice.id, roles: ['founder'], dbRole: 'app_backend' });
+      const { rowCount } = await c.query('DELETE FROM lab.project_favorites WHERE project_id = $1', [
+        project,
+      ]);
+      expect(rowCount).toBe(1);
+    });
+  });
+});
+
 describe('RLS: покрытие манифеста', () => {
   it('каждая доменная таблица имеет ENABLE + FORCE RLS и хотя бы одну политику', async () => {
     const { rows } = await getPool().query<{ table_name: string; reason: string }>(
@@ -842,7 +959,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 12 схем и 68 таблиц', async () => {
+  it('схема соответствует спецификации: 12 схем и 69 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -879,11 +996,14 @@ describe('RLS: покрытие манифеста', () => {
     // поддержку и сообщения об ошибках. Одна сущность на две задачи — их
     // различает `kind`, жизненный цикл у них общий.
     //
+    // + lab.project_favorites (M063): избранные проекты инвестора. Первичный
+    // ключ (user_id, project_id) и есть запрет на повторное добавление.
+    //
     // Число держится вручную намеренно: рост числа таблиц обязан быть
     // осознанным. Ожидание 61 продержалось лишние две миграции только потому,
     // что локальная тестовая БД отставала и проверка была зелёной по неверной
     // причине.
-    expect(Number(tables.rows[0]!.count)).toBe(68);
+    expect(Number(tables.rows[0]!.count)).toBe(69);
   });
 });
 

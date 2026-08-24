@@ -16,6 +16,7 @@ import {
 import type { CreateSupportTicketRequest, CurrentUser, SupportTicketStatus } from '@unicorn/contracts';
 import { ApiError, api, setCsrf } from './api';
 import { CatalogPage } from './pages/CatalogPage';
+import { FavoritesPage } from './pages/FavoritesPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
 import { OffersPage } from './pages/OffersPage';
 import { BillingPage } from './pages/BillingPage';
@@ -43,6 +44,7 @@ type Tab =
   | 'verification'
   | 'offers'
   | 'notifications'
+  | 'favorites'
   | 'support';
 
 /**
@@ -202,6 +204,9 @@ export default function App() {
               <TabButton active={tab === 'catalog'} onClick={() => setTab('catalog')}>
                 Каталог
               </TabButton>
+              <TabButton active={tab === 'favorites'} onClick={() => setTab('favorites')}>
+                Избранное
+              </TabButton>
               <TabButton active={tab === 'subscription'} onClick={() => setTab('subscription')}>
                 Подписка
               </TabButton>
@@ -247,6 +252,7 @@ export default function App() {
           {!checking && me && tab === 'notifications' ? (
             <NotificationsCard port={notificationsPort} />
           ) : null}
+          {!checking && me && tab === 'favorites' ? <FavoritesPage /> : null}
           {!checking && me && tab === 'support' ? <SupportCard port={supportPort} /> : null}
         </Container>
       </main>

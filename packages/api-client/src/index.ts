@@ -9,6 +9,7 @@ import {
   EmailVerificationStatusSchema,
   EntityMemberSchema,
   ExpertAssignmentSchema,
+  FavoriteProjectSchema,
   HealthSchema,
   InvestmentAgreementSchema,
   InvestmentOfferSchema,
@@ -670,6 +671,47 @@ export class UnicornApi {
 
     revokeDevice: (id: string) =>
       this.http.request({ method: 'DELETE', path: `/notifications/devices/${id}` }),
+  };
+
+  // ------------------------------------------------------------- избранное
+  /**
+   * Избранные проекты инвестора.
+   *
+   * PUT и DELETE, а не «переключить»: обе операции идемпотентны, и повтор при
+   * обрыве связи приводит к тому же состоянию. Переключатель на повторе дал бы
+   * противоположный результат.
+   */
+  readonly favorites = {
+    list: () =>
+      this.http
+        .request({
+          path: '/investor/favorites',
+          schema: z.object({ items: z.array(FavoriteProjectSchema) }),
+        })
+        .then((response) => response.items),
+
+    /** Только идентификаторы — каталог отмечает карточки одним запросом. */
+    ids: () =>
+      this.http
+        .request({
+          path: '/investor/favorites/ids',
+          schema: z.object({ items: z.array(z.string()) }),
+        })
+        .then((response) => response.items),
+
+    add: (projectId: string) =>
+      this.http.request({
+        method: 'PUT',
+        path: `/investor/favorites/${encodeURIComponent(projectId)}`,
+        schema: z.object({ favorited: z.boolean() }),
+      }),
+
+    remove: (projectId: string) =>
+      this.http.request({
+        method: 'DELETE',
+        path: `/investor/favorites/${encodeURIComponent(projectId)}`,
+        schema: z.object({ favorited: z.boolean() }),
+      }),
   };
 
   // -------------------------------------------------------------- поддержка
