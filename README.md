@@ -171,6 +171,7 @@ node scripts/smoke-core.mjs            # периметр: 46 проверок
 node scripts/smoke-lab.mjs             # KYC, проекты, каталог, согласия: 112 проверок
 node scripts/smoke-auth-recovery.mjs   # восстановление пароля и почта: 34 проверки
 node scripts/smoke-mail-smtp.mjs       # SMTP-транспорт и служебный ящик: 17 проверок
+node scripts/probe-mail-readiness.mjs --domain <домен> --ip <адрес>  # MX, SPF, DKIM, DMARC, PTR, релей
 node scripts/smoke-billing.mjs         # биллинг и админский контур: 44 проверки
 node scripts/smoke-investments.mjs     # регулируемый контур ОИП: 34 проверки
 node scripts/smoke-experts.mjs         # экспертиза, сезон, уведомления: 49 проверок
