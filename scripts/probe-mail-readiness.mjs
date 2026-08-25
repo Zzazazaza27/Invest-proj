@@ -166,7 +166,17 @@ const directSending = Boolean(args.direct);
 if (!ip) {
   report('SKIP', 'PTR', 'адрес не задан (--ip) — проверка не выполнялась');
 } else {
-  const names = await resolver.reverse(ip).catch(() => []);
+  // Явный запрос PTR по `in-addr.arpa`, а не `resolver.reverse()`.
+  //
+  // `reverse()` на этой машине вернул пустоту для адреса, у которого запись
+  // ЕСТЬ: `nslookup -type=PTR` через те же 8.8.8.8 и 1.1.1.1 отдавал
+  // `mail.vgorkakh.ru`, и Gmail в тот же момент принял письмо — то есть
+  // обратная запись работала, а зонд сообщал «её нет». Второй раз подряд
+  // инструмент проверки соврал в сторону «всё плохо», и по такому отчёту
+  // пошли бы чинить работающее. Запрос по имени зоны детерминирован.
+  const names = await resolver
+    .resolvePtr(`${ip.split('.').reverse().join('.')}.in-addr.arpa`)
+    .catch(() => resolver.reverse(ip).catch(() => []));
   if (names.length === 0) {
     if (directSending) blocking += 1;
     report(
