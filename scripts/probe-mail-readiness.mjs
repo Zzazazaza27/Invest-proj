@@ -19,6 +19,7 @@
  *   node scripts/probe-mail-readiness.mjs --relay smtp.timeweb.ru:2525
  *   node scripts/probe-mail-readiness.mjs --domain <домен> --direct   # свой MTA
  *   node scripts/probe-mail-readiness.mjs --domain <домен> --resolver system
+ *   node scripts/probe-mail-readiness.mjs --domain <домен> --outbound  # С СЕРВЕРА
  *
  * Без аргументов домен берётся из MAIL_FROM, релей — из MAIL_SMTP_HOST/PORT
  * корневого .env.
@@ -211,6 +212,61 @@ if (!relay) {
   }
 }
 
+// --- Исходящие почтовые порты (--outbound) ---------------------------------
+//
+// ЗАПУСКАТЬ С САМОГО СЕРВЕРА. Провайдеры ВПС закрывают исходящий 25 по
+// умолчанию, чтобы с их адресов не рассылали спам, и открывают по заявке.
+// Проверить это можно только оттуда, откуда пойдут письма: с машины
+// разработчика 25-й может быть открыт, а с ВПС закрыт, и наоборот.
+//
+// Проверка содержательная: соединение считается рабочим, только когда сервер
+// прислал приветствие `220`. Открытый сокет доказывает меньше, чем кажется —
+// провайдер может принимать соединение и молча его глотать.
+
+if (args.outbound) {
+  console.warn('\n--- Исходящие почтовые порты (проверять С СЕРВЕРА) ---\n');
+
+  const relayHost = relay ? splitRelay(relay)[0] : 'smtp.timeweb.ru';
+  const targets = [
+    ...mx.map((r) => [r.exchange, 25]),
+    ['gmail-smtp-in.l.google.com', 25],
+    ['mx.yandex.ru', 25],
+    [relayHost, 25],
+    [relayHost, 587],
+    [relayHost, 465],
+    [relayHost, 2525],
+  ];
+
+  let reachable = 0;
+  for (const [host, port] of targets) {
+    const result = await probeRelay(host, port);
+    if (result.error) {
+      report('HIGH', `${port}`, `${host} — ${result.error}`);
+    } else {
+      reachable += 1;
+      report('OK', `${port}`, `${host} — ${result.banner}`);
+    }
+  }
+
+  // Позитивный контроль. Без него «всё закрыто» неотличимо от «сети нет
+  // вовсе», и отчёт получается уверенным, но бессмысленным.
+  const control = await probeTcp('github.com', 443);
+  report(
+    control ? 'OK' : 'HIGH',
+    'контроль',
+    control
+      ? 'github.com:443 доступен — сеть работает, значит отказы выше про порты'
+      : 'github.com:443 недоступен — у машины нет сети, результаты выше ничего не значат',
+  );
+
+  console.warn(
+    `\nИсходящих направлений доступно: ${reachable} из ${targets.length}. ` +
+      (reachable === 0
+        ? 'Почту отсюда не отправить никак.'
+        : 'Отправка возможна по доступным портам.'),
+  );
+}
+
 console.warn(
   `\nИтог: блокирующих пробелов ${blocking}. ` +
     (blocking === 0
@@ -218,6 +274,22 @@ console.warn(
       : 'До подключения почты их нужно закрыть.'),
 );
 process.exitCode = blocking === 0 ? 0 : 1;
+
+/** Только факт установленного TCP-соединения — для позитивного контроля. */
+async function probeTcp(host, port) {
+  return new Promise((resolve) => {
+    const socket = createConnection({ host, port }, () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.setTimeout(SMTP_TIMEOUT_MS);
+    socket.on('timeout', () => {
+      socket.destroy();
+      resolve(false);
+    });
+    socket.on('error', () => resolve(false));
+  });
+}
 
 // ---------------------------------------------------------------- служебное
 
