@@ -63,6 +63,23 @@ panel.vgorkakh.ru {
 доверия начинается снаружи, у Caddy. Проверено фактом: `curl` снаружи даёт
 `302` на `/login/` при `ssl_verify_result=0`.
 
+**`header_up Host {host}` — обязательная строка, без неё вход не работает.**
+Панель сверяет заголовок `Origin` с собственным `Host`
+(`web/inc/prevent_csrf.php`) и без этой строки видит адрес апстрима вместо
+того, по которому пришёл человек. Любой POST, включая вход, отбивается как
+«Potential CSRF use detected». Симптом обманчив: сообщение советует отключить
+расширения браузера или сбросить `POLICY_CSRF_STRICTNESS` в `0`, хотя браузер
+ни при чём, а обнуление политики сняло бы защиту от подделки запросов вместо
+починки проксирования. Проверяется одной командой — с сервера, минуя Caddy,
+тот же запрос проходил, а через Caddy падал:
+
+```bash
+curl -s -X POST -H "Origin: https://panel.vgorkakh.ru"   -d "user=admin&password=неверный" https://panel.vgorkakh.ru/login/   | grep -oE "Potential CSRF use detected|<title>[^<]*"
+```
+
+Ответ `<title>LOGIN ...` — проверка пройдена; `Potential CSRF` — сломано
+проксирование заголовков. `POLICY_CSRF_STRICTNESS` при этом остаётся `1`.
+
 Ящик `info@vgorkakh.ru`: IMAP `mail.vgorkakh.ru:993` (SSL), отправка
 `mail.vgorkakh.ru:587` (STARTTLS). Пароль — в `/root/.mail-info-account` (600).
 Порт **465 закрыт снаружи сознательно**: exim на нём слушает, но клиентская
