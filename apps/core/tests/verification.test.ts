@@ -3,7 +3,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { loadEnv, resetEnvCache } from '../src/config/env';
-import { FileMailTransport, NullMailTransport } from '../src/comms/mail.transport';
+import { FileMailTransport, NullMailTransport, buildMessage } from '../src/comms/mail.transport';
 
 /**
  * Восстановление пароля и подтверждение адреса: то, что дымовой прогон
@@ -119,5 +119,91 @@ describe('Файловый транспорт', () => {
       resetEnvCache();
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('SMTP-транспорт: конфигурация fail-closed', () => {
+  const SMTP_ENV = { ...BASE_ENV, MAIL_TRANSPORT: 'smtp' };
+
+  it('транспорт smtp без релея не запускается', () => {
+    expect(() => loadEnv(SMTP_ENV)).toThrow(/MAIL_SMTP_HOST/);
+  });
+
+  it('открытый канал разрешён только к петле', () => {
+    expect(() =>
+      loadEnv({ ...SMTP_ENV, MAIL_SMTP_HOST: 'smtp.example.com', MAIL_SMTP_SECURITY: 'plain' }),
+    ).toThrow(/MAIL_SMTP_SECURITY/);
+    // Позитивный контроль: к локальному приёмнику прогонов — законно.
+    expect(
+      loadEnv({ ...SMTP_ENV, MAIL_SMTP_HOST: '127.0.0.1', MAIL_SMTP_SECURITY: 'plain' })
+        .MAIL_SMTP_SECURITY,
+    ).toBe('plain');
+  });
+
+  it('имя без пароля отвергается', () => {
+    expect(() =>
+      loadEnv({ ...SMTP_ENV, MAIL_SMTP_HOST: 'smtp.example.com', MAIL_SMTP_USER: 'sender' }),
+    ).toThrow(/MAIL_SMTP_PASSWORD/);
+  });
+
+  it('в production релей обязан быть зашифрован и с аутентификацией', () => {
+    const prodSmtp = { ...PROD_ENV, MAIL_TRANSPORT: 'smtp', MAIL_SMTP_HOST: 'smtp.timeweb.ru' };
+    // Релей без входа примет письмо от кого угодно от нашего имени.
+    expect(() => loadEnv(prodSmtp)).toThrow(/MAIL_SMTP_USER/);
+    expect(
+      loadEnv({
+        ...prodSmtp,
+        MAIL_SMTP_USER: 'no-reply@unicorn.vc',
+        MAIL_SMTP_PASSWORD: 'p'.repeat(24),
+        MAIL_SMTP_PORT: '2525',
+      }).MAIL_SMTP_PORT,
+    ).toBe(2525);
+  });
+
+  it('уведомления о регистрации без служебного ящика не включаются', () => {
+    expect(() =>
+      loadEnv({ ...BASE_ENV, NOTIFY_INBOX_ON_REGISTRATION: 'true', SUPPORT_INBOX_EMAIL: '' }),
+    ).toThrow(/SUPPORT_INBOX_EMAIL/);
+  });
+});
+
+describe('Сборка письма', () => {
+  const LETTER = { from: 'no-reply@unicorn.local', to: 'user@example.com' };
+
+  it('кириллическая тема кодируется по RFC 2047', () => {
+    const message = buildMessage({ ...LETTER, subject: 'Подтверждение адреса', text: 'ссылка' });
+    // Тема, отданная как есть, приезжает в почтовый клиент нечитаемой.
+    expect(message).toMatch(/Subject: =\?UTF-8\?B\?/);
+    expect(message).not.toContain('Подтверждение');
+    expect(message).toContain('Content-Transfer-Encoding: base64');
+  });
+
+  it('ASCII-тема не кодируется без нужды', () => {
+    expect(buildMessage({ ...LETTER, subject: '[registration] new', text: 'x' })).toContain(
+      'Subject: [registration] new',
+    );
+  });
+
+  it('перевод строки в заголовке отвергается', () => {
+    // Иначе в письмо дописывается СВОЙ заголовок: скрытая копия, другой
+    // получатель, собственный Content-Type.
+    expect(() =>
+      buildMessage({ ...LETTER, subject: 'тема\r\nBcc: attacker@example.com', text: 'x' }),
+    ).toThrow();
+    expect(() =>
+      buildMessage({
+        ...LETTER,
+        to: 'user@example.com\nBcc: attacker@example.com',
+        subject: 's',
+        text: 'x',
+      }),
+    ).toThrow();
+  });
+
+  it('тело доезжает целым: base64 обратимо', () => {
+    const text = 'Первая строка.\n.\nи «кавычки» с ёжиком';
+    const message = buildMessage({ ...LETTER, subject: 's', text });
+    const body = message.split('\r\n\r\n')[1]!.replace(/\r\n/g, '');
+    expect(Buffer.from(body, 'base64').toString('utf8')).toBe(text);
   });
 });

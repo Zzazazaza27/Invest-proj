@@ -17,6 +17,7 @@ import { getEnv } from '../config/env';
 import { issueCsrfToken } from '../auth/csrf';
 import { TokenRevocationService } from '../auth/token-revocation.service';
 import { LoginThrottleService } from '../auth/login-throttle.service';
+import { MailTransport } from '../comms/mail.transport';
 
 /**
  * Роли, от имени которых разрешено писать глагол `identity.token.revoked`
@@ -90,6 +91,7 @@ export class IdentityService {
     private readonly audit: AuditRepository,
     private readonly revocations: TokenRevocationService,
     private readonly loginThrottle: LoginThrottleService,
+    private readonly mail: MailTransport,
   ) {}
 
   /**
@@ -129,7 +131,6 @@ export class IdentityService {
     input: RegisterRequest,
     ctx: RequestContext,
   ): Promise<{ userId: string; roles: Role[] }> {
-    const env = getEnv();
     const userId = uuidv7();
     const passwordHash = await argon2.hash(input.password, ARGON2_OPTIONS);
 
@@ -143,7 +144,7 @@ export class IdentityService {
       phone: input.phone ?? null,
     });
 
-    return this.db.transaction(ctx, async (tx) => {
+    const created = await this.db.transaction(ctx, async (tx) => {
       // Занятость контакта проверяется до вставки, чтобы вернуть внятную
       // ошибку. UNIQUE-индекс по blind index закрывает ГОНКУ — но только от
       // появления дубликата: ответ при этом был 500, пока его не перевели в
@@ -212,9 +213,71 @@ export class IdentityService {
         traceId: ctx.traceId,
       });
 
-      void env;
       return { userId, roles: [input.role as Role] };
     });
+
+    // Уведомление служебного ящика — ПОСЛЕ фиксации транзакции и вне её.
+    // Внутри оно означало бы удержание соединения с базой на время
+    // SMTP-диалога с чужим сервером, а при отказе релея — откат уже
+    // состоявшейся регистрации.
+    await this.notifyInboxOnRegistration(created.userId, input.role, input.locale);
+    return created;
+  }
+
+  /**
+   * «Зарегистрировался новый пользователь» на служебный ящик проекта.
+   *
+   * В письме НЕТ ни адреса, ни телефона, ни имени. Контакты лежат в базе
+   * зашифрованными и с blind-индексом; отправить их в почтовый ящик — значит
+   * вынести персональные данные из защищённого хранилища в канал, где нет ни
+   * шифрования на покое, ни журнала доступа, ни срока хранения. Для
+   * уведомления достаточно идентификатора, роли и ссылки в админку: кому
+   * положено, тот откроет карточку и увидит остальное под своими правами.
+   *
+   * Отказ отправки не роняет регистрацию: человек уже зарегистрирован, и
+   * возвращать ему ошибку из-за недоступного релея неверно. Но и молчать
+   * нельзя — неудача уходит предупреждением в лог.
+   */
+  private async notifyInboxOnRegistration(
+    userId: string,
+    role: string,
+    locale: string,
+  ): Promise<void> {
+    const env = getEnv();
+    if (env.NOTIFY_INBOX_ON_REGISTRATION !== 'true') return;
+    if (!env.SUPPORT_INBOX_EMAIL || !this.mail.available) {
+      this.logger.warn({
+        msg: 'уведомление о регистрации не отправлено — канал не настроен',
+        hasInbox: Boolean(env.SUPPORT_INBOX_EMAIL),
+        mailAvailable: this.mail.available,
+      });
+      return;
+    }
+    try {
+      await this.mail.send({
+        to: env.SUPPORT_INBOX_EMAIL,
+        subject: `[registration] Новая регистрация: ${role}`,
+        text: [
+          'Зарегистрирован новый пользователь.',
+          '',
+          `Идентификатор: ${userId}`,
+          `Роль: ${role}`,
+          `Язык интерфейса: ${locale}`,
+          `Момент: ${new Date().toISOString()}`,
+          '',
+          `Карточка: ${env.PUBLIC_BASE_URL}/admin/users/${userId}`,
+          '',
+          'Контактные данные в письмо не выносятся — они видны в карточке под правами.',
+          '',
+        ].join('\n'),
+      });
+    } catch (error) {
+      this.logger.warn({
+        msg: 'уведомление о регистрации не ушло',
+        userId,
+        reason: error instanceof Error ? error.message : 'unknown',
+      });
+    }
   }
 
   /**

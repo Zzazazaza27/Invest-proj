@@ -24,6 +24,8 @@
     "infra:up": "node scripts/infra.mjs up",
     "web:up": "node scripts/infra.mjs web-up",
     "web:down": "node scripts/infra.mjs web-down",
+    "infra:mail-up": "node scripts/infra.mjs mail-up",
+    "infra:mail-down": "node scripts/infra.mjs mail-down",
     "infra:down": "node scripts/infra.mjs down",
     "infra:reset": "node scripts/infra.mjs reset",
     "db:migrate": "npm run migrate -w database",
