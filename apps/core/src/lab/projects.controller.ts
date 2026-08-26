@@ -109,6 +109,24 @@ export class ProjectsController {
     // Документ проекта — не публичный ресурс: он не должен осесть в общих
     // кэшах между инвестором и следующим посетителем.
     void reply.header('Cache-Control', 'private, no-store');
+    /*
+      Встраивание разрешено СВОЕМУ origin и только здесь.
+      Глобально ядро отдаёт `X-Frame-Options: DENY` и `frame-ancestors 'none'` —
+      правильная защита от кликджекинга для страниц с действиями. Но просмотр
+      документа — это ровно встраивание в собственный кабинет: с глобальными
+      заголовками фрейм оставался пустым, а браузер писал «сайт не позволяет
+      установить соединение» (проверено рендером, а не чтением кода).
+      `SAMEORIGIN` и `frame-ancestors 'self'` открывают только свой домен;
+      встроить документ к себе на страницу чужой сайт по-прежнему не может.
+      Остальные директивы CSP оставлены запретительными: у PDF нет ни скриптов,
+      ни форм, которым здесь было бы место.
+    */
+    void reply.header('X-Frame-Options', 'SAMEORIGIN');
+    void reply.header(
+      'Content-Security-Policy',
+      "default-src 'none'; object-src 'none'; script-src 'none'; " +
+        "form-action 'none'; frame-ancestors 'self'",
+    );
     return reply.send(file.body);
   }
 
