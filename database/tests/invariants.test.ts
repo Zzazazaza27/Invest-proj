@@ -17,7 +17,8 @@ import {
   inRollbackTx,
   uuidv7,
 } from './helpers.ts';
-import { readdirSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { Client } from 'pg';
 import { MIGRATIONS_DIR } from '../src/env.ts';
@@ -112,6 +113,36 @@ describe('Журнал событий: append-only и hash-chain', () => {
       );
       await expect(c.query(`DELETE FROM audit.events`)).rejects.toThrow(/append-only/i);
     });
+  });
+
+  // Реестр fail-closed: глагол, которого нет в audit.event_type_registry,
+  // роняет транзакцию сервиса целиком. Тесты ядра аудит подменяют, поэтому
+  // незарегистрированный глагол доживает до стенда (так упал PUT
+  // /v1/admin/ai/credentials, M068). Сверка идёт по исходникам ядра: каждый
+  // `verb: '...'` обязан быть зарегистрирован миграцией.
+  it('каждый глагол аудита из кода ядра зарегистрирован в реестре', async () => {
+    const coreSrc = join(MIGRATIONS_DIR, '..', '..', 'apps', 'core', 'src');
+    const inCode = new Set<string>();
+    const walk = (dir: string) => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) walk(path);
+        else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
+          for (const m of readFileSync(path, 'utf8').matchAll(/verb:\s*'([a-z_]+\.[a-z_.]+)'/g)) {
+            inCode.add(m[1]);
+          }
+        }
+      }
+    };
+    walk(coreSrc);
+    expect(inCode.size).toBeGreaterThan(10);
+
+    const { rows } = await getPool().query<{ verb: string }>(
+      `SELECT verb FROM audit.event_type_registry`,
+    );
+    const registered = new Set(rows.map((r) => r.verb));
+    const missing = [...inCode].filter((v) => !registered.has(v)).sort();
+    expect(missing).toEqual([]);
   });
 
   it('недопустимая роль актора отвергается', async () => {
