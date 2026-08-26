@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import hmac
 import json
 import logging
@@ -428,14 +429,27 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 f"{provider.name}:{credential.model or provider.model or 'default'}"
             )
             try:
-                system, user = build_messages(
-                    prompts,
-                    project=payload.project.model_dump(),
-                    nonce=nonce,
-                    model_version=model_version,
-                )
+                project_dump = payload.project.model_dump()
 
-                async def one_vote() -> tuple[dict[str, Any], str]:
+                def vote_nonce(index: int) -> str:
+                    # Голос 0 — базовый nonce ядра (он в inputSha256), остальные —
+                    # производные от него: модель чувствительна к самой строке
+                    # маркера (зонд: разные nonce на одном входе — сдвиг IRS до 4),
+                    # медиана по разным nonce усредняет и это смещение, оставаясь
+                    # детерминированной для одного и того же входа.
+                    if index == 0:
+                        return nonce
+                    return hashlib.sha256(
+                        f"{nonce}:{index}".encode("utf-8")
+                    ).hexdigest()[:32]
+
+                async def one_vote(index: int) -> tuple[dict[str, Any], str]:
+                    system, user = build_messages(
+                        prompts,
+                        project=project_dump,
+                        nonce=vote_nonce(index),
+                        model_version=model_version,
+                    )
                     text, model_used = await run_in_threadpool(
                         call_chat,
                         endpoint=provider.endpoint or "",
@@ -464,7 +478,8 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 # семплера, которую temperature 0 и seed у хостинговых моделей не
                 # убирают. Отказов больше половины — отказ всего прогона.
                 outcomes = await asyncio.gather(
-                    *(one_vote() for _ in range(provider.votes)), return_exceptions=True
+                    *(one_vote(i) for i in range(provider.votes)),
+                    return_exceptions=True,
                 )
                 successes = [o for o in outcomes if not isinstance(o, BaseException)]
                 failures = [o for o in outcomes if isinstance(o, BaseException)]
