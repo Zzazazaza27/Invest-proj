@@ -457,7 +457,8 @@ def test_request_extras_from_policy_reach_provider_body(
     monkeypatch.setattr("app.llm._post_json", fake_post)
     policy = load_policy("policy/ai-policy.json")
     deepseek = policy.providers["deepseek"]
-    assert deepseek.request_extras == {"thinking": {"type": "disabled"}}
+    assert deepseek.request_extras["thinking"] == {"type": "disabled"}
+    assert isinstance(deepseek.request_extras["seed"], int)
     text, _model = llm.call_chat(
         endpoint=deepseek.endpoint or "",
         api_style=deepseek.api_style,

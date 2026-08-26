@@ -39,7 +39,7 @@
     "таймаут одного вызова анализа/перевода. DeepSeek: thinking выключен ради",
     "воспроизводимости (в режиме размышления temperature игнорируется)."
   ],
-  "version": "1.6.0",
+  "version": "1.6.1",
   "default_provider": "local_deterministic",
   "residency": {
     "restricted_classes": [
@@ -161,7 +161,10 @@
       "models_endpoint": "https://api.openai.com/v1/models",
       "model_suggestions": [],
       "max_output_tokens": 16000,
-      "timeout_seconds": 240
+      "timeout_seconds": 240,
+      "request_extras": {
+        "seed": 20260826
+      }
     },
     {
       "name": "kimi",
@@ -227,7 +230,7 @@
         "commercial_secret"
       ],
       "enabled": false,
-      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модели deepseek-v4-pro / deepseek-v4-flash. Режим размышления выключен (thinking.type=disabled): в нём игнорируется temperature, а размышление входит в max_tokens; потолок 65 536 оставлен с запасом.",
+      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модели deepseek-v4-pro / deepseek-v4-flash. Режим размышления выключен (thinking.type=disabled): в нём игнорируется temperature, а размышление входит в max_tokens; потолок 65 536 оставлен с запасом. seed фиксирован: детерминированная выборка (beta у DeepSeek) держит разброс IRS между прогонами в пределах гейта.",
       "models_endpoint": "https://api.deepseek.com/models",
       "model_suggestions": [],
       "max_output_tokens": 65536,
@@ -235,7 +238,8 @@
       "request_extras": {
         "thinking": {
           "type": "disabled"
-        }
+        },
+        "seed": 20260826
       }
     }
   ]

@@ -412,7 +412,7 @@ try {
           const window = s.explanation.slice(Math.max(0, at - 60), at + n.length + 60);
           const derived =
             /[×*/÷≈=+−]/.test(window) ||
-            [...digits(window)].some((m) => m !== n && m.length >= 2 && inputNumbers.has(m));
+            [...digits(window)].some((m) => m !== n && inputNumbers.has(m));
           if (derived) continue;
           hallucinated += 1;
           // Само число и его окружение — иначе отказ нельзя разобрать: год,
