@@ -9,15 +9,24 @@
     "  pdn               — персональные данные (152-ФЗ)",
     "  commercial_secret — финансы, договоры, непубличные метрики",
     "",
-    "Провайдер вне jurisdiction=RU не получает pdn и commercial_secret никогда.",
-    "Это не настройка по умолчанию, а инвариант: запрос отклоняется целиком.",
+    "Механизм резидентности: провайдер вне residency.allowed_jurisdictions не",
+    "получает restricted_classes никогда — запрос отклоняется целиком, а",
+    "политика с таким противоречием не загружается.",
+    "",
+    "Решение владельца от 2026-08-26: зарубежные модели (OpenAI, Anthropic, Kimi,",
+    "Qwen) в работе НЕ ограничиваются — allowed_jurisdictions расширен до US и CN,",
+    "и каждому LLM-провайдеру открыты все классы данных. Риск трансграничной",
+    "передачи ПДн (152-ФЗ, ст. 12) принят владельцем и записан в ADR-008 §7.",
+    "Вернуть ограничение — убрать US/CN из allowed_jurisdictions и сузить",
+    "data_classes зарубежных провайдеров до public: загрузчик сам откажет",
+    "противоречивой строке.",
     "",
     "api_style / auth_scheme / model — как вызывать сетевого провайдера. Адрес,",
     "стиль и юрисдикция задаются ТОЛЬКО здесь и проходят ревью: редактируемый из",
     "панели адрес был бы каналом утечки текста заявок на произвольный хост (ADR-008).",
     "Ключ провайдера в этот файл не попадает никогда: он в панели или в окружении."
   ],
-  "version": "1.1.0",
+  "version": "1.2.0",
   "default_provider": "local_deterministic",
   "residency": {
     "restricted_classes": [
@@ -25,7 +34,9 @@
       "commercial_secret"
     ],
     "allowed_jurisdictions": [
-      "RU"
+      "RU",
+      "US",
+      "CN"
     ]
   },
   "providers": [
@@ -86,10 +97,13 @@
       "is_llm": true,
       "endpoint": "https://api.anthropic.com/v1/messages",
       "data_classes": [
-        "public"
+        "public",
+        "pseudonymous",
+        "pdn",
+        "commercial_secret"
       ],
       "enabled": false,
-      "note": "Вне РФ. Допустим только для публичных текстов и только по явному гранту. Модель задаёт оператор.",
+      "note": "Claude (Anthropic, США). Все классы данных — по решению владельца 2026-08-26. Модель задаёт оператор.",
       "api_style": "anthropic_messages",
       "auth_scheme": "x-api-key",
       "model": null
@@ -104,10 +118,49 @@
       "auth_scheme": "bearer",
       "model": null,
       "data_classes": [
-        "public"
+        "public",
+        "pseudonymous",
+        "pdn",
+        "commercial_secret"
       ],
       "enabled": false,
-      "note": "Вне РФ. Только публичные тексты. Модель задаёт оператор."
+      "note": "OpenAI (США). Все классы данных — по решению владельца 2026-08-26. Модель задаёт оператор."
+    },
+    {
+      "name": "kimi",
+      "jurisdiction": "CN",
+      "kind": "llm",
+      "is_llm": true,
+      "endpoint": "https://api.moonshot.ai/v1/chat/completions",
+      "api_style": "openai_chat",
+      "auth_scheme": "bearer",
+      "model": null,
+      "data_classes": [
+        "public",
+        "pseudonymous",
+        "pdn",
+        "commercial_secret"
+      ],
+      "enabled": false,
+      "note": "Kimi (Moonshot AI, КНР), международная площадка platform.kimi.ai — OpenAI-совместимый вход. Ключ китайской площадки (api.moonshot.cn) сюда не подходит: адрес меняется здесь, ревью. Модель задаёт оператор (kimi-k2.5, moonshot-v1-32k)."
+    },
+    {
+      "name": "qwen",
+      "jurisdiction": "CN",
+      "kind": "llm",
+      "is_llm": true,
+      "endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+      "api_style": "openai_chat",
+      "auth_scheme": "bearer",
+      "model": null,
+      "data_classes": [
+        "public",
+        "pseudonymous",
+        "pdn",
+        "commercial_secret"
+      ],
+      "enabled": false,
+      "note": "Qwen (Alibaba Cloud Model Studio, КНР), международный регион Singapore — OpenAI-совместимый вход. Ключ региона Beijing требует адреса dashscope.aliyuncs.com — меняется здесь, ревью. Модель задаёт оператор (qwen-plus, qwen-max)."
     }
   ]
 }

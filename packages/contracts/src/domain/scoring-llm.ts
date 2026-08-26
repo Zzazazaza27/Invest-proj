@@ -200,7 +200,7 @@ export type StoredPassport = z.infer<typeof StoredPassportSchema>;
 // ------------------------------------------------------------------ панель: ключ провайдера
 
 /** Провайдеры, для которых панель принимает ключ. Совпадает с CHECK в M066 и политикой шлюза. */
-export const LlmProviderSchema = z.enum(['yandex_gpt', 'gigachat', 'anthropic', 'openai']);
+export const LlmProviderSchema = z.enum(['yandex_gpt', 'gigachat', 'anthropic', 'openai', 'kimi', 'qwen']);
 export type LlmProvider = z.infer<typeof LlmProviderSchema>;
 
 /** Что панель видит о ключе: отпечаток и метаданные, самого ключа здесь нет и не будет. */

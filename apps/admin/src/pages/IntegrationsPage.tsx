@@ -38,13 +38,17 @@ const PRODUCT_VERTICALS: Record<string, string> = {
   gigachat: 'ИИ-скоринг',
   anthropic: 'ИИ-скоринг',
   openai: 'ИИ-скоринг',
+  kimi: 'ИИ-скоринг',
+  qwen: 'ИИ-скоринг',
 };
 
 const PROVIDER_TITLES: Record<string, string> = {
   yandex_gpt: 'YandexGPT (РФ)',
   gigachat: 'GigaChat (РФ)',
-  anthropic: 'Anthropic (США — только публичные тексты)',
-  openai: 'OpenAI (США — только публичные тексты)',
+  anthropic: 'Claude (Anthropic, США)',
+  openai: 'OpenAI (США)',
+  kimi: 'Kimi (Moonshot AI, КНР)',
+  qwen: 'Qwen (Alibaba Cloud, КНР)',
 };
 
 const MODEL_HINTS: Record<string, string> = {
@@ -52,6 +56,8 @@ const MODEL_HINTS: Record<string, string> = {
   gigachat: 'например GigaChat или GigaChat-Pro',
   anthropic: 'например claude-sonnet-4-5',
   openai: 'например gpt-4o',
+  kimi: 'например kimi-k2.5 или moonshot-v1-32k',
+  qwen: 'например qwen-plus или qwen-max',
 };
 
 type Tab = 'apis' | 'clients' | 'scoring';

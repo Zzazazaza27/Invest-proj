@@ -129,7 +129,7 @@ describe('Журнал событий: append-only и hash-chain', () => {
         if (entry.isDirectory()) walk(path);
         else if (entry.name.endsWith('.ts') && !entry.name.endsWith('.test.ts')) {
           for (const m of readFileSync(path, 'utf8').matchAll(/verb:\s*'([a-z_]+\.[a-z_.]+)'/g)) {
-            inCode.add(m[1]);
+            inCode.add(m[1]!);
           }
         }
       }
