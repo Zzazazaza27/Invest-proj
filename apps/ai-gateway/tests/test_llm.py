@@ -444,7 +444,7 @@ def test_provider_models_failure_reports_upstream_status(
 
 def test_provider_check_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     def fake_call(**kwargs):  # type: ignore[no-untyped-def]
-        assert kwargs["max_tokens"] == 32
+        assert kwargs["max_tokens"] == 1024
         return '{"ok": true}', "gpt-test-2026"
 
     monkeypatch.setattr("app.main.call_chat", fake_call)

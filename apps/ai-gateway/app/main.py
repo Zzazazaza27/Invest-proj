@@ -643,7 +643,10 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 default_model=provider.model,
                 system="Отвечай только JSON.",
                 user='Верни ровно {"ok": true}',
-                max_tokens=32,
+                # Рассуждающие модели (DeepSeek V4, o-серия) тратят токены на
+                # размышление до первого символа ответа: 32 токена дают
+                # «оборвано по лимиту» на живом ключе. 1024 — всё ещё копейки.
+                max_tokens=1024,
                 temperature=0,
                 timeout=30,
             )
