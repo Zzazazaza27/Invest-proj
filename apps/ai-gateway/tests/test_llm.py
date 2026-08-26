@@ -486,6 +486,45 @@ def test_parse_json_object_tolerates_wrapping_text() -> None:
         llm.parse_json_object("никакого объекта")
 
 
+def test_votes_pick_median_run(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """DeepSeek: 5 прогонов, наружу — медианный по IRS, вызовов ровно votes."""
+    canned = analyze(PROJECT)
+    calls = {"n": 0}
+    # Значения market по прогонам: 20, 80, 50, 35, 65 → медиана 50.
+    values = [20, 80, 50, 35, 65]
+
+    def fake_call(**kwargs):  # type: ignore[no-untyped-def]
+        i = calls["n"]
+        calls["n"] += 1
+        variant = json.loads(json.dumps(canned, ensure_ascii=False))
+        for s in variant["scores"]:
+            if s["axis"] == "market":
+                s["value"] = values[i]
+        variant["modelVersion"] = "deepseek:deepseek-v4-flash"
+        return json.dumps(variant, ensure_ascii=False), "deepseek-v4-flash"
+
+    monkeypatch.setattr("app.main.call_chat", fake_call)
+    client = _client(monkeypatch, tmp_path)
+    response = client.post(
+        "/v1/analyze",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "task": "project_analysis",
+            "data_class": "pseudonymous",
+            "provider": "deepseek",
+            "provider_credential": {
+                "api_key": "sk-test-key-value",
+                "model": "deepseek-v4-flash",
+            },
+            "project": PROJECT,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert calls["n"] == 5
+    market = next(s for s in response.json()["scores"] if s["axis"] == "market")
+    assert market["value"] == 50
+
+
 def test_provider_models_static_when_no_catalog(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:  # type: ignore[no-untyped-def]

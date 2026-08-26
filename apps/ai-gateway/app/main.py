@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -32,7 +33,7 @@ from starlette.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
-from .analyzer import analyze
+from .analyzer import AXIS_WEIGHTS, analyze
 from .llm import (
     Credential,
     ProviderError,
@@ -433,26 +434,75 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                     nonce=nonce,
                     model_version=model_version,
                 )
-                text, model_used = await run_in_threadpool(
-                    call_chat,
-                    endpoint=provider.endpoint or "",
-                    api_style=provider.api_style,
-                    auth_scheme=provider.auth_scheme,
-                    credential=credential,
-                    default_model=provider.model,
-                    system=system,
-                    user=user,
-                    # Потолок — из политики: у рассуждающих моделей (DeepSeek V4)
-                    # размышление входит в max_tokens, и 16k им мало.
-                    max_tokens=provider.max_output_tokens,
-                    timeout=provider.timeout_seconds,
-                    extras=provider.request_extras,
-                    # Скоринг — детерминированная задача: нулевая температура держит
-                    # разброс IRS между прогонами в пределах гейта (раздел 9, п. 2).
-                    temperature=0.0,
+
+                async def one_vote() -> tuple[dict[str, Any], str]:
+                    text, model_used = await run_in_threadpool(
+                        call_chat,
+                        endpoint=provider.endpoint or "",
+                        api_style=provider.api_style,
+                        auth_scheme=provider.auth_scheme,
+                        credential=credential,
+                        default_model=provider.model,
+                        system=system,
+                        user=user,
+                        # Потолок — из политики: у рассуждающих моделей (DeepSeek V4)
+                        # размышление входит в max_tokens, и 16k им мало.
+                        max_tokens=provider.max_output_tokens,
+                        timeout=provider.timeout_seconds,
+                        extras=provider.request_extras,
+                        # Скоринг — детерминированная задача: нулевая температура держит
+                        # разброс IRS между прогонами в пределах гейта (раздел 9, п. 2).
+                        temperature=0.0,
+                    )
+                    parsed = parse_json_object(text)
+                    assert_top_level(parsed)
+                    return parsed, model_used
+
+                # Голосование (политика, `votes`): N прогонов параллельно, наружу —
+                # прогон с медианным IRS целиком (оси, объяснения, факты из одного
+                # согласованного ответа, а не смесь). Медиана из N глушит дисперсию
+                # семплера, которую temperature 0 и seed у хостинговых моделей не
+                # убирают. Отказов больше половины — отказ всего прогона.
+                outcomes = await asyncio.gather(
+                    *(one_vote() for _ in range(provider.votes)), return_exceptions=True
                 )
-                result = parse_json_object(text)
-                assert_top_level(result)
+                successes = [o for o in outcomes if not isinstance(o, BaseException)]
+                failures = [o for o in outcomes if isinstance(o, BaseException)]
+                if len(successes) * 2 <= provider.votes - 1 or not successes:
+                    first = failures[0]
+                    if isinstance(first, ProviderError):
+                        raise first
+                    raise ProviderError("provider_vote_failed", str(first))
+                for failure in failures:
+                    LOG.warning(
+                        "vote failed",
+                        extra={
+                            "traceId": trace_id,
+                            "provider": provider.name,
+                            "error": str(failure),
+                        },
+                    )
+
+                def irs_of(parsed: dict[str, Any]) -> float:
+                    return sum(
+                        float(s.get("value", 0))
+                        * AXIS_WEIGHTS.get(str(s.get("axis")), 0.0)
+                        for s in (parsed.get("scores") or [])
+                        if isinstance(s, dict)
+                    )
+
+                successes.sort(key=lambda o: irs_of(o[0]))
+                result, model_used = successes[len(successes) // 2]
+                if provider.votes > 1:
+                    LOG.info(
+                        "vote",
+                        extra={
+                            "traceId": trace_id,
+                            "provider": provider.name,
+                            "votes": provider.votes,
+                            "irs": [round(irs_of(o[0]), 1) for o in successes],
+                        },
+                    )
             except ProviderError as error:
                 LOG.warning(
                     "llm provider failed",

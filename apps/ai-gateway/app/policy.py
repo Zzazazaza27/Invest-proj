@@ -67,6 +67,10 @@ class Provider:
     request_extras: dict = None  # type: ignore[assignment]
     # Таймаут одного вызова анализа/перевода, секунд.
     timeout_seconds: float = 90.0
+    # Голосование: N параллельных прогонов, публикуется медианный по IRS.
+    # Семплер хостинговых моделей не детерминирован даже при temperature 0 и
+    # seed; медиана из N глушит дисперсию, не трогая порог гейта.
+    votes: int = 1
 
 
 @dataclass(frozen=True)
@@ -211,6 +215,9 @@ def load_policy(path: str | Path) -> Policy:
             raise PolicyError(f"провайдер {name!r}: timeout_seconds — число секунд")
         if not 10 <= timeout_seconds <= 900:
             raise PolicyError(f"провайдер {name!r}: timeout_seconds — от 10 до 900")
+        votes = entry.get("votes", 1)
+        if isinstance(votes, bool) or not isinstance(votes, int) or not 1 <= votes <= 7:
+            raise PolicyError(f"провайдер {name!r}: votes — целое от 1 до 7")
         suggestions = entry.get("model_suggestions", [])
         if not isinstance(suggestions, list) or not all(
             isinstance(x, str) for x in suggestions
@@ -244,6 +251,7 @@ def load_policy(path: str | Path) -> Policy:
             max_output_tokens=max_output_tokens,
             request_extras=dict(request_extras),
             timeout_seconds=float(timeout_seconds),
+            votes=votes,
             model=(str(entry["model"]) if entry.get("model") else None),
         )
 

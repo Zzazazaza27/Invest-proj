@@ -37,9 +37,11 @@
     "audio, image, realtime, completion-only отфильтрованы по имени.",
     "request_extras — провайдерские поля запроса (только здесь, ревью); timeout_seconds —",
     "таймаут одного вызова анализа/перевода. DeepSeek: thinking выключен ради",
-    "воспроизводимости (в режиме размышления temperature игнорируется)."
+    "воспроизводимости (в режиме размышления temperature игнорируется).",
+    "votes — число параллельных прогонов анализа; публикуется прогон с медианным IRS.",
+    "Стоимость ×votes, время — как у одного прогона."
   ],
-  "version": "1.6.1",
+  "version": "1.7.0",
   "default_provider": "local_deterministic",
   "residency": {
     "restricted_classes": [
@@ -230,7 +232,7 @@
         "commercial_secret"
       ],
       "enabled": false,
-      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модели deepseek-v4-pro / deepseek-v4-flash. Режим размышления выключен (thinking.type=disabled): в нём игнорируется temperature, а размышление входит в max_tokens; потолок 65 536 оставлен с запасом. seed фиксирован: детерминированная выборка (beta у DeepSeek) держит разброс IRS между прогонами в пределах гейта.",
+      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модели deepseek-v4-pro / deepseek-v4-flash. Режим размышления выключен (thinking.type=disabled): в нём игнорируется temperature, а размышление входит в max_tokens; потолок 65 536 оставлен с запасом. seed фиксирован: детерминированная выборка (beta у DeepSeek) держит разброс IRS между прогонами в пределах гейта. votes=5: медианный из пяти параллельных прогонов — разброс IRS одного прогона 2,7 на 10 повторов не проходил гейт (≤ 2).",
       "models_endpoint": "https://api.deepseek.com/models",
       "model_suggestions": [],
       "max_output_tokens": 65536,
@@ -240,7 +242,8 @@
           "type": "disabled"
         },
         "seed": 20260826
-      }
+      },
+      "votes": 5
     }
   ]
 }
