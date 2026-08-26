@@ -744,6 +744,27 @@ export class ProjectsService {
           throw errors.subscriptionRequired();
         }
 
+        // Флаги комплаенса в действующем паспорте останавливают публикацию до
+        // решения человека (ADR-008 §4). Обещание гарантированной доходности —
+        // это не минус балл, а признак, требующий остановки: и по обязанностям
+        // оператора, и по признакам финансовой пирамиды, и по требованиям к
+        // рекламе финансовых услуг. Решение принимается в очереди комплаенса.
+        const compliance = await tx.query<{ status: string | null; flags: string[] | null }>(
+          `SELECT jsonb_data->'complianceReview'->>'status' AS status,
+                  ARRAY(SELECT jsonb_array_elements_text(COALESCE(jsonb_data->'complianceFlags', '[]'::jsonb))) AS flags
+             FROM scoring.investment_passports
+            WHERE project_id = $1 AND superseded_at IS NULL`,
+          [projectId],
+        );
+        const held = compliance.rows[0];
+        if (held && (held.flags?.length ?? 0) > 0 && held.status !== 'allowed') {
+          throw errors.stateTransition(
+            held.status === 'blocked'
+              ? 'Публикация закрыта решением комплаенса по признакам, найденным при оценке'
+              : 'Публикация приостановлена до решения комплаенса: оценка выявила признаки, требующие проверки человеком',
+          );
+        }
+
         await tx.query(
           `UPDATE lab.projects
               SET listing_status = 'listed', listed_at = now(),

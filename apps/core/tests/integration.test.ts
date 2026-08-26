@@ -40,6 +40,7 @@ const BASE_ENV: NodeJS.ProcessEnv = {
   KEK_KYB_DOCUMENTS: Buffer.alloc(32, 9).toString('base64'),
   KEK_INVESTMENT_DOCUMENTS: Buffer.alloc(32, 10).toString('base64'),
   KEK_WEBHOOK_SECRETS: Buffer.alloc(32, 11).toString('base64'),
+  KEK_AI_PROVIDER_SECRETS: Buffer.alloc(32, 12).toString('base64'),
 };
 
 function withEnv<T>(fn: () => T, extra: NodeJS.ProcessEnv = {}): T {

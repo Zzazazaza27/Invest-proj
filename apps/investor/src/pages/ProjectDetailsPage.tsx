@@ -11,6 +11,7 @@ import {
   formatScore10,
 } from '@unicorn/ui';
 import type { InvestmentPassport, ProjectFull, ProjectMaterial } from '@unicorn/contracts';
+import { ScoreProvenance, publishedScore10 } from '@unicorn/cabinet';
 import { ApiError, api, apiBaseUrl } from '../api';
 
 const STAGE_TITLES: Record<string, string> = {
@@ -183,8 +184,10 @@ ${new Date().toLocaleDateString('ru-RU')} · UNICORN LAUNCH`;
           <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
             <Badge tone="accent">{STAGE_TITLES[project.stage] ?? project.stage}</Badge>
             {project.geoCountry ? <Badge>{project.geoCountry}</Badge> : null}
-            {passport?.irs ? (
-              <Badge tone="success">оценка {formatScore10(passport.irs.value)}</Badge>
+            {passport ? (
+              <Badge tone="success">
+                оценка {publishedScore10(passport) ?? formatScore10(passport.irs?.value)}/10
+              </Badge>
             ) : null}
           </div>
           <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>{project.title}</h1>
@@ -217,10 +220,12 @@ ${new Date().toLocaleDateString('ru-RU')} · UNICORN LAUNCH`;
           <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Оценка платформы</h2>
           {passport ? (
             <>
-              <span style={{ color: 'var(--u-text-muted)' }}>
-                Паспорт версии {passport.version}
-                {passport.irs ? `, интегральная оценка ${formatScore10(passport.irs.value)}` : ''}
-              </span>
+              {/*
+                Число не показывается без блока происхождения: «8/10» рядом с
+                проектом читается как оценка привлекательности вложения, что бы
+                ни лежало в служебных полях (ADR-008 §4).
+              */}
+              <ScoreProvenance passport={passport} modelVersion={passport.modelVersion ?? null} />
               <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)', lineHeight: 1.6 }}>
                 {passport.scores.map((score) => (
                   <li key={score.axis}>

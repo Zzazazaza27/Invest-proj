@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import {
   AdminPlanSchema,
   AdminSubscriptionSchema,
@@ -9,9 +9,16 @@ import {
   UpdateDraftPlanRequestSchema,
   UpdateFeatureFlagRequestSchema,
   UuidSchema,
+  AiProviderCheckResultSchema,
+  AiProviderCredentialSchema,
+  LlmProviderSchema,
+  UpsertAiProviderCredentialRequestSchema,
 } from '@unicorn/contracts';
 import { z } from 'zod';
+import { AiGatewayClient } from '../ai/ai-gateway.client';
+import { ProviderCredentialsService } from '../ai/provider-credentials.service';
 import { Ctx, Roles } from '../auth/guards';
+import { errors } from '../common/errors';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';
 import { AdminService } from './admin.service';
@@ -27,7 +34,60 @@ import { AdminService } from './admin.service';
 @Roles('admin')
 @Controller('admin')
 export class AdminController {
-  constructor(private readonly admin: AdminService) {}
+  constructor(
+    private readonly admin: AdminService,
+    private readonly credentials: ProviderCredentialsService,
+    private readonly gateway: AiGatewayClient,
+  ) {}
+
+  // ---------------------------------------------------------- ключ LLM-провайдера
+  //
+  // Ключ задаётся здесь и нигде больше (ADR-008 §2). Ни один маршрут не
+  // возвращает его обратно: наружу — отпечаток, модель, автор и время.
+
+  @Get('ai/credentials')
+  async listAiCredentials(@Ctx() ctx: RequestContext) {
+    const items = await this.credentials.list(ctx);
+    return { items: items.map((c) => AiProviderCredentialSchema.parse(c)) };
+  }
+
+  @Put('ai/credentials')
+  async upsertAiCredential(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(UpsertAiProviderCredentialRequestSchema, rawBody);
+    const view = await this.credentials.upsert(ctx, {
+      provider: input.provider,
+      apiKey: input.apiKey,
+      modelName: input.modelName ?? null,
+      reason: input.reason,
+    });
+    return AiProviderCredentialSchema.parse(view);
+  }
+
+  @Post('ai/credentials/:provider/revoke')
+  async revokeAiCredential(
+    @Param('provider') rawProvider: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const provider = parseOrThrow(LlmProviderSchema, rawProvider);
+    const input = parseOrThrow(z.object({ reason: z.string().min(3).max(500) }), rawBody);
+    await this.credentials.revoke(ctx, provider, input.reason);
+    return { revoked: true };
+  }
+
+  /**
+   * Проверка ключа коротким вызовом провайдера через шлюз. Ключ читается из
+   * хранилища и сразу уходит в шлюз; результат — да/нет и имя модели.
+   */
+  @Post('ai/credentials/:provider/check')
+  async checkAiCredential(@Param('provider') rawProvider: string, @Ctx() ctx: RequestContext) {
+    const provider = parseOrThrow(LlmProviderSchema, rawProvider);
+    const credential = await this.credentials.forCheck(ctx, provider);
+    if (!credential) throw errors.notFound({ subject: 'ai_provider_credential' });
+    const result = await this.gateway.checkProvider(credential, ctx.traceId);
+    await this.credentials.recordCheck(ctx, provider, result.ok);
+    return AiProviderCheckResultSchema.parse({ ...result, provider });
+  }
 
   // ---------------------------------------------------------------- тарифы
 

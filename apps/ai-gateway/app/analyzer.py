@@ -84,10 +84,17 @@ SIGNALS: Final[dict[str, tuple[str, ...]]] = {
     "uniqueness": ("уникальн", "патент", "ноу-хау", "unique", "proprietary", "запатент"),
 }
 
+# Зрелость стадии. Ключи ОБЯЗАНЫ покрывать `ProjectStageSchema` контрактов:
+# idea, mvp, early_revenue, growth. Стадия, которой здесь нет, приводится строкой
+# ниже к «idea» — то есть проект с первой выручкой считался как пустая идея, и
+# именно на этой когорте (23 из 100 карточек каталога) baseline был смещён.
+# `prototype` и `scale` в контракте отсутствуют: оставлены задельными значениями
+# на случай расширения шкалы, порядок между ними и соседями сохранён.
 STAGE_MATURITY: Final[dict[str, float]] = {
     "idea": 0.15,
     "prototype": 0.35,
     "mvp": 0.55,
+    "early_revenue": 0.65,
     "growth": 0.75,
     "scale": 0.9,
 }
@@ -186,6 +193,29 @@ def _axis_score(
         explanation=explanation,
         sources=["application_text", "materials"],
     )
+
+
+# Таблица полуинтервалов балла — та же, что в ядре (scoring-rules.ts). Здесь
+# только для контрольного значения: публикуемый балл считает ядро.
+_SCORE_TABLE: Final[tuple[tuple[float, int], ...]] = (
+    (82, 10), (74, 9), (66, 8), (58, 7), (50, 6), (42, 5), (33, 4), (24, 3), (13, 2), (0, 1),
+)
+
+
+def _score10(irs: float) -> int:
+    for lo, score in _SCORE_TABLE:
+        if irs >= lo:
+            return score
+    return 1
+
+
+def _irs_breakdown(scores: list) -> dict:
+    breakdown: dict = {}
+    for s in scores:
+        breakdown[s.axis] = s.value
+        breakdown[f"{s.axis}_w"] = round(s.value * AXIS_WEIGHTS[s.axis], 2)
+    breakdown["sum"] = _bounded(sum(s.value * AXIS_WEIGHTS[s.axis] for s in scores))
+    return breakdown
 
 
 def analyze(project: dict) -> dict:
@@ -406,16 +436,40 @@ def analyze(project: dict) -> dict:
         ),
     ]
 
+    # Паспорт в той же строгой форме, что возвращает LLM (PassportSchema в
+    # контрактах): одна схема на оба провайдера, иначе `.strict()` пришлось бы
+    # ослаблять ради эвристики — и проверка перестала бы быть проверкой.
+    # Балл и разбор IRS здесь — контрольные: ядро пересчитывает их само.
+    high = [r["dimension"] for r in readiness if r["level"] == "high"]
+    low = [r["dimension"] for r in readiness if r["level"] == "low"]
+    # Эвристика не умеет отличать подтверждённое от заявленного: всё, что она
+    # видит, — наличие чисел. Поэтому выше «claimed» она не поднимается никогда.
+    evidence = "claimed" if length >= MIN_MEANINGFUL_CHARS and _has_numbers(corpus) else "absent"
+    passport = {
+        "score10": _score10(irs),
+        "irsBreakdown": _irs_breakdown(scores),
+        "scoreBasis": "disclosure",
+        "verdict": (
+            f"Разбор заявки эвристикой {MODEL_VERSION}: длина корпуса {length} симв., "
+            f"материалов {len(materials)}, стадия «{stage}». Оценка описывает полноту "
+            f"и проверяемость заявки, а не перспективы бизнеса."
+        ),
+        "strengths": [f"раскрыто: {d}" for d in high[:5]],
+        "weaknesses": [f"не раскрыто: {d}" for d in low[:5]],
+        "risks": [],
+        "capsApplied": [],
+        "penaltiesApplied": [],
+        "integrityFlags": [],
+        "complianceFlags": [],
+        "businessModel": "not_stated",
+        "askSanity": "not_stated",
+        "investorExit": "not_stated",
+        "evidenceLevel": evidence,
+    }
+
     return {
         "modelVersion": MODEL_VERSION,
-        "passport": {
-            "summary": (
-                f"Разбор заявки эвристикой {MODEL_VERSION}: длина корпуса {length} симв., "
-                f"материалов {len(materials)}, стадия «{stage}»."
-            ),
-            "corpusChars": length,
-            "materialKinds": sorted(material_kinds),
-        },
+        "passport": passport,
         "facts": [
             {
                 "category": f.category,

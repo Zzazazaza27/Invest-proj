@@ -117,7 +117,7 @@ export class SeasonsService {
   async rating(traceId: string, seasonId: string, limit: number): Promise<RatingEntry[]> {
     return this.db.asPublicRole(traceId, async (tx) => {
       const { rows } = await tx.query<RatingRow>(
-        `SELECT rank, project_id, title, irs, computed_at
+        `SELECT rank, project_id, title, irs, score10, computed_at
            FROM seasons.mv_season_rating
           WHERE season_id = $1
           ORDER BY rank ASC
@@ -566,6 +566,7 @@ interface RatingRow {
   project_id: string;
   title: string;
   irs: string;
+  score10: number;
   computed_at: Date;
 }
 
@@ -576,6 +577,7 @@ function mapRating(row: RatingRow): RatingEntry {
     projectId: row.project_id,
     title: row.title,
     irs: Number(row.irs),
+    score10: Number(row.score10),
     computedAt: row.computed_at.toISOString(),
   };
 }

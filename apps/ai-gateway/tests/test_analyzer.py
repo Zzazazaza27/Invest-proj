@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from app.analyzer import AXES, READINESS_DIMENSIONS, analyze
+from app.analyzer import AXES, READINESS_DIMENSIONS, STAGE_MATURITY, analyze
 
 RICH = {
     "title": "Аналитика для B2B SaaS",
@@ -104,3 +104,31 @@ def test_untrusted_text_is_data_not_instruction() -> None:
     result = analyze(hostile)
     assert len(result["scores"]) == len(AXES)
     assert 0 <= result["irs"]["value"] <= 100
+
+
+def test_stage_maturity_covers_contract_stages() -> None:
+    """Все стадии контракта различимы для анализатора.
+
+    Стадия, которой нет в `STAGE_MATURITY`, приводится к «idea» — то есть
+    проект с первой выручкой оценивался как пустая идея. На каталожном
+    комплекте это 23 карточки из 100, и именно они образуют когорту, по которой
+    сравнивают LLM с baseline: смещённый эталон делает такое сравнение
+    бессмысленным.
+    """
+    for stage in ("idea", "mvp", "early_revenue", "growth"):
+        assert stage in STAGE_MATURITY
+
+
+def test_early_revenue_scores_above_idea_on_same_text() -> None:
+    """Один и тот же текст на более зрелой стадии не может стоить меньше."""
+    idea = dict(RICH, stage="idea")
+    early = dict(RICH, stage="early_revenue")
+    growth = dict(RICH, stage="growth")
+
+    idea_irs = analyze(idea)["irs"]["value"]
+    early_irs = analyze(early)["irs"]["value"]
+    growth_irs = analyze(growth)["irs"]["value"]
+
+    assert early_irs > idea_irs
+    # И остаётся ниже следующей стадии: порядок шкалы важнее самих чисел.
+    assert early_irs < growth_irs

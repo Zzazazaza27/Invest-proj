@@ -27,7 +27,11 @@ export type KekDomain =
   | 'nominal_account_evidence'
   | 'billing_documents'
   | 'search_index'
-  | 'webhook_secrets';
+  | 'webhook_secrets'
+  // Ключи LLM-провайдеров, заданные из панели (ADR-008 §2). Свой домен, а не
+  // webhook_secrets: компрометация или ротация ключа провайдера не должна
+  // затрагивать подписи вебхуков, и наоборот.
+  | 'ai_provider_secrets';
 
 const ENV_BY_DOMAIN: Record<KekDomain, string> = {
   kyc_documents: 'KEK_KYC_DOCUMENTS',
@@ -38,6 +42,7 @@ const ENV_BY_DOMAIN: Record<KekDomain, string> = {
   billing_documents: 'KEK_BILLING_DOCUMENTS',
   search_index: 'KEK_SEARCH_INDEX',
   webhook_secrets: 'KEK_WEBHOOK_SECRETS',
+  ai_provider_secrets: 'KEK_AI_PROVIDER_SECRETS',
 };
 
 const IV_BYTES = 12; // рекомендованный размер nonce для GCM

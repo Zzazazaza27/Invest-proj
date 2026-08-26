@@ -49,7 +49,6 @@ const RESERVED_DEK_COLUMNS = new Set([
   'kyc.business_entities.registry_payload_wrapped_dek',
   'investments.investment_tranches.evidence_wrapped_dek', // nominal_account_evidence
   'billing.invoices.pdf_wrapped_dek', // billing_documents; таблица пуста до генератора PDF
-  'scoring.passport_facts.value_wrapped_dek', // факты пишутся в value_jsonb, шифрование не включено
   'audit.encryption_keys_registry.wrapped_dek', // реестр ключей, а не данных: хранит обёртку самого ключа
 ]);
 

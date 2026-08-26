@@ -15,6 +15,7 @@ import { ProjectBadges } from '../App';
 import { MaterialsCard, RoadmapCard } from './MaterialsCard';
 import { PublicationConsentsCard } from './PublicationConsentsCard';
 import { BillingCard } from './BillingCard';
+import { ScoreProvenance } from '@unicorn/cabinet';
 
 /**
  * Карта готовности по-человечески.
@@ -290,9 +291,11 @@ function PassportCard({ projectId }: { projectId: string }) {
             <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
               <Badge tone="accent">версия {passport.version}</Badge>
               <Badge>{passport.disclosureTier}</Badge>
-              {passport.irs ? (
-                <Badge tone="success">оценка {formatScore10(passport.irs.value)}</Badge>
-              ) : null}
+              <ScoreProvenance
+                passport={passport}
+                modelVersion={passport.modelVersion ?? null}
+                compact
+              />
             </div>
             <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
               {passport.scores.map((score) => (

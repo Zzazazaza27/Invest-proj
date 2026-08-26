@@ -5,7 +5,24 @@ import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { type ScoringReviewItem, type StoredPassport } from '@unicorn/contracts';
 import { AiGatewayClient, type AnalysisResult } from './ai-gateway.client';
+import { ProviderCredentialsService } from './provider-credentials.service';
+import { CryptoService } from '../crypto/crypto.service';
+import { LocalizationService } from './localization.service';
+import {
+  EgressViolation,
+  IRS_DISCREPANCY_TOLERANCE,
+  assertAxesComplete,
+  assertReadinessComplete,
+  buildIrsBreakdown,
+  checkEgress,
+  computeIrs,
+  computeScore10,
+  newNonce,
+  stripSlotMarkers,
+  type Stage,
+} from './scoring-rules';
 
 /**
  * Оркестрация анализа проекта.
@@ -35,6 +52,9 @@ import { AiGatewayClient, type AnalysisResult } from './ai-gateway.client';
  */
 const ANALYSIS_DATA_CLASS = 'pseudonymous' as const;
 
+/** AAD зашифрованных фактов паспорта; ротация KEK проверяет ключ с ним. */
+const FACT_AAD = 'field:fact_value';
+
 @Injectable()
 export class AnalysisService {
   private readonly logger = new Logger(AnalysisService.name);
@@ -43,10 +63,13 @@ export class AnalysisService {
     private readonly db: Database,
     private readonly audit: AuditRepository,
     private readonly gateway: AiGatewayClient,
+    private readonly credentials: ProviderCredentialsService,
+    private readonly crypto: CryptoService,
+    private readonly localization: LocalizationService,
   ) {}
 
   async run(ctx: RequestContext, projectId: string): Promise<AnalysisRunView> {
-    await this.assertScoringEnabled(ctx);
+    const flags = await this.assertScoringEnabled(ctx);
 
     const runId = uuidv7();
     const env = getEnv();
@@ -105,6 +128,8 @@ export class AnalysisService {
       const { rows } = await tx.query<ProjectRow>(
         `SELECT p.id, p.title, p.tagline, p.description, p.stage,
                 p.updated_at,
+                p.investment_ask::text AS investment_ask, p.ask_currency, p.geo_country,
+                (SELECT t.name_ru FROM lab.project_taxonomy t WHERE t.id = p.taxonomy_id) AS taxonomy_name,
                 EXISTS (SELECT 1 FROM lab.founders_projects fp
                          WHERE fp.project_id = p.id AND fp.user_id = app.current_user_id()
                            AND fp.role IN ('owner','editor')) AS can_edit
@@ -128,11 +153,26 @@ export class AnalysisService {
         [projectId],
       );
 
+      // Маркеры слота данных вырезаются ДО снимка: снимок хранит ровно то, что
+      // анализировалось, а nonce входит в отпечаток — воспроизводимость прогона
+      // включает и границу слота (ADR-008 §3, Э4).
+      const nonce = newNonce();
+      const title = stripSlotMarkers(row.title);
+      const summary = stripSlotMarkers([row.tagline, row.description].filter(Boolean).join('\n'));
       const snapshot = {
-        title: row.title,
+        title: title.text,
         tagline: row.tagline,
         description: row.description,
+        summary: summary.text,
         stage: row.stage,
+        nonce,
+        markersRemoved: title.removed + summary.removed,
+        metadata: {
+          investmentAsk: row.investment_ask,
+          currency: row.ask_currency,
+          taxonomy: row.taxonomy_name,
+          geoCountry: row.geo_country,
+        },
         projectUpdatedAt: row.updated_at.toISOString(),
         materials: materials.rows.map((m) => ({ id: m.id, type: m.type, version: m.version })),
       };
@@ -156,13 +196,26 @@ export class AnalysisService {
       return { row, materials: materials.rows, snapshot, inputSha256 };
     });
 
+    // Ключ провайдера достаётся ПОСЛЕ фиксации входа и только при включённом
+    // LLM-скоринге: без флага прогон идёт эвристикой, и ключ из хранилища не
+    // читается вовсе. Объект уходит в шлюз и нигде не задерживается.
+    const credential = flags.llm
+      ? await this.db.readOnly(ctx, (tx) => this.credentials.activeForCall(tx))
+      : null;
+    if (flags.llm && !credential) {
+      await this.failRun(ctx, runId);
+      throw errors.featureDisabled('ai.scoring.llm.enabled');
+    }
+
     let result: AnalysisResult;
     try {
       result = await this.gateway.analyze(
         {
-          title: input.row.title,
-          summary: [input.row.tagline, input.row.description].filter(Boolean).join('\n'),
+          title: input.snapshot.title,
+          summary: input.snapshot.summary,
           stage: input.row.stage,
+          nonce: input.snapshot.nonce,
+          metadata: input.snapshot.metadata,
           // Содержимое материалов не передаётся: парсера дек нет, а ходить по
           // пользовательской ссылке сервером — это SSRF. В анализ попадает
           // только факт наличия материала и его тип.
@@ -170,6 +223,7 @@ export class AnalysisService {
         },
         ANALYSIS_DATA_CLASS,
         ctx.traceId,
+        { credential },
       );
     } catch (error) {
       await this.db.transaction(ctx, async (tx) => {
@@ -185,12 +239,35 @@ export class AnalysisService {
     // (model lookup, constraint, supersede, outbox) раньше оставляла прогон в
     // `running` навсегда — до stale-cleanup следующего запуска. Терминальное
     // состояние — инвариант, а не пожелание (CODE-HIGH-03).
+    let view: AnalysisRunView;
     try {
-      return await this.publish(ctx, projectId, runId, input, result);
+      view = await this.publish(ctx, projectId, runId, input, result);
     } catch (error) {
+      if (error instanceof EgressViolation) {
+        // Модель вернула то, чего не должна: ссылку, разметку, чужие
+        // персональные данные. Это отказ прогона с названной причиной, а не
+        // тихая правка — правка прятала бы сам факт (Э5). Причина пишется
+        // отдельной транзакцией: та, где она обнаружена, откатывается.
+        await this.journal(ctx, runId, 'egress_rejected', {
+          field: error.field,
+          reason: error.reason,
+        });
+        await this.failRun(ctx, runId);
+        throw errors.conflict(
+          `Результат анализа отклонён фильтром публикации (${error.field}: ${error.reason})`,
+        );
+      }
       await this.failRun(ctx, runId);
       throw error;
     }
+
+    // Перевод — сразу после оценки, тем же провайдером, своим прогоном
+    // (ADR-008 §5): английский читатель не должен ждать первого запроса, а
+    // упавший перевод не делает оценку неуспешной.
+    if (credential && view.passportId) {
+      await this.localization.translate(ctx, projectId, view.passportId, credential);
+    }
+    return view;
   }
 
   private async publish(
@@ -230,6 +307,39 @@ export class AnalysisService {
       const modelId = await this.activeModelId(tx, 'ai_score');
       const irsModelId = await this.activeModelId(tx, 'irs');
 
+      // То, что считает код, а не модель (ADR-008 §3). Порядок: полнота →
+      // арифметика → фильтр выхода. Расхождения с моделью — в журнал прогона,
+      // отказ — только на полноте и на фильтре.
+      assertAxesComplete(result.scores);
+      assertReadinessComplete(result.readiness);
+      const computed = this.applyScoringRules(input.row.stage as Stage, result);
+      checkEgress({
+        passport: computed.stored,
+        scores: result.scores,
+        readiness: result.readiness,
+        roadmap: result.roadmap,
+      });
+      const irsValue = computed.stored.irsComputed;
+      await tx.query(
+        `INSERT INTO audit.node_checkpoints (id, run_id, node_name, state_jsonb)
+         VALUES ($1, $2, 'scoring_rules', $3::jsonb)`,
+        [
+          uuidv7(),
+          runId,
+          JSON.stringify({
+            irsModel: result.irs.value,
+            irsComputed: irsValue,
+            score10Model: result.passport.score10,
+            score10Base: computed.stored.score10Base,
+            score10Proposed: computed.stored.score10Proposed,
+            discrepancies: computed.stored.discrepancies,
+            integrityFlags: result.passport.integrityFlags,
+            complianceFlags: result.passport.complianceFlags,
+            markersRemoved: input.snapshot.markersRemoved,
+          }),
+        ],
+      );
+
       const version = await this.supersedePassport(tx, projectId);
       const passportId = uuidv7();
       await tx.query(
@@ -240,23 +350,36 @@ export class AnalysisService {
           passportId,
           projectId,
           version,
-          JSON.stringify(result.passport),
+          JSON.stringify(computed.stored),
           JSON.stringify([{ type: 'analysis_run', ref: runId }]),
           modelId,
         ],
       );
 
       for (const fact of result.facts) {
+        // Факты категорий finance и legal — выручка, маржа, запас хода,
+        // структура владения — шифруются доменом passport_sensitive (Э14):
+        // колонка value_wrapped_dek заведена M006 ровно для этого и до сих пор
+        // была пуста, то есть выглядела защитой, которой нет. Остальные
+        // категории остаются открытыми: по ним строится карта готовности.
+        const sensitive = fact.category === 'finance' || fact.category === 'legal';
+        const sealed = sensitive
+          ? this.crypto.seal('passport_sensitive', JSON.stringify(fact.value), FACT_AAD)
+          : null;
         await tx.query(
           `INSERT INTO scoring.passport_facts
-             (id, passport_id, category, key, value_jsonb, source_type, source_ref, confidence)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8)`,
+             (id, passport_id, category, key, value_jsonb, value_wrapped_dek,
+              source_type, source_ref, confidence)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)`,
           [
             uuidv7(),
             passportId,
             fact.category,
             fact.key,
-            JSON.stringify(fact.value),
+            sealed
+              ? JSON.stringify({ enc: sealed.ciphertext.toString('base64') })
+              : JSON.stringify(fact.value),
+            sealed ? sealed.wrappedDek : null,
             fact.sourceType,
             fact.sourceRef,
             fact.confidence,
@@ -294,11 +417,11 @@ export class AnalysisService {
         [projectId],
       );
       const previousValue = previous.rows[0] ? Number(previous.rows[0].value) : null;
-      const delta = previousValue === null ? null : round2(result.irs.value - previousValue);
+      const delta = previousValue === null ? null : round2(irsValue - previousValue);
       await tx.query(
         `INSERT INTO scoring.irs_scores (id, project_id, value, previous_value, delta, model_id)
          VALUES ($1, $2, $3, $4, $5, $6)`,
-        [uuidv7(), projectId, result.irs.value, previousValue, delta, irsModelId],
+        [uuidv7(), projectId, irsValue, previousValue, delta, irsModelId],
       );
 
       for (const entry of result.readiness) {
@@ -362,7 +485,10 @@ export class AnalysisService {
           provider: result.provider,
           isLlm: result.isLlm,
           modelVersion: result.modelVersion,
-          irs: result.irs.value,
+          promptVersion: result.promptVersion ?? null,
+          irs: irsValue,
+          score10: computed.stored.score10Published,
+          reviewStatus: computed.stored.review.status,
         },
         traceId: ctx.traceId,
       });
@@ -371,7 +497,7 @@ export class AnalysisService {
         aggregateId: projectId,
         aggregateVersion: version,
         eventType: 'lab.project.scored',
-        payload: { projectId, irs: result.irs.value, passportVersion: version },
+        payload: { projectId, irs: irsValue, passportVersion: version },
       });
 
       return {
@@ -382,9 +508,221 @@ export class AnalysisService {
         isLlm: result.isLlm,
         modelVersion: result.modelVersion,
         passportVersion: version,
-        irs: result.irs.value,
+        passportId,
+        irs: irsValue,
         irsDelta: delta,
+        score10: computed.stored.score10Published,
+        reviewStatus: computed.stored.review.status,
       };
+    });
+  }
+
+  /**
+   * Пересчёт того, чему нельзя верить модели: IRS из осей по весам, балл из
+   * IRS по таблице, потолки по коду правила и стадии. Значения модели служат
+   * контролем: расхождение — запись в журнал, число — из расчёта.
+   *
+   * Публикуемый балл равен базовому, пока человек не подтвердил потолки и
+   * штрафы (ADR-008 §4): суждение модели не меняет позицию проекта само.
+   */
+  private applyScoringRules(stage: Stage, result: AnalysisResult): { stored: StoredPassport } {
+    const passport = result.passport;
+    const irsComputed = computeIrs(result.scores);
+    const discrepancies: string[] = [];
+    if (Math.abs(irsComputed - result.irs.value) > IRS_DISCREPANCY_TOLERANCE) {
+      discrepancies.push(`irs: модель ${result.irs.value}, пересчёт ${irsComputed}`);
+    }
+    if (Math.abs(irsComputed - passport.irsBreakdown.sum) > IRS_DISCREPANCY_TOLERANCE) {
+      discrepancies.push(
+        `irsBreakdown.sum: модель ${passport.irsBreakdown.sum}, пересчёт ${irsComputed}`,
+      );
+    }
+    const score = computeScore10(
+      irsComputed,
+      stage,
+      passport.capsApplied,
+      passport.penaltiesApplied,
+    );
+    discrepancies.push(...score.discrepancies);
+    if (passport.score10 !== score.proposed) {
+      discrepancies.push(`score10: модель ${passport.score10}, пересчёт ${score.proposed}`);
+    }
+    const needsReview = score.caps.length > 0 || score.penalties.length > 0;
+    const stored: StoredPassport = {
+      ...passport,
+      irsBreakdown: buildIrsBreakdown(result.scores) as StoredPassport['irsBreakdown'],
+      capsApplied: score.caps,
+      penaltiesApplied: score.penalties,
+      score10Base: score.base,
+      score10Proposed: score.proposed,
+      score10Published: score.base,
+      irsComputed,
+      discrepancies: discrepancies.slice(0, 20),
+      review: { status: needsReview ? 'pending' : 'none', decidedBy: null, decidedAt: null },
+      complianceReview: {
+        status: passport.complianceFlags.length > 0 ? 'pending' : 'none',
+        decidedBy: null,
+        decidedAt: null,
+      },
+    };
+    return { stored };
+  }
+
+  // ------------------------------------------------------------ решения человека
+
+  /**
+   * Очередь оценок, ждущих человека: потолки/штрафы и флаги комплаенса.
+   * Только действующие паспорта — по устаревшей версии решать нечего.
+   */
+  async listReviews(ctx: RequestContext): Promise<ScoringReviewItem[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<{
+        id: string;
+        project_id: string;
+        title: string;
+        version: number;
+        published_at: Date | null;
+        jsonb_data: StoredPassport;
+      }>(
+        `SELECT p.id, p.project_id, pr.title, p.version, p.published_at, p.jsonb_data
+           FROM scoring.investment_passports p
+           JOIN lab.projects pr ON pr.id = p.project_id
+          WHERE p.superseded_at IS NULL
+            AND (p.jsonb_data->'review'->>'status' = 'pending'
+                 OR p.jsonb_data->'complianceReview'->>'status' = 'pending')
+          ORDER BY p.published_at DESC NULLS LAST
+          LIMIT 200`,
+      );
+      return rows.map((row) => ({
+        passportId: row.id,
+        projectId: row.project_id,
+        projectTitle: row.title,
+        passportVersion: row.version,
+        publishedAt: row.published_at?.toISOString() ?? null,
+        score10Base: row.jsonb_data.score10Base,
+        score10Proposed: row.jsonb_data.score10Proposed,
+        score10Published: row.jsonb_data.score10Published,
+        capsApplied: row.jsonb_data.capsApplied,
+        penaltiesApplied: row.jsonb_data.penaltiesApplied,
+        complianceFlags: row.jsonb_data.complianceFlags,
+        integrityFlags: row.jsonb_data.integrityFlags,
+        reviewStatus: row.jsonb_data.review.status,
+        complianceStatus: row.jsonb_data.complianceReview.status,
+      }));
+    });
+  }
+
+  /**
+   * Решение человека. Подтверждение потолков переносит предложенный балл в
+   * публикуемый; отказ оставляет базовый. Решение по комплаенсу открывает или
+   * закрывает публикацию листинга. Факт решения пишется в журнал прогона и в
+   * аудит: автоматическое решение по суждению модели, затрагивающее права
+   * заявителя, здесь заменяется решением человека (ADR-008 §4).
+   */
+  async decideReview(
+    ctx: RequestContext,
+    passportId: string,
+    decision: 'confirm' | 'reject' | 'allow' | 'block',
+    reason: string,
+  ): Promise<ScoringReviewItem> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows } = await tx.query<{
+        id: string;
+        project_id: string;
+        title: string;
+        version: number;
+        published_at: Date | null;
+        jsonb_data: StoredPassport;
+        sources: { type: string; ref: string }[];
+      }>(
+        `SELECT p.id, p.project_id, pr.title, p.version, p.published_at, p.jsonb_data, p.sources
+           FROM scoring.investment_passports p
+           JOIN lab.projects pr ON pr.id = p.project_id
+          WHERE p.id = $1 AND p.superseded_at IS NULL
+          FOR UPDATE OF p`,
+        [passportId],
+      );
+      const row = rows[0];
+      if (!row) throw errors.notFound({ subject: 'investment_passport' });
+      const now = new Date().toISOString();
+      const data: StoredPassport = { ...row.jsonb_data };
+      if (decision === 'confirm' || decision === 'reject') {
+        if (data.review.status !== 'pending') {
+          throw errors.stateTransition('По потолкам этого паспорта решение уже принято');
+        }
+        data.review = {
+          status: decision === 'confirm' ? 'confirmed' : 'rejected',
+          decidedBy: ctx.userId,
+          decidedAt: now,
+        };
+        data.score10Published = decision === 'confirm' ? data.score10Proposed : data.score10Base;
+      } else {
+        if (data.complianceReview.status !== 'pending') {
+          throw errors.stateTransition('По флагам комплаенса этого паспорта решение уже принято');
+        }
+        data.complianceReview = {
+          status: decision === 'allow' ? 'allowed' : 'blocked',
+          decidedBy: ctx.userId,
+          decidedAt: now,
+        };
+      }
+      await tx.query(
+        `UPDATE scoring.investment_passports SET jsonb_data = $2::jsonb WHERE id = $1`,
+        [passportId, JSON.stringify(data)],
+      );
+      const runRef = row.sources.find((s) => s.type === 'analysis_run')?.ref ?? null;
+      if (runRef) {
+        await tx.query(
+          `INSERT INTO audit.node_checkpoints (id, run_id, node_name, state_jsonb)
+           VALUES ($1, $2, 'human_review', $3::jsonb)`,
+          [
+            uuidv7(),
+            runRef,
+            JSON.stringify({ decision, reason, decidedBy: ctx.userId, decidedAt: now }),
+          ],
+        );
+      }
+      await this.audit.emit(tx, {
+        verb: 'admin.scoring_review.decided',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'investment_passport',
+        subjectId: passportId,
+        context: { projectId: row.project_id, decision, reason },
+        traceId: ctx.traceId,
+      });
+      return {
+        passportId: row.id,
+        projectId: row.project_id,
+        projectTitle: row.title,
+        passportVersion: row.version,
+        publishedAt: row.published_at?.toISOString() ?? null,
+        score10Base: data.score10Base,
+        score10Proposed: data.score10Proposed,
+        score10Published: data.score10Published,
+        capsApplied: data.capsApplied,
+        penaltiesApplied: data.penaltiesApplied,
+        complianceFlags: data.complianceFlags,
+        integrityFlags: data.integrityFlags,
+        reviewStatus: data.review.status,
+        complianceStatus: data.complianceReview.status,
+      };
+    });
+  }
+
+  /** Запись в журнал прогона отдельной транзакцией — переживает откат основной. */
+  private async journal(
+    ctx: RequestContext,
+    runId: string,
+    node: string,
+    state: Record<string, unknown>,
+  ): Promise<void> {
+    await this.db.transaction(ctx, async (tx) => {
+      await tx.query(
+        `INSERT INTO audit.node_checkpoints (id, run_id, node_name, state_jsonb)
+         VALUES ($1, $2, $3, $4::jsonb)`,
+        [uuidv7(), runId, node, JSON.stringify(state)],
+      );
     });
   }
 
@@ -425,20 +763,46 @@ export class AnalysisService {
         [projectId],
       );
 
+      // Язык показа — из профиля читателя, не из Accept-Language (ADR-008 §5).
+      // Нет варианта на нужной локали — канонический текст плюс признак
+      // translationPending. На чтении ничего не генерируется.
+      const locale = await this.userLocale(tx, ctx);
+      const texts = await this.localization.textsFor(tx, row.id, locale);
+      const data: Record<string, unknown> = { ...row.jsonb_data };
+      if (locale !== 'ru-RU') {
+        if (texts) {
+          Object.assign(data, {
+            verdict: texts.verdict,
+            strengths: texts.strengths,
+            weaknesses: texts.weaknesses,
+            risks: texts.risks,
+            businessModel: texts.businessModel,
+            askSanity: texts.askSanity,
+            investorExit: texts.investorExit,
+            locale,
+          });
+        } else {
+          data.translationPending = true;
+        }
+      }
+      // Сигнал безопасности не выходит в кабинет: его место в журнале.
+      delete data.integrityFlags;
+      delete data.discrepancies;
+
       return {
         id: row.id,
         projectId: row.project_id,
         version: row.version,
         disclosureTier: row.disclosure_tier,
         modelVersion: row.model_version,
-        data: row.jsonb_data,
+        data,
         publishedAt: row.published_at?.toISOString() ?? null,
         scores: scores.rows.map((s) => ({
           axis: s.axis,
           value: Number(s.value),
           confidenceLow: Number(s.confidence_low),
           confidenceHigh: Number(s.confidence_high),
-          explanation: s.explanation,
+          explanation: texts?.explanations[s.axis] ?? s.explanation,
           computedAt: s.computed_at.toISOString(),
           sources: s.sources ?? [],
           // Версия модели самой оценки, а не паспорта: пересчёт одной оси
@@ -471,10 +835,11 @@ export class AnalysisService {
            FROM scoring.readiness_map WHERE project_id = $1 ORDER BY dimension`,
         [projectId],
       );
+      const texts = await this.activeTexts(tx, ctx, projectId);
       return rows.map((r) => ({
         dimension: r.dimension,
         level: r.level,
-        recommendations: r.recommendations,
+        recommendations: texts?.recommendations[r.dimension] ?? r.recommendations,
         updatedAt: r.updated_at.toISOString(),
       }));
     });
@@ -509,16 +874,18 @@ export class AnalysisService {
            FROM scoring.roadmap_steps WHERE roadmap_id = $1 ORDER BY order_index`,
         [roadmap.id],
       );
+      const texts =
+        roadmap.generated_by === 'ai' ? await this.activeTexts(tx, ctx, projectId) : null;
       return {
         id: roadmap.id,
         projectId: roadmap.project_id,
         generatedBy: roadmap.generated_by,
         isActive: roadmap.is_active,
         createdAt: roadmap.created_at.toISOString(),
-        steps: steps.rows.map((s) => ({
+        steps: steps.rows.map((s, index) => ({
           id: s.id,
-          title: s.title,
-          description: s.description,
+          title: texts?.roadmap[index]?.title ?? s.title,
+          description: texts?.roadmap[index]?.description ?? s.description,
           dimension: s.dimension,
           status: s.status,
           priority: s.priority,
@@ -553,14 +920,42 @@ export class AnalysisService {
     }
   }
 
-  private async assertScoringEnabled(ctx: RequestContext): Promise<void> {
-    const enabled = await this.db.readOnly(ctx, async (tx) => {
-      const { rows } = await tx.query<{ enabled: boolean }>(
-        `SELECT enabled FROM audit.feature_flags WHERE key = 'ai.scoring.enabled'`,
+  /** Локаль читателя — из профиля. Аноним и служебный контекст — канонический язык. */
+  private async userLocale(tx: Tx, ctx: RequestContext): Promise<string> {
+    if (!ctx.userId) return 'ru-RU';
+    const { rows } = await tx.query<{ locale: string | null }>(
+      `SELECT locale FROM identity.users WHERE id = $1`,
+      [ctx.userId],
+    );
+    return rows[0]?.locale ?? 'ru-RU';
+  }
+
+  /** Перевод действующего паспорта проекта для локали читателя, если он есть. */
+  private async activeTexts(tx: Tx, ctx: RequestContext, projectId: string) {
+    const locale = await this.userLocale(tx, ctx);
+    if (locale === 'ru-RU') return null;
+    const { rows } = await tx.query<{ id: string }>(
+      `SELECT id FROM scoring.investment_passports WHERE project_id = $1 AND superseded_at IS NULL`,
+      [projectId],
+    );
+    const passportId = rows[0]?.id;
+    return passportId ? this.localization.textsFor(tx, passportId, locale) : null;
+  }
+
+  /**
+   * Два флага — два состояния продукта: скоринг эвристикой и скоринг моделью.
+   * Второй без первого смысла не имеет; первый без второго — штатный режим.
+   */
+  private async assertScoringEnabled(ctx: RequestContext): Promise<{ llm: boolean }> {
+    const flags = await this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<{ key: string; enabled: boolean }>(
+        `SELECT key, enabled FROM audit.feature_flags
+          WHERE key IN ('ai.scoring.enabled', 'ai.scoring.llm.enabled')`,
       );
-      return rows[0]?.enabled ?? false;
+      return Object.fromEntries(rows.map((r) => [r.key, r.enabled]));
     });
-    if (!enabled) throw errors.featureDisabled('ai.scoring.enabled');
+    if (!flags['ai.scoring.enabled']) throw errors.featureDisabled('ai.scoring.enabled');
+    return { llm: Boolean(flags['ai.scoring.llm.enabled']) };
   }
 
   private async activeModelId(tx: Tx, name: string): Promise<string> {
@@ -605,6 +1000,10 @@ interface ProjectRow {
   stage: string;
   updated_at: Date;
   can_edit: boolean;
+  investment_ask: string | null;
+  ask_currency: string;
+  geo_country: string | null;
+  taxonomy_name: string | null;
 }
 
 interface MaterialRow {
@@ -620,7 +1019,16 @@ interface AnalysisInputSnapshot {
     title: string;
     tagline: string | null;
     description: string | null;
+    summary: string;
     stage: string;
+    nonce: string;
+    markersRemoved: number;
+    metadata: {
+      investmentAsk: string | null;
+      currency: string;
+      taxonomy: string | null;
+      geoCountry: string | null;
+    };
     projectUpdatedAt: string;
     materials: { id: string; type: string; version: number }[];
   };
@@ -659,8 +1067,12 @@ export interface AnalysisRunView {
   isLlm: boolean;
   modelVersion: string;
   passportVersion: number;
+  passportId: string;
   irs: number;
   irsDelta: number | null;
+  /** Публикуемый балл 1–10 и состояние решения человека по потолкам. */
+  score10: number;
+  reviewStatus: 'none' | 'pending' | 'confirmed' | 'rejected';
 }
 
 export interface PassportView {

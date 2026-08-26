@@ -16,6 +16,11 @@ DATA_CLASSES: Final[frozenset[str]] = frozenset(
     {"public", "pseudonymous", "pdn", "commercial_secret"}
 )
 
+# Как разговаривать с провайдером. Закрытые списки: неизвестное значение в
+# политике роняет сервис на старте, а не всплывает на первом вызове.
+API_STYLES: Final[frozenset[str]] = frozenset({"openai_chat", "anthropic_messages"})
+AUTH_SCHEMES: Final[frozenset[str]] = frozenset({"bearer", "api-key", "x-api-key"})
+
 
 class PolicyError(RuntimeError):
     """Политика непригодна к применению. Сервис не должен стартовать."""
@@ -43,6 +48,11 @@ class Provider:
     endpoint: str | None
     data_classes: frozenset[str]
     enabled: bool
+    # Только для сетевых провайдеров: формат запроса, способ передачи ключа и
+    # модель по умолчанию (оператор может задать свою в панели).
+    api_style: str = "openai_chat"
+    auth_scheme: str = "bearer"
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -137,6 +147,16 @@ def load_policy(path: str | Path) -> Policy:
                     f"провайдер {name!r}: endpoint обязан быть https:// (получено {endpoint!r})"
                 )
 
+        api_style = str(entry.get("api_style", "openai_chat"))
+        auth_scheme = str(entry.get("auth_scheme", "bearer"))
+        if entry.get("kind", "llm") != "deterministic":
+            if api_style not in API_STYLES:
+                raise PolicyError(f"провайдер {name!r}: неизвестный api_style {api_style!r}")
+            if auth_scheme not in AUTH_SCHEMES:
+                raise PolicyError(f"провайдер {name!r}: неизвестный auth_scheme {auth_scheme!r}")
+            if endpoint is None:
+                raise PolicyError(f"провайдер {name!r}: сетевой провайдер без endpoint")
+
         providers[name] = Provider(
             name=name,
             jurisdiction=jurisdiction,
@@ -146,6 +166,9 @@ def load_policy(path: str | Path) -> Policy:
             data_classes=classes,
             # Детерминированный провайдер включён всегда: он не ходит наружу.
             enabled=bool(entry.get("enabled", entry.get("kind") == "deterministic")),
+            api_style=api_style,
+            auth_scheme=auth_scheme,
+            model=(str(entry["model"]) if entry.get("model") else None),
         )
 
     default = raw.get("default_provider")

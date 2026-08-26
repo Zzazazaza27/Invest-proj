@@ -40,6 +40,13 @@ import {
   type UpsertNotificationTemplate,
   AdminProjectSummarySchema,
   AdminUserSummarySchema,
+  AiProviderCheckResultSchema,
+  AiProviderCredentialSchema,
+  ScoringReviewItemSchema,
+  type AiProviderCheckResult,
+  type AiProviderCredential,
+  type ScoringReviewItem,
+  type UpsertAiProviderCredentialRequest,
   type AdminProjectSummary,
   type AdminUserSummary,
 } from '@unicorn/contracts';
@@ -357,6 +364,67 @@ export const api = {
    * Нужен экранам, которые работают по идентификатору: набирать UUID руками
    * оператору неоткуда, а искать он умеет по имени.
    */
+  /**
+   * Ключ LLM-провайдера (ADR-008 §2). Панель отправляет ключ один раз и
+   * обратно получает только отпечаток: прочитать ключ через API нельзя.
+   */
+  aiCredentials(): Promise<{ items: AiProviderCredential[] }> {
+    return client.request({
+      method: 'GET',
+      path: '/v1/admin/ai/credentials',
+      schema: z.object({ items: z.array(AiProviderCredentialSchema) }),
+    });
+  },
+
+  upsertAiCredential(body: UpsertAiProviderCredentialRequest): Promise<AiProviderCredential> {
+    return client.request({
+      method: 'PUT',
+      path: '/v1/admin/ai/credentials',
+      body,
+      schema: AiProviderCredentialSchema,
+    });
+  },
+
+  revokeAiCredential(provider: string, reason: string): Promise<{ revoked: boolean }> {
+    return client.request({
+      method: 'POST',
+      path: `/v1/admin/ai/credentials/${encodeURIComponent(provider)}/revoke`,
+      body: { reason },
+      schema: z.object({ revoked: z.boolean() }),
+    });
+  },
+
+  checkAiCredential(provider: string): Promise<AiProviderCheckResult> {
+    return client.request({
+      method: 'POST',
+      path: `/v1/admin/ai/credentials/${encodeURIComponent(provider)}/check`,
+      body: {},
+      schema: AiProviderCheckResultSchema,
+    });
+  },
+
+  /** Оценки ИИ, ждущие решения человека (ADR-008 §4). */
+  scoringReviews(): Promise<{ items: ScoringReviewItem[] }> {
+    return client.request({
+      method: 'GET',
+      path: '/v1/projects/scoring-reviews',
+      schema: z.object({ items: z.array(ScoringReviewItemSchema) }),
+    });
+  },
+
+  decideScoringReview(
+    passportId: string,
+    decision: 'confirm' | 'reject' | 'allow' | 'block',
+    reason: string,
+  ): Promise<ScoringReviewItem> {
+    return client.request({
+      method: 'POST',
+      path: `/v1/projects/scoring-reviews/${encodeURIComponent(passportId)}/decision`,
+      body: { decision, reason },
+      schema: ScoringReviewItemSchema,
+    });
+  },
+
   searchUsers(query: string): Promise<{ items: AdminUserSummary[] }> {
     return client.request({
       method: 'GET',

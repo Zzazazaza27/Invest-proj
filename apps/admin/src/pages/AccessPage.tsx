@@ -27,7 +27,7 @@ export function AccessPage() {
     <Stack gap="var(--u-space-6)">
       <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Доступ</h1>
       <RolesSection />
-      <ServiceAccountsSection />
+      {/* Клиенты Integration API переехали в «Интеграции»: там всё внешнее в одном месте. */}
     </Stack>
   );
 }
@@ -253,7 +253,7 @@ function RolesSection() {
  * недоработка интерфейса: в базе лежит только Argon2id-хеш, и «показать ещё
  * раз» невозможно by design.
  */
-function ServiceAccountsSection() {
+export function ServiceAccountsSection() {
   const [state, setState] = useState<
     | { status: 'loading' }
     | {

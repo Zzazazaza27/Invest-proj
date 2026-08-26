@@ -5,6 +5,8 @@ import { AdminService } from './admin/admin.service';
 import { DiscoveryModule } from '@nestjs/core';
 import { DirectoryController } from './admin/directory.controller';
 import { DirectoryService } from './admin/directory.service';
+import { ProviderCredentialsService } from './ai/provider-credentials.service';
+import { LocalizationService } from './ai/localization.service';
 import { RolesController } from './admin/roles.controller';
 import { RolesService } from './admin/roles.service';
 import { SessionEpochService } from './auth/session-epoch.service';
@@ -132,6 +134,8 @@ import { S3Service } from './storage/s3.service';
     BillingService,
     AdminService,
     DirectoryService,
+    ProviderCredentialsService,
+    LocalizationService,
     RolesService,
     TemplatesService,
     InvestmentsService,

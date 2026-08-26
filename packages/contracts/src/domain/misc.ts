@@ -181,6 +181,13 @@ export const InvestmentPassportSchema = z.object({
   scores: z.array(ScoreSchema),
   irs: IrsScoreSchema.nullable(),
   publishedAt: IsoDateTimeSchema.nullable(),
+  /**
+   * Происхождение оценки — неотделимо от числа (ADR-008 §4): версия модели и
+   * промпта показываются рядом с баллом. Необязательны ради совместимости со
+   * старыми ответами, но сервер заполняет их всегда.
+   */
+  modelVersion: z.string().max(120).nullable().optional(),
+  promptVersion: z.string().max(60).nullable().optional(),
 });
 export type InvestmentPassport = z.infer<typeof InvestmentPassportSchema>;
 
@@ -546,6 +553,8 @@ export const RatingEntrySchema = z.object({
   projectId: UuidSchema,
   title: z.string(),
   irs: z.number().min(0).max(100),
+  /** Публикуемый балл 1–10 (0 — паспорта ещё нет). Рейтинг сортируется по нему, IRS — тай-брейкер. */
+  score10: z.number().int().min(0).max(10),
   computedAt: IsoDateTimeSchema,
 });
 export type RatingEntry = z.infer<typeof RatingEntrySchema>;

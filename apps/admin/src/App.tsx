@@ -4,6 +4,7 @@ import { ApiError, api } from './api';
 import { LoginPage } from './pages/LoginPage';
 import { PlansPage } from './pages/PlansPage';
 import { SubscriptionsPage } from './pages/SubscriptionsPage';
+import { IntegrationsPage } from './pages/IntegrationsPage';
 import { FlagsPage } from './pages/FlagsPage';
 import { CompliancePage } from './pages/CompliancePage';
 import { SeasonPage } from './pages/SeasonPage';
@@ -77,6 +78,7 @@ export function App() {
         <NavItem to="/funnel" label="Воронка сезона" />
         <NavItem to="/templates" label="Уведомления" />
         <NavItem to="/support" label="Поддержка" />
+        <NavItem to="/integrations" label="Интеграции" />
         <NavItem to="/flags" label="Функции платформы" />
         <NavItem to="/access" label="Доступ" />
         <div className="sidebar__footer">
@@ -113,6 +115,7 @@ export function App() {
           <Route path="/templates" element={<TemplatesPage />} />
           <Route path="/support" element={<SupportPage />} />
           <Route path="/support/:id" element={<SupportPage />} />
+          <Route path="/integrations" element={<IntegrationsPage />} />
           <Route path="/flags" element={<FlagsPage />} />
           <Route path="/access" element={<AccessPage />} />
           <Route path="*" element={<Navigate to="/plans" replace />} />

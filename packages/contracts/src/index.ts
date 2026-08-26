@@ -24,6 +24,7 @@ export * from './domain/investments';
 export * from './domain/integration';
 export * from './domain/support';
 export * from './domain/misc';
+export * from './domain/scoring-llm';
 
 export * from './events';
 

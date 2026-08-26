@@ -1168,7 +1168,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 12 схем и 70 таблиц', async () => {
+  it('схема соответствует спецификации: 12 схем и 72 таблицы', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -1215,7 +1215,8 @@ describe('RLS: покрытие манифеста', () => {
     // осознанным. Ожидание 61 продержалось лишние две миграции только потому,
     // что локальная тестовая БД отставала и проверка была зелёной по неверной
     // причине.
-    expect(Number(tables.rows[0]!.count)).toBe(70);
+    // +2 в M066: scoring.ai_provider_credentials и scoring.passport_texts (ADR-008).
+    expect(Number(tables.rows[0]!.count)).toBe(72);
   });
 });
 

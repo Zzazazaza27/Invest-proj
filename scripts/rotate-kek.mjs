@@ -60,6 +60,9 @@ const ENVELOPE = {
       dek: 'contact_wrapped_dek',
       probe: { column: 'email_ciphertext', aad: 'field:email' },
     },
+    // Факты паспорта категорий finance/legal (Э14, ADR-008): шифртекст лежит в
+    // value_jsonb->>'enc' (base64), поэтому пробной колонки для расшифровки нет.
+    { table: 'scoring.passport_facts', dek: 'value_wrapped_dek', probe: null },
   ],
   kyb_documents: [
     {
@@ -71,6 +74,14 @@ const ENVELOPE = {
   investment_documents: [
     { table: 'investments.investment_offers', dek: 'document_wrapped_dek', probe: null },
     { table: 'investments.investment_agreements', dek: 'document_wrapped_dek', probe: null },
+  ],
+  // Ключи LLM-провайдеров из панели (ADR-008 §2, M066).
+  ai_provider_secrets: [
+    {
+      table: 'scoring.ai_provider_credentials',
+      dek: 'wrapped_dek',
+      probe: { column: 'api_key_ciphertext', aad: 'field:api_key' },
+    },
   ],
 };
 
@@ -122,6 +133,7 @@ const ENV_BY_DOMAIN = {
   billing_documents: 'KEK_BILLING_DOCUMENTS',
   search_index: 'KEK_SEARCH_INDEX',
   webhook_secrets: 'KEK_WEBHOOK_SECRETS',
+  ai_provider_secrets: 'KEK_AI_PROVIDER_SECRETS',
 };
 
 function encrypt(key, plaintext, aad) {

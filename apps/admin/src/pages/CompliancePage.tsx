@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { KycVerification } from '@unicorn/contracts';
 import { PromptDialog } from '@unicorn/ui';
 import { api } from '../api';
+import { ScoringReviewsSection } from './ScoringReviewsSection';
 import { formatDate, problemText } from '../lib/format';
 
 const KYC_KIND_TITLES: Record<string, string> = {
@@ -177,6 +178,7 @@ export function CompliancePage() {
           if (item) void decide(item, 'rejected', reason);
         }}
       />
+      <ScoringReviewsSection />
     </>
   );
 }

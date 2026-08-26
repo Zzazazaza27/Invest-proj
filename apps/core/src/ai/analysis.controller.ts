@@ -1,6 +1,11 @@
-import { Controller, Get, Param, Post } from '@nestjs/common';
-import { InvestmentPassportSchema, UuidSchema } from '@unicorn/contracts';
-import { Ctx } from '../auth/guards';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import {
+  InvestmentPassportSchema,
+  ScoringReviewDecisionSchema,
+  ScoringReviewItemSchema,
+  UuidSchema,
+} from '@unicorn/contracts';
+import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';
 import { AnalysisService } from './analysis.service';
@@ -34,6 +39,29 @@ export class AnalysisController {
    * незамеченным именно потому, что ответ никто не сверял со схемой: лучше
    * узнать о нём отказом здесь, чем пустым экраном у пользователя.
    */
+  // ---------------------------------------------------------- решения человека
+
+  @Roles('admin')
+  @Get('scoring-reviews')
+  async listReviews(@Ctx() ctx: RequestContext) {
+    const items = await this.analysis.listReviews(ctx);
+    return { items: items.map((i) => ScoringReviewItemSchema.parse(i)) };
+  }
+
+  @Roles('admin')
+  @Post('scoring-reviews/:passportId/decision')
+  async decideReview(
+    @Param('passportId') rawId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const passportId = parseOrThrow(UuidSchema, rawId);
+    const input = parseOrThrow(ScoringReviewDecisionSchema, rawBody);
+    return ScoringReviewItemSchema.parse(
+      await this.analysis.decideReview(ctx, passportId, input.decision, input.reason),
+    );
+  }
+
   @Get(':id/passport')
   async passport(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);

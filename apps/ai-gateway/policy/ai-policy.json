@@ -10,13 +10,23 @@
     "  commercial_secret — финансы, договоры, непубличные метрики",
     "",
     "Провайдер вне jurisdiction=RU не получает pdn и commercial_secret никогда.",
-    "Это не настройка по умолчанию, а инвариант: запрос отклоняется целиком."
+    "Это не настройка по умолчанию, а инвариант: запрос отклоняется целиком.",
+    "",
+    "api_style / auth_scheme / model — как вызывать сетевого провайдера. Адрес,",
+    "стиль и юрисдикция задаются ТОЛЬКО здесь и проходят ревью: редактируемый из",
+    "панели адрес был бы каналом утечки текста заявок на произвольный хост (ADR-008).",
+    "Ключ провайдера в этот файл не попадает никогда: он в панели или в окружении."
   ],
-  "version": "1.0.0",
+  "version": "1.1.0",
   "default_provider": "local_deterministic",
   "residency": {
-    "restricted_classes": ["pdn", "commercial_secret"],
-    "allowed_jurisdictions": ["RU"]
+    "restricted_classes": [
+      "pdn",
+      "commercial_secret"
+    ],
+    "allowed_jurisdictions": [
+      "RU"
+    ]
   },
   "providers": [
     {
@@ -25,7 +35,12 @@
       "kind": "deterministic",
       "is_llm": false,
       "endpoint": null,
-      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
+      "data_classes": [
+        "public",
+        "pseudonymous",
+        "pdn",
+        "commercial_secret"
+      ],
       "note": "Воспроизводимая эвристика внутри контура. Данные никуда не уходят."
     },
     {
@@ -33,10 +48,18 @@
       "jurisdiction": "RU",
       "kind": "llm",
       "is_llm": true,
-      "endpoint": "https://llm.api.cloud.yandex.net/foundationModels/v1/completion",
-      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
+      "endpoint": "https://llm.api.cloud.yandex.net/v1/chat/completions",
+      "data_classes": [
+        "public",
+        "pseudonymous",
+        "pdn",
+        "commercial_secret"
+      ],
       "enabled": false,
-      "note": "Включается вместе с ключом и eval-гейтом. Без ключа не выбирается."
+      "note": "OpenAI-совместимый вход YandexGPT. Модель вида gpt://<folder>/yandexgpt/latest задаёт оператор в панели.",
+      "api_style": "openai_chat",
+      "auth_scheme": "api-key",
+      "model": null
     },
     {
       "name": "gigachat",
@@ -44,9 +67,17 @@
       "kind": "llm",
       "is_llm": true,
       "endpoint": "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
-      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
+      "data_classes": [
+        "public",
+        "pseudonymous",
+        "pdn",
+        "commercial_secret"
+      ],
       "enabled": false,
-      "note": "Включается вместе с ключом и eval-гейтом."
+      "note": "Требует access token GigaChat (получается по client secret) — задаётся в панели как ключ.",
+      "api_style": "openai_chat",
+      "auth_scheme": "bearer",
+      "model": "GigaChat"
     },
     {
       "name": "anthropic",
@@ -54,9 +85,29 @@
       "kind": "llm",
       "is_llm": true,
       "endpoint": "https://api.anthropic.com/v1/messages",
-      "data_classes": ["public"],
+      "data_classes": [
+        "public"
+      ],
       "enabled": false,
-      "note": "Вне РФ. Допустим только для публичных текстов и только по явному гранту."
+      "note": "Вне РФ. Допустим только для публичных текстов и только по явному гранту. Модель задаёт оператор.",
+      "api_style": "anthropic_messages",
+      "auth_scheme": "x-api-key",
+      "model": null
+    },
+    {
+      "name": "openai",
+      "jurisdiction": "US",
+      "kind": "llm",
+      "is_llm": true,
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "api_style": "openai_chat",
+      "auth_scheme": "bearer",
+      "model": null,
+      "data_classes": [
+        "public"
+      ],
+      "enabled": false,
+      "note": "Вне РФ. Только публичные тексты. Модель задаёт оператор."
     }
   ]
 }

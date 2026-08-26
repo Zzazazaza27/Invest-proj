@@ -134,6 +134,7 @@ const RawEnvSchema = z.object({
   KEK_NOMINAL_ACCOUNT_EVIDENCE: z.string().default(''),
   KEK_BILLING_DOCUMENTS: z.string().default(''),
   KEK_WEBHOOK_SECRETS: z.string().default(''),
+  KEK_AI_PROVIDER_SECRETS: z.string().default(''),
 
   RATE_LIMIT_DEFAULT_PER_MIN: z.coerce.number().int().min(1).default(120),
   RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().min(1).default(30),
@@ -546,6 +547,7 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
       'KEK_KYB_DOCUMENTS',
       'KEK_INVESTMENT_DOCUMENTS',
       'KEK_WEBHOOK_SECRETS',
+      'KEK_AI_PROVIDER_SECRETS',
     ] as const;
     for (const name of REQUIRED_KEK_ENVS) {
       if (!Base64Key32.safeParse(env[name]).success) {

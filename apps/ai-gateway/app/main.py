@@ -33,6 +33,19 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .analyzer import analyze
+from .llm import (
+    Credential,
+    ProviderError,
+    assert_top_level,
+    build_messages,
+    build_translation_messages,
+    call_chat,
+    contains_pii,
+    credential_from_env,
+    load_prompts,
+    new_nonce,
+    parse_json_object,
+)
 from .policy import Policy, PolicyError, ResidencyViolation, load_policy
 
 LOG = logging.getLogger("ai-gateway")
@@ -142,11 +155,24 @@ class Material(BaseModel):
     url: str | None = Field(default=None, max_length=2048)
 
 
+class ProjectMetadata(BaseModel):
+    """Доверенные метаданные платформы для шаблона сообщения (раздел 4 промпта)."""
+
+    investmentAsk: str | None = Field(default=None, max_length=32)
+    currency: str = Field(default="RUB", max_length=3)
+    taxonomy: str | None = Field(default=None, max_length=200)
+    geoCountry: str | None = Field(default=None, max_length=2)
+    launchCountry: str | None = Field(default=None, max_length=2)
+
+
 class ProjectPayload(BaseModel):
     title: str = Field(max_length=500)
     summary: str | None = Field(default=None, max_length=MAX_TEXT_CHARS)
     stage: str = Field(max_length=32)
     materials: list[Material] = Field(default_factory=list)
+    # Одноразовый nonce прогона: только он закрывает слот данных в промпте.
+    nonce: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    metadata: ProjectMetadata = Field(default_factory=ProjectMetadata)
 
     @field_validator("materials")
     @classmethod
@@ -156,11 +182,47 @@ class ProjectPayload(BaseModel):
         return value
 
 
+class ProviderCredentialPayload(BaseModel):
+    """Ключ провайдера на один вызов (ADR-008 §2). В логи не попадает."""
+
+    api_key: str = Field(min_length=8, max_length=512)
+    model: str | None = Field(default=None, max_length=120)
+
+    def __repr__(self) -> str:  # pragma: no cover - защита от случайного вывода
+        return "ProviderCredentialPayload(<redacted>)"
+
+
+class TranslateRequest(BaseModel):
+    """Проход локализации паспорта (раздел 11): один вызов на версию паспорта."""
+
+    provider: str = Field(max_length=64)
+    provider_credential: ProviderCredentialPayload | None = None
+    locale: str = Field(pattern=r"^(en-US|ru-RU)$")
+    nonce: str = Field(pattern=r"^[0-9a-f]{32}$")
+    numbers: dict[str, Any] = Field(default_factory=dict)
+    texts: dict[str, Any]
+
+    @field_validator("texts")
+    @classmethod
+    def _bounded_texts(cls, value: dict[str, Any]) -> dict[str, Any]:
+        if len(json.dumps(value, ensure_ascii=False)) > 200_000:
+            raise ValueError("переводимые поля больше 200 000 знаков")
+        return value
+
+
+class ProviderCheckRequest(BaseModel):
+    """Проверка ключа из панели: провайдер из политики и ключ на один вызов."""
+
+    provider: str = Field(max_length=64)
+    provider_credential: ProviderCredentialPayload
+
+
 class AnalyzeRequest(BaseModel):
     task: str = Field(max_length=64)
     data_class: str = Field(max_length=32)
     project: ProjectPayload
     provider: str | None = Field(default=None, max_length=64)
+    provider_credential: ProviderCredentialPayload | None = None
     # Алфавит ограничен, а не только длина: trace_id пишется в лог, и
     # перевод строки в нём — подделка строки журнала чужими руками (log
     # forging, LOW внешнего аудита №2). Сейчас core присылает уже
@@ -193,6 +255,8 @@ def create_app(policy: Policy | None = None) -> FastAPI:
         os.environ.get("AI_POLICY_PATH", "apps/ai-gateway/policy/ai-policy.json")
     )
     expected_token = _require_token()
+    # Промпт читается на старте: его отсутствие роняет сервис, а не запрос.
+    prompts = load_prompts()
 
     # docs/redoc/openapi выключены все три. Выключить только UI недостаточно:
     # /openapi.json отдаёт ту же схему целиком и без аутентификации — то есть
@@ -288,13 +352,101 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 extra={"traceId": trace_id, "markers": len(injection_hits)},
             )
 
+        # Класс данных — по СОДЕРЖИМОМУ, а не только по атрибуту проекта
+        # (раздел 8, п. 11): персональные данные живут в тексте, и заявка
+        # класса public с телефоном основателя не должна уехать зарубежному
+        # провайдеру «легально» с точки зрения роутинга. Детекция — до вызова.
+        if provider.kind != "deterministic" and contains_pii(
+            f"{payload.project.title}\n{untrusted}"
+        ):
+            try:
+                provider = resolved_policy.resolve("pdn", payload.provider)
+            except ResidencyViolation as violation:
+                LOG.warning(
+                    "pii in text upgraded data class; provider rejected",
+                    extra={"traceId": trace_id, "provider": violation.provider},
+                )
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "residency_violation",
+                        "dataClass": "pdn",
+                        "provider": violation.provider,
+                        "jurisdiction": violation.jurisdiction,
+                    },
+                ) from violation
+            except PolicyError as error:
+                raise HTTPException(
+                    status_code=422, detail={"code": "policy_rejected", "reason": str(error)}
+                ) from error
+
         if provider.kind != "deterministic":
-            # Сетевые провайдеры включаются вместе с ключами и eval-гейтом.
-            # До тех пор — честный отказ вместо тихой подмены детерминированным.
-            raise HTTPException(
-                status_code=503,
-                detail={"code": "provider_unavailable", "provider": provider.name},
+            credential = (
+                Credential(
+                    api_key=payload.provider_credential.api_key,
+                    model=payload.provider_credential.model,
+                )
+                if payload.provider_credential
+                else credential_from_env(provider.name)
             )
+            if credential is None:
+                # Ключа нет ни в панели, ни в окружении — честный отказ вместо
+                # тихой подмены детерминированным провайдером.
+                raise HTTPException(
+                    status_code=503,
+                    detail={"code": "provider_unavailable", "provider": provider.name},
+                )
+            nonce = payload.project.nonce or new_nonce()
+            model_version = f"{provider.name}:{credential.model or provider.model or 'default'}"
+            try:
+                system, user = build_messages(
+                    prompts,
+                    project=payload.project.model_dump(),
+                    nonce=nonce,
+                    model_version=model_version,
+                )
+                text, model_used = await run_in_threadpool(
+                    call_chat,
+                    endpoint=provider.endpoint or "",
+                    api_style=provider.api_style,
+                    auth_scheme=provider.auth_scheme,
+                    credential=credential,
+                    default_model=provider.model,
+                    system=system,
+                    user=user,
+                    max_tokens=16000,
+                    temperature=0.1,
+                )
+                result = parse_json_object(text)
+                assert_top_level(result)
+            except ProviderError as error:
+                LOG.warning(
+                    "llm provider failed",
+                    extra={"traceId": trace_id, "provider": provider.name, "code": error.code},
+                )
+                status = 403 if error.code == "provider_auth" else 502
+                raise HTTPException(
+                    status_code=status,
+                    detail={"code": error.code, "provider": provider.name},
+                ) from error
+            # Эхо модели не сохраняется, а сверяется: расхождение — рассинхрон
+            # промпта и конфигурации, и его видно в журнале ядра.
+            echoed = str(result.get("modelVersion", ""))
+            if echoed != model_version:
+                LOG.warning(
+                    "modelVersion echo mismatch",
+                    extra={"traceId": trace_id, "expected": model_version, "echoed": echoed[:120]},
+                )
+            result["modelVersion"] = f"{provider.name}:{model_used}"
+            result["promptVersion"] = prompts.version
+            result["provider"] = provider.name
+            result["isLlm"] = True
+            result["jurisdiction"] = provider.jurisdiction
+            result["dataClass"] = payload.data_class
+            result["traceId"] = trace_id
+            result["injectionMarkers"] = len(injection_hits)
+            result["durationMs"] = round((time.monotonic() - started) * 1000, 2)
+            return result
 
         # analyze() — CPU-bound: сканирование корпуса до ~1 МБ блокирует event
         # loop на десятки-сотни мс. При одном воркере несколько параллельных
@@ -309,6 +461,113 @@ def create_app(policy: Policy | None = None) -> FastAPI:
         result["injectionMarkers"] = len(injection_hits)
         result["durationMs"] = round((time.monotonic() - started) * 1000, 2)
         return result
+
+    @app.post("/v1/translate", dependencies=[Depends(authenticate)])
+    async def translate_passport(payload: TranslateRequest) -> dict[str, Any]:
+        """Перевод нарратива паспорта. Числа не меняются — это проверяет ядро."""
+        started = time.monotonic()
+        provider = resolved_policy.providers.get(payload.provider)
+        if provider is None or provider.kind == "deterministic" or not provider.enabled:
+            raise HTTPException(
+                status_code=503, detail={"code": "provider_unavailable", "provider": payload.provider}
+            )
+        credential = (
+            Credential(
+                api_key=payload.provider_credential.api_key,
+                model=payload.provider_credential.model,
+            )
+            if payload.provider_credential
+            else credential_from_env(provider.name)
+        )
+        if credential is None:
+            raise HTTPException(
+                status_code=503, detail={"code": "provider_unavailable", "provider": provider.name}
+            )
+        try:
+            system, user = build_translation_messages(
+                prompts,
+                nonce=payload.nonce,
+                locale=payload.locale,
+                numbers=payload.numbers,
+                texts=payload.texts,
+            )
+            text, model_used = await run_in_threadpool(
+                call_chat,
+                endpoint=provider.endpoint or "",
+                api_style=provider.api_style,
+                auth_scheme=provider.auth_scheme,
+                credential=credential,
+                default_model=provider.model,
+                system=system,
+                user=user,
+                max_tokens=8000,
+                temperature=0,
+            )
+            result = parse_json_object(text)
+        except ProviderError as error:
+            status = 403 if error.code == "provider_auth" else 502
+            raise HTTPException(
+                status_code=status, detail={"code": error.code, "provider": provider.name}
+            ) from error
+        translated = result.get("translated")
+        if not isinstance(translated, dict):
+            raise HTTPException(
+                status_code=502, detail={"code": "model_bad_shape", "provider": provider.name}
+            )
+        flags = result.get("flags") or []
+        return {
+            "translated": translated,
+            "flags": [str(f)[:60] for f in flags if isinstance(f, str)][:10],
+            "modelVersion": f"{provider.name}:{model_used}",
+            "promptVersion": prompts.version,
+            "provider": provider.name,
+            "durationMs": round((time.monotonic() - started) * 1000, 2),
+        }
+
+    @app.post("/v1/providers/check", dependencies=[Depends(authenticate)])
+    async def check_provider(payload: ProviderCheckRequest) -> dict[str, Any]:
+        """Проверка ключа одним коротким вызовом — без текста заявки.
+
+        Нужна панели: оператор задал ключ и хочет знать, что он рабочий, до
+        того как первый основатель запустит анализ. Вызов минимальный по
+        токенам; результат — да/нет и имя модели, тело ответа наружу не идёт.
+        """
+        started = time.monotonic()
+        provider = resolved_policy.providers.get(payload.provider)
+        if provider is None or provider.kind == "deterministic":
+            raise HTTPException(status_code=422, detail={"code": "policy_rejected"})
+        credential = Credential(
+            api_key=payload.provider_credential.api_key,
+            model=payload.provider_credential.model,
+        )
+        try:
+            text, model_used = await run_in_threadpool(
+                call_chat,
+                endpoint=provider.endpoint or "",
+                api_style=provider.api_style,
+                auth_scheme=provider.auth_scheme,
+                credential=credential,
+                default_model=provider.model,
+                system="Отвечай только JSON.",
+                user='Верни ровно {"ok": true}',
+                max_tokens=32,
+                temperature=0,
+                timeout=30,
+            )
+            parsed = parse_json_object(text)
+        except ProviderError as error:
+            return {
+                "ok": False,
+                "code": error.code,
+                "provider": provider.name,
+                "durationMs": round((time.monotonic() - started) * 1000, 2),
+            }
+        return {
+            "ok": bool(parsed.get("ok")),
+            "provider": provider.name,
+            "model": model_used,
+            "durationMs": round((time.monotonic() - started) * 1000, 2),
+        }
 
     return app
 

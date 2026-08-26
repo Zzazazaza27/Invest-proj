@@ -9,9 +9,9 @@ import {
   LoadingState,
   Stack,
   formatMoney,
-  formatScore10,
 } from '@unicorn/ui';
 import type { ProjectTeaser } from '@unicorn/contracts';
+import { publishedScore10 } from '@unicorn/cabinet';
 import { ApiError, api } from '../api';
 
 /**
@@ -126,7 +126,12 @@ export function CatalogPage({ onOpen }: { onOpen: (projectId: string) => void })
         [projectId]: {
           state: 'ready',
           summary: description ? shorten(description, 220) : null,
-          irs: passport?.irs?.value ?? null,
+          // Публикуемый балл — после решения человека по потолкам; у старых
+          // паспортов без него — из IRS по таблице.
+          irs:
+            passport === null
+              ? null
+              : (publishedScore10(passport) ?? Math.round((passport.irs?.value ?? 0) / 10)),
         },
       }));
     });
@@ -377,7 +382,7 @@ function PreviewPopover({ preview }: { preview: Preview }) {
           <strong>
             {preview.irs === null
               ? 'Оценка платформы ещё не рассчитана'
-              : `Оценка платформы: ${formatScore10(preview.irs)}`}
+              : `Оценка платформы: ${preview.irs}/10 · сгенерирована ИИ, сведения не проверялись`}
           </strong>
         </>
       ) : null}

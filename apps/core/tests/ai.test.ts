@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ScoreAxisSchema } from '@unicorn/contracts';
+import { ReadinessDimensionSchema, ScoreAxisSchema } from '@unicorn/contracts';
 import { AnalysisResultSchema, AiGatewayClient } from '../src/ai/ai-gateway.client';
 
 /**
@@ -29,7 +29,28 @@ function validResult(): Record<string, unknown> {
     jurisdiction: 'ru',
     dataClass: 'pseudonymous',
     modelVersion: 'v0.1-heuristic',
-    passport: { summary: 'ok' },
+    // Паспорт — в строгой форме Э1: одна схема на эвристику и LLM.
+    passport: {
+      score10: 6,
+      irsBreakdown: Object.fromEntries([
+        ['sum', 50],
+        ...ScoreAxisSchema.options.map((axis) => [axis, 50]),
+        ...ScoreAxisSchema.options.map((axis) => [`${axis}_w`, 5]),
+      ]),
+      scoreBasis: 'disclosure',
+      verdict: 'ok',
+      strengths: [],
+      weaknesses: [],
+      risks: [],
+      capsApplied: [],
+      penaltiesApplied: [],
+      integrityFlags: [],
+      complianceFlags: [],
+      businessModel: 'not_stated',
+      askSanity: 'not_stated',
+      investorExit: 'not_stated',
+      evidenceLevel: 'absent',
+    },
     facts: [
       {
         category: 'market',
@@ -42,7 +63,12 @@ function validResult(): Record<string, unknown> {
     ],
     scores: ScoreAxisSchema.options.map((axis) => validScore(axis)),
     irs: { value: 50 },
-    readiness: [{ dimension: 'problem', level: 'medium', recommendations: ['шаг'] }],
+    // Ровно тринадцать: дырявая карта готовности больше не проходит разбор.
+    readiness: ReadinessDimensionSchema.options.map((dimension) => ({
+      dimension,
+      level: 'medium',
+      recommendations: ['шаг'],
+    })),
     roadmap: [],
     injectionMarkers: 0,
     durationMs: 10,

@@ -13,6 +13,7 @@ import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { mapDbErrors } from '../billing/billing.service';
+import { llmModelVersion } from '../ai/provider-credentials.service';
 
 /**
  * Административное управление платформой.
@@ -494,6 +495,46 @@ export class AdminService {
     });
   }
 
+  private async switchScoringModel(tx: Tx, enableLlm: boolean): Promise<void> {
+    if (!enableLlm) {
+      await tx.query(
+        `UPDATE scoring.score_models SET is_active = false WHERE name = 'ai_score' AND is_active`,
+      );
+      await tx.query(
+        `UPDATE scoring.score_models SET is_active = true
+          WHERE name = 'ai_score' AND version = 'v0.1-heuristic'`,
+      );
+      return;
+    }
+    const credential = await tx.query<{ provider: string; model_name: string | null }>(
+      `SELECT provider, model_name FROM scoring.ai_provider_credentials WHERE is_active`,
+    );
+    const active = credential.rows[0];
+    if (!active) {
+      throw errors.stateTransition(
+        'LLM-скоринг нельзя включить без активного ключа провайдера — задайте его в разделе «ИИ-скоринг»',
+      );
+    }
+    const version = llmModelVersion(active.provider, active.model_name);
+    const model = await tx.query<{ id: string; passed: boolean | null }>(
+      `SELECT id, (eval_metrics_jsonb->>'passed')::boolean AS passed
+         FROM scoring.score_models WHERE name = 'ai_score' AND version = $1`,
+      [version],
+    );
+    if (!model.rows[0]?.passed) {
+      throw errors.stateTransition(
+        `LLM-скоринг нельзя включить без зелёного eval-гейта для ${version}: ` +
+          'прогоните node scripts/eval-ai-scoring.mjs',
+      );
+    }
+    await tx.query(
+      `UPDATE scoring.score_models SET is_active = false WHERE name = 'ai_score' AND is_active`,
+    );
+    await tx.query(`UPDATE scoring.score_models SET is_active = true WHERE id = $1`, [
+      model.rows[0].id,
+    ]);
+  }
+
   async setFeatureFlag(
     ctx: RequestContext,
     key: string,
@@ -502,6 +543,14 @@ export class AdminService {
   ): Promise<FeatureFlag> {
     return mapDbErrors(async () =>
       this.db.transaction(ctx, async (tx) => {
+        // Включение LLM-скоринга — состояние продукта, а не переключатель
+        // (ADR-008 §6): без активного ключа и зелёного eval-гейта под текущую
+        // версию промпта сервер отказывает. Активная модель `ai_score`
+        // переключается той же транзакцией, чтобы паспорт ссылался на ту
+        // модель, которой посчитан.
+        if (key === 'ai.scoring.llm.enabled') {
+          await this.switchScoringModel(tx, enabled);
+        }
         const { rows } = await tx.query<FlagRow>(
           `UPDATE audit.feature_flags
               SET enabled = $2, updated_by = $3, updated_at = now()

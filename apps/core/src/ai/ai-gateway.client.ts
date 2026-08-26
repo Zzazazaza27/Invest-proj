@@ -3,9 +3,14 @@ import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 import { z } from 'zod';
 import {
+  FactCategorySchema,
+  FactSourceTypeSchema,
+  PassportSchema,
   ReadinessDimensionSchema,
   ReadinessLevelSchema,
   ScoreAxisSchema,
+  ScoreSourceTokenSchema,
+  type Passport,
 } from '@unicorn/contracts';
 
 /**
@@ -32,6 +37,28 @@ export interface AnalysisInput {
   summary: string | null;
   stage: string;
   materials: { type: string; text?: string | null; url?: string | null }[];
+  /**
+   * Одноразовый nonce прогона (128 бит, hex). Маркеры слота данных
+   * опубликованы вместе с промптом; nonce — нет, и только он закрывает слот.
+   */
+  nonce: string;
+  /** Доверенные метаданные платформы для шаблона сообщения (раздел 4 промпта). */
+  metadata: {
+    investmentAsk: string | null;
+    currency: string;
+    taxonomy: string | null;
+    geoCountry: string | null;
+  };
+}
+
+/**
+ * Ключ провайдера на ОДИН вызов (ADR-008 §2). Ядро достаёт его из хранилища
+ * и кладёт в тело запроса; шлюз использует и не хранит. В логи не попадает.
+ */
+export interface ProviderCredential {
+  provider: string;
+  apiKey: string;
+  model: string | null;
 }
 
 /**
@@ -51,7 +78,9 @@ export const AnalysisResultSchema = z.object({
   jurisdiction: z.string().max(40),
   dataClass: z.string().max(40),
   modelVersion: z.string().max(120),
-  passport: z.record(z.string(), z.unknown()),
+  // Строгая схема паспорта (ADR-008, Э1): закрытые перечисления, лимиты длин,
+  // отказ на неизвестном ключе. Раньше это было единственное поле без проверки.
+  passport: PassportSchema,
   // Пустые facts/scores/readiness раньше проходили разбор: «анализ без единой
   // оценки» сохранялся и публиковался как паспорт. Публичный контракт
   // (`ScoreSchema`) требует непустые sources и enum осей — boundary-схема
@@ -60,11 +89,13 @@ export const AnalysisResultSchema = z.object({
   facts: z
     .array(
       z.object({
-        category: z.string().max(120),
+        // Ровно список CHECK в scoring.passport_facts: иное значение роняло
+        // запись уже на вставке — внутренней ошибкой вместо отказа на границе.
+        category: FactCategorySchema,
         key: z.string().max(200),
         value: z.record(z.string(), z.unknown()),
         confidence: z.number().min(0).max(1),
-        sourceType: z.string().max(60),
+        sourceType: FactSourceTypeSchema,
         sourceRef: z.string().max(500),
       }),
     )
@@ -82,7 +113,16 @@ export const AnalysisResultSchema = z.object({
           confidenceHigh: z.number().min(0).max(100),
           explanation: z.string().max(4000),
           // Оценка без источников — мнение модели, выданное за факт.
-          sources: z.array(z.string().max(500)).min(1).max(50),
+          // Закрытый список токенов: каждая строка ложится в
+          // `scoring.scores.sources[].type`, и свободный текст там становится
+          // «типом источника». 1–4 без повторов — по промпту.
+          sources: z
+            .array(ScoreSourceTokenSchema)
+            .min(1)
+            .max(4)
+            .refine((items) => new Set(items).size === items.length, {
+              message: 'токены источников не должны повторяться',
+            }),
         })
         // Интервал уверенности обязан накрывать значение: low ≤ value ≤ high.
         // Оценка 90 с интервалом [10, 20] — внутренне противоречива.
@@ -116,8 +156,11 @@ export const AnalysisResultSchema = z.object({
         recommendations: z.array(z.string().max(2000)).max(50),
       }),
     )
-    .min(1)
-    .max(50)
+    // Ровно тринадцать: схема, требовавшая лишь уникальности, пропускала
+    // дырявую карту готовности молча. Полнота проверяется ещё и отдельным
+    // ассертом в правилах (assertReadinessComplete) — на случай смены списка.
+    .min(13)
+    .max(13)
     .refine((entries) => new Set(entries.map((e) => e.dimension)).size === entries.length, {
       message: 'измерения карты готовности не должны дублироваться',
     }),
@@ -134,6 +177,9 @@ export const AnalysisResultSchema = z.object({
       }),
     )
     .max(200),
+  // Версия промпта — только у LLM-провайдера. Без неё нельзя сказать, какой
+  // рубрикой посчитан паспорт (ADR-008 §1).
+  promptVersion: z.string().max(60).optional(),
   injectionMarkers: z.number().int().nonnegative(),
   durationMs: z.number().nonnegative(),
 });
@@ -144,7 +190,7 @@ export interface AnalysisResult {
   jurisdiction: string;
   dataClass: string;
   modelVersion: string;
-  passport: Record<string, unknown>;
+  passport: Passport;
   facts: {
     category: string;
     key: string;
@@ -170,6 +216,7 @@ export interface AnalysisResult {
     priority: number;
     orderIndex: number;
   }[];
+  promptVersion?: string;
   injectionMarkers: number;
   durationMs: number;
 }
@@ -196,6 +243,7 @@ export class AiGatewayClient {
     input: AnalysisInput,
     dataClass: DataClass,
     traceId: string,
+    options: { credential?: ProviderCredential | null } = {},
   ): Promise<AnalysisResult> {
     const env = getEnv();
     if (!this.isConfigured) throw errors.featureDisabled('ai_gateway');
@@ -216,6 +264,17 @@ export class AiGatewayClient {
           data_class: dataClass,
           project: input,
           trace_id: traceId,
+          // Провайдер и его ключ — только когда оператор задал ключ и включил
+          // LLM-скоринг; иначе шлюз берёт провайдера по умолчанию (эвристику).
+          ...(options.credential
+            ? {
+                provider: options.credential.provider,
+                provider_credential: {
+                  api_key: options.credential.apiKey,
+                  model: options.credential.model,
+                },
+              }
+            : {}),
         }),
         signal: AbortSignal.timeout(env.AI_GATEWAY_TIMEOUT_MS),
       });
@@ -260,6 +319,112 @@ export class AiGatewayClient {
    * доказательство: chunked-ответ его не имеет, поэтому счётчик байтов ведётся
    * по фактическим чанкам, а превышение обрывает поток немедленно.
    */
+  /**
+   * Проверка ключа провайдера коротким вызовом без текста заявки (панель).
+   * Ответ шлюза — да/нет, код причины и имя модели; ключ наружу не выходит.
+   */
+  async checkProvider(
+    credential: ProviderCredential,
+    traceId: string,
+  ): Promise<{ ok: boolean; code?: string; model?: string | null; durationMs: number }> {
+    const env = getEnv();
+    if (!this.isConfigured) throw errors.featureDisabled('ai_gateway');
+    const url = new URL('/v1/providers/check', env.AI_GATEWAY_URL);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.AI_GATEWAY_TOKEN}`,
+        },
+        body: JSON.stringify({
+          provider: credential.provider,
+          provider_credential: { api_key: credential.apiKey, model: credential.model },
+        }),
+        signal: AbortSignal.timeout(env.AI_GATEWAY_TIMEOUT_MS),
+      });
+    } catch {
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+    if (!response.ok) {
+      this.logger.warn({ msg: 'шлюз отклонил проверку ключа', status: response.status, traceId });
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+    const parsed = z
+      .object({
+        ok: z.boolean(),
+        code: z.string().max(60).optional(),
+        model: z.string().max(120).nullable().optional(),
+        durationMs: z.number().nonnegative(),
+      })
+      .safeParse(await response.json());
+    if (!parsed.success) throw errors.upstreamUnavailable('ai_gateway');
+    return parsed.data;
+  }
+
+  /**
+   * Проход локализации паспорта (ADR-008 §5): переводимые поля — в слоте с
+   * nonce, числа — справкой вне слота. Ответ разбирается схемой: форма
+   * `translated` обязана совпасть с отправленной, это проверяет вызывающая
+   * сторона по ключам.
+   */
+  async translatePassport(
+    input: {
+      locale: 'en-US' | 'ru-RU';
+      nonce: string;
+      numbers: Record<string, unknown>;
+      texts: Record<string, unknown>;
+    },
+    credential: ProviderCredential,
+    traceId: string,
+  ): Promise<{
+    translated: Record<string, unknown>;
+    flags: string[];
+    modelVersion: string;
+    promptVersion: string;
+  }> {
+    const env = getEnv();
+    if (!this.isConfigured) throw errors.featureDisabled('ai_gateway');
+    const url = new URL('/v1/translate', env.AI_GATEWAY_URL);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.AI_GATEWAY_TOKEN}`,
+        },
+        body: JSON.stringify({
+          provider: credential.provider,
+          provider_credential: { api_key: credential.apiKey, model: credential.model },
+          locale: input.locale,
+          nonce: input.nonce,
+          numbers: input.numbers,
+          texts: input.texts,
+        }),
+        signal: AbortSignal.timeout(env.AI_GATEWAY_TIMEOUT_MS),
+      });
+    } catch {
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+    if (!response.ok) {
+      this.logger.warn({ msg: 'шлюз отклонил перевод паспорта', status: response.status, traceId });
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+    const raw = await this.readBounded(response, traceId);
+    const parsed = z
+      .object({
+        translated: z.record(z.string(), z.unknown()),
+        flags: z.array(z.string().max(60)).max(10),
+        modelVersion: z.string().max(120),
+        promptVersion: z.string().max(60),
+      })
+      .safeParse(JSON.parse(raw));
+    if (!parsed.success) throw errors.upstreamUnavailable('ai_gateway');
+    return parsed.data;
+  }
+
   private async readBounded(response: Response, traceId: string): Promise<string> {
     const declared = Number(response.headers.get('content-length') ?? NaN);
     if (Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) {
