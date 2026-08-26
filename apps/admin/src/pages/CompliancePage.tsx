@@ -4,6 +4,12 @@ import { PromptDialog } from '@unicorn/ui';
 import { api } from '../api';
 import { formatDate, problemText } from '../lib/format';
 
+const KYC_KIND_TITLES: Record<string, string> = {
+  identity: 'личность',
+  investor_status: 'статус инвестора',
+  accredited: 'квалифицированный инвестор',
+};
+
 /**
  * Очередь комплаенса.
  *
@@ -96,7 +102,7 @@ export function CompliancePage() {
           <table>
             <thead>
               <tr>
-                <th>Заявка</th>
+                <th>Заявитель</th>
                 <th>Вид</th>
                 <th>Статус</th>
                 <th>Подана</th>
@@ -106,8 +112,17 @@ export function CompliancePage() {
             <tbody>
               {queue.map((item) => (
                 <tr key={item.id}>
-                  <td className="small muted">{item.id.slice(0, 8)}</td>
-                  <td>{item.kind}</td>
+                  <td>
+                    {/*
+                      Имя заявителя вместо восьми знаков идентификатора:
+                      одобрять неизвестно кого — не решение, а нажатие кнопки.
+                      Идентификатор остаётся рядом мелким шрифтом, он нужен для
+                      сверки с журналом.
+                    */}
+                    <div>{item.subjectName ?? 'имя не указано'}</div>
+                    <div className="small muted">{item.id.slice(0, 8)}</div>
+                  </td>
+                  <td>{KYC_KIND_TITLES[item.kind] ?? item.kind}</td>
                   <td>
                     <span className="badge badge--warn">
                       {item.status === 'pending' ? 'ожидает' : 'на проверке'}

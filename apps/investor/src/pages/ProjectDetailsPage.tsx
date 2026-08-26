@@ -39,6 +39,26 @@ const SCORE_AXIS_TITLES: Record<string, string> = {
 };
 
 /**
+ * Ссылка материала с проверкой схемы.
+ *
+ * Сервер принимает только `https://` (AddProductLinkSchema), но интерфейс
+ * рендерит то, что лежит в базе, — а туда строка могла попасть до появления
+ * этой проверки, сидом или через служебный путь. `javascript:` в `href` — это
+ * выполнение чужого кода в кабинете смотрящего, поэтому схема проверяется и
+ * здесь: защита стоит там, где происходит опасное действие.
+ */
+const SAFE_LINK_SCHEMES = new Set(['http:', 'https:']);
+function safeHref(raw: string | null | undefined): string {
+  if (!raw) return '#';
+  try {
+    const parsed = new URL(raw);
+    return SAFE_LINK_SCHEMES.has(parsed.protocol) ? parsed.toString() : '#';
+  } catch {
+    return '#';
+  }
+}
+
+/**
  * Карточка проекта глазами инвестора.
  *
  * Отдельная страница, а не раскрывающийся блок в списке: описание проекта —
@@ -219,7 +239,7 @@ export function ProjectDetailsPage({
           {links.map((material) => (
             <div key={material.id} style={{ display: 'flex', gap: 'var(--u-space-3)' }}>
               <Badge>{MATERIAL_TYPE_TITLES[material.type] ?? material.type}</Badge>
-              <a href={material.url ?? '#'} target="_blank" rel="noreferrer noopener">
+              <a href={safeHref(material.url)} target="_blank" rel="noreferrer noopener">
                 {material.url}
               </a>
             </div>

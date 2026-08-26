@@ -337,11 +337,15 @@ export class KycService {
   ): Promise<{ items: KycVerification[]; nextCursor: string | null }> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<VerificationRow>(
-        `SELECT id, kind, status, rejection_reason, expires_at, created_at
-           FROM kyc.kyc_verifications
-          WHERE status IN ('pending','in_review')
-            AND ($2::timestamptz IS NULL OR (created_at, id) > ($2::timestamptz, $3::uuid))
-          ORDER BY created_at, id
+        // Имя заявителя джойном: без него оператор одобряет строку
+        // идентификатора, а не человека.
+        `SELECT v.id, v.kind, v.status, v.rejection_reason, v.expires_at, v.created_at,
+                u.display_name AS subject_name
+           FROM kyc.kyc_verifications v
+           LEFT JOIN identity.users u ON u.id = v.user_id
+          WHERE v.status IN ('pending','in_review')
+            AND ($2::timestamptz IS NULL OR (v.created_at, v.id) > ($2::timestamptz, $3::uuid))
+          ORDER BY v.created_at, v.id
           LIMIT $1`,
         [limit + 1, cursor?.at ?? null, cursor?.id ?? null],
       );
@@ -541,6 +545,8 @@ interface VerificationRow {
   rejection_reason: string | null;
   expires_at: Date | null;
   created_at: Date;
+  /** Имя заявителя. Заполняется только в очереди комплаенса. */
+  subject_name?: string | null;
 }
 
 interface KybRow extends VerificationRow {
@@ -571,6 +577,9 @@ function mapVerification(row: VerificationRow): KycVerification {
     rejectionSummary: row.rejection_reason === null ? null : 'Проверка не пройдена',
     expiresAt: row.expires_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
+    // Только там, где запрос его выбрал: в собственных проверках пользователя
+    // имя заявителя — это он сам, и повторять его незачем.
+    ...(row.subject_name === undefined ? {} : { subjectName: row.subject_name }),
   };
 }
 

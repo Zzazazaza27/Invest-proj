@@ -36,6 +36,15 @@ export const KycVerificationSchema = z.object({
   rejectionSummary: z.string().nullable(),
   expiresAt: IsoDateTimeSchema.nullable(),
   createdAt: IsoDateTimeSchema,
+  /**
+   * Имя заявителя — только в очереди комплаенса, где решение принимает человек.
+   *
+   * Оператор видел одну строку идентификатора и вид проверки: одобрять
+   * неизвестно кого — это не решение, а нажатие кнопки. Адрес почты сюда НЕ
+   * выносится: он лежит в базе зашифрованным, и вытаскивать его в список
+   * означало бы потерять и шифрование на покое, и журнал доступа.
+   */
+  subjectName: z.string().nullable().optional(),
 });
 export type KycVerification = z.infer<typeof KycVerificationSchema>;
 
