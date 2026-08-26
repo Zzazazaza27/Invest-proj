@@ -19,7 +19,6 @@ import {
   checkEgress,
   computeIrs,
   computeScore10,
-  newNonce,
   stripSlotMarkers,
   type Stage,
 } from './scoring-rules';
@@ -155,10 +154,14 @@ export class AnalysisService {
 
       // Маркеры слота данных вырезаются ДО снимка: снимок хранит ровно то, что
       // анализировалось, а nonce входит в отпечаток — воспроизводимость прогона
-      // включает и границу слота (ADR-008 §3, Э4).
-      const nonce = newNonce();
+      // включает и границу слота (ADR-008 §3, Э4). Nonce детерминирован по
+      // входу (HMAC с серверным ключом): один и тот же снимок — один и тот же
+      // промпт, иначе модель даёт разброс IRS 4+ на одинаковом входе.
       const title = stripSlotMarkers(row.title);
       const summary = stripSlotMarkers([row.tagline, row.description].filter(Boolean).join('\n'));
+      const nonce = this.crypto.analysisNonce(
+        `${row.id}|${row.updated_at.toISOString()}|${title.text}|${summary.text}`,
+      );
       const snapshot = {
         title: title.text,
         tagline: row.tagline,

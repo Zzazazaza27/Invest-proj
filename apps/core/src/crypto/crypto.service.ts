@@ -154,6 +154,22 @@ export class CryptoService {
     return a.length === b.length && timingSafeEqual(a, b);
   }
 
+  /**
+   * Nonce маркеров слота данных для прогона анализа — детерминированный по входу.
+   *
+   * Случайный nonce на каждый прогон менял промпт побайтно, и модель на один
+   * и тот же вход отвечала с разбросом IRS 4+ (зонд 2026-08-26: фиксированный
+   * nonce — 1,0, случайный — 4,2). HMAC с серверным ключом даёт то же свойство,
+   * ради которого nonce вводился (заявитель не может предсказать маркер и
+   * закрыть слот сам), и при этом одинаковый вход → одинаковый промпт.
+   */
+  analysisNonce(input: string): string {
+    return createHmac('sha256', this.kek('ai_provider_secrets'))
+      .update(`analysis-nonce:${input}`, 'utf8')
+      .digest('hex')
+      .slice(0, 32);
+  }
+
   /** Хеш IP и User-Agent для записи акцепта: сам адрес не сохраняется. */
   contextHash(value: string): Buffer {
     return createHmac('sha256', this.kek('search_index')).update(`ctx:${value}`, 'utf8').digest();

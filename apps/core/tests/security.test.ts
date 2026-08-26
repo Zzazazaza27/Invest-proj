@@ -127,6 +127,20 @@ describe('Envelope encryption', () => {
     }
   }
 
+  it('nonce анализа детерминирован по входу и непредсказуем без ключа', () => {
+    withKeys(() => {
+      const a = crypto.analysisNonce('id|2026-08-26T00:00:00.000Z|Заголовок|Текст');
+      const again = crypto.analysisNonce('id|2026-08-26T00:00:00.000Z|Заголовок|Текст');
+      const other = crypto.analysisNonce('id|2026-08-26T00:00:00.000Z|Заголовок|Текст.');
+      expect(a).toMatch(/^[0-9a-f]{32}$/);
+      expect(again).toBe(a);
+      expect(other).not.toBe(a);
+      // Без серверного ключа маркер не воспроизвести: это не хеш входа.
+      const plainHash = createHmac('sha256', '').update(a).digest('hex').slice(0, 32);
+      expect(plainHash).not.toBe(a);
+    });
+  });
+
   it('значение расшифровывается обратно', () => {
     withKeys(() => {
       const sealed = crypto.seal('passport_sensitive', 'секрет');

@@ -19,7 +19,7 @@
  * Требует запущенного ai-gateway (8100) и доступа к БД (.env).
  */
 import pg from 'pg';
-import { createDecipheriv, randomBytes } from 'node:crypto';
+import { createDecipheriv, createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -99,7 +99,11 @@ async function analyze(project, credential, dataClass = 'pseudonymous') {
   const body = {
     task: 'project_analysis',
     data_class: dataClass,
-    project: { ...project, nonce: randomBytes(16).toString('hex') },
+    // Nonce детерминирован по входу, как в ядре: один вход — один промпт.
+    project: {
+      ...project,
+      nonce: createHash('sha256').update(JSON.stringify(project)).digest('hex').slice(0, 32),
+    },
     trace_id: `eval-${Date.now().toString(36)}`,
   };
   if (credential && credential.provider !== 'local_deterministic') {
