@@ -36,6 +36,19 @@ const READINESS_LEVEL_TITLES: Record<string, string> = {
   high: 'сильно',
 };
 
+/** Оси оценки паспорта. Тот же принцип: в кабинете — слова, а не коды. */
+const SCORE_AXIS_TITLES: Record<string, string> = {
+  market: 'рынок',
+  demand: 'спрос',
+  competitive_edge: 'преимущество перед конкурентами',
+  uniqueness: 'уникальность',
+  profitability: 'прибыльность',
+  presentation_quality: 'качество подачи',
+  scalability: 'масштабируемость',
+  investment_readiness: 'готовность к инвестициям',
+  product_readiness: 'готовность продукта',
+};
+
 /**
  * Карточка проекта: состояние, действия и результат анализа.
  *
@@ -271,7 +284,8 @@ function PassportCard({ projectId }: { projectId: string }) {
             <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
               {passport.scores.map((score) => (
                 <li key={score.axis}>
-                  <strong>{score.axis}</strong>: {score.value} (интервал {score.confidenceLow}–
+                  <strong>{SCORE_AXIS_TITLES[score.axis] ?? score.axis}</strong>: {score.value}{' '}
+                  (интервал {score.confidenceLow}–
                   {score.confidenceHigh}) — {score.explanation}
                 </li>
               ))}

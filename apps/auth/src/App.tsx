@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Badge, Button, Card, Container, Field, IconTile, Input, Stack } from '@unicorn/ui';
 import { ApiError, api, setCsrf } from './api';
 import { cabinetUrl, cabinetsForRoles, type Cabinet } from './routing';
@@ -144,6 +144,17 @@ export default function App() {
   const [role, setRole] = useState<'founder' | 'investor'>('founder');
   const [consentGiven, setConsentGiven] = useState(false);
   const [passwordRepeat, setPasswordRepeat] = useState('');
+
+  /**
+   * Токены подтверждения, уже отправленные на сервер.
+   *
+   * Ссылка из письма одноразовая, а обработчиков у неё два: подписка на
+   * `hashchange` и разбор адреса при открытии страницы. Когда срабатывали оба,
+   * второй запрос получал законный отказ по использованному токену — и человек
+   * видел «Адрес подтверждён» вместе с красной ошибкой валидации. Помним, что
+   * уже отправляли: повторный вызов по тому же токену просто не нужен.
+   */
+  const confirmedTokens = useRef<Set<string>>(new Set());
 
   /**
    * Уже вошедшего человека не заставляем входить снова.
@@ -306,6 +317,8 @@ export default function App() {
    * почти никогда не тот, где открыт кабинет.
    */
   async function confirmEmailLink(token: string): Promise<void> {
+    if (confirmedTokens.current.has(token)) return;
+    confirmedTokens.current.add(token);
     setBusy(true);
     try {
       await api.auth.confirmEmail(token);

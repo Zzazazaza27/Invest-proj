@@ -13,6 +13,19 @@ import type { ProjectTeaser } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 
 /**
+ * Стадия проекта по-человечески.
+ *
+ * В карточке каталога стояло сырое `growth`: инвестор видит английский код там,
+ * где ждёт стадию проекта на своём языке.
+ */
+const STAGE_TITLES: Record<string, string> = {
+  idea: 'идея',
+  mvp: 'MVP',
+  early_revenue: 'первая выручка',
+  growth: 'рост',
+};
+
+/**
  * Каталог проектов.
  *
  * Инвестор видит те же тизеры, что и аноним: полная карточка открывается
@@ -199,7 +212,7 @@ export function CatalogPage() {
           {state.items.map((teaser) => (
             <li key={teaser.id}>
               <Card style={{ height: '100%', display: 'grid', gap: 'var(--u-space-3)' }}>
-                <Badge tone="accent">{teaser.stage}</Badge>
+                <Badge tone="accent">{STAGE_TITLES[teaser.stage] ?? teaser.stage}</Badge>
                 <strong style={{ fontSize: 'var(--u-text-lg)' }}>{teaser.title}</strong>
                 {teaser.tagline ? (
                   <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>

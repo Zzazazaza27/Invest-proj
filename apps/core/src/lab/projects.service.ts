@@ -849,7 +849,12 @@ async function resolveFounderPlan(tx: Tx, ask: string): Promise<string> {
 const PROJECT_COLUMNS = `
   id, taxonomy_id, title, tagline, description, stage, geo_country, geo_region,
   investment_ask::text AS investment_ask, ask_currency, required_plan_id,
-  listing_status, listed_at, status, season_id, current_version_id, created_at, updated_at
+  listing_status, listed_at, status, season_id, current_version_id, created_at, updated_at,
+  (SELECT s.value::text
+     FROM scoring.irs_scores s
+    WHERE s.project_id = lab.projects.id
+    ORDER BY s.computed_at DESC
+    LIMIT 1) AS irs
 `;
 
 interface ProjectRow {
@@ -871,6 +876,8 @@ interface ProjectRow {
   current_version_id: string | null;
   created_at: Date;
   updated_at: Date;
+  /** Последний IRS проекта; NUMERIC приходит строкой, чтобы не терять точность. */
+  irs: string | null;
 }
 
 interface ProjectSummaryRow {
@@ -923,8 +930,11 @@ function mapProject(row: ProjectRow): ProjectFull {
     seasonId: row.season_id,
     requiredPlanId: row.required_plan_id,
     currentVersionId: row.current_version_id,
-    // Скоринга в этой фазе нет. `null` честнее нуля: ноль читается как оценка.
-    irs: null,
+    // Последний рассчитанный IRS проекта. Раньше здесь стоял жёсткий `null` с
+    // припиской «скоринга в этой фазе нет» — скоринг появился, а строка
+    // осталась, и кабинет показывал «IRS ещё не рассчитан» рядом с посчитанным
+    // паспортом. `null` по-прежнему честнее нуля: ноль читается как оценка.
+    irs: row.irs === null || row.irs === undefined ? null : Number(row.irs),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
