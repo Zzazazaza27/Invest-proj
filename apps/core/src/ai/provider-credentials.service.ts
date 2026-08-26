@@ -28,7 +28,7 @@ export const LLM_PROVIDERS = ['yandex_gpt', 'gigachat', 'anthropic', 'openai', '
  * шлюза; строка версии модели в scoring.score_models собирается отсюда, чтобы
  * «какой рубрикой посчитан паспорт» читалось из одной записи (ADR-008 §1, §6).
  */
-export const PROMPT_VERSION = 'v2.5';
+export const PROMPT_VERSION = 'v2.5.1';
 
 export function llmModelVersion(provider: string, model: string | null): string {
   return `llm:${provider}:${model ?? 'default'}:${PROMPT_VERSION}`;

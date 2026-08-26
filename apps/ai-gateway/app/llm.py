@@ -32,7 +32,7 @@ from typing import Any, Final
 
 LOG = logging.getLogger("ai_gateway.llm")
 
-PROMPT_VERSION: Final[str] = "v2.5"
+PROMPT_VERSION: Final[str] = "v2.5.1"
 PROMPTS_DIR: Final[Path] = Path(__file__).resolve().parent.parent / "prompts"
 
 ANTHROPIC_VERSION: Final[str] = "2023-06-01"
