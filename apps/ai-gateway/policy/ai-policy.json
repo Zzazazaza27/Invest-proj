@@ -36,7 +36,7 @@
     "Каталог моделей отдаёт только текстовые чат-модели: embeddings, vision,",
     "audio, image, realtime, completion-only отфильтрованы по имени."
   ],
-  "version": "1.5.0",
+  "version": "1.5.1",
   "default_provider": "local_deterministic",
   "residency": {
     "restricted_classes": [
@@ -218,10 +218,10 @@
         "commercial_secret"
       ],
       "enabled": false,
-      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модель задаёт оператор; на 2026-08 API принимает deepseek-v4-pro, deepseek-v4-flash (имя «DeepSeek» отвергается кодом 400).",
+      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модель задаёт оператор; на 2026-08 API принимает deepseek-v4-pro, deepseek-v4-flash (имя «DeepSeek» отвергается кодом 400). Рассуждающая модель: размышление входит в max_tokens (лимит API 384K), потому потолок 65 536.",
       "models_endpoint": "https://api.deepseek.com/models",
       "model_suggestions": [],
-      "max_output_tokens": 8192
+      "max_output_tokens": 65536
     }
   ]
 }

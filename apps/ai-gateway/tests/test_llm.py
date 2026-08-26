@@ -430,8 +430,7 @@ def test_max_tokens_capped_by_provider_limit(
     assert response.status_code == 200
     assert seen["max_tokens"] == 1024
     policy = load_policy("policy/ai-policy.json")
-    assert policy.providers["deepseek"].max_output_tokens == 8192
-    assert min(16000, policy.providers["deepseek"].max_output_tokens) == 8192
+    assert policy.providers["deepseek"].max_output_tokens == 65536
 
 
 def test_provider_models_static_when_no_catalog(

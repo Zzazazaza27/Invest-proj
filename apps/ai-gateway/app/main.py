@@ -442,7 +442,9 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                     default_model=provider.model,
                     system=system,
                     user=user,
-                    max_tokens=min(16000, provider.max_output_tokens),
+                    # Потолок — из политики: у рассуждающих моделей (DeepSeek V4)
+                    # размышление входит в max_tokens, и 16k им мало.
+                    max_tokens=provider.max_output_tokens,
                     temperature=0.1,
                 )
                 result = parse_json_object(text)
