@@ -61,6 +61,12 @@ class Provider:
     # («max_tokens is too large»), а не усечённый ответ. Шлюз режет свои
     # лимиты по нему.
     max_output_tokens: int = 16000
+    # Провайдерские поля запроса (OpenAI-формат), например выключение режима
+    # размышления у DeepSeek: {"thinking": {"type": "disabled"}}. Только здесь,
+    # через ревью — панель их не задаёт.
+    request_extras: dict = None  # type: ignore[assignment]
+    # Таймаут одного вызова анализа/перевода, секунд.
+    timeout_seconds: float = 90.0
 
 
 @dataclass(frozen=True)
@@ -189,6 +195,22 @@ def load_policy(path: str | Path) -> Policy:
             raise PolicyError(
                 f"провайдер {name!r}: max_output_tokens — целое от 2048 до 200000"
             )
+        request_extras = entry.get("request_extras") or {}
+        if not isinstance(request_extras, dict) or any(
+            k
+            in ("model", "messages", "max_tokens", "tools", "tool_choice", "functions")
+            for k in request_extras
+        ):
+            raise PolicyError(
+                f"провайдер {name!r}: request_extras — объект без служебных полей"
+            )
+        timeout_seconds = entry.get("timeout_seconds", 90)
+        if isinstance(timeout_seconds, bool) or not isinstance(
+            timeout_seconds, (int, float)
+        ):
+            raise PolicyError(f"провайдер {name!r}: timeout_seconds — число секунд")
+        if not 10 <= timeout_seconds <= 900:
+            raise PolicyError(f"провайдер {name!r}: timeout_seconds — от 10 до 900")
         suggestions = entry.get("model_suggestions", [])
         if not isinstance(suggestions, list) or not all(
             isinstance(x, str) for x in suggestions
@@ -220,6 +242,8 @@ def load_policy(path: str | Path) -> Policy:
             models_endpoint=models_endpoint,
             model_suggestions=tuple(suggestions),
             max_output_tokens=max_output_tokens,
+            request_extras=dict(request_extras),
+            timeout_seconds=float(timeout_seconds),
             model=(str(entry["model"]) if entry.get("model") else None),
         )
 

@@ -102,12 +102,19 @@ def test_pii_detector() -> None:
     assert not contains_pii("выручка 1200000 рублей за 2025 год")
 
 
-def test_parse_json_object_tolerates_fences_only() -> None:
+def test_parse_json_object_fences_and_outer_object() -> None:
+    """Обрамление ``` и фраза вокруг объекта снимаются; не-объект — отказ.
+
+    Раньше фраза вокруг была отказом; живой DeepSeek её иногда добавляет,
+    и это стоило целого прогона (`model_bad_json`). Содержимое объекта
+    по-прежнему проверяется строгой схемой дальше.
+    """
     assert parse_json_object('```json\n{"a": 1}\n```') == {"a": 1}
-    with pytest.raises(ProviderError):
-        parse_json_object('вот ответ: {"a": 1}')
+    assert parse_json_object('вот ответ: {"a": 1}') == {"a": 1}
     with pytest.raises(ProviderError):
         parse_json_object("[1, 2]")
+    with pytest.raises(ProviderError):
+        parse_json_object("{не json}")
 
 
 def test_top_level_shape_is_exactly_seven_keys() -> None:
@@ -431,6 +438,51 @@ def test_max_tokens_capped_by_provider_limit(
     assert seen["max_tokens"] == 1024
     policy = load_policy("policy/ai-policy.json")
     assert policy.providers["deepseek"].max_output_tokens == 65536
+
+
+def test_request_extras_from_policy_reach_provider_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DeepSeek: режим размышления выключен политикой — поле уходит в тело, служебные поля не перекрываются."""
+    seen: dict = {}
+
+    def fake_post(url, headers, body, timeout):  # type: ignore[no-untyped-def]
+        seen.update(body)
+        return {
+            "choices": [
+                {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+            ]
+        }
+
+    monkeypatch.setattr("app.llm._post_json", fake_post)
+    policy = load_policy("policy/ai-policy.json")
+    deepseek = policy.providers["deepseek"]
+    assert deepseek.request_extras == {"thinking": {"type": "disabled"}}
+    text, _model = llm.call_chat(
+        endpoint=deepseek.endpoint or "",
+        api_style=deepseek.api_style,
+        auth_scheme=deepseek.auth_scheme,
+        credential=llm.Credential(
+            api_key="sk-test-key-value", model="deepseek-v4-flash"
+        ),
+        default_model=None,
+        system="s",
+        user="u",
+        max_tokens=100,
+        temperature=0.1,
+        extras={**deepseek.request_extras, "model": "подмена"},
+    )
+    assert text == '{"ok": true}'
+    assert seen["thinking"] == {"type": "disabled"}
+    assert seen["model"] == "deepseek-v4-flash", (
+        "служебное поле не перекрывается extras"
+    )
+
+
+def test_parse_json_object_tolerates_wrapping_text() -> None:
+    assert llm.parse_json_object('Вот паспорт: {"a": 1} — готово.') == {"a": 1}
+    with pytest.raises(llm.ProviderError):
+        llm.parse_json_object("никакого объекта")
 
 
 def test_provider_models_static_when_no_catalog(

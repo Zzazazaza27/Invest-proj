@@ -34,9 +34,12 @@
     "max_output_tokens — потолок выходных токенов провайдера (запрос выше него — 400,",
     "а не усечение); шлюз режет свои лимиты анализа/перевода/проверки по нему.",
     "Каталог моделей отдаёт только текстовые чат-модели: embeddings, vision,",
-    "audio, image, realtime, completion-only отфильтрованы по имени."
+    "audio, image, realtime, completion-only отфильтрованы по имени.",
+    "request_extras — провайдерские поля запроса (только здесь, ревью); timeout_seconds —",
+    "таймаут одного вызова анализа/перевода. DeepSeek: thinking выключен ради",
+    "воспроизводимости (в режиме размышления temperature игнорируется)."
   ],
-  "version": "1.5.1",
+  "version": "1.6.0",
   "default_provider": "local_deterministic",
   "residency": {
     "restricted_classes": [
@@ -87,7 +90,8 @@
         "gpt://<folder-id>/yandexgpt-lite/latest",
         "gpt://<folder-id>/yandexgpt-32k/latest"
       ],
-      "max_output_tokens": 8000
+      "max_output_tokens": 8000,
+      "timeout_seconds": 240
     },
     {
       "name": "gigachat",
@@ -112,7 +116,8 @@
         "GigaChat-Pro",
         "GigaChat-Max"
       ],
-      "max_output_tokens": 8192
+      "max_output_tokens": 8192,
+      "timeout_seconds": 240
     },
     {
       "name": "anthropic",
@@ -133,7 +138,8 @@
       "model": null,
       "models_endpoint": "https://api.anthropic.com/v1/models",
       "model_suggestions": [],
-      "max_output_tokens": 16000
+      "max_output_tokens": 16000,
+      "timeout_seconds": 240
     },
     {
       "name": "openai",
@@ -154,7 +160,8 @@
       "note": "OpenAI (США). Все классы данных — по решению владельца 2026-08-26. Модель задаёт оператор.",
       "models_endpoint": "https://api.openai.com/v1/models",
       "model_suggestions": [],
-      "max_output_tokens": 16000
+      "max_output_tokens": 16000,
+      "timeout_seconds": 240
     },
     {
       "name": "kimi",
@@ -175,7 +182,8 @@
       "note": "Kimi (Moonshot AI, КНР), международная площадка platform.kimi.ai — OpenAI-совместимый вход. Ключ китайской площадки (api.moonshot.cn) сюда не подходит: адрес меняется здесь, ревью. Модель задаёт оператор (kimi-k3, kimi-k2.5).",
       "models_endpoint": "https://api.moonshot.ai/v1/models",
       "model_suggestions": [],
-      "max_output_tokens": 8192
+      "max_output_tokens": 8192,
+      "timeout_seconds": 240
     },
     {
       "name": "qwen",
@@ -200,7 +208,8 @@
         "qwen-max",
         "qwen-turbo"
       ],
-      "max_output_tokens": 8192
+      "max_output_tokens": 8192,
+      "timeout_seconds": 240
     },
     {
       "name": "deepseek",
@@ -218,10 +227,16 @@
         "commercial_secret"
       ],
       "enabled": false,
-      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модель задаёт оператор; на 2026-08 API принимает deepseek-v4-pro, deepseek-v4-flash (имя «DeepSeek» отвергается кодом 400). Рассуждающая модель: размышление входит в max_tokens (лимит API 384K), потому потолок 65 536.",
+      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модели deepseek-v4-pro / deepseek-v4-flash. Режим размышления выключен (thinking.type=disabled): в нём игнорируется temperature, а размышление входит в max_tokens; потолок 65 536 оставлен с запасом.",
       "models_endpoint": "https://api.deepseek.com/models",
       "model_suggestions": [],
-      "max_output_tokens": 65536
+      "max_output_tokens": 65536,
+      "timeout_seconds": 240,
+      "request_extras": {
+        "thinking": {
+          "type": "disabled"
+        }
+      }
     }
   ]
 }

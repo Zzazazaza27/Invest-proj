@@ -372,8 +372,14 @@ def call_chat(
     max_tokens: int,
     temperature: float,
     timeout: float = DEFAULT_TIMEOUT_SECONDS,
+    extras: dict[str, Any] | None = None,
 ) -> tuple[str, str]:
-    """Один вызов без инструментов. Возвращает (текст ответа, имя модели)."""
+    """Один вызов без инструментов. Возвращает (текст ответа, имя модели).
+
+    `extras` — провайдерские поля из политики (например, выключение режима
+    размышления у DeepSeek). Служебные поля они перекрыть не могут: тело
+    собирается ПОСЛЕ них.
+    """
     model = credential.model or default_model
     if not model:
         raise ProviderError("provider_model_missing", "имя модели не задано")
@@ -399,6 +405,7 @@ def call_chat(
         return text, str(parsed.get("model") or model)
 
     body = {
+        **(extras or {}),
         "model": model,
         "messages": [
             {"role": "system", "content": system},
@@ -435,8 +442,18 @@ def parse_json_object(text: str) -> dict[str, Any]:
         stripped = re.sub(r"\s*```$", "", stripped)
     try:
         parsed = json.loads(stripped)
-    except json.JSONDecodeError as error:
-        raise ProviderError("model_bad_json", "ответ модели не JSON") from error
+    except json.JSONDecodeError:
+        # Модель иногда обрамляет объект фразой («Вот паспорт: {…}»). Берётся
+        # самый внешний объект; всё остальное — по-прежнему отказ. В журнал —
+        # начало текста, чтобы отказ можно было разобрать, а не гадать.
+        start, end = stripped.find("{"), stripped.rfind("}")
+        try:
+            if start < 0 or end <= start:
+                raise json.JSONDecodeError("нет объекта", stripped, 0)
+            parsed = json.loads(stripped[start : end + 1])
+        except json.JSONDecodeError as error:
+            LOG.warning("model_bad_json: %s", " ".join(stripped[:200].split()))
+            raise ProviderError("model_bad_json", "ответ модели не JSON") from error
     if not isinstance(parsed, dict):
         raise ProviderError("model_bad_json", "ответ модели не объект")
     return parsed

@@ -299,7 +299,8 @@ const RawEnvSchema = z.object({
   // конфигурации: часть URL из пользовательского ввода была бы SSRF.
   AI_GATEWAY_URL: z.string().default(''),
   AI_GATEWAY_TOKEN: z.string().default(''),
-  AI_GATEWAY_TIMEOUT_MS: z.coerce.number().int().min(1000).max(120_000).default(30_000),
+  // Вызов LLM-провайдера через шлюз идёт минуты: потолок 10 минут, значение — из .env.
+  AI_GATEWAY_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600_000).default(30_000),
   /**
    * Сколько прогонов анализа один пользователь может запустить за сутки.
    *

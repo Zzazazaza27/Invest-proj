@@ -112,7 +112,7 @@ async function analyze(project, credential, dataClass = 'pseudonymous') {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${TOKEN}` },
     body: JSON.stringify(body),
-    signal: AbortSignal.timeout(180_000),
+    signal: AbortSignal.timeout(600_000),
   });
   const text = await response.text();
   // Отказ шлюза без причины на экране — гейт, который нельзя починить: первые

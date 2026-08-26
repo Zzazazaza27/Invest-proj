@@ -445,6 +445,8 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                     # Потолок — из политики: у рассуждающих моделей (DeepSeek V4)
                     # размышление входит в max_tokens, и 16k им мало.
                     max_tokens=provider.max_output_tokens,
+                    timeout=provider.timeout_seconds,
+                    extras=provider.request_extras,
                     temperature=0.1,
                 )
                 result = parse_json_object(text)
@@ -548,6 +550,8 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 system=system,
                 user=user,
                 max_tokens=min(8000, provider.max_output_tokens),
+                timeout=provider.timeout_seconds,
+                extras=provider.request_extras,
                 temperature=0,
             )
             result = parse_json_object(text)
@@ -649,6 +653,7 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 # размышление до первого символа ответа: 32 токена дают
                 # «оборвано по лимиту» на живом ключе. 1024 — всё ещё копейки.
                 max_tokens=min(1024, provider.max_output_tokens),
+                extras=provider.request_extras,
                 temperature=0,
                 timeout=30,
             )
