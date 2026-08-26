@@ -115,6 +115,12 @@ async function analyze(project, credential, dataClass = 'pseudonymous') {
     signal: AbortSignal.timeout(180_000),
   });
   const text = await response.text();
+  // Отказ шлюза без причины на экране — гейт, который нельзя починить: первые
+  // отказы печатаются целиком (ключа в ответе нет — он только в запросе).
+  if (!response.ok && gatewayErrorsShown < 3) {
+    gatewayErrorsShown += 1;
+    console.error(`  шлюз ответил ${response.status}: ${text.slice(0, 400)}`);
+  }
   let json;
   try {
     json = JSON.parse(text);
@@ -123,6 +129,7 @@ async function analyze(project, credential, dataClass = 'pseudonymous') {
   }
   return { status: response.status, json };
 }
+let gatewayErrorsShown = 0;
 
 const WEIGHTS = {
   market: 0.15,

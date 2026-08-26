@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import secrets
@@ -28,6 +29,8 @@ import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
+
+LOG = logging.getLogger("ai_gateway.llm")
 
 PROMPT_VERSION: Final[str] = "v2.5"
 PROMPTS_DIR: Final[Path] = Path(__file__).resolve().parent.parent / "prompts"
@@ -48,7 +51,9 @@ _MARKER_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
 # (раздел 8, п. 11): заявка класса `public` с телефоном основателя не должна
 # уехать зарубежному провайдеру «легально» с точки зрения роутинга.
 _PII_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
-    re.compile(r"(?:^|\D)(?:\+7|8|\+\d{1,3})[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}(?!\d)"),
+    re.compile(
+        r"(?:^|\D)(?:\+7|8|\+\d{1,3})[\s(-]*\d{3}[\s)-]*\d{3}[\s-]*\d{2}[\s-]*\d{2}(?!\d)"
+    ),
     re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+"),
     re.compile(r"\b\d{3}-\d{3}-\d{3}[\s-]\d{2}\b"),
     re.compile(r"(?:^|\D)(?:\d{10}|\d{12})(?!\d)"),
@@ -58,9 +63,14 @@ _PII_PATTERNS: Final[tuple[re.Pattern[str], ...]] = (
 class ProviderError(RuntimeError):
     """Провайдер не дал пригодного ответа. Код — для ответа ядру, без деталей тела."""
 
-    def __init__(self, code: str, detail: str = "") -> None:
+    def __init__(
+        self, code: str, detail: str = "", upstream_status: int | None = None
+    ) -> None:
         super().__init__(detail or code)
         self.code = code
+        # Код ответа провайдера (400/404/429…) — без него оператор не отличит
+        # «модели с таким именем нет» от «кончился баланс». Тело — нет.
+        self.upstream_status = upstream_status
 
 
 @dataclass(frozen=True)
@@ -79,17 +89,30 @@ class Prompts:
 
 def load_prompts() -> Prompts:
     """Файлы промпта читаются на старте: их отсутствие роняет сервис, а не запрос."""
-    system = (PROMPTS_DIR / f"project_analysis.system.{PROMPT_VERSION}.txt").read_text("utf-8")
-    user = (PROMPTS_DIR / f"project_analysis.user.{PROMPT_VERSION}.txt").read_text("utf-8")
-    translation = (PROMPTS_DIR / f"passport_translation.system.{PROMPT_VERSION}.txt").read_text(
+    system = (PROMPTS_DIR / f"project_analysis.system.{PROMPT_VERSION}.txt").read_text(
         "utf-8"
     )
-    if "{{NONCE}}" not in system or "{{NONCE}}" not in user or "{{NONCE}}" not in translation:
+    user = (PROMPTS_DIR / f"project_analysis.user.{PROMPT_VERSION}.txt").read_text(
+        "utf-8"
+    )
+    translation = (
+        PROMPTS_DIR / f"passport_translation.system.{PROMPT_VERSION}.txt"
+    ).read_text("utf-8")
+    if (
+        "{{NONCE}}" not in system
+        or "{{NONCE}}" not in user
+        or "{{NONCE}}" not in translation
+    ):
         raise RuntimeError("промпт не содержит слота nonce — это не тот файл")
-    return Prompts(system=system, user=user, version=PROMPT_VERSION, translation=translation)
+    return Prompts(
+        system=system, user=user, version=PROMPT_VERSION, translation=translation
+    )
 
 
-LOCALE_NAMES: Final[dict[str, str]] = {"en-US": "английский (en-US)", "ru-RU": "русский (ru-RU)"}
+LOCALE_NAMES: Final[dict[str, str]] = {
+    "en-US": "английский (en-US)",
+    "ru-RU": "русский (ru-RU)",
+}
 
 
 def build_translation_messages(
@@ -119,7 +142,7 @@ def build_translation_messages(
         f"<<<ТЕКСТ:{nonce}\n"
         + json.dumps(texts, ensure_ascii=False, indent=1)
         + f"\nТЕКСТ:{nonce}>>>\n\n"
-        "Верни JSON вида {\"translated\": {…той же формы…}, \"flags\": []}."
+        'Верни JSON вида {"translated": {…той же формы…}, "flags": []}.'
     )
     return system, user
 
@@ -219,12 +242,27 @@ def _post_json(
     body: dict[str, Any],
     timeout: float,
 ) -> dict[str, Any]:
+    return _request_json("POST", url, headers, body, timeout)
+
+
+def _request_json(
+    method: str,
+    url: str,
+    headers: dict[str, str],
+    body: dict[str, Any] | None,
+    timeout: float,
+) -> dict[str, Any]:
     if not url.startswith("https://"):
         # Ключ в заголовке по нешифрованному каналу — утечка, а не вызов.
         raise ProviderError("provider_insecure_endpoint", "адрес провайдера не https")
-    data = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(url, data=data, method="POST")
-    request.add_header("Content-Type", "application/json")
+    data = (
+        json.dumps(body, ensure_ascii=False).encode("utf-8")
+        if body is not None
+        else None
+    )
+    request = urllib.request.Request(url, data=data, method=method)
+    if data is not None:
+        request.add_header("Content-Type", "application/json")
     request.add_header("Accept", "application/json")
     for name, value in headers.items():
         request.add_header(name, value)
@@ -233,8 +271,17 @@ def _post_json(
             raw = response.read(MAX_PROVIDER_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as error:
         # Тело ошибки провайдера наружу не идёт: в нём бывает эхо запроса.
+        # В журнал шлюза — только код и первые 200 байт: этого хватает, чтобы
+        # отличить неверное имя модели от исчерпанного баланса.
         code = "provider_auth" if error.code in (401, 403) else "provider_http_error"
-        raise ProviderError(code, f"провайдер ответил {error.code}") from error
+        try:
+            excerpt = error.read(200).decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 — тело может быть уже закрыто
+            excerpt = ""
+        LOG.warning("provider http %s: %s", error.code, " ".join(excerpt.split()))
+        raise ProviderError(
+            code, f"провайдер ответил {error.code}", error.code
+        ) from error
     except urllib.error.URLError as error:
         raise ProviderError("provider_unreachable", str(error.reason)) from error
     except TimeoutError as error:
@@ -248,6 +295,43 @@ def _post_json(
     if not isinstance(parsed, dict):
         raise ProviderError("provider_bad_json")
     return parsed
+
+
+# Имя модели — идентификатор, а не текст: всё, что не похоже на него, из
+# списка выбрасывается. Так ответ провайдера не может пронести в панель
+# разметку или подсказку «введите ключ ещё раз на сайте …».
+_MODEL_ID: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,119}$")
+MAX_MODELS: Final[int] = 200
+
+
+def list_models(
+    *, endpoint: str, auth_scheme: str, api_key: str, timeout: float = 20.0
+) -> list[str]:
+    """Список моделей провайдера — GET на его каталог, ответ в формате OpenAI.
+
+    OpenAI, DeepSeek, Kimi, Qwen (compatible-mode), GigaChat и Anthropic отдают
+    `{"data": [{"id": "…"}]}`. Наружу уходят только идентификаторы, прошедшие
+    фильтр по алфавиту, без дублей, не больше MAX_MODELS.
+    """
+    parsed = _request_json(
+        "GET", endpoint, _auth_headers(auth_scheme, api_key), None, timeout
+    )
+    rows = parsed.get("data")
+    if not isinstance(rows, list):
+        raise ProviderError("provider_bad_json", "каталог моделей без поля data")
+    ids: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        candidate = row.get("id") if isinstance(row, dict) else None
+        if not isinstance(candidate, str) or not _MODEL_ID.match(candidate):
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        ids.append(candidate)
+        if len(ids) >= MAX_MODELS:
+            break
+    return sorted(ids)
 
 
 def _auth_headers(auth_scheme: str, api_key: str) -> dict[str, str]:
@@ -285,7 +369,9 @@ def call_chat(
             "temperature": temperature,
             "top_p": 1,
         }
-        parsed = _post_json(endpoint, _auth_headers(auth_scheme, credential.api_key), body, timeout)
+        parsed = _post_json(
+            endpoint, _auth_headers(auth_scheme, credential.api_key), body, timeout
+        )
         blocks = parsed.get("content") or []
         if any(b.get("type") != "text" for b in blocks):
             raise ProviderError("provider_tool_use", "модель вернула не только текст")
@@ -305,7 +391,9 @@ def call_chat(
         "max_tokens": max_tokens,
         "response_format": {"type": "json_object"},
     }
-    parsed = _post_json(endpoint, _auth_headers(auth_scheme, credential.api_key), body, timeout)
+    parsed = _post_json(
+        endpoint, _auth_headers(auth_scheme, credential.api_key), body, timeout
+    )
     choices = parsed.get("choices") or []
     if not choices:
         raise ProviderError("provider_empty", "в ответе нет choices")

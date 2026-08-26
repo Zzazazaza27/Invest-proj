@@ -323,10 +323,77 @@ export class AiGatewayClient {
    * Проверка ключа провайдера коротким вызовом без текста заявки (панель).
    * Ответ шлюза — да/нет, код причины и имя модели; ключ наружу не выходит.
    */
+  /**
+   * Каталог моделей провайдера по ключу — для выбора модели в панели.
+   * Ключ уходит на один вызов и нигде не сохраняется; в ответе — только
+   * идентификаторы моделей, отфильтрованные шлюзом.
+   */
+  async listProviderModels(
+    input: { provider: string; apiKey: string },
+    traceId: string,
+  ): Promise<{
+    ok: boolean;
+    source: 'provider' | 'static';
+    models: string[];
+    code?: string;
+    upstreamStatus?: number | null;
+    durationMs: number;
+  }> {
+    const env = getEnv();
+    if (!this.isConfigured) throw errors.featureDisabled('ai_gateway');
+    const url = new URL('/v1/providers/models', env.AI_GATEWAY_URL);
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${env.AI_GATEWAY_TOKEN}`,
+        },
+        body: JSON.stringify({
+          provider: input.provider,
+          provider_credential: { api_key: input.apiKey },
+        }),
+        signal: AbortSignal.timeout(env.AI_GATEWAY_TIMEOUT_MS),
+      });
+    } catch {
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+    if (!response.ok) {
+      this.logger.warn({
+        msg: 'шлюз отклонил запрос каталога моделей',
+        status: response.status,
+        traceId,
+      });
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+    const parsed = z
+      .object({
+        ok: z.boolean(),
+        source: z.enum(['provider', 'static']),
+        models: z.array(z.string().max(120)).max(200),
+        code: z.string().max(60).optional(),
+        upstreamStatus: z.number().int().nullable().optional(),
+        durationMs: z.number().nonnegative(),
+      })
+      .safeParse(await response.json().catch(() => null));
+    if (!parsed.success) {
+      this.logger.warn({ msg: 'шлюз вернул каталог моделей вне контракта', traceId });
+      throw errors.upstreamUnavailable('ai_gateway');
+    }
+    return parsed.data;
+  }
+
   async checkProvider(
     credential: ProviderCredential,
     traceId: string,
-  ): Promise<{ ok: boolean; code?: string; model?: string | null; durationMs: number }> {
+  ): Promise<{
+    ok: boolean;
+    code?: string;
+    model?: string | null;
+    upstreamStatus?: number | null;
+    durationMs: number;
+  }> {
     const env = getEnv();
     if (!this.isConfigured) throw errors.featureDisabled('ai_gateway');
     const url = new URL('/v1/providers/check', env.AI_GATEWAY_URL);
@@ -356,6 +423,7 @@ export class AiGatewayClient {
         ok: z.boolean(),
         code: z.string().max(60).optional(),
         model: z.string().max(120).nullable().optional(),
+        upstreamStatus: z.number().int().nullable().optional(),
         durationMs: z.number().nonnegative(),
       })
       .safeParse(await response.json());

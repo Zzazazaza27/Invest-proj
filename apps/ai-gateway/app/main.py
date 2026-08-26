@@ -40,6 +40,7 @@ from .llm import (
     build_messages,
     build_translation_messages,
     call_chat,
+    list_models,
     contains_pii,
     credential_from_env,
     load_prompts,
@@ -127,6 +128,8 @@ class BodyTooLarge(Exception):
     приём нужно ДО того, как тело будет разобрано, и единственный способ
     сделать это из ASGI-receive — исключение.
     """
+
+
 MAX_MATERIALS: Final[int] = 50
 MAX_TEXT_CHARS: Final[int] = 100_000
 MIN_TOKEN_LENGTH: Final[int] = 32
@@ -217,6 +220,13 @@ class ProviderCheckRequest(BaseModel):
     provider_credential: ProviderCredentialPayload
 
 
+class ProviderModelsRequest(BaseModel):
+    """Каталог моделей провайдера для выбора в панели — ключ на один вызов."""
+
+    provider: str = Field(max_length=64)
+    provider_credential: ProviderCredentialPayload
+
+
 class AnalyzeRequest(BaseModel):
     task: str = Field(max_length=64)
     data_class: str = Field(max_length=32)
@@ -275,7 +285,9 @@ def create_app(policy: Policy | None = None) -> FastAPI:
 
     async def authenticate(authorization: str = Header(default="")) -> None:
         prefix = "Bearer "
-        presented = authorization[len(prefix) :] if authorization.startswith(prefix) else ""
+        presented = (
+            authorization[len(prefix) :] if authorization.startswith(prefix) else ""
+        )
         # Сравнение в БАЙТАХ: compare_digest на str падает TypeError, если в
         # строке есть символы вне ASCII (latin-1 из заголовка), — наружу
         # уходил 500 вместо 401, а в лог трейсбек (LOW внешнего аудита №2).
@@ -290,7 +302,11 @@ def create_app(policy: Policy | None = None) -> FastAPI:
     @app.middleware("http")
     async def limit_body(request: Request, call_next):  # type: ignore[no-untyped-def]
         declared = request.headers.get("content-length")
-        if declared is not None and declared.isdigit() and int(declared) > MAX_BODY_BYTES:
+        if (
+            declared is not None
+            and declared.isdigit()
+            and int(declared) > MAX_BODY_BYTES
+        ):
             return JSONResponse(status_code=413, content={"code": "body_too_large"})
 
         response = await call_next(request)
@@ -312,7 +328,11 @@ def create_app(policy: Policy | None = None) -> FastAPI:
         trace_id = payload.trace_id or str(uuid.uuid4())
 
         try:
-            provider = resolved_policy.resolve(payload.data_class, payload.provider)
+            provider = resolved_policy.resolve(
+                payload.data_class,
+                payload.provider,
+                has_credential=payload.provider_credential is not None,
+            )
         except ResidencyViolation as violation:
             # Отдельный код ответа: вызывающая сторона обязана отличать
             # «нельзя по закону» от «сервис занят» и не пытаться повторить.
@@ -336,7 +356,8 @@ def create_app(policy: Policy | None = None) -> FastAPI:
             ) from violation
         except PolicyError as error:
             raise HTTPException(
-                status_code=422, detail={"code": "policy_rejected", "reason": str(error)}
+                status_code=422,
+                detail={"code": "policy_rejected", "reason": str(error)},
             ) from error
 
         untrusted = "\n".join(
@@ -360,7 +381,11 @@ def create_app(policy: Policy | None = None) -> FastAPI:
             f"{payload.project.title}\n{untrusted}"
         ):
             try:
-                provider = resolved_policy.resolve("pdn", payload.provider)
+                provider = resolved_policy.resolve(
+                    "pdn",
+                    payload.provider,
+                    has_credential=payload.provider_credential is not None,
+                )
             except ResidencyViolation as violation:
                 LOG.warning(
                     "pii in text upgraded data class; provider rejected",
@@ -377,7 +402,8 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 ) from violation
             except PolicyError as error:
                 raise HTTPException(
-                    status_code=422, detail={"code": "policy_rejected", "reason": str(error)}
+                    status_code=422,
+                    detail={"code": "policy_rejected", "reason": str(error)},
                 ) from error
 
         if provider.kind != "deterministic":
@@ -397,7 +423,9 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                     detail={"code": "provider_unavailable", "provider": provider.name},
                 )
             nonce = payload.project.nonce or new_nonce()
-            model_version = f"{provider.name}:{credential.model or provider.model or 'default'}"
+            model_version = (
+                f"{provider.name}:{credential.model or provider.model or 'default'}"
+            )
             try:
                 system, user = build_messages(
                     prompts,
@@ -422,12 +450,20 @@ def create_app(policy: Policy | None = None) -> FastAPI:
             except ProviderError as error:
                 LOG.warning(
                     "llm provider failed",
-                    extra={"traceId": trace_id, "provider": provider.name, "code": error.code},
+                    extra={
+                        "traceId": trace_id,
+                        "provider": provider.name,
+                        "code": error.code,
+                    },
                 )
                 status = 403 if error.code == "provider_auth" else 502
                 raise HTTPException(
                     status_code=status,
-                    detail={"code": error.code, "provider": provider.name},
+                    detail={
+                        "code": error.code,
+                        "provider": provider.name,
+                        "upstreamStatus": error.upstream_status,
+                    },
                 ) from error
             # Эхо модели не сохраняется, а сверяется: расхождение — рассинхрон
             # промпта и конфигурации, и его видно в журнале ядра.
@@ -435,7 +471,11 @@ def create_app(policy: Policy | None = None) -> FastAPI:
             if echoed != model_version:
                 LOG.warning(
                     "modelVersion echo mismatch",
-                    extra={"traceId": trace_id, "expected": model_version, "echoed": echoed[:120]},
+                    extra={
+                        "traceId": trace_id,
+                        "expected": model_version,
+                        "echoed": echoed[:120],
+                    },
                 )
             result["modelVersion"] = f"{provider.name}:{model_used}"
             result["promptVersion"] = prompts.version
@@ -467,9 +507,13 @@ def create_app(policy: Policy | None = None) -> FastAPI:
         """Перевод нарратива паспорта. Числа не меняются — это проверяет ядро."""
         started = time.monotonic()
         provider = resolved_policy.providers.get(payload.provider)
-        if provider is None or provider.kind == "deterministic" or not provider.enabled:
+        enabled = provider is not None and (
+            provider.enabled or payload.provider_credential is not None
+        )
+        if provider is None or provider.kind == "deterministic" or not enabled:
             raise HTTPException(
-                status_code=503, detail={"code": "provider_unavailable", "provider": payload.provider}
+                status_code=503,
+                detail={"code": "provider_unavailable", "provider": payload.provider},
             )
         credential = (
             Credential(
@@ -481,7 +525,8 @@ def create_app(policy: Policy | None = None) -> FastAPI:
         )
         if credential is None:
             raise HTTPException(
-                status_code=503, detail={"code": "provider_unavailable", "provider": provider.name}
+                status_code=503,
+                detail={"code": "provider_unavailable", "provider": provider.name},
             )
         try:
             system, user = build_translation_messages(
@@ -507,12 +552,14 @@ def create_app(policy: Policy | None = None) -> FastAPI:
         except ProviderError as error:
             status = 403 if error.code == "provider_auth" else 502
             raise HTTPException(
-                status_code=status, detail={"code": error.code, "provider": provider.name}
+                status_code=status,
+                detail={"code": error.code, "provider": provider.name},
             ) from error
         translated = result.get("translated")
         if not isinstance(translated, dict):
             raise HTTPException(
-                status_code=502, detail={"code": "model_bad_shape", "provider": provider.name}
+                status_code=502,
+                detail={"code": "model_bad_shape", "provider": provider.name},
             )
         flags = result.get("flags") or []
         return {
@@ -521,6 +568,52 @@ def create_app(policy: Policy | None = None) -> FastAPI:
             "modelVersion": f"{provider.name}:{model_used}",
             "promptVersion": prompts.version,
             "provider": provider.name,
+            "durationMs": round((time.monotonic() - started) * 1000, 2),
+        }
+
+    @app.post("/v1/providers/models", dependencies=[Depends(authenticate)])
+    async def provider_models(payload: ProviderModelsRequest) -> dict[str, Any]:
+        """Список моделей провайдера по ключу — чтобы оператор выбирал, а не угадывал.
+
+        Имя модели, набранное руками («DeepSeek»), провайдер отвергает кодом
+        400, и до первого анализа это не видно. Здесь — каталог самого
+        провайдера; у кого каталога нет (YandexGPT) — статические подсказки
+        из политики, и это честно помечено `source: static`.
+        """
+        started = time.monotonic()
+        provider = resolved_policy.providers.get(payload.provider)
+        if provider is None or provider.kind == "deterministic":
+            raise HTTPException(status_code=422, detail={"code": "policy_rejected"})
+        if provider.models_endpoint is None:
+            return {
+                "ok": True,
+                "provider": provider.name,
+                "source": "static",
+                "models": list(provider.model_suggestions),
+                "durationMs": round((time.monotonic() - started) * 1000, 2),
+            }
+        try:
+            models = await run_in_threadpool(
+                list_models,
+                endpoint=provider.models_endpoint,
+                auth_scheme=provider.auth_scheme,
+                api_key=payload.provider_credential.api_key,
+            )
+        except ProviderError as error:
+            return {
+                "ok": False,
+                "provider": provider.name,
+                "source": "provider",
+                "models": list(provider.model_suggestions),
+                "code": error.code,
+                "upstreamStatus": error.upstream_status,
+                "durationMs": round((time.monotonic() - started) * 1000, 2),
+            }
+        return {
+            "ok": True,
+            "provider": provider.name,
+            "source": "provider",
+            "models": models,
             "durationMs": round((time.monotonic() - started) * 1000, 2),
         }
 
@@ -560,6 +653,7 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 "ok": False,
                 "code": error.code,
                 "provider": provider.name,
+                "upstreamStatus": error.upstream_status,
                 "durationMs": round((time.monotonic() - started) * 1000, 2),
             }
         return {

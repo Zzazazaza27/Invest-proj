@@ -361,6 +361,87 @@ def test_translate_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None: 
     assert body["promptVersion"] == llm.PROMPT_VERSION
 
 
+def test_provider_models_endpoint_filters_ids(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    """Каталог моделей: наружу — только идентификаторы, без дублей, отсортированные."""
+
+    def fake_get(method, url, headers, body, timeout):  # type: ignore[no-untyped-def]
+        assert method == "GET" and body is None
+        assert url == "https://api.openai.com/v1/models"
+        assert headers["Authorization"] == "Bearer sk-test-key-value"
+        return {
+            "data": [
+                {"id": "gpt-4o"},
+                {"id": "gpt-4o"},
+                {"id": "<script>alert(1)</script>"},
+                {"id": "введите ключ на сайте"},
+                {"id": "gpt-4.1-mini"},
+                {"not_id": "x"},
+                "строка",
+            ]
+        }
+
+    monkeypatch.setattr("app.llm._request_json", fake_get)
+    client = _client(monkeypatch, tmp_path)
+    response = client.post(
+        "/v1/providers/models",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "provider": "openai",
+            "provider_credential": {"api_key": "sk-test-key-value"},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["source"] == "provider"
+    assert body["models"] == ["gpt-4.1-mini", "gpt-4o"]
+    assert "sk-test" not in response.text
+
+
+def test_provider_models_static_when_no_catalog(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    """У YandexGPT каталога нет — подсказки из политики и честная пометка static."""
+    client = _client(monkeypatch, tmp_path)
+    response = client.post(
+        "/v1/providers/models",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "provider": "yandex_gpt",
+            "provider_credential": {"api_key": "yc-test-key-value"},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "static"
+    assert body["models"] and all(m.startswith("gpt://") for m in body["models"])
+
+
+def test_provider_models_failure_reports_upstream_status(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    def fake_get(method, url, headers, body, timeout):  # type: ignore[no-untyped-def]
+        raise llm.ProviderError("provider_auth", "провайдер ответил 401", 401)
+
+    monkeypatch.setattr("app.llm._request_json", fake_get)
+    client = _client(monkeypatch, tmp_path)
+    response = client.post(
+        "/v1/providers/models",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "provider": "deepseek",
+            "provider_credential": {"api_key": "sk-test-key-value"},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["code"] == "provider_auth"
+    assert body["upstreamStatus"] == 401
+
+
 def test_provider_check_endpoint(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     def fake_call(**kwargs):  # type: ignore[no-untyped-def]
         assert kwargs["max_tokens"] == 32

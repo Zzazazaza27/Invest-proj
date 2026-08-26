@@ -24,9 +24,15 @@
     "api_style / auth_scheme / model — как вызывать сетевого провайдера. Адрес,",
     "стиль и юрисдикция задаются ТОЛЬКО здесь и проходят ревью: редактируемый из",
     "панели адрес был бы каналом утечки текста заявок на произвольный хост (ADR-008).",
-    "Ключ провайдера в этот файл не попадает никогда: он в панели или в окружении."
+    "Ключ провайдера в этот файл не попадает никогда: он в панели или в окружении.",
+    "enabled: true — провайдер доступен и без ключа из панели (ключ из окружения",
+    "шлюза AI_PROVIDER_API_KEY_<NAME>); false — только с ключом, заданным в панели",
+    "«Подключённые API» (ADR-008 §2). Ключ в панели и есть включение провайдера.",
+    "models_endpoint — каталог моделей провайдера (GET, формат OpenAI {data:[{id}]}) для",
+    "выбора модели в панели после ввода ключа; model_suggestions — подсказки, когда",
+    "каталога нет или он недоступен. Оба — только здесь, через ревью."
   ],
-  "version": "1.3.0",
+  "version": "1.4.0",
   "default_provider": "local_deterministic",
   "residency": {
     "restricted_classes": [
@@ -70,7 +76,13 @@
       "note": "OpenAI-совместимый вход YandexGPT. Модель вида gpt://<folder>/yandexgpt/latest задаёт оператор в панели.",
       "api_style": "openai_chat",
       "auth_scheme": "api-key",
-      "model": null
+      "model": null,
+      "models_endpoint": null,
+      "model_suggestions": [
+        "gpt://<folder-id>/yandexgpt/latest",
+        "gpt://<folder-id>/yandexgpt-lite/latest",
+        "gpt://<folder-id>/yandexgpt-32k/latest"
+      ]
     },
     {
       "name": "gigachat",
@@ -88,7 +100,13 @@
       "note": "Требует access token GigaChat (получается по client secret) — задаётся в панели как ключ.",
       "api_style": "openai_chat",
       "auth_scheme": "bearer",
-      "model": "GigaChat"
+      "model": "GigaChat",
+      "models_endpoint": "https://gigachat.devices.sberbank.ru/api/v1/models",
+      "model_suggestions": [
+        "GigaChat",
+        "GigaChat-Pro",
+        "GigaChat-Max"
+      ]
     },
     {
       "name": "anthropic",
@@ -106,7 +124,9 @@
       "note": "Claude (Anthropic, США). Все классы данных — по решению владельца 2026-08-26. Модель задаёт оператор.",
       "api_style": "anthropic_messages",
       "auth_scheme": "x-api-key",
-      "model": null
+      "model": null,
+      "models_endpoint": "https://api.anthropic.com/v1/models",
+      "model_suggestions": []
     },
     {
       "name": "openai",
@@ -124,7 +144,9 @@
         "commercial_secret"
       ],
       "enabled": false,
-      "note": "OpenAI (США). Все классы данных — по решению владельца 2026-08-26. Модель задаёт оператор."
+      "note": "OpenAI (США). Все классы данных — по решению владельца 2026-08-26. Модель задаёт оператор.",
+      "models_endpoint": "https://api.openai.com/v1/models",
+      "model_suggestions": []
     },
     {
       "name": "kimi",
@@ -142,7 +164,9 @@
         "commercial_secret"
       ],
       "enabled": false,
-      "note": "Kimi (Moonshot AI, КНР), международная площадка platform.kimi.ai — OpenAI-совместимый вход. Ключ китайской площадки (api.moonshot.cn) сюда не подходит: адрес меняется здесь, ревью. Модель задаёт оператор (kimi-k2.5, moonshot-v1-32k)."
+      "note": "Kimi (Moonshot AI, КНР), международная площадка platform.kimi.ai — OpenAI-совместимый вход. Ключ китайской площадки (api.moonshot.cn) сюда не подходит: адрес меняется здесь, ревью. Модель задаёт оператор (kimi-k3, kimi-k2.5).",
+      "models_endpoint": "https://api.moonshot.ai/v1/models",
+      "model_suggestions": []
     },
     {
       "name": "qwen",
@@ -160,7 +184,13 @@
         "commercial_secret"
       ],
       "enabled": false,
-      "note": "Qwen (Alibaba Cloud Model Studio, КНР), международный регион Singapore — OpenAI-совместимый вход. Ключ региона Beijing требует адреса dashscope.aliyuncs.com — меняется здесь, ревью. Модель задаёт оператор (qwen-plus, qwen-max)."
+      "note": "Qwen (Alibaba Cloud Model Studio, КНР), международный регион Singapore — OpenAI-совместимый вход. Ключ региона Beijing требует адреса dashscope.aliyuncs.com — меняется здесь, ревью. Модель задаёт оператор (qwen-plus, qwen-max).",
+      "models_endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models",
+      "model_suggestions": [
+        "qwen-plus",
+        "qwen-max",
+        "qwen-turbo"
+      ]
     },
     {
       "name": "deepseek",
@@ -178,7 +208,9 @@
         "commercial_secret"
       ],
       "enabled": false,
-      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модель задаёт оператор (deepseek-chat, deepseek-reasoner)."
+      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модель задаёт оператор; на 2026-08 API принимает deepseek-v4-pro, deepseek-v4-flash (имя «DeepSeek» отвергается кодом 400).",
+      "models_endpoint": "https://api.deepseek.com/models",
+      "model_suggestions": []
     }
   ]
 }

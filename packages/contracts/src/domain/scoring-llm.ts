@@ -200,7 +200,15 @@ export type StoredPassport = z.infer<typeof StoredPassportSchema>;
 // ------------------------------------------------------------------ панель: ключ провайдера
 
 /** Провайдеры, для которых панель принимает ключ. Совпадает с CHECK в M066 и политикой шлюза. */
-export const LlmProviderSchema = z.enum(['yandex_gpt', 'gigachat', 'anthropic', 'openai', 'kimi', 'qwen', 'deepseek']);
+export const LlmProviderSchema = z.enum([
+  'yandex_gpt',
+  'gigachat',
+  'anthropic',
+  'openai',
+  'kimi',
+  'qwen',
+  'deepseek',
+]);
 export type LlmProvider = z.infer<typeof LlmProviderSchema>;
 
 /** Что панель видит о ключе: отпечаток и метаданные, самого ключа здесь нет и не будет. */
@@ -227,11 +235,32 @@ export type UpsertAiProviderCredentialRequest = z.infer<
   typeof UpsertAiProviderCredentialRequestSchema
 >;
 
+/** Запрос каталога моделей по ключу — ключ на один вызов, не сохраняется. */
+export const ListAiProviderModelsRequestSchema = z.object({
+  provider: LlmProviderSchema,
+  apiKey: z.string().min(8).max(512),
+});
+export type ListAiProviderModelsRequest = z.infer<typeof ListAiProviderModelsRequestSchema>;
+
+export const AiProviderModelsSchema = z.object({
+  ok: z.boolean(),
+  provider: LlmProviderSchema,
+  /** provider — каталог самого провайдера; static — подсказки из политики шлюза. */
+  source: z.enum(['provider', 'static']),
+  models: z.array(z.string().max(120)).max(200),
+  code: z.string().max(60).optional(),
+  upstreamStatus: z.number().int().nullable().optional(),
+  durationMs: z.number().nonnegative(),
+});
+export type AiProviderModels = z.infer<typeof AiProviderModelsSchema>;
+
 export const AiProviderCheckResultSchema = z.object({
   ok: z.boolean(),
   provider: LlmProviderSchema,
   model: z.string().max(120).nullable().optional(),
   code: z.string().max(60).optional(),
+  /** HTTP-код ответа самого провайдера: 400 — неверное имя модели, 429 — лимит или баланс. */
+  upstreamStatus: z.number().int().nullable().optional(),
   durationMs: z.number().nonnegative(),
 });
 export type AiProviderCheckResult = z.infer<typeof AiProviderCheckResultSchema>;

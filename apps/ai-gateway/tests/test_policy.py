@@ -86,6 +86,14 @@ def test_public_class_still_blocked_while_provider_disabled(policy: Policy) -> N
         policy.resolve("public", "anthropic")
 
 
+def test_disabled_provider_opens_with_panel_credential(policy: Policy) -> None:
+    """Ключ из панели — включение провайдера (ADR-008 §2), файл править не нужно."""
+    provider = policy.resolve("pseudonymous", "deepseek", has_credential=True)
+    assert provider.name == "deepseek"
+    with pytest.raises(PolicyError):
+        policy.resolve("pseudonymous", "deepseek")
+
+
 def test_unknown_provider_rejected(policy: Policy) -> None:
     with pytest.raises(PolicyError):
         policy.resolve("public", "no_such_provider")

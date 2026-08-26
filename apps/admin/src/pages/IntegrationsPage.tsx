@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import type { AiProviderCredential, FeatureFlag } from '@unicorn/contracts';
+import type { AiProviderCredential, AiProviderModels, FeatureFlag } from '@unicorn/contracts';
 import { PromptDialog } from '@unicorn/ui';
 import { api } from '../api';
 import { formatDate, problemText } from '../lib/format';
@@ -58,9 +58,9 @@ const MODEL_HINTS: Record<string, string> = {
   gigachat: 'например GigaChat или GigaChat-Pro',
   anthropic: 'например claude-sonnet-4-5',
   openai: 'например gpt-4o',
-  kimi: 'например kimi-k2.5 или moonshot-v1-32k',
+  kimi: 'например kimi-k3 или kimi-k2.5',
   qwen: 'например qwen-plus или qwen-max',
-  deepseek: 'например deepseek-chat или deepseek-reasoner',
+  deepseek: 'например deepseek-v4-flash или deepseek-v4-pro',
 };
 
 type Tab = 'apis' | 'clients' | 'scoring';
@@ -176,6 +176,36 @@ function AiScoringStatusSection() {
   );
 }
 
+/**
+ * Отказ проверки — словами оператора. Код шлюза говорит, ГДЕ сломалось, код
+ * провайдера — ЧТО: 400 у OpenAI-совместимых API почти всегда «нет такой
+ * модели», 429 — лимит или нулевой баланс. Тело ответа провайдера сюда не
+ * доходит намеренно (в нём бывает эхо запроса) — только код.
+ */
+function checkFailureText(provider: string, code?: string, upstreamStatus?: number | null) {
+  const hint = MODEL_HINTS[provider] ?? '';
+  switch (code) {
+    case 'provider_auth':
+      return `Провайдер отклонил ключ (${upstreamStatus ?? '401/403'}): ключ неверный, отозван или без прав на модель.`;
+    case 'provider_http_error':
+      if (upstreamStatus === 400 || upstreamStatus === 404) {
+        return `Провайдер ответил ${upstreamStatus}: чаще всего неверное имя модели (${hint}). Задай ключ заново с правильной моделью.`;
+      }
+      if (upstreamStatus === 429) {
+        return 'Провайдер ответил 429: лимит запросов или исчерпан баланс.';
+      }
+      return `Провайдер ответил ${upstreamStatus ?? 'ошибкой'}; подробности — в журнале шлюза.`;
+    case 'provider_unreachable':
+      return 'Провайдер недоступен по сети со стороны платформы.';
+    case 'provider_timeout':
+      return 'Провайдер не ответил за отведённое время.';
+    case 'policy_rejected':
+      return 'Политика шлюза отклонила провайдера — см. ai-policy.json.';
+    default:
+      return `Провайдер не принял ключ: ${code ?? 'причина не названа'}.`;
+  }
+}
+
 /** Подключённые API: внешние продукты с ключами платформы. */
 function ConnectedApisSection() {
   const [items, setItems] = useState<AiProviderCredential[] | null>(null);
@@ -186,6 +216,9 @@ function ConnectedApisSection() {
   const [provider, setProvider] = useState('yandex_gpt');
   const [apiKey, setApiKey] = useState('');
   const [modelName, setModelName] = useState('');
+  // Каталог моделей провайдера, полученный по введённому ключу: пока он открыт,
+  // ключ живёт в состоянии страницы и уходит вместе с выбранной моделью.
+  const [picker, setPicker] = useState<AiProviderModels | null>(null);
   const [reason, setReason] = useState('');
   const [revoking, setRevoking] = useState<string | null>(null);
 
@@ -203,8 +236,32 @@ function ConnectedApisSection() {
     void load();
   }, [load]);
 
+  /**
+   * Шаг 1: по введённому ключу спросить у провайдера его каталог моделей и
+   * открыть выбор. Имя модели, набранное руками, провайдер отвергает кодом 400
+   * уже на первом анализе — поэтому выбор из каталога, а не поле ввода.
+   */
   async function submit(event: FormEvent) {
     event.preventDefault();
+    setBusy('models');
+    setError(null);
+    setNotice(null);
+    try {
+      const catalog = await api.aiProviderModels({
+        provider: provider as AiProviderCredential['provider'],
+        apiKey,
+      });
+      setModelName(catalog.models[0] ?? '');
+      setPicker(catalog);
+    } catch (err) {
+      setError(problemText(err, 'Не удалось получить список моделей'));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /** Шаг 2: сохранить ключ с выбранной моделью. */
+  async function saveWithModel(chosen: string) {
     setBusy('save');
     setError(null);
     setNotice(null);
@@ -212,9 +269,10 @@ function ConnectedApisSection() {
       const saved = await api.upsertAiCredential({
         provider: provider as AiProviderCredential['provider'],
         apiKey,
-        modelName: modelName.trim() || undefined,
+        modelName: chosen.trim() || undefined,
         reason,
       });
+      setPicker(null);
       // Ключ из состояния страницы стирается сразу: он больше нигде не нужен.
       setApiKey('');
       setReason('');
@@ -238,7 +296,7 @@ function ConnectedApisSection() {
       setNotice(
         result.ok
           ? `Провайдер ответил за ${Math.round(result.durationMs)} мс, модель ${result.model ?? '—'}.`
-          : `Провайдер не принял ключ: ${result.code ?? 'причина не названа'}.`,
+          : checkFailureText(item.provider, result.code, result.upstreamStatus),
       );
       await load();
     } catch (err) {
@@ -270,16 +328,6 @@ function ConnectedApisSection() {
               ))}
             </select>
           </label>
-          <label className="field" htmlFor="ai-model">
-            <span>Модель</span>
-            <input
-              id="ai-model"
-              value={modelName}
-              onChange={(event) => setModelName(event.target.value)}
-              placeholder={MODEL_HINTS[provider] ?? ''}
-              maxLength={120}
-            />
-          </label>
           <label className="field" htmlFor="ai-key">
             <span>API-ключ</span>
             <input
@@ -307,15 +355,26 @@ function ConnectedApisSection() {
           </label>
           <div className="row-actions">
             <button type="submit" className="btn--sm" disabled={busy !== null}>
-              {busy === 'save' ? 'Сохраняем…' : 'Сохранить ключ'}
+              {busy === 'models' ? 'Запрашиваем модели…' : 'Далее: выбрать модель'}
             </button>
           </div>
         </form>
+        <ModelPickerDialog
+          picker={picker}
+          providerTitle={PROVIDER_TITLES[provider] ?? provider}
+          hint={MODEL_HINTS[provider] ?? ''}
+          value={modelName}
+          busy={busy === 'save'}
+          onChange={setModelName}
+          onConfirm={() => void saveWithModel(modelName)}
+          onCancel={() => setPicker(null)}
+        />
         <p className="small muted">
-          Новый ключ становится активным и снимает активность с прежнего: активный провайдер на
-          платформе один. Зарубежные модели (OpenAI, Claude, Kimi, Qwen, DeepSeek) по классам данных не
-          ограничены — решение владельца от 26.08.2026 (ADR-008 §7); адреса провайдеров задаются
-          только в политике шлюза.
+          После ввода ключа платформа запросит у провайдера список его моделей и предложит выбор;
+          если каталога у провайдера нет, будут подсказки из политики шлюза. Новый ключ становится
+          активным и снимает активность с прежнего: активный провайдер на платформе один. Зарубежные
+          модели (OpenAI, Claude, Kimi, Qwen, DeepSeek) по классам данных не ограничены — решение
+          владельца от 26.08.2026 (ADR-008 §7); адреса провайдеров задаются только в политике шлюза.
         </p>
       </div>
 
@@ -413,5 +472,128 @@ function ConnectedApisSection() {
         }}
       />
     </>
+  );
+}
+
+/**
+ * Выбор модели после ввода ключа. Список — из каталога провайдера (или
+ * подсказки политики, если каталога нет); ручной ввод остаётся запасным
+ * путём для модели, которой в каталоге ещё нет. Диалог свой, а не
+ * `window.prompt`, по тем же причинам, что и PromptDialog в @unicorn/ui.
+ */
+function ModelPickerDialog({
+  picker,
+  providerTitle,
+  hint,
+  value,
+  busy,
+  onChange,
+  onConfirm,
+  onCancel,
+}: {
+  picker: AiProviderModels | null;
+  providerTitle: string;
+  hint: string;
+  value: string;
+  busy: boolean;
+  onChange: (value: string) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  const open = picker !== null;
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCancel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open, onCancel]);
+
+  if (!picker) return null;
+  const fromList = picker.models.includes(value);
+  const trimmed = value.trim();
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 100,
+        display: 'grid',
+        placeItems: 'center',
+        padding: 'var(--u-space-4)',
+        background: 'rgba(0, 0, 0, 0.45)',
+      }}
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+    >
+      <form
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Модель для ${providerTitle}`}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (trimmed) onConfirm();
+        }}
+        style={{
+          width: 'min(32rem, 100%)',
+          display: 'grid',
+          gap: 'var(--u-space-4)',
+          padding: 'var(--u-space-5)',
+          borderRadius: 'var(--u-radius-lg)',
+          border: '1px solid var(--u-border)',
+          background: 'var(--u-surface)',
+          boxShadow: 'var(--u-shadow-lg, 0 24px 60px rgba(0,0,0,0.35))',
+        }}
+      >
+        <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Модель для {providerTitle}</h2>
+        <p className="small muted" style={{ margin: 0 }}>
+          {picker.ok
+            ? picker.source === 'provider'
+              ? `Каталог провайдера: ${picker.models.length} моделей.`
+              : 'У провайдера нет каталога моделей — ниже подсказки из политики шлюза.'
+            : `Каталог не получен (${picker.code ?? 'ошибка'}${
+                picker.upstreamStatus ? `, ответ ${picker.upstreamStatus}` : ''
+              }) — ключ может быть неверным. Модель можно ввести вручную.`}
+        </p>
+        {picker.models.length > 0 ? (
+          <label className="field" htmlFor="ai-model-pick">
+            <span>Из списка</span>
+            <select
+              id="ai-model-pick"
+              value={fromList ? value : ''}
+              onChange={(event) => onChange(event.target.value)}
+            >
+              <option value="">— другая модель —</option>
+              {picker.models.map((m) => (
+                <option key={m} value={m}>
+                  {m}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
+        <label className="field" htmlFor="ai-model-custom">
+          <span>Имя модели</span>
+          <input
+            id="ai-model-custom"
+            value={value}
+            onChange={(event) => onChange(event.target.value)}
+            placeholder={hint}
+            maxLength={120}
+          />
+        </label>
+        <div style={{ display: 'flex', gap: 'var(--u-space-3)', justifyContent: 'flex-end' }}>
+          <button type="button" className="btn--ghost btn--sm" onClick={onCancel} disabled={busy}>
+            Отмена
+          </button>
+          <button type="submit" className="btn--sm" disabled={busy || trimmed.length === 0}>
+            {busy ? 'Сохраняем…' : 'Сохранить ключ'}
+          </button>
+        </div>
+      </form>
+    </div>
   );
 }

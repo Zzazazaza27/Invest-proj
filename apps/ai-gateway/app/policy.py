@@ -53,6 +53,10 @@ class Provider:
     api_style: str = "openai_chat"
     auth_scheme: str = "bearer"
     model: str | None = None
+    # Каталог моделей провайдера (GET) — для выбора модели в панели после
+    # ввода ключа. Нет каталога — статический список подсказок.
+    models_endpoint: str | None = None
+    model_suggestions: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -63,8 +67,20 @@ class Policy:
     allowed_jurisdictions: frozenset[str]
     providers: dict[str, Provider]
 
-    def resolve(self, data_class: str, requested: str | None = None) -> Provider:
+    def resolve(
+        self,
+        data_class: str,
+        requested: str | None = None,
+        *,
+        has_credential: bool = False,
+    ) -> Provider:
         """Выбрать провайдера под класс данных.
+
+        `has_credential` — в запросе пришёл ключ, заданный оператором в панели
+        (ADR-008 §2). Это и есть включение провайдера: `enabled` в политике
+        остаётся для ключа из окружения шлюза (план ADR-007), а ключ из панели
+        открывает провайдера без правки файла. Резидентность от этого не
+        зависит — она проверяется раньше.
 
         Порядок проверок принципиален: сначала резидентность, потом всё
         остальное. Иначе запрос с персональными данными мог бы получить отказ
@@ -88,8 +104,10 @@ class Policy:
         if data_class not in provider.data_classes:
             raise ResidencyViolation(data_class, provider.name, provider.jurisdiction)
 
-        if not provider.enabled:
-            raise PolicyError(f"провайдер {provider.name} выключен")
+        if not provider.enabled and not has_credential:
+            raise PolicyError(
+                f"провайдер {provider.name} выключен: задайте ключ в панели «Подключённые API»"
+            )
 
         return provider
 
@@ -149,11 +167,29 @@ def load_policy(path: str | Path) -> Policy:
 
         api_style = str(entry.get("api_style", "openai_chat"))
         auth_scheme = str(entry.get("auth_scheme", "bearer"))
+        models_endpoint = entry.get("models_endpoint")
+        if models_endpoint is not None and (
+            not isinstance(models_endpoint, str)
+            or not models_endpoint.startswith("https://")
+        ):
+            raise PolicyError(
+                f"провайдер {name!r}: models_endpoint обязан быть https:// "
+                f"(получено {models_endpoint!r})"
+            )
+        suggestions = entry.get("model_suggestions", [])
+        if not isinstance(suggestions, list) or not all(
+            isinstance(x, str) for x in suggestions
+        ):
+            raise PolicyError(f"провайдер {name!r}: model_suggestions — список строк")
         if entry.get("kind", "llm") != "deterministic":
             if api_style not in API_STYLES:
-                raise PolicyError(f"провайдер {name!r}: неизвестный api_style {api_style!r}")
+                raise PolicyError(
+                    f"провайдер {name!r}: неизвестный api_style {api_style!r}"
+                )
             if auth_scheme not in AUTH_SCHEMES:
-                raise PolicyError(f"провайдер {name!r}: неизвестный auth_scheme {auth_scheme!r}")
+                raise PolicyError(
+                    f"провайдер {name!r}: неизвестный auth_scheme {auth_scheme!r}"
+                )
             if endpoint is None:
                 raise PolicyError(f"провайдер {name!r}: сетевой провайдер без endpoint")
 
@@ -168,6 +204,8 @@ def load_policy(path: str | Path) -> Policy:
             enabled=bool(entry.get("enabled", entry.get("kind") == "deterministic")),
             api_style=api_style,
             auth_scheme=auth_scheme,
+            models_endpoint=models_endpoint,
+            model_suggestions=tuple(suggestions),
             model=(str(entry["model"]) if entry.get("model") else None),
         )
 

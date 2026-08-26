@@ -10,6 +10,8 @@ import {
   UpdateFeatureFlagRequestSchema,
   UuidSchema,
   AiProviderCheckResultSchema,
+  AiProviderModelsSchema,
+  ListAiProviderModelsRequestSchema,
   AiProviderCredentialSchema,
   LlmProviderSchema,
   UpsertAiProviderCredentialRequestSchema,
@@ -61,6 +63,18 @@ export class AdminController {
       reason: input.reason,
     });
     return AiProviderCredentialSchema.parse(view);
+  }
+
+  /**
+   * Каталог моделей провайдера по ключу — до сохранения. Ключ приходит в теле,
+   * уходит шлюзу на один вызов и не сохраняется; события аудита нет — это
+   * чтение, состояние платформы не меняется.
+   */
+  @Post('ai/credentials/models')
+  async listAiProviderModels(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(ListAiProviderModelsRequestSchema, rawBody);
+    const result = await this.gateway.listProviderModels(input, ctx.traceId);
+    return AiProviderModelsSchema.parse({ ...result, provider: input.provider });
   }
 
   @Post('ai/credentials/:provider/revoke')

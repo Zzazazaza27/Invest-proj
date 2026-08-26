@@ -41,9 +41,12 @@ import {
   AdminProjectSummarySchema,
   AdminUserSummarySchema,
   AiProviderCheckResultSchema,
+  AiProviderModelsSchema,
   AiProviderCredentialSchema,
   ScoringReviewItemSchema,
   type AiProviderCheckResult,
+  type AiProviderModels,
+  type ListAiProviderModelsRequest,
   type AiProviderCredential,
   type ScoringReviewItem,
   type UpsertAiProviderCredentialRequest,
@@ -394,6 +397,14 @@ export const api = {
     });
   },
 
+  aiProviderModels(body: ListAiProviderModelsRequest): Promise<AiProviderModels> {
+    return client.request({
+      method: 'POST',
+      path: '/v1/admin/ai/credentials/models',
+      body,
+      schema: AiProviderModelsSchema,
+    });
+  },
   checkAiCredential(provider: string): Promise<AiProviderCheckResult> {
     return client.request({
       method: 'POST',

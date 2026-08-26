@@ -69,19 +69,75 @@ READINESS_DIMENSIONS: Final[tuple[str, ...]] = (
 SIGNALS: Final[dict[str, tuple[str, ...]]] = {
     "problem": ("проблем", "боль", "problem", "pain point"),
     "solution": ("решени", "solution", "подход", "approach"),
-    "product": ("продукт", "product", "mvp", "прототип", "prototype", "релиз", "release"),
+    "product": (
+        "продукт",
+        "product",
+        "mvp",
+        "прототип",
+        "prototype",
+        "релиз",
+        "release",
+    ),
     "tech": ("технолог", "архитектур", "stack", "technology", "algorithm", "алгоритм"),
     "team": ("команд", "основател", "team", "founder", "cto", "опыт", "experience"),
     "market": ("рынок", "рынк", "market", "tam", "sam", "som", "сегмент", "segment"),
     "competition": ("конкурент", "competitor", "аналог", "alternative", "отличие"),
-    "business_model": ("модель", "монетиз", "business model", "revenue", "подписк", "subscription"),
-    "unit_economics": ("unit", "экономик", "ltv", "cac", "маржа", "margin", "retention"),
-    "legal": ("юридич", "лиценз", "патент", "legal", "license", "patent", "ip", "товарный знак"),
+    "business_model": (
+        "модель",
+        "монетиз",
+        "business model",
+        "revenue",
+        "подписк",
+        "subscription",
+    ),
+    "unit_economics": (
+        "unit",
+        "экономик",
+        "ltv",
+        "cac",
+        "маржа",
+        "margin",
+        "retention",
+    ),
+    "legal": (
+        "юридич",
+        "лиценз",
+        "патент",
+        "legal",
+        "license",
+        "patent",
+        "ip",
+        "товарный знак",
+    ),
     "finance": ("выручк", "revenue", "прибыл", "profit", "burn", "runway", "оборот"),
     "pitch": ("питч", "презентац", "pitch", "deck"),
-    "traction": ("трэкшн", "traction", "пользовател", "users", "клиент", "customers", "mrr", "arr"),
-    "scale": ("масштаб", "scale", "международ", "international", "b2b", "b2c", "платформ"),
-    "uniqueness": ("уникальн", "патент", "ноу-хау", "unique", "proprietary", "запатент"),
+    "traction": (
+        "трэкшн",
+        "traction",
+        "пользовател",
+        "users",
+        "клиент",
+        "customers",
+        "mrr",
+        "arr",
+    ),
+    "scale": (
+        "масштаб",
+        "scale",
+        "международ",
+        "international",
+        "b2b",
+        "b2c",
+        "платформ",
+    ),
+    "uniqueness": (
+        "уникальн",
+        "патент",
+        "ноу-хау",
+        "unique",
+        "proprietary",
+        "запатент",
+    ),
 }
 
 # Зрелость стадии. Ключи ОБЯЗАНЫ покрывать `ProjectStageSchema` контрактов:
@@ -198,7 +254,16 @@ def _axis_score(
 # Таблица полуинтервалов балла — та же, что в ядре (scoring-rules.ts). Здесь
 # только для контрольного значения: публикуемый балл считает ядро.
 _SCORE_TABLE: Final[tuple[tuple[float, int], ...]] = (
-    (82, 10), (74, 9), (66, 8), (58, 7), (50, 6), (42, 5), (33, 4), (24, 3), (13, 2), (0, 1),
+    (82, 10),
+    (74, 9),
+    (66, 8),
+    (58, 7),
+    (50, 6),
+    (42, 5),
+    (33, 4),
+    (24, 3),
+    (13, 2),
+    (0, 1),
 )
 
 
@@ -290,11 +355,15 @@ def analyze(project: dict) -> dict:
             evidence=uniq_hits,
             quantified=quantified,
             volume=volume,
-            notes=[f"признаков уникальности и технологии: {uniq_hits}"] if uniq_hits else [],
+            notes=[f"признаков уникальности и технологии: {uniq_hits}"]
+            if uniq_hits
+            else [],
         )
     )
 
-    profit_hits = signal("business_model") + signal("unit_economics") + signal("finance")
+    profit_hits = (
+        signal("business_model") + signal("unit_economics") + signal("finance")
+    )
     scores.append(
         _axis_score(
             "profitability",
@@ -302,7 +371,9 @@ def analyze(project: dict) -> dict:
             evidence=profit_hits,
             quantified=quantified,
             volume=volume,
-            notes=[f"сигналов модели и экономики: {profit_hits}"] if profit_hits else [],
+            notes=[f"сигналов модели и экономики: {profit_hits}"]
+            if profit_hits
+            else [],
         )
     )
 
@@ -358,7 +429,9 @@ def analyze(project: dict) -> dict:
     scores.append(
         _axis_score(
             "product_readiness",
-            base=min(0.9, maturity * 0.7 + 0.08 * pr_hits + (0.1 if has_product else 0.0)),
+            base=min(
+                0.9, maturity * 0.7 + 0.08 * pr_hits + (0.1 if has_product else 0.0)
+            ),
             evidence=pr_hits + (1 if has_product else 0),
             quantified=quantified,
             volume=volume,
@@ -444,7 +517,11 @@ def analyze(project: dict) -> dict:
     low = [r["dimension"] for r in readiness if r["level"] == "low"]
     # Эвристика не умеет отличать подтверждённое от заявленного: всё, что она
     # видит, — наличие чисел. Поэтому выше «claimed» она не поднимается никогда.
-    evidence = "claimed" if length >= MIN_MEANINGFUL_CHARS and _has_numbers(corpus) else "absent"
+    evidence = (
+        "claimed"
+        if length >= MIN_MEANINGFUL_CHARS and _has_numbers(corpus)
+        else "absent"
+    )
     passport = {
         "score10": _score10(irs),
         "irsBreakdown": _irs_breakdown(scores),
