@@ -8,6 +8,35 @@ import { PublicationConsentsCard } from './PublicationConsentsCard';
 import { BillingCard } from './BillingCard';
 
 /**
+ * Карта готовности по-человечески.
+ *
+ * До этого строка выглядела как «low business_model»: сначала английский
+ * уровень, потом технический код измерения. Основатель по такой карте не может
+ * понять, что именно у него слабое место — а карта существует ровно для этого.
+ */
+const READINESS_DIMENSION_TITLES: Record<string, string> = {
+  problem: 'проблема',
+  solution: 'решение',
+  product: 'продукт',
+  tech: 'технология',
+  team: 'команда',
+  market: 'рынок',
+  competition: 'конкуренты',
+  business_model: 'бизнес-модель',
+  unit_economics: 'юнит-экономика',
+  legal: 'юридическая часть',
+  finance: 'финансы',
+  pitch: 'презентация',
+  data_room: 'комната данных',
+};
+
+const READINESS_LEVEL_TITLES: Record<string, string> = {
+  low: 'слабо',
+  medium: 'средне',
+  high: 'сильно',
+};
+
+/**
  * Карточка проекта: состояние, действия и результат анализа.
  *
  * Все действия здесь — обращения к серверу, и ни одно из них не «предсказывает»
@@ -304,9 +333,9 @@ function ReadinessCard({ projectId }: { projectId: string }) {
                         : 'neutral'
                   }
                 >
-                  {entry.level}
+                  {READINESS_LEVEL_TITLES[entry.level] ?? entry.level}
                 </Badge>
-                <span>{entry.dimension}</span>
+                <span>{READINESS_DIMENSION_TITLES[entry.dimension] ?? entry.dimension}</span>
               </li>
             ))}
           </ul>

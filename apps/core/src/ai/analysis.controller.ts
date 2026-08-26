@@ -1,5 +1,5 @@
 import { Controller, Get, Param, Post } from '@nestjs/common';
-import { UuidSchema } from '@unicorn/contracts';
+import { InvestmentPassportSchema, UuidSchema } from '@unicorn/contracts';
 import { Ctx } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';
@@ -25,10 +25,19 @@ export class AnalysisController {
     return this.analysis.run(ctx, id);
   }
 
+  /**
+   * Ответ проверяется контрактом на выходе.
+   *
+   * Без этой проверки сервер молча отдавал оценки без `sources` и
+   * `modelVersion`, клиент отбрасывал весь документ при разборе, и человек
+   * видел «паспорт недоступен» при посчитанном паспорте. Расхождение прожило
+   * незамеченным именно потому, что ответ никто не сверял со схемой: лучше
+   * узнать о нём отказом здесь, чем пустым экраном у пользователя.
+   */
   @Get(':id/passport')
   async passport(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
-    return this.analysis.getPassport(ctx, id);
+    return InvestmentPassportSchema.parse(await this.analysis.getPassport(ctx, id));
   }
 
   @Get(':id/readiness')

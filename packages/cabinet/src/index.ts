@@ -15,6 +15,11 @@ export { NotificationsCard, type NotificationsPort } from './NotificationsCard';
 export { BusinessEntitiesCard, type EntitiesPort } from './BusinessEntitiesCard';
 export { SupportCard, type SupportPort } from './SupportCard';
 export {
+  VerificationCard,
+  type VerificationPort,
+  type VerificationKind,
+} from './VerificationCard';
+export {
   BugReportWidget,
   BUG_REPORT_HOTKEY_LABEL,
   type BugReportPort,

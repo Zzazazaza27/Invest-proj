@@ -19,7 +19,13 @@ import {
 } from '@unicorn/ui';
 import type { CreateSupportTicketRequest, CurrentUser, ProjectFull, SupportTicketStatus } from '@unicorn/contracts';
 import { ApiError, api, setCsrf } from './api';
-import { BugReportWidget, BusinessEntitiesCard, NotificationsCard, SupportCard } from '@unicorn/cabinet';
+import {
+  BugReportWidget,
+  BusinessEntitiesCard,
+  NotificationsCard,
+  SupportCard,
+  VerificationCard,
+} from '@unicorn/cabinet';
 import type {
   AddEntityMemberRequest,
   CreateEntityRequest,
@@ -80,6 +86,22 @@ const entitiesPort = {
     api.kyc.addMember(entityId, body),
   startKyb: (entityId: string, kind: 'registry_check' | 'beneficial_owners') =>
     api.kyc.startKyb(entityId, kind),
+};
+
+/**
+ * Транспорт верификации личности.
+ *
+ * Публикация листинга требует действующей проверки, и сервер отвечает отказом
+ * «Требуется пройти верификацию». До появления этой карточки основателю некуда
+ * было пойти по такому отказу: экран проверки был только у инвестора.
+ */
+const verificationPort = {
+  status: () => api.kyc.status(),
+  start: (body: {
+    kind: 'identity' | 'investor_status' | 'accredited';
+    docType: 'passport' | 'foreign_passport' | 'id_card' | 'driver_license';
+    docCountry: string;
+  }) => api.kyc.start(body),
 };
 
 /**
@@ -160,6 +182,11 @@ export default function App() {
                 проверенной компании выпуск закрыт. Поэтому карточка стоит в
                 списке проектов, а не прячется внутри одного из них.
               */}
+              {/*
+                Верификация личности стоит рядом с юрлицом: оба шага
+                обязательны для публикации, и оба сервер требует до неё.
+              */}
+              <VerificationCard port={verificationPort} />
               <BusinessEntitiesCard port={entitiesPort} />
               <NotificationsCard port={notificationsPort} />
               <SupportCard port={supportPort} />

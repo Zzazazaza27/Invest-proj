@@ -31,6 +31,20 @@ const TYPE_TITLES: Record<string, string> = {
 };
 
 /**
+ * Состояние разбора материала по-человечески.
+ *
+ * Сырое `not_required` в списке читалось как поломка: человек видит английский
+ * код там, где ждёт понятного слова, и не может отличить норму от ошибки.
+ */
+const PARSE_STATUS_TITLES: Record<string, string> = {
+  not_required: 'разбор не нужен',
+  pending: 'ждёт разбора',
+  in_progress: 'разбирается',
+  done: 'разобран',
+  failed: 'разбор не удался',
+};
+
+/**
  * Материалы проекта и ссылка на продукт.
  *
  * Файл сюда НЕ проходит: сервер выдаёт подписанную форму загрузки, и файл идёт
@@ -198,7 +212,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
                   {material.url ?? `версия ${material.version}`}
                 </span>
                 <Badge tone={material.parseStatus === 'failed' ? 'warning' : 'neutral'}>
-                  {material.parseStatus}
+                  {PARSE_STATUS_TITLES[material.parseStatus] ?? material.parseStatus}
                 </Badge>
               </li>
             ))}

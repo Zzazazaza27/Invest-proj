@@ -404,9 +404,12 @@ export class AnalysisService {
       if (!row) throw errors.notFound({ subject: 'investment_passport' });
 
       const scores = await tx.query<ScoreRow>(
-        `SELECT axis, value::text AS value, confidence_low::text AS confidence_low,
-                confidence_high::text AS confidence_high, explanation, computed_at
-           FROM scoring.scores WHERE passport_id = $1 ORDER BY axis`,
+        `SELECT s.axis, s.value::text AS value, s.confidence_low::text AS confidence_low,
+                s.confidence_high::text AS confidence_high, s.explanation, s.computed_at,
+                s.sources, m.version AS model_version
+           FROM scoring.scores s
+           LEFT JOIN scoring.score_models m ON m.id = s.model_id
+          WHERE s.passport_id = $1 ORDER BY s.axis`,
         [row.id],
       );
       const irs = await tx.query<{
@@ -437,6 +440,11 @@ export class AnalysisService {
           confidenceHigh: Number(s.confidence_high),
           explanation: s.explanation,
           computedAt: s.computed_at.toISOString(),
+          sources: s.sources ?? [],
+          // Версия модели самой оценки, а не паспорта: пересчёт одной оси
+          // другой моделью обязан быть виден по этой оси, а не по всему
+          // документу.
+          modelVersion: s.model_version ?? row.model_version ?? 'unknown',
         })),
         irs: irs.rows[0]
           ? {
@@ -636,6 +644,11 @@ interface ScoreRow {
   confidence_high: string;
   explanation: string;
   computed_at: Date;
+  // Источники и версия модели входят в публичный контракт оценки: без них
+  // клиент отбрасывает весь паспорт при разборе ответа, и человек видит
+  // «паспорт недоступен» вместо посчитанных оценок.
+  sources: { type: string; ref: string }[];
+  model_version: string | null;
 }
 
 export interface AnalysisRunView {
@@ -665,6 +678,8 @@ export interface PassportView {
     confidenceHigh: number;
     explanation: string;
     computedAt: string;
+    sources: { type: string; ref: string }[];
+    modelVersion: string;
   }[];
   irs: {
     value: number;
