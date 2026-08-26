@@ -8,9 +8,20 @@ import {
   Input,
   LoadingState,
   Stack,
+  formatMoney,
 } from '@unicorn/ui';
-import type { ProjectTeaser } from '@unicorn/contracts';
+import type { InvestmentPassport, ProjectFull, ProjectTeaser } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
+
+/** Строка «подпись — значение» внутри раскрытой карточки проекта. */
+function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', gap: 'var(--u-space-2)' }}>
+      <dt style={{ color: 'var(--u-text-muted)', minWidth: '10rem' }}>{label}</dt>
+      <dd style={{ margin: 0 }}>{children}</dd>
+    </div>
+  );
+}
 
 /**
  * Стадия проекта по-человечески.
@@ -41,7 +52,12 @@ export function CatalogPage() {
     | { status: 'ready'; items: ProjectTeaser[] }
     | { status: 'error'; message: string; traceId: string | null }
   >({ status: 'loading' });
-  const [details, setDetails] = useState<{ id: string; text: string } | null>(null);
+  const [details, setDetails] = useState<
+    | { id: string; state: 'loading' }
+    | { id: string; state: 'ready'; project: ProjectFull; passport: InvestmentPassport | null }
+    | { id: string; state: 'error'; message: string }
+    | null
+  >(null);
   /**
    * Отметки избранного.
    *
@@ -107,7 +123,8 @@ export function CatalogPage() {
       } catch (error) {
         setDetails({
           id: projectId,
-          text:
+          state: 'error',
+          message:
             error instanceof ApiError
               ? (error.problem?.detail ?? error.message)
               : 'Не удалось изменить избранное',
@@ -119,21 +136,30 @@ export function CatalogPage() {
     [favorites],
   );
 
-  /** Полная карточка: доступ проверяет сервер, а не эта функция. */
+  /**
+   * Полная карточка проекта. Доступ проверяет сервер, а не эта функция.
+   *
+   * Раньше здесь запрашивался ТОЛЬКО паспорт, и его отсутствие обрывало показ:
+   * инвестор жал «Подробнее» и читал «Не найдено» — при живом опубликованном
+   * проекте. Паспорт появляется лишь после прогона анализа, поэтому у только
+   * что опубликованного проекта его закономерно нет, и это не ошибка.
+   *
+   * Теперь основа карточки — сам проект, а оценка показывается, если она
+   * посчитана. Отказ в доступе к проекту по-прежнему объясняется словами
+   * сервера: подписка открывает полную карточку, без неё виден тизер.
+   */
   const openDetails = useCallback(async (id: string) => {
-    setDetails({ id, text: 'Загружаем…' });
+    setDetails({ id, state: 'loading' });
     try {
-      const passport = await api.projects.passport(id);
-      setDetails({
-        id,
-        text: `Паспорт версии ${passport.version}, уровень раскрытия ${passport.disclosureTier}${
-          passport.irs ? `, IRS ${passport.irs.value}` : ''
-        }`,
-      });
+      const project = await api.projects.get(id);
+      // Паспорт — необязательная часть: его отсутствие не должно рушить карточку.
+      const passport = await api.projects.passport(id).catch(() => null);
+      setDetails({ id, state: 'ready', project, passport });
     } catch (error) {
       setDetails({
         id,
-        text:
+        state: 'error',
+        message:
           error instanceof ApiError
             ? (error.problem?.detail ?? error.message)
             : 'Сервис недоступен',
@@ -220,7 +246,7 @@ export function CatalogPage() {
                   </span>
                 ) : null}
                 <span style={{ fontWeight: 600 }}>
-                  {teaser.investmentAsk} {teaser.askCurrency}
+                  {formatMoney(teaser.investmentAsk, teaser.askCurrency)}
                 </span>
                 <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
                   <Button variant="secondary" onClick={() => void openDetails(teaser.id)}>
@@ -245,13 +271,51 @@ export function CatalogPage() {
                   <div
                     role="status"
                     style={{
+                      display: 'grid',
+                      gap: 'var(--u-space-2)',
                       padding: 'var(--u-space-3)',
                       borderRadius: 'var(--u-radius-md)',
                       background: 'var(--u-bg-inset)',
                       fontSize: 'var(--u-text-sm)',
                     }}
                   >
-                    {details.text}
+                    {details.state === 'loading' ? 'Загружаем…' : null}
+                    {details.state === 'error' ? details.message : null}
+                    {details.state === 'ready' ? (
+                      <>
+                        {details.project.description ? (
+                          <p style={{ margin: 0, whiteSpace: 'pre-line' }}>
+                            {details.project.description}
+                          </p>
+                        ) : (
+                          <span style={{ color: 'var(--u-text-muted)' }}>
+                            Основатель пока не добавил подробное описание.
+                          </span>
+                        )}
+                        <dl style={{ display: 'grid', gap: 'var(--u-space-1)', margin: 0 }}>
+                          <DetailRow label="Стадия">
+                            {STAGE_TITLES[details.project.stage] ?? details.project.stage}
+                          </DetailRow>
+                          <DetailRow label="Запрос">
+                            {formatMoney(
+                              details.project.investmentAsk,
+                              details.project.askCurrency,
+                            )}
+                          </DetailRow>
+                          {details.project.geoCountry ? (
+                            <DetailRow label="География">
+                              {details.project.geoCountry}
+                              {details.project.geoRegion ? `, ${details.project.geoRegion}` : ''}
+                            </DetailRow>
+                          ) : null}
+                          <DetailRow label="Оценка платформы">
+                            {details.passport?.irs
+                              ? `IRS ${details.passport.irs.value} (паспорт версии ${details.passport.version})`
+                              : 'ещё не рассчитана — проект не проходил анализ'}
+                          </DetailRow>
+                        </dl>
+                      </>
+                    ) : null}
                   </div>
                 ) : null}
               </Card>

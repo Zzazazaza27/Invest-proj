@@ -11,6 +11,7 @@ import {
   LoadingState,
   PageHeading,
   Stack,
+  formatMoney,
 } from '@unicorn/ui';
 import type { ProjectFull, ProjectSummary, TaxonomyNode } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
@@ -156,7 +157,7 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
                     {project.title}
                   </span>
                   <span style={{ fontSize: 'var(--u-text-sm)', color: 'var(--u-text-muted)' }}>
-                    Запрос: {project.investmentAsk} {project.askCurrency}
+                    Запрос: {formatMoney(project.investmentAsk, project.askCurrency)}
                     {project.requiredPlanCode ? ` · тариф ${project.requiredPlanCode}` : ''}
                   </span>
                 </span>
@@ -320,12 +321,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
             ответа справочника. Кнопка, ведущая только к отказу, не должна быть
             нажимаемой; причина названа словами, а не спрятана в disabled.
           */}
-          <Button
-            type="submit"
-            variant="brand"
-            loading={busy}
-            disabled={taxonomy.length === 0}
-          >
+          <Button type="submit" variant="brand" loading={busy} disabled={taxonomy.length === 0}>
             Создать
           </Button>
           {taxonomy.length === 0 && !error ? (

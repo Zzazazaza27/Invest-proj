@@ -1,7 +1,39 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, Stack } from '@unicorn/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  Stack,
+  formatMoney,
+} from '@unicorn/ui';
 import type { Invoice, Pricing, Subscription } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
+
+/**
+ * Тарифы и состояния подписки по-человечески.
+ *
+ * В карточке стояло «founder_t2 pending_payment» — два технических кода подряд
+ * там, где основатель хочет прочитать «Рост» и «ждёт оплаты».
+ */
+const PLAN_TITLES: Record<string, string> = {
+  founder_t1: 'Старт',
+  founder_t2: 'Рост',
+  founder_t3: 'Масштаб',
+  founder_t4: 'Крупный',
+  founder_t5: 'Стратегический',
+  investor_membership: 'Подписка инвестора',
+};
+
+const SUBSCRIPTION_STATUS_TITLES: Record<string, string> = {
+  pending_payment: 'ждёт оплаты',
+  active: 'активна',
+  past_due: 'просрочена',
+  canceled: 'отменена',
+  expired: 'истекла',
+};
 
 /**
  * Подписка проекта и счета.
@@ -143,13 +175,13 @@ export function BillingCard({
               >
                 <div>
                   <div style={{ fontWeight: 600 }}>
-                    {item.planCode}{' '}
+                    {PLAN_TITLES[item.planCode] ?? item.planCode}{' '}
                     <Badge tone={item.status === 'active' ? 'success' : 'warning'}>
-                      {item.status}
+                      {SUBSCRIPTION_STATUS_TITLES[item.status] ?? item.status}
                     </Badge>
                   </div>
                   <div style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-                    {item.priceSnapshot} {item.currency}
+                    {formatMoney(item.priceSnapshot, item.currency)}
                     {item.currentPeriodEnd
                       ? ` · до ${new Date(item.currentPeriodEnd).toLocaleDateString('ru-RU')}`
                       : ' · период не начат: активацию подтверждает оператор'}
@@ -182,7 +214,7 @@ export function BillingCard({
                 Тариф проекта: <strong>{plan.name}</strong>{' '}
                 {plan.individualPricing || plan.price === null
                   ? '— цена индивидуальная, назначает оператор'
-                  : `— ${plan.price} ${plan.currency} в месяц`}
+                  : `— ${formatMoney(plan.price, plan.currency)} в месяц`}
               </span>
             ) : (
               <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>

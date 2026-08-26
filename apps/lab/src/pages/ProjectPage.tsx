@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card, ErrorState, LoadingState, Stack } from '@unicorn/ui';
+import { Badge, Button, Card, ErrorState, LoadingState, Stack, formatMoney } from '@unicorn/ui';
 import type { InvestmentPassport, ProjectFull, ReadinessEntry } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
@@ -143,7 +143,7 @@ export function ProjectPage({ projectId, onBack }: { projectId: string; onBack: 
           ) : null}
           <dl style={{ display: 'grid', gap: 'var(--u-space-2)', margin: 0 }}>
             <Row label="Запрос инвестиций">
-              {project.investmentAsk} {project.askCurrency}
+              {formatMoney(project.investmentAsk, project.askCurrency)}
             </Row>
             <Row label="IRS">{project.irs === null ? 'ещё не рассчитан' : project.irs}</Row>
             <Row label="Версия заявки">

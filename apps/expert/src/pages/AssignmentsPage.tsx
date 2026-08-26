@@ -20,6 +20,13 @@ import {
 } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 
+/** Типы материалов по-человечески: эксперт видел сырое `product_link`. */
+const MATERIAL_TYPE_TITLES: Record<string, string> = {
+  deck: 'презентация',
+  video: 'видео',
+  doc: 'документ',
+  product_link: 'ссылка на продукт',
+};
 /**
  * Назначения эксперта: ответ на назначение, рецензия, конфликт интересов.
  *
@@ -145,8 +152,8 @@ export function AssignmentsPage() {
                     знает, что стало с проектом после его рецензии.
                   */}
                   <Badge>
-                    проект: {PROJECT_STATUS_LABEL[assignment.projectStatus] ??
-                      assignment.projectStatus}
+                    проект:{' '}
+                    {PROJECT_STATUS_LABEL[assignment.projectStatus] ?? assignment.projectStatus}
                   </Badge>
                   {assignment.reviewSubmitted && !assignment.revisable ? (
                     <Badge tone="success">решение принято</Badge>
@@ -374,7 +381,13 @@ function WorkspacePanel({ assignmentId }: { assignmentId: string }) {
         <h3 style={{ margin: '0 0 var(--u-space-2)', fontSize: 'var(--u-text-md)' }}>
           Внутренние заметки
         </h3>
-        <p style={{ margin: '0 0 var(--u-space-3)', color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+        <p
+          style={{
+            margin: '0 0 var(--u-space-3)',
+            color: 'var(--u-text-muted)',
+            fontSize: 'var(--u-text-sm)',
+          }}
+        >
           Видны вам, организатору и администратору. Автору проекта — нет.
         </p>
         {notes.length === 0 ? (
@@ -751,7 +764,7 @@ function MaterialsPanel({ projectId }: { projectId: string }) {
         <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
           {state.materials.map((material) => (
             <li key={material.id} style={{ wordBreak: 'break-all' }}>
-              <Badge>{material.type}</Badge>{' '}
+              <Badge>{MATERIAL_TYPE_TITLES[material.type] ?? material.type}</Badge>{' '}
               {material.url ? (
                 // Внешняя ссылка открывается без передачи адреса этой страницы:
                 // куда именно ходит рецензент — не дело чужого сайта.

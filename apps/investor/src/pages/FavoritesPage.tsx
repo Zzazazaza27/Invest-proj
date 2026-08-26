@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card, EmptyState, ErrorState, LoadingState, Stack } from '@unicorn/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  LoadingState,
+  Stack,
+  formatMoney,
+} from '@unicorn/ui';
 import type { FavoriteProject } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 
@@ -129,7 +138,7 @@ export function FavoritesPage() {
                   </span>
                 ) : null}
                 <span style={{ fontWeight: 600 }}>
-                  {item.investmentAsk} {item.askCurrency}
+                  {formatMoney(item.investmentAsk, item.askCurrency)}
                 </span>
                 <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-xs)' }}>
                   в избранном с {new Date(item.favoritedAt).toLocaleDateString('ru-RU')}
