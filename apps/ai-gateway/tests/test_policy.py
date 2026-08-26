@@ -46,7 +46,9 @@ def _policy_with_ru_only_residency(tmp_path: Path) -> Path:
 
 
 @pytest.mark.parametrize("data_class", ["pdn", "commercial_secret"])
-@pytest.mark.parametrize("provider_name", ["anthropic", "openai", "kimi", "qwen"])
+@pytest.mark.parametrize(
+    "provider_name", ["anthropic", "openai", "kimi", "qwen", "deepseek"]
+)
 def test_restricted_classes_never_leave_ru_when_residency_is_ru_only(
     tmp_path: Path, data_class: str, provider_name: str
 ) -> None:
@@ -64,7 +66,13 @@ def test_owner_decision_foreign_providers_get_every_class(policy: Policy) -> Non
     foreign = [
         p for p in policy.providers.values() if p.is_llm and p.jurisdiction != "RU"
     ]
-    assert {p.name for p in foreign} == {"anthropic", "openai", "kimi", "qwen"}
+    assert {p.name for p in foreign} == {
+        "anthropic",
+        "openai",
+        "kimi",
+        "qwen",
+        "deepseek",
+    }
     for provider in foreign:
         assert provider.data_classes == frozenset(
             {"public", "pseudonymous", "pdn", "commercial_secret"}

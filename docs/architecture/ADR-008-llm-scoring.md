@@ -108,7 +108,7 @@
 ### 7. Зарубежные провайдеры в работе не ограничены (решение владельца, 2026-08-26)
 
 Подключаемые продукты: YandexGPT, GigaChat, OpenAI, Claude (Anthropic),
-Kimi (Moonshot AI), Qwen (Alibaba Cloud). Владелец решил не ограничивать
+Kimi (Moonshot AI), Qwen (Alibaba Cloud), DeepSeek. Владелец решил не ограничивать
 зарубежные модели по классам данных: `residency.allowed_jurisdictions`
 расширен до RU, US, CN, каждому LLM-провайдеру открыты все четыре класса.
 
@@ -122,7 +122,7 @@ Kimi (Moonshot AI), Qwen (Alibaba Cloud). Владелец решил не ог�
 сам откажет противоречивой записи, негативные тесты живут на фикстуре.
 
 Адреса Kimi и Qwen — международные площадки (`api.moonshot.ai`,
-`dashscope-intl.aliyuncs.com`); ключ китайского региона потребует правки
+`dashscope-intl.aliyuncs.com`), DeepSeek — `api.deepseek.com`; ключ китайского региона потребует правки
 адреса в политике через ревью, как и для любого провайдера.
 
 ## Альтернативы

@@ -40,6 +40,7 @@ const PRODUCT_VERTICALS: Record<string, string> = {
   openai: 'ИИ-скоринг',
   kimi: 'ИИ-скоринг',
   qwen: 'ИИ-скоринг',
+  deepseek: 'ИИ-скоринг',
 };
 
 const PROVIDER_TITLES: Record<string, string> = {
@@ -49,6 +50,7 @@ const PROVIDER_TITLES: Record<string, string> = {
   openai: 'OpenAI (США)',
   kimi: 'Kimi (Moonshot AI, КНР)',
   qwen: 'Qwen (Alibaba Cloud, КНР)',
+  deepseek: 'DeepSeek (КНР)',
 };
 
 const MODEL_HINTS: Record<string, string> = {
@@ -58,6 +60,7 @@ const MODEL_HINTS: Record<string, string> = {
   openai: 'например gpt-4o',
   kimi: 'например kimi-k2.5 или moonshot-v1-32k',
   qwen: 'например qwen-plus или qwen-max',
+  deepseek: 'например deepseek-chat или deepseek-reasoner',
 };
 
 type Tab = 'apis' | 'clients' | 'scoring';
@@ -310,7 +313,7 @@ function ConnectedApisSection() {
         </form>
         <p className="small muted">
           Новый ключ становится активным и снимает активность с прежнего: активный провайдер на
-          платформе один. Зарубежные модели (OpenAI, Claude, Kimi, Qwen) по классам данных не
+          платформе один. Зарубежные модели (OpenAI, Claude, Kimi, Qwen, DeepSeek) по классам данных не
           ограничены — решение владельца от 26.08.2026 (ADR-008 §7); адреса провайдеров задаются
           только в политике шлюза.
         </p>
