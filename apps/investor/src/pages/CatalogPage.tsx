@@ -343,7 +343,13 @@ function PreviewPopover({ preview }: { preview: Preview }) {
       role="tooltip"
       style={{
         position: 'absolute',
-        bottom: 'calc(100% + var(--u-space-2))',
+        /*
+          Подсказка раскрывается ВНИЗ, а не вверх: всплывая над кнопкой, она
+          закрывала название и сумму той самой карточки, о которой
+          рассказывает. Снизу она ложится поверх соседнего ряда — там ничего
+          сейчас не читают.
+        */
+        top: 'calc(100% + var(--u-space-2))',
         left: 0,
         zIndex: 20,
         width: 'min(22rem, 80vw)',
