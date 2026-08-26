@@ -376,9 +376,9 @@ describe('согласие на публикацию', () => {
       }).success,
     ).toBe(true);
     // Пустой список — законное «снимать можно, данные проекта не раскрывать».
-    expect(PublicationConsentRequestSchema.safeParse({ ...base, disclosedFields: [] }).success).toBe(
-      true,
-    );
+    expect(
+      PublicationConsentRequestSchema.safeParse({ ...base, disclosedFields: [] }).success,
+    ).toBe(true);
   });
 
   it('неизвестная область согласия отвергается', () => {

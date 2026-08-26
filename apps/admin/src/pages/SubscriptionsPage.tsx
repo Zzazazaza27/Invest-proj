@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { PromptDialog } from '@unicorn/ui';
 import type { AdminSubscription } from '@unicorn/contracts';
 import { api } from '../api';
 import { formatDate, formatMoney, problemText } from '../lib/format';
@@ -16,6 +17,14 @@ import { formatDate, formatMoney, problemText } from '../lib/format';
  * в журнал вместе с причиной.
  */
 export function SubscriptionsPage({ adminId }: { adminId: string }) {
+  /**
+   * Диалоги вместо `window.prompt`.
+   *
+   * Основание действия уходит в неизменяемый журнал, и терять его из-за
+   * настройки браузера, отключающей системные подсказки, нельзя.
+   */
+  const [activating, setActivating] = useState<string | null>(null);
+  const [pricing, setPricing] = useState<{ id: string; price: string } | null>(null);
   const [items, setItems] = useState<AdminSubscription[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -103,16 +112,7 @@ export function SubscriptionsPage({ adminId }: { adminId: string }) {
                         <button
                           type="button"
                           className="btn--sm"
-                          onClick={() => {
-                            const reason = window.prompt(
-                              'Основание активации (например, номер платёжного поручения):',
-                            );
-                            if (!reason) return;
-                            void act(
-                              () => api.activateSubscription(sub.id, reason),
-                              'Подписка активирована.',
-                            );
-                          }}
+                          onClick={() => setActivating(sub.id)}
                         >
                           Активировать
                         </button>
@@ -142,16 +142,7 @@ export function SubscriptionsPage({ adminId }: { adminId: string }) {
                       <button
                         type="button"
                         className="btn--ghost btn--sm"
-                        onClick={() => {
-                          const price = window.prompt('Персональная цена, ₽ (например 149990.00):');
-                          if (!price) return;
-                          const reason = window.prompt('Основание (попадёт в журнал):');
-                          if (!reason) return;
-                          void act(
-                            () => api.proposeCustomPrice(sub.id, { price, reason }),
-                            'Цена назначена. Требуется утверждение вторым администратором.',
-                          );
-                        }}
+                        onClick={() => setPricing({ id: sub.id, price: '' })}
                       >
                         Персональная цена
                       </button>
@@ -163,6 +154,50 @@ export function SubscriptionsPage({ adminId }: { adminId: string }) {
           </table>
         </div>
       )}
+
+      <PromptDialog
+        open={activating !== null}
+        title="Активация подписки"
+        description="Платёжный провайдер не подключён: активацию подтверждает оператор, а основание попадает в неизменяемый журнал."
+        label="Основание активации"
+        placeholder="Например, номер платёжного поручения"
+        confirmText="Активировать"
+        onCancel={() => setActivating(null)}
+        onConfirm={(reason) => {
+          const id = activating;
+          setActivating(null);
+          if (id) void act(() => api.activateSubscription(id, reason), 'Подписка активирована.');
+        }}
+      />
+
+      <PromptDialog
+        open={pricing !== null && pricing.price === ''}
+        title="Персональная цена"
+        description="Цену назначает один администратор, утверждает другой — так требует ограничение таблицы."
+        label="Цена, ₽"
+        placeholder="149990.00"
+        confirmText="Дальше"
+        onCancel={() => setPricing(null)}
+        onConfirm={(price) => setPricing(pricing ? { ...pricing, price } : null)}
+      />
+
+      <PromptDialog
+        open={pricing !== null && pricing.price !== ''}
+        title="Основание персональной цены"
+        description="Попадёт в журнал вместе с автором."
+        label="Основание"
+        confirmText="Назначить цену"
+        onCancel={() => setPricing(null)}
+        onConfirm={(reason) => {
+          const current = pricing;
+          setPricing(null);
+          if (current)
+            void act(
+              () => api.proposeCustomPrice(current.id, { price: current.price, reason }),
+              'Цена назначена. Требуется утверждение вторым администратором.',
+            );
+        }}
+      />
     </>
   );
 }

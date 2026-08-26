@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { FeatureFlag } from '@unicorn/contracts';
+import { PromptDialog } from '@unicorn/ui';
 import { api } from '../api';
 import { formatDate, problemText } from '../lib/format';
 
@@ -29,14 +30,10 @@ export function FlagsPage() {
     void load();
   }, [load]);
 
-  async function toggle(flag: FeatureFlag) {
-    const regulated = flag.key.startsWith('investments.');
-    const question = regulated
-      ? `Флаг «${flag.key}» относится к регулируемому контуру. Включение допустимо только после включения в реестр ОИП и согласования Правил платформы.\n\nОснование:`
-      : `Изменение флага «${flag.key}». Основание:`;
-    const reason = window.prompt(question);
-    if (!reason) return;
+  /** Основание вводится в диалоге и попадает в неизменяемый журнал. */
+  const [changing, setChanging] = useState<FeatureFlag | null>(null);
 
+  async function toggle(flag: FeatureFlag, reason: string) {
     setError(null);
     setNotice(null);
     try {
@@ -92,7 +89,7 @@ export function FlagsPage() {
                       <button
                         type="button"
                         className="btn--ghost btn--sm"
-                        onClick={() => void toggle(flag)}
+                        onClick={() => setChanging(flag)}
                       >
                         {flag.enabled ? 'Выключить' : 'Включить'}
                       </button>
@@ -104,6 +101,24 @@ export function FlagsPage() {
           </table>
         </div>
       )}
+
+      <PromptDialog
+        open={changing !== null}
+        title={changing ? `Флаг «${changing.key}»` : 'Флаг'}
+        description={
+          changing?.key.startsWith('investments.')
+            ? 'Регулируемый контур: включение допустимо только после внесения оператора в реестр Банка России и согласования Правил платформы.'
+            : 'Изменение попадёт в неизменяемый журнал вместе с автором.'
+        }
+        label="Основание"
+        confirmText={changing?.enabled ? 'Выключить' : 'Включить'}
+        onCancel={() => setChanging(null)}
+        onConfirm={(reason) => {
+          const flag = changing;
+          setChanging(null);
+          if (flag) void toggle(flag, reason);
+        }}
+      />
     </>
   );
 }

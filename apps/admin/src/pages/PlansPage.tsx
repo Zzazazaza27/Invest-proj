@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import type { AdminPlan, PlanCode, PublishPlanRequest } from '@unicorn/contracts';
+import { PromptDialog } from '@unicorn/ui';
 import { ApiError, api } from '../api';
 import { FeatureEditor } from '../components/FeatureEditor';
 import { formatDate, formatMoney, problemText } from '../lib/format';
@@ -28,6 +29,9 @@ const PLAN_CODES: PlanCode[] = [
 ];
 
 export function PlansPage() {
+  /** Снятие тарифа с продажи: основание вводится диалогом и идёт в журнал. */
+  const [closing, setClosing] = useState<{ id: string; name: string } | null>(null);
+
   const [plans, setPlans] = useState<AdminPlan[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -116,16 +120,7 @@ export function PlansPage() {
                     <button
                       type="button"
                       className="btn--danger btn--sm"
-                      onClick={() => {
-                        const reason = window.prompt(
-                          'Причина снятия тарифа с продажи (попадёт в журнал):',
-                        );
-                        if (!reason) return;
-                        void act(
-                          () => api.closePlan(current.id, { reason }),
-                          'Тариф снят с продажи. Действующие подписки продолжают работать.',
-                        );
-                      }}
+                      onClick={() => setClosing({ id: current.id, name: current.name })}
                     >
                       Снять с продажи
                     </button>
@@ -220,6 +215,24 @@ export function PlansPage() {
       {plans !== null && plans.length === 0 && (
         <div className="card empty">Тарифов пока нет. Опубликуйте первую версию.</div>
       )}
+
+      <PromptDialog
+        open={closing !== null}
+        title={closing ? `Снять с продажи: ${closing.name}` : 'Снять с продажи'}
+        description="Действующие подписки продолжают работать по своей цене. Основание попадёт в журнал."
+        label="Причина снятия"
+        confirmText="Снять с продажи"
+        onCancel={() => setClosing(null)}
+        onConfirm={(reason) => {
+          const plan = closing;
+          setClosing(null);
+          if (plan)
+            void act(
+              () => api.closePlan(plan.id, { reason }),
+              'Тариф снят с продажи. Действующие подписки продолжают работать.',
+            );
+        }}
+      />
     </>
   );
 }

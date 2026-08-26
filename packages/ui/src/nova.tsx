@@ -31,10 +31,14 @@ export function NovaTopBar({
   return (
     <header className="u-topbar">
       <div className="u-topbar__inner">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--u-space-3)', minWidth: 0 }}>
+        <div
+          style={{ display: 'flex', alignItems: 'center', gap: 'var(--u-space-3)', minWidth: 0 }}
+        >
           <IconTile name={icon} variant="solid" size={40} />
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 800, letterSpacing: '-0.01em', lineHeight: 1.2 }}>{title}</div>
+            <div style={{ fontWeight: 800, letterSpacing: '-0.01em', lineHeight: 1.2 }}>
+              {title}
+            </div>
             {subtitle ? (
               <div
                 style={{

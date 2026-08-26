@@ -539,6 +539,59 @@ export class ProjectsService {
     });
   }
 
+  /**
+   * Содержимое материала для просмотра ВНУТРИ платформы.
+   *
+   * Доступ решает RLS: файл увидит участник проекта, администратор,
+   * организатор, назначенный рецензент и инвестор с активной подпиской по
+   * опубликованному листингу (M065). Если политика не пускает — строки просто
+   * не будет, и ответ ничем не отличается от «такого материала нет».
+   *
+   * Ядро отдаёт байты само и НЕ выписывает presigned-ссылку на хранилище:
+   * такая ссылка живёт своей жизнью — переживает окончание подписки, снятие
+   * листинга и пересылается кому угодно. Здесь же доступ проверяется на каждом
+   * запросе.
+   */
+  async getMaterialContent(
+    ctx: RequestContext,
+    projectId: string,
+    materialId: string,
+  ): Promise<{ body: Buffer; contentType: string; filename: string }> {
+    const key = await this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<{ s3_key: string | null; type: string }>(
+        `SELECT s3_key, type FROM lab.project_materials
+          WHERE id = $1 AND project_id = $2 AND uploaded_at IS NOT NULL`,
+        [materialId, projectId],
+      );
+      const row = rows[0];
+      if (!row) throw errors.notFound({ subject: 'material' });
+      if (!row.s3_key) {
+        // Ссылка на продукт — это адрес, а не файл: открывать её должен сам
+        // браузер, а не платформа своим запросом (иначе ядро станет прокси в
+        // произвольный интернет — готовый SSRF).
+        throw errors.conflict('Этот материал — внешняя ссылка, а не файл');
+      }
+      return { key: row.s3_key, type: row.type };
+    });
+
+    const object = await this.s3.getObject(key.key);
+    if (!object) throw errors.notFound({ subject: 'material' });
+
+    // Тип берём из хранилища, но принимаем только то, что браузер показывает
+    // сам. Чужой content-type здесь означал бы отдачу HTML с нашего адреса.
+    const allowed = new Set(['application/pdf', 'image/png', 'image/jpeg', 'image/webp']);
+    const contentType =
+      object.contentType && allowed.has(object.contentType)
+        ? object.contentType
+        : 'application/pdf';
+
+    return {
+      body: object.body,
+      contentType,
+      filename: `${key.type}-${materialId}`,
+    };
+  }
+
   async addProductLink(ctx: RequestContext, input: AddProductLink): Promise<ProjectMaterial> {
     return this.runMapped(async () =>
       this.db.transaction(ctx, async (tx) => {

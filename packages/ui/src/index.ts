@@ -49,3 +49,5 @@ export {
 } from './nova';
 
 export { formatAmount, formatMoney } from './format';
+
+export { PromptDialog } from './prompt-dialog';

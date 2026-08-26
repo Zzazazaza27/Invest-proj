@@ -92,32 +92,40 @@ const PATHS: Record<IconName, React.ReactNode> = {
   ),
   bell: (
     <>
-      <path
-        d="M6 16V11a6 6 0 1 1 12 0v5l1.4 2H4.6L6 16Z"
-        fill="currentColor"
-        opacity=".14"
-      />
+      <path d="M6 16V11a6 6 0 1 1 12 0v5l1.4 2H4.6L6 16Z" fill="currentColor" opacity=".14" />
       <path d="M6 11a6 6 0 1 1 12 0v5l1.4 2H4.6L6 16v-5Z" />
       <path d="M10 20.5a2.2 2.2 0 0 0 4 0" />
     </>
   ),
   building: (
     <>
-      <path d="M4.5 20V6.2c0-.8.6-1.4 1.4-1.4h7c.8 0 1.4.6 1.4 1.4V20" fill="currentColor" opacity=".14" />
+      <path
+        d="M4.5 20V6.2c0-.8.6-1.4 1.4-1.4h7c.8 0 1.4.6 1.4 1.4V20"
+        fill="currentColor"
+        opacity=".14"
+      />
       <path d="M3 20h18M4.5 20V6.2c0-.8.6-1.4 1.4-1.4h7c.8 0 1.4.6 1.4 1.4V20M14.3 10h4.3c.8 0 1.4.6 1.4 1.4V20" />
       <path d="M7.5 8.5h3.5M7.5 12h3.5M7.5 15.5h3.5" />
     </>
   ),
   shield: (
     <>
-      <path d="M12 3.2 19 6v5.4c0 4.2-2.9 7.5-7 9.4-4.1-1.9-7-5.2-7-9.4V6l7-2.8Z" fill="currentColor" opacity=".14" />
+      <path
+        d="M12 3.2 19 6v5.4c0 4.2-2.9 7.5-7 9.4-4.1-1.9-7-5.2-7-9.4V6l7-2.8Z"
+        fill="currentColor"
+        opacity=".14"
+      />
       <path d="M12 3.2 19 6v5.4c0 4.2-2.9 7.5-7 9.4-4.1-1.9-7-5.2-7-9.4V6l7-2.8Z" />
       <path d="m9 12 2.2 2.2L15.2 10" />
     </>
   ),
   sparkles: (
     <>
-      <path d="m12 3.5 1.9 4.9 4.9 1.9-4.9 1.9L12 17.1l-1.9-4.9-4.9-1.9 4.9-1.9L12 3.5Z" fill="currentColor" opacity=".14" />
+      <path
+        d="m12 3.5 1.9 4.9 4.9 1.9-4.9 1.9L12 17.1l-1.9-4.9-4.9-1.9 4.9-1.9L12 3.5Z"
+        fill="currentColor"
+        opacity=".14"
+      />
       <path d="m12 3.5 1.9 4.9 4.9 1.9-4.9 1.9L12 17.1l-1.9-4.9-4.9-1.9 4.9-1.9L12 3.5Z" />
       <path d="M18.5 16.2l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7.7-1.8Z" />
     </>
@@ -125,7 +133,9 @@ const PATHS: Record<IconName, React.ReactNode> = {
   plus: <path d="M12 5.5v13M5.5 12h13" />,
   chevronRight: <path d="m9.5 6 6 6-6 6" />,
   arrowLeft: <path d="M19 12H5.5m0 0 5.5-5.5M5.5 12l5.5 5.5" />,
-  logout: <path d="M15 8.5V6.4c0-1-.8-1.9-1.9-1.9H6.4c-1 0-1.9.8-1.9 1.9v11.2c0 1 .8 1.9 1.9 1.9h6.7c1 0 1.9-.8 1.9-1.9v-2.1M10 12h9.5m0 0-3-3m3 3-3 3" />,
+  logout: (
+    <path d="M15 8.5V6.4c0-1-.8-1.9-1.9-1.9H6.4c-1 0-1.9.8-1.9 1.9v11.2c0 1 .8 1.9 1.9 1.9h6.7c1 0 1.9-.8 1.9-1.9v-2.1M10 12h9.5m0 0-3-3m3 3-3 3" />
+  ),
   user: (
     <>
       <circle cx="12" cy="8.5" r="3.5" fill="currentColor" opacity=".14" />
@@ -164,13 +174,21 @@ const PATHS: Record<IconName, React.ReactNode> = {
   check: <path d="m5 12.5 4.5 4.5L19 7.5" />,
   chat: (
     <>
-      <path d="M4 6.4c0-1 .8-1.9 1.9-1.9h12.2c1 0 1.9.8 1.9 1.9v7.7c0 1-.8 1.9-1.9 1.9H9.5L5 19.5v-3.5h-1V6.4Z" fill="currentColor" opacity=".14" />
+      <path
+        d="M4 6.4c0-1 .8-1.9 1.9-1.9h12.2c1 0 1.9.8 1.9 1.9v7.7c0 1-.8 1.9-1.9 1.9H9.5L5 19.5v-3.5h-1V6.4Z"
+        fill="currentColor"
+        opacity=".14"
+      />
       <path d="M20 14.1c0 1-.8 1.9-1.9 1.9H9.5L5 19.5V16h-.1c-.5 0-.9-.4-.9-.9V6.4c0-1 .8-1.9 1.9-1.9h12.2c1 0 1.9.8 1.9 1.9v7.7Z" />
     </>
   ),
   document: (
     <>
-      <path d="M6 4.5h7l5 5v10c0 1-.8 1.9-1.9 1.9H6c-1 0-1.9-.8-1.9-1.9V6.4c0-1 .8-1.9 1.9-1.9Z" fill="currentColor" opacity=".14" />
+      <path
+        d="M6 4.5h7l5 5v10c0 1-.8 1.9-1.9 1.9H6c-1 0-1.9-.8-1.9-1.9V6.4c0-1 .8-1.9 1.9-1.9Z"
+        fill="currentColor"
+        opacity=".14"
+      />
       <path d="M13 4.5H6c-1 0-1.9.8-1.9 1.9v13.2c0 1 .8 1.9 1.9 1.9h10c1 0 1.9-.8 1.9-1.9V9.5L13 4.5Z" />
       <path d="M13 4.5v5h5M8 13.5h7M8 17h5" />
     </>

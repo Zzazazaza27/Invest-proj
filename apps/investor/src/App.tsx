@@ -13,14 +13,24 @@ import {
   Stack,
   UI_KEYFRAMES,
 } from '@unicorn/ui';
-import type { CreateSupportTicketRequest, CurrentUser, SupportTicketStatus } from '@unicorn/contracts';
+import type {
+  CreateSupportTicketRequest,
+  CurrentUser,
+  SupportTicketStatus,
+} from '@unicorn/contracts';
 import { ApiError, api, setCsrf } from './api';
 import { CatalogPage } from './pages/CatalogPage';
+import { ProjectDetailsPage } from './pages/ProjectDetailsPage';
 import { FavoritesPage } from './pages/FavoritesPage';
 import { SubscriptionPage } from './pages/SubscriptionPage';
 import { OffersPage } from './pages/OffersPage';
 import { BillingPage } from './pages/BillingPage';
-import { BugReportWidget, BusinessEntitiesCard, NotificationsCard, SupportCard } from '@unicorn/cabinet';
+import {
+  BugReportWidget,
+  BusinessEntitiesCard,
+  NotificationsCard,
+  SupportCard,
+} from '@unicorn/cabinet';
 import type {
   AddEntityMemberRequest,
   CreateEntityRequest,
@@ -65,7 +75,6 @@ function toAddress(input: string): string {
   return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
 }
 
-
 /**
  * Транспорт для общих блоков кабинета.
  *
@@ -78,7 +87,6 @@ const notificationsPort = {
   savePreferences: (items: NotificationPreference[]) => api.notifications.updatePreferences(items),
 };
 
-
 /**
  * Транспорт для карточки юрлиц. Тот же приём, что и у уведомлений: пакет не
  * знает про HTTP, а кабинет остаётся при своём клиенте.
@@ -86,8 +94,7 @@ const notificationsPort = {
 const entitiesPort = {
   list: () => api.kyc.entities(),
   create: (body: CreateEntityRequest) => api.kyc.createEntity(body),
-  addMember: (entityId: string, body: AddEntityMemberRequest) =>
-    api.kyc.addMember(entityId, body),
+  addMember: (entityId: string, body: AddEntityMemberRequest) => api.kyc.addMember(entityId, body),
   startKyb: (entityId: string, kind: 'registry_check' | 'beneficial_owners') =>
     api.kyc.startKyb(entityId, kind),
 };
@@ -123,6 +130,13 @@ export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState<Tab>('catalog');
+  /**
+   * Открытая карточка проекта.
+   *
+   * Живёт рядом с вкладкой, а не внутри каталога: возврат «к каталогу» обязан
+   * приводить в тот же список, а переход на другую вкладку — закрывать карточку.
+   */
+  const [openProject, setOpenProject] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -201,28 +215,76 @@ export default function App() {
                 padding: 'var(--u-space-2) 0',
               }}
             >
-              <TabButton active={tab === 'catalog'} onClick={() => setTab('catalog')}>
+              <TabButton
+                active={tab === 'catalog'}
+                onClick={() => {
+                  setTab('catalog');
+                  setOpenProject(null);
+                }}
+              >
                 Каталог
               </TabButton>
-              <TabButton active={tab === 'favorites'} onClick={() => setTab('favorites')}>
+              <TabButton
+                active={tab === 'favorites'}
+                onClick={() => {
+                  setTab('favorites');
+                  setOpenProject(null);
+                }}
+              >
                 Избранное
               </TabButton>
-              <TabButton active={tab === 'subscription'} onClick={() => setTab('subscription')}>
+              <TabButton
+                active={tab === 'subscription'}
+                onClick={() => {
+                  setTab('subscription');
+                  setOpenProject(null);
+                }}
+              >
                 Подписка
               </TabButton>
-              <TabButton active={tab === 'billing'} onClick={() => setTab('billing')}>
+              <TabButton
+                active={tab === 'billing'}
+                onClick={() => {
+                  setTab('billing');
+                  setOpenProject(null);
+                }}
+              >
                 Счета
               </TabButton>
-              <TabButton active={tab === 'verification'} onClick={() => setTab('verification')}>
+              <TabButton
+                active={tab === 'verification'}
+                onClick={() => {
+                  setTab('verification');
+                  setOpenProject(null);
+                }}
+              >
                 Верификация
               </TabButton>
-              <TabButton active={tab === 'notifications'} onClick={() => setTab('notifications')}>
+              <TabButton
+                active={tab === 'notifications'}
+                onClick={() => {
+                  setTab('notifications');
+                  setOpenProject(null);
+                }}
+              >
                 Уведомления
               </TabButton>
-              <TabButton active={tab === 'offers'} onClick={() => setTab('offers')}>
+              <TabButton
+                active={tab === 'offers'}
+                onClick={() => {
+                  setTab('offers');
+                  setOpenProject(null);
+                }}
+              >
                 Предложения
               </TabButton>
-              <TabButton active={tab === 'support'} onClick={() => setTab('support')}>
+              <TabButton
+                active={tab === 'support'}
+                onClick={() => {
+                  setTab('support');
+                  setOpenProject(null);
+                }}
+              >
                 Поддержка
               </TabButton>
             </nav>
@@ -234,7 +296,12 @@ export default function App() {
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
           {!checking && !me ? <LoginPage onLoggedIn={() => void load()} /> : null}
-          {!checking && me && tab === 'catalog' ? <CatalogPage /> : null}
+          {!checking && me && tab === 'catalog' && openProject === null ? (
+            <CatalogPage onOpen={(id) => setOpenProject(id)} />
+          ) : null}
+          {!checking && me && tab === 'catalog' && openProject !== null ? (
+            <ProjectDetailsPage projectId={openProject} onBack={() => setOpenProject(null)} />
+          ) : null}
           {!checking && me && tab === 'subscription' ? <SubscriptionPage /> : null}
           {!checking && me && tab === 'billing' ? <BillingPage /> : null}
           {!checking && me && tab === 'verification' ? (

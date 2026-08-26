@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Badge,
   Button,
@@ -10,18 +10,8 @@ import {
   Stack,
   formatMoney,
 } from '@unicorn/ui';
-import type { InvestmentPassport, ProjectFull, ProjectTeaser } from '@unicorn/contracts';
+import type { ProjectTeaser } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
-
-/** Строка «подпись — значение» внутри раскрытой карточки проекта. */
-function DetailRow({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', gap: 'var(--u-space-2)' }}>
-      <dt style={{ color: 'var(--u-text-muted)', minWidth: '10rem' }}>{label}</dt>
-      <dd style={{ margin: 0 }}>{children}</dd>
-    </div>
-  );
-}
 
 /**
  * Стадия проекта по-человечески.
@@ -36,15 +26,27 @@ const STAGE_TITLES: Record<string, string> = {
   growth: 'рост',
 };
 
+/** Краткая справка для подсказки: описание проекта и оценка платформы. */
+type Preview =
+  | { state: 'loading' }
+  | { state: 'ready'; summary: string | null; irs: number | null }
+  | { state: 'unavailable' };
+
 /**
  * Каталог проектов.
  *
  * Инвестор видит те же тизеры, что и аноним: полная карточка открывается
  * подпиской, и это решает СЕРВЕР. Кабинет не пытается угадать доступ и не
- * прячет кнопку «подробнее» — он отправляет запрос и показывает ответ, включая
+ * прячет кнопку «Подробнее» — он отправляет запрос и показывает ответ, включая
  * отказ с объяснением, что нужна подписка.
+ *
+ * Сетка карточек намеренно жёсткая: у каждой карточки фиксированная раскладка
+ * строк и ряд кнопок, прижатый к низу. Раньше подробности раскрывались внутри
+ * карточки, и при нажатии соседние карточки уезжали вниз — человек терял
+ * место, на которое смотрел. Теперь «Подробнее» открывает отдельную страницу, а
+ * подсказка при наведении показывается поверх сетки и на поток не влияет.
  */
-export function CatalogPage() {
+export function CatalogPage({ onOpen }: { onOpen: (projectId: string) => void }) {
   const [query, setQuery] = useState('');
   const [applied, setApplied] = useState('');
   const [state, setState] = useState<
@@ -52,12 +54,7 @@ export function CatalogPage() {
     | { status: 'ready'; items: ProjectTeaser[] }
     | { status: 'error'; message: string; traceId: string | null }
   >({ status: 'loading' });
-  const [details, setDetails] = useState<
-    | { id: string; state: 'loading' }
-    | { id: string; state: 'ready'; project: ProjectFull; passport: InvestmentPassport | null }
-    | { id: string; state: 'error'; message: string }
-    | null
-  >(null);
+  const [notice, setNotice] = useState<string | null>(null);
   /**
    * Отметки избранного.
    *
@@ -68,6 +65,10 @@ export function CatalogPage() {
    */
   const [favorites, setFavorites] = useState<Set<string>>(new Set());
   const [favoriteBusy, setFavoriteBusy] = useState<string | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [previews, setPreviews] = useState<Record<string, Preview>>({});
+  /** Уже запрошенные справки: подсказка не должна дёргать сеть на каждое наведение. */
+  const requested = useRef<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -100,6 +101,37 @@ export function CatalogPage() {
   }, []);
 
   /**
+   * Справка для подсказки при наведении.
+   *
+   * Тянется один раз на проект и только по наведению: грузить сотню паспортов
+   * при открытии каталога ради подсказки, которую, может быть, никто не
+   * увидит, — расход впустую.
+   */
+  const ensurePreview = useCallback((projectId: string) => {
+    if (requested.current.has(projectId)) return;
+    requested.current.add(projectId);
+    setPreviews((current) => ({ ...current, [projectId]: { state: 'loading' } }));
+    void Promise.all([
+      api.projects.get(projectId).catch(() => null),
+      api.projects.passport(projectId).catch(() => null),
+    ]).then(([project, passport]) => {
+      if (!project && !passport) {
+        setPreviews((current) => ({ ...current, [projectId]: { state: 'unavailable' } }));
+        return;
+      }
+      const description = project?.description ?? null;
+      setPreviews((current) => ({
+        ...current,
+        [projectId]: {
+          state: 'ready',
+          summary: description ? shorten(description, 220) : null,
+          irs: passport?.irs?.value ?? null,
+        },
+      }));
+    });
+  }, []);
+
+  /**
    * Переключение отметки.
    *
    * Состояние читается из СЕРВЕРНОГО ответа, а не выводится из предыдущего:
@@ -109,6 +141,7 @@ export function CatalogPage() {
   const toggleFavorite = useCallback(
     async (projectId: string) => {
       setFavoriteBusy(projectId);
+      setNotice(null);
       const wasFavorite = favorites.has(projectId);
       try {
         const result = wasFavorite
@@ -121,51 +154,17 @@ export function CatalogPage() {
           return next;
         });
       } catch (error) {
-        setDetails({
-          id: projectId,
-          state: 'error',
-          message:
-            error instanceof ApiError
-              ? (error.problem?.detail ?? error.message)
-              : 'Не удалось изменить избранное',
-        });
+        setNotice(
+          error instanceof ApiError
+            ? (error.problem?.detail ?? error.message)
+            : 'Не удалось изменить избранное',
+        );
       } finally {
         setFavoriteBusy(null);
       }
     },
     [favorites],
   );
-
-  /**
-   * Полная карточка проекта. Доступ проверяет сервер, а не эта функция.
-   *
-   * Раньше здесь запрашивался ТОЛЬКО паспорт, и его отсутствие обрывало показ:
-   * инвестор жал «Подробнее» и читал «Не найдено» — при живом опубликованном
-   * проекте. Паспорт появляется лишь после прогона анализа, поэтому у только
-   * что опубликованного проекта его закономерно нет, и это не ошибка.
-   *
-   * Теперь основа карточки — сам проект, а оценка показывается, если она
-   * посчитана. Отказ в доступе к проекту по-прежнему объясняется словами
-   * сервера: подписка открывает полную карточку, без неё виден тизер.
-   */
-  const openDetails = useCallback(async (id: string) => {
-    setDetails({ id, state: 'loading' });
-    try {
-      const project = await api.projects.get(id);
-      // Паспорт — необязательная часть: его отсутствие не должно рушить карточку.
-      const passport = await api.projects.passport(id).catch(() => null);
-      setDetails({ id, state: 'ready', project, passport });
-    } catch (error) {
-      setDetails({
-        id,
-        state: 'error',
-        message:
-          error instanceof ApiError
-            ? (error.problem?.detail ?? error.message)
-            : 'Сервис недоступен',
-      });
-    }
-  }, []);
 
   return (
     <Stack gap="var(--u-space-5)">
@@ -190,6 +189,20 @@ export function CatalogPage() {
         />
         <Button type="submit">Найти</Button>
       </form>
+
+      {notice ? (
+        <div
+          role="alert"
+          style={{
+            padding: 'var(--u-space-3) var(--u-space-4)',
+            borderRadius: 'var(--u-radius-md)',
+            background: 'var(--u-danger-subtle)',
+            color: 'var(--u-danger)',
+          }}
+        >
+          {notice}
+        </div>
+      ) : null}
 
       {state.status === 'loading' ? <LoadingState label="Загружаем каталог" /> : null}
       {state.status === 'error' ? (
@@ -233,25 +246,66 @@ export function CatalogPage() {
             display: 'grid',
             gap: 'var(--u-space-4)',
             gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+            alignItems: 'stretch',
           }}
         >
           {state.items.map((teaser) => (
-            <li key={teaser.id}>
-              <Card style={{ height: '100%', display: 'grid', gap: 'var(--u-space-3)' }}>
+            <li key={teaser.id} style={{ position: 'relative' }}>
+              <Card
+                style={{
+                  height: '100%',
+                  display: 'grid',
+                  /*
+                    Пять строк с заранее назначенными ролями: метка, название,
+                    подзаголовок, сумма и ряд кнопок. Ряд кнопок стоит в
+                    последней строке (`1fr` над ним съедает остаток), поэтому
+                    кнопки всех карточек в ряду находятся на одной высоте
+                    независимо от длины подзаголовка.
+                  */
+                  gridTemplateRows: 'auto auto auto 1fr auto',
+                  gap: 'var(--u-space-3)',
+                }}
+              >
                 <Badge tone="accent">{STAGE_TITLES[teaser.stage] ?? teaser.stage}</Badge>
                 <strong style={{ fontSize: 'var(--u-text-lg)' }}>{teaser.title}</strong>
-                {teaser.tagline ? (
-                  <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-                    {teaser.tagline}
-                  </span>
-                ) : null}
-                <span style={{ fontWeight: 600 }}>
+                <span
+                  style={{
+                    color: 'var(--u-text-muted)',
+                    fontSize: 'var(--u-text-sm)',
+                    /* Ровно две строки: карточки не расходятся по высоте. */
+                    display: '-webkit-box',
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: 'vertical',
+                    overflow: 'hidden',
+                    minHeight: '2.6em',
+                  }}
+                >
+                  {teaser.tagline ?? ''}
+                </span>
+                <span style={{ fontWeight: 600, alignSelf: 'end' }}>
                   {formatMoney(teaser.investmentAsk, teaser.askCurrency)}
                 </span>
                 <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
-                  <Button variant="secondary" onClick={() => void openDetails(teaser.id)}>
-                    Подробнее
-                  </Button>
+                  <div
+                    style={{ position: 'relative' }}
+                    onMouseEnter={() => {
+                      setHovered(teaser.id);
+                      ensurePreview(teaser.id);
+                    }}
+                    onMouseLeave={() => setHovered(null)}
+                    onFocus={() => {
+                      setHovered(teaser.id);
+                      ensurePreview(teaser.id);
+                    }}
+                    onBlur={() => setHovered(null)}
+                  >
+                    <Button variant="secondary" onClick={() => onOpen(teaser.id)}>
+                      Подробнее
+                    </Button>
+                    {hovered === teaser.id ? (
+                      <PreviewPopover preview={previews[teaser.id] ?? { state: 'loading' }} />
+                    ) : null}
+                  </div>
                   {/*
                     Состояние отметки объявлено ТЕКСТОМ и `aria-pressed`, а не
                     только цветом звезды: «жёлтая звезда = в избранном» не
@@ -267,57 +321,6 @@ export function CatalogPage() {
                     {favorites.has(teaser.id) ? '★ В избранном' : '☆ В избранное'}
                   </Button>
                 </div>
-                {details?.id === teaser.id ? (
-                  <div
-                    role="status"
-                    style={{
-                      display: 'grid',
-                      gap: 'var(--u-space-2)',
-                      padding: 'var(--u-space-3)',
-                      borderRadius: 'var(--u-radius-md)',
-                      background: 'var(--u-bg-inset)',
-                      fontSize: 'var(--u-text-sm)',
-                    }}
-                  >
-                    {details.state === 'loading' ? 'Загружаем…' : null}
-                    {details.state === 'error' ? details.message : null}
-                    {details.state === 'ready' ? (
-                      <>
-                        {details.project.description ? (
-                          <p style={{ margin: 0, whiteSpace: 'pre-line' }}>
-                            {details.project.description}
-                          </p>
-                        ) : (
-                          <span style={{ color: 'var(--u-text-muted)' }}>
-                            Основатель пока не добавил подробное описание.
-                          </span>
-                        )}
-                        <dl style={{ display: 'grid', gap: 'var(--u-space-1)', margin: 0 }}>
-                          <DetailRow label="Стадия">
-                            {STAGE_TITLES[details.project.stage] ?? details.project.stage}
-                          </DetailRow>
-                          <DetailRow label="Запрос">
-                            {formatMoney(
-                              details.project.investmentAsk,
-                              details.project.askCurrency,
-                            )}
-                          </DetailRow>
-                          {details.project.geoCountry ? (
-                            <DetailRow label="География">
-                              {details.project.geoCountry}
-                              {details.project.geoRegion ? `, ${details.project.geoRegion}` : ''}
-                            </DetailRow>
-                          ) : null}
-                          <DetailRow label="Оценка платформы">
-                            {details.passport?.irs
-                              ? `IRS ${details.passport.irs.value} (паспорт версии ${details.passport.version})`
-                              : 'ещё не рассчитана — проект не проходил анализ'}
-                          </DetailRow>
-                        </dl>
-                      </>
-                    ) : null}
-                  </div>
-                ) : null}
               </Card>
             </li>
           ))}
@@ -325,4 +328,61 @@ export function CatalogPage() {
       ) : null}
     </Stack>
   );
+}
+
+/**
+ * Подсказка при наведении: о чём проект и как его оценила платформа.
+ *
+ * Абсолютное позиционирование обязательно — подсказка не участвует в потоке и
+ * не сдвигает соседние карточки. Роль `tooltip` и `aria-live` дают её тем, кто
+ * не пользуется мышью.
+ */
+function PreviewPopover({ preview }: { preview: Preview }) {
+  return (
+    <div
+      role="tooltip"
+      style={{
+        position: 'absolute',
+        bottom: 'calc(100% + var(--u-space-2))',
+        left: 0,
+        zIndex: 20,
+        width: 'min(22rem, 80vw)',
+        padding: 'var(--u-space-3) var(--u-space-4)',
+        borderRadius: 'var(--u-radius-md)',
+        border: '1px solid var(--u-border)',
+        background: 'var(--u-surface)',
+        boxShadow: 'var(--u-shadow-md, 0 8px 24px rgba(0,0,0,0.18))',
+        fontSize: 'var(--u-text-sm)',
+        lineHeight: 1.5,
+        display: 'grid',
+        gap: 'var(--u-space-2)',
+      }}
+    >
+      {preview.state === 'loading' ? <span>Загружаем краткую справку…</span> : null}
+      {preview.state === 'unavailable' ? (
+        <span style={{ color: 'var(--u-text-muted)' }}>
+          Подробности откроются по подписке — нажмите «Подробнее».
+        </span>
+      ) : null}
+      {preview.state === 'ready' ? (
+        <>
+          <span>{preview.summary ?? 'Основатель пока не добавил подробное описание.'}</span>
+          <strong>
+            {preview.irs === null
+              ? 'Оценка платформы ещё не рассчитана'
+              : `Оценка платформы: ${preview.irs}`}
+          </strong>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+/** Обрезка по границе слова: обрубленное на середине слова читается как сбой. */
+function shorten(text: string, limit: number): string {
+  const flat = text.replace(/\s+/g, ' ').trim();
+  if (flat.length <= limit) return flat;
+  const cut = flat.slice(0, limit);
+  const lastSpace = cut.lastIndexOf(' ');
+  return `${cut.slice(0, lastSpace > 40 ? lastSpace : limit)}…`;
 }

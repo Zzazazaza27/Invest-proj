@@ -212,8 +212,8 @@ export function BugReportWidget({
                       fontSize: 'var(--u-text-sm)',
                     }}
                   >
-                    Адрес страницы, браузер, время и версия сборки приложатся сами — переписывать
-                    их не нужно. Пароли, токены и cookie не собираются.
+                    Адрес страницы, браузер, время и версия сборки приложатся сами — переписывать их
+                    не нужно. Пароли, токены и cookie не собираются.
                   </p>
 
                   <Field label="Что произошло" htmlFor="bug-subject" error={error}>
@@ -257,7 +257,11 @@ export function BugReportWidget({
                   </Field>
 
                   <div style={{ display: 'flex', gap: 'var(--u-space-3)', flexWrap: 'wrap' }}>
-                    <Button type="submit" loading={busy} disabled={busy || subject.trim().length < 3}>
+                    <Button
+                      type="submit"
+                      loading={busy}
+                      disabled={busy || subject.trim().length < 3}
+                    >
                       Отправить
                     </Button>
                     <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
@@ -267,7 +271,11 @@ export function BugReportWidget({
 
                   <details>
                     <summary
-                      style={{ cursor: 'pointer', fontSize: 'var(--u-text-sm)', color: 'var(--u-text-muted)' }}
+                      style={{
+                        cursor: 'pointer',
+                        fontSize: 'var(--u-text-sm)',
+                        color: 'var(--u-text-muted)',
+                      }}
                     >
                       Что будет отправлено вместе с сообщением
                     </summary>

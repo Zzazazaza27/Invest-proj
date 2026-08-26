@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card, EmptyState, ErrorState, Field, Input, LoadingState, Stack } from '@unicorn/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  EmptyState,
+  ErrorState,
+  Field,
+  Input,
+  LoadingState,
+  Stack,
+} from '@unicorn/ui';
 import type { SupportTicket, SupportTicketDetail, SupportTicketStatus } from '@unicorn/contracts';
 
 /**
@@ -22,7 +32,10 @@ export interface SupportPort {
   detail: (id: string) => Promise<SupportTicketDetail>;
   open: (input: { subject: string; body: string }) => Promise<SupportTicketDetail>;
   reply: (id: string, body: string) => Promise<unknown>;
-  update: (id: string, input: { status?: SupportTicketStatus; assignToMe?: boolean }) => Promise<unknown>;
+  update: (
+    id: string,
+    input: { status?: SupportTicketStatus; assignToMe?: boolean },
+  ) => Promise<unknown>;
 }
 
 const STATUS_TITLES: Record<SupportTicketStatus, string> = {
@@ -42,7 +55,9 @@ function formatMoment(iso: string): string {
 
 export function SupportCard({ port, staff = false }: { port: SupportPort; staff?: boolean }) {
   const [state, setState] = useState<
-    { status: 'loading' } | { status: 'ready'; items: SupportTicket[] } | { status: 'error'; message: string }
+    | { status: 'loading' }
+    | { status: 'ready'; items: SupportTicket[] }
+    | { status: 'error'; message: string }
   >({ status: 'loading' });
   const [openId, setOpenId] = useState<string | null>(null);
   const [thread, setThread] = useState<SupportTicketDetail | null>(null);
@@ -218,7 +233,9 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
                     Отправить
                   </Button>
                 </div>
-                <p style={{ margin: 0, color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+                <p
+                  style={{ margin: 0, color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}
+                >
                   Обращение сохраняется в системе и уходит на почту проекта — оно не потеряется,
                   даже если в этот момент никто не в интерфейсе.
                 </p>
@@ -263,14 +280,23 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
                     fontFamily: 'inherit',
                   }}
                 >
-                  <span style={{ display: 'flex', gap: 'var(--u-space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span
+                    style={{
+                      display: 'flex',
+                      gap: 'var(--u-space-2)',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                    }}
+                  >
                     <Badge>{KIND_TITLES[item.kind] ?? item.kind}</Badge>
                     <Badge>{STATUS_TITLES[item.status]}</Badge>
                     <strong>{item.subject}</strong>
                   </span>
                   <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
                     сообщений: {item.messageCount} · последнее:{' '}
-                    {item.lastMessageAt ? formatMoment(item.lastMessageAt) : formatMoment(item.createdAt)}
+                    {item.lastMessageAt
+                      ? formatMoment(item.lastMessageAt)
+                      : formatMoment(item.createdAt)}
                     {item.assigned ? ' · взято в работу' : ''}
                   </span>
                 </button>
@@ -287,7 +313,14 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
               <LoadingState label="Открываем обращение" />
             ) : (
               <>
-                <div style={{ display: 'flex', gap: 'var(--u-space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 'var(--u-space-2)',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                  }}
+                >
                   <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>{thread.subject}</h2>
                   <Badge>{STATUS_TITLES[thread.status]}</Badge>
                 </div>
@@ -329,7 +362,13 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
                 */}
                 {Object.keys(thread.context).length > 0 ? (
                   <details>
-                    <summary style={{ cursor: 'pointer', color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+                    <summary
+                      style={{
+                        cursor: 'pointer',
+                        color: 'var(--u-text-muted)',
+                        fontSize: 'var(--u-text-sm)',
+                      }}
+                    >
                       Технический контекст
                     </summary>
                     <pre
@@ -376,7 +415,11 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
                         />
                       </Field>
                       <div>
-                        <Button type="submit" loading={busy} disabled={busy || reply.trim().length === 0}>
+                        <Button
+                          type="submit"
+                          loading={busy}
+                          disabled={busy || reply.trim().length === 0}
+                        >
                           Отправить
                         </Button>
                       </div>

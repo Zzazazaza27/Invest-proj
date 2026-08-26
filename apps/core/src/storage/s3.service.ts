@@ -242,6 +242,80 @@ export class S3Service {
   }
 
   /**
+   * Прочитать объект целиком.
+   *
+   * Нужен просмотру материалов: инвестор с подпиской смотрит презентацию
+   * ВНУТРИ платформы, а прямой ссылки на хранилище не получает — иначе она
+   * переживёт и подписку, и снятие листинга, и её можно переслать кому угодно.
+   * Поэтому файл проходит через ядро: доступ проверяется на каждом запросе.
+   *
+   * Тело возвращается целиком, а не потоком: материалы ограничены 50 МБ на
+   * загрузке, и держать поток открытым через два прокси ради такого размера
+   * незачем.
+   */
+  async getObject(key: string): Promise<{ body: Buffer; contentType: string | null } | null> {
+    const env = getEnv();
+    if (!this.isConfigured) throw new Error('S3 не настроен');
+
+    const now = new Date();
+    const amzDate = toAmzDate(now);
+    const shortDate = amzDate.slice(0, 8);
+    const payloadHash = sha256Hex(Buffer.alloc(0));
+
+    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
+    const url = new URL(
+      env.S3_FORCE_PATH_STYLE === 'true'
+        ? `${base}/${env.S3_BUCKET}/${key}`
+        : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${key}`,
+    );
+
+    const headers: Record<string, string> = {
+      host: url.host,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate,
+    };
+    const signedHeaders = Object.keys(headers).sort().join(';');
+    const canonicalHeaders = Object.keys(headers)
+      .sort()
+      .map((name) => `${name}:${headers[name]}\n`)
+      .join('');
+    const canonicalRequest = [
+      'GET',
+      url.pathname,
+      '',
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+    const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
+    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
+    const signature = createHmac(
+      'sha256',
+      signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
+    )
+      .update(stringToSign, 'utf8')
+      .digest('hex');
+
+    const response = await fetch(url.toString(), {
+      method: 'GET',
+      headers: {
+        ...headers,
+        Authorization:
+          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
+          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      },
+      signal: AbortSignal.timeout(60_000),
+    });
+
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`хранилище ответило ${response.status} на GET`);
+    return {
+      body: Buffer.from(await response.arrayBuffer()),
+      contentType: response.headers.get('content-type'),
+    };
+  }
+
+  /**
    * Удалить объект.
    *
    * Нужно уборке брошенных загрузок: билет мог быть выдан, объект — положен, а

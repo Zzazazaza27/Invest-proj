@@ -44,6 +44,22 @@ export interface EntitiesPort {
   ) => Promise<KybVerification>;
 }
 
+/**
+ * Состояние проверки по реестру по-человечески.
+ *
+ * В карточке стояло сырое `unknown`: владелец компании видит английский код и
+ * не понимает, это ошибка, отказ или просто «ещё не проверяли».
+ */
+const REGISTRY_STATUS_TITLES: Record<string, string> = {
+  unknown: 'не проверялся',
+  pending: 'проверяется',
+  in_review: 'на проверке',
+  found: 'найдена в реестре',
+  not_found: 'в реестре не найдена',
+  mismatch: 'данные расходятся с реестром',
+  failed: 'проверка не удалась',
+};
+
 const MEMBER_ROLES = [
   { value: 'signatory' as const, title: 'Подписант' },
   { value: 'beneficial_owner' as const, title: 'Бенефициар' },
@@ -147,8 +163,20 @@ export function BusinessEntitiesCard({ port }: { port: EntitiesPort }) {
                   </Badge>
                 </div>
                 <div style={MUTED_STYLE}>
-                  ИНН {entity.innMasked} · {entity.jurisdiction} · реестр: {entity.registryStatus}
+                  ИНН {entity.innMasked} · {entity.jurisdiction} · реестр:{' '}
+                  {REGISTRY_STATUS_TITLES[entity.registryStatus] ?? entity.registryStatus}
                 </div>
+                {/*
+                  Проверка идёт не мгновенно: её проводит комплаенс, и до его
+                  ответа карточка остаётся прежней. Без этой строки нажатие
+                  «Проверка по реестру» выглядело как «ничего не произошло».
+                */}
+                {!entity.kybApproved && entity.registryStatus !== 'unknown' ? (
+                  <div style={MUTED_STYLE}>
+                    Проверка запрошена. Результат появится здесь после ответа комплаенса — платформа
+                    не подтверждает её сама.
+                  </div>
+                ) : null}
 
                 <div
                   style={{

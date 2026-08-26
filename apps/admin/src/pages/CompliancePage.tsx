@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { KycVerification } from '@unicorn/contracts';
+import { PromptDialog } from '@unicorn/ui';
 import { api } from '../api';
 import { formatDate, problemText } from '../lib/format';
 
@@ -58,13 +59,10 @@ export function CompliancePage() {
     void load();
   }, [load]);
 
-  async function decide(item: KycVerification, decision: 'approved' | 'rejected') {
-    let reason: string | undefined;
-    if (decision === 'rejected') {
-      const input = window.prompt('Причина отказа (во внутренний контур, пользователю не видна):');
-      if (!input) return;
-      reason = input;
-    }
+  /** Отказ требует причины: диалог вместо системного `window.prompt`. */
+  const [rejecting, setRejecting] = useState<KycVerification | null>(null);
+
+  async function decide(item: KycVerification, decision: 'approved' | 'rejected', reason?: string) {
     setError(null);
     setNotice(null);
     try {
@@ -128,7 +126,7 @@ export function CompliancePage() {
                       <button
                         type="button"
                         className="btn--danger btn--sm"
-                        onClick={() => void decide(item, 'rejected')}
+                        onClick={() => setRejecting(item)}
                       >
                         Отклонить
                       </button>
@@ -150,6 +148,20 @@ export function CompliancePage() {
           )}
         </div>
       )}
+
+      <PromptDialog
+        open={rejecting !== null}
+        title="Отказ в верификации"
+        description="Причина уходит во внутренний контур и пользователю не показывается: ему приходит обобщённая формулировка."
+        label="Причина отказа"
+        confirmText="Отклонить"
+        onCancel={() => setRejecting(null)}
+        onConfirm={(reason) => {
+          const item = rejecting;
+          setRejecting(null);
+          if (item) void decide(item, 'rejected', reason);
+        }}
+      />
     </>
   );
 }

@@ -128,7 +128,12 @@ export class ApiClient {
         if (
           RETRYABLE_METHODS.has(method) &&
           RETRYABLE_STATUS.has(response.status) &&
-          attempt < MAX_RETRIES
+          attempt < MAX_RETRIES &&
+          // Выключенная функция — не временный сбой, а решение оператора:
+          // повторять запрос к ней бессмысленно. Раньше открытие раздела с
+          // выключенным контуром давало шесть одинаковых 503 подряд и лишнюю
+          // секунду ожидания на пустом месте.
+          !(await isFeatureDisabled(response))
         ) {
           attempt += 1;
           await sleep(backoffMs(attempt));
@@ -296,6 +301,23 @@ function defaultMessage(code: ErrorCodeValue): string {
     [ErrorCode.DEPENDENCY_UNAVAILABLE]: 'Сервис временно недоступен',
   };
   return messages[code] ?? 'Не удалось выполнить операцию';
+}
+
+/**
+ * Ответ «функция выключена»?
+ *
+ * Тело читается с КЛОНА: оригинал ещё понадобится для разбора ошибки, а поток
+ * тела можно прочитать только один раз. Любая осечка разбора означает «не
+ * знаем» — тогда повтор разрешён, как и раньше.
+ */
+async function isFeatureDisabled(response: Response): Promise<boolean> {
+  if (response.status !== 503) return false;
+  try {
+    const problem = (await response.clone().json()) as { code?: unknown };
+    return problem?.code === 'feature_disabled';
+  } catch {
+    return false;
+  }
 }
 
 function backoffMs(attempt: number): number {

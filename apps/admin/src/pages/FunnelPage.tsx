@@ -19,6 +19,19 @@ const STAGE_TITLES: Record<string, string> = {
  * отказ выводится словами сервера: дублировать эти правила в браузере значило
  * бы завести второй источник правды об отборе.
  */
+/**
+ * Состояния сезона по-человечески: оператор читает «приём заявок открыт», а не
+ * `applications_open`.
+ */
+const SEASON_STATUS_TITLES: Record<string, string> = {
+  draft: 'черновик',
+  applications_open: 'приём заявок открыт',
+  review: 'экспертиза',
+  bootcamp: 'буткемп',
+  final: 'финал',
+  closed: 'закрыт',
+};
+
 export function FunnelPage() {
   const [season, setSeason] = useState<Season | null | undefined>(undefined);
   const [stages, setStages] = useState<SeasonStageOccupancy[]>([]);
@@ -133,7 +146,8 @@ export function FunnelPage() {
       ) : (
         <>
           <p className="muted">
-            Сезон №{season.number}, состояние «{season.status}». Квота — верхняя граница числа
+            Сезон №{season.number}, состояние «
+            {SEASON_STATUS_TITLES[season.status] ?? season.status}». Квота — верхняя граница числа
             проектов НА этапе. Уменьшение квоты не выводит тех, кто прошёл раньше, но добрать до
             прежнего числа больше не позволит.
           </p>

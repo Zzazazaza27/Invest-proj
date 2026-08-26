@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Res } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
 import {
   AddProductLinkSchema,
   CreateProjectRequestSchema,
@@ -79,6 +80,36 @@ export class ProjectsController {
     const id = parseOrThrow(UuidSchema, rawId);
     const items = await this.projects.listMaterials(ctx, id);
     return { items: items.map((m) => ProjectMaterialSchema.parse(m)) };
+  }
+
+  /**
+   * Просмотр материала внутри платформы.
+   *
+   * `Content-Disposition: inline` — файл открывается во встроенном просмотрщике
+   * браузера, а не сохраняется. Это не защита от копирования (её на клиенте не
+   * существует: у того, кто видит документ, он уже есть), а честное поведение
+   * интерфейса — «смотреть здесь», без кнопки «скачать».
+   *
+   * `X-Content-Type-Options: nosniff` обязателен: без него браузер угадывает
+   * тип по содержимому и может выполнить чужой файл как HTML с нашего адреса.
+   */
+  @Get(':id/materials/:materialId/content')
+  async materialContent(
+    @Param('id') rawId: string,
+    @Param('materialId') rawMaterialId: string,
+    @Ctx() ctx: RequestContext,
+    @Res({ passthrough: true }) reply: FastifyReply,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const materialId = parseOrThrow(UuidSchema, rawMaterialId);
+    const file = await this.projects.getMaterialContent(ctx, id, materialId);
+    void reply.header('Content-Type', file.contentType);
+    void reply.header('Content-Disposition', `inline; filename="${file.filename}"`);
+    void reply.header('X-Content-Type-Options', 'nosniff');
+    // Документ проекта — не публичный ресурс: он не должен осесть в общих
+    // кэшах между инвестором и следующим посетителем.
+    void reply.header('Cache-Control', 'private, no-store');
+    return reply.send(file.body);
   }
 
   @Roles('founder', 'admin')

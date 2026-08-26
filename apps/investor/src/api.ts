@@ -92,4 +92,13 @@ export function setCsrf(token: string | null): void {
   api.http.setCsrfToken(token || readCsrfCookie());
 }
 
+/**
+ * Базовый адрес API для случаев, когда запрос делает не клиент, а браузер сам.
+ *
+ * Нужен просмотру документов: `<iframe src=...>` идёт в ядро напрямую, минуя
+ * наш HTTP-клиент, и адрес ему приходится собирать вручную. Сессионная cookie
+ * при этом отправляется браузером, поэтому доступ проверяется как обычно.
+ */
+export const apiBaseUrl = BASE_URL;
+
 export { ApiError };

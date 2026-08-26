@@ -13,7 +13,12 @@ import {
   Stack,
   UI_KEYFRAMES,
 } from '@unicorn/ui';
-import type { CreateSupportTicketRequest, CurrentUser, NotificationPreference, SupportTicketStatus } from '@unicorn/contracts';
+import type {
+  CreateSupportTicketRequest,
+  CurrentUser,
+  NotificationPreference,
+  SupportTicketStatus,
+} from '@unicorn/contracts';
 import { BugReportWidget, NotificationsCard, SupportCard } from '@unicorn/cabinet';
 import { ApiError, api, setCsrf } from './api';
 import { AssignmentsPage } from './pages/AssignmentsPage';
@@ -45,7 +50,6 @@ function toAddress(input: string): string {
   const value = input.trim();
   return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
 }
-
 
 /**
  * Транспорт для общих блоков кабинета.
