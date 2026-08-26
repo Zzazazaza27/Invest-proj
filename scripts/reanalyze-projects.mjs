@@ -13,6 +13,8 @@
  *   node scripts/reanalyze-projects.mjs --limit 5       первые N (для пробы)
  *   node scripts/reanalyze-projects.mjs --concurrency 3
  *   node scripts/reanalyze-projects.mjs --dry-run       только список
+ *   node scripts/reanalyze-projects.mjs --only-stale    только те, чей действующий паспорт
+ *                                                       не от активной модели (возобновление)
  *
  * Учётка администратора — из окружения: REANALYZE_ADMIN_EMAIL (по умолчанию
  * stand-admin@unicorn.local) и REANALYZE_ADMIN_PASSWORD (по умолчанию
@@ -36,6 +38,7 @@ const arg = (name, fallback) => {
   return i >= 0 ? argv[i + 1] : fallback;
 };
 const onlyListed = argv.includes('--only-listed');
+const onlyStale = argv.includes('--only-stale');
 const dryRun = argv.includes('--dry-run');
 const limit = Number(arg('--limit', '0'));
 const concurrency = Math.max(1, Math.min(4, Number(arg('--concurrency', '2'))));
@@ -95,11 +98,17 @@ function makeClient() {
 async function listProjects() {
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER, max: 1 });
   try {
+    const staleOnly = `AND NOT EXISTS (
+        SELECT 1 FROM scoring.investment_passports ip
+        JOIN scoring.score_models m ON m.id = ip.model_id
+       WHERE ip.project_id = p.id AND ip.superseded_at IS NULL
+         AND m.name = 'ai_score' AND m.is_active)`;
     const { rows } = await pool.query(
-      `SELECT id, title, listed_at IS NOT NULL AS listed
-         FROM lab.projects
-        WHERE deleted_at IS NULL ${onlyListed ? 'AND listed_at IS NOT NULL' : ''}
-        ORDER BY created_at`,
+      `SELECT p.id, p.title, p.listed_at IS NOT NULL AS listed
+         FROM lab.projects p
+        WHERE p.deleted_at IS NULL ${onlyListed ? 'AND p.listed_at IS NOT NULL' : ''}
+          ${onlyStale ? staleOnly : ''}
+        ORDER BY p.created_at`,
     );
     return rows;
   } finally {
@@ -117,7 +126,9 @@ async function main() {
   let projects = await listProjects();
   if (limit > 0) projects = projects.slice(0, limit);
   console.warn(
-    `проектов к анализу: ${projects.length}${onlyListed ? ' (только опубликованные)' : ''}`,
+    `проектов к анализу: ${projects.length}${onlyListed ? ' (только опубликованные)' : ''}${
+      onlyStale ? ' (без паспорта от активной модели)' : ''
+    }`,
   );
   if (dryRun) {
     for (const p of projects) console.warn(`  ${p.id}  ${p.listed ? '●' : '○'}  ${p.title}`);

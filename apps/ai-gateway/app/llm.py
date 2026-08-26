@@ -459,6 +459,256 @@ def parse_json_object(text: str) -> dict[str, Any]:
     return parsed
 
 
+# Закрытые списки контракта ядра (packages/contracts/scoring-llm.ts) — зеркало.
+# Модель их знает из промпта, но живой провайдер нарушает формат в 30–60 %
+# ответов: лишний токен источника, verdict на 640 знаков, измерение шага
+# «общее». Это ФОРМАТ, а не содержание: обрезка и отбрасывание неизвестных
+# кодов ничего не выдумывают, а отказ целого прогона из-за одного токена —
+# это не «качественный скоринг». Семантика (девять осей, тринадцать измерений,
+# семь ключей, интервалы уверенности) по-прежнему проверяется отказом.
+SOURCE_TOKENS: Final[frozenset[str]] = frozenset(
+    {
+        "application_text",
+        "title",
+        "stage",
+        "materials",
+        "material:deck",
+        "material:doc",
+        "material:video",
+        "material:product_link",
+        "reference_data",
+    }
+)
+FACT_CATEGORIES: Final[frozenset[str]] = frozenset(
+    {"team", "tech", "market", "competitors", "legal", "finance", "traction", "ip"}
+)
+FACT_SOURCE_TYPES: Final[frozenset[str]] = frozenset(
+    {"application_text", "title", "metadata", "materials", "reference_data"}
+)
+CAP_RULES: Final[frozenset[str]] = frozenset(
+    {
+        "no_verifiable_activity_claims",
+        "business_model_missing",
+        "numbers_contradict",
+        "no_product_customer_money",
+        "legal_form_missing",
+        "ask_without_use_of_funds",
+    }
+)
+PENALTY_RULES: Final[frozenset[str]] = frozenset(
+    {
+        "no_competitors_claim",
+        "single_channel",
+        "single_supplier_dependency",
+        "growth_without_absolute_numbers",
+        "stage_mismatch",
+    }
+)
+INTEGRITY_FLAGS: Final[frozenset[str]] = frozenset(
+    {
+        "instruction_override",
+        "score_demand",
+        "role_switch",
+        "fake_system_marker",
+        "fake_metadata",
+        "delimiter_escape",
+        "quotation_not_attempt",
+    }
+)
+COMPLIANCE_FLAGS: Final[frozenset[str]] = frozenset(
+    {
+        "guaranteed_return",
+        "no_risk_claim",
+        "unlicensed_regulated_activity",
+        "third_party_allegation",
+        "misleading_authority_claim",
+    }
+)
+DIMENSIONS: Final[frozenset[str]] = frozenset(
+    {
+        "problem",
+        "solution",
+        "product",
+        "tech",
+        "team",
+        "market",
+        "competition",
+        "business_model",
+        "unit_economics",
+        "legal",
+        "finance",
+        "pitch",
+        "data_room",
+    }
+)
+
+
+def _clip(text: Any, limit: int, changes: list[str], where: str) -> Any:
+    """Обрезка по последней границе предложения до лимита; иначе — по лимиту."""
+    if not isinstance(text, str) or len(text) <= limit:
+        return text
+    cut = text[:limit]
+    boundary = max(cut.rfind(". "), cut.rfind("! "), cut.rfind("? "))
+    if boundary >= limit // 2:
+        cut = cut[: boundary + 1]
+    changes.append(f"{where}:len{len(text)}>{limit}")
+    return cut.rstrip()
+
+
+def _codes(
+    values: Any, allowed: frozenset[str], limit: int, changes: list[str], where: str
+) -> list[str]:
+    out: list[str] = []
+    for value in values if isinstance(values, list) else []:
+        if isinstance(value, str) and value in allowed and value not in out:
+            out.append(value)
+        else:
+            changes.append(f"{where}:{str(value)[:40]}")
+    return out[:limit]
+
+
+def normalize_result(result: dict[str, Any]) -> list[str]:
+    """Нормализация ФОРМАТА ответа модели под контракт ядра. Возвращает список правок."""
+    changes: list[str] = []
+    passport = result.get("passport")
+    if isinstance(passport, dict):
+        passport["verdict"] = _clip(passport.get("verdict"), 600, changes, "verdict")
+        for key in ("businessModel", "askSanity", "investorExit"):
+            passport[key] = _clip(passport.get(key), 300, changes, key)
+        for key in ("strengths", "weaknesses"):
+            items = passport.get(key)
+            if isinstance(items, list):
+                if len(items) > 5:
+                    changes.append(f"{key}:count{len(items)}>5")
+                passport[key] = [
+                    _clip(x, 200, changes, key) for x in items[:5] if isinstance(x, str)
+                ]
+        risks = passport.get("risks")
+        if isinstance(risks, list):
+            if len(risks) > 7:
+                changes.append(f"risks:count{len(risks)}>7")
+            passport["risks"] = [
+                {
+                    "risk": _clip(r.get("risk", ""), 300, changes, "risk"),
+                    "mitigation": _clip(
+                        r.get("mitigation", ""), 300, changes, "mitigation"
+                    ),
+                }
+                for r in risks[:7]
+                if isinstance(r, dict)
+            ]
+        caps: list[dict[str, Any]] = []
+        for cap in passport.get("capsApplied") or []:
+            rule = cap.get("rule") if isinstance(cap, dict) else None
+            value = cap.get("cap") if isinstance(cap, dict) else None
+            if (
+                rule in CAP_RULES
+                and isinstance(value, (int, float))
+                and not isinstance(value, bool)
+                and 1 <= int(value) <= 10
+                and all(c["rule"] != rule for c in caps)
+            ):
+                caps.append({"rule": rule, "cap": int(value)})
+            else:
+                changes.append(f"capsApplied:{str(rule)[:40]}")
+        passport["capsApplied"] = caps[:6]
+        passport["penaltiesApplied"] = _codes(
+            passport.get("penaltiesApplied"),
+            PENALTY_RULES,
+            5,
+            changes,
+            "penaltiesApplied",
+        )
+        passport["integrityFlags"] = _codes(
+            passport.get("integrityFlags"),
+            INTEGRITY_FLAGS,
+            7,
+            changes,
+            "integrityFlags",
+        )
+        passport["complianceFlags"] = _codes(
+            passport.get("complianceFlags"),
+            COMPLIANCE_FLAGS,
+            5,
+            changes,
+            "complianceFlags",
+        )
+    for score in result.get("scores") or []:
+        if not isinstance(score, dict):
+            continue
+        sources = _codes(score.get("sources"), SOURCE_TOKENS, 4, changes, "sources")
+        if not sources:
+            changes.append("sources:empty>application_text")
+            sources = ["application_text"]
+        score["sources"] = sources
+        score["explanation"] = _clip(
+            score.get("explanation"), 4000, changes, "explanation"
+        )
+    for entry in result.get("readiness") or []:
+        if not isinstance(entry, dict):
+            continue
+        if isinstance(entry.get("level"), str):
+            entry["level"] = entry["level"].strip().lower()
+        recs = entry.get("recommendations")
+        if isinstance(recs, list):
+            entry["recommendations"] = [
+                _clip(r, 2000, changes, "recommendation")
+                for r in recs[:50]
+                if isinstance(r, str)
+            ]
+        elif isinstance(recs, str):
+            entry["recommendations"] = [_clip(recs, 2000, changes, "recommendation")]
+    for step in result.get("roadmap") or []:
+        if not isinstance(step, dict):
+            continue
+        if (
+            step.get("dimension") is not None
+            and step.get("dimension") not in DIMENSIONS
+        ):
+            changes.append(f"roadmap.dimension:{str(step.get('dimension'))[:40]}")
+            step["dimension"] = None
+        step["title"] = _clip(step.get("title"), 300, changes, "roadmap.title")
+        step["description"] = _clip(
+            step.get("description"), 4000, changes, "roadmap.description"
+        )
+        for key in ("priority", "orderIndex"):
+            value = step.get(key)
+            if isinstance(value, float) and value.is_integer():
+                step[key] = int(value)
+    facts: list[dict[str, Any]] = []
+    for fact in result.get("facts") or []:
+        if not isinstance(fact, dict):
+            continue
+        if fact.get("category") not in FACT_CATEGORIES:
+            changes.append(f"facts.category:{str(fact.get('category'))[:40]}")
+            continue
+        if fact.get("sourceType") not in FACT_SOURCE_TYPES:
+            changes.append(f"facts.sourceType:{str(fact.get('sourceType'))[:40]}")
+            fact["sourceType"] = "application_text"
+        if not isinstance(fact.get("value"), dict):
+            changes.append("facts.value:not-object")
+            fact["value"] = {"value": fact.get("value")}
+        confidence = fact.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            fact["confidence"] = min(1.0, max(0.0, float(confidence)))
+        facts.append(fact)
+    if isinstance(result.get("facts"), list) and not facts:
+        changes.append("facts:empty>placeholder")
+        facts = [
+            {
+                "category": "market",
+                "key": "no_quantitative_claims",
+                "value": {"present": False},
+                "confidence": 1,
+                "sourceType": "application_text",
+                "sourceRef": "весь текст заявки",
+            }
+        ]
+    if isinstance(result.get("facts"), list):
+        result["facts"] = facts
+    return changes
+
+
 REQUIRED_TOP_LEVEL: Final[frozenset[str]] = frozenset(
     {"modelVersion", "passport", "facts", "scores", "irs", "readiness", "roadmap"}
 )

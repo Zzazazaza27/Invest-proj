@@ -529,6 +529,48 @@ def test_votes_pick_median_run(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Non
     assert response.json()["passport"]["integrityFlags"] == ["score_demand"]
 
 
+def test_normalize_result_fixes_format_only() -> None:
+    """Формат чинится, содержание не выдумывается; неизвестные коды выбрасываются."""
+    messy = analyze(PROJECT)
+    messy["passport"]["verdict"] = "Первое предложение. " * 40  # 800 знаков
+    messy["passport"]["capsApplied"] = [
+        {"rule": "no_quantitative_claims", "cap": 5},
+        {"rule": "business_model_missing", "cap": 4},
+    ]
+    messy["passport"]["penaltiesApplied"] = ["single_channel", "выдумка"]
+    messy["scores"][0]["sources"] = [
+        "application_text",
+        "объяснение",
+        "application_text",
+        "title",
+    ]
+    messy["roadmap"][0]["dimension"] = "общее"
+    messy["facts"].append(
+        {
+            "category": "vibes",
+            "key": "x",
+            "value": {},
+            "confidence": 1,
+            "sourceType": "application_text",
+            "sourceRef": "r",
+        }
+    )
+    changes = llm.normalize_result(messy)
+    assert len(messy["passport"]["verdict"]) <= 600
+    assert messy["passport"]["verdict"].endswith(".")
+    assert messy["passport"]["capsApplied"] == [
+        {"rule": "business_model_missing", "cap": 4}
+    ]
+    assert messy["passport"]["penaltiesApplied"] == ["single_channel"]
+    assert messy["scores"][0]["sources"] == ["application_text", "title"]
+    assert messy["roadmap"][0]["dimension"] is None
+    assert all(f["category"] != "vibes" for f in messy["facts"])
+    assert any(c.startswith("verdict:") for c in changes)
+    assert any(c.startswith("capsApplied:no_quantitative_claims") for c in changes)
+    # Чистый ответ эвристики нормализация не трогает.
+    assert llm.normalize_result(analyze(PROJECT)) == []
+
+
 def test_provider_models_static_when_no_catalog(
     monkeypatch: pytest.MonkeyPatch, tmp_path
 ) -> None:  # type: ignore[no-untyped-def]

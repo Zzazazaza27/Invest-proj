@@ -47,6 +47,7 @@ from .llm import (
     credential_from_env,
     load_prompts,
     new_nonce,
+    normalize_result,
     parse_json_object,
 )
 from .policy import Policy, PolicyError, ResidencyViolation, load_policy
@@ -470,6 +471,13 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                     )
                     parsed = parse_json_object(text)
                     assert_top_level(parsed)
+                    changes = normalize_result(parsed)
+                    if changes:
+                        LOG.warning(
+                            "model output normalized: %s",
+                            ", ".join(changes[:12]),
+                            extra={"traceId": trace_id, "provider": provider.name},
+                        )
                     return parsed, model_used
 
                 # Голосование (политика, `votes`): N прогонов параллельно, наружу —

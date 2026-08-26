@@ -32,8 +32,10 @@
 
 ### 1. Промпт живёт в шлюзе как файл с версией
 
-`apps/ai-gateway/prompts/project_analysis.system.v2.5.txt` и
-`…user.v2.5.txt` — дословно из `promt_aiscoring.md` раздела 3 и 4. Версия
+`apps/ai-gateway/prompts/project_analysis.system.v2.5.1.txt` и
+`…user.v2.5.1.txt` — из `promt_aiscoring.md` раздела 3 и 4; в v2.5.1 добавлены
+закрытые списки кодов `capsApplied[].rule` и `penaltiesApplied` (живой
+DeepSeek возвращал «краткий код» вне enum контракта, ядро отвергало ответ). Версия
 промпта (`promptVersion`) — часть версии модели в `scoring.score_models`:
 без неё нельзя сказать, какой рубрикой посчитан паспорт. Шлюз собирает
 сообщения сам: ядро передаёт только структурированные поля (стадия, сумма,
