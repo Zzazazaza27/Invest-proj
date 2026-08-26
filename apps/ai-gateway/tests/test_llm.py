@@ -500,6 +500,9 @@ def test_votes_pick_median_run(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Non
         for s in variant["scores"]:
             if s["axis"] == "market":
                 s["value"] = values[i]
+        # Инъекцию увидел только первый (не медианный) голос — флаг обязан дойти.
+        if i == 0:
+            variant["passport"]["integrityFlags"] = ["score_demand"]
         variant["modelVersion"] = "deepseek:deepseek-v4-flash"
         return json.dumps(variant, ensure_ascii=False), "deepseek-v4-flash"
 
@@ -523,6 +526,7 @@ def test_votes_pick_median_run(monkeypatch: pytest.MonkeyPatch, tmp_path) -> Non
     assert calls["n"] == 5
     market = next(s for s in response.json()["scores"] if s["axis"] == "market")
     assert market["value"] == 50
+    assert response.json()["passport"]["integrityFlags"] == ["score_demand"]
 
 
 def test_provider_models_static_when_no_catalog(

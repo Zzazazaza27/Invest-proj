@@ -397,8 +397,17 @@ try {
   // это сетка оценок, проценты и порядковые. Эвристика по построению пишет в
   // объяснение длину корпуса и число материалов — для неё проверка не имеет
   // смысла и помечается неприменимой, а не зелёной.
+  // «74 тыс.», «1,2 млн», «3 млрд» во входе — это 74000, 1200000, 3000000000:
+  // модель законно раскрывает единицы, и это не внешний факт.
+  const expandUnits = (text) =>
+    text.replace(/(\d+(?:[.,]\d+)?)\s*(тыс|млн|млрд)\.?/gi, (_, num, unit) => {
+      const factor = { тыс: 1e3, млн: 1e6, млрд: 1e9 }[unit.toLowerCase()];
+      return String(Math.round(Number(num.replace(',', '.')) * factor));
+    });
   const digits = (text) =>
-    new Set((text.match(/\d[\d\s.,]*\d|\d/g) ?? []).map((x) => x.replace(/[\s.,]/g, '')));
+    new Set(
+      (expandUnits(text).match(/\d[\d\s.,]*\d|\d/g) ?? []).map((x) => x.replace(/[\s.,]/g, '')),
+    );
   let hallucinated = 0;
   const examples = [];
   for (const r of results.slice(0, 10)) {

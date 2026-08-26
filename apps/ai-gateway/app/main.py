@@ -493,6 +493,24 @@ def create_app(policy: Policy | None = None) -> FastAPI:
 
                 successes.sort(key=lambda o: irs_of(o[0]))
                 result, model_used = successes[len(successes) // 2]
+                # Флаги целостности и комплаенса — объединение по всем голосам:
+                # это сигналы безопасности, и достаточно одного прогона, который
+                # увидел инъекцию или обещание доходности. Оси и тексты — из
+                # одного согласованного медианного прогона.
+                if len(successes) > 1 and isinstance(result.get("passport"), dict):
+                    for key in ("integrityFlags", "complianceFlags"):
+                        union: list[str] = []
+                        for parsed, _ in successes:
+                            passport = parsed.get("passport")
+                            flags = (
+                                passport.get(key)
+                                if isinstance(passport, dict)
+                                else None
+                            )
+                            for flag in flags or []:
+                                if isinstance(flag, str) and flag not in union:
+                                    union.append(flag)
+                        result["passport"][key] = union
                 if provider.votes > 1:
                     LOG.info(
                         "vote",
