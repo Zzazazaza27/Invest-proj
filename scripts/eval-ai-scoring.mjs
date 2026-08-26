@@ -405,6 +405,15 @@ try {
     for (const s of r.json.scores) {
       for (const n of digits(s.explanation)) {
         if (n.length >= 3 && !inputNumbers.has(n)) {
+          // Расчёт над числами заявки (CAC / (8 900 × 0,54) ≈ 3,9; 4 × 190 = 760)
+          // — не внешний факт: промпт разрешает арифметику над данными. Признак
+          // расчёта — оператор или число из заявки в том же окне текста.
+          const at = s.explanation.search(new RegExp(n.split('').join('[\\s.,]?')));
+          const window = s.explanation.slice(Math.max(0, at - 60), at + n.length + 60);
+          const derived =
+            /[×*/÷≈=+−]/.test(window) ||
+            [...digits(window)].some((m) => m !== n && m.length >= 2 && inputNumbers.has(m));
+          if (derived) continue;
           hallucinated += 1;
           // Само число и его окружение — иначе отказ нельзя разобрать: год,
           // перевод «5 млн» в «5000000» и выдуманный рынок выглядят одинаково.

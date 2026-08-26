@@ -447,7 +447,9 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                     max_tokens=provider.max_output_tokens,
                     timeout=provider.timeout_seconds,
                     extras=provider.request_extras,
-                    temperature=0.1,
+                    # Скоринг — детерминированная задача: нулевая температура держит
+                    # разброс IRS между прогонами в пределах гейта (раздел 9, п. 2).
+                    temperature=0.0,
                 )
                 result = parse_json_object(text)
                 assert_top_level(result)
