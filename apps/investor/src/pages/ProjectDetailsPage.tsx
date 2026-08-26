@@ -96,6 +96,21 @@ export function ProjectDetailsPage({
     | { status: 'denied'; message: string }
   >({ status: 'loading' });
   const [openFile, setOpenFile] = useState<string | null>(null);
+  /**
+   * Подпись водяного знака: кто и когда смотрит.
+   *
+   * Имя берётся из текущей сессии — тем же запросом, что рисует шапку кабинета.
+   * Отказ здесь не должен закрывать документ: если имя не пришло, знак остаётся
+   * с датой и адресом платформы.
+   */
+  const [viewer, setViewer] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.auth
+      .me()
+      .then((me) => setViewer(me.displayName))
+      .catch(() => setViewer(null));
+  }, []);
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -152,6 +167,8 @@ export function ProjectDetailsPage({
   }
 
   const { project, passport } = state;
+  const watermark = `${viewer ?? 'UNICORN LAUNCH'}
+${new Date().toLocaleDateString('ru-RU')} · UNICORN LAUNCH`;
   const files = materials.status === 'ready' ? materials.items.filter((m) => m.url === null) : [];
   const links = materials.status === 'ready' ? materials.items.filter((m) => m.url !== null) : [];
 
@@ -269,26 +286,63 @@ export function ProjectDetailsPage({
                   Просмотрщик — встроенный в браузер: файл приходит с адреса
                   ядра и открывается на месте. Высота фиксирована, чтобы
                   открытие документа не растягивало страницу рывком.
+
+                  Поверх лежит водяной знак с именем смотрящего. Скопировать
+                  документ он не мешает и не должен: у того, кто видит файл, он
+                  уже есть. Смысл в другом — снимок экрана или пересланная
+                  копия несут имя того, у кого они появились. Это единственная
+                  работающая мера против «переслал знакомому»: не запрет, а
+                  ответственность.
                 */
-                <iframe
-                  title={`Материал: ${MATERIAL_TYPE_TITLES[material.type] ?? material.type}`}
-                  /*
-                    `#toolbar=0` убирает панель встроенного просмотрщика — в
-                    ней Chrome рисует свои кнопки «скачать» и «печать», и они
-                    прямо противоречат обещанию «смотреть здесь». Это не
-                    защита от копирования: тот, кто видит документ, уже им
-                    располагает — но интерфейс не должен предлагать действие,
-                    которого не обещал.
-                  */
-                  src={`${apiBaseUrl}/projects/${projectId}/materials/${material.id}/content#toolbar=0&navpanes=0`}
-                  style={{
-                    width: '100%',
-                    height: '70vh',
-                    border: '1px solid var(--u-border)',
-                    borderRadius: 'var(--u-radius-md)',
-                    background: 'var(--u-surface)',
-                  }}
-                />
+                <div style={{ position: 'relative' }}>
+                  <iframe
+                    title={`Материал: ${MATERIAL_TYPE_TITLES[material.type] ?? material.type}`}
+                    /*
+                      `#toolbar=0` убирает панель встроенного просмотрщика — в
+                      ней Chrome рисует свои кнопки «скачать» и «печать», и они
+                      прямо противоречат обещанию «смотреть здесь».
+                    */
+                    src={`${apiBaseUrl}/projects/${projectId}/materials/${material.id}/content#toolbar=0&navpanes=0`}
+                    style={{
+                      width: '100%',
+                      height: '70vh',
+                      border: '1px solid var(--u-border)',
+                      borderRadius: 'var(--u-radius-md)',
+                      background: 'var(--u-surface)',
+                      display: 'block',
+                    }}
+                  />
+                  <div
+                    aria-hidden="true"
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      // Знак не перехватывает мышь: документ остаётся
+                      // прокручиваемым и выделяемым.
+                      pointerEvents: 'none',
+                      overflow: 'hidden',
+                      borderRadius: 'var(--u-radius-md)',
+                      display: 'grid',
+                      placeItems: 'center',
+                    }}
+                  >
+                    <span
+                      style={{
+                        transform: 'rotate(-24deg)',
+                        fontSize: 'clamp(1rem, 3vw, 2rem)',
+                        fontWeight: 700,
+                        letterSpacing: '0.08em',
+                        color: 'rgba(90, 70, 180, 0.16)',
+                        textAlign: 'center',
+                        lineHeight: 1.6,
+                        whiteSpace: 'pre-line',
+                        userSelect: 'none',
+                      }}
+                    >
+                      {watermark}
+                    </span>
+                  </div>
+                </div>
               ) : null}
             </Stack>
           ))}

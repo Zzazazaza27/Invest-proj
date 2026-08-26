@@ -712,3 +712,30 @@ export type Health = z.infer<typeof HealthSchema>;
 
 export const FeatureFlagsSchema = z.record(z.string(), z.boolean());
 export type FeatureFlags = z.infer<typeof FeatureFlagsSchema>;
+
+/**
+ * Строка поиска пользователей для админки.
+ *
+ * Адрес почты сюда не выносится: он лежит зашифрованным, и показывать его
+ * списком значило бы потерять и шифрование на покое, и журнал доступа. Для
+ * различения тёзок хватает роли и первых знаков идентификатора — по ним же
+ * сверяют записи в журнале.
+ */
+export const AdminUserSummarySchema = z.object({
+  id: UuidSchema,
+  displayName: z.string(),
+  roles: z.array(z.string()),
+  status: z.string(),
+  createdAt: IsoDateTimeSchema,
+});
+export type AdminUserSummary = z.infer<typeof AdminUserSummarySchema>;
+
+/** Строка поиска проектов для админки: перевод по воронке идёт по идентификатору. */
+export const AdminProjectSummarySchema = z.object({
+  id: UuidSchema,
+  title: z.string(),
+  status: z.string(),
+  listingStatus: z.string(),
+  seasonId: UuidSchema.nullable(),
+});
+export type AdminProjectSummary = z.infer<typeof AdminProjectSummarySchema>;

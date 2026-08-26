@@ -3,6 +3,8 @@ import { APP_GUARD } from '@nestjs/core';
 import { AdminController } from './admin/admin.controller';
 import { AdminService } from './admin/admin.service';
 import { DiscoveryModule } from '@nestjs/core';
+import { DirectoryController } from './admin/directory.controller';
+import { DirectoryService } from './admin/directory.service';
 import { RolesController } from './admin/roles.controller';
 import { RolesService } from './admin/roles.service';
 import { SessionEpochService } from './auth/session-epoch.service';
@@ -101,6 +103,7 @@ import { S3Service } from './storage/s3.service';
     IntegrationController,
     IntegrationTokenController,
     ServiceAccountsController,
+    DirectoryController,
     RolesController,
     TemplatesController,
     OpenApiController,
@@ -128,6 +131,7 @@ import { S3Service } from './storage/s3.service';
     SeasonsService,
     BillingService,
     AdminService,
+    DirectoryService,
     RolesService,
     TemplatesService,
     InvestmentsService,

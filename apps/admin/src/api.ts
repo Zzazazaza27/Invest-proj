@@ -38,6 +38,10 @@ import {
   type ServiceAccountWithSecret,
   type UpdateDraftPlanRequest,
   type UpsertNotificationTemplate,
+  AdminProjectSummarySchema,
+  AdminUserSummarySchema,
+  type AdminProjectSummary,
+  type AdminUserSummary,
 } from '@unicorn/contracts';
 import { z } from 'zod';
 
@@ -347,6 +351,30 @@ export const api = {
   // Идентификатор в пути кодируется: он приходит из свободного поля формы,
   // и без кодирования произвольные символы ломают маршрут (LOW аудита №2).
   // Валидация формата — на сервере (UuidSchema), здесь дешёвая гигиена.
+  /**
+   * Поиск людей и проектов.
+   *
+   * Нужен экранам, которые работают по идентификатору: набирать UUID руками
+   * оператору неоткуда, а искать он умеет по имени.
+   */
+  searchUsers(query: string): Promise<{ items: AdminUserSummary[] }> {
+    return client.request({
+      method: 'GET',
+      path: '/v1/admin/users',
+      query: { q: query },
+      schema: z.object({ items: z.array(AdminUserSummarySchema) }),
+    });
+  },
+
+  searchProjects(query: string): Promise<{ items: AdminProjectSummary[] }> {
+    return client.request({
+      method: 'GET',
+      path: '/v1/admin/projects',
+      query: { q: query },
+      schema: z.object({ items: z.array(AdminProjectSummarySchema) }),
+    });
+  },
+
   listRoles(userId: string): Promise<{ items: GrantedRole[] }> {
     return client.request({
       method: 'GET',

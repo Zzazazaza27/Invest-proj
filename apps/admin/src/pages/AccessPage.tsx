@@ -10,6 +10,7 @@ import {
   LoadingState,
   Stack,
 } from '@unicorn/ui';
+import type { AdminUserSummary } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 
 /**
@@ -33,6 +34,8 @@ export function AccessPage() {
 
 function RolesSection() {
   const [userId, setUserId] = useState('');
+  const [search, setSearch] = useState('');
+  const [found, setFound] = useState<AdminUserSummary[] | null>(null);
   const [role, setRole] = useState('expert');
   const [items, setItems] = useState<
     { role: string; grantedAt: string; revokedAt: string | null }[]
@@ -72,7 +75,82 @@ function RolesSection() {
           попадает в журнал вместе с тем, кто его сделал.
         </span>
 
-        <Field label="Идентификатор пользователя" htmlFor="role-user" hint="UUID из базы">
+        {/*
+          Поиск по имени вместо ввода UUID руками.
+
+          Идентификатор остаётся тем, чем оперирует API — он однозначен и попадает
+          в журнал. Но взять его оператору было негде: экран просил «UUID из базы»,
+          а базы у оператора нет. Теперь он ищет человека по имени и выбирает из
+          найденных; поле идентификатора остаётся видимым и заполняется выбором —
+          сверить его с журналом по-прежнему можно.
+        */}
+        <Field
+          label="Найти человека"
+          htmlFor="role-search"
+          hint="По имени, как оно указано в профиле"
+        >
+          <div style={{ display: 'flex', gap: 'var(--u-space-2)' }}>
+            <Input
+              id="role-search"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="Например, Оливер"
+            />
+            <button
+              type="button"
+              className="btn--sm"
+              onClick={() => {
+                setFound(null);
+                void api
+                  .searchUsers(search.trim())
+                  .then((page) => setFound(page.items))
+                  .catch(() => setFound([]));
+              }}
+            >
+              Искать
+            </button>
+          </div>
+        </Field>
+
+        {found !== null && found.length === 0 ? (
+          <div className="small muted">Никого не нашлось — попробуйте другую часть имени.</div>
+        ) : null}
+
+        {found !== null && found.length > 0 ? (
+          <ul
+            style={{
+              listStyle: 'none',
+              margin: 0,
+              padding: 0,
+              display: 'grid',
+              gap: 'var(--u-space-2)',
+            }}
+          >
+            {found.map((item) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  className={item.id === userId ? 'btn--sm' : 'btn--ghost btn--sm'}
+                  style={{ width: '100%', textAlign: 'left' }}
+                  onClick={() => setUserId(item.id)}
+                >
+                  {item.displayName}
+                  <span className="small muted">
+                    {' '}
+                    · {item.roles.length > 0 ? item.roles.join(', ') : 'без ролей'} ·{' '}
+                    {item.id.slice(0, 8)}
+                  </span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : null}
+
+        <Field
+          label="Идентификатор пользователя"
+          htmlFor="role-user"
+          hint="Заполняется выбором из поиска"
+        >
           <Input
             id="role-user"
             value={userId}

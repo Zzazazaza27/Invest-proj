@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { Season, SeasonStageOccupancy } from '@unicorn/contracts';
+import type { AdminProjectSummary } from '@unicorn/contracts';
 import { api } from '../api';
 import { problemText } from '../lib/format';
 
@@ -39,6 +40,8 @@ export function FunnelPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [quotas, setQuotas] = useState<Record<string, string>>({});
   const [projectId, setProjectId] = useState('');
+  const [search, setSearch] = useState('');
+  const [found, setFound] = useState<AdminProjectSummary[] | null>(null);
   const [targetStage, setTargetStage] = useState('bootcamp');
   const [reason, setReason] = useState('');
   const [useTicket, setUseTicket] = useState(false);
@@ -192,6 +195,63 @@ export function FunnelPage() {
           </button>
 
           <h2>Перевести проект</h2>
+
+          {/*
+            Поиск по названию: раньше экран требовал «UUID проекта», а взять его
+            оператору было негде — ни списка, ни поиска. Идентификатор остаётся
+            полем ввода и заполняется выбором, чтобы его можно было сверить с
+            журналом.
+          */}
+          <label className="field" htmlFor="funnel-search">
+            <span>Найти проект по названию</span>
+            <div style={{ display: 'flex', gap: 'var(--u-space-2)' }}>
+              <input
+                id="funnel-search"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Например, Аэросид"
+              />
+              <button
+                type="button"
+                className="btn--sm"
+                onClick={() => {
+                  setFound(null);
+                  void api
+                    .searchProjects(search.trim())
+                    .then((page) => setFound(page.items))
+                    .catch(() => setFound([]));
+                }}
+              >
+                Искать
+              </button>
+            </div>
+          </label>
+
+          {found !== null && found.length === 0 ? (
+            <div className="small muted">Ничего не нашлось — попробуйте другую часть названия.</div>
+          ) : null}
+
+          {found !== null && found.length > 0 ? (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 4 }}>
+              {found.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className={item.id === projectId ? 'btn--sm' : 'btn--ghost btn--sm'}
+                    style={{ width: '100%', textAlign: 'left' }}
+                    onClick={() => setProjectId(item.id)}
+                  >
+                    {item.title}
+                    <span className="small muted">
+                      {' '}
+                      · {item.status} · {item.id.slice(0, 8)}
+                    </span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+
           <div className="grid-2">
             <label className="field" htmlFor="funnel-project">
               <span>Идентификатор проекта</span>
@@ -199,7 +259,7 @@ export function FunnelPage() {
                 id="funnel-project"
                 value={projectId}
                 onChange={(event) => setProjectId(event.target.value)}
-                placeholder="UUID проекта"
+                placeholder="заполняется выбором из поиска"
               />
             </label>
             <label className="field">
