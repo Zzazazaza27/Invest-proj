@@ -442,7 +442,7 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                     default_model=provider.model,
                     system=system,
                     user=user,
-                    max_tokens=16000,
+                    max_tokens=min(16000, provider.max_output_tokens),
                     temperature=0.1,
                 )
                 result = parse_json_object(text)
@@ -545,7 +545,7 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 default_model=provider.model,
                 system=system,
                 user=user,
-                max_tokens=8000,
+                max_tokens=min(8000, provider.max_output_tokens),
                 temperature=0,
             )
             result = parse_json_object(text)
@@ -646,7 +646,7 @@ def create_app(policy: Policy | None = None) -> FastAPI:
                 # Рассуждающие модели (DeepSeek V4, o-серия) тратят токены на
                 # размышление до первого символа ответа: 32 токена дают
                 # «оборвано по лимиту» на живом ключе. 1024 — всё ещё копейки.
-                max_tokens=1024,
+                max_tokens=min(1024, provider.max_output_tokens),
                 temperature=0,
                 timeout=30,
             )

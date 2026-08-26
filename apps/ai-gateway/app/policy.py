@@ -57,6 +57,10 @@ class Provider:
     # ввода ключа. Нет каталога — статический список подсказок.
     models_endpoint: str | None = None
     model_suggestions: tuple[str, ...] = ()
+    # Потолок выходных токенов у провайдера: запрос выше него получает 400
+    # («max_tokens is too large»), а не усечённый ответ. Шлюз режет свои
+    # лимиты по нему.
+    max_output_tokens: int = 16000
 
 
 @dataclass(frozen=True)
@@ -176,6 +180,15 @@ def load_policy(path: str | Path) -> Policy:
                 f"провайдер {name!r}: models_endpoint обязан быть https:// "
                 f"(получено {models_endpoint!r})"
             )
+        max_output_tokens = entry.get("max_output_tokens", 16000)
+        if (
+            not isinstance(max_output_tokens, int)
+            or isinstance(max_output_tokens, bool)
+            or not 2048 <= max_output_tokens <= 200_000
+        ):
+            raise PolicyError(
+                f"провайдер {name!r}: max_output_tokens — целое от 2048 до 200000"
+            )
         suggestions = entry.get("model_suggestions", [])
         if not isinstance(suggestions, list) or not all(
             isinstance(x, str) for x in suggestions
@@ -206,6 +219,7 @@ def load_policy(path: str | Path) -> Policy:
             auth_scheme=auth_scheme,
             models_endpoint=models_endpoint,
             model_suggestions=tuple(suggestions),
+            max_output_tokens=max_output_tokens,
             model=(str(entry["model"]) if entry.get("model") else None),
         )
 

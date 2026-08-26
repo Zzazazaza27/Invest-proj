@@ -377,6 +377,13 @@ def test_provider_models_endpoint_filters_ids(
                 {"id": "<script>alert(1)</script>"},
                 {"id": "введите ключ на сайте"},
                 {"id": "gpt-4.1-mini"},
+                {"id": "text-embedding-3-large"},
+                {"id": "whisper-1"},
+                {"id": "gpt-4o-realtime-preview"},
+                {"id": "gpt-image-1"},
+                {"id": "gpt-3.5-turbo-instruct"},
+                {"id": "qwen-vl-max"},
+                {"id": "deepseek-v4-flash-vision-exp"},
                 {"not_id": "x"},
                 "строка",
             ]
@@ -398,6 +405,33 @@ def test_provider_models_endpoint_filters_ids(
     assert body["source"] == "provider"
     assert body["models"] == ["gpt-4.1-mini", "gpt-4o"]
     assert "sk-test" not in response.text
+
+
+def test_max_tokens_capped_by_provider_limit(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:  # type: ignore[no-untyped-def]
+    """Провайдер с потолком 8192 не должен получать запрос на 16000 — это 400, не усечение."""
+    seen: dict[str, int] = {}
+
+    def fake_call(**kwargs):  # type: ignore[no-untyped-def]
+        seen["max_tokens"] = kwargs["max_tokens"]
+        return '{"ok": true}', "deepseek-v4-flash"
+
+    monkeypatch.setattr("app.main.call_chat", fake_call)
+    client = _client(monkeypatch, tmp_path)
+    response = client.post(
+        "/v1/providers/check",
+        headers={"Authorization": f"Bearer {TOKEN}"},
+        json={
+            "provider": "deepseek",
+            "provider_credential": {"api_key": "sk-test-key-value"},
+        },
+    )
+    assert response.status_code == 200
+    assert seen["max_tokens"] == 1024
+    policy = load_policy("policy/ai-policy.json")
+    assert policy.providers["deepseek"].max_output_tokens == 8192
+    assert min(16000, policy.providers["deepseek"].max_output_tokens) == 8192
 
 
 def test_provider_models_static_when_no_catalog(

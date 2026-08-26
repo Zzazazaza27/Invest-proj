@@ -303,6 +303,22 @@ def _request_json(
 _MODEL_ID: Final[re.Pattern[str]] = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/@-]{0,119}$")
 MAX_MODELS: Final[int] = 200
 
+# Платформа отправляет модели текст и ждёт текст. Эмбеддинги, картинки, звук,
+# распознавание, модерация, «vision-only», completion-only и realtime в
+# каталоге провайдера есть, но в паре «промпт → JSON-паспорт» не работают:
+# выбор такой модели дал бы 400 на первом анализе. Фильтр — по имени, это
+# единственное, что каталог сообщает; то, что просочилось, отсеет «Проверить».
+_NON_TEXT_MODEL: Final[re.Pattern[str]] = re.compile(
+    r"embed|whisper|tts|speech|audio|transcri|asr|realtime|moderation|image|dall-e|sora|"
+    r"vision|(^|[-_])vl([-_]|$)|ocr|rerank|omni|video|wan[0-9]|flux|instruct|babbage|davinci|"
+    r"codex|computer-use|search",
+    re.IGNORECASE,
+)
+
+
+def is_text_chat_model(model_id: str) -> bool:
+    return _NON_TEXT_MODEL.search(model_id) is None
+
 
 def list_models(
     *, endpoint: str, auth_scheme: str, api_key: str, timeout: float = 20.0
@@ -324,6 +340,8 @@ def list_models(
     for row in rows:
         candidate = row.get("id") if isinstance(row, dict) else None
         if not isinstance(candidate, str) or not _MODEL_ID.match(candidate):
+            continue
+        if not is_text_chat_model(candidate):
             continue
         if candidate in seen:
             continue

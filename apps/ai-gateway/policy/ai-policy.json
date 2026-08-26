@@ -30,9 +30,13 @@
     "«Подключённые API» (ADR-008 §2). Ключ в панели и есть включение провайдера.",
     "models_endpoint — каталог моделей провайдера (GET, формат OpenAI {data:[{id}]}) для",
     "выбора модели в панели после ввода ключа; model_suggestions — подсказки, когда",
-    "каталога нет или он недоступен. Оба — только здесь, через ревью."
+    "каталога нет или он недоступен. Оба — только здесь, через ревью.",
+    "max_output_tokens — потолок выходных токенов провайдера (запрос выше него — 400,",
+    "а не усечение); шлюз режет свои лимиты анализа/перевода/проверки по нему.",
+    "Каталог моделей отдаёт только текстовые чат-модели: embeddings, vision,",
+    "audio, image, realtime, completion-only отфильтрованы по имени."
   ],
-  "version": "1.4.0",
+  "version": "1.5.0",
   "default_provider": "local_deterministic",
   "residency": {
     "restricted_classes": [
@@ -82,7 +86,8 @@
         "gpt://<folder-id>/yandexgpt/latest",
         "gpt://<folder-id>/yandexgpt-lite/latest",
         "gpt://<folder-id>/yandexgpt-32k/latest"
-      ]
+      ],
+      "max_output_tokens": 8000
     },
     {
       "name": "gigachat",
@@ -106,7 +111,8 @@
         "GigaChat",
         "GigaChat-Pro",
         "GigaChat-Max"
-      ]
+      ],
+      "max_output_tokens": 8192
     },
     {
       "name": "anthropic",
@@ -126,7 +132,8 @@
       "auth_scheme": "x-api-key",
       "model": null,
       "models_endpoint": "https://api.anthropic.com/v1/models",
-      "model_suggestions": []
+      "model_suggestions": [],
+      "max_output_tokens": 16000
     },
     {
       "name": "openai",
@@ -146,7 +153,8 @@
       "enabled": false,
       "note": "OpenAI (США). Все классы данных — по решению владельца 2026-08-26. Модель задаёт оператор.",
       "models_endpoint": "https://api.openai.com/v1/models",
-      "model_suggestions": []
+      "model_suggestions": [],
+      "max_output_tokens": 16000
     },
     {
       "name": "kimi",
@@ -166,7 +174,8 @@
       "enabled": false,
       "note": "Kimi (Moonshot AI, КНР), международная площадка platform.kimi.ai — OpenAI-совместимый вход. Ключ китайской площадки (api.moonshot.cn) сюда не подходит: адрес меняется здесь, ревью. Модель задаёт оператор (kimi-k3, kimi-k2.5).",
       "models_endpoint": "https://api.moonshot.ai/v1/models",
-      "model_suggestions": []
+      "model_suggestions": [],
+      "max_output_tokens": 8192
     },
     {
       "name": "qwen",
@@ -190,7 +199,8 @@
         "qwen-plus",
         "qwen-max",
         "qwen-turbo"
-      ]
+      ],
+      "max_output_tokens": 8192
     },
     {
       "name": "deepseek",
@@ -210,7 +220,8 @@
       "enabled": false,
       "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модель задаёт оператор; на 2026-08 API принимает deepseek-v4-pro, deepseek-v4-flash (имя «DeepSeek» отвергается кодом 400).",
       "models_endpoint": "https://api.deepseek.com/models",
-      "model_suggestions": []
+      "model_suggestions": [],
+      "max_output_tokens": 8192
     }
   ]
 }
