@@ -1,0 +1,626 @@
+{
+  "$comment": [
+    "Основатели каталожного комплекта UNICORN LAUNCH (catalog/v1).",
+    "",
+    "Пространство ключей — catalog-f-<страна>-<номер>, оно НЕ пересекается с",
+    "ключами демонстрационного комплекта fixtures/demo. Поэтому два набора могут",
+    "жить в базе одновременно и убираться независимо друг от друга.",
+    "",
+    "Все основатели — иностранные: комплект собран под каталог, где проекты",
+    "приходят из 32 стран. Пароля здесь НЕТ по тем же причинам, что и в demo:",
+    "пароль в репозитории — это пароль, который утёк.",
+    "",
+    "У части основателей по 2–4 проекта: без этого кабинет основателя со списком",
+    "из нескольких заявок и переключением между ними остаётся непроверенным."
+  ],
+  "people": [
+    {
+      "key": "catalog-f-ar-01",
+      "login": "cat-ar-01",
+      "displayName": "Мартин Соса",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Аргентина — проекты «Cuadrilla», «Cuotta»"
+    },
+    {
+      "key": "catalog-f-br-01",
+      "login": "cat-br-01",
+      "displayName": "Каролина Алвес",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Бразилия — проект «Celuma»"
+    },
+    {
+      "key": "catalog-f-br-02",
+      "login": "cat-br-02",
+      "displayName": "Раджив Пател",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Бразилия — проект «Marumbi»"
+    },
+    {
+      "key": "catalog-f-ca-01",
+      "login": "cat-ca-01",
+      "displayName": "Клэр Трамбле",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Канада — проекты «Tidewrite», «Rxlane»"
+    },
+    {
+      "key": "catalog-f-ca-02",
+      "login": "cat-ca-02",
+      "displayName": "Итан Морроу",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Канада — проекты «Bayline», «Ruelle»"
+    },
+    {
+      "key": "catalog-f-ca-03",
+      "login": "cat-ca-03",
+      "displayName": "Ясмин Хаддад",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Канада — проекты «Rideau Bid», «Frameport»"
+    },
+    {
+      "key": "catalog-f-ca-04",
+      "login": "cat-ca-04",
+      "displayName": "Люк Бошан",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Канада — проекты «Mimara», «Referra», «Driftwood Games»"
+    },
+    {
+      "key": "catalog-f-ch-01",
+      "login": "cat-ch-01",
+      "displayName": "Лука Штайнер",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Швейцария — проект «Kadenz»"
+    },
+    {
+      "key": "catalog-f-cn-01",
+      "login": "cat-cn-01",
+      "displayName": "Хань Юй",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Китай — проект «Yunque»"
+    },
+    {
+      "key": "catalog-f-cn-02",
+      "login": "cat-cn-02",
+      "displayName": "Приया Шарма",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Китай — проект «Lingce»"
+    },
+    {
+      "key": "catalog-f-cr-01",
+      "login": "cat-cr-01",
+      "displayName": "Валерия Хименес",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Коста-Рика — проект «FichaClub»"
+    },
+    {
+      "key": "catalog-f-cz-01",
+      "login": "cat-cz-01",
+      "displayName": "Томаш Новак",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Чехия — проект «Vzor»"
+    },
+    {
+      "key": "catalog-f-de-01",
+      "login": "cat-de-01",
+      "displayName": "Йонас Келлер",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Германия — проект «Weichen»"
+    },
+    {
+      "key": "catalog-f-de-02",
+      "login": "cat-de-02",
+      "displayName": "Лена Хофманн",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Германия — проекты «Warmnetz», «Riegel»"
+    },
+    {
+      "key": "catalog-f-dk-01",
+      "login": "cat-dk-01",
+      "displayName": "Миккель Сёренсен",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Дания — проект «Trygtrade»"
+    },
+    {
+      "key": "catalog-f-eg-01",
+      "login": "cat-eg-01",
+      "displayName": "Лейла Мансур",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Египет — проект «Tawseel»"
+    },
+    {
+      "key": "catalog-f-es-01",
+      "login": "cat-es-01",
+      "displayName": "Пабло Ортега",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Испания — проект «Mirador»"
+    },
+    {
+      "key": "catalog-f-fr-01",
+      "login": "cat-fr-01",
+      "displayName": "Матьё Лефевр",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Франция — проект «Rouage»"
+    },
+    {
+      "key": "catalog-f-fr-02",
+      "login": "cat-fr-02",
+      "displayName": "Камиль Морель",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Франция — проекты «Boussole», «Rivage»"
+    },
+    {
+      "key": "catalog-f-gb-01",
+      "login": "cat-gb-01",
+      "displayName": "Оливер Хейз",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Великобритания — проекты «Larkfield», «Kinetiq», «Meterly», «Vettra»"
+    },
+    {
+      "key": "catalog-f-gb-02",
+      "login": "cat-gb-02",
+      "displayName": "Амелия Кларк",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Великобритания — проекты «Reconna», «Zerolane», «Orrery», «Dermalog»"
+    },
+    {
+      "key": "catalog-f-gb-03",
+      "login": "cat-gb-03",
+      "displayName": "Софи Уиттакер",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Великобритания — проекты «Polisim», «Orbin», «Almanack»"
+    },
+    {
+      "key": "catalog-f-gb-04",
+      "login": "cat-gb-04",
+      "displayName": "Дэниел Оконкво",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Великобритания — проекты «Portlane», «Claimforge», «Mandata», «Spindle»"
+    },
+    {
+      "key": "catalog-f-gb-05",
+      "login": "cat-gb-05",
+      "displayName": "Имоджен Рид",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Великобритания — проекты «Fernloop», «Latchkey», «Trailmark», «Bramble»"
+    },
+    {
+      "key": "catalog-f-id-01",
+      "login": "cat-id-01",
+      "displayName": "Путри Вибово",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Индонезия — проекты «Panenku», «Kirana Pay»"
+    },
+    {
+      "key": "catalog-f-id-02",
+      "login": "cat-id-02",
+      "displayName": "Бима Сантосо",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Индонезия — проект «Kenali»"
+    },
+    {
+      "key": "catalog-f-ie-01",
+      "login": "cat-ie-01",
+      "displayName": "Ниав О’Салливан",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Ирландия — проект «Sábháil»"
+    },
+    {
+      "key": "catalog-f-il-01",
+      "login": "cat-il-01",
+      "displayName": "Ноа Бен-Ари",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Израиль — проекты «Sulam», «Sefira»"
+    },
+    {
+      "key": "catalog-f-il-02",
+      "login": "cat-il-02",
+      "displayName": "Ювал Шапира",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Израиль — проект «Kavana»"
+    },
+    {
+      "key": "catalog-f-in-01",
+      "login": "cat-in-01",
+      "displayName": "Ананья Айер",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Индия — проекты «Dhaara Fuel», «Vetan», «Kalpio», «Saathi Care»"
+    },
+    {
+      "key": "catalog-f-in-02",
+      "login": "cat-in-02",
+      "displayName": "Викрам Наир",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Индия — проекты «Vaarta», «Drishti Labs», «Rachana»"
+    },
+    {
+      "key": "catalog-f-in-03",
+      "login": "cat-in-03",
+      "displayName": "Ниша Гупта",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Индия — проекты «Pramaan», «Chillar», «Sangati», «Abhyaas»"
+    },
+    {
+      "key": "catalog-f-in-04",
+      "login": "cat-in-04",
+      "displayName": "Арджун Мехта",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Индия — проекты «Attestly», «Chhatri», «Chirpi», «Nuskha»"
+    },
+    {
+      "key": "catalog-f-in-05",
+      "login": "cat-in-05",
+      "displayName": "Кавья Редди",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Индия — проекты «Kaarya», «Paysetu», «Baithak»"
+    },
+    {
+      "key": "catalog-f-jp-01",
+      "login": "cat-jp-01",
+      "displayName": "Аой Танака",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Япония — проект «Sashimono»"
+    },
+    {
+      "key": "catalog-f-ke-01",
+      "login": "cat-ke-01",
+      "displayName": "Джума Отиено",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Кения — проект «Jedwali»"
+    },
+    {
+      "key": "catalog-f-mx-01",
+      "login": "cat-mx-01",
+      "displayName": "Даниэла Роблес",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Мексика — проекты «Zaguán», «Copalia»"
+    },
+    {
+      "key": "catalog-f-my-01",
+      "login": "cat-my-01",
+      "displayName": "Айша Рахман",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Малайзия — проекты «Kedaimas», «Cerdik»"
+    },
+    {
+      "key": "catalog-f-my-02",
+      "login": "cat-my-02",
+      "displayName": "Джаред Лим",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Малайзия — проект «Kedaiku»"
+    },
+    {
+      "key": "catalog-f-ng-01",
+      "login": "cat-ng-01",
+      "displayName": "Чидинма Эзе",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Нигерия — проект «Kobolink»"
+    },
+    {
+      "key": "catalog-f-nl-01",
+      "login": "cat-nl-01",
+      "displayName": "Санне де Врис",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Нидерланды — проект «Gracht»"
+    },
+    {
+      "key": "catalog-f-pa-01",
+      "login": "cat-pa-01",
+      "displayName": "Рикардо Мена",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Панама — проект «Garita»"
+    },
+    {
+      "key": "catalog-f-ph-01",
+      "login": "cat-ph-01",
+      "displayName": "Мария Сантос",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Филиппины — проект «Hatid»"
+    },
+    {
+      "key": "catalog-f-pl-01",
+      "login": "cat-pl-01",
+      "displayName": "Магда Ковальская",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Польша — проект «Osnowa»"
+    },
+    {
+      "key": "catalog-f-pt-01",
+      "login": "cat-pt-01",
+      "displayName": "Инеш Каштру",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Португалия — проект «Bússola»"
+    },
+    {
+      "key": "catalog-f-se-01",
+      "login": "cat-se-01",
+      "displayName": "Эльса Линдгрен",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Швеция — проект «Bordly»"
+    },
+    {
+      "key": "catalog-f-se-02",
+      "login": "cat-se-02",
+      "displayName": "Каллум Дойл",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Швеция — проект «Bevisa»"
+    },
+    {
+      "key": "catalog-f-sg-01",
+      "login": "cat-sg-01",
+      "displayName": "Вэй Лин Тан",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Сингапур — проекты «Kelong», «Bilik»"
+    },
+    {
+      "key": "catalog-f-sg-02",
+      "login": "cat-sg-02",
+      "displayName": "Джером Кох",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, Сингапур — проекты «Straitsight», «Selat»"
+    },
+    {
+      "key": "catalog-f-tr-01",
+      "login": "cat-tr-01",
+      "displayName": "Эмре Йылмаз",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Турция — проект «Coban»"
+    },
+    {
+      "key": "catalog-f-ua-01",
+      "login": "cat-ua-01",
+      "displayName": "Олена Ковтун",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "основатель, Украина — проект «Dokoria»"
+    },
+    {
+      "key": "catalog-f-us-01",
+      "login": "cat-us-01",
+      "displayName": "Меган Райс",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, США — проекты «Routely», «Tapwright»"
+    },
+    {
+      "key": "catalog-f-us-02",
+      "login": "cat-us-02",
+      "displayName": "Андре Уитфилд",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, США — проекты «Stoopline», «Wrenchline»"
+    },
+    {
+      "key": "catalog-f-us-03",
+      "login": "cat-us-03",
+      "displayName": "Хлоя Бергман",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, США — проекты «Scribeon», «Sprigbase»"
+    },
+    {
+      "key": "catalog-f-us-04",
+      "login": "cat-us-04",
+      "displayName": "Итан Наварро",
+      "primaryRole": "founder",
+      "roles": ["founder"],
+      "about": "серийный основатель, США — проекты «Chartweave», «Docdrift»"
+    },
+    {
+      "key": "catalog-inv-01",
+      "login": "cat-inv-01",
+      "displayName": "Юлия Кравец",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "частный инвестор, Москва — ранние стадии SaaS и AI"
+    },
+    {
+      "key": "catalog-inv-02",
+      "login": "cat-inv-02",
+      "displayName": "Артём Бельский",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "управляющий партнёр небольшого фонда, Санкт-Петербург"
+    },
+    {
+      "key": "catalog-inv-03",
+      "login": "cat-inv-03",
+      "displayName": "Наталья Гордеева",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "бизнес-ангел, отраслевая экспертиза в финтехе"
+    },
+    {
+      "key": "catalog-inv-04",
+      "login": "cat-inv-04",
+      "displayName": "Дамир Хайруллин",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "инвестор-практик, маркетплейсы и логистика"
+    },
+    {
+      "key": "catalog-inv-05",
+      "login": "cat-inv-05",
+      "displayName": "Ольга Ветрова",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "семейный офис, инвестиции в образование и здоровье"
+    },
+    {
+      "key": "catalog-inv-06",
+      "login": "cat-inv-06",
+      "displayName": "Сергей Панкратов",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "синдикат ангелов, deeptech и промышленный софт"
+    },
+    {
+      "key": "catalog-inv-07",
+      "login": "cat-inv-07",
+      "displayName": "Ирина Мостовая",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "инвестор ранней стадии, мобильные продукты"
+    },
+    {
+      "key": "catalog-inv-08",
+      "login": "cat-inv-08",
+      "displayName": "Виктор Ильин",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "корпоративный венчур, интеграции с крупным бизнесом"
+    },
+    {
+      "key": "catalog-inv-09",
+      "login": "cat-inv-09",
+      "displayName": "Алина Терехова",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "инвестор, web3 и инфраструктура данных"
+    },
+    {
+      "key": "catalog-inv-10",
+      "login": "cat-inv-10",
+      "displayName": "Роман Ковач",
+      "primaryRole": "founder",
+      "roles": ["investor"],
+      "about": "инвестор без подписки — смотрит только тизеры"
+    },
+    {
+      "key": "catalog-exp-01",
+      "login": "cat-exp-01",
+      "displayName": "Марина Голубева",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["fintech", "saas"],
+      "about": "финтех и платёжные сервисы, 11 лет"
+    },
+    {
+      "key": "catalog-exp-02",
+      "login": "cat-exp-02",
+      "displayName": "Кирилл Ефимов",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["ai", "deeptech"],
+      "about": "машинное обучение в проде, 9 лет"
+    },
+    {
+      "key": "catalog-exp-03",
+      "login": "cat-exp-03",
+      "displayName": "Дарья Шульга",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["saas", "marketplace"],
+      "about": "продуктовая аналитика и маркетплейсы"
+    },
+    {
+      "key": "catalog-exp-04",
+      "login": "cat-exp-04",
+      "displayName": "Тимур Асланов",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["healthtech"],
+      "about": "цифровое здравоохранение и регуляторика"
+    },
+    {
+      "key": "catalog-exp-05",
+      "login": "cat-exp-05",
+      "displayName": "Елена Бортникова",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["edtech", "mobile"],
+      "about": "образовательные продукты, 8 лет"
+    },
+    {
+      "key": "catalog-exp-06",
+      "login": "cat-exp-06",
+      "displayName": "Павел Драгунов",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["web3", "fintech"],
+      "about": "блокчейн-инфраструктура и комплаенс"
+    },
+    {
+      "key": "catalog-exp-07",
+      "login": "cat-exp-07",
+      "displayName": "Светлана Реброва",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["gaming", "mobile"],
+      "about": "игровые продукты и монетизация"
+    },
+    {
+      "key": "catalog-exp-08",
+      "login": "cat-exp-08",
+      "displayName": "Никита Заозёрский",
+      "primaryRole": "founder",
+      "roles": ["expert"],
+      "expertiseTags": ["deeptech", "ai"],
+      "about": "промышленный софт и интеграции"
+    },
+    {
+      "key": "catalog-organizer",
+      "login": "cat-organizer",
+      "displayName": "Павел Ерохин",
+      "primaryRole": "founder",
+      "roles": ["organizer"],
+      "about": "организатор сезона: воронка отбора и состав рецензентов"
+    },
+    {
+      "key": "catalog-admin",
+      "login": "cat-admin",
+      "displayName": "Ксения Дорохова",
+      "primaryRole": "founder",
+      "roles": ["admin"],
+      "about": "администратор платформы: тарифы, верификации, интеграции"
+    }
+  ]
+}

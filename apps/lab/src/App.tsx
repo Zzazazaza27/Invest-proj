@@ -17,7 +17,12 @@ import {
   TrustStrip,
   UI_KEYFRAMES,
 } from '@unicorn/ui';
-import type { CreateSupportTicketRequest, CurrentUser, ProjectFull, SupportTicketStatus } from '@unicorn/contracts';
+import type {
+  CreateSupportTicketRequest,
+  CurrentUser,
+  ProjectFull,
+  SupportTicketStatus,
+} from '@unicorn/contracts';
 import { ApiError, api, setCsrf } from './api';
 import {
   BugReportWidget,
@@ -60,7 +65,6 @@ function toAddress(input: string): string {
   return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
 }
 
-
 /**
  * Транспорт для общих блоков кабинета.
  *
@@ -70,10 +74,8 @@ function toAddress(input: string): string {
 const notificationsPort = {
   list: (limit: number) => api.notifications.list({ limit }),
   preferences: () => api.notifications.preferences(),
-  savePreferences: (items: NotificationPreference[]) =>
-    api.notifications.updatePreferences(items),
+  savePreferences: (items: NotificationPreference[]) => api.notifications.updatePreferences(items),
 };
-
 
 /**
  * Транспорт для карточки юрлиц. Тот же приём, что и у уведомлений: пакет не
@@ -82,8 +84,7 @@ const notificationsPort = {
 const entitiesPort = {
   list: () => api.kyc.entities(),
   create: (body: CreateEntityRequest) => api.kyc.createEntity(body),
-  addMember: (entityId: string, body: AddEntityMemberRequest) =>
-    api.kyc.addMember(entityId, body),
+  addMember: (entityId: string, body: AddEntityMemberRequest) => api.kyc.addMember(entityId, body),
   startKyb: (entityId: string, kind: 'registry_check' | 'beneficial_owners') =>
     api.kyc.startKyb(entityId, kind),
 };

@@ -31,11 +31,7 @@ import type { KycVerification } from '@unicorn/contracts';
  * документа. Причина отказа показывается ровно так, как её отдал сервер:
  * обобщённой формулировкой, внутренние основания комплаенса наружу не идут.
  */
-export type VerificationDocType =
-  | 'passport'
-  | 'foreign_passport'
-  | 'id_card'
-  | 'driver_license';
+export type VerificationDocType = 'passport' | 'foreign_passport' | 'id_card' | 'driver_license';
 
 export interface VerificationPort {
   status: () => Promise<KycVerification[]>;

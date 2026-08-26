@@ -45,7 +45,29 @@ import { fileURLToPath } from 'node:url';
 import { s3Object, storageFromEnv } from './lib/s3.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const FIXTURES = join(ROOT, 'fixtures', 'demo');
+
+/**
+ * Комплект данных: `fixtures/<набор>/`.
+ *
+ * Наборов больше одного: `demo` — пять проектов со сквозными сценариями для
+ * ручного прохода, `catalog` — сотня карточек для наполнения каталога. Ключи
+ * внутри наборов не пересекаются, поэтому идентификаторы остаются
+ * детерминированными, а уборка (`clean --set <набор>`) снимает ровно свой
+ * комплект и не трогает чужой.
+ */
+const SET_ARG = process.argv.find((a) => a.startsWith('--set='))?.slice('--set='.length);
+const SET_POSITIONAL =
+  process.argv.indexOf('--set') >= 0 ? process.argv[process.argv.indexOf('--set') + 1] : undefined;
+const FIXTURE_SET = SET_ARG ?? SET_POSITIONAL ?? 'demo';
+if (!/^[a-z0-9-]+$/.test(FIXTURE_SET)) {
+  console.error(`недопустимое имя набора «${FIXTURE_SET}»: только строчные буквы, цифры и дефис`);
+  process.exit(1);
+}
+const FIXTURES = join(ROOT, 'fixtures', FIXTURE_SET);
+if (!existsSync(FIXTURES)) {
+  console.error(`набора «${FIXTURE_SET}» нет: ожидался каталог ${FIXTURES}`);
+  process.exit(1);
+}
 
 loadDotEnv();
 
@@ -72,7 +94,9 @@ const NAMESPACE = 'unicorn-launch/demo/v1';
 
 /** UUIDv5 из пространства имён и имени сущности. Детерминированный и стабильный. */
 function demoId(...parts) {
-  const hash = createHash('sha1').update(`${NAMESPACE}|${parts.join('|')}`).digest();
+  const hash = createHash('sha1')
+    .update(`${NAMESPACE}|${parts.join('|')}`)
+    .digest();
   const bytes = Buffer.from(hash.subarray(0, 16));
   bytes[6] = (bytes[6] & 0x0f) | 0x50; // версия 5
   bytes[8] = (bytes[8] & 0x3f) | 0x80; // вариант RFC 4122
@@ -196,14 +220,30 @@ async function clean() {
          (SELECT id FROM experts.expert_assignments WHERE project_id = ANY($1::uuid[]))`,
       [pids],
     ],
-    ['решения консенсуса', `DELETE FROM experts.review_consensus WHERE project_id = ANY($1::uuid[])`, [pids]],
-    ['назначения', `DELETE FROM experts.expert_assignments WHERE project_id = ANY($1::uuid[])`, [pids]],
+    [
+      'решения консенсуса',
+      `DELETE FROM experts.review_consensus WHERE project_id = ANY($1::uuid[])`,
+      [pids],
+    ],
+    [
+      'назначения',
+      `DELETE FROM experts.expert_assignments WHERE project_id = ANY($1::uuid[])`,
+      [pids],
+    ],
     ['профили экспертов', `DELETE FROM experts.experts WHERE user_id = ANY($1::uuid[])`, [uids]],
     ['уведомления', `DELETE FROM comms.notifications WHERE user_id = ANY($1::uuid[])`, [uids]],
-    ['настройки уведомлений', `DELETE FROM comms.notification_preferences WHERE user_id = ANY($1::uuid[])`, [uids]],
+    [
+      'настройки уведомлений',
+      `DELETE FROM comms.notification_preferences WHERE user_id = ANY($1::uuid[])`,
+      [uids],
+    ],
     ['подписки', `DELETE FROM billing.subscriptions WHERE user_id = ANY($1::uuid[])`, [uids]],
     ['материалы', `DELETE FROM lab.project_materials WHERE project_id = ANY($1::uuid[])`, [pids]],
-    ['ссылка на текущую версию', `UPDATE lab.projects SET current_version_id = NULL WHERE id = ANY($1::uuid[])`, [pids]],
+    [
+      'ссылка на текущую версию',
+      `UPDATE lab.projects SET current_version_id = NULL WHERE id = ANY($1::uuid[])`,
+      [pids],
+    ],
   ];
 
   for (const [label, statement, params] of steps) {
@@ -225,10 +265,20 @@ async function clean() {
   // первой строкой файла) — в бою этот путь недостижим, и append-only там
   // остаётся безусловным.
   const APPEND_ONLY = [
-    ['lab.project_versions', 'project_versions_immutable', 'версии заявок',
-     `DELETE FROM lab.project_versions WHERE project_id = ANY($1::uuid[])`, pids],
-    ['identity.consents', 'consents_immutable', 'согласия',
-     `DELETE FROM identity.consents WHERE user_id = ANY($1::uuid[])`, uids],
+    [
+      'lab.project_versions',
+      'project_versions_immutable',
+      'версии заявок',
+      `DELETE FROM lab.project_versions WHERE project_id = ANY($1::uuid[])`,
+      pids,
+    ],
+    [
+      'identity.consents',
+      'consents_immutable',
+      'согласия',
+      `DELETE FROM identity.consents WHERE user_id = ANY($1::uuid[])`,
+      uids,
+    ],
   ];
   for (const [table, trigger, label, statement, params] of APPEND_ONLY) {
     await pool.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
@@ -241,7 +291,11 @@ async function clean() {
   }
 
   const rest = [
-    ['участники проектов', `DELETE FROM lab.founders_projects WHERE project_id = ANY($1::uuid[])`, [pids]],
+    [
+      'участники проектов',
+      `DELETE FROM lab.founders_projects WHERE project_id = ANY($1::uuid[])`,
+      [pids],
+    ],
     ['проекты', `DELETE FROM lab.projects WHERE id = ANY($1::uuid[])`, [pids]],
     ['роли', `DELETE FROM identity.user_roles WHERE user_id = ANY($1::uuid[])`, [uids]],
     ['учётные записи', `DELETE FROM identity.users WHERE id = ANY($1::uuid[])`, [uids]],
@@ -330,6 +384,76 @@ async function upsertPerson(person) {
     );
   }
   return { ...person, id, email };
+}
+
+/**
+ * Общая раскладка ролей для наборов без именного сценария.
+ *
+ * Что делает и почему именно так:
+ *
+ * — Инвесторам выдаётся активная подписка, кроме последнего по ключу: один
+ *   инвестор намеренно остаётся без неё. Каталог обязан по-разному выглядеть
+ *   для подписчика и для гостя, и проверить это можно только имея обоих.
+ *
+ * — Эксперты назначаются на проекты, которые дошли до экспертизы
+ *   (`status = 'expert_review'`), по кругу и по два эксперта на проект: одна
+ *   рецензия — это мнение, а решение принимается на нескольких.
+ *
+ * Рецензии и консенсус здесь НЕ создаются: их содержание — часть именного
+ * сценария, а выдуманная оценка чужого проекта в общей раскладке была бы
+ * записью, за которой никто не стоит.
+ */
+async function seedGenericRoles(byKey) {
+  const investors = people.filter((p) => (p.roles ?? []).includes('investor'));
+  const experts = people.filter((p) => (p.roles ?? []).includes('expert'));
+  const organizer = people.find((p) => (p.roles ?? []).includes('organizer'));
+
+  const withSubscription = investors.slice(0, Math.max(investors.length - 1, 0));
+  for (const person of withSubscription) {
+    await sql(
+      `INSERT INTO billing.subscriptions
+         (id, user_id, plan_id, project_id, price_snapshot, currency_snapshot, terms_version,
+          status, current_period_end)
+       SELECT $1, $2, pl.id, NULL, pl.price, 'RUB', 'v1', 'active', now() + interval '60 days'
+         FROM billing.subscription_plans pl
+        WHERE pl.code = 'investor_membership' AND pl.valid_to IS NULL
+        ORDER BY pl.version DESC LIMIT 1
+       ON CONFLICT (id) DO NOTHING`,
+      [demoId('subscription', person.key), byKey.get(person.key).id],
+    );
+  }
+  if (investors.length > 0) {
+    console.warn(
+      `  инвесторов: ${investors.length} (с подпиской ${withSubscription.length}, без — ${investors.length - withSubscription.length})`,
+    );
+  }
+
+  if (experts.length > 0 && organizer) {
+    const underReview = projects.filter((p) => p.status === 'expert_review');
+    let assigned = 0;
+    for (const [index, project] of underReview.entries()) {
+      // Два разных эксперта на проект: сдвиг на единицу гарантирует, что второй
+      // не совпадёт с первым, пока экспертов больше одного.
+      const pair = [experts[index % experts.length], experts[(index + 1) % experts.length]];
+      for (const expert of new Set(pair)) {
+        await sql(
+          `INSERT INTO experts.expert_assignments
+             (id, project_id, expert_id, season_id, assigned_reason, status, due_at, assigned_by)
+           VALUES ($1, $2, $3, $4, 'manual', 'assigned', now() + interval '14 days', $5)
+           ON CONFLICT (id) DO NOTHING`,
+          [
+            demoId('assignment', project.key, expert.key),
+            projectId(project.key),
+            byKey.get(expert.key).id,
+            SEASON_ID,
+            byKey.get(organizer.key).id,
+          ],
+        );
+        assigned += 1;
+      }
+    }
+    console.warn(`  экспертов: ${experts.length}, назначений: ${assigned}`);
+  }
 }
 
 async function load() {
@@ -484,8 +608,25 @@ async function load() {
       await sql(
         `INSERT INTO billing.subscriptions
            (id, user_id, plan_id, project_id, price_snapshot, currency_snapshot, terms_version,
+            custom_price, custom_price_set_by, custom_price_approved_by,
             status, current_period_end)
-         SELECT $1, $2, p.required_plan_id, p.id, pl.price, 'RUB', 'v1',
+         SELECT $1, $2, p.required_plan_id, p.id,
+                -- У тарифа «Стратегический» цены в справочнике нет: она
+                -- индивидуальная и утверждается по правилу четырёх глаз.
+                -- Подписка обязана хранить цену, под которой оформлена, и для
+                -- такого тарифа снимок обязан совпадать с утверждённой
+                -- custom_price. Для тестового комплекта фиксируем условную
+                -- сумму и берём двух разных служебных пользователей —
+                -- назначившего и утвердившего.
+                COALESCE(pl.price, 499990.00), 'RUB', 'v1',
+                CASE WHEN pl.individual_pricing THEN 499990.00 END,
+                CASE WHEN pl.individual_pricing THEN
+                  (SELECT user_id FROM identity.user_roles
+                    WHERE role = 'admin' AND revoked_at IS NULL ORDER BY granted_at LIMIT 1) END,
+                CASE WHEN pl.individual_pricing THEN
+                  (SELECT user_id FROM identity.user_roles
+                    WHERE role IN ('organizer', 'showrunner') AND revoked_at IS NULL
+                    ORDER BY granted_at LIMIT 1) END,
                 'active', now() + interval '60 days'
            FROM lab.projects p
            JOIN billing.subscription_plans pl ON pl.id = p.required_plan_id
@@ -507,8 +648,26 @@ async function load() {
   }
   console.warn(`  проектов: ${projects.length}`);
 
-  // --- подписка инвестора: она открывает полные карточки каталога
+  /**
+   * Сквозные сценарии поверх проектов собираются только там, где для них есть
+   * персонажи.
+   *
+   * Набор `demo` держит пятёрку проектов с инвестором, экспертами и
+   * организатором — на них проходят именные сценарии рецензий, консенсуса и
+   * избранного, и они собираются ниже по ключам персонажей.
+   *
+   * Набор `catalog` именных сценариев не имеет: там сотня карточек, их
+   * основатели, инвесторы и эксперты без заранее расписанных ролей в сюжете.
+   * Для таких наборов работает общая раскладка (`seedGenericRoles`): подписки
+   * инвесторам и назначения экспертам на проекты, которые дошли до экспертизы.
+   * Раньше загрузчик шёл в именную часть при любом наборе и падал на первом
+   * отсутствующем персонаже — данные заливались наполовину.
+   */
   const investor = byKey.get('investor-active');
+  if (!investor) {
+    await seedGenericRoles(byKey);
+    return;
+  }
   await sql(
     `INSERT INTO billing.subscriptions
        (id, user_id, plan_id, project_id, price_snapshot, currency_snapshot, terms_version,
@@ -551,14 +710,16 @@ async function load() {
       project: 'aeroseed',
       expert: 'expert-fintech',
       recommendation: 'pass',
-      comment: 'Повторные заказы у 7 клиентов из 9 — спрос подтверждён деньгами, а не письмами о намерениях.',
+      comment:
+        'Повторные заказы у 7 клиентов из 9 — спрос подтверждён деньгами, а не письмами о намерениях.',
       scores: RUBRIC,
     },
     {
       project: 'aeroseed',
       expert: 'expert-industry',
       recommendation: 'pass',
-      comment: 'Сертификация полётов вне зоны видимости — главный риск сроков; в остальном производство готово.',
+      comment:
+        'Сертификация полётов вне зоны видимости — главный риск сроков; в остальном производство готово.',
       scores: { ...RUBRIC, legal: 5 },
     },
   ];
@@ -633,7 +794,13 @@ async function load() {
     await sql(
       `INSERT INTO comms.support_tickets (id, user_id, kind, subject, context_jsonb)
        VALUES ($1, $2, $3, $4, $5::jsonb) ON CONFLICT (id) DO NOTHING`,
-      [demoId('ticket', ticket.key), trial.id, ticket.kind, ticket.subject, JSON.stringify(ticket.context)],
+      [
+        demoId('ticket', ticket.key),
+        trial.id,
+        ticket.kind,
+        ticket.subject,
+        JSON.stringify(ticket.context),
+      ],
     );
     await sql(
       `INSERT INTO comms.support_messages (id, ticket_id, author_id, author_kind, body)
@@ -659,7 +826,9 @@ async function load() {
   console.warn('  сценарии: экспертиза, избранное, поддержка');
   console.warn('\nГотово. Учётные записи:\n');
   for (const person of people) {
-    console.warn(`  ${person.login.padEnd(22)} ${person.roles.join(', ').padEnd(10)} ${person.displayName}`);
+    console.warn(
+      `  ${person.login.padEnd(22)} ${person.roles.join(', ').padEnd(10)} ${person.displayName}`,
+    );
   }
   console.warn('\n  Пароль — из DEMO_USER_PASSWORD (или DEV_TEST_USER_PASSWORD) в .env.\n');
 }

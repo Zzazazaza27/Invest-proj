@@ -285,8 +285,7 @@ function PassportCard({ projectId }: { projectId: string }) {
               {passport.scores.map((score) => (
                 <li key={score.axis}>
                   <strong>{SCORE_AXIS_TITLES[score.axis] ?? score.axis}</strong>: {score.value}{' '}
-                  (интервал {score.confidenceLow}–
-                  {score.confidenceHigh}) — {score.explanation}
+                  (интервал {score.confidenceLow}–{score.confidenceHigh}) — {score.explanation}
                 </li>
               ))}
             </ul>

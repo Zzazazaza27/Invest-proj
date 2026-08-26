@@ -277,6 +277,10 @@ export default function App() {
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault();
     setError(null);
+    // Сообщение о прошлом успехе гасим тоже: «Пароль изменён» рядом с
+    // «Неверная почта или пароль» читается как противоречие, и человек не
+    // понимает, к какой из его попыток относится каждая строка.
+    setNotice(null);
     setBusy(true);
     try {
       // Версии документов НЕ зашиты в приложении: сервер отвергает акцепт с
@@ -477,8 +481,8 @@ export default function App() {
                 <div>
                   <h1 className="auth-title">Новый пароль</h1>
                   <p className="auth-subtitle">
-                    Ссылка срабатывает один раз. После смены пароля все открытые сессии
-                    закрываются — на других устройствах придётся войти заново.
+                    Ссылка срабатывает один раз. После смены пароля все открытые сессии закрываются
+                    — на других устройствах придётся войти заново.
                   </p>
                 </div>
 
@@ -508,7 +512,12 @@ export default function App() {
                   </p>
                 ) : null}
 
-                <Button type="submit" variant="brand" loading={busy} disabled={busy || password.length < 12}>
+                <Button
+                  type="submit"
+                  variant="brand"
+                  loading={busy}
+                  disabled={busy || password.length < 12}
+                >
                   Сменить пароль
                 </Button>
 
@@ -545,8 +554,8 @@ export default function App() {
                 <div>
                   <h1 className="auth-title">Восстановление доступа</h1>
                   <p className="auth-subtitle">
-                    Укажите адрес почты. Если он зарегистрирован, придёт письмо со ссылкой на
-                    смену пароля.
+                    Укажите адрес почты. Если он зарегистрирован, придёт письмо со ссылкой на смену
+                    пароля.
                   </p>
                 </div>
 
@@ -565,7 +574,12 @@ export default function App() {
                   </p>
                 ) : null}
 
-                <Button type="submit" variant="brand" loading={busy} disabled={busy || email.trim().length === 0}>
+                <Button
+                  type="submit"
+                  variant="brand"
+                  loading={busy}
+                  disabled={busy || email.trim().length === 0}
+                >
                   Прислать ссылку
                 </Button>
 
