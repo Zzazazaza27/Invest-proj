@@ -35,3 +35,20 @@ export function formatMoney(
   if (value === '—' || !currency) return value;
   return `${value}${NBSP}${currency}`;
 }
+
+/**
+ * Оценка по стобалльной шкале в понятном виде: `25.18` → `3/10`.
+ *
+ * Сервер считает оценки от 0 до 100 с сотыми — это внутренняя точность модели,
+ * и показывать её человеку значит обещать различие, которого нет: «25.18»
+ * читается как измерение, хотя это результат эвристики с широким интервалом
+ * уверенности. Десятибалльная шкала честнее: она сразу говорит, что оценка
+ * грубая, и её не с чем спутать.
+ */
+export function formatScore10(value: number | string | null | undefined): string {
+  if (value === null || value === undefined) return '—';
+  const numeric = typeof value === 'number' ? value : Number(value);
+  if (!Number.isFinite(numeric)) return '—';
+  const clamped = Math.min(100, Math.max(0, numeric));
+  return `${Math.round(clamped / 10)}/10`;
+}

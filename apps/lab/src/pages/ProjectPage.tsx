@@ -1,5 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card, ErrorState, LoadingState, Stack, formatMoney } from '@unicorn/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorState,
+  LoadingState,
+  Stack,
+  formatMoney,
+  formatScore10,
+} from '@unicorn/ui';
 import type { InvestmentPassport, ProjectFull, ReadinessEntry } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
@@ -145,7 +154,9 @@ export function ProjectPage({ projectId, onBack }: { projectId: string; onBack: 
             <Row label="Запрос инвестиций">
               {formatMoney(project.investmentAsk, project.askCurrency)}
             </Row>
-            <Row label="IRS">{project.irs === null ? 'ещё не рассчитан' : project.irs}</Row>
+            <Row label="Оценка платформы">
+              {project.irs === null ? 'ещё не рассчитана' : formatScore10(project.irs)}
+            </Row>
             <Row label="Версия заявки">
               {project.currentVersionId === null ? 'не подана' : 'снимок зафиксирован'}
             </Row>
@@ -279,13 +290,20 @@ function PassportCard({ projectId }: { projectId: string }) {
             <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
               <Badge tone="accent">версия {passport.version}</Badge>
               <Badge>{passport.disclosureTier}</Badge>
-              {passport.irs ? <Badge tone="success">IRS {passport.irs.value}</Badge> : null}
+              {passport.irs ? (
+                <Badge tone="success">оценка {formatScore10(passport.irs.value)}</Badge>
+              ) : null}
             </div>
             <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
               {passport.scores.map((score) => (
                 <li key={score.axis}>
-                  <strong>{SCORE_AXIS_TITLES[score.axis] ?? score.axis}</strong>: {score.value}{' '}
-                  (интервал {score.confidenceLow}–{score.confidenceHigh}) — {score.explanation}
+                  <strong>{SCORE_AXIS_TITLES[score.axis] ?? score.axis}</strong>:{' '}
+                  {formatScore10(score.value)}{' '}
+                  <span style={{ color: 'var(--u-text-muted)' }}>
+                    (интервал {formatScore10(score.confidenceLow)}–
+                    {formatScore10(score.confidenceHigh)})
+                  </span>{' '}
+                  — {score.explanation}
                 </li>
               ))}
             </ul>

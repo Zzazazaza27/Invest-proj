@@ -48,6 +48,6 @@ export {
   TrustStrip,
 } from './nova';
 
-export { formatAmount, formatMoney } from './format';
+export { formatAmount, formatMoney, formatScore10 } from './format';
 
 export { PromptDialog } from './prompt-dialog';

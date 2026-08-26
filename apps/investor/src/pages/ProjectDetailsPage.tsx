@@ -8,6 +8,7 @@ import {
   LoadingState,
   Stack,
   formatMoney,
+  formatScore10,
 } from '@unicorn/ui';
 import type { InvestmentPassport, ProjectFull, ProjectMaterial } from '@unicorn/contracts';
 import { ApiError, api, apiBaseUrl } from '../api';
@@ -165,7 +166,9 @@ export function ProjectDetailsPage({
           <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
             <Badge tone="accent">{STAGE_TITLES[project.stage] ?? project.stage}</Badge>
             {project.geoCountry ? <Badge>{project.geoCountry}</Badge> : null}
-            {passport?.irs ? <Badge tone="success">IRS {passport.irs.value}</Badge> : null}
+            {passport?.irs ? (
+              <Badge tone="success">оценка {formatScore10(passport.irs.value)}</Badge>
+            ) : null}
           </div>
           <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>{project.title}</h1>
           {project.tagline ? (
@@ -199,13 +202,17 @@ export function ProjectDetailsPage({
             <>
               <span style={{ color: 'var(--u-text-muted)' }}>
                 Паспорт версии {passport.version}
-                {passport.irs ? `, интегральная оценка ${passport.irs.value}` : ''}
+                {passport.irs ? `, интегральная оценка ${formatScore10(passport.irs.value)}` : ''}
               </span>
               <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)', lineHeight: 1.6 }}>
                 {passport.scores.map((score) => (
                   <li key={score.axis}>
-                    <strong>{SCORE_AXIS_TITLES[score.axis] ?? score.axis}</strong>: {score.value}{' '}
-                    (интервал {score.confidenceLow}–{score.confidenceHigh})
+                    <strong>{SCORE_AXIS_TITLES[score.axis] ?? score.axis}</strong>:{' '}
+                    {formatScore10(score.value)}{' '}
+                    <span style={{ color: 'var(--u-text-muted)' }}>
+                      (интервал {formatScore10(score.confidenceLow)}–
+                      {formatScore10(score.confidenceHigh)})
+                    </span>
                   </li>
                 ))}
               </ul>

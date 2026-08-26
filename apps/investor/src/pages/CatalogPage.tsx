@@ -9,6 +9,7 @@ import {
   LoadingState,
   Stack,
   formatMoney,
+  formatScore10,
 } from '@unicorn/ui';
 import type { ProjectTeaser } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
@@ -376,7 +377,7 @@ function PreviewPopover({ preview }: { preview: Preview }) {
           <strong>
             {preview.irs === null
               ? 'Оценка платформы ещё не рассчитана'
-              : `Оценка платформы: ${preview.irs}`}
+              : `Оценка платформы: ${formatScore10(preview.irs)}`}
           </strong>
         </>
       ) : null}
