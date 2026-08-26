@@ -272,7 +272,15 @@ export function ProjectDetailsPage({
                 */
                 <iframe
                   title={`Материал: ${MATERIAL_TYPE_TITLES[material.type] ?? material.type}`}
-                  src={`${apiBaseUrl}/projects/${projectId}/materials/${material.id}/content`}
+                  /*
+                    `#toolbar=0` убирает панель встроенного просмотрщика — в
+                    ней Chrome рисует свои кнопки «скачать» и «печать», и они
+                    прямо противоречат обещанию «смотреть здесь». Это не
+                    защита от копирования: тот, кто видит документ, уже им
+                    располагает — но интерфейс не должен предлагать действие,
+                    которого не обещал.
+                  */
+                  src={`${apiBaseUrl}/projects/${projectId}/materials/${material.id}/content#toolbar=0&navpanes=0`}
                   style={{
                     width: '100%',
                     height: '70vh',
