@@ -47,6 +47,14 @@ if (process.env.NODE_ENV === 'production') {
 const args = process.argv.slice(2);
 const APPLY = args.includes('--yes');
 const LOGIN = valueOf('--login') ?? 'ssurgut';
+/**
+ * Куда передать строки, где ссылка на пользователя объявлена NOT NULL и
+ * удаление означало бы потерю рабочего объекта. Такая строка сейчас одна:
+ * `scoring.ai_provider_credentials.set_by` — это ключ живого LLM-провайдера,
+ * и снести его вместе с учёткой значит выключить скоринг. Правда о том, кто
+ * ключ поставил, остаётся в журнале аудита: он не переписывается.
+ */
+const REASSIGN_TO = valueOf('--reassign-to');
 const EMAIL = LOGIN.includes('@') ? LOGIN : `${LOGIN}@unicorn.local`;
 
 /** Журнал аудита: append-only и связан hash-chain, удалению не подлежит. */
@@ -141,13 +149,83 @@ for (const fk of fks.rows) {
 }
 if (withRows.length === 0) console.log('  ссылок нет');
 
+// Подробности по тому, что нельзя удалить механически.
+const projects = await pool.query(
+  `SELECT p.id, p.title, p.status, p.created_at,
+          (SELECT count(*)::int FROM lab.founders_projects f2 WHERE f2.project_id = p.id) AS founders
+     FROM lab.projects p
+     JOIN lab.founders_projects f ON f.project_id = p.id
+    WHERE f.user_id = $1`,
+  [user.id],
+);
+if (projects.rowCount > 0) {
+  console.log('');
+  console.log('=== Проекты, где учётка — основатель ===');
+  for (const p of projects.rows) {
+    console.log(
+      `  ${p.id}  ${p.status.padEnd(12)}  основателей: ${p.founders}  ${p.title ?? '(без названия)'}`,
+    );
+  }
+}
+
+const creds = await pool.query(
+  `SELECT id, provider, key_fingerprint, is_active, set_at
+     FROM scoring.ai_provider_credentials WHERE set_by = $1`,
+  [user.id],
+);
+if (creds.rowCount > 0) {
+  console.log('');
+  console.log('=== Ключи провайдеров, поставленные этой учёткой ===');
+  for (const c of creds.rows) {
+    console.log(
+      `  ${c.provider.padEnd(12)}  отпечаток ${c.key_fingerprint}  ` +
+        `${c.is_active ? 'ДЕЙСТВУЮЩИЙ' : 'отозван'}  ${c.set_at.toISOString()}`,
+    );
+  }
+  console.log('  Удаление учётки снесёт их вместе с ней — используй --reassign-to <логин>.');
+}
+
 const blocked = withRows.filter((r) => PROTECTED_SCHEMAS.has(r.schema_name));
 const removable = withRows.filter((r) => !PROTECTED_SCHEMAS.has(r.schema_name));
+
+// Ссылки, объявленные NOT NULL: их нельзя ни удалить по отдельности, ни
+// обнулить — только передать другой учётке.
+const MUST_REASSIGN = new Set(['scoring.ai_provider_credentials.set_by']);
+const needReassign = removable.filter((r) => MUST_REASSIGN.has(`${r.table_name}.${r.column_name}`));
+
+let heirId = null;
+if (REASSIGN_TO) {
+  const heirEmail = REASSIGN_TO.includes('@') ? REASSIGN_TO : `${REASSIGN_TO}@unicorn.local`;
+  const heir = await pool.query(
+    `SELECT u.id FROM identity.users u
+       JOIN identity.user_roles r ON r.user_id = u.id AND r.role = 'admin'
+      WHERE u.email_hmac = $1 AND u.deleted_at IS NULL`,
+    [blindIndex(heirEmail)],
+  );
+  if (heir.rowCount === 0) {
+    console.error(`Наследник ${heirEmail} не найден или не администратор.`);
+    await pool.end();
+    process.exit(1);
+  }
+  heirId = heir.rows[0].id;
+  console.log('');
+  console.log(`Наследник обязательных ссылок: ${heirEmail} (${heirId})`);
+}
 
 if (!APPLY) {
   console.log('\nЭто показ без изменений. Для удаления добавь --yes.');
   await pool.end();
   process.exit(0);
+}
+
+if (needReassign.length > 0 && !heirId) {
+  const what = needReassign.map((r) => `${r.table_name}.${r.column_name} (${r.n})`).join(', ');
+  console.error(`
+Есть обязательные ссылки: ${what}.`);
+  console.error('Удаление остановлено: укажи --reassign-to <логин администратора>,');
+  console.error('иначе вместе с учёткой уедет рабочий объект (например, ключ провайдера).');
+  await pool.end();
+  process.exit(1);
 }
 
 if (blocked.length > 0) {
@@ -170,6 +248,14 @@ try {
   // транзакции — чтобы отказ на любом шаге не оставил учётку разобранной
   // наполовину.
   for (const r of removable) {
+    if (MUST_REASSIGN.has(`${r.table_name}.${r.column_name}`)) {
+      const res = await client.query(
+        `UPDATE ${r.table_name} SET ${quoteIdent(r.column_name)} = $2 WHERE ${quoteIdent(r.column_name)} = $1`,
+        [user.id, heirId],
+      );
+      console.log(`  передано ${String(res.rowCount).padStart(5)}  ${r.table_name}.${r.column_name}`);
+      continue;
+    }
     const res = await client.query(
       `DELETE FROM ${r.table_name} WHERE ${quoteIdent(r.column_name)} = $1`,
       [user.id],
