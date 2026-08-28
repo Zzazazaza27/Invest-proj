@@ -170,7 +170,7 @@ if (projects.rowCount > 0) {
 }
 
 const creds = await pool.query(
-  `SELECT id, provider, key_fingerprint, is_active, set_at
+  `SELECT provider, model_name, key_fingerprint, is_active, set_at
      FROM scoring.ai_provider_credentials WHERE set_by = $1`,
   [user.id],
 );
@@ -179,8 +179,8 @@ if (creds.rowCount > 0) {
   console.log('=== Ключи провайдеров, поставленные этой учёткой ===');
   for (const c of creds.rows) {
     console.log(
-      `  ${c.provider.padEnd(12)}  отпечаток ${c.key_fingerprint}  ` +
-        `${c.is_active ? 'ДЕЙСТВУЮЩИЙ' : 'отозван'}  ${c.set_at.toISOString()}`,
+      `  ${c.provider.padEnd(12)}  ${(c.model_name ?? '—').padEnd(24)}  ` +
+        `отпечаток ${c.key_fingerprint}  ${c.is_active ? 'ДЕЙСТВУЮЩИЙ' : 'отозван'}`,
     );
   }
   console.log('  Удаление учётки снесёт их вместе с ней — используй --reassign-to <логин>.');
