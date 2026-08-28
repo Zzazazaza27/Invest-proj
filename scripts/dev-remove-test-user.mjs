@@ -104,82 +104,6 @@ function quoteIdent(name) {
 }
 
 
-/**
- * Каскадное удаление вглубь по внешним ключам.
- *
- * Своими руками, потому что в схеме нет ни одного ON DELETE CASCADE — это
- * осознанно: боевые данные не должны исчезать по цепочке от одного DELETE.
- * Для тестовой учётки цепочку приходится пройти явно. Глубина реальная:
- * проект → паспорт → факты паспорта.
- *
- * Составной первичный ключ у дочерней таблицы — остановка с сообщением:
- * гадать, чем адресовать строку, хуже, чем позвать человека.
- */
-async function cascadeDelete(client, table, pkColumn, ids, log, depth = 0) {
-  if (ids.length === 0) return 0;
-  if (depth > 6) throw new Error(`Слишком глубокая цепочка зависимостей на ${table}`);
-
-  const children = await client.query(
-    `SELECT c.conrelid::regclass::text AS child_table,
-            a.attname                  AS child_column
-       FROM pg_constraint c
-       JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
-       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
-      WHERE c.contype = 'f' AND c.confrelid = $1::regclass`,
-    [table],
-  );
-
-  let removed = 0;
-  for (const child of children.rows) {
-    if (PROTECTED_TABLES.has(child.child_table)) continue;
-    const childPk = await primaryKeyColumn(client, child.child_table);
-    if (childPk) {
-      const grandIds = await client.query(
-        `SELECT ${quoteIdent(childPk)} AS id FROM ${child.child_table}
-          WHERE ${quoteIdent(child.child_column)} = ANY($1::uuid[])`,
-        [ids],
-      );
-      removed += await cascadeDelete(
-        client,
-        child.child_table,
-        childPk,
-        grandIds.rows.map((r) => r.id),
-        log,
-        depth + 1,
-      );
-    }
-    const res = await client.query(
-      `DELETE FROM ${child.child_table} WHERE ${quoteIdent(child.child_column)} = ANY($1::uuid[])`,
-      [ids],
-    );
-    if (res.rowCount > 0) {
-      removed += res.rowCount;
-      log(res.rowCount, `${child.child_table} (через ${table})`);
-    }
-  }
-
-  const own = await client.query(
-    `DELETE FROM ${table} WHERE ${quoteIdent(pkColumn)} = ANY($1::uuid[])`,
-    [ids],
-  );
-  removed += own.rowCount;
-  log(own.rowCount, table);
-  return removed;
-}
-
-/** Однополевой первичный ключ таблицы; null, если ключ составной или его нет. */
-async function primaryKeyColumn(client, table) {
-  const { rows } = await client.query(
-    `SELECT a.attname, array_length(c.conkey, 1) AS n
-       FROM pg_constraint c
-       JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = c.conkey[1]
-      WHERE c.contype = 'p' AND c.conrelid = $1::regclass`,
-    [table],
-  );
-  if (rows.length === 0 || rows[0].n !== 1) return null;
-  return rows[0].attname;
-}
-
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER, max: 2 });
 
 const found = await pool.query(
@@ -276,6 +200,9 @@ const removable = withRows.filter((r) => !PROTECTED_TABLES.has(r.table_name));
 // обнулить — только передать другой учётке.
 const MUST_REASSIGN = new Set(['scoring.ai_provider_credentials.set_by']);
 const needReassign = removable.filter((r) => MUST_REASSIGN.has(`${r.table_name}.${r.column_name}`));
+// Проект без второго основателя тоже требует наследника — иначе он повиснет
+// в каталоге без владельца.
+const soleFounderProjects = projects.rows.filter((p) => p.founders === 1).length;
 
 let heirId = null;
 if (REASSIGN_TO) {
@@ -302,7 +229,7 @@ if (!APPLY) {
   process.exit(0);
 }
 
-if (needReassign.length > 0 && !heirId) {
+if ((needReassign.length > 0 || soleFounderProjects > 0) && !heirId) {
   const what = needReassign.map((r) => `${r.table_name}.${r.column_name} (${r.n})`).join(', ');
   console.error(`
 Есть обязательные ссылки: ${what}.`);
@@ -342,14 +269,19 @@ try {
     removedRows += checkpoints.rowCount;
   }
 
-  // Проекты, где учётка — единственный основатель. Удалить одну лишь связь
-  // `founders_projects` значило бы оставить в каталоге проект без владельца:
-  // им уже нельзя управлять, а в выдаче он остаётся.
+  // Проекты, где учётка — единственный основатель, ПЕРЕДАЮТСЯ наследнику.
+  // Удалить их целиком не выйдет и не нужно: на проекте висит рейтинг
+  // (`scoring.irs_scores`), а он защищён триггером append-only — «rating is
+  // not for sale». Защита правильная, обходить её ради уборки нельзя. Просто
+  // порвать связь тоже нельзя: проект остался бы в каталоге без владельца.
   const orphans = projects.rows.filter((p) => p.founders === 1).map((p) => p.id);
   if (orphans.length > 0) {
-    removedRows += await cascadeDelete(client, 'lab.projects', 'id', orphans, (n, what) =>
-      console.log(`  удалено ${String(n).padStart(6)}  ${what}`),
+    const res = await client.query(
+      `UPDATE lab.founders_projects SET user_id = $2
+        WHERE user_id = $1 AND project_id = ANY($3::uuid[])`,
+      [user.id, heirId, orphans],
     );
+    console.log(`  передано ${String(res.rowCount).padStart(5)}  lab.founders_projects (проекты)`);
   }
   // Порядок: сначала всё, что ссылается, потом сама строка. Внутри одной
   // транзакции — чтобы отказ на любом шаге не оставил учётку разобранной
