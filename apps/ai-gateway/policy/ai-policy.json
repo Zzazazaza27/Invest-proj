@@ -41,7 +41,7 @@
     "votes — число параллельных прогонов анализа; публикуется прогон с медианным IRS.",
     "Стоимость ×votes, время — как у одного прогона."
   ],
-  "version": "1.7.0",
+  "version": "1.7.1",
   "default_provider": "local_deterministic",
   "residency": {
     "restricted_classes": [
@@ -224,7 +224,7 @@
       "endpoint": "https://api.deepseek.com/chat/completions",
       "api_style": "openai_chat",
       "auth_scheme": "bearer",
-      "model": null,
+      "model": "deepseek-v4-flash",
       "data_classes": [
         "public",
         "pseudonymous",
@@ -232,7 +232,7 @@
         "commercial_secret"
       ],
       "enabled": false,
-      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модели deepseek-v4-pro / deepseek-v4-flash. Режим размышления выключен (thinking.type=disabled): в нём игнорируется temperature, а размышление входит в max_tokens; потолок 65 536 оставлен с запасом. seed фиксирован: детерминированная выборка (beta у DeepSeek) держит разброс IRS между прогонами в пределах гейта. votes=5: медианный из пяти параллельных прогонов — разброс IRS одного прогона 2,7 на 10 повторов не проходил гейт (≤ 2).",
+      "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модели deepseek-v4-pro / deepseek-v4-flash. Режим размышления выключен (thinking.type=disabled): в нём игнорируется temperature, а размышление входит в max_tokens; потолок 65 536 оставлен с запасом. seed фиксирован: детерминированная выборка (beta у DeepSeek) держит разброс IRS между прогонами в пределах гейта. votes=5: медианный из пяти параллельных прогонов — разброс IRS одного прогона 2,7 на 10 повторов не проходил гейт (≤ 2). Модель по умолчанию закреплена на deepseek-v4-flash (решение владельца 2026-08-28): pro втрое дороже при том же промпте — $0,079 против $0,026 за проект вне пика. Значение из панели перебивает это поле, поэтому смена модели остаётся осознанным действием оператора, а не следствием пустого поля.",
       "models_endpoint": "https://api.deepseek.com/models",
       "model_suggestions": [],
       "max_output_tokens": 65536,
