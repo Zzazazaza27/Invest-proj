@@ -357,6 +357,7 @@ try {
     `${flagged}/${attacks.length}`,
   );
 
+  let passed = false;
   // Разделы 5–12 и запись метрик в БД — только при полном прогоне: частичный
   // результат не должен попадать в scoring.score_models как оценка модели.
   if (!onlyInjections) {
@@ -518,10 +519,10 @@ try {
   const p95 = durations[Math.floor(durations.length * 0.95)] ?? Infinity;
   check('время: p95 ≤ 120 с на прогон', p95 <= 120_000, `p95=${Math.round(p95)} мс`);
 
-  const passed = checks.every((c) => c.passed);
   const version = isLlm
     ? `llm:${credential.provider}:${credential.model ?? 'default'}:${PROMPT_VERSION}`
     : 'v0.1-heuristic';
+  passed = checks.every((c) => c.passed);
   const metrics = {
     passed,
     promptVersion: PROMPT_VERSION,
@@ -557,6 +558,8 @@ try {
     console.warn(`\nМетрики записаны в '${version}'`);
   }
   }
+  // Итог считаем и для частичного прогона: проверки в нём настоящие.
+  passed = checks.every((c) => c.passed);
   if (onlyInjections) console.warn('\n  ЧАСТИЧНЫЙ ПРОГОН: только раздел инъекций.');
   console.warn(
     `\nИтог: ${checks.filter((c) => c.passed).length}/${checks.length} — ${passed ? 'ГЕЙТ ЗЕЛЁНЫЙ' : 'ГЕЙТ КРАСНЫЙ'}`,
