@@ -151,7 +151,7 @@ if (withRows.length === 0) console.log('  ссылок нет');
 
 // Подробности по тому, что нельзя удалить механически.
 const projects = await pool.query(
-  `SELECT p.id, p.title, p.status, p.created_at,
+  `SELECT p.id, p.title, p.stage, p.listing_status,
           (SELECT count(*)::int FROM lab.founders_projects f2 WHERE f2.project_id = p.id) AS founders
      FROM lab.projects p
      JOIN lab.founders_projects f ON f.project_id = p.id
@@ -163,7 +163,8 @@ if (projects.rowCount > 0) {
   console.log('=== Проекты, где учётка — основатель ===');
   for (const p of projects.rows) {
     console.log(
-      `  ${p.id}  ${p.status.padEnd(12)}  основателей: ${p.founders}  ${p.title ?? '(без названия)'}`,
+      `  ${p.id}  ${p.stage.padEnd(14)}  ${p.listing_status.padEnd(12)}  ` +
+        `основателей: ${p.founders}  ${p.title}`,
     );
   }
 }
