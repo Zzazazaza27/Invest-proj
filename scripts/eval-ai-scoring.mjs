@@ -463,7 +463,10 @@ try {
           if (examples.length < 6) {
             const at = s.explanation.search(new RegExp(n.split('').join('[\\s.,]?')));
             examples.push(
-              `${s.axis}: «…${s.explanation.slice(Math.max(0, at - 25), at + n.length + 25)}…»`,
+              `${s.axis}: число «${n}» в «…${s.explanation.slice(
+                Math.max(0, at - 70),
+                at + n.length + 70,
+              )}…»`,
             );
           }
         }
