@@ -32,7 +32,7 @@ from typing import Any, Final
 
 LOG = logging.getLogger("ai_gateway.llm")
 
-PROMPT_VERSION: Final[str] = "v2.5.1"
+PROMPT_VERSION: Final[str] = "v2.5.2"
 PROMPTS_DIR: Final[Path] = Path(__file__).resolve().parent.parent / "prompts"
 
 ANTHROPIC_VERSION: Final[str] = "2023-06-01"
@@ -98,11 +98,20 @@ def load_prompts() -> Prompts:
     translation = (
         PROMPTS_DIR / f"passport_translation.system.{PROMPT_VERSION}.txt"
     ).read_text("utf-8")
-    if (
-        "{{NONCE}}" not in system
-        or "{{NONCE}}" not in user
-        or "{{NONCE}}" not in translation
-    ):
+    # Системный промпт анализа обязан быть КОНСТАНТНЫМ: с v2.5.2 метка слота
+    # объявляется первой строкой пользовательского сообщения, а не подставляется
+    # в системное. Причина денежная: кэш промпта у провайдеров считается по
+    # префиксу, и уникальная строка в голове 34-тысячного текста обнуляла его на
+    # каждом из пяти голосов — вход оплачивался по полной ставке вместо
+    # cache-hit (у DeepSeek $0,22 против $0,007 за млн токенов).
+    if "{{NONCE}}" in system:
+        raise RuntimeError(
+            "системный промпт анализа содержит {{NONCE}}: это ломает кэш префикса, "
+            "метка слота объявляется в пользовательском сообщении"
+        )
+    if "{{" in system:
+        raise RuntimeError("в системном промпте анализа остались подстановки")
+    if "{{NONCE}}" not in user or "{{NONCE}}" not in translation:
         raise RuntimeError("промпт не содержит слота nonce — это не тот файл")
     return Prompts(
         system=system, user=user, version=PROMPT_VERSION, translation=translation
@@ -193,7 +202,9 @@ def build_messages(
     metadata = project.get("metadata") or {}
     materials = project.get("materials") or []
 
-    system = prompts.system.replace("{{NONCE}}", nonce)
+    # Системное сообщение уходит как есть — байт в байт одинаковое для всех
+    # проектов и всех голосов. Это и есть условие попадания в кэш префикса.
+    system = prompts.system
 
     user = prompts.user
     # Справочный контур не подключён: блок опускается целиком вместе с маркерами.

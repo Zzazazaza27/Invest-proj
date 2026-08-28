@@ -55,7 +55,12 @@ def prompts() -> llm.Prompts:
 
 def test_prompts_load_and_carry_version(prompts: llm.Prompts) -> None:
     assert prompts.version == llm.PROMPT_VERSION
-    assert "{{NONCE}}" in prompts.system
+    # С v2.5.2 системный промпт КОНСТАНТЕН: метка слота объявляется в
+    # пользовательском сообщении. Уникальная строка в голове системного текста
+    # обнуляла кэш префикса и оплачивалась по полной ставке на каждом голосе.
+    assert "{{NONCE}}" not in prompts.system
+    assert "{{" not in prompts.system
+    assert "{{NONCE}}" in prompts.user
 
 
 def test_messages_use_nonce_and_no_leftover_slots(prompts: llm.Prompts) -> None:
@@ -64,12 +69,31 @@ def test_messages_use_nonce_and_no_leftover_slots(prompts: llm.Prompts) -> None:
     )
     assert f"<<<ЗАЯВКА:{NONCE}" in user
     assert f"ЗАЯВКА:{NONCE}>>>" in user
-    assert NONCE in system
+    # Метка объявлена первой строкой пользовательского сообщения — оттуда
+    # модель её и берёт.
+    assert user.startswith("МЕТКА СЛОТА: " + NONCE + "\n")
+    assert NONCE not in system
     assert "{{" not in user and "{{" not in system
     # Справочный контур не подключён — блок опущен вместе с маркерами.
     assert "СПРАВОЧНЫЕ ДАННЫЕ" not in user
     assert "deck, product_link" in user
     assert "modelVersion: m:1" in user
+
+
+def test_system_prompt_is_byte_identical_across_projects(prompts: llm.Prompts) -> None:
+    """Условие кэша префикса: системное сообщение не зависит ни от проекта, ни от nonce.
+
+    Проверка стоит здесь, а не в обзоре кода, потому что нарушение бесшумное:
+    промпт с подстановкой работает ровно так же и просто стоит втрое дороже.
+    """
+    other = dict(PROJECT)
+    other["title"] = "Совсем другой проект"
+    other["summary"] = "Другое описание"
+    first, _ = build_messages(prompts, project=PROJECT, nonce=NONCE, model_version="m:1")
+    second, _ = build_messages(
+        prompts, project=other, nonce="f" * 32, model_version="m:2"
+    )
+    assert first == second
 
 
 def test_hostile_markers_are_stripped_before_substitution(prompts: llm.Prompts) -> None:

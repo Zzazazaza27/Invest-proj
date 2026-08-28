@@ -30,7 +30,7 @@ loadDotEnv();
 
 const GATEWAY = process.env.AI_GATEWAY_URL || `http://127.0.0.1:${PORTS.aiGateway}`;
 const TOKEN = process.env.AI_GATEWAY_TOKEN ?? '';
-const PROMPT_VERSION = 'v2.5.1';
+const PROMPT_VERSION = 'v2.5.2';
 
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => {
