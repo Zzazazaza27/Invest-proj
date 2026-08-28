@@ -64,7 +64,7 @@ const EMAIL = LOGIN.includes('@') ? LOGIN : `${LOGIN}@unicorn.local`;
  * прогонов под RLS, без цепочки и без append-only триггера; их строки уходят
  * вместе с учёткой штатным порядком.
  */
-const PROTECTED_TABLES = new Set(['audit.events']);
+const PROTECTED_TABLES = new Set(['audit.events', 'identity.consents', 'scoring.irs_scores']);
 
 function valueOf(flag) {
   const i = args.indexOf(flag);
@@ -240,15 +240,11 @@ if ((needReassign.length > 0 || soleFounderProjects > 0) && !heirId) {
 }
 
 if (blocked.length > 0) {
-  // Ожидаемо недостижимо: журнал не объявляет внешнего ключа на users. Если
-  // это изменится миграцией — лучше остановиться и посмотреть глазами, чем
-  // выдумывать обходной путь: CHECK на таблице требует непустого контакта,
-  // и «стереть всё, оставив якорь» она попросту не даст.
-  const where = blocked.map((r) => `${r.table_name}: ${r.n}`).join(', ');
-  console.error(`\nНа учётку ссылается защищённая схема (${where}).`);
-  console.error('Удаление остановлено: разбери эти ссылки руками.');
-  await pool.end();
-  process.exit(1);
+  const where = blocked.map((r) => `${r.table_name} (${r.n})`).join(', ');
+  console.log('');
+  console.log(`Неудаляемые по построению записи ссылаются на учётку: ${where}.`);
+  console.log('Строку identity.users физически удалить нельзя — она будет обезврежена:');
+  console.log('пароль снят, роли сняты, статус deleted. Вход по ней невозможен.');
 }
 
 const client = await pool.connect();
@@ -302,8 +298,23 @@ try {
     removedRows += res.rowCount;
     console.log(`  удалено ${String(res.rowCount).padStart(6)}  ${r.table_name}`);
   }
-  const res = await client.query('DELETE FROM identity.users WHERE id = $1', [user.id]);
-  console.log(`  удалено ${String(res.rowCount).padStart(6)}  identity.users`);
+  if (blocked.length === 0) {
+    const res = await client.query('DELETE FROM identity.users WHERE id = $1', [user.id]);
+    console.log(`  удалено ${String(res.rowCount).padStart(6)}  identity.users`);
+  } else {
+    // Акцепты согласий удалить нельзя, значит нельзя удалить и строку
+    // пользователя. Снимаем всё, чем можно войти, и помечаем удалённой.
+    // Контакт остаётся зашифрованным: CHECK таблицы требует непустого адреса
+    // или телефона. Ключ от него — KEK, а не эта строка.
+    const res = await client.query(
+      `UPDATE identity.users
+          SET password_hash = NULL, status = 'deleted', deleted_at = now(),
+              display_name = 'удалённая учётная запись', mfa_enabled = false
+        WHERE id = $1`,
+      [user.id],
+    );
+    console.log(`  помечено ${String(res.rowCount).padStart(5)}  identity.users (пароль снят)`);
+  }
   await client.query('COMMIT');
 } catch (err) {
   await client.query('ROLLBACK');
@@ -316,19 +327,33 @@ client.release();
 
 // Проверка результата отдельным запросом: «команда прошла» и «строки нет» —
 // разные утверждения.
-const after = await pool.query('SELECT id, status FROM identity.users WHERE id = $1', [user.id]);
+const after = await pool.query(
+  'SELECT id, status, password_hash FROM identity.users WHERE id = $1',
+  [user.id],
+);
 const byEmail = await pool.query(
   'SELECT count(*)::int AS n FROM identity.users WHERE email_hmac = $1',
   [blindIndex(EMAIL)],
 );
 console.log('\n=== Результат ===');
 console.log(`  удалено связанных строк: ${removedRows}`);
-console.log(
-  after.rowCount === 0
-    ? '  identity.users: строки нет'
-    : `  identity.users: строка ОСТАЛАСЬ (status=${after.rows[0].status}) — это ошибка`,
+if (after.rowCount === 0) {
+  console.log('  identity.users: строки нет');
+} else {
+  console.log(
+    `  identity.users: status=${after.rows[0].status}, ` +
+      `хеш пароля ${after.rows[0].password_hash === null ? 'снят' : 'НА МЕСТЕ — это ошибка'}`,
+  );
+}
+const rolesLeft = await pool.query(
+  'SELECT count(*)::int AS n FROM identity.user_roles WHERE user_id = $1',
+  [user.id],
 );
+console.log(`  ролей осталось: ${rolesLeft.rows[0].n}`);
 console.log(`  поиск по адресу ${EMAIL}: ${byEmail.rows[0].n} совпадений`);
 
 await pool.end();
-process.exit(after.rowCount === 0 ? 0 : 1);
+const neutralised =
+  after.rowCount === 0 ||
+  (after.rows[0].status === 'deleted' && after.rows[0].password_hash === null);
+process.exit(neutralised && rolesLeft.rows[0].n === 0 ? 0 : 1);
