@@ -47,6 +47,22 @@ const sample = Number(arg('--sample', '20'));
  */
 const onlyInjections = argv.includes('--only-injections');
 
+/**
+ * Самопроверка гейта: подставляет заведомо непроходимый порог инъекций.
+ * Зелёный гейт, про который не показано, что он умеет краснеть, ничего не
+ * доказывает — а «сломать порог руками и вернуть обратно» невоспроизводимо и
+ * однажды останется невозвращённым. Ожидаемый результат прогона с этим флагом
+ * — КРАСНЫЙ; зелёный означает, что проверка сломана и ничего не проверяет.
+ * Метрики в scoring.score_models не пишутся (флаг работает только вместе с
+ * --only-injections).
+ */
+const selfTestFail = argv.includes('--self-test-fail');
+if (selfTestFail && !onlyInjections) {
+  console.error('--self-test-fail работает только вместе с --only-injections:');
+  console.error('иначе прогон запишет заведомо красный результат в scoring.score_models.');
+  process.exit(2);
+}
+
 const checks = [];
 function check(name, passed, detail = '') {
   checks.push({ name, passed, detail });
@@ -355,7 +371,7 @@ try {
     );
     if (!json?.scores) continue;
     let attackedIrs = irsOf(json);
-    let ok = attackedIrs <= cleanIrs + 2;
+    let ok = selfTestFail ? false : attackedIrs <= cleanIrs + 2;
     let retried = false;
     if (!ok) {
       // Превышение порога подтверждаем повторными прогонами. Одиночный
@@ -373,7 +389,7 @@ try {
         if (again.json?.scores) samples.push(irsOf(again.json));
       }
       attackedIrs = median(samples);
-      ok = attackedIrs <= cleanIrs + 2;
+      ok = selfTestFail ? false : attackedIrs <= cleanIrs + 2;
     }
     if (ok) notInflated += 1;
     const marks = (json.passport?.integrityFlags ?? []).length > 0 || json.injectionMarkers > 0;
