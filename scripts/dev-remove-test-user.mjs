@@ -57,8 +57,14 @@ const LOGIN = valueOf('--login') ?? 'ssurgut';
 const REASSIGN_TO = valueOf('--reassign-to');
 const EMAIL = LOGIN.includes('@') ? LOGIN : `${LOGIN}@unicorn.local`;
 
-/** Журнал аудита: append-only и связан hash-chain, удалению не подлежит. */
-const PROTECTED_SCHEMAS = new Set(['audit']);
+/**
+ * Что не удаляется никогда. Только `audit.events`: она связана hash-chain, и
+ * вырезанная строка ломает проверку целостности на всей истории. Остальные
+ * таблицы схемы `audit` (`agent_runs`, `node_checkpoints`) — обычные записи
+ * прогонов под RLS, без цепочки и без append-only триггера; их строки уходят
+ * вместе с учёткой штатным порядком.
+ */
+const PROTECTED_TABLES = new Set(['audit.events']);
 
 function valueOf(flag) {
   const i = args.indexOf(flag);
@@ -143,7 +149,7 @@ for (const fk of fks.rows) {
   );
   if (rows[0].n > 0) {
     withRows.push({ ...fk, n: rows[0].n });
-    const guard = PROTECTED_SCHEMAS.has(fk.schema_name) ? '  <- ЖУРНАЛ, не трогаем' : '';
+    const guard = PROTECTED_TABLES.has(fk.table_name) ? '  <- ЖУРНАЛ, не трогаем' : '';
     console.log(`  ${String(rows[0].n).padStart(6)}  ${fk.table_name}.${fk.column_name}${guard}`);
   }
 }
@@ -186,8 +192,8 @@ if (creds.rowCount > 0) {
   console.log('  Удаление учётки снесёт их вместе с ней — используй --reassign-to <логин>.');
 }
 
-const blocked = withRows.filter((r) => PROTECTED_SCHEMAS.has(r.schema_name));
-const removable = withRows.filter((r) => !PROTECTED_SCHEMAS.has(r.schema_name));
+const blocked = withRows.filter((r) => PROTECTED_TABLES.has(r.table_name));
+const removable = withRows.filter((r) => !PROTECTED_TABLES.has(r.table_name));
 
 // Ссылки, объявленные NOT NULL: их нельзя ни удалить по отдельности, ни
 // обнулить — только передать другой учётке.
@@ -245,6 +251,45 @@ const client = await pool.connect();
 let removedRows = 0;
 try {
   await client.query('BEGIN');
+
+  // Второй уровень зависимостей. Эти строки ссылаются не на пользователя, а на
+  // объекты, которые уходят вместе с ним, — прямого внешнего ключа на users у
+  // них нет, и каталожный обход выше их не видит.
+  const checkpoints = await client.query(
+    `DELETE FROM audit.node_checkpoints
+      WHERE run_id IN (SELECT id FROM audit.agent_runs WHERE user_id = $1)`,
+    [user.id],
+  );
+  if (checkpoints.rowCount > 0) {
+    console.log(`  удалено ${String(checkpoints.rowCount).padStart(6)}  audit.node_checkpoints`);
+    removedRows += checkpoints.rowCount;
+  }
+
+  // Проекты, где учётка — единственный основатель. Удалить одну лишь связь
+  // `founders_projects` значило бы оставить в каталоге проект без владельца:
+  // им уже нельзя управлять, а в выдаче он остаётся.
+  const orphans = projects.rows.filter((p) => p.founders === 1).map((p) => p.id);
+  if (orphans.length > 0) {
+    const projectFks = await client.query(`
+      SELECT c.conrelid::regclass::text AS table_name, a.attname AS column_name
+        FROM pg_constraint c
+        JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+        JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+       WHERE c.contype = 'f' AND c.confrelid = 'lab.projects'::regclass`);
+    for (const fk of projectFks.rows) {
+      const res = await client.query(
+        `DELETE FROM ${fk.table_name} WHERE ${quoteIdent(fk.column_name)} = ANY($1::uuid[])`,
+        [orphans],
+      );
+      if (res.rowCount > 0) {
+        removedRows += res.rowCount;
+        console.log(`  удалено ${String(res.rowCount).padStart(6)}  ${fk.table_name} (проект)`);
+      }
+    }
+    const res = await client.query('DELETE FROM lab.projects WHERE id = ANY($1::uuid[])', [orphans]);
+    removedRows += res.rowCount;
+    console.log(`  удалено ${String(res.rowCount).padStart(6)}  lab.projects`);
+  }
   // Порядок: сначала всё, что ссылается, потом сама строка. Внутри одной
   // транзакции — чтобы отказ на любом шаге не оставил учётку разобранной
   // наполовину.
