@@ -99,6 +99,27 @@ describe('Конфигурация: fail-closed в production', () => {
     );
   });
 
+  it('раздутый суточный предел анализа не запускается в production', () => {
+    expect(() =>
+      loadEnv({
+        ...BASE_ENV,
+        NODE_ENV: 'production',
+        AUTH_MODE: 'oidc',
+        OIDC_ISSUER: 'https://id.unicorn.vc',
+        OIDC_AUDIENCE: 'core',
+        KMS_MODE: 'kms',
+        CORE_PUBLIC_URL: 'https://api.unicorn.vc',
+        CORS_ALLOWED_ORIGINS: 'https://app.unicorn.vc',
+        AI_ANALYSIS_DAILY_LIMIT: '1000',
+      }),
+    ).toThrow(/AI_ANALYSIS_DAILY_LIMIT/);
+  });
+
+  it('стендовый предел 1000 вне production принимается: пересчёт каталога не ломается', () => {
+    const env = loadEnv({ ...BASE_ENV, AI_ANALYSIS_DAILY_LIMIT: '1000' });
+    expect(env.AI_ANALYSIS_DAILY_LIMIT).toBe(1000);
+  });
+
   it('корректная dev-конфигурация загружается', () => {
     const env = loadEnv({ ...BASE_ENV, CORS_ALLOWED_ORIGINS: 'http://localhost:5173' });
     expect(env.isProduction).toBe(false);

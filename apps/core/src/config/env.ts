@@ -364,6 +364,9 @@ function isLoopbackHost(host: string): boolean {
   return parts.every((value) => value <= 255) && parts[0] === 127;
 }
 
+/** Потолок суточных запусков анализа для боевого контура (см. superRefine ниже). */
+const LLM_DAILY_LIMIT_PROD_MAX = 20;
+
 const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
   const isProd = env.NODE_ENV === 'production';
 
@@ -640,6 +643,20 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
       code: 'custom',
       path: ['AI_GATEWAY_URL'],
       message: 'в production обращение к шлюзу — только по https',
+    });
+  }
+  // Суточный предел запусков анализа. На стенде он поднимается до 1000, чтобы
+  // разово пересчитать весь каталог; в production такой лимит означает, что
+  // один пользователь может сжечь бюджет на модель за сутки. Предел боевого
+  // контура — 20 (LLM_DAILY_LIMIT_PROD_MAX); поднимать его осознанно и вместе
+  // с решением по стоимости, а не переменной окружения на горячую.
+  if (isProd && env.AI_ANALYSIS_DAILY_LIMIT > LLM_DAILY_LIMIT_PROD_MAX) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['AI_ANALYSIS_DAILY_LIMIT'],
+      message:
+        `в production предел запусков анализа не выше ${LLM_DAILY_LIMIT_PROD_MAX} в сутки: ` +
+        'каждый запуск — платный вызов модели',
     });
   }
 
