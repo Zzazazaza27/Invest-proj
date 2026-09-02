@@ -55,6 +55,20 @@ const containers = online ? onServer("docker ps --format '{{.Names}} {{.Status}}
 const health = online ? onServer('curl -s -m 10 https://vgorkakh.ru/v1/health') : '';
 const uptime = online ? onServer('uptime -p 2>/dev/null || uptime') : '';
 
+/**
+ * Тег, которым помечено развёрнутое состояние. Коммит сам по себе ничего не
+ * говорит человеку — тег говорит: вот это стоит на стенде и вот почему.
+ */
+const serverTag = online
+  ? (() => {
+      try {
+        return local(`git tag --points-at ${serverSha}`).split('\n')[0] || '';
+      } catch {
+        return '';
+      }
+    })()
+  : '';
+
 const localSha = local('git rev-parse --short HEAD');
 const localSubject = local('git log -1 --pretty=%s');
 const behind =
@@ -92,6 +106,7 @@ const body = `# Состояние стендов
 | Хост | 193.233.217.210, \`unicorn.ptr.network\` |
 | Доступность | ${online ? 'отвечает' : '**НЕ ОТВЕЧАЕТ** — SSH не прошёл'} |
 | Развёрнутый коммит | ${online ? `\`${serverSha}\` от ${serverDate}` : '—'} |
+| Тег | ${serverTag ? `\`${serverTag}\`` : 'не помечен — поставьте тег, иначе состояние потом не опознать'} |
 | Что это за коммит | ${online ? serverSubject || '—' : '—'} |
 | Отставание от \`main\` | ${online ? (behind === '0' ? 'нет, совпадает' : `**${behind} коммит(ов)**`) : '—'} |
 | Аптайм | ${uptime || '—'} |
