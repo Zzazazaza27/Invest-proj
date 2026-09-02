@@ -22,3 +22,13 @@ export {
   publishedScore10,
   translationPending,
 } from './ScoreProvenance';
+export {
+  decideAccess,
+  cabinetsForRoles,
+  hrefFor,
+  CABINET_PATH,
+  LOGIN_PATH,
+  ROLE_TO_CABINET,
+  type CabinetKey,
+  type AccessDecision,
+} from './access';

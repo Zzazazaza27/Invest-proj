@@ -1,12 +1,9 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   Button,
-  Card,
   Container,
-  Field,
   Icon,
   IconTile,
-  Input,
   LoadingState,
   NovaTopBar,
   OfflineBanner,
@@ -30,6 +27,8 @@ import {
   BusinessEntitiesCard,
   NotificationsCard,
   SupportCard,
+  decideAccess,
+  hrefFor,
 } from '@unicorn/cabinet';
 import type {
   AddEntityMemberRequest,
@@ -56,24 +55,6 @@ type Tab =
   | 'notifications'
   | 'favorites'
   | 'support';
-
-/**
- * Короткое имя входа дополняется внутренним доменом.
- *
- * Тестовые и служебные учётные записи заводятся как `имя@unicorn.local`, но
- * человек вводит просто `имя`. Отдельного поля «логин» в схеме нет и заводить
- * его ради удобства входа не стоит, поэтому подстановка живёт на границе
- * интерфейса — сервер по-прежнему получает адрес и о ней ничего не знает.
- *
- * То же правило действует в админке: расхождение между кабинетами выглядело бы
- * как «в одном вход работает, в другом нет».
- */
-const INTERNAL_DOMAIN = 'unicorn.local';
-
-function toAddress(input: string): string {
-  const value = input.trim();
-  return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
-}
 
 /**
  * Транспорт для общих блоков кабинета.
@@ -121,6 +102,15 @@ const supportPort = {
  */
 declare const __APP_VERSION__: string;
 
+/**
+ * Порты приложений стенда, подставленные Vite. Нужны только при прямом запуске
+ * dev-сервером: за единой точкой входа переход идёт по пути, без портов.
+ */
+declare const __CABINET_PORTS__: Partial<
+  Record<'lab' | 'investor' | 'expert' | 'admin' | 'login', number>
+>;
+
+
 /** Сообщение об ошибке уходит тем же маршрутом — различает их вид обращения. */
 const bugReportPort = {
   open: (input: CreateSupportTicketRequest) => api.support.open(input),
@@ -140,11 +130,24 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      setMe(await api.auth.me());
-    } catch (error) {
-      if (!(error instanceof ApiError) || error.status !== 401) {
-        console.warn('профиль не получен', error);
+      const profile = await api.auth.me();
+      // Кабинет открывается только своей роли: до этого войти здесь мог кто
+      // угодно и остаться в чужом разделе, где сервер отвечает отказом.
+      const decision = decideAccess(profile.roles, 'investor');
+      if (decision.kind !== 'allowed') {
+        const target = decision.kind === 'elsewhere' ? decision.to : 'login';
+        window.location.replace(hrefFor(target, __CABINET_PORTS__));
+        return;
       }
+      setMe(profile);
+    } catch (error) {
+      // 401 — не ошибка, а отсутствие сессии: человека ждёт единый вход.
+      // Своей формы у кабинета больше нет, оставлять его здесь незачем.
+      if (error instanceof ApiError && error.status === 401) {
+        window.location.replace(hrefFor('login', __CABINET_PORTS__));
+        return;
+      }
+      console.warn('профиль не получен', error);
       setMe(null);
     } finally {
       setChecking(false);
@@ -189,6 +192,9 @@ export default function App() {
                   await api.auth.logout().catch(() => undefined);
                   setCsrf(null);
                   setMe(null);
+                  // Своей формы входа у кабинета больше нет — уводим на общий
+                  // экран, иначе останется пустой каркас чужого раздела.
+                  window.location.replace(hrefFor('login', __CABINET_PORTS__));
                 }}
               >
                 <Icon name="logout" size={16} />
@@ -295,7 +301,6 @@ export default function App() {
       <main id="content">
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
-          {!checking && !me ? <LoginPage onLoggedIn={() => void load()} /> : null}
           {!checking && me && tab === 'catalog' && openProject === null ? (
             <CatalogPage onOpen={(id) => setOpenProject(id)} />
           ) : null}
@@ -368,79 +373,3 @@ function TabButton({
   );
 }
 
-function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  return (
-    <Card style={{ maxWidth: 420, margin: '0 auto' }}>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setBusy(true);
-          setError(null);
-          try {
-            const session = await api.auth.login({ email: toAddress(email), password });
-            setCsrf(session.csrfToken ?? null);
-            onLoggedIn();
-          } catch (caught) {
-            // Причина 401 наружу НЕ раскрывается: текст сервера отличает
-            // «нет такого пользователя» от «неверный пароль» и превращает
-            // форму входа в перечислитель учёток. Для остальных ошибок
-            // (например, требуется повторный акцепт условий) текст полезен и
-            // сохраняется. Admin вёл себя так с самого начала — расхождение
-            // копий кабинетов (аудит №2).
-            setError(
-              caught instanceof ApiError
-                ? caught.status === 401
-                  ? 'Неверные данные для входа'
-                  : (caught.problem?.detail ?? caught.message)
-                : 'Сервис недоступен',
-            );
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <Stack>
-          <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Вход</h1>
-          <Field
-            label="Почта или логин"
-            htmlFor="email"
-            hint="Короткое имя дополняется доменом автоматически"
-          >
-            <Input
-              id="email"
-              // Не type="email": короткое имя без @ браузер отверг бы до отправки.
-              type="text"
-              autoComplete="username"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </Field>
-          <Field label="Пароль" htmlFor="password">
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </Field>
-          {error ? (
-            <div role="alert" style={{ color: 'var(--u-danger)', fontSize: 'var(--u-text-sm)' }}>
-              {error}
-            </div>
-          ) : null}
-          <Button type="submit" loading={busy}>
-            Войти
-          </Button>
-        </Stack>
-      </form>
-    </Card>
-  );
-}

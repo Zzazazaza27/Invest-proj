@@ -38,6 +38,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: '/login/',
+    // Значок вкладки лежит один на все приложения: иначе семь копий одного
+    // favicon расходятся по одной за раз. Каталог общий — `packages/ui/public`.
+    publicDir: resolve(ROOT, 'packages', 'ui', 'public'),
     define: { __CABINET_PORTS__: JSON.stringify(cabinetPorts) },
     plugins: [react()],
     optimizeDeps: { include: ['@unicorn/api-client', '@unicorn/contracts'] },

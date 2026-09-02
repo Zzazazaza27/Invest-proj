@@ -30,6 +30,9 @@ export default defineConfig(({ mode }) => {
   }
 
   return {
+    // Значок вкладки лежит один на все приложения: иначе семь копий одного
+    // favicon расходятся по одной за раз. Каталог общий — `packages/ui/public`.
+    publicDir: resolve(ROOT, 'packages', 'ui', 'public'),
     plugins: [react()],
     // Пакеты монорепо собираются в CommonJS: их потребляет и ядро на NestJS,
     // которое ESM не принимает. Vite не пре-бандлит связанные пакеты по

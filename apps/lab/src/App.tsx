@@ -2,14 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Badge,
   Button,
-  Card,
   Container,
   EmptyState,
   ErrorState,
-  Field,
   Icon,
   IconTile,
-  Input,
   LoadingState,
   NovaTopBar,
   OfflineBanner,
@@ -30,6 +27,8 @@ import {
   NotificationsCard,
   SupportCard,
   VerificationCard,
+  decideAccess,
+  hrefFor,
 } from '@unicorn/cabinet';
 import type {
   AddEntityMemberRequest,
@@ -47,24 +46,6 @@ import { ProjectPage } from './pages/ProjectPage';
  * политикой БД на бэкенде, поэтому здесь нет ни одной проверки прав «на
  * всякий случай».
  */
-/**
- * Короткое имя входа дополняется внутренним доменом.
- *
- * Тестовые и служебные учётные записи заводятся как `имя@unicorn.local`, но
- * человек вводит просто `имя`. Отдельного поля «логин» в схеме нет и заводить
- * его ради удобства входа не стоит, поэтому подстановка живёт на границе
- * интерфейса — сервер по-прежнему получает адрес и о ней ничего не знает.
- *
- * То же правило действует в админке: расхождение между кабинетами выглядело бы
- * как «в одном вход работает, в другом нет».
- */
-const INTERNAL_DOMAIN = 'unicorn.local';
-
-function toAddress(input: string): string {
-  const value = input.trim();
-  return value.includes('@') ? value : `${value}@${INTERNAL_DOMAIN}`;
-}
-
 /**
  * Транспорт для общих блоков кабинета.
  *
@@ -127,6 +108,12 @@ const supportPort = {
  */
 declare const __APP_VERSION__: string;
 
+/**
+ * Порты приложений стенда, подставленные Vite. Нужны только при прямом запуске
+ * dev-сервером: за единой точкой входа переход идёт по пути, без портов.
+ */
+declare const __CABINET_PORTS__: Partial<Record<'lab' | 'investor' | 'expert' | 'admin' | 'login', number>>;
+
 /** Сообщение об ошибке уходит тем же маршрутом — различает их вид обращения. */
 const bugReportPort = {
   open: (input: CreateSupportTicketRequest) => api.support.open(input),
@@ -139,14 +126,27 @@ export default function App() {
 
   const load = useCallback(async () => {
     try {
-      setMe(await api.auth.me());
-    } catch (error) {
-      // 401 здесь — норма: пользователь просто не вошёл.
-      if (!(error instanceof ApiError) || error.status !== 401) {
-        console.warn('профиль не получен', error);
+      const profile = await api.auth.me();
+      // Кабинет открывается только своей роли. Раньше проверки не было вовсе:
+      // войдя здесь инвестором, человек оставался в кабинете основателя — с
+      // формой создания проекта, на которую сервер отвечал отказом.
+      const decision = decideAccess(profile.roles, 'lab');
+      if (decision.kind !== 'allowed') {
+        const target = decision.kind === 'elsewhere' ? decision.to : 'login';
+        window.location.replace(hrefFor(target, __CABINET_PORTS__));
+        return;
       }
+      setMe(profile);
+      setChecking(false);
+    } catch (error) {
+      // 401 — не ошибка, а отсутствие сессии: человека ждёт единый вход.
+      // Сюда он вернётся уже с ролью, и решение примет ветка выше.
+      if (error instanceof ApiError && error.status === 401) {
+        window.location.replace(hrefFor('login', __CABINET_PORTS__));
+        return;
+      }
+      console.warn('профиль не получен', error);
       setMe(null);
-    } finally {
       setChecking(false);
     }
   }, []);
@@ -169,12 +169,15 @@ export default function App() {
           setCsrf(null);
           setMe(null);
           setOpenProject(null);
+          // Уводим на единый вход: своей формы у кабинета больше нет, а
+          // оставлять человека на странице кабинета без сессии — показывать
+          // ему пустой каркас чужого раздела.
+          window.location.replace(hrefFor('login', __CABINET_PORTS__));
         }}
       />
       <main id="content">
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
-          {!checking && !me ? <LoginPage onLoggedIn={() => void load()} /> : null}
           {!checking && me && openProject === null ? (
             <Stack gap="var(--u-space-6)">
               <ProjectsPage onOpen={(id) => setOpenProject(id)} />
@@ -280,102 +283,6 @@ const TRUST_ITEMS = [
   },
 ];
 
-function LoginPage({ onLoggedIn }: { onLoggedIn: () => void }) {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  return (
-    <Card
-      style={{
-        maxWidth: 440,
-        margin: 'var(--u-space-7) auto',
-        padding: 'var(--u-space-6)',
-        borderRadius: 'var(--u-radius-xl, var(--u-radius-lg))',
-        boxShadow: 'var(--u-shadow-md)',
-      }}
-    >
-      <div style={{ display: 'grid', justifyItems: 'center', gap: 'var(--u-space-2)' }}>
-        <IconTile name="rocket" variant="solid" size={56} />
-      </div>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setBusy(true);
-          setError(null);
-          try {
-            const session = await api.auth.login({ email: toAddress(email), password });
-            setCsrf(session.csrfToken ?? null);
-            onLoggedIn();
-          } catch (caught) {
-            // Текст сервера, а не «что-то пошло не так»: он объясняет причину
-            // (неверные данные, требуется повторный акцепт условий и т.д.).
-            // Причина 401 наружу НЕ раскрывается: текст сервера отличает
-            // «нет такого пользователя» от «неверный пароль» и превращает
-            // форму входа в перечислитель учёток. Для остальных ошибок
-            // (например, требуется повторный акцепт условий) текст полезен и
-            // сохраняется. Admin вёл себя так с самого начала — расхождение
-            // копий кабинетов (аудит №2).
-            setError(
-              caught instanceof ApiError
-                ? caught.status === 401
-                  ? 'Неверные данные для входа'
-                  : (caught.problem?.detail ?? caught.message)
-                : 'Сервис недоступен',
-            );
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <Stack>
-          <div style={{ textAlign: 'center', display: 'grid', gap: 4 }}>
-            <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)', fontWeight: 800 }}>
-              Вход в кабинет
-            </h1>
-            <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-              Заявки, материалы и статус проектов
-            </span>
-          </div>
-          <Field
-            label="Почта или логин"
-            htmlFor="email"
-            hint="Короткое имя дополняется доменом автоматически"
-          >
-            <Input
-              id="email"
-              // Не type="email": короткое имя без @ браузер отверг бы до отправки.
-              type="text"
-              autoComplete="username"
-              required
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
-            />
-          </Field>
-          <Field label="Пароль" htmlFor="password">
-            <Input
-              id="password"
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-            />
-          </Field>
-          {error ? (
-            <div role="alert" style={{ color: 'var(--u-danger)', fontSize: 'var(--u-text-sm)' }}>
-              {error}
-            </div>
-          ) : null}
-          <Button type="submit" variant="brand" loading={busy}>
-            Войти
-          </Button>
-        </Stack>
-      </form>
-    </Card>
-  );
-}
 
 /** Общие ярлыки статусов: они одинаковы во всех экранах кабинета. */
 export const PROJECT_STATUS_LABEL: Record<string, string> = {
