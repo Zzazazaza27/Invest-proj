@@ -6,10 +6,10 @@ AI-анализ и развитие; верифицированные инвес
 карточки и заключают договоры инвестирования средствами платформы. Движение
 инвестиционных средств учитывается через номинальный счёт ОИП.
 
-Источники правды: [`Architect_Launch.md`](./Architect_Launch.md) (архитектура),
-[`Database_Launch.md`](./Database_Launch.md) (схема БД),
-[`RULES.md`](./RULES.md) (метод работы), [`Architect.md`](./Architect.md) и
-[`Database.md`](./Database.md) (целевая экосистема — швы под Unicorn Capital и
+Источники правды: [`docs/architecture/Architect_Launch.md`](./docs/architecture/Architect_Launch.md) (архитектура),
+[`docs/architecture/Database_Launch.md`](./docs/architecture/Database_Launch.md) (схема БД),
+[`RULES.md`](./RULES.md) (метод работы), [`docs/architecture/Architect.md`](./docs/architecture/Architect.md) и
+[`docs/architecture/Database.md`](./docs/architecture/Database.md) (целевая экосистема — швы под Unicorn Capital и
 медиаконтур Шоу).
 
 Состояние работ: [`TODO.md`](./TODO.md) — что осталось сделать,
@@ -1004,7 +1004,7 @@ Integration API — единственная дверь для внешних с
 ## Модель монетизации
 
 Публикуется открыто — это продуктовый принцип, а не маркетинг
-([`Architect_Launch.md`](./Architect_Launch.md) §5).
+([`docs/architecture/Architect_Launch.md`](./docs/architecture/Architect_Launch.md) §5).
 
 ### Подписка основателя — по размеру запроса инвестиций
 
@@ -1078,7 +1078,7 @@ API честно помечен `isLlm: false` — выдавать одно з�
 
 Инвестиционный контур включается **только после** включения российского
 юридического лица в реестр ОИП Банка России и согласования Правил
-инвестиционной платформы (гейт A, `Architect_Launch.md` §9). До этого момента
+инвестиционной платформы (гейт A, `docs/architecture/Architect_Launch.md` §9). До этого момента
 соответствующая функциональность закрыта feature flag'ами. Способы
 инвестирования (`instrument_type`) — серверный allowlist, а не свободный
 параметр клиента.

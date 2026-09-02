@@ -123,7 +123,7 @@ rules:
     languages: [generic]
     severity: ERROR
     message: >-
-      BYPASSRLS у роли приложения запрещён (Database_Launch.md §1).
+      BYPASSRLS у роли приложения запрещён (docs/architecture/Database_Launch.md §1).
       RLS обязателен и для сервисных ролей.
     pattern-regex: '(?i)(^|\s)(ALTER|CREATE)\s+ROLE\s+\S+[^;]*\bBYPASSRLS\b'
     paths:

@@ -36,7 +36,7 @@ export type ConsentKind = z.infer<typeof ConsentKindSchema>;
 /**
  * Четыре документа, без акцепта актуальных версий которых аккаунт не
  * активируется. Это сервисный инвариант, а не галочка в UI
- * (Architect_Launch.md §4.1, §5.4). Продублирован в БД триггером.
+ * (docs/architecture/Architect_Launch.md §4.1, §5.4). Продублирован в БД триггером.
  */
 export const REQUIRED_CONSENT_KINDS = [
   'platform_rules',

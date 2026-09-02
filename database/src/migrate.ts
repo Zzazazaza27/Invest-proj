@@ -8,7 +8,7 @@
  *    роняет раннер, а не создаёт расхождение между средами;
  *  - каждая миграция — в своей транзакции: частично применённых нет;
  *  - forward-only: down-скрипты не предполагаются, production правится
- *    следующей миграцией (Database_Launch.md §16).
+ *    следующей миграцией (docs/architecture/Database_Launch.md §16).
  *
  * Запуск:  npm run migrate  ·  npm run migrate:status
  */

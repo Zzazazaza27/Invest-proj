@@ -1,5 +1,5 @@
 /**
- * Негативные тесты RLS — обязательный гейт CI (Database_Launch.md §15).
+ * Негативные тесты RLS — обязательный гейт CI (docs/architecture/Database_Launch.md §15).
  *
  * Каждый тест отвечает на вопрос «может ли роль X добраться до данных, к
  * которым не должна?». Зелёный тест здесь означает «НЕ может».
@@ -1190,7 +1190,7 @@ describe('RLS: покрытие манифеста', () => {
                             'seasons','comms','billing','audit','integration','content')
           AND c.relkind IN ('r','p') AND c.relispartition = false`,
     );
-    // 60 таблиц по Database_Launch.md + billing.custom_price_proposals (M017):
+    // 60 таблиц по docs/architecture/Database_Launch.md + billing.custom_price_proposals (M017):
     // двухшаговое согласование индивидуальной цены нельзя было уместить в саму
     // подписку, не ослабив её CHECK-ограничение на четыре глаза.
     // + integration.deal_commissions (M028): обезличенная проекция сделок для

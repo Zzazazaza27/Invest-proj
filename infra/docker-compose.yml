@@ -286,7 +286,7 @@ services:
     restart: 'no'
 
   # Проверенный IdP. Launch НЕ реализует протокол OIDC самостоятельно
-  # (Database_Launch.md §2): сессии, refresh-токены, WebAuthn, MFA и ключи
+  # (docs/architecture/Database_Launch.md §2): сессии, refresh-токены, WebAuthn, MFA и ключи
   # подписи живут в БД Keycloak, а не в unicorn_launch.
   keycloak:
     image: quay.io/keycloak/keycloak:26.0

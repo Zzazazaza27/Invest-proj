@@ -76,7 +76,7 @@ export function verbAllowedByScopes(verb: string, scopes: readonly string[]): bo
 }
 
 /**
- * Операции, требующие step-up MFA (Architect_Launch.md §7).
+ * Операции, требующие step-up MFA (docs/architecture/Architect_Launch.md §7).
  * Сервер проверяет `acr` токена; список продублирован здесь, чтобы фронтенд
  * мог заранее инициировать повышение уровня, а не ловить 403.
  */

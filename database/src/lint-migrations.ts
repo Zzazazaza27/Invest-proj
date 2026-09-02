@@ -90,7 +90,7 @@ for (const file of files) {
           lineOf(re),
           'expand-contract',
           `${label} — необратимая contract-операция. Она выносится в отдельную миграцию ` +
-            'после того, как код перестал использовать объект (Database_Launch.md §16), ' +
+            'после того, как код перестал использовать объект (docs/architecture/Database_Launch.md §16), ' +
             'и помечается строкой `-- migrate:contract`.',
         );
       }
@@ -210,7 +210,7 @@ for (const file of files) {
       file,
       lineOf(/BYPASSRLS/i),
       'bypassrls',
-      'BYPASSRLS запрещён (Database_Launch.md §1).',
+      'BYPASSRLS запрещён (docs/architecture/Database_Launch.md §1).',
     );
   }
 

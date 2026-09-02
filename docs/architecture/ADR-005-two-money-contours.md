@@ -2,7 +2,7 @@
 
 - **Статус:** принято, повторному продуктовому толкованию не подлежит
 - **Дата:** 2026-08-10
-- **Основание:** `Architect_Launch.md` §2.7, §5.3, §7; `Database_Launch.md` §6, §11
+- **Основание:** `docs/architecture/Architect_Launch.md` §2.7, §5.3, §7; `docs/architecture/Database_Launch.md` §6, §11
 
 ## Контекст
 

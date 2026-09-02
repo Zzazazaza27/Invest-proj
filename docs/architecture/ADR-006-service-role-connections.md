@@ -2,7 +2,7 @@
 
 - **Статус:** принято
 - **Дата:** 2026-08-10
-- **Основание:** `Database_Launch.md` §1 (разделение ролей), `Architect_Launch.md` §7,
+- **Основание:** `docs/architecture/Database_Launch.md` §1 (разделение ролей), `docs/architecture/Architect_Launch.md` §7,
   `RULES.md` §3.1; найдено живым прогоном Ф6
 
 ## Контекст

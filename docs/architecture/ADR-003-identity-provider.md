@@ -2,7 +2,7 @@
 
 - **Статус:** принято
 - **Дата:** 2026-08-10
-- **Основание:** `Architect_Launch.md` §2.5, §7; `Database_Launch.md` §2
+- **Основание:** `docs/architecture/Architect_Launch.md` §2.5, §7; `docs/architecture/Database_Launch.md` §2
 
 ## Контекст
 
@@ -37,7 +37,7 @@ core сам подписывает короткоживущие токены к�
 
 ## Step-up MFA
 
-Обязателен (`Architect_Launch.md` §7) на: выбор проекта инвестором, принятие
+Обязателен (`docs/architecture/Architect_Launch.md` §7) на: выбор проекта инвестором, принятие
 инвестиционного предложения, подписание договора, смену платёжных реквизитов.
 Реализуется требованием `acr` уровня `mfa` в токене; отсутствие → `403` с
 `WWW-Authenticate: Bearer error="insufficient_user_authentication"`.

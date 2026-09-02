@@ -269,7 +269,7 @@ export type AnalysisRun = z.infer<typeof AnalysisRunSchema>;
 
 /**
  * Ответ AI Mentor. `sources` непуст по контракту: ответ без источника из
- * passport_facts не выдаётся (Architect_Launch.md §4.5).
+ * passport_facts не выдаётся (docs/architecture/Architect_Launch.md §4.5).
  */
 export const MentorAnswerSchema = z.object({
   answer: z.string(),
@@ -431,7 +431,7 @@ export type ExpertReview = z.infer<typeof ExpertReviewSchema>;
 /**
  * Финальное решение по проекту. Его фиксирует ЧЕЛОВЕК: `decidedBy` берётся из
  * контекста запроса, а не из тела — «AI ускоряет, человек решает»
- * (Architect.md §3.6). Модель может посчитать расхождение, но не подписаться
+ * (docs/architecture/Architect.md §3.6). Модель может посчитать расхождение, но не подписаться
  * за организатора.
  */
 export const DecideConsensusRequestSchema = z.object({

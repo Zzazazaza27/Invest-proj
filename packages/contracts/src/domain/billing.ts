@@ -26,7 +26,7 @@ export const PlanAudienceSchema = z.enum(['founder', 'investor']);
 
 /**
  * Тарифная сетка публикуется открыто, без авторизации — принцип радикальной
- * прозрачности (Architect_Launch.md §5.4).
+ * прозрачности (docs/architecture/Architect_Launch.md §5.4).
  */
 export const SubscriptionPlanSchema = z.object({
   id: UuidSchema,

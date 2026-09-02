@@ -67,7 +67,7 @@ export const MoneyAmountSchema = z
   .refine((v) => Number(v) > 0, 'сумма должна быть положительной');
 export type MoneyAmount = z.infer<typeof MoneyAmountSchema>;
 
-/** Launch v1 работает только в рублях (Database_Launch.md §1). */
+/** Launch v1 работает только в рублях (docs/architecture/Database_Launch.md §1). */
 export const CurrencySchema = z.literal('RUB');
 export type Currency = z.infer<typeof CurrencySchema>;
 

@@ -18,7 +18,7 @@ import {
 
 /**
  * Способ инвестирования — серверный allowlist из согласованных Правил, а не
- * свободный параметр клиента (Architect_Launch.md §5.5). Каждый тип
+ * свободный параметр клиента (docs/architecture/Architect_Launch.md §5.5). Каждый тип
  * дополнительно закрыт собственным флагом.
  */
 export const InstrumentTypeSchema = z.enum(['loan', 'security', 'utility_digital_right', 'dfa']);
@@ -79,7 +79,7 @@ export type AgreementStatus = z.infer<typeof AgreementStatusSchema>;
 /**
  * Принятие инвестиционного предложения.
  *
- * Требует step-up MFA (Architect_Launch.md §7) и подтверждения, что инвестор
+ * Требует step-up MFA (docs/architecture/Architect_Launch.md §7) и подтверждения, что инвестор
  * ознакомлен с последствием: вознаграждение начисляется от ПОЛНОЙ суммы
  * договора однократно и не пересчитывается при непоступлении следующих траншей.
  */
@@ -149,7 +149,7 @@ export type InvestmentTranche = z.infer<typeof InvestmentTrancheSchema>;
  * ЭТО НЕ КЛИЕНТСКИЙ ЭНДПОИНТ. Схема описывает вход вебхука от банка; он
  * принимается только с проверенной HMAC-подписью и timestamp в допустимом окне.
  * Подтвердить транш иным способом нельзя — ни через API, ни ролью app_backend
- * (Architect_Launch.md §7).
+ * (docs/architecture/Architect_Launch.md §7).
  */
 export const NominalAccountWebhookSchema = z.object({
   agreementId: UuidSchema,

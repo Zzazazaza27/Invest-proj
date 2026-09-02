@@ -128,6 +128,6 @@ rm -rf apps/web-public apps/lab apps/investor apps/expert apps/admin
 - [ ] Небезопасные методы шлют `X-CSRF-Token`
 - [ ] Денежные операции шлют `Idempotency-Key`
 - [ ] Тарифы и вознаграждение ОИП видны без авторизации (принцип радикальной
-      прозрачности, `Architect_Launch.md` §5.4)
+      прозрачности, `docs/architecture/Architect_Launch.md` §5.4)
 - [ ] Ошибки RFC 9457 отображаются пользователю без утечки внутренних деталей
 - [ ] Origin добавлен в `CORS_ALLOWED_ORIGINS`

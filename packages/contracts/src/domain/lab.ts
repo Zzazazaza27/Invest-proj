@@ -104,7 +104,7 @@ export type TaxonomyNode = z.infer<typeof TaxonomyNodeSchema>;
 
 /**
  * Заявка проекта. `investmentAsk` обязателен: именно он определяет тариф
- * (Architect_Launch.md §5.1). Тариф резолвится СЕРВЕРОМ — клиент его не выбирает.
+ * (docs/architecture/Architect_Launch.md §5.1). Тариф резолвится СЕРВЕРОМ — клиент его не выбирает.
  */
 export const CreateProjectRequestSchema = z.object({
   title: boundedString(2, 200),

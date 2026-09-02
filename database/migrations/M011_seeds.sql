@@ -2,7 +2,7 @@
 -- M011 — сиды
 -- Реестр типов событий, фичефлаги, таксономия, сезон 1, тарифы и fee schedule,
 -- шаблоны документов (Правила/оферта/ПДн/комиссия), шаблоны уведомлений.
--- Источник: Database_Launch.md §14, §16.1.
+-- Источник: docs/architecture/Database_Launch.md §14, §16.1.
 --
 -- Все вставки идемпотентны: миграция должна безопасно применяться на чистой БД
 -- и не ломаться при повторном прогоне в тестовом контуре.
@@ -53,7 +53,7 @@ INSERT INTO audit.feature_flags (key, enabled, rules_jsonb) VALUES
     ('billing.subscriptions.enabled',  true,  '{}'),
     ('ai.scoring.enabled',             true,  '{}'),
     ('ai.mentor.enabled',              false, '{"note":"включается после eval-гейта Langfuse"}'),
-    ('show.publication.enabled',       false, '{"note":"медиаконтур — фаза 3 по Architect.md"}'),
+    ('show.publication.enabled',       false, '{"note":"медиаконтур — фаза 3 по docs/architecture/Architect.md"}'),
     ('capital.integration.enabled',    false, '{"gate":"B"}')
 ON CONFLICT (key) DO NOTHING;
 
@@ -118,7 +118,7 @@ COMMENT ON TABLE identity.consent_templates IS
     'должны быть утверждены юристом, а хеши пересчитаны от фактических документов.';
 
 -- ----------------------------------------------------- шаблоны уведомлений
--- Политика каналов (Database_Launch.md §10): сервисные push→telegram→email;
+-- Политика каналов (docs/architecture/Database_Launch.md §10): сервисные push→telegram→email;
 -- security sms+email; биллинг-критичные push+email+sms.
 INSERT INTO comms.notification_templates
     (id, code, channel, locale, version, title_template, body_template, fallback_chain, is_critical) VALUES
