@@ -276,11 +276,14 @@ await page.waitForTimeout(2500);
   check('заметка попала в историю', text.includes('Заметка по ходу работы'));
 }
 {
-  const [row] = await sql(
-    `SELECT body FROM experts.expert_notes WHERE assignment_id = $1`,
-    [assignment.id],
+  const [row] = await sql(`SELECT body FROM experts.expert_notes WHERE assignment_id = $1`, [
+    assignment.id,
+  ]);
+  check(
+    'заметка записана в БД',
+    (row?.body ?? '').includes('финмодель'),
+    (row?.body ?? '').slice(0, 40),
   );
-  check('заметка записана в БД', (row?.body ?? '').includes('финмодель'), (row?.body ?? '').slice(0, 40));
 }
 
 // --- пересмотр результата до решения

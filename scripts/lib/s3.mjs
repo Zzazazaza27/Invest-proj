@@ -85,7 +85,10 @@ export async function s3Object(storage, method, key, body = null, headers = {}) 
 
   const scope = `${shortDate}/${storage.region}/s3/aws4_request`;
   const stringToSign = [ALGORITHM, date, scope, sha256Hex(canonicalRequest)].join('\n');
-  const signature = createHmac('sha256', signingKey(storage.secretKey, shortDate, storage.region, 's3'))
+  const signature = createHmac(
+    'sha256',
+    signingKey(storage.secretKey, shortDate, storage.region, 's3'),
+  )
     .update(stringToSign, 'utf8')
     .digest('hex');
 

@@ -21,7 +21,15 @@ import type { ProviderCredential } from './ai-gateway.client';
  *     операция с деньгами, и у неё есть автор и основание.
  */
 
-export const LLM_PROVIDERS = ['yandex_gpt', 'gigachat', 'anthropic', 'openai', 'kimi', 'qwen', 'deepseek'] as const;
+export const LLM_PROVIDERS = [
+  'yandex_gpt',
+  'gigachat',
+  'anthropic',
+  'openai',
+  'kimi',
+  'qwen',
+  'deepseek',
+] as const;
 
 /**
  * Версия промпта, под которую проходит eval-гейт. Совпадает с PROMPT_VERSION

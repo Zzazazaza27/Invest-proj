@@ -89,9 +89,7 @@
       "investmentAsk": "3500000.00",
       "status": "submitted",
       "listingStatus": "not_listed",
-      "materials": [
-        { "type": "product_link", "url": "https://polevoy-zhurnal.example.ru/pilot" }
-      ]
+      "materials": [{ "type": "product_link", "url": "https://polevoy-zhurnal.example.ru/pilot" }]
     },
     {
       "key": "kolba",

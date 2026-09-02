@@ -105,7 +105,11 @@ check('инвестор комплекта вошёл в свой кабинет
   await page.waitForTimeout(2000);
   const text = await page.locator('main').innerText();
   // «Колба» снята с публикации основателем — её в каталоге быть не должно.
-  check('снятый с публикации проект в каталоге не показан', !text.includes('Колба'), text.slice(0, 80));
+  check(
+    'снятый с публикации проект в каталоге не показан',
+    !text.includes('Колба'),
+    text.slice(0, 80),
+  );
 }
 
 console.warn('\n[2] Избранное заполнено комплектом');
@@ -127,14 +131,22 @@ console.warn('\n[3] Обращение в поддержку из комплек
   await trial.waitForTimeout(2000);
 
   const text = await trial.locator('main').innerText();
-  check('обращение комплекта видно автору', text.includes('Не понимаю, что входит в подписку'), text.slice(0, 120));
+  check(
+    'обращение комплекта видно автору',
+    text.includes('Не понимаю, что входит в подписку'),
+    text.slice(0, 120),
+  );
   check('сообщение об ошибке тоже на месте', text.includes('Фильтр по сумме сбрасывается'));
   check('обращение взято в работу', text.includes('в работе'));
 
   await trial.getByText('Не понимаю, что входит в подписку').first().click();
   await trial.waitForTimeout(1800);
   const thread = await trial.locator('main').innerText();
-  check('ответ поддержки виден в переписке', thread.includes('Подписка открывает полную карточку'), thread.slice(0, 120));
+  check(
+    'ответ поддержки виден в переписке',
+    thread.includes('Подписка открывает полную карточку'),
+    thread.slice(0, 120),
+  );
   await trialContext.close();
 }
 
@@ -147,7 +159,11 @@ console.warn('\n[4] Материалы проекта в кабинете экс
   await expert.waitForTimeout(1500);
 
   const list = await expert.locator('main').innerText();
-  check('назначение комплекта видно эксперту', list.includes('Ритм-Диагностика'), list.slice(0, 120));
+  check(
+    'назначение комплекта видно эксперту',
+    list.includes('Ритм-Диагностика'),
+    list.slice(0, 120),
+  );
 
   await expert.getByRole('button', { name: 'Материалы проекта' }).first().click();
   await expert.waitForTimeout(2500);

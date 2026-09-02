@@ -194,7 +194,10 @@ let ticketId = null;
   ticketId = json?.id ?? null;
   check('статус новый', json?.status === 'new', String(json?.status));
   check('первое сообщение внутри обращения', json?.messages?.length === 1);
-  check('автором первого сообщения значится пользователь', json?.messages?.[0]?.authorKind === 'user');
+  check(
+    'автором первого сообщения значится пользователь',
+    json?.messages?.[0]?.authorKind === 'user',
+  );
   check('счётчик сообщений сходится', json?.messageCount === 1, String(json?.messageCount));
   check('обращение не назначено', json?.assigned === false);
 
@@ -228,13 +231,21 @@ console.warn('\n[2] Границы доступа');
 
   const direct = await outsider.client.call(`/v1/support/tickets/${ticketId}`);
   // Именно 404, а не 403: 403 подтверждал бы существование чужого обращения.
-  check('чужое обращение по ссылке — 404', direct.response.status === 404, `HTTP ${direct.response.status}`);
+  check(
+    'чужое обращение по ссылке — 404',
+    direct.response.status === 404,
+    `HTTP ${direct.response.status}`,
+  );
 
   const reply = await outsider.client.call(`/v1/support/tickets/${ticketId}/messages`, {
     method: 'POST',
     body: { body: 'Допишу в чужое обращение' },
   });
-  check('в чужое обращение не написать', reply.response.status === 404, `HTTP ${reply.response.status}`);
+  check(
+    'в чужое обращение не написать',
+    reply.response.status === 404,
+    `HTTP ${reply.response.status}`,
+  );
 
   const anon = await raw('/v1/support/tickets', {
     method: 'POST',
@@ -303,14 +314,23 @@ let bugId;
   check('адрес страницы сохранён', ctx.url === 'https://example.test/investor/catalog');
   check('версия приложения сохранена', ctx.appVersion === 'abc1234');
   check('размер окна сохранён', ctx.viewport === '1440x900');
-  check('момент проставил сервер', typeof ctx.occurredAt === 'string' && !Number.isNaN(Date.parse(ctx.occurredAt)));
-  check('роли взяты из контекста запроса', Array.isArray(ctx.roles) && ctx.roles.includes('founder'));
+  check(
+    'момент проставил сервер',
+    typeof ctx.occurredAt === 'string' && !Number.isNaN(Date.parse(ctx.occurredAt)),
+  );
+  check(
+    'роли взяты из контекста запроса',
+    Array.isArray(ctx.roles) && ctx.roles.includes('founder'),
+  );
   check(
     'user agent взят из заголовка, а не из тела',
     typeof ctx.userAgent === 'string' && ctx.userAgent.startsWith('SmokeSupport/1.0'),
     String(ctx.userAgent).slice(0, 40),
   );
-  check('сквозной идентификатор запроса приложен', typeof ctx.traceId === 'string' && ctx.traceId.length > 0);
+  check(
+    'сквозной идентификатор запроса приложен',
+    typeof ctx.traceId === 'string' && ctx.traceId.length > 0,
+  );
 
   const serialized = JSON.stringify(ctx);
   check(
@@ -370,7 +390,11 @@ console.warn('\n[6] Сотрудник поддержки');
     method: 'POST',
     body: { body: 'Проверили: письма уходят, посмотрите папку «Спам».' },
   });
-  check('ответ сотрудника принят', answered.response.status === 201, `HTTP ${answered.response.status}`);
+  check(
+    'ответ сотрудника принят',
+    answered.response.status === 201,
+    `HTTP ${answered.response.status}`,
+  );
   check(
     'ответ помечен как ответ поддержки',
     answered.json?.authorKind === 'staff',
@@ -405,7 +429,11 @@ console.warn('\n[7] Пользователь не подменяет сторо�
     body: { status: 'closed' },
   });
   // Политика БД не отдаёт строку на UPDATE — снаружи это 404, как и «нет такого».
-  check('автор не закрывает своё обращение', close.response.status === 404, `HTTP ${close.response.status}`);
+  check(
+    'автор не закрывает своё обращение',
+    close.response.status === 404,
+    `HTTP ${close.response.status}`,
+  );
 }
 
 // 8. Закрытие и запрет писать в закрытое.
@@ -415,8 +443,16 @@ console.warn('\n[8] Закрытие обращения');
     method: 'PATCH',
     body: { status: 'closed' },
   });
-  check('сотрудник закрыл обращение', closed.json?.status === 'closed', String(closed.json?.status));
-  check('момент закрытия проставлен', typeof closed.json?.closedAt === 'string', String(closed.json?.closedAt));
+  check(
+    'сотрудник закрыл обращение',
+    closed.json?.status === 'closed',
+    String(closed.json?.status),
+  );
+  check(
+    'момент закрытия проставлен',
+    typeof closed.json?.closedAt === 'string',
+    String(closed.json?.closedAt),
+  );
 
   const late = await author.client.call(`/v1/support/tickets/${ticketId}/messages`, {
     method: 'POST',
@@ -441,7 +477,11 @@ console.warn('\n[9] Список автора');
 {
   const list = await author.client.call('/v1/support/tickets');
   const ids = (list.json?.items ?? []).map((item) => item.id);
-  check('оба обращения на месте', ids.includes(ticketId) && ids.includes(bugId), `всего: ${ids.length}`);
+  check(
+    'оба обращения на месте',
+    ids.includes(ticketId) && ids.includes(bugId),
+    `всего: ${ids.length}`,
+  );
   check(
     'виды обращений различаются',
     new Set((list.json?.items ?? []).map((item) => item.kind)).size === 2,

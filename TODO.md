@@ -206,8 +206,10 @@ PTR forward-confirmed, релей `127.0.0.1:25` с STARTTLS и AUTH — бло�
 ни зелёные прогоны.
 
 - 🔴 **`npm run lint` и `npm run format:check` не проходят на `main`.**
-  Prettier недоволен `README.md`, `TODO.md` и `RULES.md` — проверено на версии
-  из `HEAD`, до каких-либо правок. Линтер даёт 53 ошибки в четырёх скриптах:
+  Prettier недоволен **61 файлом**: 27 в `docs/audits/`, 19 в `scripts/`,
+  остальные россыпью — проверено на версии из `HEAD`, до правок этой ветки
+  (`README.md` и `TODO.md` из этого числа уже приведены в порядок). Линтер
+  даёт 53 ошибки в четырёх скриптах:
   `check-stand-logins.mjs`, `dev-remove-test-user.mjs`,
   `dev-reset-stand-passwords.mjs`, `eval-ai-scoring.mjs`. В основном
   `console.log` там, где правило разрешает только `warn` и `error`. Значит и

@@ -120,14 +120,20 @@ console.warn('\n[3] Добавление');
   await button.click();
   await page.waitForTimeout(1500);
   check('отметка встала', (await button.getAttribute('aria-pressed')) === 'true');
-  check('надпись сменилась на «В избранном»', ((await button.textContent()) ?? '').includes('В избранном'));
+  check(
+    'надпись сменилась на «В избранном»',
+    ((await button.textContent()) ?? '').includes('В избранном'),
+  );
 }
 
 console.warn('\n[4] Раздел «Избранное»');
 {
   await page.getByRole('button', { name: 'Избранное', exact: true }).click();
   await page.waitForTimeout(1500);
-  check('раздел открылся', (await page.getByRole('heading', { name: 'Избранные проекты' }).count()) === 1);
+  check(
+    'раздел открылся',
+    (await page.getByRole('heading', { name: 'Избранные проекты' }).count()) === 1,
+  );
   check('проект в списке', (await page.getByText(projectTitle).count()) >= 1, projectTitle);
   check('показан момент добавления', (await page.getByText(/в избранном с/).count()) >= 1);
 }

@@ -213,7 +213,9 @@ console.warn('\n[2] В базе только отпечаток токена');
 const resetToken = tokenFor(EMAIL, 'reset', markUnknown);
 {
   check('токен получен из письма', Boolean(resetToken), `${String(resetToken).slice(0, 8)}…`);
-  const digest = createHash('sha256').update(resetToken ?? '', 'utf8').digest();
+  const digest = createHash('sha256')
+    .update(resetToken ?? '', 'utf8')
+    .digest();
   const rows = await sql(
     `SELECT purpose, expires_at > now() AS live, used_at
        FROM identity.verification_tokens WHERE token_sha256 = $1`,
@@ -238,7 +240,11 @@ console.warn('\n[3] Смена пароля по ссылке');
     method: 'POST',
     body: { token: resetToken, password: 'short' },
   });
-  check('короткий пароль отвергнут', short.response.status === 400, `статус ${short.response.status}`);
+  check(
+    'короткий пароль отвергнут',
+    short.response.status === 400,
+    `статус ${short.response.status}`,
+  );
 
   const wrong = await req('/v1/auth/password/reset', {
     method: 'POST',
@@ -260,7 +266,11 @@ console.warn('\n[3] Смена пароля по ссылке');
     method: 'POST',
     body: { token: resetToken, password: 'Another-passw0rd-here!' },
   });
-  check('ссылка срабатывает один раз', again.response.status === 400, `статус ${again.response.status}`);
+  check(
+    'ссылка срабатывает один раз',
+    again.response.status === 400,
+    `статус ${again.response.status}`,
+  );
 }
 
 // ------------------------------------------- 4. последствия смены пароля
@@ -270,7 +280,11 @@ console.warn('\n[4] Последствия смены пароля');
     method: 'POST',
     body: { email: EMAIL, password: OLD_PASSWORD },
   });
-  check('старый пароль больше не подходит', old.response.status === 401, `статус ${old.response.status}`);
+  check(
+    'старый пароль больше не подходит',
+    old.response.status === 401,
+    `статус ${old.response.status}`,
+  );
 
   // Пауза здесь не «чтобы прошло»: рубеж сессий ставится на НАЧАЛО СЛЕДУЮЩЕЙ
   // секунды (иначе токен, выпущенный в ту же секунду, что и смена пароля,
@@ -286,7 +300,11 @@ console.warn('\n[4] Последствия смены пароля');
   const stale = await req('/v1/auth/me', { headers: { Cookie: sessionCookie ?? '' } });
   // Сессия, открытая ДО смены пароля, обязана умереть: восстановление доступа,
   // после которого чужая вкладка ещё жива, доступ не восстанавливает.
-  check('сессия, открытая до смены пароля, мертва', stale.response.status === 401, `статус ${stale.response.status}`);
+  check(
+    'сессия, открытая до смены пароля, мертва',
+    stale.response.status === 401,
+    `статус ${stale.response.status}`,
+  );
   captureSession(fresh.response);
 
   const rows = await sql(
@@ -306,20 +324,36 @@ console.warn('\n[4] Последствия смены пароля');
 console.warn('\n[5] Подтверждение адреса');
 {
   const before = await req('/v1/auth/email/verify/status', { headers: authHeaders() });
-  check('состояние подтверждения доступно', before.response.status === 200, `статус ${before.response.status}`);
+  check(
+    'состояние подтверждения доступно',
+    before.response.status === 200,
+    `статус ${before.response.status}`,
+  );
   check('адрес пока не подтверждён', before.json?.verified === false);
   check('канал отправки объявлен доступным', before.json?.mailAvailable === true);
 
   const anon = await req('/v1/auth/email/verify/request', { method: 'POST' });
-  check('запрос подтверждения без сессии отклонён', anon.response.status === 401, `статус ${anon.response.status}`);
+  check(
+    'запрос подтверждения без сессии отклонён',
+    anon.response.status === 401,
+    `статус ${anon.response.status}`,
+  );
 
   const mark = stamp();
   const sent = await req('/v1/auth/email/verify/request', {
     method: 'POST',
     headers: authHeaders('POST'),
   });
-  check('письмо подтверждения запрошено', sent.response.status === 202, `статус ${sent.response.status}`);
-  check('назван срок действия ссылки', typeof sent.json?.expiresAt === 'string', sent.json?.expiresAt ?? '');
+  check(
+    'письмо подтверждения запрошено',
+    sent.response.status === 202,
+    `статус ${sent.response.status}`,
+  );
+  check(
+    'назван срок действия ссылки',
+    typeof sent.json?.expiresAt === 'string',
+    sent.json?.expiresAt ?? '',
+  );
 
   const verifyToken = tokenFor(EMAIL, 'verify', mark);
   check('токен подтверждения получен из письма', Boolean(verifyToken));
@@ -330,17 +364,29 @@ console.warn('\n[5] Подтверждение адреса');
   });
   // Токен подтверждения почты не должен работать как ссылка смены пароля:
   // иначе цель токена — украшение, а не граница.
-  check('токен подтверждения не годится для смены пароля', crossed.response.status === 400, `статус ${crossed.response.status}`);
+  check(
+    'токен подтверждения не годится для смены пароля',
+    crossed.response.status === 400,
+    `статус ${crossed.response.status}`,
+  );
 
   const confirmed = await req('/v1/auth/email/verify/confirm', {
     method: 'POST',
     body: { token: verifyToken },
   });
-  check('адрес подтверждён без сессии', confirmed.response.status === 200, `статус ${confirmed.response.status}`);
+  check(
+    'адрес подтверждён без сессии',
+    confirmed.response.status === 200,
+    `статус ${confirmed.response.status}`,
+  );
 
   const after = await req('/v1/auth/email/verify/status', { headers: authHeaders() });
   check('состояние стало «подтверждён»', after.json?.verified === true);
-  check('живой ссылки больше нет', after.json?.pendingUntil === null, String(after.json?.pendingUntil));
+  check(
+    'живой ссылки больше нет',
+    after.json?.pendingUntil === null,
+    String(after.json?.pendingUntil),
+  );
 
   const identities = await sql(
     `SELECT provider, provider_uid, verified_at IS NOT NULL AS verified
@@ -348,7 +394,11 @@ console.warn('\n[5] Подтверждение адреса');
       WHERE provider = 'email' AND user_id = (
         SELECT user_id FROM identity.verification_tokens
          WHERE token_sha256 = $1)`,
-    [createHash('sha256').update(verifyToken ?? '', 'utf8').digest()],
+    [
+      createHash('sha256')
+        .update(verifyToken ?? '', 'utf8')
+        .digest(),
+    ],
   );
   check('факт подтверждения записан', identities[0]?.verified === true);
   check(
@@ -381,7 +431,11 @@ console.warn('\n[6] Счётчик писем на контакт');
   // счётчика, и повторная проверка анти-перечисления: одинаковый ответ на
   // восемь запросов при нулевой отправке.
   const files = mailsSince(mark).filter((name) => name.includes(`flood-${suffix}`));
-  check('писем на незарегистрированный адрес не отправлено', files.length === 0, `файлов ${files.length}`);
+  check(
+    'писем на незарегистрированный адрес не отправлено',
+    files.length === 0,
+    `файлов ${files.length}`,
+  );
 }
 
 // --------------------------------------------------------------- уборка

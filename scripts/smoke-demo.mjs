@@ -84,7 +84,9 @@ const projects = JSON.parse(readFileSync(join(FIXTURES, 'projects.json'), 'utf8'
 /** Те же идентификаторы, что считает сам комплект. Совпадение — часть проверки. */
 const NAMESPACE = 'unicorn-launch/demo/v1';
 function demoId(...parts) {
-  const hash = createHash('sha1').update(`${NAMESPACE}|${parts.join('|')}`).digest();
+  const hash = createHash('sha1')
+    .update(`${NAMESPACE}|${parts.join('|')}`)
+    .digest();
   const bytes = Buffer.from(hash.subarray(0, 16));
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
@@ -116,15 +118,31 @@ console.warn('[1] Загрузка на чистую систему');
   // данные уже были загружены раньше.
   seed('clean');
   const before = await counts();
-  check('после уборки комплекта в базе нет', before.projects_demo === 0, `проектов: ${before.projects_demo}`);
+  check(
+    'после уборки комплекта в базе нет',
+    before.projects_demo === 0,
+    `проектов: ${before.projects_demo}`,
+  );
 
   seed('load');
   const after = await counts();
-  check('учётные записи загружены', after.users_demo === people.length, `${after.users_demo}/${people.length}`);
-  check('проекты загружены', after.projects_demo === projects.length, `${after.projects_demo}/${projects.length}`);
+  check(
+    'учётные записи загружены',
+    after.users_demo === people.length,
+    `${after.users_demo}/${people.length}`,
+  );
+  check(
+    'проекты загружены',
+    after.projects_demo === projects.length,
+    `${after.projects_demo}/${projects.length}`,
+  );
 
   const expectedMaterials = projects.reduce((sum, p) => sum + (p.materials?.length ?? 0), 0);
-  check('материалы загружены', after.materials_demo === expectedMaterials, `${after.materials_demo}/${expectedMaterials}`);
+  check(
+    'материалы загружены',
+    after.materials_demo === expectedMaterials,
+    `${after.materials_demo}/${expectedMaterials}`,
+  );
 }
 
 console.warn('\n[2] Повторный запуск не плодит дубликаты');
@@ -132,9 +150,21 @@ console.warn('\n[2] Повторный запуск не плодит дубли
   const before = await counts();
   seed('load');
   const after = await counts();
-  check('число проектов не изменилось', before.projects_total === after.projects_total, `${before.projects_total} → ${after.projects_total}`);
-  check('число учётных записей не изменилось', before.users_total === after.users_total, `${before.users_total} → ${after.users_total}`);
-  check('число материалов не изменилось', before.materials_total === after.materials_total, `${before.materials_total} → ${after.materials_total}`);
+  check(
+    'число проектов не изменилось',
+    before.projects_total === after.projects_total,
+    `${before.projects_total} → ${after.projects_total}`,
+  );
+  check(
+    'число учётных записей не изменилось',
+    before.users_total === after.users_total,
+    `${before.users_total} → ${after.users_total}`,
+  );
+  check(
+    'число материалов не изменилось',
+    before.materials_total === after.materials_total,
+    `${before.materials_total} → ${after.materials_total}`,
+  );
 }
 
 console.warn('\n[3] Данные выглядят как настоящие');
@@ -155,7 +185,10 @@ console.warn('\n[3] Данные выглядят как настоящие');
   ];
   const found = placeholders.filter((rx) => rx.test(text)).map(String);
   check('заглушек в текстах нет', found.length === 0, found.join(', '));
-  check('описания содержательные', rows.every((r) => (r.description ?? '').length > 400));
+  check(
+    'описания содержательные',
+    rows.every((r) => (r.description ?? '').length > 400),
+  );
   check(
     'у каждого проекта есть краткое описание',
     rows.every((r) => (r.tagline ?? '').length > 20),
@@ -255,7 +288,11 @@ console.warn('\n[6] Файлы материалов лежат в хранили
       }
       matched += 1;
     }
-    check('каждый файл читается и совпадает с записью в БД', mismatch === '' && matched === rows.length, mismatch || `${matched} шт.`);
+    check(
+      'каждый файл читается и совпадает с записью в БД',
+      mismatch === '' && matched === rows.length,
+      mismatch || `${matched} шт.`,
+    );
 
     // Обратная сверка: объект в хранилище совпадает с файлом в репозитории.
     const deck = rows.find((r) => r.type === 'deck');
@@ -271,7 +308,11 @@ console.warn('\n[6] Файлы материалов лежат в хранили
         alternatives.some((candidate) => candidate.equals(remote)),
         `${remote.length} байт против ${local.length}`,
       );
-      check('файл — валидный PDF', remote.subarray(0, 5).toString('latin1') === '%PDF-', remote.subarray(0, 5).toString('latin1'));
+      check(
+        'файл — валидный PDF',
+        remote.subarray(0, 5).toString('latin1') === '%PDF-',
+        remote.subarray(0, 5).toString('latin1'),
+      );
     }
 
     const png = readFileSync(join(FIXTURES, 'files', 'tochka-screen.png'));
@@ -311,7 +352,11 @@ console.warn('\n[7] Каталог, поиск и фильтры на этих �
   // ровно один — иначе полнотекстовый поиск проверялся бы «вообще».
   const search = await raw(`/v1/catalog?q=${encodeURIComponent('пластырь')}&limit=20`);
   const found = (search.json?.items ?? []).map((item) => item.title);
-  check('поиск находит проект по слову из описания', found.includes('Ритм-Диагностика'), found.join(', '));
+  check(
+    'поиск находит проект по слову из описания',
+    found.includes('Ритм-Диагностика'),
+    found.join(', '),
+  );
 
   const searchOther = await raw(`/v1/catalog?q=${encodeURIComponent('стройплощадке')}&limit=20`);
   const found2 = (searchOther.json?.items ?? []).map((item) => item.title);
@@ -339,7 +384,11 @@ console.warn('\n[7] Каталог, поиск и фильтры на этих �
   const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'healthtech'`);
   const filtered = await raw(`/v1/catalog?taxonomyId=${taxonomy.id}&limit=50`);
   const byTaxonomy = (filtered.json?.items ?? []).map((item) => item.title);
-  check('фильтр по направлению работает', byTaxonomy.includes('Ритм-Диагностика'), byTaxonomy.join(', '));
+  check(
+    'фильтр по направлению работает',
+    byTaxonomy.includes('Ритм-Диагностика'),
+    byTaxonomy.join(', '),
+  );
   check('фильтр отсекает чужое направление', !byTaxonomy.includes('Точка сборки'));
 }
 
@@ -349,8 +398,16 @@ console.warn('\n[8] Уборка удаляет ровно комплект');
   seed('clean');
   const after = await counts();
 
-  check('демонстрационных проектов не осталось', after.projects_demo === 0, `${after.projects_demo}`);
-  check('демонстрационных учётных записей не осталось', after.users_demo === 0, `${after.users_demo}`);
+  check(
+    'демонстрационных проектов не осталось',
+    after.projects_demo === 0,
+    `${after.projects_demo}`,
+  );
+  check(
+    'демонстрационных учётных записей не осталось',
+    after.users_demo === 0,
+    `${after.users_demo}`,
+  );
   check('материалов комплекта не осталось', after.materials_demo === 0, `${after.materials_demo}`);
 
   // Главное: чужие строки не тронуты. Разница общего счётчика обязана в
@@ -381,7 +438,10 @@ console.warn('\n[9] Восстановление после чистой уст�
 {
   seed('load');
   const after = await counts();
-  check('комплект восстановлен целиком', after.projects_demo === projects.length && after.users_demo === people.length);
+  check(
+    'комплект восстановлен целиком',
+    after.projects_demo === projects.length && after.users_demo === people.length,
+  );
 
   // Воспроизводимость: идентификаторы после пересоздания те же самые.
   const rows = await sql(`SELECT id, title FROM lab.projects WHERE id = ANY($1::uuid[])`, [

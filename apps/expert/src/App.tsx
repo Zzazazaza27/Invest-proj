@@ -78,7 +78,6 @@ declare const __CABINET_PORTS__: Partial<
   Record<'lab' | 'investor' | 'expert' | 'admin' | 'login', number>
 >;
 
-
 /** Сообщение об ошибке уходит тем же маршрутом — различает их вид обращения. */
 const bugReportPort = {
   open: (input: CreateSupportTicketRequest) => api.support.open(input),
@@ -189,4 +188,3 @@ export default function App() {
     </>
   );
 }
-

@@ -1006,7 +1006,11 @@ const activeDoc = (
       WHERE kind = 'pdn_biometric' AND locale = 'ru-RU' AND superseded_at IS NULL`,
   )
 )[0];
-check('документ согласия на публичность опубликован', Boolean(activeDoc), activeDoc?.version ?? 'нет');
+check(
+  'документ согласия на публичность опубликован',
+  Boolean(activeDoc),
+  activeDoc?.version ?? 'нет',
+);
 
 {
   const { response } = await founderB.client.call('/v1/publication-consents', {
@@ -1108,7 +1112,11 @@ check('документ согласия на публичность опубл�
   });
   // Повтор не переписывает прежнее согласие: у него своя дата и своя версия
   // документа, и подмена стёрла бы доказательство принятого.
-  check('повторное согласие на ту же область — 409', response.status === 409, `статус ${response.status}`);
+  check(
+    'повторное согласие на ту же область — 409',
+    response.status === 409,
+    `статус ${response.status}`,
+  );
 }
 
 {
@@ -1130,16 +1138,19 @@ check('документ согласия на публичность опубл�
 }
 
 {
-  const { response, json } = await founderA.client.call(
-    `/v1/publication-consents/${consentId}`,
-    { method: 'DELETE' },
-  );
+  const { response, json } = await founderA.client.call(`/v1/publication-consents/${consentId}`, {
+    method: 'DELETE',
+  });
   check('согласие отозвано', response.status === 200, `статус ${response.status}`);
   const deadlineGap =
     json?.revokedAt && json?.deletionDeadline
       ? (Date.parse(json.deletionDeadline) - Date.parse(json.revokedAt)) / 60000
       : null;
-  check('крайний срок удаления проекции — 15 минут от отзыва', deadlineGap === 15, `${deadlineGap} мин`);
+  check(
+    'крайний срок удаления проекции — 15 минут от отзыва',
+    deadlineGap === 15,
+    `${deadlineGap} мин`,
+  );
 }
 
 {
@@ -1154,7 +1165,11 @@ check('документ согласия на публичность опубл�
   const { response } = await founderA.client.call(`/v1/publication-consents/${consentId}`, {
     method: 'DELETE',
   });
-  check('повторный отзыв не является ошибкой', response.status === 200, `статус ${response.status}`);
+  check(
+    'повторный отзыв не является ошибкой',
+    response.status === 200,
+    `статус ${response.status}`,
+  );
   const events = await sql(
     `SELECT event_type, count(*)::int AS n FROM audit.outbox_events
       WHERE aggregate_id = $1 GROUP BY event_type ORDER BY event_type`,
@@ -1165,7 +1180,11 @@ check('документ согласия на публичность опубл�
   check('выдача попала в outbox', granted?.n === 1, `записей ${granted?.n ?? 0}`);
   // Второе событие отзыва запустило бы у потребителя новый пятнадцатиминутный
   // срок удаления того, что он уже удалил.
-  check('повтор отзыва не публикует второе событие', revoked?.n === 1, `записей ${revoked?.n ?? 0}`);
+  check(
+    'повтор отзыва не публикует второе событие',
+    revoked?.n === 1,
+    `записей ${revoked?.n ?? 0}`,
+  );
 }
 
 // Свой сезон прогон оставляет как есть — он одноразовый; а вот чужие

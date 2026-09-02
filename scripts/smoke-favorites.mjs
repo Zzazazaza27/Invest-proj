@@ -160,15 +160,25 @@ const secondId = listed[1]?.id ?? null;
 
 console.warn('[1] Добавление и список');
 {
-  const added = await investor.client.call(`/v1/investor/favorites/${projectId}`, { method: 'PUT' });
-  check('проект добавлен в избранное', added.response.status === 200, `HTTP ${added.response.status}`);
+  const added = await investor.client.call(`/v1/investor/favorites/${projectId}`, {
+    method: 'PUT',
+  });
+  check(
+    'проект добавлен в избранное',
+    added.response.status === 200,
+    `HTTP ${added.response.status}`,
+  );
 
   const list = await investor.client.call('/v1/investor/favorites');
   const ids = (list.json?.items ?? []).map((item) => item.id);
   check('проект виден в списке избранного', ids.includes(projectId), `в списке: ${ids.length}`);
 
   const item = (list.json?.items ?? []).find((entry) => entry.id === projectId);
-  check('в списке — карточка, а не голый идентификатор', typeof item?.title === 'string', item?.title);
+  check(
+    'в списке — карточка, а не голый идентификатор',
+    typeof item?.title === 'string',
+    item?.title,
+  );
   check('момент добавления возвращается', typeof item?.favoritedAt === 'string', item?.favoritedAt);
   // Закладка не должна открывать данные, которых инвестор без неё не видит.
   const teaserKeys = new Set([
@@ -196,8 +206,14 @@ console.warn('[1] Добавление и список');
 
 console.warn('\n[2] Повторное добавление не плодит дубль');
 {
-  const again = await investor.client.call(`/v1/investor/favorites/${projectId}`, { method: 'PUT' });
-  check('повтор не является ошибкой', again.response.status === 200, `HTTP ${again.response.status}`);
+  const again = await investor.client.call(`/v1/investor/favorites/${projectId}`, {
+    method: 'PUT',
+  });
+  check(
+    'повтор не является ошибкой',
+    again.response.status === 200,
+    `HTTP ${again.response.status}`,
+  );
   const [row] = await sql(
     `SELECT count(*)::int AS n FROM lab.project_favorites WHERE user_id = $1 AND project_id = $2`,
     [investor.userId, projectId],
@@ -209,7 +225,11 @@ console.warn('\n[3] Границы: чужое избранное');
 {
   const otherList = await other.client.call('/v1/investor/favorites');
   const ids = (otherList.json?.items ?? []).map((item) => item.id);
-  check('чужое избранное не видно в своём списке', !ids.includes(projectId), `в списке: ${ids.length}`);
+  check(
+    'чужое избранное не видно в своём списке',
+    !ids.includes(projectId),
+    `в списке: ${ids.length}`,
+  );
 
   // Попытка снять чужую отметку своим запросом: маршрут не принимает чужого
   // владельца вовсе, поэтому проверяем ФАКТ в базе после вызова.
@@ -234,7 +254,11 @@ console.warn('\n[4] Границы в самой БД (RLS, а не только
     await client.query('SET LOCAL ROLE app_backend');
 
     const seen = await client.query('SELECT project_id FROM lab.project_favorites');
-    check('под ролью приложения чужих строк не видно', seen.rowCount === 0, `строк: ${seen.rowCount}`);
+    check(
+      'под ролью приложения чужих строк не видно',
+      seen.rowCount === 0,
+      `строк: ${seen.rowCount}`,
+    );
 
     const deleted = await client.query('DELETE FROM lab.project_favorites WHERE project_id = $1', [
       projectId,
@@ -259,15 +283,18 @@ console.warn('\n[4] Границы в самой БД (RLS, а не только
 
 console.warn('\n[5] Роль инвестора обязательна');
 {
-  const attempt = await founder.client.call(`/v1/investor/favorites/${projectId}`, { method: 'PUT' });
+  const attempt = await founder.client.call(`/v1/investor/favorites/${projectId}`, {
+    method: 'PUT',
+  });
   check(
     'основатель добавить не может',
     attempt.response.status === 403,
     `HTTP ${attempt.response.status}`,
   );
-  const [row] = await sql(`SELECT count(*)::int AS n FROM lab.project_favorites WHERE user_id = $1`, [
-    founder.userId,
-  ]);
+  const [row] = await sql(
+    `SELECT count(*)::int AS n FROM lab.project_favorites WHERE user_id = $1`,
+    [founder.userId],
+  );
   check('строки основателя в базе нет', row.n === 0, `строк: ${row.n}`);
 }
 
@@ -315,7 +342,11 @@ console.warn('\n[7] Состояние переживает выход и вхо
   }
   await investor.client.call('/v1/auth/logout', { method: 'POST' });
   const after = await investor.client.call('/v1/investor/favorites');
-  check('после выхода список не отдаётся', after.response.status === 401, `HTTP ${after.response.status}`);
+  check(
+    'после выхода список не отдаётся',
+    after.response.status === 401,
+    `HTTP ${after.response.status}`,
+  );
 
   const fresh = makeClient();
   await fresh.call('/v1/auth/login', {
@@ -324,7 +355,11 @@ console.warn('\n[7] Состояние переживает выход и вхо
   });
   const list = await fresh.call('/v1/investor/favorites');
   const ids = (list.json?.items ?? []).map((item) => item.id);
-  check('после повторного входа избранное на месте', ids.includes(projectId), `в списке: ${ids.length}`);
+  check(
+    'после повторного входа избранное на месте',
+    ids.includes(projectId),
+    `в списке: ${ids.length}`,
+  );
   if (secondId) {
     check('оба проекта сохранились', ids.includes(secondId), ids.join(', '));
     // Свежее — сверху: человек ждёт последнее добавленное первым.
@@ -343,7 +378,11 @@ console.warn('\n[8] Удаление');
   check('отметка снята', removed.response.status === 200, `HTTP ${removed.response.status}`);
 
   const again = await fresh.call(`/v1/investor/favorites/${projectId}`, { method: 'DELETE' });
-  check('повторное удаление не ошибка', again.response.status === 200, `HTTP ${again.response.status}`);
+  check(
+    'повторное удаление не ошибка',
+    again.response.status === 200,
+    `HTTP ${again.response.status}`,
+  );
 
   const list = await fresh.call('/v1/investor/favorites');
   const ids = (list.json?.items ?? []).map((item) => item.id);

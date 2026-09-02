@@ -259,10 +259,7 @@ await page.fill('#entity-inn', `77${entitySuffix.padStart(8, '0').slice(-8)}`);
 await page.fill('#entity-ogrn', `1${entitySuffix.padStart(12, '0').slice(-12)}`);
 await page.getByRole('button', { name: 'Добавить юрлицо' }).click();
 await page.waitForTimeout(2500);
-check(
-  'юрлицо создано из кабинета',
-  (await page.getByText('Юрлицо добавлено').count()) > 0,
-);
+check('юрлицо создано из кабинета', (await page.getByText('Юрлицо добавлено').count()) > 0);
 check(
   'состояние KYB показано сразу и честно',
   (await page.getByText('KYB не пройден').count()) > 0,
@@ -284,30 +281,17 @@ check(
   (await page.getByText('Проверка по реестру запрошена').count()) > 0,
 );
 
-
 console.warn('\n[2b] Уведомления и настройки каналов');
 const notificationsText = await page.locator('main').innerText();
-check(
-  'блок уведомлений есть в кабинете',
-  notificationsText.includes('Уведомления'),
-);
-check(
-  'пустая лента объяснена словами',
-  notificationsText.includes('Уведомлений нет'),
-);
+check('блок уведомлений есть в кабинете', notificationsText.includes('Уведомления'));
+check('пустая лента объяснена словами', notificationsText.includes('Уведомлений нет'));
 // Безопасность и счета отключить нельзя — это ограничение СХЕМЫ (M008), а не
 // каприз интерфейса. Переключатель, который сервер отвергнет, обещал бы
 // управление, которого нет.
-check(
-  'неотключаемые темы названы прямо',
-  notificationsText.includes('отключить нельзя'),
-);
+check('неотключаемые темы названы прямо', notificationsText.includes('отключить нельзя'));
 const securityToggle = page.locator('#pref-email-security');
 const projectsToggle = page.locator('#pref-email-projects');
-check(
-  'настройка темы «безопасность» заблокирована',
-  await securityToggle.isDisabled(),
-);
+check('настройка темы «безопасность» заблокирована', await securityToggle.isDisabled());
 // Позитивный контроль: блокировка выше — про КОНКРЕТНУЮ тему, а не про то,
 // что переключатели не работают вовсе.
 check('обычная тема переключается', !(await projectsToggle.isDisabled()));
@@ -326,7 +310,6 @@ check(
   'выключенная тема осталась выключенной после перезагрузки',
   !(await page.locator('#pref-email-projects').isChecked()),
 );
-
 
 await page.getByRole('button', { name: 'Новая заявка' }).first().click();
 await page.waitForSelector('#title', { timeout: 10_000 });
@@ -471,7 +454,6 @@ check(
   'счетов по подписке пока нет — и это объяснено',
   (await page.getByText('Счёт выставляется на оформленную подписку').count()) > 0,
 );
-
 
 console.warn('\n[3c] Согласия на публичный контур');
 const consentRow = page.locator('li').filter({ hasText: 'Выпуск отбора' }).first();

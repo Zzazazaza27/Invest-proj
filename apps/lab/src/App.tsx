@@ -112,7 +112,9 @@ declare const __APP_VERSION__: string;
  * Порты приложений стенда, подставленные Vite. Нужны только при прямом запуске
  * dev-сервером: за единой точкой входа переход идёт по пути, без портов.
  */
-declare const __CABINET_PORTS__: Partial<Record<'lab' | 'investor' | 'expert' | 'admin' | 'login', number>>;
+declare const __CABINET_PORTS__: Partial<
+  Record<'lab' | 'investor' | 'expert' | 'admin' | 'login', number>
+>;
 
 /** Сообщение об ошибке уходит тем же маршрутом — различает их вид обращения. */
 const bugReportPort = {
@@ -282,7 +284,6 @@ const TRUST_ITEMS = [
     description: 'Вопрос по заявке — через уведомления кабинета',
   },
 ];
-
 
 /** Общие ярлыки статусов: они одинаковы во всех экранах кабинета. */
 export const PROJECT_STATUS_LABEL: Record<string, string> = {

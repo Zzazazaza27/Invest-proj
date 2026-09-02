@@ -208,10 +208,7 @@ await p3.goto(`${BASE}/login/`, { waitUntil: 'networkidle' });
 await p3.getByRole('button', { name: 'Забыли пароль?' }).click();
 await p3.waitForTimeout(400);
 check('экран восстановления открылся', (await p3.locator('#forgot-email').count()) === 1);
-check(
-  'на экране восстановления нет поля пароля',
-  (await p3.locator('#password').count()) === 0,
-);
+check('на экране восстановления нет поля пароля', (await p3.locator('#password').count()) === 0);
 
 await p3.locator('#forgot-email').fill('stand-founder@unicorn.local');
 await p3.getByRole('button', { name: 'Прислать ссылку' }).click();
@@ -237,7 +234,10 @@ check(
 // проверяется экран, а не смена пароля — её проверяет смоук-прогон.
 await p3.goto(`${BASE}/login/#reset=${'z'.repeat(43)}`, { waitUntil: 'networkidle' });
 await p3.waitForTimeout(500);
-check('ссылка из письма открывает форму нового пароля', (await p3.locator('#new-password').count()) === 1);
+check(
+  'ссылка из письма открывает форму нового пароля',
+  (await p3.locator('#new-password').count()) === 1,
+);
 await p3.locator('#new-password').fill('Some-long-passw0rd!');
 await p3.locator('#repeat-password').fill('Other-long-passw0rd!');
 await p3.getByRole('button', { name: 'Сменить пароль' }).click();
@@ -258,8 +258,11 @@ check(
 );
 
 const inputsWithoutLabel = await p3.locator('input:not([id]):not([aria-label])').count();
-check('поля восстановления имеют подписи', inputsWithoutLabel === 0, `без подписи: ${inputsWithoutLabel}`);
-
+check(
+  'поля восстановления имеют подписи',
+  inputsWithoutLabel === 0,
+  `без подписи: ${inputsWithoutLabel}`,
+);
 
 check('исключений на страницах нет', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 

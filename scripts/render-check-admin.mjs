@@ -256,15 +256,9 @@ check(
   'сказано, что секрет больше не покажут',
   (await page.getByText('Повторно он не отображается').count()) > 0,
 );
-check(
-  'новый клиент появился в списке',
-  (await page.getByText(`probe-${saSuffix}`).count()) > 0,
-);
+check('новый клиент появился в списке', (await page.getByText(`probe-${saSuffix}`).count()) > 0);
 
-await page
-  .getByRole('button', { name: 'Приостановить' })
-  .last()
-  .click();
+await page.getByRole('button', { name: 'Приостановить' }).last().click();
 await page.waitForTimeout(1500);
 // Приостановка — не удаление: клиент остаётся в списке, меняется состояние.
 check(

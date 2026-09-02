@@ -25,32 +25,32 @@
 
 ## Статус гейтов (доказательства этой сессии)
 
-| Гейт | Результат |
-|---|---|
-| `lint:migrations` | 0 ошибок, 1 прежний WARN |
-| Миграция M056 | применена к основной и тестовой БД |
-| Тесты БД | 61/61 (+6) |
-| `smoke-integration` | 53/53 (выдача токена через definer-функцию) |
-| `smoke-lab` | 93/93 (материалы под новой политикой) |
-| `smoke-investments` | 34/34 |
-| `smoke-experts` | 49/49 (материалы рецензенту, has_valid_kyc) |
-| `smoke-core` | 46/46 (регистрация, активация по согласиям) |
-| `check-definer-privileges` | 0 нарушений |
-| `check-service-roles` | 42/42 |
-| `gate:net` | пройден |
-| TypeScript / ESLint / Prettier | 0 / 0 / чисто |
+| Гейт                           | Результат                                   |
+| ------------------------------ | ------------------------------------------- |
+| `lint:migrations`              | 0 ошибок, 1 прежний WARN                    |
+| Миграция M056                  | применена к основной и тестовой БД          |
+| Тесты БД                       | 61/61 (+6)                                  |
+| `smoke-integration`            | 53/53 (выдача токена через definer-функцию) |
+| `smoke-lab`                    | 93/93 (материалы под новой политикой)       |
+| `smoke-investments`            | 34/34                                       |
+| `smoke-experts`                | 49/49 (материалы рецензенту, has_valid_kyc) |
+| `smoke-core`                   | 46/46 (регистрация, активация по согласиям) |
+| `check-definer-privileges`     | 0 нарушений                                 |
+| `check-service-roles`          | 42/42                                       |
+| `gate:net`                     | пройден                                     |
+| TypeScript / ESLint / Prettier | 0 / 0 / чисто                               |
 
 ## Findings
 
-| Severity | Что | Статус |
-|---|---|---|
-| MEDIUM | `password_hash` и контакты доступны трём сервисным ролям | FIXED (доказано тестом: SELECT колонки → отказ, разрешённые колонки читаются) |
-| MEDIUM | `users_update_self` позволял менять системные колонки | FIXED (тест: primary_role/email_hmac/deleted_at — отказ, display_name — проходит) |
-| LOW | Неподтверждённые материалы видны в SELECT | FIXED (тест: pending отсутствует в выборке, confirmed присутствует) |
-| LOW | `has_required_consents` на пустой локали | FIXED (тест) |
-| LOW | `has_valid_kyc` пропускал `review` | FIXED (тест) |
-| LOW | Ёмкость оффера не защищена при UPDATE | FIXED (триггер) |
-| LOW | `app_integration` читала все `client_secret_hash` | FIXED (definer-функция; smoke-integration 53/53) |
+| Severity | Что                                                      | Статус                                                                            |
+| -------- | -------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| MEDIUM   | `password_hash` и контакты доступны трём сервисным ролям | FIXED (доказано тестом: SELECT колонки → отказ, разрешённые колонки читаются)     |
+| MEDIUM   | `users_update_self` позволял менять системные колонки    | FIXED (тест: primary_role/email_hmac/deleted_at — отказ, display_name — проходит) |
+| LOW      | Неподтверждённые материалы видны в SELECT                | FIXED (тест: pending отсутствует в выборке, confirmed присутствует)               |
+| LOW      | `has_required_consents` на пустой локали                 | FIXED (тест)                                                                      |
+| LOW      | `has_valid_kyc` пропускал `review`                       | FIXED (тест)                                                                      |
+| LOW      | Ёмкость оффера не защищена при UPDATE                    | FIXED (триггер)                                                                   |
+| LOW      | `app_integration` читала все `client_secret_hash`        | FIXED (definer-функция; smoke-integration 53/53)                                  |
 
 ## Ограничения
 

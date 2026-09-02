@@ -163,17 +163,10 @@ check(
   'сказано, откуда берётся счёт',
   billingText.includes('подписки') && billingText.includes('вознаграждения'),
 );
-check(
-  'начисление объяснено как однократное',
-  billingText.includes('один раз'),
-);
+check('начисление объяснено как однократное', billingText.includes('один раз'));
 // Оплата картой не подключена — интерфейс обязан сказать это, а не показывать
 // кнопку, ведущую в отказ.
-check(
-  'неподключённая оплата названа прямо',
-  billingText.includes('не подключён'),
-);
-
+check('неподключённая оплата названа прямо', billingText.includes('не подключён'));
 
 // Юрлицо инвестора: сделка от компании требует проверенной организации, и это
 // часть той же верификации, а не отдельный раздел.
@@ -188,7 +181,6 @@ check(
   entityText.replace(/\s+/g, ' ').slice(0, 90),
 );
 
-
 console.warn('\n[3c] Уведомления');
 await page.getByRole('button', { name: 'Уведомления' }).click();
 await page.waitForTimeout(1500);
@@ -198,11 +190,7 @@ check(
   notifyText.includes('Уведомлений нет') || notifyText.includes('Показаны последние'),
   notifyText.replace(/\s+/g, ' ').slice(0, 90),
 );
-check(
-  'неотключаемые темы названы прямо',
-  notifyText.includes('отключить нельзя'),
-);
-
+check('неотключаемые темы названы прямо', notifyText.includes('отключить нельзя'));
 
 console.warn('\n[4] Выключенный регулируемый контур');
 await page.getByRole('button', { name: 'Предложения' }).click();

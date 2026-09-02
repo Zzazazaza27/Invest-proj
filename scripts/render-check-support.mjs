@@ -175,7 +175,10 @@ console.warn('\n[6] Сотрудник поддержки отвечает');
   check('сотрудник видит чужое обращение', (await staff.getByText(supportSubject).count()) >= 1);
   // Формы «написать в поддержку» у сотрудника нет: обращение, заведённое
   // сотрудником за пользователя, не является обращением пользователя.
-  check('формы создания за пользователя нет', (await staff.locator('#support-subject').count()) === 0);
+  check(
+    'формы создания за пользователя нет',
+    (await staff.locator('#support-subject').count()) === 0,
+  );
 
   await staff.getByText(supportSubject).first().click();
   await staff.waitForTimeout(1200);

@@ -103,7 +103,6 @@ function quoteIdent(name) {
   return `"${name}"`;
 }
 
-
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER, max: 2 });
 
 const found = await pool.query(
@@ -288,7 +287,9 @@ try {
         `UPDATE ${r.table_name} SET ${quoteIdent(r.column_name)} = $2 WHERE ${quoteIdent(r.column_name)} = $1`,
         [user.id, heirId],
       );
-      console.log(`  передано ${String(res.rowCount).padStart(5)}  ${r.table_name}.${r.column_name}`);
+      console.log(
+        `  передано ${String(res.rowCount).padStart(5)}  ${r.table_name}.${r.column_name}`,
+      );
       continue;
     }
     const res = await client.query(

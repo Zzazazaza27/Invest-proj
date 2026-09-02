@@ -130,11 +130,7 @@ console.warn('\n=== ДЫМОВАЯ ПРОВЕРКА CORE ===\n');
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   });
-  check(
-    'оплата счёта закрыта без токена',
-    response.status === 401,
-    `получено ${response.status}`,
-  );
+  check('оплата счёта закрыта без токена', response.status === 401, `получено ${response.status}`);
   check('отказ оплаты в формате problem+json', json?.code === 'unauthenticated');
 }
 

@@ -44,15 +44,8 @@
   "version": "1.7.1",
   "default_provider": "local_deterministic",
   "residency": {
-    "restricted_classes": [
-      "pdn",
-      "commercial_secret"
-    ],
-    "allowed_jurisdictions": [
-      "RU",
-      "US",
-      "CN"
-    ]
+    "restricted_classes": ["pdn", "commercial_secret"],
+    "allowed_jurisdictions": ["RU", "US", "CN"]
   },
   "providers": [
     {
@@ -61,12 +54,7 @@
       "kind": "deterministic",
       "is_llm": false,
       "endpoint": null,
-      "data_classes": [
-        "public",
-        "pseudonymous",
-        "pdn",
-        "commercial_secret"
-      ],
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
       "note": "Воспроизводимая эвристика внутри контура. Данные никуда не уходят."
     },
     {
@@ -75,12 +63,7 @@
       "kind": "llm",
       "is_llm": true,
       "endpoint": "https://llm.api.cloud.yandex.net/v1/chat/completions",
-      "data_classes": [
-        "public",
-        "pseudonymous",
-        "pdn",
-        "commercial_secret"
-      ],
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
       "enabled": false,
       "note": "OpenAI-совместимый вход YandexGPT. Модель вида gpt://<folder>/yandexgpt/latest задаёт оператор в панели.",
       "api_style": "openai_chat",
@@ -101,23 +84,14 @@
       "kind": "llm",
       "is_llm": true,
       "endpoint": "https://gigachat.devices.sberbank.ru/api/v1/chat/completions",
-      "data_classes": [
-        "public",
-        "pseudonymous",
-        "pdn",
-        "commercial_secret"
-      ],
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
       "enabled": false,
       "note": "Требует access token GigaChat (получается по client secret) — задаётся в панели как ключ.",
       "api_style": "openai_chat",
       "auth_scheme": "bearer",
       "model": "GigaChat",
       "models_endpoint": "https://gigachat.devices.sberbank.ru/api/v1/models",
-      "model_suggestions": [
-        "GigaChat",
-        "GigaChat-Pro",
-        "GigaChat-Max"
-      ],
+      "model_suggestions": ["GigaChat", "GigaChat-Pro", "GigaChat-Max"],
       "max_output_tokens": 8192,
       "timeout_seconds": 240
     },
@@ -127,12 +101,7 @@
       "kind": "llm",
       "is_llm": true,
       "endpoint": "https://api.anthropic.com/v1/messages",
-      "data_classes": [
-        "public",
-        "pseudonymous",
-        "pdn",
-        "commercial_secret"
-      ],
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
       "enabled": false,
       "note": "Claude (Anthropic, США). Все классы данных — по решению владельца 2026-08-26. Модель задаёт оператор.",
       "api_style": "anthropic_messages",
@@ -152,12 +121,7 @@
       "api_style": "openai_chat",
       "auth_scheme": "bearer",
       "model": null,
-      "data_classes": [
-        "public",
-        "pseudonymous",
-        "pdn",
-        "commercial_secret"
-      ],
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
       "enabled": false,
       "note": "OpenAI (США). Все классы данных — по решению владельца 2026-08-26. Модель задаёт оператор.",
       "models_endpoint": "https://api.openai.com/v1/models",
@@ -177,12 +141,7 @@
       "api_style": "openai_chat",
       "auth_scheme": "bearer",
       "model": null,
-      "data_classes": [
-        "public",
-        "pseudonymous",
-        "pdn",
-        "commercial_secret"
-      ],
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
       "enabled": false,
       "note": "Kimi (Moonshot AI, КНР), международная площадка platform.kimi.ai — OpenAI-совместимый вход. Ключ китайской площадки (api.moonshot.cn) сюда не подходит: адрес меняется здесь, ревью. Модель задаёт оператор (kimi-k3, kimi-k2.5).",
       "models_endpoint": "https://api.moonshot.ai/v1/models",
@@ -199,20 +158,11 @@
       "api_style": "openai_chat",
       "auth_scheme": "bearer",
       "model": null,
-      "data_classes": [
-        "public",
-        "pseudonymous",
-        "pdn",
-        "commercial_secret"
-      ],
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
       "enabled": false,
       "note": "Qwen (Alibaba Cloud Model Studio, КНР), международный регион Singapore — OpenAI-совместимый вход. Ключ региона Beijing требует адреса dashscope.aliyuncs.com — меняется здесь, ревью. Модель задаёт оператор (qwen-plus, qwen-max).",
       "models_endpoint": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/models",
-      "model_suggestions": [
-        "qwen-plus",
-        "qwen-max",
-        "qwen-turbo"
-      ],
+      "model_suggestions": ["qwen-plus", "qwen-max", "qwen-turbo"],
       "max_output_tokens": 8192,
       "timeout_seconds": 240
     },
@@ -225,12 +175,7 @@
       "api_style": "openai_chat",
       "auth_scheme": "bearer",
       "model": "deepseek-v4-flash",
-      "data_classes": [
-        "public",
-        "pseudonymous",
-        "pdn",
-        "commercial_secret"
-      ],
+      "data_classes": ["public", "pseudonymous", "pdn", "commercial_secret"],
       "enabled": false,
       "note": "DeepSeek (КНР) — OpenAI-совместимый вход. Модели deepseek-v4-pro / deepseek-v4-flash. Режим размышления выключен (thinking.type=disabled): в нём игнорируется temperature, а размышление входит в max_tokens; потолок 65 536 оставлен с запасом. seed фиксирован: детерминированная выборка (beta у DeepSeek) держит разброс IRS между прогонами в пределах гейта. votes=5: медианный из пяти параллельных прогонов — разброс IRS одного прогона 2,7 на 10 повторов не проходил гейт (≤ 2). Модель по умолчанию закреплена на deepseek-v4-flash (решение владельца 2026-08-28): pro втрое дороже при том же промпте — $0,079 против $0,026 за проект вне пика. Значение из панели перебивает это поле, поэтому смена модели остаётся осознанным действием оператора, а не следствием пустого поля.",
       "models_endpoint": "https://api.deepseek.com/models",

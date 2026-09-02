@@ -42,15 +42,7 @@ const steps = [
     // `--strict` — как в CI: без него pip-audit возвращает 0, когда какую-то
     // зависимость не удалось проверить, и локальный гейт был мягче CI
     // (расхождение поведения между средами, LOW внешнего аудита №2).
-    args: [
-      '-m',
-      'pip_audit',
-      '-r',
-      'requirements.txt',
-      '--strict',
-      '--progress-spinner',
-      'off',
-    ],
+    args: ['-m', 'pip_audit', '-r', 'requirements.txt', '--strict', '--progress-spinner', 'off'],
   },
 ];
 

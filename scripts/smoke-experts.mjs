@@ -764,13 +764,21 @@ let wsAssignment;
 }
 {
   const { json } = await expert3.client.call(`/v1/experts/assignments/${wsAssignment.id}/notes`);
-  check('своя заметка видна автору', (json?.items ?? []).length === 1, `${(json?.items ?? []).length}`);
+  check(
+    'своя заметка видна автору',
+    (json?.items ?? []).length === 1,
+    `${(json?.items ?? []).length}`,
+  );
 }
 {
   const { json } = await expert1.client.call(`/v1/experts/assignments/${wsAssignment.id}/notes`);
   // Чужое назначение политикой не видно — список пуст, а не отказ: сам факт
   // существования чужого назначения тоже не подтверждается.
-  check('чужие заметки не видны', (json?.items ?? []).length === 0, `${(json?.items ?? []).length}`);
+  check(
+    'чужие заметки не видны',
+    (json?.items ?? []).length === 0,
+    `${(json?.items ?? []).length}`,
+  );
 }
 {
   const { response } = await expert1.client.call(
@@ -906,7 +914,11 @@ let wsAssignment;
 {
   const { json } = await expert3.client.call('/v1/experts/assignments');
   const mine = (json?.items ?? []).find((item) => item.id === wsAssignment.id);
-  check('в назначении виден этап проекта', mine?.projectStatus === 'expert_review', mine?.projectStatus);
+  check(
+    'в назначении виден этап проекта',
+    mine?.projectStatus === 'expert_review',
+    mine?.projectStatus,
+  );
   check('видно, что рецензия подана', mine?.reviewSubmitted === true);
   check('пересмотр пока разрешён', mine?.revisable === true);
 }

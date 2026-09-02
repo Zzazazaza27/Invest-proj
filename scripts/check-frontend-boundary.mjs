@@ -34,9 +34,15 @@ const ALLOWED_CASE = {
 // Консоль разработки — такой же фронтенд с точки зрения границы: она обращается
 // к тому же публичному API и не имеет права ходить в БД, очереди и хранилище
 // напрямую. Забыть её здесь означало бы оставить дыру в проверке (ADR-002).
-const FRONTEND_APPS = ['web-public', 'lab', 'investor', 'expert', 'admin', 'console', 'auth'].filter(
-  (app) => existsSync(join(ROOT, 'apps', app)),
-);
+const FRONTEND_APPS = [
+  'web-public',
+  'lab',
+  'investor',
+  'expert',
+  'admin',
+  'console',
+  'auth',
+].filter((app) => existsSync(join(ROOT, 'apps', app)));
 
 if (FRONTEND_APPS.length === 0) {
   console.error('Ни одного фронтенд-приложения не найдено — проверять нечего.');

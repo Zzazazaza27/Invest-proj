@@ -64,7 +64,8 @@ const urlKeyLogins = new Map(
   ),
 );
 // Имя роли внутри значения KEY=postgres://<роль>:...
-const envUrlRole = (key) => envExample.match(new RegExp(`^${key}=postgres://([^:@/]+)[:@]`, 'm'))?.[1];
+const envUrlRole = (key) =>
+  envExample.match(new RegExp(`^${key}=postgres://([^:@/]+)[:@]`, 'm'))?.[1];
 
 for (const key of urlKeys) {
   if (new RegExp(`export ${key}=`).test(ci)) ok(`CI экспортирует ${key}`);

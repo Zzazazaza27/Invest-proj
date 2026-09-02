@@ -647,7 +647,9 @@ describe('RLS: обращения в поддержку (M062)', () => {
       const ticket = await openTicket(c, alice.id);
 
       await actAs(c, { userId: bob.id, roles: ['founder'], dbRole: 'app_backend' });
-      const { rows } = await c.query('SELECT id FROM comms.support_tickets WHERE id = $1', [ticket]);
+      const { rows } = await c.query('SELECT id FROM comms.support_tickets WHERE id = $1', [
+        ticket,
+      ]);
       expect(rows).toHaveLength(0);
     });
   });
@@ -659,7 +661,9 @@ describe('RLS: обращения в поддержку (M062)', () => {
       const ticket = await openTicket(c, alice.id);
 
       await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
-      const { rows } = await c.query('SELECT id FROM comms.support_tickets WHERE id = $1', [ticket]);
+      const { rows } = await c.query('SELECT id FROM comms.support_tickets WHERE id = $1', [
+        ticket,
+      ]);
       expect(rows).toHaveLength(1);
     });
   });
@@ -788,10 +792,9 @@ describe('RLS: обращения в поддержку (M062)', () => {
       );
 
       await actAs(c, { userId: bob.id, roles: ['founder'], dbRole: 'app_backend' });
-      const { rows } = await c.query(
-        'SELECT id FROM comms.support_messages WHERE ticket_id = $1',
-        [ticket],
-      );
+      const { rows } = await c.query('SELECT id FROM comms.support_messages WHERE ticket_id = $1', [
+        ticket,
+      ]);
       expect(rows).toHaveLength(0);
     });
   });
@@ -885,9 +888,10 @@ describe('RLS: избранные проекты инвестора (M063)', () 
       await favorite(c, alice.id, project);
 
       await actAs(c, { userId: bob.id, roles: ['investor'], dbRole: 'app_backend' });
-      const { rowCount } = await c.query('DELETE FROM lab.project_favorites WHERE project_id = $1', [
-        project,
-      ]);
+      const { rowCount } = await c.query(
+        'DELETE FROM lab.project_favorites WHERE project_id = $1',
+        [project],
+      );
       // Молчаливый ноль — тоже отказ, и проверять надо именно его.
       expect(rowCount).toBe(0);
 
@@ -929,9 +933,10 @@ describe('RLS: избранные проекты инвестора (M063)', () 
       // Роль снята: добавлять больше нельзя, но собственная строка не должна
       // становиться неудаляемой.
       await actAs(c, { userId: alice.id, roles: ['founder'], dbRole: 'app_backend' });
-      const { rowCount } = await c.query('DELETE FROM lab.project_favorites WHERE project_id = $1', [
-        project,
-      ]);
+      const { rowCount } = await c.query(
+        'DELETE FROM lab.project_favorites WHERE project_id = $1',
+        [project],
+      );
       expect(rowCount).toBe(1);
     });
   });
@@ -939,9 +944,12 @@ describe('RLS: избранные проекты инвестора (M063)', () 
 
 describe('RLS: рабочая зона эксперта (M064)', () => {
   /** Эксперт с назначением на проект. Фикстуры заводятся от имени владельца. */
-  async function assignExpert(
-    c: Client,
-  ): Promise<{ expert: { id: string }; other: { id: string }; project: string; assignment: string }> {
+  async function assignExpert(c: Client): Promise<{
+    expert: { id: string };
+    other: { id: string };
+    project: string;
+    assignment: string;
+  }> {
     const owner = await createUser(c, { role: 'founder' });
     const expert = await createUser(c, { role: 'expert' });
     const other = await createUser(c, { role: 'expert' });
@@ -1113,9 +1121,8 @@ describe('RLS: рабочая зона эксперта (M064)', () => {
 
       // Событие пишется единственным разрешённым путём — через app_emit_event.
       await c.query(`SELECT set_config('app.event_emit_context', 'on', true)`);
-      await c.query(
-        `SELECT audit.app_emit_event($1, $2, $3, $4, $5, $6, $7)`,
-        [
+      await c
+        .query(`SELECT audit.app_emit_event($1, $2, $3, $4, $5, $6, $7)`, [
           'lab.expert.assigned',
           null,
           'organizer',
@@ -1123,8 +1130,8 @@ describe('RLS: рабочая зона эксперта (M064)', () => {
           assignment,
           JSON.stringify({ projectId: null }),
           null,
-        ],
-      ).catch(() => undefined);
+        ])
+        .catch(() => undefined);
 
       await actAs(c, { userId: other.id, roles: ['expert'], dbRole: 'app_backend' });
       const foreign = await c.query(
