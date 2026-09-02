@@ -574,7 +574,8 @@ npm run gate:deps                   # npm audit --audit-level=high
 npm run gate:secrets                # gitleaks — вся история коммитов (ожидание: 0)
 npm run gate:secret-reuse           # два секрета не делят одно значение (.env, пример, compose)
 npm run gate:kek                    # KEK-домены: тип, вызовы seal*, карта ротации и колонки БД не расходятся
-npm run gate:roles-env              # логин-роли БД: bootstrap, границы ролей, CI env и .env.example не расходятся
+npm run gate:roles-env              # логин-роли БД: bootstrap, границы ролей, CI env и .env.example не расходятся,
+                                    # включая имена ролей внутри DATABASE_URL_* (группа вместо логин-роли — провал, Ф58)
 npm run gate:sast-config            # guardian.yml цел, совпадает с HEAD и защищён read-only (обнулялся 4 раза)
 npm run gate:checkpoint-secrets     # в ветках чекпоинтов Entire нет секретов (Ф47)
 npm run probe:secret-leak           # значения из .env в объектах git (ожидание: 0)
