@@ -13,6 +13,9 @@
     "database"
   ],
   "scripts": {
+    "prepare": "git config core.hooksPath .githooks",
+    "hooks:install": "git config core.hooksPath .githooks",
+    "session": "node scripts/check-upstream-owner.mjs && node scripts/stand-status.mjs",
     "build": "npm run build:packages && npm run build -w apps/core --if-present && npm run build -w apps/web-public --if-present && npm run build -w apps/admin --if-present && npm run build -w apps/lab --if-present && npm run build -w apps/investor --if-present && npm run build -w apps/expert --if-present && npm run build -w apps/auth --if-present",
     "build:console": "npm run build -w apps/console",
     "typecheck": "npm run typecheck --workspaces --if-present",
@@ -43,6 +46,7 @@
     "gate:secret-reuse": "node scripts/check-secret-reuse.mjs",
     "gate:kek": "node scripts/check-kek-domains.mjs",
     "gate:roles-env": "node scripts/check-role-env-consistency.mjs",
+    "gate:upstream": "node scripts/check-upstream-owner.mjs",
     "gate:sast-config": "node scripts/check-sast-config.mjs",
     "gate:checkpoint-secrets": "node scripts/check-checkpoint-secrets.mjs",
     "gate:ssh-keys": "node scripts/check-ssh-keys.mjs",
@@ -50,7 +54,7 @@
     "rotate:stand-secrets": "node scripts/rotate-stand-secrets.mjs",
     "gate:net": "node scripts/network-audit.mjs",
     "gate:net:strict": "node scripts/network-audit.mjs --strict",
-    "gate": "npm run lint && npm run typecheck && npm run test && npm run gate:boundary && npm run gate:deps && npm run gate:secret-reuse && npm run gate:kek && npm run gate:roles-env && npm run gate:sast-config && npm run gate:ssh-keys && npm run gate:ai && npm run gate:net:strict",
+    "gate": "npm run gate:upstream && npm run lint && npm run typecheck && npm run test && npm run gate:boundary && npm run gate:deps && npm run gate:secret-reuse && npm run gate:kek && npm run gate:roles-env && npm run gate:sast-config && npm run gate:ssh-keys && npm run gate:ai && npm run gate:net:strict",
     "gate:boundary": "node scripts/check-frontend-boundary.mjs",
     "build:packages": "npm run build -w packages/contracts && npm run build -w packages/ui && npm run build -w packages/cabinet && npm run build -w packages/api-client",
     "gate:ai": "node scripts/gate-ai-gateway.mjs"
