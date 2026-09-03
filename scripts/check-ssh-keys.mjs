@@ -21,7 +21,7 @@
 // Запуск: node scripts/check-ssh-keys.mjs   (npm run gate:ssh-keys)
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, statSync, writeFileSync, rmSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
@@ -98,25 +98,17 @@ console.warn('Гейт: приватные SSH-ключи не покидают 
 // Проверяем не текстом файла, а поведением git: правило можно записать
 // по-разному, значение имеет только результат.
 {
-  const probe = join(SSH_DIR, '.gate-probe');
+  // `git check-ignore` отвечает по ПУТИ и не требует, чтобы файл существовал.
+  // Раньше гейт всё-таки создавал пробный файл — и падал с ENOENT на чистом
+  // клоне, где каталога `.ssh/` нет: writeFileSync в несуществующий каталог.
+  // Именно так он валил CI на каждом прогоне. Проверка от этого не ослабла:
+  // спрашиваем git о поведении, а не читаем .gitignore глазами.
   let ignored;
   try {
-    if (!existsSync(SSH_DIR)) {
-      console.warn('  .ssh/ отсутствует — проверка правила по пробному пути');
-    }
-    writeFileSync(probe, 'probe\n');
-    try {
-      git(['check-ignore', '-q', '.ssh/.gate-probe']);
-      ignored = true;
-    } catch {
-      ignored = false;
-    }
-  } finally {
-    try {
-      rmSync(probe, { force: true });
-    } catch {
-      /* пробник мог не создаться — это не ошибка гейта */
-    }
+    git(['check-ignore', '-q', '.ssh/.gate-probe']);
+    ignored = true;
+  } catch {
+    ignored = false;
   }
   if (ignored) ok('.ssh/ игнорируется git');
   else fail('.ssh/ НЕ игнорируется git — добавь `.ssh/` в .gitignore');

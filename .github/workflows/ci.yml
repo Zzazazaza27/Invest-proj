@@ -211,8 +211,11 @@ jobs:
         run: npm run migrate -w database
       - name: Линтер миграций (expand/contract, FK/RLS/GRANT)
         run: npm run lint:migrations -w database
-      - name: Негативные тесты RLS и конкурентные инварианты
-        run: npm run test -w database
+      # Логин-роли заводятся ДО тестов: rls.test.ts проверяет членство
+      # app_backend_user в группах, и на пустой базе тест видел роль
+      # несуществующей — «expected [] to deeply equal [app_backend,
+      # app_public_read]». Шаг стоял после тестов с Ф18, из-за чего джоб падал
+      # на каждом прогоне.
       # Постоянные гейты прав. Локально они прогонялись руками — то есть не
       # прогонялись на каждом изменении: расширить права сервисной роли или
       # выдать PUBLIC право на SECURITY DEFINER можно было незаметно для CI.
@@ -229,6 +232,8 @@ jobs:
           DB_ROLE_PASSWORD_APP_MAINTENANCE: ci_only_role_password_mainten_0
           DB_ROLE_PASSWORD_APP_AUTH: ci_only_role_password_authstate_0
           DB_ROLE_PASSWORD_APP_ARCHIVE: ci_only_role_password_archive_00
+      - name: Негативные тесты RLS и конкурентные инварианты
+        run: npm run test -w database
       - name: Права PUBLIC на функциях SECURITY DEFINER (ожидание 0 нарушений)
         run: node scripts/check-definer-privileges.mjs
       # Строки подключения собираются в шаге, а не лежат литералами: пароль
