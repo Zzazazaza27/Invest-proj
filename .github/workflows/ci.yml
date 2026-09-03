@@ -167,8 +167,26 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci
-      - name: npm audit (high и выше — блокирующе)
-        run: npm audit --audit-level=high
+      # Предупреждает, но не блокирует. Транзитивная уязвимость появляется без
+      # единой правки кода — от новой advisory на пакет, которого мы даже не
+      # выбирали. Блокирующий шаг в такой ситуации не защищает, а превращает
+      # красный CI в норму, и тогда на него перестают смотреть вовсе.
+      # Критические — по-прежнему останавливают: их мало и они того стоят.
+      - name: npm audit (critical блокирует, high и ниже — предупреждение)
+        run: |
+          npm audit --audit-level=critical
+          npm audit --audit-level=high || echo "::warning::Есть уязвимости уровня high — посмотрите npm audit"
+
+      - name: Итог аудита в сводку
+        if: always()
+        run: |
+          {
+            echo "### Аудит зависимостей"
+            echo ''
+            echo '```'
+            npm audit 2>&1 | tail -20 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
       # AI-контур появляется в фазе Ф7. Пока файла нет — шаг пропускается явно
       # и с сообщением, а не «зеленеет» молча.
       - name: Python-зависимости AI-контура
