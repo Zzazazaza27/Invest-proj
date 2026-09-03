@@ -84,6 +84,10 @@ async function main() {
   await pool.end();
   const row = rows[0];
   if (!row) throw new Error('нет активного ключа провайдера');
+  // Правило SAST срабатывает на ИМЯ переменной `kek`. Секрета в коде нет:
+  // значение приходит из окружения, а ключ провайдера лежит в базе
+  // шифртекстом и расшифровывается ниже. Та же оговорка — в ядре и rotate-kek.
+  // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
   const kek = Buffer.from(process.env.KEK_AI_PROVIDER_SECRETS ?? '', 'base64');
   const dek = decrypt(kek, row.wrapped_dek, 'wrap:ai_provider_secrets');
   const apiKey = decrypt(dek, row.api_key_ciphertext, 'field:api_key').toString('utf8');

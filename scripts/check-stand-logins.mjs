@@ -70,6 +70,9 @@ async function tryLogin(email) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password: PASSWORD }),
+      // Без таймаута скрипт висит вечно на неотвечающем ядре: 80 учёток —
+      // и прогон не завершится никогда, а причина останется невидимой.
+      signal: AbortSignal.timeout(15_000),
     });
     if (res.status !== 429) return res.status;
     // Retry-After в секундах, если сервер его прислал.

@@ -109,6 +109,10 @@ async function activeCredential(sql) {
   );
   const row = rows[0];
   if (!row) return null;
+  // Правило SAST срабатывает на ИМЯ переменной `kek`. Секрета в коде нет:
+  // значение приходит из окружения, а ключ провайдера лежит в базе
+  // шифртекстом и расшифровывается ниже. Та же оговорка — в ядре и rotate-kek.
+  // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
   const kek = Buffer.from(process.env.KEK_AI_PROVIDER_SECRETS ?? '', 'base64');
   if (kek.length !== 32) throw new Error('KEK_AI_PROVIDER_SECRETS не задан или неверной длины');
   const dek = decrypt(kek, row.wrapped_dek, 'wrap:ai_provider_secrets');
@@ -507,7 +511,11 @@ try {
           // Расчёт над числами заявки (CAC / (8 900 × 0,54) ≈ 3,9) — не внешний
           // факт: промпт разрешает арифметику над данными. Признак расчёта —
           // оператор или число из заявки в том же окне текста.
-          const at = s.explanation.search(new RegExp(n.split('').join('[\s.,]?')));
+          // Разделитель разрядов: пробел, точка или запятая. `\\s` —
+          // экранирование ДЛЯ РЕГУЛЯРКИ, а не для строки: в обычной строке
+          // '[\s.,]?' даёт класс из буквы «s», точки и запятой, и число
+          // «8 900» с пробелом не находилось никогда.
+          const at = s.explanation.search(new RegExp(n.split('').join('[\\s.,]?')));
           const window = s.explanation.slice(Math.max(0, at - 60), at + n.length + 60);
           const derived =
             /[×*/÷≈=+−]/.test(window) ||
