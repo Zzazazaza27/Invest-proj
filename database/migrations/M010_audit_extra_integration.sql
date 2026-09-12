@@ -2,7 +2,7 @@
 -- M010 — audit-extra + integration
 -- Реестр KEK, фичефлаги, прогоны AI-графов; сервисные аккаунты будущих
 -- платформ, вебхуки, доставки, внешние ссылки.
--- Источник: docs/architecture/Database_Launch.md §12, §13.
+-- Источник: Database_Launch.md §12, §13.
 -- =============================================================================
 
 CREATE TABLE audit.encryption_keys_registry (

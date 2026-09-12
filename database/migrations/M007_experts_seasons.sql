@@ -2,7 +2,7 @@
 -- M007 — experts + seasons
 -- Экспертный совет (назначения, конфликты, рецензии, консенсус) и сезонный
 -- метроном с золотыми билетами и рейтингом.
--- Источник: docs/architecture/Database_Launch.md §8, §9.
+-- Источник: Database_Launch.md §8, §9.
 -- =============================================================================
 
 -- --------------------------------------------------------------- эксперты
@@ -95,7 +95,7 @@ CREATE INDEX consensus_project ON experts.review_consensus (project_id, decided_
 
 COMMENT ON COLUMN experts.review_consensus.decided_by IS
     'Human gate: финальное решение фиксирует человек, а не модель '
-    '(docs/architecture/Architect.md §3.6 «AI ускоряет, человек решает»).';
+    '(Architect.md §3.6 «AI ускоряет, человек решает»).';
 
 -- ---------------------------------------------------------------- сезоны
 CREATE TABLE seasons.seasons (

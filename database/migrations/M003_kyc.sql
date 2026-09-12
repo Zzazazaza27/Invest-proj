@@ -1,7 +1,7 @@
 -- =============================================================================
 -- M003 — kyc
 -- Верификация физлиц (KYC) и юрлиц (KYB), бенефициары, участники юрлица.
--- Источник: docs/architecture/Database_Launch.md §4.
+-- Источник: Database_Launch.md §4.
 --
 -- Все документы шифруются ДО загрузки в S3 (envelope encryption, KEK-домены
 -- kyc_documents / kyb_documents). В БД хранится только s3_key и wrapped DEK.

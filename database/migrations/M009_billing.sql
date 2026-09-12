@@ -2,7 +2,7 @@
 -- M009 — billing
 -- Версионируемые тарифы и fee schedule, подписки, начисления вознаграждения
 -- ОИП, инвойсы, платежи. Атомарная команда confirm_first_tranche().
--- Источник: docs/architecture/Database_Launch.md §11; docs/architecture/Architect_Launch.md §5; ADR-005.
+-- Источник: Database_Launch.md §11; Architect_Launch.md §5; ADR-005.
 --
 -- ГРАНИЦА КОНТУРОВ: здесь только выручка платформы. Инвестиционный principal
 -- живёт в investments.* и в billing.payments не попадает никогда.

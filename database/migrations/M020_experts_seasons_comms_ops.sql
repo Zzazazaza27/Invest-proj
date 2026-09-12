@@ -63,7 +63,7 @@ REVOKE ALL ON FUNCTION seasons.refresh_rating() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION seasons.refresh_rating() TO app_backend;
 
 -- ------------------------------------------------------ шаблоны уведомлений
--- Канальная политика прежняя (docs/architecture/Database_Launch.md §10): сервисные уведомления
+-- Канальная политика прежняя (Database_Launch.md §10): сервисные уведомления
 -- идут push → telegram → email. ПДн в шаблоны не попадают: подставляются
 -- название проекта и номер сезона, но не имена и не контакты.
 INSERT INTO comms.notification_templates
