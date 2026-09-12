@@ -183,6 +183,9 @@ if (existsSync(envPath)) {
   if (m && m[1]) {
     const { default: pg } = await import('pg');
     const pool = new pg.Pool({ connectionString: m[1].trim(), max: 1 });
+    // `.env` есть, а БД не поднята — обычное дело на машине разработчика.
+    // Раньше гейт падал здесь стеком ECONNREFUSED, и выглядело это как
+    // провал проверки, хотя проверить было попросту нечем.
     try {
       let checked = 0;
       for (const col of RESERVED_DEK_COLUMNS) {
@@ -203,6 +206,15 @@ if (existsSync(envPath)) {
       liveNote = `живая проверка: ${checked} зарезервированных колонок пусты`;
       if (failures.some((f) => f.includes('НЕ пуста')))
         liveNote = 'живая проверка: найдены НЕпустые зарезервированные колонки';
+    } catch (error) {
+      // База не поднята — проверять нечем, и это НЕ провал гейта: статическая
+      // часть уже отработала. Глушится только недоступность соединения;
+      // отсутствующая таблица или колонка — настоящая находка и летит дальше.
+      const offline = ['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET'];
+      if (!offline.includes(error?.code)) throw error;
+      liveNote =
+        `живая проверка ПРОПУЩЕНА: БД недоступна (${error.code}). ` +
+        'Подними стенд `npm run infra:up`, если нужна полная проверка';
     } finally {
       await pool.end();
     }
