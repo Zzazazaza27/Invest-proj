@@ -4,7 +4,6 @@ import * as contracts from '@unicorn/contracts';
 import { API_VERSION, INTEGRATION_SCOPES } from '@unicorn/contracts';
 import { z } from 'zod';
 import { Ctx, Public } from '../auth/guards';
-import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 import type { RequestContext } from '../db/unit-of-work';
 import {
@@ -39,18 +38,27 @@ export class OpenApiController {
   constructor(private readonly discovery: DiscoveryService) {}
 
   /**
-   * В production описание отдаётся ТОЛЬКО по сессии.
+   * Описание отдаётся ТОЛЬКО по сессии. Всегда, а не только в production.
    *
    * Документ перечисляет все маршруты, включая административные и
    * интеграционные, вместе с требованиями доступа. Анониму это карта поверхности
-   * атаки, полученная одним запросом (SEC-21). Вне production он остаётся
-   * открытым: там он нужен разработке и живым прогонам, а скрывать нечего.
+   * атаки, полученная одним запросом (SEC-21).
+   *
+   * Почему не «только в production». Условие было завязано на NODE_ENV, и
+   * 2026-09-13 выяснилось, чем это кончается: на боевом стенде стоял
+   * `NODE_ENV=development`, и https://vgorkakh.ru/v1/openapi.json отдавал 117
+   * маршрутов кому угодно. Защита была написана, но снята одним значением
+   * переменной — ровно как три рубежа вокруг служебной консоли.
+   *
+   * Разработке это не мешает: локально сессия есть, описание открывается. Цена
+   * ошибки в конфигурации при этом падает до нуля — спрашиваем сессию, а не
+   * окружение.
    *
    * Отказ — 404, а не 403: 403 подтвердил бы, что документ существует.
    */
   @Get()
   document(@Ctx() ctx: RequestContext): Record<string, unknown> {
-    if (getEnv().isProduction && !ctx.userId) {
+    if (!ctx.userId) {
       throw errors.notFound({ subject: 'openapi' });
     }
     const controllers = this.discovery
