@@ -24,6 +24,8 @@
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,yml,yaml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,mjs,cjs,json,md,yml,yaml}\"",
     "test": "npm run build:packages && npm run test --workspaces --if-present",
+    "deploy": "node scripts/deploy.mjs",
+    "deploy:dry": "node scripts/deploy.mjs --dry-run",
     "stand:up": "node scripts/stand-up.mjs",
     "stand:check": "node scripts/stand-up.mjs --check",
     "docker:fix": "node scripts/fix-docker-socket.mjs",
