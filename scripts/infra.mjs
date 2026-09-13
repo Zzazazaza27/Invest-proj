@@ -26,7 +26,6 @@ import { PORTS } from './lib/ports.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ENV_PATH = join(ROOT, '.env');
 const COMPOSE_PATH = join(ROOT, 'infra', 'docker-compose.yml');
-const COMPOSE_LOCAL_PATH = join(ROOT, 'infra', 'docker-compose.local.yml');
 
 /**
  * Боевое ли это окружение.
@@ -36,10 +35,6 @@ const COMPOSE_LOCAL_PATH = join(ROOT, 'infra', 'docker-compose.local.yml');
  * отрицательная: неизвестное значение считается боевым — забытая переменная
  * не должна открывать наружу то, что открывать не собирались.
  */
-function isProductionLike() {
-  const value = (process.env.APP_ENV ?? process.env.NODE_ENV ?? '').toLowerCase();
-  return value !== '' && value !== 'development' && value !== 'test' && value !== 'local';
-}
 
 const COMMANDS = {
   up: ['up', '-d'],
@@ -77,12 +72,6 @@ if (existsSync(ENV_PATH)) {
 
 args.push('-f', COMPOSE_PATH);
 
-// Локальные дополнения идут вторым файлом и только вне боевого окружения.
-// На сервере команда состоит из одного `-f`: маршрута консоли в конфиге nginx
-// не появится, потому что монтировать его будет нечем.
-const local = !isProductionLike() && existsSync(COMPOSE_LOCAL_PATH);
-if (local) args.push('-f', COMPOSE_LOCAL_PATH);
-
 args.push(...tail, ...rest);
 
 // `reset` удаляет тома вместе с данными БД и объектами хранилища. Это
@@ -96,14 +85,6 @@ console.warn(
   `infra: ${command} — postgres:${PORTS.postgres} redis:${PORTS.redis} ` +
     `nats:${PORTS.nats} s3:${PORTS.s3}`,
 );
-// Публикация служебной консоли называется вслух: это единственное отличие
-// локального запуска от боевого, и молчать о нём не стоит.
-console.warn(
-  local
-    ? 'infra: локальный профиль — служебная консоль публикуется на /console/'
-    : 'infra: боевой профиль — служебная консоль НЕ публикуется',
-);
-
 const result = spawnSync('docker', args, { stdio: 'inherit', cwd: ROOT });
 
 if (result.error) {

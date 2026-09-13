@@ -1,141 +1,106 @@
 #!/usr/bin/env node
 /**
- * Гейт: служебная консоль API не публикуется боевым контуром.
+ * Гейт «служебная консоль закрыта постороннему».
  *
- * Код консоли лежит в репозитории и попадёт на сервер вместе с ним — это
- * неизбежно и само по себе безобидно. Опасна публикация: консоль не защищает
- * себя сама (права проверяет сервер), но даёт постороннему карту всего API
- * одним списком — выдачу служебных токенов, вебхуки, ротацию секретов.
+ * История. Консоль прятали от боевого контура тремя рубежами: её не собирал
+ * `npm run build`, маршрут жил в отдельном каталоге конфигов, каталог монтировал
+ * отдельный compose-файл — и подключался он, только когда окружение не боевое.
+ * Любого одного рубежа считалось достаточно.
  *
- * Поэтому публикация выключена ТРЕМЯ независимыми способами, и здесь
- * проверяется каждый: достаточно одного уцелевшего, чтобы консоль не открылась,
- * но молча потерять два из трёх — плохая позиция.
+ * 2026-09-13 выяснилось, что все три снимает ОДНО значение: на боевом стенде
+ * стоял `NODE_ENV=development`, `infra.mjs` штатно подключил локальный профиль,
+ * и https://vgorkakh.ru/console/ отдавала настоящую консоль кому угодно. Рубежи
+ * выглядели эшелонированием, а стояли на одной оси. Тем же значением, к слову,
+ * было открыто и описание API — 117 маршрутов анониму.
  *
- *   1. СБОРКА       — `npm run build` не собирает консоль;
- *   2. МАРШРУТ      — `location /console/` только в `infra/nginx/local/`;
- *   3. МОНТИРОВАНИЕ — каталог подключает лишь `infra/docker-compose.local.yml`.
+ * Прежний гейт при этом был ЗЕЛЁНЫМ: он проверял файлы, а не поведение живой
+ * системы, и консоль, отданную анониму локально, считал нормой.
  *
- * Дополнительно, если единая точка входа поднята, проверяется ФАКТОМ: что
- * отдаёт `/console/` на самом деле.
+ * Теперь доступ решает роль: ядро отвечает на подзапрос nginx (`auth_request`),
+ * посторонний получает 404. Прятать то, что защищено, смысла нет — консоль
+ * монтируется наравне с остальными приложениями. Проверять надо ровно одно:
+ * что привратник на месте и работает.
  *
- * Запуск: node scripts/check-console-private.mjs
+ * Запуск: npm run gate:console-private
  */
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { readFileSync, existsSync } from 'node:fs';
+import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
 import { PORTS } from './lib/ports.mjs';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 let failed = 0;
-
-function fail(message) {
+const ok = (text) => console.warn(`  ok    ${text}`);
+const fail = (text) => {
   failed += 1;
-  console.warn(`  FAIL  ${message}`);
-}
+  console.error(`  ПРОВАЛ ${text}`);
+};
 
-function ok(message) {
-  console.warn(`  OK    ${message}`);
-}
+console.warn('\nГейт: служебная консоль закрыта постороннему\n');
 
-function read(relative) {
-  const path = join(ROOT, relative);
-  return existsSync(path) ? readFileSync(path, 'utf8') : null;
-}
-
-console.warn('\n=== СЛУЖЕБНАЯ КОНСОЛЬ НЕ ПУБЛИКУЕТСЯ БОЕВЫМ КОНТУРОМ ===\n');
-
-// --- 1. Сборка ------------------------------------------------------------
+// --- 1. Привратник объявлен в конфигурации прокси -------------------------
 {
-  const pkg = read('package.json');
-  if (!pkg) {
-    fail('package.json не найден');
+  const confPath = join(ROOT, 'infra', 'nginx', 'default.conf');
+  const conf = existsSync(confPath) ? readFileSync(confPath, 'utf8') : '';
+
+  if (!conf.includes('location /console/')) {
+    fail('в infra/nginx/default.conf нет маршрута /console/ — консоль не раздаётся вовсе');
+  } else if (!/location \/console\/ \{[^}]*auth_request/s.test(conf)) {
+    fail('маршрут /console/ есть, но без auth_request — консоль откроется любому');
   } else {
-    const scripts = JSON.parse(pkg).scripts ?? {};
-    const build = scripts.build ?? '';
-    if (build.includes('apps/console')) {
-      fail('`npm run build` собирает консоль — её dist появится на сервере');
-    } else {
-      ok('`npm run build` не собирает консоль (для неё есть build:console)');
-    }
+    ok('маршрут /console/ защищён auth_request');
+  }
+
+  if (!conf.includes('/v1/auth/authz/console')) {
+    fail('подзапрос не ведёт на /v1/auth/authz/console — проверять права нечем');
+  } else {
+    ok('подзапрос ведёт в ядро, на маршрут проверки прав');
+  }
+
+  // Отказ обязан выглядеть как отсутствие: 403 подтвердил бы, что консоль тут
+  // есть. Та же анти-оракульная линия, что у описания API и у локального входа.
+  if (!/error_page[^\n]*401[^\n]*403/.test(conf) || !conf.includes('return 404')) {
+    fail('отказ не приводится к 404 — посторонний узнает, что консоль существует');
+  } else {
+    ok('отказ отдаётся как 404, а не 403');
   }
 }
 
-// --- 2. Маршрут -----------------------------------------------------------
+// --- 2. Маршрут проверки прав требует роль администратора ----------------
 {
-  const base = read('infra/nginx/default.conf');
-  if (!base) {
-    fail('infra/nginx/default.conf не найден');
-  } else if (/location\s+[^\n]*\/console/.test(base)) {
-    fail('маршрут /console/ объявлен в основном конфиге nginx');
-  } else if (!base.includes('include /etc/nginx/local/')) {
-    fail(
-      'в основном конфиге нет подключения локальных дополнений — маршрут не появится и локально',
-    );
+  const controller = join(ROOT, 'apps', 'core', 'src', 'identity', 'identity.controller.ts');
+  const src = existsSync(controller) ? readFileSync(controller, 'utf8') : '';
+  const guarded = /@Roles\('admin'\)[\s\S]{0,200}?authz\/console/.test(src);
+  if (!guarded) {
+    fail("маршрут authz/console не под @Roles('admin') — пустит любого, у кого есть сессия");
   } else {
-    ok('маршрут /console/ отсутствует в основном конфиге nginx');
-  }
-
-  const localConf = read('infra/nginx/local/console.conf');
-  if (!localConf || !/location\s+\/console\//.test(localConf)) {
-    fail('локальный маршрут /console/ отсутствует — консоль не откроется и в разработке');
-  } else {
-    ok('маршрут /console/ живёт в infra/nginx/local/');
+    ok("маршрут проверки прав под @Roles('admin')");
   }
 }
 
-// --- 3. Монтирование ------------------------------------------------------
-{
-  const base = read('infra/docker-compose.yml');
-  const local = read('infra/docker-compose.local.yml');
-  if (!base) {
-    fail('infra/docker-compose.yml не найден');
-  } else if (base.includes('apps/console') || base.includes('/etc/nginx/local')) {
-    fail('базовый compose монтирует консоль или каталог локальных дополнений');
-  } else {
-    ok('базовый compose не монтирует ни консоль, ни локальные дополнения');
-  }
-
-  if (!local || !local.includes('apps/console/dist')) {
-    fail('infra/docker-compose.local.yml не монтирует консоль — локально она не откроется');
-  } else {
-    ok('консоль монтируется только локальным compose-файлом');
-  }
-}
-
-// --- 4. Факт --------------------------------------------------------------
+// --- 3. Факт: что отдаёт живая система ------------------------------------
 /**
- * Три проверки выше читают файлы. Эта смотрит, что сервер отдаёт НА САМОМ ДЕЛЕ:
- * конфигурация могла быть переопределена запуском, о котором файлы не знают.
+ * Проверки выше читают файлы. Эта смотрит, что сервер отдаёт НА САМОМ ДЕЛЕ:
+ * конфигурация могла быть не перечитана. Ровно так и случилось при первом
+ * боевом выкате — файл приехал, nginx его не применил, консоль осталась
+ * открытой при обновлённом коде.
  */
 {
   const origin = PORTS.web === 80 ? 'http://127.0.0.1' : `http://127.0.0.1:${PORTS.web}`;
   try {
     const response = await fetch(`${origin}/console/`, { signal: AbortSignal.timeout(3000) });
     const body = await response.text();
-    // Заголовок страницы отличает консоль от витрины: обе отвечают 200, потому
-    // что неизвестный путь отдаёт index.html витрины.
     const isConsole = /<title>[^<]*Консоль API/.test(body);
-    const expectedLocally = existsSync(join(ROOT, 'infra', 'docker-compose.local.yml'));
 
-    // Состояний три, а не два. Раньше их различали только по содержимому
-    // ответа, и «закрыто привратником» неотличимо сливалось с «профиль не
-    // поднят» — гейт рапортовал неправду о живой системе.
-    if (response.status === 404) {
-      ok(`${origin}/console/ закрыта: анониму 404 (пускает только админа)`);
-    } else if (isConsole && expectedLocally) {
-      // Консоль отдана БЕЗ сессии — значит привратник не сработал. Раньше это
-      // считалось нормой «раз локально»; 2026-09-13 ровно так она и оказалась
-      // открыта в интернет на боевом стенде.
-      fail(
-        `${origin}/console/ отдаёт консоль анониму — привратник auth_request не работает ` +
-          '(проверьте infra/nginx/local/console.conf и маршрут /v1/auth/authz/console)',
-      );
-    } else if (isConsole) {
-      fail(`${origin}/console/ отдаёт консоль, хотя локального профиля быть не должно`);
+    if (isConsole) {
+      fail(`${origin}/console/ отдаёт консоль анониму — привратник не работает`);
+    } else if (response.status === 404) {
+      ok(`${origin}/console/ анониму отвечает 404`);
     } else {
-      ok(`${origin}/console/ отдаёт не консоль`);
+      // 500 здесь означает, что подзапрос вернул неожиданный код: так было,
+      // когда ядро ещё не подхватило новый маршрут после перезапуска.
+      fail(`${origin}/console/ отвечает ${response.status} — ожидался 404, проверьте подзапрос`);
     }
   } catch {
     ok('единая точка входа не отвечает — проверять фактом нечего');
@@ -144,7 +109,7 @@ console.warn('\n=== СЛУЖЕБНАЯ КОНСОЛЬ НЕ ПУБЛИКУЕТС�
 
 console.warn('');
 if (failed > 0) {
-  console.warn(`Нарушений: ${failed}. Консоль рискует уехать в боевой контур.\n`);
+  console.warn(`Нарушений: ${failed}. Консоль может открыться постороннему.\n`);
   process.exit(1);
 }
-console.warn('Консоль публикуется только локально.\n');
+console.warn('Консоль доступна только администратору.\n');
