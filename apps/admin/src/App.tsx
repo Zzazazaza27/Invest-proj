@@ -81,6 +81,18 @@ export function App() {
         <NavItem to="/integrations" label="Интеграции" />
         <NavItem to="/flags" label="Функции платформы" />
         <NavItem to="/access" label="Доступ" />
+        {/*
+          Консоль — отдельное приложение, не маршрут этого кабинета, поэтому
+          обычная ссылка, а не NavLink. Пункт виден только администратору:
+          остальным сервер всё равно ответит 404 (привратник auth_request в
+          infra/nginx/local/console.conf), и пустая ссылка в меню выглядела бы
+          поломкой.
+        */}
+        {isAdmin ? (
+          <a className="navlink" href={consoleHref()} target="_blank" rel="noreferrer">
+            Консоль API
+          </a>
+        ) : null}
         <div className="sidebar__footer">
           <div>{me.displayName}</div>
           <div className="small muted" style={{ marginBottom: 8 }}>
@@ -123,6 +135,22 @@ export function App() {
       </main>
     </div>
   );
+}
+
+/** Порт консоли, подставленный сборкой (`vite.config.ts`, define). */
+declare const __CONSOLE_PORT__: number;
+
+/**
+ * Адрес служебной консоли.
+ *
+ * За единой точкой входа порта в адресе страницы нет — тогда консоль открыта
+ * по пути. При прямом запуске dev-сервером порт есть, и путь `/console/` вёл
+ * бы на несуществующий маршрут ТОГО ЖЕ сервера: приложения поднимаются
+ * отдельно. Тот же приём, что у переходов между кабинетами.
+ */
+function consoleHref(): string {
+  const { protocol, hostname, port } = window.location;
+  return port === '' ? '/console/' : `${protocol}//${hostname}:${__CONSOLE_PORT__}/console/`;
 }
 
 function NavItem({ to, label }: { to: string; label: string }) {
