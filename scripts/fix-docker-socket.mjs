@@ -52,18 +52,33 @@ const SOCK = join(DIR, 'engine.sock');
 
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '').replace(/-/g, '');
 
-if (!existsSync(DIR)) {
+try {
+  readdirSync(DIR);
+} catch {
   console.warn('ok  каталог секрет-движка отсутствует — Docker создаст его сам');
   process.exit(0);
 }
 
 /**
- * Живой сокет от залипшего отличается одним: у залипшего недоступны даже
- * атрибуты. Пробное переименование туда-обратно — самый честный способ
- * спросить об этом систему, не полагаясь на догадки.
+ * Живой сокет от залипшего отличается тем, что залипший не поддаётся ни одной
+ * операции: `stat`, `lstat`, `open` и `rename` отвечают EACCES. Проверяем
+ * переименованием туда-обратно — ровно то, что делает Docker при старте.
+ *
+ * ВАЖНО: наличие файла проверяется чтением КАТАЛОГА, а не `existsSync`.
+ * `existsSync` внутри зовёт `stat`, а на залипшем сокете `stat` падает — и
+ * функция возвращает false, будто файла нет вовсе. Первая версия этого скрипта
+ * на том и погорела: рапортовала «сокет в порядке», пока Docker падал на нём
+ * же (2026-09-13).
  */
 function isStale() {
-  if (!existsSync(SOCK)) return false;
+  let present;
+  try {
+    present = readdirSync(DIR).includes('engine.sock');
+  } catch {
+    return false; // каталога нет — чинить нечего
+  }
+  if (!present) return false;
+
   const probe = `${SOCK}.probe-${process.pid}`;
   try {
     renameSync(SOCK, probe);
