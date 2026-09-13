@@ -466,7 +466,17 @@ console.warn('\n--- счета и начисления ---');
 console.warn('\n--- описание API ---');
 
 {
-  const { response, json } = await raw('/v1/openapi.json');
+  // Описание отдаётся только по сессии — анониму 404, чтобы карта маршрутов не
+  // доставалась одним запросом. Поэтому запрашиваем как вошедший пользователь;
+  // отдельная проверка ниже убеждается, что анониму оно закрыто.
+  const anon = await raw('/v1/openapi.json');
+  check(
+    'описание API закрыто анониму',
+    anon.response.status === 404,
+    `без сессии: ${anon.response.status}`,
+  );
+
+  const { response, json } = await founder.client.call('/v1/openapi.json');
   const paths = Object.keys(json?.paths ?? {});
   check(
     'в описании есть перечень маршрутов',
