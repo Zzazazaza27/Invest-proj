@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Logger, Post, Query, Req, Res } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Logger, Post, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import {
   AuthSessionSchema,
@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 import { parseOrThrow } from '../common/validation';
-import { Ctx, Public, type AuthenticatedRequest } from '../auth/guards';
+import { Ctx, Public, Roles, type AuthenticatedRequest } from '../auth/guards';
 import { TokenVerifier } from '../auth/token.verifier';
 import type { RequestContext } from '../db/unit-of-work';
 import { IdentityService } from './identity.service';
@@ -160,6 +160,30 @@ export class IdentityController {
   @Get('me')
   async me(@Ctx() ctx: RequestContext) {
     return CurrentUserSchema.parse(await this.identity.getCurrentUser(ctx));
+  }
+
+  /**
+   * Привратник служебной консоли: пускать или нет.
+   *
+   * Консоль — обычная статика, права она проверять не умеет. Опасна не она
+   * сама: она даёт постороннему КАРТУ ВСЕГО API одним списком, включая выдачу
+   * служебных токенов, вебхуки и ротацию секретов. Поэтому решение принимается
+   * до того, как отдан HTML.
+   *
+   * Маршрут вызывает nginx через `auth_request` (`infra/nginx/local/
+   * console.conf`) и смотрит только на код ответа: 204 — пускаем, 401 или 403
+   * — отдаём 404, чтобы посторонний не узнал даже о существовании консоли.
+   * Тело ответа не нужно и не отдаётся.
+   *
+   * Проверку делает тот же guard, что и на всех остальных маршрутах: сессия,
+   * роль, отзыв токена. Отдельной логики доступа здесь нет намеренно — иначе
+   * она разъехалась бы с основной.
+   */
+  @Roles('admin')
+  @Get('authz/console')
+  @HttpCode(204)
+  consoleAccess(): void {
+    // Пустое тело: весь смысл — в том, что guard пропустил запрос сюда.
   }
 
   /**
