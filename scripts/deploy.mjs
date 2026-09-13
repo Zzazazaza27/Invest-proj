@@ -209,10 +209,35 @@ try {
 
   step('Перезапуск');
   remote('systemctl restart unicorn-core unicorn-ai-gateway');
-  // Прокси пересоздаётся, а не перезапускается: смонтированные каталоги и
-  // конфиг могли измениться вместе с кодом.
+
+  // Ядру нужно время подняться: сразу после restart оно ещё не слушает порт,
+  // а следом идёт проверка конфигурации nginx, которая ходит именно в него.
+  let coreUp = false;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    sleep(3000);
+    if (
+      remote('curl -s -o /dev/null -w "%{http_code}" -m 5 http://127.0.0.1:4300/v1/health', {
+        allowFail: true,
+      }) === '200'
+    ) {
+      coreUp = true;
+      break;
+    }
+  }
+  if (!coreUp) throw new Error('ядро не поднялось после перезапуска');
+  ok('ядро отвечает');
+
   remote('npm run web:up', { show: true });
-  ok('ядро, шлюз и прокси подняты');
+
+  // compose НЕ пересоздаёт контейнер, если его определение не менялось, —
+  // а конфиг nginx лежит в смонтированном каталоге и меняется вместе с кодом.
+  // nginx же читает конфигурацию только при старте. Без явного reload новый
+  // console.conf приехал бы файлом, но не применился: ровно так 2026-09-13
+  // консоль осталась открытой при обновлённом коде.
+  const confOk = remote('docker exec unicorn-web nginx -t', { allowFail: true });
+  if (confOk === null) throw new Error('конфигурация nginx не проходит проверку — reload отменён');
+  remote('docker exec unicorn-web nginx -s reload');
+  ok('ядро, шлюз и прокси подняты, конфигурация nginx перечитана');
 
   step('Проверка снаружи');
   let bad = [];
