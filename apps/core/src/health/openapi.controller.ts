@@ -101,7 +101,7 @@ export function buildOpenApiDocument(
   return {
     openapi: '3.1.0',
     info: {
-      title: 'UNICORN LAUNCH API',
+      title: 'Пятый элемент — API',
       version: API_VERSION,
       description:
         'Типы запросов и ответов, выведенные из @unicorn/contracts — тех же схем, ' +

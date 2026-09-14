@@ -168,8 +168,8 @@ export function ProjectDetailsPage({
   }
 
   const { project, passport } = state;
-  const watermark = `${viewer ?? 'UNICORN LAUNCH'}
-${new Date().toLocaleDateString('ru-RU')} · UNICORN LAUNCH`;
+  const watermark = `${viewer ?? 'Пятый элемент'}
+${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
   const files = materials.status === 'ready' ? materials.items.filter((m) => m.url === null) : [];
   const links = materials.status === 'ready' ? materials.items.filter((m) => m.url !== null) : [];
 

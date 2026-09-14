@@ -125,7 +125,7 @@ export default function App() {
       </a>
       <OfflineBanner />
       <NovaTopBar
-        title="UNICORN LAUNCH"
+        title="Пятый элемент"
         subtitle="Кабинет эксперта"
         icon="check"
         actions={

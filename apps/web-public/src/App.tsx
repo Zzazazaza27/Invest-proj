@@ -77,7 +77,7 @@ function Header() {
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 'var(--u-space-3)' }}>
           <IconTile name="rocket" variant="solid" size={40} />
           <strong style={{ fontSize: 'var(--u-text-lg)', letterSpacing: '-0.02em' }}>
-            UNICORN LAUNCH
+            Пятый элемент
           </strong>
         </span>
         <nav
@@ -165,7 +165,7 @@ const FALLBACK: Record<string, { title?: string; body: string }> = {
   },
   disclaimer: {
     body:
-      'UNICORN LAUNCH — оператор инвестиционной платформы. Инвестиционный контур ' +
+      '«Пятый элемент» — оператор инвестиционной платформы. Инвестиционный контур ' +
       'включается после включения оператора в реестр Банка России.',
   },
 };

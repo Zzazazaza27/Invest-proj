@@ -77,7 +77,7 @@ const { smtpDeliver } = await import(pathToFileURL(CLIENT).href);
 const { buildMessage } = await import(pathToFileURL(TRANSPORT).href);
 
 const marker = randomUUID();
-const subject = `Проверка доставки UNICORN LAUNCH · ${marker.slice(0, 8)}`;
+const subject = `Проверка доставки «Пятый элемент» · ${marker.slice(0, 8)}`;
 const data = buildMessage({
   from,
   to,

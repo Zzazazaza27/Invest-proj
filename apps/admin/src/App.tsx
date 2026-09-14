@@ -68,7 +68,7 @@ export function App() {
     <div className="layout">
       <nav className="sidebar">
         <div className="sidebar__brand">
-          UNICORN LAUNCH
+          Пятый элемент
           <span>административный кабинет</span>
         </div>
         <NavItem to="/plans" label="Тарифы" />

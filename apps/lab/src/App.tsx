@@ -226,7 +226,7 @@ export default function App() {
 function Header({ me, onLogout }: { me: CurrentUser | null; onLogout: () => void }) {
   return (
     <NovaTopBar
-      title="UNICORN LAUNCH"
+      title="Пятый элемент"
       subtitle="Кабинет основателя"
       icon="rocket"
       actions={

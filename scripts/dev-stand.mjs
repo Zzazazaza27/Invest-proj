@@ -141,7 +141,7 @@ async function upsertUser(login, displayName, primaryRole, roles) {
   return { login, email, userId, roles };
 }
 
-console.warn('\n=== ЛОКАЛЬНЫЙ СТЕНД UNICORN LAUNCH ===\n');
+console.warn('\n=== ЛОКАЛЬНЫЙ СТЕНД «ПЯТЫЙ ЭЛЕМЕНТ» ===\n');
 console.warn('--- учётные записи ---');
 
 // Админ заводится первым: одобрение верификации выполняет ДРУГОЙ человек,

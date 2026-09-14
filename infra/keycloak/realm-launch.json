@@ -1,7 +1,7 @@
 {
   "realm": "unicorn-launch",
   "enabled": true,
-  "displayName": "UNICORN LAUNCH (dev)",
+  "displayName": "Пятый элемент (dev)",
   "sslRequired": "external",
   "registrationAllowed": false,
   "resetPasswordAllowed": true,
@@ -26,7 +26,7 @@
   "clients": [
     {
       "clientId": "unicorn-launch-core",
-      "name": "UNICORN LAUNCH Core API",
+      "name": "Пятый элемент — Core API",
       "enabled": true,
       "protocol": "openid-connect",
       "publicClient": false,

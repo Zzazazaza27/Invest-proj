@@ -97,7 +97,7 @@ export class VerificationService {
 
     await this.mail.send({
       to: email,
-      subject: 'Смена пароля в UNICORN LAUNCH',
+      subject: 'Смена пароля — «Пятый элемент»',
       text: this.letter(
         'Вы (или кто-то другой) запросили смену пароля.',
         `${getEnv().PUBLIC_BASE_URL}/login/#reset=${token.value}`,
@@ -179,7 +179,7 @@ export class VerificationService {
 
     await this.mail.send({
       to: email,
-      subject: 'Подтверждение адреса в UNICORN LAUNCH',
+      subject: 'Подтверждение адреса — «Пятый элемент»',
       text: this.letter(
         'Подтвердите адрес почты, указанный в вашем аккаунте.',
         `${getEnv().PUBLIC_BASE_URL}/login/#verify=${token.value}`,
