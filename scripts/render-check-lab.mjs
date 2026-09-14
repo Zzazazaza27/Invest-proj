@@ -414,46 +414,66 @@ check(
   'карточка подписки есть на странице проекта',
   (await page.getByText('Подписка и счета').count()) > 0,
 );
-check(
-  'отсутствие подписки объяснено словами',
-  (await page.getByText('Подписки на проект нет').count()) > 0,
-);
-check(
-  'сказано, что оплата картой не подключена',
-  (await page.getByText('Приём платежей картой пока не подключён').count()) > 0,
-);
 
-await page.getByRole('button', { name: 'Оформить подписку' }).click();
-await page.waitForTimeout(2500);
-// Ищем ИМЕННО текст этой карточки, а не последнее сообщение на странице: выше
-// уже есть отказы других карточек, и `.last()` читал бы их — проверка была бы
-// зелёной или красной по чужой причине.
-// Сообщение берётся ИЗ ЭТОЙ карточки, а не последнее на странице: выше уже
-// есть отказы других карточек, и `.last()` читал бы их.
-const billingCard = page
-  .locator('div')
-  .filter({ has: page.getByRole('heading', { name: 'Подписка и счета' }) })
-  .last();
-const billingNotice = (
-  await billingCard
-    .locator('[role="status"], [role="alert"]')
-    .first()
-    .innerText()
-    .catch(() => '')
-).trim();
-check(
-  'подписка оформлена и это сказано',
-  billingNotice.includes('Подписка оформлена'),
-  billingNotice.slice(0, 80),
-);
-check(
-  'тариф подписки виден в карточке',
-  (await page.getByText('founder_t', { exact: false }).count()) > 0,
-);
-check(
-  'счетов по подписке пока нет — и это объяснено',
-  (await page.getByText('Счёт выставляется на оформленную подписку').count()) > 0,
-);
+// С M071 платёжный барьер — флаг, по умолчанию выключенный (подача и листинг
+// бесплатны). Карточка обязана не предлагать оплату при выключенном барьере
+// и вести к подписке при включённом; проверяется ветка, в которой стенд.
+const featuresResponse = await fetch(`${CORE_URL}/v1/features`);
+const featuresJson = await featuresResponse.json().catch(() => null);
+const barrierOn = featuresJson?.flags?.['billing.listing_requires_subscription'] === true;
+console.warn(`  ·     платёжный барьер основателя: ${barrierOn ? 'ВКЛЮЧЁН' : 'выключен'}`);
+
+if (!barrierOn) {
+  check(
+    'при выключенном барьере сказано, что подача и публикация бесплатны',
+    (await page.getByText('Подача и публикация бесплатны').count()) > 0,
+  );
+  check(
+    'при выключенном барьере оплату не предлагают',
+    (await page.getByRole('button', { name: 'Оформить подписку' }).count()) === 0 &&
+      (await page.getByText('Тариф проекта').count()) === 0,
+  );
+} else {
+  check(
+    'отсутствие подписки объяснено словами',
+    (await page.getByText('Подписки на проект нет').count()) > 0,
+  );
+  check(
+    'сказано, что оплата картой не подключена',
+    (await page.getByText('Приём платежей картой пока не подключён').count()) > 0,
+  );
+
+  await page.getByRole('button', { name: 'Оформить подписку' }).click();
+  await page.waitForTimeout(2500);
+  // Сообщение берётся ИЗ ЭТОЙ карточки, а не последнее на странице: выше уже
+  // есть отказы других карточек, и `.last()` читал бы их — проверка была бы
+  // зелёной или красной по чужой причине.
+  const billingCard = page
+    .locator('div')
+    .filter({ has: page.getByRole('heading', { name: 'Подписка и счета' }) })
+    .last();
+  const billingNotice = (
+    await billingCard
+      .locator('[role="status"], [role="alert"]')
+      .first()
+      .innerText()
+      .catch(() => '')
+  ).trim();
+  check(
+    'подписка оформлена и это сказано',
+    billingNotice.includes('Подписка оформлена'),
+    billingNotice.slice(0, 80),
+  );
+  // Коды тарифов заменены словами (e4bb007): проверяется название, а не код.
+  check(
+    'тариф подписки виден в карточке',
+    (await page.getByText(/Старт|Рост|Масштаб|Крупный|Стратегический/).count()) > 0,
+  );
+  check(
+    'счетов по подписке пока нет — и это объяснено',
+    (await page.getByText('Счёт выставляется на оформленную подписку').count()) > 0,
+  );
+}
 
 console.warn('\n[3c] Согласия на публичный контур');
 const consentRow = page.locator('li').filter({ hasText: 'Выпуск отбора' }).first();
@@ -495,7 +515,36 @@ const overflow = await page.evaluate(
   // eslint-disable-next-line no-undef
   () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
 );
-check('горизонтальной прокрутки нет на 390px', overflow <= 1, `переполнение: ${overflow}px`);
+// При переполнении называются виновники: «6px» без адреса — не диагноз.
+// Берутся ЛИСТОВЫЕ элементы (у которых ни один потомок не вылезает сам):
+// обёртки вылезают вслед за содержимым и виновниками не являются.
+const culprits =
+  overflow > 1
+    ? await page.evaluate(() => {
+        /* eslint-disable no-undef */
+        const limit = document.documentElement.clientWidth + 1;
+        const sticks = (el) => el.getBoundingClientRect().right > limit;
+        return [...document.querySelectorAll('body *')]
+          .filter((el) => sticks(el) && ![...el.children].some(sticks))
+          .slice(0, 4)
+          .map((el) => {
+            const cls =
+              typeof el.className === 'string' && el.className
+                ? `.${el.className.split(' ')[0]}`
+                : '';
+            const text = (el.textContent ?? '').trim().replace(/\s+/g, ' ').slice(0, 40);
+            return `${el.tagName.toLowerCase()}${el.id ? `#${el.id}` : ''}${cls} right=${Math.round(
+              el.getBoundingClientRect().right,
+            )} «${text}»`;
+          });
+        /* eslint-enable no-undef */
+      })
+    : [];
+check(
+  'горизонтальной прокрутки нет на 390px',
+  overflow <= 1,
+  `переполнение: ${overflow}px${culprits.length ? `; ${culprits.join(' | ')}` : ''}`,
+);
 
 // Отказы, вызванные ПРЕДНАМЕРЕННО (публикация без подписки, внутренний адрес),
 // печатаются браузером как ошибки загрузки ресурса. Это ожидаемое поведение

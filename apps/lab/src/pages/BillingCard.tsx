@@ -9,7 +9,7 @@ import {
   Stack,
   formatMoney,
 } from '@unicorn/ui';
-import type { Invoice, Pricing, Subscription } from '@unicorn/contracts';
+import type { Features, Invoice, Pricing, Subscription } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 
 /**
@@ -46,6 +46,12 @@ const SUBSCRIPTION_STATUS_TITLES: Record<string, string> = {
  * Тариф здесь не выбирается: его резолвит сервер из суммы запроса проекта.
  * Выбор плана на стороне клиента означал бы, что цену можно занизить, подставив
  * чужой идентификатор, — поэтому в запрос уходит ПРОЕКТ, а не план.
+ *
+ * С M071 платёжный барьер основателя — флаг `billing.listing_requires_subscription`
+ * (по решению владельца в первой очереди выключен: подача и публикация
+ * бесплатны). Карточка читает флаг из `/features`: при выключенном барьере
+ * она не предлагает оплатить то, что бесплатно, — ни тарифа, ни кнопки; уже
+ * оформленные подписки и счета при этом показываются, они существуют.
  */
 export function BillingCard({
   projectId,
@@ -56,7 +62,13 @@ export function BillingCard({
 }) {
   const [state, setState] = useState<
     | { status: 'loading' }
-    | { status: 'ready'; subscriptions: Subscription[]; invoices: Invoice[]; pricing: Pricing }
+    | {
+        status: 'ready';
+        subscriptions: Subscription[];
+        invoices: Invoice[];
+        pricing: Pricing;
+        barrierOn: boolean;
+      }
     | { status: 'error'; message: string }
   >({ status: 'loading' });
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
@@ -65,12 +77,19 @@ export function BillingCard({
   const load = useCallback(async () => {
     setState({ status: 'loading' });
     try {
-      const [subscriptions, invoices, pricing] = await Promise.all([
+      const [subscriptions, invoices, pricing, features] = await Promise.all([
         api.billing.subscriptions(),
         api.billing.invoices(),
         api.pricing(),
+        api.features(),
       ]);
-      setState({ status: 'ready', subscriptions, invoices, pricing });
+      setState({
+        status: 'ready',
+        subscriptions,
+        invoices,
+        pricing,
+        barrierOn: isBarrierOn(features),
+      });
     } catch (error) {
       setState({
         status: 'error',
@@ -127,10 +146,30 @@ export function BillingCard({
     own.some((subscription) => subscription.id === invoice.subscriptionId),
   );
 
+  if (!state.barrierOn && own.length === 0) {
+    return (
+      <Card>
+        <Stack>
+          <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Подписка и счета</h2>
+          <p style={{ margin: 0 }} role="status">
+            Подача и публикация бесплатны: подписка для листинга не требуется.
+          </p>
+        </Stack>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <Stack>
         <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Подписка и счета</h2>
+
+        {!state.barrierOn ? (
+          <p style={{ margin: 0 }} role="status">
+            Подача и публикация бесплатны: подписка для листинга не требуется. Ниже — уже
+            оформленные подписки и счета по проекту.
+          </p>
+        ) : null}
 
         {notice ? (
           <div
@@ -207,7 +246,7 @@ export function BillingCard({
           </ul>
         )}
 
-        {!active && !pending ? (
+        {state.barrierOn && !active && !pending ? (
           <div style={{ display: 'grid', gap: 'var(--u-space-2)' }}>
             {plan ? (
               <span>
@@ -278,4 +317,8 @@ export function BillingCard({
       </Stack>
     </Card>
   );
+}
+
+function isBarrierOn(features: Features): boolean {
+  return features.flags['billing.listing_requires_subscription'] === true;
 }
