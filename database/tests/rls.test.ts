@@ -1223,7 +1223,11 @@ describe('RLS: покрытие манифеста', () => {
     // что локальная тестовая БД отставала и проверка была зелёной по неверной
     // причине.
     // +2 в M066: scoring.ai_provider_credentials и scoring.passport_texts (ADR-008).
-    expect(Number(tables.rows[0]!.count)).toBe(72);
+    //
+    // +2 в M071: lab.investment_applications — заявка отдельно от проекта,
+    // несколько заявок на проект; lab.application_policies — настраиваемые
+    // ограничения основателя вместо тарифа (план 0.2 §0а, §2.2, §2.8).
+    expect(Number(tables.rows[0]!.count)).toBe(74);
   });
 });
 

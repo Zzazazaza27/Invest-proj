@@ -13,6 +13,7 @@ import {
   createSignedAgreement,
   createFounderSubscription,
   createUser,
+  enableListingBarrier,
   getPool,
   inRollbackTx,
   uuidv7,
@@ -346,8 +347,15 @@ describe('Подписки: форма и листинг', () => {
   // срабатывает на COMMIT, поэтому в тесте его нужно принудительно
   // материализовать через SET CONSTRAINTS ALL IMMEDIATE. Без этого тест был бы
   // зелёным просто потому, что проверка ещё не выполнялась.
-  it('листинг без активной подписки невозможен', async () => {
+  //
+  // С M071 платёжный барьер — флаг billing.listing_requires_subscription, по
+  // умолчанию ВЫКЛЮЧЕННЫЙ (решение владельца: подача и листинг бесплатны).
+  // Эти два теста проверяют прежнее поведение при включённом барьере и потому
+  // включают флаг явно в своей транзакции; поведение по умолчанию — в
+  // applications.test.ts.
+  it('листинг без активной подписки невозможен (барьер включён)', async () => {
     await inRollbackTx(async (c) => {
+      await enableListingBarrier(c);
       const founder = await createUser(c);
       const project = await createProject(c, founder.id, { listed: false });
       await c.query(
@@ -360,8 +368,9 @@ describe('Подписки: форма и листинг', () => {
     });
   });
 
-  it('рост запроса инвестиций сверх лимита тарифа блокирует публикацию', async () => {
+  it('рост запроса инвестиций сверх лимита тарифа блокирует публикацию (барьер включён)', async () => {
     await inRollbackTx(async (c) => {
+      await enableListingBarrier(c);
       const founder = await createUser(c);
       const project = await createProject(c, founder.id, { ask: 500_000, listed: true });
       // Запрос вырос до уровня t3, а подписка и required_plan_id остались t1.

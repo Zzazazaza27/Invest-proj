@@ -111,6 +111,21 @@ export async function resetRole(client: Client): Promise<void> {
   await client.query('RESET ROLE');
 }
 
+/**
+ * Включает платёжный барьер основателя в текущей транзакции (M071: флаг
+ * billing.listing_requires_subscription по умолчанию выключен). Флаги пишет
+ * только администратор — контекст выставляется и снимается здесь же, чтобы
+ * тест дальше шёл под своими ролями.
+ */
+export async function enableListingBarrier(client: Client): Promise<void> {
+  await actAs(client, { roles: ['admin'] });
+  await client.query(
+    `UPDATE audit.feature_flags SET enabled = true
+      WHERE key = 'billing.listing_requires_subscription'`,
+  );
+  await actAs(client, { roles: [] });
+}
+
 /** Ожидает, что запрос упадёт, и возвращает ошибку. Пустой результат — тоже провал. */
 export async function expectError(fn: () => Promise<unknown>): Promise<Error> {
   try {
@@ -248,6 +263,26 @@ export async function createProject(
     `INSERT INTO lab.founders_projects (project_id, user_id, role) VALUES ($1, $2, 'owner')`,
     [id, ownerUserId],
   );
+
+  // С M071 у проекта есть заявка: фикстура повторяет перенос (одна заявка из
+  // полей проекта, схема 0), иначе проект в тестах существовал бы в форме,
+  // которой после миграции не бывает. Вставка идёт от владельца схем под
+  // FORCE RLS — контекст владельца проекта выставляется и снимается здесь же.
+  const applicationId = uuidv7();
+  await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', ownerUserId]);
+  await client.query('SELECT set_config($1, $2, true)', ['app.current_roles', 'founder']);
+  await client.query(
+    `INSERT INTO lab.investment_applications
+       (id, project_id, status, stage, investment_ask, schema_version, created_by)
+     VALUES ($1, $2, 'draft', 'mvp', $3, 0, $4)`,
+    [applicationId, id, ask, ownerUserId],
+  );
+  await client.query(`UPDATE lab.projects SET current_application_id = $2 WHERE id = $1`, [
+    id,
+    applicationId,
+  ]);
+  await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', '']);
+  await client.query('SELECT set_config($1, $2, true)', ['app.current_roles', '']);
 
   if (opts.listed) {
     await createFounderSubscription(client, ownerUserId, id);
