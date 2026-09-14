@@ -131,7 +131,7 @@ export class AnalysisService {
                 (SELECT t.name_ru FROM lab.project_taxonomy t WHERE t.id = p.taxonomy_id) AS taxonomy_name,
                 EXISTS (SELECT 1 FROM lab.founders_projects fp
                          WHERE fp.project_id = p.id AND fp.user_id = app.current_user_id()
-                           AND fp.role IN ('owner','editor')) AS can_edit
+                           AND fp.role IN ('owner','cofounder')) AS can_edit
            FROM lab.projects p
           WHERE p.id = $1 AND p.deleted_at IS NULL`,
         [projectId],

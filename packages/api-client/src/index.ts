@@ -1,7 +1,11 @@
 import {
   AcceptedSchema,
   AnalysisRunSchema,
+  ApplicationListSchema,
+  ApplicationWithChecksSchema,
   AuthSessionSchema,
+  FeaturesSchema,
+  InvestmentApplicationSchema,
   BusinessEntitySchema,
   CommissionAccrualSchema,
   ConsentTemplateSchema,
@@ -51,6 +55,8 @@ import {
   type AdvanceProjectStageRequest,
   type AddProductLink,
   type CatalogFilter,
+  type CreateApplicationRequest,
+  type UpdateApplicationRequest,
   type AddEntityMemberRequest,
   type CreateEntityRequest,
   type StartKybRequest,
@@ -483,6 +489,51 @@ export class UnicornApi {
   };
 
   // -------------------------------------------------------------- биллинг
+  // -------------------------------------------------------------- заявки
+  /**
+   * Инвестиционные заявки проекта (M071). Заявка отделена от проекта: у
+   * проекта их может быть несколько, у каждой — свои версии и свой архив.
+   * Черновик свободен; что мешает подаче — в `submission.missing`.
+   */
+  readonly applications = {
+    list: (projectId: string) =>
+      this.http.request({
+        path: `/projects/${projectId}/applications`,
+        schema: ApplicationListSchema,
+      }),
+
+    create: (projectId: string, body: CreateApplicationRequest = {}) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${projectId}/applications`,
+        body,
+        schema: InvestmentApplicationSchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    get: (id: string) =>
+      this.http.request({ path: `/applications/${id}`, schema: ApplicationWithChecksSchema }),
+
+    /** Автосохранение: частичное тело, `null` очищает поле. */
+    update: (id: string, body: UpdateApplicationRequest) =>
+      this.http.request({
+        method: 'PATCH',
+        path: `/applications/${id}`,
+        body,
+        schema: ApplicationWithChecksSchema,
+      }),
+
+    archive: (id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/applications/${id}/archive`,
+        schema: InvestmentApplicationSchema,
+      }),
+  };
+
+  /** Публичные флаги интерфейса: барьер подписки, версия кабинета основателя. */
+  readonly features = () => this.http.request({ path: '/features', schema: FeaturesSchema });
+
   readonly billing = {
     /** Свои подписки. Сервер отдаёт конверт `{ items }`, а не голый массив. */
     subscriptions: () =>

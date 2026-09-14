@@ -63,6 +63,12 @@ import { CatalogController } from './lab/catalog.controller';
 import { CatalogService } from './lab/catalog.service';
 import { ProjectsController } from './lab/projects.controller';
 import { ProjectsService } from './lab/projects.service';
+import {
+  AdminApplicationPoliciesController,
+  ApplicationsController,
+} from './lab/applications.controller';
+import { ApplicationsService } from './lab/applications.service';
+import { FeaturesController } from './health/features.controller';
 import { PartitionMaintenanceService } from './maintenance/partitions.service';
 import { StorageJanitorService } from './maintenance/storage-janitor.service';
 import { PricingController } from './pricing/pricing.controller';
@@ -92,6 +98,9 @@ import { S3Service } from './storage/s3.service';
     VerificationController,
     KycController,
     ProjectsController,
+    ApplicationsController,
+    AdminApplicationPoliciesController,
+    FeaturesController,
     CatalogController,
     SeasonsController,
     BillingController,
@@ -129,6 +138,7 @@ import { S3Service } from './storage/s3.service';
     { provide: MailTransport, useFactory: createMailTransport },
     KycService,
     ProjectsService,
+    ApplicationsService,
     CatalogService,
     SeasonsService,
     BillingService,

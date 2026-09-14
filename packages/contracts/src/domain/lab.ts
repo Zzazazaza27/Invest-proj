@@ -119,7 +119,14 @@ export const CreateProjectRequestSchema = z.object({
 });
 export type CreateProjectRequest = z.infer<typeof CreateProjectRequestSchema>;
 
-export const UpdateProjectRequestSchema = CreateProjectRequestSchema.partial();
+/**
+ * Валюты в обновлении нет: сервер её никогда не записывал (0.1 §11), а
+ * принимать поле, которое молча теряется, — расхождение контракта и
+ * поведения. Валюта одна и задаётся при создании.
+ */
+export const UpdateProjectRequestSchema = CreateProjectRequestSchema.omit({
+  askCurrency: true,
+}).partial();
 export type UpdateProjectRequest = z.infer<typeof UpdateProjectRequestSchema>;
 
 /**
@@ -161,6 +168,8 @@ export const ProjectFullSchema = ProjectTeaserSchema.extend({
   seasonId: UuidSchema.nullable(),
   requiredPlanId: UuidSchema.nullable(),
   currentVersionId: UuidSchema.nullable(),
+  /** Последняя поданная открытая заявка (M071); проект — производный кеш от неё. */
+  currentApplicationId: UuidSchema.nullable(),
   irs: z.number().min(0).max(100).nullable(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
@@ -310,9 +319,15 @@ export type ProjectMaterial = z.infer<typeof ProjectMaterialSchema>;
 export const ProjectVersionSchema = z.object({
   id: UuidSchema,
   projectId: UuidSchema,
-  seasonId: UuidSchema,
+  /** Сезон — только у подач через сезон; самостоятельная заявка его не требует (M071). */
+  seasonId: UuidSchema.nullable(),
   versionNo: z.number().int().positive(),
   submittedAt: IsoDateTimeSchema,
+  applicationId: UuidSchema.nullable(),
+  /** 0 — снимок старой формы из девяти полей проекта. */
+  schemaVersion: z.number().int().nonnegative(),
+  readinessConfigVersion: z.number().int().positive().nullable(),
+  completenessPct: z.number().int().min(0).max(100).nullable(),
 });
 export type ProjectVersion = z.infer<typeof ProjectVersionSchema>;
 

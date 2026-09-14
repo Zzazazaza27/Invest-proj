@@ -308,7 +308,7 @@ export class ProjectsService {
       const { rows } = await tx.query<VersionRow>(
         `INSERT INTO lab.project_versions (id, project_id, season_id, version_no, snapshot_jsonb)
          VALUES ($1, $2, $3, $4, $5::jsonb)
-         RETURNING id, project_id, season_id, version_no, submitted_at`,
+         RETURNING ${VERSION_COLUMNS}`,
         [versionId, projectId, seasonId, versionNo, JSON.stringify(snapshot)],
       );
 
@@ -331,14 +331,7 @@ export class ProjectsService {
         traceId: ctx.traceId,
       });
 
-      const row = rows[0]!;
-      return {
-        id: row.id,
-        projectId: row.project_id,
-        seasonId: row.season_id,
-        versionNo: row.version_no,
-        submittedAt: row.submitted_at.toISOString(),
-      };
+      return mapVersion(rows[0]!);
     });
   }
 
@@ -353,20 +346,14 @@ export class ProjectsService {
   async listVersions(ctx: RequestContext, projectId: string): Promise<ProjectVersion[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<VersionRow>(
-        `SELECT id, project_id, season_id, version_no, submitted_at
+        `SELECT ${VERSION_COLUMNS}
            FROM lab.project_versions
           WHERE project_id = $1
-          ORDER BY version_no DESC
+          ORDER BY submitted_at DESC, version_no DESC
           LIMIT 100`,
         [projectId],
       );
-      return rows.map((row) => ({
-        id: row.id,
-        projectId: row.project_id,
-        seasonId: row.season_id,
-        versionNo: row.version_no,
-        submittedAt: row.submitted_at.toISOString(),
-      }));
+      return rows.map(mapVersion);
     });
   }
 
@@ -733,15 +720,24 @@ export class ProjectsService {
         // публикацией могла смениться версия тарифной сетки.
         const planId = await resolveFounderPlan(tx, project.investment_ask);
 
-        const subscription = await tx.query<{ ok: boolean }>(
-          `SELECT EXISTS (
-             SELECT 1 FROM billing.subscriptions s
-              WHERE s.project_id = $1 AND s.user_id = $2
-                AND s.plan_id = $3 AND s.status = 'active') AS ok`,
-          [projectId, project.owner_id, planId],
+        // Платёжный барьер — флаг, а не удаление (M071, план 0.2 §2.9.2): по
+        // решению владельца в первой очереди подача и листинг бесплатны. При
+        // включённом флаге проверка та же, что раньше; триггер БД повторяет
+        // её на COMMIT. Доступ инвестора от флага не зависит.
+        const barrier = await tx.query<{ on: boolean }>(
+          'SELECT lab.listing_requires_subscription() AS "on"',
         );
-        if (!subscription.rows[0]?.ok) {
-          throw errors.subscriptionRequired();
+        if (barrier.rows[0]?.on) {
+          const subscription = await tx.query<{ ok: boolean }>(
+            `SELECT EXISTS (
+               SELECT 1 FROM billing.subscriptions s
+                WHERE s.project_id = $1 AND s.user_id = $2
+                  AND s.plan_id = $3 AND s.status = 'active') AS ok`,
+            [projectId, project.owner_id, planId],
+          );
+          if (!subscription.rows[0]?.ok) {
+            throw errors.subscriptionRequired();
+          }
         }
 
         // Флаги комплаенса в действующем паспорте останавливают публикацию до
@@ -923,7 +919,8 @@ async function resolveFounderPlan(tx: Tx, ask: string): Promise<string> {
 const PROJECT_COLUMNS = `
   id, taxonomy_id, title, tagline, description, stage, geo_country, geo_region,
   investment_ask::text AS investment_ask, ask_currency, required_plan_id,
-  listing_status, listed_at, status, season_id, current_version_id, created_at, updated_at,
+  listing_status, listed_at, status, season_id, current_version_id, current_application_id,
+  created_at, updated_at,
   (SELECT s.value::text
      FROM scoring.irs_scores s
     WHERE s.project_id = lab.projects.id
@@ -948,6 +945,7 @@ interface ProjectRow {
   status: ProjectFull['status'];
   season_id: string | null;
   current_version_id: string | null;
+  current_application_id: string | null;
   created_at: Date;
   updated_at: Date;
   /** Последний IRS проекта; NUMERIC приходит строкой, чтобы не терять точность. */
@@ -968,12 +966,35 @@ interface ProjectSummaryRow {
   created_at: Date;
 }
 
+const VERSION_COLUMNS = `
+  id, project_id, season_id, version_no, submitted_at, application_id, schema_version,
+  readiness_config_version, completeness_pct
+`;
+
 interface VersionRow {
   id: string;
   project_id: string;
-  season_id: string;
+  season_id: string | null;
   version_no: number;
   submitted_at: Date;
+  application_id: string | null;
+  schema_version: number;
+  readiness_config_version: number | null;
+  completeness_pct: number | null;
+}
+
+function mapVersion(row: VersionRow): ProjectVersion {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    seasonId: row.season_id,
+    versionNo: row.version_no,
+    submittedAt: row.submitted_at.toISOString(),
+    applicationId: row.application_id,
+    schemaVersion: row.schema_version,
+    readinessConfigVersion: row.readiness_config_version,
+    completenessPct: row.completeness_pct,
+  };
 }
 
 interface MaterialRow {
@@ -1004,6 +1025,7 @@ function mapProject(row: ProjectRow): ProjectFull {
     seasonId: row.season_id,
     requiredPlanId: row.required_plan_id,
     currentVersionId: row.current_version_id,
+    currentApplicationId: row.current_application_id,
     // Последний рассчитанный IRS проекта. Раньше здесь стоял жёсткий `null` с
     // припиской «скоринга в этой фазе нет» — скоринг появился, а строка
     // осталась, и кабинет показывал «IRS ещё не рассчитан» рядом с посчитанным
