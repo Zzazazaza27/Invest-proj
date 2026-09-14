@@ -18,6 +18,8 @@ import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
 import { getEnv } from '../config/env';
+import { ApplicationsService } from './applications.service';
+import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 
 /**
  * Проекты и листинги основателя.
@@ -81,6 +83,7 @@ export class ProjectsService {
     private readonly db: Database,
     private readonly audit: AuditRepository,
     private readonly s3: S3Service,
+    private readonly applications: ApplicationsService,
   ) {}
 
   async create(ctx: RequestContext, input: CreateProjectRequest): Promise<ProjectFull> {
@@ -116,6 +119,31 @@ export class ProjectsService {
         `INSERT INTO lab.founders_projects (project_id, user_id, role) VALUES ($1, $2, 'owner')`,
         [id, ctx.userId],
       );
+
+      // С M071 у проекта с первой секунды есть заявка — как у перенесённых:
+      // схема 0, поля из проекта. Кабинет v1 её не видит, но подача через
+      // старый маршрут и список заявок v2 работают одинаково для старых и
+      // новых проектов.
+      const applicationId = uuidv7();
+      await tx.query(
+        `INSERT INTO lab.investment_applications
+           (id, project_id, stage, investment_ask, ask_currency, schema_version,
+            answers_jsonb, created_by)
+         VALUES ($1, $2, $3, $4::numeric, $5, 0, $6::jsonb, $7)`,
+        [
+          applicationId,
+          id,
+          input.stage,
+          input.investmentAsk,
+          input.askCurrency,
+          JSON.stringify(input.description ? { description: input.description } : {}),
+          ctx.userId,
+        ],
+      );
+      await tx.query(`UPDATE lab.projects SET current_application_id = $2 WHERE id = $1`, [
+        id,
+        applicationId,
+      ]);
 
       await this.audit.emit(tx, {
         verb: 'lab.project.created',
@@ -234,6 +262,21 @@ export class ProjectsService {
         const row = rows[0];
         if (!row) throw errors.notFound({ subject: 'project' });
 
+        // Кабинет v1 правит сумму и стадию на проекте; с M071 они живут в
+        // текущей заявке, а проект — производный кеш. Чтобы v1 не расходился с
+        // заявкой (следующая проекция вернула бы старое значение), правка
+        // переносится в текущую незаархивированную заявку схемы 0.
+        if (input.investmentAsk !== undefined || input.stage !== undefined) {
+          await tx.query(
+            `UPDATE lab.investment_applications
+                SET investment_ask = COALESCE($2::numeric, investment_ask),
+                    stage          = COALESCE($3, stage)
+              WHERE id = (SELECT current_application_id FROM lab.projects WHERE id = $1)
+                AND status <> 'archived' AND schema_version = 0`,
+            [projectId, input.investmentAsk ?? null, input.stage ?? null],
+          );
+        }
+
         await this.audit.emit(tx, {
           verb: 'lab.project.updated',
           actorId: ctx.userId,
@@ -250,11 +293,15 @@ export class ProjectsService {
   }
 
   /**
-   * Подача заявки в сезон.
+   * Подача проекта в сезон — старый маршрут, теперь обёртка над подачей
+   * заявки (план 0.2 §2.14, коммит 2.3).
    *
-   * Создаёт НЕИЗМЕНЯЕМЫЙ снимок карточки: на него потом ссылаются AI-скоринг и
-   * рецензии экспертов. Если бы заявку можно было переписать после подачи,
-   * оценка относилась бы к тексту, которого больше не существует.
+   * Поведение для кабинета v1 не меняется: требуется открытый сезон, проект
+   * должен быть в `draft` или `submitted`, снимок неизменяем, проект получает
+   * `season_id`. Что изменилось внутри: снимок делает сервис заявок по
+   * ТЕКУЩЕЙ заявке проекта (после переноса M071 она есть у каждого), а
+   * политика ограничений здесь не проверяется — v1 работает как прежде до
+   * переключения на v2.
    */
   async submit(ctx: RequestContext, projectId: string): Promise<ProjectVersion> {
     return this.db.transaction(ctx, async (tx) => {
@@ -285,53 +332,63 @@ export class ProjectsService {
         throw errors.stateTransition('Приём заявок в сезон сейчас закрыт');
       }
 
-      const next = await tx.query<{ next_no: string }>(
-        `SELECT COALESCE(MAX(version_no), 0) + 1 AS next_no
-           FROM lab.project_versions WHERE project_id = $1 AND season_id = $2`,
-        [projectId, seasonId],
-      );
-      const versionNo = Number(next.rows[0]?.next_no ?? 1);
+      // Текущая заявка проекта; если её нет (проект создан мимо переноса) —
+      // последняя незаархивированная, иначе заявка из полей проекта, как её
+      // создал бы перенос M071.
+      let applicationId = project.current_application_id;
+      if (!applicationId) {
+        const { rows } = await tx.query<{ id: string }>(
+          `SELECT id FROM lab.investment_applications
+            WHERE project_id = $1 AND status <> 'archived'
+            ORDER BY created_at DESC LIMIT 1`,
+          [projectId],
+        );
+        applicationId = rows[0]?.id ?? null;
+      }
+      if (!applicationId) {
+        applicationId = uuidv7();
+        await tx.query(
+          `INSERT INTO lab.investment_applications
+             (id, project_id, stage, investment_ask, ask_currency, schema_version,
+              answers_jsonb, created_by)
+           VALUES ($1, $2, $3, $4::numeric, $5, 0, $6::jsonb, $7)`,
+          [
+            applicationId,
+            projectId,
+            project.stage,
+            project.investment_ask,
+            project.ask_currency,
+            JSON.stringify(project.description ? { description: project.description } : {}),
+            ctx.userId,
+          ],
+        );
+      }
 
-      const versionId = uuidv7();
-      const snapshot = {
-        title: project.title,
-        tagline: project.tagline,
-        description: project.description,
-        stage: project.stage,
-        taxonomyId: project.taxonomy_id,
-        geoCountry: project.geo_country,
-        geoRegion: project.geo_region,
-        investmentAsk: project.investment_ask,
-        askCurrency: project.ask_currency,
-      };
+      const version = await this.applications.submitInTx(tx, ctx, applicationId, {
+        seasonId,
+        enforcePolicy: false,
+      });
 
-      const { rows } = await tx.query<VersionRow>(
-        `INSERT INTO lab.project_versions (id, project_id, season_id, version_no, snapshot_jsonb)
-         VALUES ($1, $2, $3, $4, $5::jsonb)
-         RETURNING ${VERSION_COLUMNS}`,
-        [versionId, projectId, seasonId, versionNo, JSON.stringify(snapshot)],
-      );
-
-      await tx.query(
-        `UPDATE lab.projects
-            SET current_version_id = $2, season_id = $3,
-                status = 'submitted', updated_at = now()
-          WHERE id = $1`,
-        [projectId, versionId, seasonId],
-      );
-
+      // Событие проекта сохраняется ради потребителей старого пути; версия
+      // агрегата — по счётчику, а не по номеру версии: у двух заявок одного
+      // проекта номера версий совпадают.
       await this.audit.record(tx, {
         verb: 'lab.project.submitted',
         actorId: ctx.userId,
         actorRole: 'founder',
         aggregateType: 'project',
         aggregateId: projectId,
-        aggregateVersion: versionNo,
-        payload: { projectId, seasonId, versionNo },
+        aggregateVersion: await this.audit.nextAggregateVersion(
+          tx,
+          'project',
+          projectId,
+          'lab.project.submitted',
+        ),
+        payload: { projectId, seasonId, versionNo: version.versionNo, applicationId },
         traceId: ctx.traceId,
       });
 
-      return mapVersion(rows[0]!);
+      return version;
     });
   }
 
@@ -964,37 +1021,6 @@ interface ProjectSummaryRow {
   required_plan_code: string | null;
   role: 'owner' | 'cofounder';
   created_at: Date;
-}
-
-const VERSION_COLUMNS = `
-  id, project_id, season_id, version_no, submitted_at, application_id, schema_version,
-  readiness_config_version, completeness_pct
-`;
-
-interface VersionRow {
-  id: string;
-  project_id: string;
-  season_id: string | null;
-  version_no: number;
-  submitted_at: Date;
-  application_id: string | null;
-  schema_version: number;
-  readiness_config_version: number | null;
-  completeness_pct: number | null;
-}
-
-function mapVersion(row: VersionRow): ProjectVersion {
-  return {
-    id: row.id,
-    projectId: row.project_id,
-    seasonId: row.season_id,
-    versionNo: row.version_no,
-    submittedAt: row.submitted_at.toISOString(),
-    applicationId: row.application_id,
-    schemaVersion: row.schema_version,
-    readinessConfigVersion: row.readiness_config_version,
-    completenessPct: row.completeness_pct,
-  };
 }
 
 interface MaterialRow {

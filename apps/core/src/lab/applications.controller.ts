@@ -6,6 +6,7 @@ import {
   ApplicationWithChecksSchema,
   CreateApplicationRequestSchema,
   InvestmentApplicationSchema,
+  ProjectVersionSchema,
   UpdateApplicationRequestSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -61,6 +62,17 @@ export class ApplicationsController {
   async archive(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
     return InvestmentApplicationSchema.parse(await this.applications.archive(ctx, id));
+  }
+
+  /**
+   * Подача: неизменяемый снимок версии, проекция в проект. Сезон не нужен;
+   * подача в сезон — старый маршрут `POST /projects/:id/submit`.
+   */
+  @Roles('founder', 'admin')
+  @Post('applications/:id/submit')
+  async submit(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    return ProjectVersionSchema.parse(await this.applications.submit(ctx, id));
   }
 }
 

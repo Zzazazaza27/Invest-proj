@@ -9,6 +9,7 @@ import {
   type ActivateApplicationPolicyRequest,
   type CreateApplicationRequest,
   type InvestmentApplication,
+  type ProjectVersion,
   type UpdateApplicationRequest,
   toMinorUnits,
   fromMinorUnits,
@@ -16,6 +17,7 @@ import {
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 
 /**
  * Инвестиционные заявки основателя (план 0.2 §2.2–§2.4, §2.8).
@@ -239,6 +241,145 @@ export class ApplicationsService {
     });
   }
 
+  // ------------------------------------------------------------------ подача
+
+  /**
+   * Подача заявки (план 0.2 §2.3, §5.1). Сезон не требуется.
+   *
+   * Создаёт НЕИЗМЕНЯЕМЫЙ снимок версии: на него ссылаются скоринг и
+   * экспертиза, и правки черновика после подачи его не трогают. Повторная
+   * подача той же заявки — новая версия, а не новая заявка: улучшать заявку
+   * всегда дешевле, чем заводить ещё одну.
+   */
+  async submit(
+    ctx: RequestContext,
+    applicationId: string,
+    opts: SubmitOptions = {},
+  ): Promise<ProjectVersion> {
+    return this.db.transaction(ctx, (tx) => this.submitInTx(tx, ctx, applicationId, opts));
+  }
+
+  /**
+   * Та же подача внутри чужой транзакции — для старого маршрута проекта,
+   * который добавляет сезон и своё событие в ту же единицу работы.
+   */
+  async submitInTx(
+    tx: Tx,
+    ctx: RequestContext,
+    applicationId: string,
+    opts: SubmitOptions = {},
+  ): Promise<ProjectVersion> {
+    const enforcePolicy = opts.enforcePolicy ?? true;
+    const probe = await this.load(tx, applicationId);
+    await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+      `project-write:${probe.projectId}`,
+    ]);
+    // Перечитать под локом: параллельная подача могла изменить заявку.
+    const application = await this.load(tx, applicationId);
+    if (application.status === 'archived') {
+      throw errors.stateTransition('Заявка в архиве: подать её нельзя');
+    }
+
+    const { rows: projectRows } = await tx.query<SnapshotProjectRow>(
+      `SELECT title, tagline, description, taxonomy_id, geo_country, geo_region, status
+         FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
+      [application.projectId],
+    );
+    const project = projectRows[0];
+    if (!project) throw errors.notFound({ subject: 'project' });
+    if (project.status === 'rejected' || project.status === 'archived') {
+      throw errors.stateTransition('Проект закрыт: подача заявки недоступна');
+    }
+
+    const policy = await loadActivePolicy(tx);
+    const rules = enforcePolicy
+      ? policy.config
+      : { ...policy.config, maxAskPerApplication: null, maxOpenAskTotalPerProject: null };
+    const check = checkSubmission(application, rules);
+    if (!check.canSubmit) throw errors.validation(check.missing);
+    const ask = application.investmentAsk!;
+
+    if (rules.maxOpenAskTotalPerProject !== null) {
+      // Сумма открытых заявок БЕЗ этой: при повторной подаче она уже в сумме.
+      const { rows } = await tx.query<{ total: string | null }>(
+        `SELECT sum(investment_ask)::text AS total FROM lab.investment_applications
+          WHERE project_id = $1 AND status = 'submitted' AND id <> $2`,
+        [application.projectId, applicationId],
+      );
+      const others = rows[0]?.total ?? '0.00';
+      if (exceedsOpenTotal(rules, others, ask)) {
+        throw errors.limitExceeded(
+          `Сумма открытых запросов проекта превысит потолок ${rules.maxOpenAskTotalPerProject} ₽: ` +
+            `уже открыто ${addAmounts(others, '0')} ₽`,
+        );
+      }
+    }
+
+    // Номер версии — внутри заявки; при подаче в сезон он обязан быть уникален
+    // и в паре (проект, сезон): у проекта с несколькими заявками номера
+    // версий разных заявок совпадают, а старый UNIQUE этого не знает.
+    const next = await tx.query<{ next_no: string }>(
+      `SELECT COALESCE(MAX(version_no), 0) + 1 AS next_no
+         FROM lab.project_versions
+        WHERE application_id = $1
+           OR ($3::uuid IS NOT NULL AND project_id = $2 AND season_id = $3)`,
+      [applicationId, application.projectId, opts.seasonId ?? null],
+    );
+    const versionNo = Number(next.rows[0]?.next_no ?? 1);
+    const versionId = uuidv7();
+    const snapshot = buildSnapshot(application, project);
+
+    const { rows: versionRows } = await tx.query<VersionRow>(
+      `INSERT INTO lab.project_versions
+         (id, project_id, season_id, version_no, snapshot_jsonb, application_id, schema_version)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+       RETURNING ${VERSION_COLUMNS}`,
+      [
+        versionId,
+        application.projectId,
+        opts.seasonId ?? null,
+        versionNo,
+        JSON.stringify(snapshot),
+        applicationId,
+        application.schemaVersion,
+      ],
+    );
+
+    await tx.query(
+      `UPDATE lab.investment_applications
+          SET status = 'submitted', submitted_at = now(), current_version_id = $2
+        WHERE id = $1`,
+      [applicationId, versionId],
+    );
+    if (opts.seasonId) {
+      await tx.query(`UPDATE lab.projects SET season_id = $2 WHERE id = $1`, [
+        application.projectId,
+        opts.seasonId,
+      ]);
+    }
+    await recomputeProjectProjection(tx, application.projectId);
+
+    await this.audit.record(tx, {
+      verb: 'lab.application.submitted',
+      actorId: ctx.userId,
+      actorRole: actorRole(ctx),
+      aggregateType: 'application',
+      aggregateId: applicationId,
+      aggregateVersion: versionNo,
+      payload: {
+        applicationId,
+        projectId: application.projectId,
+        versionId,
+        versionNo,
+        seasonId: opts.seasonId ?? null,
+        schemaVersion: application.schemaVersion,
+      },
+      traceId: ctx.traceId,
+    });
+
+    return mapVersion(versionRows[0]!);
+  }
+
   // ------------------------------------------------------- политика (админ)
 
   async listPolicies(ctx: RequestContext): Promise<ApplicationPolicyVersion[]> {
@@ -340,6 +481,57 @@ export class ApplicationsService {
  * схема 0: старая форма из девяти полей, ответы свободны.
  */
 export const ACTIVE_SCHEMA_VERSION = 0;
+
+export interface SubmitOptions {
+  /** Сезон — только для старого маршрута подачи проекта (план 0.2 §2.14). */
+  seasonId?: string;
+  /** Старый маршрут политику ограничений не проверяет: v1 работает как прежде. */
+  enforcePolicy?: boolean;
+}
+
+export interface SnapshotProjectRow {
+  title: string;
+  tagline: string | null;
+  description: string | null;
+  taxonomy_id: string | null;
+  geo_country: string | null;
+  geo_region: string | null;
+  status: string;
+}
+
+/**
+ * Снимок версии (план 0.2 §5.1). Хранит и заявку, и те поля проекта, что
+ * входят в представление инвестору: правки проекта после подачи снимок не
+ * меняют. `applicableKeys` для схемы 0 пуст — применимость вопросов появится
+ * со схемой 1 (этап 3).
+ */
+export function buildSnapshot(
+  application: InvestmentApplication,
+  project: Omit<SnapshotProjectRow, 'status'>,
+): Record<string, unknown> {
+  return {
+    core: {
+      title: application.title,
+      stage: application.stage,
+      businessType: application.businessType,
+      fundingScope: application.fundingScope,
+      fundingScopeNote: application.fundingScopeNote,
+      investmentAsk: application.investmentAsk,
+      askCurrency: application.askCurrency,
+    },
+    answers: application.answers,
+    evidence: application.evidence,
+    applicableKeys: {},
+    project: {
+      title: project.title,
+      tagline: project.tagline,
+      description: project.description,
+      taxonomyId: project.taxonomy_id,
+      geoCountry: project.geo_country,
+      geoRegion: project.geo_region,
+    },
+  };
+}
 
 export interface Counts {
   draft: number;
@@ -456,18 +648,26 @@ export async function recomputeProjectProjection(tx: Tx, projectId: string): Pro
          FROM lab.investment_applications
         WHERE project_id = $1 AND status = 'submitted'
      ),
-     latest AS (SELECT * FROM open ORDER BY submitted_at DESC, id DESC LIMIT 1),
+     latest_open AS (SELECT * FROM open ORDER BY submitted_at DESC, id DESC LIMIT 1),
+     -- Текущая заявка: последняя открытая, а если открытых нет — последний
+     -- незаархивированный черновик (так же её выбирает перенос M071).
+     latest_any AS (
+       SELECT id FROM lab.investment_applications
+        WHERE project_id = $1 AND status <> 'archived'
+        ORDER BY (status = 'submitted') DESC, submitted_at DESC NULLS LAST, created_at DESC, id DESC
+        LIMIT 1
+     ),
      agg AS (SELECT max(investment_ask) AS max_ask FROM open)
      UPDATE lab.projects p
         SET investment_ask   = COALESCE(agg.max_ask, p.investment_ask),
             required_plan_id = billing.resolve_founder_plan(COALESCE(agg.max_ask, p.investment_ask)),
-            stage            = COALESCE(latest.stage, p.stage),
-            current_application_id = latest.id,
-            current_version_id     = COALESCE(latest.current_version_id, p.current_version_id),
-            status           = CASE WHEN p.status = 'draft' AND latest.id IS NOT NULL
+            stage            = COALESCE(latest_open.stage, p.stage),
+            current_application_id = latest_any.id,
+            current_version_id     = COALESCE(latest_open.current_version_id, p.current_version_id),
+            status           = CASE WHEN p.status = 'draft' AND latest_open.id IS NOT NULL
                                     THEN 'submitted' ELSE p.status END,
             updated_at       = now()
-       FROM agg LEFT JOIN latest ON true
+       FROM agg LEFT JOIN latest_open ON true LEFT JOIN latest_any ON true
       WHERE p.id = $1`,
     [projectId],
   );

@@ -670,16 +670,38 @@ let kybId;
   check('юрлицо помечено проверенным', entity?.kybApproved === true);
 }
 
-// ------------------------------------------------------ листинг без подписки
+// --------------------------------------- листинг: платёжный барьер по флагу
+// С M071 барьер основателя — флаг billing.listing_requires_subscription, по
+// умолчанию выключенный: подача и листинг бесплатны (план 0.2 §0а, §2.9.2).
+// Проверяется та ветка, в которой находится стенд, и печатается, какая именно;
+// доступ инвестора от флага не зависит и проверяется ниже как прежде.
+const { json: features } = await raw('/v1/features');
+const barrierOn = features?.flags?.['billing.listing_requires_subscription'] === true;
+console.log(
+  `  ·     платёжный барьер основателя: ${barrierOn ? 'ВКЛЮЧЁН' : 'выключен'} — проверяю эту ветку`,
+);
 {
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/listing`, {
     method: 'POST',
   });
-  check(
-    'публикация без активной подписки отклонена',
-    response.status === 403 && json?.code === 'subscription_required',
-    `статус ${response.status} ${json?.code ?? ''}`,
-  );
+  if (barrierOn) {
+    check(
+      'публикация без активной подписки отклонена (барьер включён)',
+      response.status === 403 && json?.code === 'subscription_required',
+      `статус ${response.status} ${json?.code ?? ''}`,
+    );
+  } else {
+    check(
+      'публикация без подписки разрешена (барьер выключен)',
+      response.status === 201 || response.status === 200,
+      `статус ${response.status} ${json?.code ?? ''}`,
+    );
+    check(
+      'статус листинга — listed без подписки',
+      json?.listingStatus === 'listed',
+      json?.listingStatus ?? '',
+    );
+  }
 }
 
 // Подписка — контур следующей фазы; создаём её как предусловие напрямую в БД.
@@ -711,21 +733,36 @@ await grantFounderSubscription(founderA.userId, projectId);
   check('дата публикации проставлена', Boolean(json?.listedAt));
 }
 {
-  // Рост запроса сверх лимита оплаченного тарифа обязан ломать публикацию.
+  // При включённом барьере рост запроса сверх оплаченного тарифа обязан ломать
+  // публикацию; при выключенном — проходит, и сумма возвращается, чтобы
+  // проверки каталога ниже не зависели от ветки.
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}`, {
     method: 'PATCH',
     body: { investmentAsk: '80000000.00' },
   });
-  check(
-    'рост запроса сверх тарифа блокирует опубликованный листинг',
-    response.status === 403 || response.status === 422,
-    `статус ${response.status} ${json?.code ?? ''}`,
-  );
-
   const [row] = await sql('SELECT investment_ask::text AS ask FROM lab.projects WHERE id = $1', [
     projectId,
   ]);
-  check('сумма запроса не изменилась после отката', row?.ask === '5000000.00', row?.ask ?? '');
+  if (barrierOn) {
+    check(
+      'рост запроса сверх тарифа блокирует опубликованный листинг (барьер включён)',
+      response.status === 403 || response.status === 422,
+      `статус ${response.status} ${json?.code ?? ''}`,
+    );
+    check('сумма запроса не изменилась после отката', row?.ask === '5000000.00', row?.ask ?? '');
+  } else {
+    check(
+      'рост запроса у опубликованного проекта проходит (барьер выключен)',
+      response.status === 200,
+      `статус ${response.status} ${json?.code ?? ''}`,
+    );
+    check('сумма запроса обновилась', row?.ask === '80000000.00', row?.ask ?? '');
+    const restored = await founderA.client.call(`/v1/projects/${projectId}`, {
+      method: 'PATCH',
+      body: { investmentAsk: '5000000.00' },
+    });
+    check('сумма возвращена к исходной', restored.response.status === 200);
+  }
 }
 
 // ------------------------------------------------------------------ каталог
@@ -927,6 +964,132 @@ let ticket;
     'посторонний не получает билет на чужой проект',
     response.status === 404,
     `статус ${response.status}`,
+  );
+}
+
+// ------------------------------------------------- заявки v2 (M071, этап 2)
+// Заявка отдельно от проекта: несколько заявок, черновик без суммы, подача
+// без сезона, лимиты по политике, проекция максимума в проект, архив
+// освобождает место. Старый путь выше уже подал текущую заявку проекта.
+{
+  const before = await founderA.client.call(`/v1/projects/${projectId}/applications`);
+  check(
+    'список заявок проекта отвечает',
+    before.response.status === 200,
+    `статус ${before.response.status}`,
+  );
+  check('у проекта есть заявка из переноса', (before.json?.items?.length ?? 0) >= 1);
+  const remainingBefore = before.json?.limits?.applications?.remaining;
+  check('остаток по политике отдаётся до создания', typeof remainingBefore === 'number');
+
+  const created = await founderA.client.call(`/v1/projects/${projectId}/applications`, {
+    method: 'POST',
+    body: { title: 'Запуск Taxi', fundingScope: 'direction' },
+  });
+  check(
+    'черновик заявки создан без суммы',
+    created.response.status === 201 && created.json?.investmentAsk === null,
+    `статус ${created.response.status} ${created.json?.code ?? ''}`,
+  );
+  const appId = created.json?.id;
+
+  const got = await founderA.client.call(`/v1/applications/${appId}`);
+  const missing = (got.json?.submission?.missing ?? []).map((m) => m.path);
+  check(
+    'подача без суммы и уточнения невозможна, причины названы',
+    got.json?.submission?.canSubmit === false &&
+      missing.includes('investmentAsk') &&
+      missing.includes('fundingScopeNote'),
+    missing.join(','),
+  );
+
+  const early = await founderA.client.call(`/v1/applications/${appId}/submit`, { method: 'POST' });
+  check(
+    'преждевременная подача отвергнута валидацией',
+    early.response.status === 422 || early.response.status === 400,
+    `статус ${early.response.status} ${early.json?.code ?? ''}`,
+  );
+
+  const patched = await founderA.client.call(`/v1/applications/${appId}`, {
+    method: 'PATCH',
+    body: {
+      investmentAsk: '800000.00',
+      fundingScopeNote: 'Такси в Казани',
+      answers: { problem: 'Долгое ожидание машины' },
+    },
+  });
+  check(
+    'автосохранение принимает частичное тело',
+    patched.response.status === 200 && patched.json?.submission?.canSubmit === true,
+    `статус ${patched.response.status} ${patched.json?.code ?? ''}`,
+  );
+
+  const overCap = await founderA.client.call(`/v1/applications/${appId}`, {
+    method: 'PATCH',
+    body: { investmentAsk: '5000000.01' },
+  });
+  check(
+    'сумма выше потолка политики сохраняется, но подать нельзя',
+    overCap.response.status === 200 && overCap.json?.submission?.canSubmit === false,
+  );
+  await founderA.client.call(`/v1/applications/${appId}`, {
+    method: 'PATCH',
+    body: { investmentAsk: '800000.00' },
+  });
+
+  const submitted = await founderA.client.call(`/v1/applications/${appId}/submit`, {
+    method: 'POST',
+  });
+  check(
+    'подача заявки без сезона создаёт версию',
+    submitted.response.status === 201 &&
+      submitted.json?.seasonId === null &&
+      submitted.json?.applicationId === appId,
+    `статус ${submitted.response.status} ${submitted.json?.code ?? ''}`,
+  );
+
+  const [proj] = await sql(
+    'SELECT investment_ask::text AS ask, current_application_id FROM lab.projects WHERE id = $1',
+    [projectId],
+  );
+  check(
+    'проекция: сумма проекта = максимум по открытым заявкам',
+    proj?.ask === '5000000.00',
+    proj?.ask ?? '',
+  );
+  check('проекция: текущая заявка — последняя поданная', proj?.current_application_id === appId);
+
+  const after = await founderA.client.call(`/v1/projects/${projectId}/applications`);
+  check(
+    'остаток уменьшился на одну заявку',
+    after.json?.limits?.applications?.remaining === remainingBefore - 1,
+    `${after.json?.limits?.applications?.remaining}`,
+  );
+  check(
+    'в списке две открытые заявки',
+    (after.json?.items ?? []).filter((a) => a.status === 'submitted').length >= 2,
+  );
+
+  const archived = await founderA.client.call(`/v1/applications/${appId}/archive`, {
+    method: 'POST',
+  });
+  check(
+    'заявка архивирована',
+    archived.response.status === 201 && archived.json?.status === 'archived',
+    `статус ${archived.response.status}`,
+  );
+  const final = await founderA.client.call(`/v1/projects/${projectId}/applications`);
+  check(
+    'архив освобождает место',
+    final.json?.limits?.applications?.remaining === remainingBefore,
+    `${final.json?.limits?.applications?.remaining}`,
+  );
+  const [proj2] = await sql('SELECT current_application_id FROM lab.projects WHERE id = $1', [
+    projectId,
+  ]);
+  check(
+    'проекция после архива указывает на другую заявку',
+    Boolean(proj2?.current_application_id) && proj2?.current_application_id !== appId,
   );
 }
 

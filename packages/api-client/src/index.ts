@@ -529,6 +529,15 @@ export class UnicornApi {
         path: `/applications/${id}/archive`,
         schema: InvestmentApplicationSchema,
       }),
+
+    /** Подача без сезона: неизменяемый снимок версии заявки. */
+    submit: (id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/applications/${id}/submit`,
+        schema: ProjectVersionSchema,
+        idempotencyKey: uuidv7(),
+      }),
   };
 
   /** Публичные флаги интерфейса: барьер подписки, версия кабинета основателя. */
