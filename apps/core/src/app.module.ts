@@ -65,6 +65,7 @@ import { ProjectsController } from './lab/projects.controller';
 import { ProjectsService } from './lab/projects.service';
 import {
   AdminApplicationPoliciesController,
+  AdminReadinessConfigsController,
   ApplicationsController,
 } from './lab/applications.controller';
 import { ApplicationsService } from './lab/applications.service';
@@ -107,6 +108,7 @@ import { S3Service } from './storage/s3.service';
     AdminApplicationPoliciesController,
     ApplicationFormController,
     AdminApplicationFormsController,
+    AdminReadinessConfigsController,
     FeaturesController,
     CatalogController,
     SeasonsController,

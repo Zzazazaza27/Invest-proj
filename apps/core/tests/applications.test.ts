@@ -121,6 +121,20 @@ describe('Условия подачи', () => {
     );
     expect(check.canSubmit).toBe(true);
   });
+
+  it('незаполненные обязательные вопросы формы мешают подаче; системные не дублируются', () => {
+    const check = checkSubmission(
+      { status: 'draft', investmentAsk: null, fundingScope: 'project', fundingScopeNote: null },
+      policy,
+      { missingMandatory: ['problem_statement', 'investment_ask', 'founders'] },
+    );
+    expect(check.canSubmit).toBe(false);
+    expect(check.missing.map((m) => m.path)).toEqual([
+      'answers.problem_statement',
+      'answers.founders',
+      'investmentAsk',
+    ]);
+  });
 });
 
 describe('Контракты заявки', () => {

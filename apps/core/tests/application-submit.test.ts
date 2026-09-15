@@ -3,7 +3,12 @@
  * Чистая функция; сама подача и проекция проверяются живьём (smoke-lab).
  */
 import { describe, expect, it } from 'vitest';
-import type { InvestmentApplication } from '@unicorn/contracts';
+import {
+  APPLICATION_FORM_V1,
+  computeCompleteness,
+  defaultReadinessConfig,
+  type InvestmentApplication,
+} from '@unicorn/contracts';
 import { buildSnapshot } from '../src/lab/applications.service';
 
 const application: InvestmentApplication = {
@@ -74,5 +79,49 @@ describe('Снимок версии заявки', () => {
     expect(text).not.toContain(application.id);
     expect(text).not.toContain('"status"');
     expect(text).not.toContain('createdAt');
+  });
+
+  it('с формой версии: применимые ключи, форма с текстами и готовность (план 0.2 §0в п.7)', () => {
+    const v1 = { ...application, schemaVersion: 1, answers: {}, evidence: {} };
+    const readiness = computeCompleteness(
+      APPLICATION_FORM_V1,
+      defaultReadinessConfig(APPLICATION_FORM_V1),
+      { ...v1, evidence: {} },
+      { schemaVersion: 1, readinessConfigVersion: 1 },
+    );
+    const snapshot = buildSnapshot(
+      v1,
+      {
+        title: 'Проект',
+        tagline: null,
+        description: null,
+        taxonomy_id: null,
+        geo_country: null,
+        geo_region: null,
+      },
+      { form: APPLICATION_FORM_V1, readiness, locale: 'ru-RU' },
+    ) as {
+      applicableKeys: Record<string, string>;
+      form: {
+        schemaVersion: number;
+        stage: string;
+        sections: { key: string; questions: { key: string; label: string; state: string }[] }[];
+      };
+      readiness: { percent: number; readinessConfigVersion: number | null };
+    };
+    // Применимость зафиксирована на момент подачи: стадия mvp, направление → note применим.
+    expect(snapshot.applicableKeys.problem_statement).toBe('mandatory');
+    expect(snapshot.applicableKeys.funding_scope_note).toBe('mandatory');
+    expect(snapshot.applicableKeys.mrr).toBeUndefined();
+    expect(snapshot.applicableKeys.growth_rate).toBeUndefined();
+    // Форма — с формулировками на языке подачи, чтобы снимок читался без конфигурации.
+    expect(snapshot.form.schemaVersion).toBe(1);
+    expect(snapshot.form.stage).toBe('mvp');
+    const problem = snapshot.form.sections
+      .flatMap((s) => s.questions)
+      .find((q) => q.key === 'problem_statement');
+    expect(problem?.label).toBe('Какую проблему вы решаете?');
+    expect(problem?.state).toBe('mandatory');
+    expect(snapshot.readiness).toEqual({ percent: readiness.percent, readinessConfigVersion: 1 });
   });
 });

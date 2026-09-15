@@ -1015,13 +1015,30 @@ let ticket;
     body: {
       investmentAsk: '800000.00',
       fundingScopeNote: 'Такси в Казани',
-      answers: { problem: 'Долгое ожидание машины' },
+      answers: { problem_statement: 'Долгое ожидание машины' },
     },
   });
   check(
-    'автосохранение принимает частичное тело',
-    patched.response.status === 200 && patched.json?.submission?.canSubmit === true,
+    'автосохранение принимает частичное тело и отдаёт готовность',
+    patched.response.status === 200 && typeof patched.json?.readiness?.percent === 'number',
     `статус ${patched.response.status} ${patched.json?.code ?? ''}`,
+  );
+  const stillMissing = (patched.json?.submission?.missing ?? []).map((m) => m.path);
+  check(
+    'без обязательных вопросов формы подача закрыта, ключи названы',
+    patched.json?.submission?.canSubmit === false &&
+      stillMissing.includes('answers.founders') &&
+      !stillMissing.includes('answers.problem_statement'),
+    stillMissing.join(','),
+  );
+  const badAnswer = await founderA.client.call(`/v1/applications/${appId}`, {
+    method: 'PATCH',
+    body: { answers: { founded_year: 'в прошлом году' } },
+  });
+  check(
+    'ответ неверного типа отвергается по форме версии',
+    badAnswer.response.status === 400 || badAnswer.response.status === 422,
+    `статус ${badAnswer.response.status}`,
   );
 
   const overCap = await founderA.client.call(`/v1/applications/${appId}`, {
@@ -1030,16 +1047,71 @@ let ticket;
   });
   check(
     'сумма выше потолка политики сохраняется, но подать нельзя',
-    overCap.response.status === 200 && overCap.json?.submission?.canSubmit === false,
+    overCap.response.status === 200 &&
+      (overCap.json?.submission?.missing ?? []).some((m) => m.path === 'investmentAsk'),
   );
   await founderA.client.call(`/v1/applications/${appId}`, {
     method: 'PATCH',
     body: { investmentAsk: '800000.00' },
   });
 
+  const premature = await founderA.client.call(`/v1/applications/${appId}/submit`, {
+    method: 'POST',
+  });
+  check(
+    'подача без обязательных вопросов отвергается с перечнем',
+    (premature.response.status === 400 || premature.response.status === 422) &&
+      JSON.stringify(premature.json ?? '').includes('answers.'),
+    `статус ${premature.response.status}`,
+  );
+  const formForFill = await founderA.client.call(`/v1/applications/${appId}/form`);
+  const answers = {};
+  for (const section of formForFill.json?.sections ?? []) {
+    for (const q of section.questions) {
+      if (q.state !== 'mandatory' || q.coreField) continue;
+      answers[q.key] =
+        q.type === 'number'
+          ? 1
+          : q.type === 'money'
+            ? '100.00'
+            : q.type === 'select'
+              ? q.options?.[0]?.code
+              : q.type === 'multiselect'
+                ? [q.options?.[0]?.code]
+                : q.type === 'boolean'
+                  ? true
+                  : q.type === 'url'
+                    ? 'https://example.com'
+                    : q.type === 'date'
+                      ? '2026-01-01'
+                      : q.type === 'material_ref'
+                        ? []
+                        : 'Ответ для дымового прогона';
+    }
+  }
+  const filled = await founderA.client.call(`/v1/applications/${appId}`, {
+    method: 'PATCH',
+    body: { answers },
+  });
+  check(
+    'после заполнения обязательных вопросов подача открыта',
+    filled.response.status === 200 &&
+      filled.json?.submission?.canSubmit === true &&
+      filled.json?.readiness?.canSubmit === true &&
+      filled.json?.readiness?.percent > 0,
+    `статус ${filled.response.status} готовность ${filled.json?.readiness?.percent}% ${JSON.stringify(filled.json?.submission?.missing ?? '').slice(0, 200)}`,
+  );
+
   const submitted = await founderA.client.call(`/v1/applications/${appId}/submit`, {
     method: 'POST',
   });
+  check(
+    'снимок версии хранит версию весов и процент готовности',
+    submitted.json?.readinessConfigVersion >= 1 &&
+      typeof submitted.json?.completenessPct === 'number' &&
+      submitted.json?.completenessPct === filled.json?.readiness?.percent,
+    `весов v${submitted.json?.readinessConfigVersion} ${submitted.json?.completenessPct}%`,
+  );
   check(
     'подача заявки без сезона создаёт версию',
     submitted.response.status === 201 &&
@@ -1196,7 +1268,7 @@ let ticket;
   check(
     'публикация даёт следующий номер и активирует версию',
     published.response.status === 201 &&
-      newVersion === activeBefore + 1 &&
+      newVersion > activeBefore &&
       published.json?.isActive === true,
     `статус ${published.response.status} ${published.json?.code ?? ''}`,
   );

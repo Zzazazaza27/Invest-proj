@@ -1,12 +1,14 @@
 import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
 import {
   ActivateApplicationPolicyRequestSchema,
+  ActivateReadinessConfigRequestSchema,
+  ApplicationDetailSchema,
   ApplicationListSchema,
   ApplicationPolicyVersionSchema,
-  ApplicationWithChecksSchema,
   CreateApplicationRequestSchema,
   InvestmentApplicationSchema,
   ProjectVersionSchema,
+  ReadinessConfigVersionSchema,
   UpdateApplicationRequestSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -45,7 +47,7 @@ export class ApplicationsController {
   @Get('applications/:id')
   async get(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
-    return ApplicationWithChecksSchema.parse(await this.applications.get(ctx, id));
+    return ApplicationDetailSchema.parse(await this.applications.get(ctx, id));
   }
 
   /** Автосохранение черновика: частичное тело, `null` очищает поле. */
@@ -54,7 +56,7 @@ export class ApplicationsController {
   async update(@Param('id') rawId: string, @Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
     const input = parseOrThrow(UpdateApplicationRequestSchema, rawBody);
-    return ApplicationWithChecksSchema.parse(await this.applications.update(ctx, id, input));
+    return ApplicationDetailSchema.parse(await this.applications.update(ctx, id, input));
   }
 
   @Roles('founder', 'admin')
@@ -96,5 +98,30 @@ export class AdminApplicationPoliciesController {
   async activate(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
     const input = parseOrThrow(ActivateApplicationPolicyRequestSchema, rawBody);
     return ApplicationPolicyVersionSchema.parse(await this.applications.activatePolicy(ctx, input));
+  }
+}
+
+/**
+ * Веса готовности заявки — отдельная версионируемая настройка (план 0.2
+ * §2.7): своя история и активация, независимые от конфигурации вопросов.
+ */
+@Roles('admin')
+@Controller('admin/readiness-configs')
+export class AdminReadinessConfigsController {
+  constructor(private readonly applications: ApplicationsService) {}
+
+  @Get()
+  async list(@Ctx() ctx: RequestContext) {
+    const items = await this.applications.listReadinessConfigs(ctx);
+    return { items: items.map((item) => ReadinessConfigVersionSchema.parse(item)) };
+  }
+
+  /** Новая версия весов активируется сразу; снимки поданных заявок не пересчитываются. */
+  @Post()
+  async activate(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(ActivateReadinessConfigRequestSchema, rawBody);
+    return ReadinessConfigVersionSchema.parse(
+      await this.applications.activateReadinessConfig(ctx, input),
+    );
   }
 }

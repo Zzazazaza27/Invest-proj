@@ -1,11 +1,12 @@
 import {
   AcceptedSchema,
   AnalysisRunSchema,
+  ApplicationDetailSchema,
   ApplicationFormVersionSchema,
   ApplicationFormVersionsSchema,
   ApplicationFormViewSchema,
   ApplicationListSchema,
-  ApplicationWithChecksSchema,
+  ReadinessConfigVersionSchema,
   AuthSessionSchema,
   FeaturesSchema,
   InvestmentApplicationSchema,
@@ -62,6 +63,7 @@ import {
   type UpdateApplicationRequest,
   type ApplicationFormConfig,
   type ProjectStage,
+  type ReadinessConfig,
   type AddEntityMemberRequest,
   type CreateEntityRequest,
   type StartKybRequest,
@@ -516,16 +518,17 @@ export class UnicornApi {
         idempotencyKey: uuidv7(),
       }),
 
+    /** Заявка с условиями подачи и готовностью (процент, разделы, недостающее). */
     get: (id: string) =>
-      this.http.request({ path: `/applications/${id}`, schema: ApplicationWithChecksSchema }),
+      this.http.request({ path: `/applications/${id}`, schema: ApplicationDetailSchema }),
 
-    /** Автосохранение: частичное тело, `null` очищает поле. */
+    /** Автосохранение: частичное тело, `null` очищает поле; ответы проверяются по форме версии. */
     update: (id: string, body: UpdateApplicationRequest) =>
       this.http.request({
         method: 'PATCH',
         path: `/applications/${id}`,
         body,
-        schema: ApplicationWithChecksSchema,
+        schema: ApplicationDetailSchema,
       }),
 
     archive: (id: string) =>
@@ -606,6 +609,26 @@ export class UnicornApi {
         path: `/admin/application-forms/${version}/activate`,
         body: { reason },
         schema: ApplicationFormVersionSchema,
+        idempotencyKey: uuidv7(),
+      }),
+  };
+
+  /** Веса готовности — отдельная версия и активация (план 0.2 §2.7). */
+  readonly readinessConfigs = {
+    list: () =>
+      this.http
+        .request({
+          path: '/admin/readiness-configs',
+          schema: z.object({ items: z.array(ReadinessConfigVersionSchema) }),
+        })
+        .then((response) => response.items),
+
+    activate: (config: ReadinessConfig, reason: string) =>
+      this.http.request({
+        method: 'POST',
+        path: '/admin/readiness-configs',
+        body: { config, reason },
+        schema: ReadinessConfigVersionSchema,
         idempotencyKey: uuidv7(),
       }),
   };

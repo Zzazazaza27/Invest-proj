@@ -1,15 +1,27 @@
 import { Injectable } from '@nestjs/common';
 import {
   ApplicationPolicySchema,
+  DEFAULT_FORM_LOCALE,
+  ReadinessConfigSchema,
+  applicableQuestions,
+  buildAnswersSchema,
+  buildStageForm,
+  computeCompleteness,
   uuidv7,
+  type ActivateReadinessConfigRequest,
+  type ApplicationDetail,
+  type ApplicationFormConfig,
   type ApplicationLimits,
   type ApplicationPolicy,
   type ApplicationPolicyVersion,
+  type ApplicationReadiness,
   type ApplicationSubmissionCheck,
   type ActivateApplicationPolicyRequest,
   type CreateApplicationRequest,
   type InvestmentApplication,
   type ProjectVersion,
+  type ReadinessConfig,
+  type ReadinessConfigVersion,
   type UpdateApplicationRequest,
   toMinorUnits,
   fromMinorUnits,
@@ -17,6 +29,7 @@ import {
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { loadFormConfig } from './application-forms.service';
 import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 
 /**
@@ -132,14 +145,10 @@ export class ApplicationsService {
     });
   }
 
-  async get(
-    ctx: RequestContext,
-    applicationId: string,
-  ): Promise<{ application: InvestmentApplication; submission: ApplicationSubmissionCheck }> {
+  async get(ctx: RequestContext, applicationId: string): Promise<ApplicationDetail> {
     return this.db.readOnly(ctx, async (tx) => {
       const application = await this.load(tx, applicationId);
-      const policy = await loadActivePolicy(tx);
-      return { application, submission: checkSubmission(application, policy.config) };
+      return this.detail(tx, application);
     });
   }
 
@@ -152,7 +161,7 @@ export class ApplicationsService {
     ctx: RequestContext,
     applicationId: string,
     input: UpdateApplicationRequest,
-  ): Promise<{ application: InvestmentApplication; submission: ApplicationSubmissionCheck }> {
+  ): Promise<ApplicationDetail> {
     const fields = Object.keys(input);
     if (fields.length === 0) {
       throw errors.validation([{ path: '(корень)', message: 'нет полей для изменения' }]);
@@ -177,6 +186,20 @@ export class ApplicationsService {
       if (input.investmentAsk !== undefined)
         set('investment_ask', input.investmentAsk, '::numeric');
       if (input.answers !== undefined) {
+        // Ответы проверяются по форме ВЕРСИИ заявки: тип, ограничения, коды
+        // вариантов, ключи только из документа. Схема 0 — ответы свободны.
+        if (current.schemaVersion > 0) {
+          const form = await loadFormConfig(tx, current.schemaVersion);
+          const parsed = buildAnswersSchema(form).safeParse(input.answers);
+          if (!parsed.success) {
+            throw errors.validation(
+              parsed.error.issues.map((issue) => ({
+                path: `answers.${issue.path.join('.') || '(корень)'}`,
+                message: issue.message,
+              })),
+            );
+          }
+        }
         params.push(JSON.stringify(input.answers));
         sets.push(`answers_jsonb = answers_jsonb || $${params.length}::jsonb`);
       }
@@ -204,9 +227,7 @@ export class ApplicationsService {
         traceId: ctx.traceId,
       });
 
-      const application = mapApplication(row);
-      const policy = await loadActivePolicy(tx);
-      return { application, submission: checkSubmission(application, policy.config) };
+      return this.detail(tx, mapApplication(row));
     });
   }
 
@@ -296,7 +317,9 @@ export class ApplicationsService {
     const rules = enforcePolicy
       ? policy.config
       : { ...policy.config, maxAskPerApplication: null, maxOpenAskTotalPerProject: null };
-    const check = checkSubmission(application, rules);
+    // Обязательные вопросы формы — условие подачи наравне с суммой (план 0.2 §4 п.5).
+    const assessment = await assessApplication(tx, application);
+    const check = checkSubmission(application, rules, assessment.readiness);
     if (!check.canSubmit) throw errors.validation(check.missing);
     const ask = application.investmentAsk!;
 
@@ -328,12 +351,17 @@ export class ApplicationsService {
     );
     const versionNo = Number(next.rows[0]?.next_no ?? 1);
     const versionId = uuidv7();
-    const snapshot = buildSnapshot(application, project);
+    const snapshot = buildSnapshot(application, project, {
+      form: assessment.form,
+      readiness: assessment.readiness,
+      locale: DEFAULT_FORM_LOCALE,
+    });
 
     const { rows: versionRows } = await tx.query<VersionRow>(
       `INSERT INTO lab.project_versions
-         (id, project_id, season_id, version_no, snapshot_jsonb, application_id, schema_version)
-       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7)
+         (id, project_id, season_id, version_no, snapshot_jsonb, application_id, schema_version,
+          readiness_config_version, completeness_pct)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9)
        RETURNING ${VERSION_COLUMNS}`,
       [
         versionId,
@@ -343,6 +371,8 @@ export class ApplicationsService {
         JSON.stringify(snapshot),
         applicationId,
         application.schemaVersion,
+        assessment.readiness.readinessConfigVersion,
+        assessment.readiness.percent,
       ],
     );
 
@@ -429,7 +459,72 @@ export class ApplicationsService {
     });
   }
 
+  // ------------------------------------------------------ веса готовности (админ)
+
+  async listReadinessConfigs(ctx: RequestContext): Promise<ReadinessConfigVersion[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<ReadinessRow>(
+        `SELECT ${READINESS_COLUMNS} FROM lab.readiness_configs ORDER BY version DESC LIMIT 100`,
+      );
+      return rows.map(mapReadiness);
+    });
+  }
+
+  /**
+   * Новая версия весов активируется одной транзакцией, как политика: прежняя
+   * гаснет и остаётся в истории. Черновики заявок считаются по новой версии
+   * налету; снимки хранят свою версию и процент и не пересчитываются
+   * (план 0.2 §5.4). Конфигурация вопросов не трогается — у неё свои версии.
+   */
+  async activateReadinessConfig(
+    ctx: RequestContext,
+    input: ActivateReadinessConfigRequest,
+  ): Promise<ReadinessConfigVersion> {
+    return this.db.transaction(ctx, async (tx) => {
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        'readiness-config:activate',
+      ]);
+      const schemaVersion = await activeSchemaVersion(tx);
+      await tx.query(`UPDATE lab.readiness_configs SET is_active = false WHERE is_active`);
+      const { rows } = await tx.query<ReadinessRow>(
+        `INSERT INTO lab.readiness_configs
+           (id, version, schema_version, config_jsonb, is_active, created_by, reason)
+         VALUES ($1, (SELECT COALESCE(MAX(version), 0) + 1 FROM lab.readiness_configs),
+                 $2, $3::jsonb, true, $4, $5)
+         RETURNING ${READINESS_COLUMNS}`,
+        [uuidv7(), schemaVersion, JSON.stringify(input.config), ctx.userId, input.reason],
+      );
+      const row = rows[0]!;
+      await this.audit.emit(tx, {
+        verb: 'lab.readiness_config.activated',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'readiness_config',
+        subjectId: row.id,
+        context: {
+          version: row.version,
+          schemaVersion,
+          reason: input.reason,
+          config: input.config,
+        },
+        traceId: ctx.traceId,
+      });
+      return mapReadiness(row);
+    });
+  }
+
   // ------------------------------------------------------------------ helpers
+
+  /** Заявка + условия подачи + готовность — то, что видит мастер после каждого сохранения. */
+  private async detail(tx: Tx, application: InvestmentApplication): Promise<ApplicationDetail> {
+    const policy = await loadActivePolicy(tx);
+    const { readiness } = await assessApplication(tx, application);
+    return {
+      application,
+      submission: checkSubmission(application, policy.config, readiness),
+      readiness,
+    };
+  }
 
   private async load(tx: Tx, applicationId: string): Promise<InvestmentApplication> {
     const { rows } = await tx.query<ApplicationRow>(
@@ -523,7 +618,22 @@ export interface SnapshotProjectRow {
 export function buildSnapshot(
   application: InvestmentApplication,
   project: Omit<SnapshotProjectRow, 'status'>,
+  /**
+   * Форма и готовность на момент подачи (план 0.2 §0в п.7): разделы,
+   * показанные вопросы с ключами, типами, формулировками и обязательностью
+   * на языке подачи. Снимок самодостаточен — поданная заявка открывается
+   * так, как её видел основатель, даже если вопрос потом изменили или
+   * архивировали. Без аргумента — снимок схемы 0 (тесты, совместимость).
+   */
+  formState?: { form: ApplicationFormConfig; readiness: ApplicationReadiness; locale: string },
 ): Record<string, unknown> {
+  const applicableKeys: Record<string, string> = {};
+  if (formState) {
+    for (const [key, level] of applicableQuestions(formState.form, application.stage)) {
+      if (key === 'funding_scope_note' && application.fundingScope !== 'direction') continue;
+      applicableKeys[key] = level;
+    }
+  }
   return {
     core: {
       title: application.title,
@@ -536,7 +646,20 @@ export function buildSnapshot(
     },
     answers: application.answers,
     evidence: application.evidence,
-    applicableKeys: {},
+    applicableKeys,
+    ...(formState
+      ? {
+          form: buildStageForm(formState.form, {
+            schemaVersion: application.schemaVersion,
+            stage: application.stage,
+            locale: formState.locale,
+          }),
+          readiness: {
+            percent: formState.readiness.percent,
+            readinessConfigVersion: formState.readiness.readinessConfigVersion,
+          },
+        }
+      : {}),
     project: {
       title: project.title,
       tagline: project.tagline,
@@ -612,8 +735,16 @@ export function checkSubmission(
     'status' | 'investmentAsk' | 'fundingScope' | 'fundingScopeNote'
   >,
   policy: ApplicationPolicy,
+  /** Готовность по форме версии заявки: незаполненные обязательные вопросы тоже мешают подаче. */
+  readiness?: Pick<ApplicationReadiness, 'missingMandatory'>,
 ): ApplicationSubmissionCheck {
   const missing: ApplicationSubmissionCheck['missing'] = [];
+  // Системные поля проверяются ниже своими сообщениями; из готовности берутся
+  // только вопросы формы, чтобы сумма не попадала в список дважды.
+  for (const key of readiness?.missingMandatory ?? []) {
+    if (CORE_KEYS.has(key)) continue;
+    missing.push({ path: `answers.${key}`, message: 'заполните обязательный вопрос' });
+  }
   if (application.status === 'archived') {
     missing.push({ path: 'status', message: 'заявка в архиве' });
   }
@@ -713,6 +844,84 @@ async function assertProjectVisible(tx: Tx, projectId: string): Promise<void> {
 
 function actorRole(ctx: RequestContext): string {
   return ctx.roles.includes('admin') ? 'admin' : 'founder';
+}
+
+const CORE_KEYS = new Set([
+  'stage',
+  'business_type',
+  'funding_scope',
+  'funding_scope_note',
+  'investment_ask',
+]);
+
+/**
+ * Форма версии заявки и её готовность по активным весам. Форма берётся по
+ * `schema_version` самой заявки (она живёт на своей версии), веса — активные:
+ * процент черновика может измениться после активации новых весов, и это
+ * ожидаемо (план 0.2 §5.4); снимок хранит свою версию и процент.
+ */
+export async function assessApplication(
+  tx: Tx,
+  application: InvestmentApplication,
+): Promise<{ form: ApplicationFormConfig; readiness: ApplicationReadiness }> {
+  const form = await loadFormConfig(tx, application.schemaVersion);
+  const weights = await loadActiveReadinessConfig(tx);
+  const readiness = computeCompleteness(
+    form,
+    weights.config,
+    {
+      stage: application.stage,
+      businessType: application.businessType,
+      fundingScope: application.fundingScope,
+      fundingScopeNote: application.fundingScopeNote,
+      investmentAsk: application.investmentAsk,
+      answers: application.answers,
+      evidence: application.evidence,
+    },
+    { schemaVersion: application.schemaVersion, readinessConfigVersion: weights.version },
+  );
+  return { form, readiness };
+}
+
+export async function loadActiveReadinessConfig(
+  tx: Tx,
+): Promise<{ version: number; config: ReadinessConfig }> {
+  const { rows } = await tx.query<{ version: number; config_jsonb: unknown }>(
+    `SELECT version, config_jsonb FROM lab.readiness_configs WHERE is_active`,
+  );
+  const row = rows[0];
+  if (!row) throw new Error('нет активной конфигурации готовности: сид M075 не применён');
+  const parsed = ReadinessConfigSchema.safeParse(row.config_jsonb);
+  if (!parsed.success) {
+    throw new Error(`конфигурация готовности версии ${row.version} не проходит схему`);
+  }
+  return { version: row.version, config: parsed.data };
+}
+
+const READINESS_COLUMNS = `id, version, schema_version, config_jsonb, is_active, created_by, created_at, reason`;
+
+interface ReadinessRow {
+  id: string;
+  version: number;
+  schema_version: number;
+  config_jsonb: unknown;
+  is_active: boolean;
+  created_by: string | null;
+  created_at: Date;
+  reason: string;
+}
+
+function mapReadiness(row: ReadinessRow): ReadinessConfigVersion {
+  return {
+    id: row.id,
+    version: row.version,
+    schemaVersion: row.schema_version,
+    config: ReadinessConfigSchema.parse(row.config_jsonb),
+    isActive: row.is_active,
+    createdBy: row.created_by,
+    createdAt: row.created_at.toISOString(),
+    reason: row.reason,
+  };
 }
 
 const APPLICATION_COLUMNS = `

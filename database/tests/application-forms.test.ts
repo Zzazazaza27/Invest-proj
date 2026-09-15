@@ -256,3 +256,64 @@ describe('RLS: версии конфигурации', () => {
     expect(rows.map((r) => r.privilege_type).sort()).toEqual(['INSERT', 'SELECT', 'UPDATE']);
   });
 });
+
+describe('M075: веса готовности — отдельная версия', () => {
+  it('сид версии 1 активен: четырнадцать разделов по 1, баллы 2 / 1', async () => {
+    const { rows } = await getPool().query<{
+      version: number;
+      config_jsonb: Record<string, unknown>;
+    }>(`SELECT version, config_jsonb FROM lab.readiness_configs WHERE is_active`);
+    expect(rows).toHaveLength(1);
+    const config = rows[0]!.config_jsonb as {
+      sections: Record<string, { weight: number }>;
+      levelPoints: { mandatory: number; recommended: number };
+    };
+    expect(Object.keys(config.sections)).toHaveLength(14);
+    expect(config.levelPoints).toEqual({ mandatory: 2, recommended: 1 });
+  });
+
+  it('активная одна; активация весов не трогает версии вопросов', async () => {
+    await inRollbackTx(async (c) => {
+      await actAs(c, { roles: ['admin'] });
+      const formsBefore = await c.query(
+        `SELECT id, is_active FROM lab.application_form_versions ORDER BY id`,
+      );
+      const clash = await failing(c, () =>
+        c.query(
+          `INSERT INTO lab.readiness_configs (id, version, schema_version, config_jsonb, is_active, reason)
+           VALUES ($1, 999, 1, '{"sections":{},"levelPoints":{"mandatory":2,"recommended":1}}', true, 'вторая активная')`,
+          [uuidv7()],
+        ),
+      );
+      expect(clash.message).toMatch(/one_active/);
+
+      await c.query(`UPDATE lab.readiness_configs SET is_active = false WHERE is_active`);
+      await c.query(
+        `INSERT INTO lab.readiness_configs (id, version, schema_version, config_jsonb, is_active, reason)
+         VALUES ($1, 999, 1, '{"sections":{},"levelPoints":{"mandatory":3,"recommended":1}}', true, 'новые веса')`,
+        [uuidv7()],
+      );
+      const formsAfter = await c.query(
+        `SELECT id, is_active FROM lab.application_form_versions ORDER BY id`,
+      );
+      expect(formsAfter.rows).toEqual(formsBefore.rows);
+    });
+  });
+
+  it('веса читает основатель, пишет только администратор', async () => {
+    await inRollbackTx(async (c) => {
+      const founder = await createUser(c);
+      await actAs(c, { userId: founder.id, roles: ['founder'], dbRole: 'app_backend' });
+      const read = await c.query(`SELECT version FROM lab.readiness_configs WHERE is_active`);
+      expect(read.rows).toHaveLength(1);
+      const error = await expectError(() =>
+        c.query(
+          `INSERT INTO lab.readiness_configs (id, version, schema_version, config_jsonb, is_active, reason)
+           VALUES ($1, 998, 1, '{}'::jsonb, false, 'попытка основателя')`,
+          [uuidv7()],
+        ),
+      );
+      expect(error.message).toMatch(/row-level security|policy/i);
+    });
+  });
+});
