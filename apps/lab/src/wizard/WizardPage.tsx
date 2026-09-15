@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { Badge, Button, Card, ErrorState, LoadingState, Markdown, Stack } from '@unicorn/ui';
 import type { ApplicationDetail, FormQuestionView } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
@@ -90,6 +90,9 @@ function Frame({
             {S.wizard.intro.versionNote(form.schemaVersion)}
           </span>
         </div>
+        <Link to="/glossary" data-glossary-link style={{ fontSize: 'var(--u-text-sm)' }}>
+          {S.glossary.link}
+        </Link>
         <SaveIndicator state={app.save} count={app.savedCount} onRetry={app.retryNow} />
       </div>
       <ReadinessPanel detail={detail} />

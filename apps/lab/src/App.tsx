@@ -39,6 +39,7 @@ import type {
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { WizardPage } from './wizard/WizardPage';
+import { GlossaryPage } from './pages/GlossaryPage';
 
 /**
  * Кабинет основателя.
@@ -221,6 +222,7 @@ export default function App() {
                 element={<ProjectRoute applicationV2={applicationV2} />}
               />
               <Route path="/applications/:id/*" element={<WizardPage />} />
+              <Route path="/glossary" element={<GlossaryPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
           ) : null}

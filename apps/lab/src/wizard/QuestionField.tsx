@@ -1,6 +1,7 @@
 import { Badge, Field, Input, Markdown, Select, TextArea } from '@unicorn/ui';
 import type { FormQuestionView, ProjectMaterial } from '@unicorn/contracts';
 import { S } from '../strings';
+import { TermHints, useGlossary, useTermsFor } from './glossary';
 
 /**
  * Один вопрос анкеты — по типу из опубликованной конфигурации.
@@ -33,6 +34,8 @@ export function QuestionField({
 }) {
   const id = `q-${question.key}`;
   const mandatory = question.state === 'mandatory';
+  const glossary = useGlossary();
+  const terms = useTermsFor(glossary, question.label, question.helpMd);
 
   return (
     <div
@@ -66,6 +69,7 @@ export function QuestionField({
       {question.helpMd ? (
         <Markdown source={question.helpMd} className="u-help" maxLength={4000} />
       ) : null}
+      <TermHints terms={terms} />
       {question.exampleGoodMd || question.exampleWeakMd ? (
         <details>
           <summary
