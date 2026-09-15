@@ -1093,6 +1093,163 @@ let ticket;
   );
 }
 
+// ------------------------------------------- форма и версии (M073, этап 3)
+// Форма заявки собирается из версии, записанной в самой заявке; админка
+// правит единственный черновик, публикует версии и откатывает активацией
+// прежней. Прогон оставляет в истории одну новую опубликованную версию и
+// возвращает активной прежнюю — история версий на стенде растёт на одну
+// строку за прогон, это ожидаемо.
+{
+  const forForm = await founderA.client.call(`/v1/projects/${projectId}/applications`, {
+    method: 'POST',
+    body: { title: 'Форма по версии' },
+  });
+  const appId = forForm.json?.id;
+  check(
+    'заявка для проверки формы создана',
+    forForm.response.status === 201 && Boolean(appId),
+    `статус ${forForm.response.status}`,
+  );
+  const form = await founderA.client.call(`/v1/applications/${appId}/form`);
+  check(
+    'форма заявки отвечает по её версии',
+    form.response.status === 200 && (form.json?.schemaVersion ?? 0) >= 1,
+    `статус ${form.response.status} v${form.json?.schemaVersion}`,
+  );
+  const keys = (form.json?.sections ?? []).flatMap((s) => s.questions.map((q) => q.key));
+  check(
+    'форма содержит разделы, системные и содержательные вопросы',
+    (form.json?.sections?.length ?? 0) >= 2 &&
+      keys.includes('investment_ask') &&
+      keys.includes('problem_statement'),
+    `разделов ${form.json?.sections?.length ?? 0}`,
+  );
+  check('скрытые для всех стадий вопросы не показываются', !keys.includes('mrr'));
+  const english = await founderA.client.call(`/v1/applications/${appId}/form?locale=en-US`);
+  check(
+    'на языке без переводов берётся запасной текст, пропуски перечислены',
+    english.response.status === 200 && (english.json?.missing?.length ?? 0) > 0,
+    `статус ${english.response.status}`,
+  );
+  const stranger = await founderB.client.call(`/v1/applications/${appId}/form`);
+  check(
+    'форму чужой заявки не видно',
+    stranger.response.status === 404,
+    `статус ${stranger.response.status}`,
+  );
+
+  const versions = await adminClient.call('/v1/admin/application-forms');
+  const activeBefore = versions.json?.activeVersion;
+  check(
+    'админка видит активную версию конфигурации',
+    versions.response.status === 200 && typeof activeBefore === 'number',
+    `статус ${versions.response.status}`,
+  );
+  const draft = await adminClient.call('/v1/admin/application-forms/draft');
+  check(
+    'черновик создаётся из активной версии',
+    draft.response.status === 200 && draft.json?.status === 'draft',
+    `статус ${draft.response.status} ${draft.json?.code ?? ''}`,
+  );
+
+  const config = draft.json?.config ?? { questions: [] };
+  const website = config.questions.find((q) => q.key === 'website_url');
+  if (website) website.stages.idea = 'hidden';
+  const saved = await adminClient.call('/v1/admin/application-forms/draft', {
+    method: 'PUT',
+    body: { config },
+  });
+  check(
+    'черновик сохраняется с изменённым состоянием вопроса',
+    saved.response.status === 200,
+    `статус ${saved.response.status} ${saved.json?.code ?? ''} ${JSON.stringify(saved.json?.fieldErrors ?? '').slice(0, 300)}`,
+  );
+
+  const preview = await adminClient.call('/v1/admin/application-forms/draft/preview?stage=idea');
+  const previewKeys = (preview.json?.sections ?? []).flatMap((s) => s.questions.map((q) => q.key));
+  check(
+    'предпросмотр черновика показывает изменение до публикации',
+    preview.response.status === 200 &&
+      previewKeys.length > 0 &&
+      !previewKeys.includes('website_url'),
+    `статус ${preview.response.status}`,
+  );
+
+  const broken = structuredClone(config);
+  broken.questions = broken.questions.filter((q) => q.key !== 'why_now');
+  const rejected = await adminClient.call('/v1/admin/application-forms/draft', {
+    method: 'PUT',
+    body: { config: broken },
+  });
+  check(
+    'удаление опубликованного ключа отвергается с перечнем',
+    (rejected.response.status === 422 || rejected.response.status === 400) &&
+      JSON.stringify(rejected.json ?? '').includes('why_now'),
+    `статус ${rejected.response.status}`,
+  );
+
+  const published = await adminClient.call('/v1/admin/application-forms/draft/publish', {
+    method: 'POST',
+    body: { reason: 'дымовой прогон: скрыт website_url на стадии идеи' },
+  });
+  const newVersion = published.json?.version;
+  check(
+    'публикация даёт следующий номер и активирует версию',
+    published.response.status === 201 &&
+      newVersion === activeBefore + 1 &&
+      published.json?.isActive === true,
+    `статус ${published.response.status} ${published.json?.code ?? ''}`,
+  );
+
+  const formAfter = await founderA.client.call(`/v1/applications/${appId}/form`);
+  check(
+    'существующая заявка осталась на своей версии после публикации',
+    formAfter.json?.schemaVersion === form.json?.schemaVersion,
+    `v${formAfter.json?.schemaVersion}`,
+  );
+
+  const fresh = await founderA.client.call(`/v1/projects/${projectId}/applications`, {
+    method: 'POST',
+    body: { title: 'Проверка версии конфигурации' },
+  });
+  check(
+    'новая заявка создаётся на новой версии',
+    fresh.response.status === 201 && fresh.json?.schemaVersion === newVersion,
+    `статус ${fresh.response.status} v${fresh.json?.schemaVersion}`,
+  );
+  if (fresh.json?.id) {
+    await founderA.client.call(`/v1/applications/${fresh.json.id}/archive`, { method: 'POST' });
+  }
+
+  const rolledBack = await adminClient.call(
+    `/v1/admin/application-forms/${activeBefore}/activate`,
+    { method: 'POST', body: { reason: 'дымовой прогон: откат к прежней версии' } },
+  );
+  check(
+    'откат активирует прежнюю версию',
+    rolledBack.response.status === 201 &&
+      rolledBack.json?.version === activeBefore &&
+      rolledBack.json?.isActive === true,
+    `статус ${rolledBack.response.status} ${rolledBack.json?.code ?? ''}`,
+  );
+  const again = await adminClient.call(`/v1/admin/application-forms/${activeBefore}/activate`, {
+    method: 'POST',
+    body: { reason: 'повторная активация' },
+  });
+  check(
+    'повторная активация активной версии — конфликт',
+    again.response.status === 409,
+    `статус ${again.response.status}`,
+  );
+  await founderA.client.call(`/v1/applications/${appId}/archive`, { method: 'POST' });
+  const founderForbidden = await founderA.client.call('/v1/admin/application-forms/draft');
+  check(
+    'основателю черновик конфигурации недоступен',
+    founderForbidden.response.status === 403,
+    `статус ${founderForbidden.response.status}`,
+  );
+}
+
 // ------------------------------------------------------------- снятие листинга
 {
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/listing`, {

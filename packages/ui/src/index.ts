@@ -51,3 +51,16 @@ export {
 export { formatAmount, formatMoney, formatScore10 } from './format';
 
 export { PromptDialog } from './prompt-dialog';
+
+/**
+ * Безопасный Markdown продуктовых текстов: подсказки, примеры, словарь, ЧАВО.
+ * Один компонент для формы, предпросмотра и админки; сырого HTML нет по
+ * конструкции (план 0.2 §2.6).
+ */
+export { Markdown, type MarkdownProps } from './markdown';
+export {
+  markdownToPlainText,
+  parseMarkdown,
+  type BlockNode,
+  type InlineNode,
+} from './markdown-parser';

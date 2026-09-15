@@ -68,6 +68,11 @@ import {
   ApplicationsController,
 } from './lab/applications.controller';
 import { ApplicationsService } from './lab/applications.service';
+import {
+  AdminApplicationFormsController,
+  ApplicationFormController,
+} from './lab/application-forms.controller';
+import { ApplicationFormsService } from './lab/application-forms.service';
 import { FeaturesController } from './health/features.controller';
 import { PartitionMaintenanceService } from './maintenance/partitions.service';
 import { StorageJanitorService } from './maintenance/storage-janitor.service';
@@ -100,6 +105,8 @@ import { S3Service } from './storage/s3.service';
     ProjectsController,
     ApplicationsController,
     AdminApplicationPoliciesController,
+    ApplicationFormController,
+    AdminApplicationFormsController,
     FeaturesController,
     CatalogController,
     SeasonsController,
@@ -139,6 +146,7 @@ import { S3Service } from './storage/s3.service';
     KycService,
     ProjectsService,
     ApplicationsService,
+    ApplicationFormsService,
     CatalogService,
     SeasonsService,
     BillingService,

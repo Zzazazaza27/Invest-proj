@@ -1,6 +1,9 @@
 import {
   AcceptedSchema,
   AnalysisRunSchema,
+  ApplicationFormVersionSchema,
+  ApplicationFormVersionsSchema,
+  ApplicationFormViewSchema,
   ApplicationListSchema,
   ApplicationWithChecksSchema,
   AuthSessionSchema,
@@ -57,6 +60,8 @@ import {
   type CatalogFilter,
   type CreateApplicationRequest,
   type UpdateApplicationRequest,
+  type ApplicationFormConfig,
+  type ProjectStage,
   type AddEntityMemberRequest,
   type CreateEntityRequest,
   type StartKybRequest,
@@ -536,6 +541,71 @@ export class UnicornApi {
         method: 'POST',
         path: `/applications/${id}/submit`,
         schema: ProjectVersionSchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    /**
+     * Форма заявки по ЕЁ версии конфигурации и стадии: разделы, вопросы с
+     * состояниями и текстами (fallback — ru-RU). Черновик живёт на своей
+     * версии, поэтому форма не меняется после публикации новой.
+     */
+    form: (id: string, locale?: string) =>
+      this.http.request({
+        path: `/applications/${id}/form${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`,
+        schema: ApplicationFormViewSchema,
+      }),
+  };
+
+  /**
+   * Конфигурация вопросов заявки — админка (план 0.2 §0в.4): черновик,
+   * предпросмотр, публикация, история, откат.
+   */
+  readonly applicationForms = {
+    list: () =>
+      this.http.request({
+        path: '/admin/application-forms',
+        schema: ApplicationFormVersionsSchema,
+      }),
+
+    draft: () =>
+      this.http.request({
+        path: '/admin/application-forms/draft',
+        schema: ApplicationFormVersionSchema,
+      }),
+
+    /** Сохранить черновик целиком; сервер проверяет схему и правила эволюции. */
+    saveDraft: (config: ApplicationFormConfig) =>
+      this.http.request({
+        method: 'PUT',
+        path: '/admin/application-forms/draft',
+        body: { config },
+        schema: ApplicationFormVersionSchema,
+      }),
+
+    preview: (stage: ProjectStage, locale?: string) =>
+      this.http.request({
+        path:
+          `/admin/application-forms/draft/preview?stage=${stage}` +
+          (locale ? `&locale=${encodeURIComponent(locale)}` : ''),
+        schema: ApplicationFormViewSchema,
+      }),
+
+    publish: (reason: string) =>
+      this.http.request({
+        method: 'POST',
+        path: '/admin/application-forms/draft/publish',
+        body: { reason },
+        schema: ApplicationFormVersionSchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    /** Откат или возврат: активировать ранее опубликованную версию. */
+    activate: (version: number, reason: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/admin/application-forms/${version}/activate`,
+        body: { reason },
+        schema: ApplicationFormVersionSchema,
         idempotencyKey: uuidv7(),
       }),
   };

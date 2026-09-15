@@ -491,6 +491,163 @@ export function buildStageForm(
   };
 }
 
+// ------------------------------------------------------------ версии (админка)
+
+export const FormVersionStatusSchema = z.enum(['draft', 'published']);
+
+/** Строка `lab.application_form_versions` без документа — для списка и истории. */
+export const ApplicationFormVersionSummarySchema = z.object({
+  id: UuidSchema,
+  /** Номер присваивается при публикации; у черновика `null`. */
+  version: z.number().int().positive().nullable(),
+  status: FormVersionStatusSchema,
+  isActive: z.boolean(),
+  basedOnVersion: z.number().int().positive().nullable(),
+  reason: z.string().nullable(),
+  createdBy: UuidSchema.nullable(),
+  createdAt: IsoDateTimeSchema,
+  updatedAt: IsoDateTimeSchema,
+  publishedBy: UuidSchema.nullable(),
+  publishedAt: IsoDateTimeSchema.nullable(),
+  activatedAt: IsoDateTimeSchema.nullable(),
+  sections: z.number().int().nonnegative(),
+  questions: z.number().int().nonnegative(),
+});
+export type ApplicationFormVersionSummary = z.infer<typeof ApplicationFormVersionSummarySchema>;
+
+export const ApplicationFormVersionSchema = ApplicationFormVersionSummarySchema.extend({
+  config: FormConfigShapeSchema,
+});
+export type ApplicationFormVersion = z.infer<typeof ApplicationFormVersionSchema>;
+
+/** Обзор: какая версия активна, есть ли черновик, история публикаций. */
+export const ApplicationFormVersionsSchema = z.object({
+  activeVersion: z.number().int().positive().nullable(),
+  draft: ApplicationFormVersionSummarySchema.nullable(),
+  items: z.array(ApplicationFormVersionSummarySchema),
+});
+export type ApplicationFormVersions = z.infer<typeof ApplicationFormVersionsSchema>;
+
+/**
+ * Сохранить черновик: документ целиком. Клиент админки собирает его из
+ * таблицы стадий и карточек вопросов; сервер принимает только документ,
+ * прошедший схему и правила эволюции (`checkAgainstPublished`).
+ */
+export const SaveApplicationFormDraftRequestSchema = z.object({
+  config: ApplicationFormConfigSchema,
+});
+export type SaveApplicationFormDraftRequest = z.infer<typeof SaveApplicationFormDraftRequestSchema>;
+
+export const PublishApplicationFormRequestSchema = z.object({
+  reason: z.string().trim().min(3).max(500),
+});
+export type PublishApplicationFormRequest = z.infer<typeof PublishApplicationFormRequestSchema>;
+
+export const ActivateApplicationFormRequestSchema = PublishApplicationFormRequestSchema;
+export type ActivateApplicationFormRequest = PublishApplicationFormRequest;
+
+export const ApplicationFormQuerySchema = z.object({
+  locale: FormLocaleSchema.optional(),
+});
+export type ApplicationFormQuery = z.infer<typeof ApplicationFormQuerySchema>;
+
+export const ApplicationFormPreviewQuerySchema = z.object({
+  stage: ProjectStageSchema,
+  locale: FormLocaleSchema.optional(),
+});
+export type ApplicationFormPreviewQuery = z.infer<typeof ApplicationFormPreviewQuerySchema>;
+
+/**
+ * Схема 0 — заявки переноса M071 и созданные до первой публикации: старая
+ * форма из девяти полей проекта. Для них форма состоит из одних системных
+ * вопросов, чтобы маршрут формы отвечал одинаково любой заявке; сами поля
+ * этих заявок правит кабинет v1.
+ */
+export function legacyFormConfig(): ApplicationFormConfig {
+  const ru = (label: string) => ({ [DEFAULT_FORM_LOCALE]: { label } });
+  const mandatory: FormStageStates = {
+    idea: 'mandatory',
+    mvp: 'mandatory',
+    early_revenue: 'mandatory',
+    growth: 'mandatory',
+  };
+  const recommended: FormStageStates = {
+    idea: 'recommended',
+    mvp: 'recommended',
+    early_revenue: 'recommended',
+    growth: 'recommended',
+  };
+  const options = (codes: readonly string[]) => codes.map((code) => ({ code, texts: ru(code) }));
+  return {
+    locales: [DEFAULT_FORM_LOCALE],
+    defaultLocale: DEFAULT_FORM_LOCALE,
+    sections: [
+      { key: 'project', order: 10, texts: { [DEFAULT_FORM_LOCALE]: { title: 'Проект' } } },
+      {
+        key: 'funding',
+        order: 20,
+        texts: { [DEFAULT_FORM_LOCALE]: { title: 'Инвестиционный запрос' } },
+      },
+    ],
+    questions: [
+      {
+        key: 'stage',
+        section: 'project',
+        order: 10,
+        type: 'select',
+        options: options(ProjectStageSchema.options),
+        stages: mandatory,
+        visibility: 'public',
+        coreField: 'stage',
+        texts: ru('Стадия проекта'),
+      },
+      {
+        key: 'business_type',
+        section: 'project',
+        order: 20,
+        type: 'select',
+        options: options(BusinessTypeSchema.options),
+        stages: recommended,
+        visibility: 'public',
+        coreField: 'business_type',
+        texts: ru('Тип бизнеса'),
+      },
+      {
+        key: 'funding_scope',
+        section: 'funding',
+        order: 10,
+        type: 'select',
+        options: options(FundingScopeSchema.options),
+        stages: mandatory,
+        visibility: 'public',
+        coreField: 'funding_scope',
+        texts: ru('На что привлекаются инвестиции'),
+      },
+      {
+        key: 'funding_scope_note',
+        section: 'funding',
+        order: 20,
+        type: 'text',
+        stages: mandatory,
+        visibility: 'public',
+        constraints: { maxLength: 200 },
+        coreField: 'funding_scope_note',
+        texts: ru('Какое направление или этап'),
+      },
+      {
+        key: 'investment_ask',
+        section: 'funding',
+        order: 30,
+        type: 'money',
+        stages: mandatory,
+        visibility: 'public',
+        coreField: 'investment_ask',
+        texts: ru('Сумма запроса'),
+      },
+    ],
+  };
+}
+
 // ------------------------------------------------------------ ответы
 
 /** `YYYY-MM-DD` — дата без времени: даты в анкете — календарные. */
