@@ -98,6 +98,7 @@ export class ApplicationsService {
       }
 
       const id = uuidv7();
+      const schemaVersion = await activeSchemaVersion(tx);
       const { rows } = await tx.query<ApplicationRow>(
         `INSERT INTO lab.investment_applications
            (id, project_id, title, stage, business_type, funding_scope, funding_scope_note,
@@ -113,7 +114,7 @@ export class ApplicationsService {
           input.fundingScope ?? 'project',
           input.fundingScopeNote ?? null,
           input.investmentAsk ?? null,
-          ACTIVE_SCHEMA_VERSION,
+          schemaVersion,
           ctx.userId,
         ],
       );
@@ -477,10 +478,24 @@ export class ApplicationsService {
 }
 
 /**
- * Версия схемы вопросов, по которой создаются новые черновики. До этапа 3 —
- * схема 0: старая форма из девяти полей, ответы свободны.
+ * Схема 0 — старая форма из девяти полей проекта, ответы свободны: так
+ * созданы заявки переноса M071 и так создаются новые, пока ни одна версия
+ * конфигурации вопросов не опубликована (M073, план 0.2 §0в).
  */
-export const ACTIVE_SCHEMA_VERSION = 0;
+export const LEGACY_SCHEMA_VERSION = 0;
+
+/**
+ * Версия конфигурации, с которой создаётся новый черновик, — активная
+ * опубликованная. Заявка живёт на ней до подачи: публикация или откат
+ * другой версии её не трогают (§0в п.6), поэтому версия читается один раз,
+ * при создании, и хранится в строке заявки.
+ */
+export async function activeSchemaVersion(tx: Tx): Promise<number> {
+  const { rows } = await tx.query<{ version: number }>(
+    `SELECT version FROM lab.application_form_versions WHERE is_active AND status = 'published'`,
+  );
+  return rows[0]?.version ?? LEGACY_SCHEMA_VERSION;
+}
 
 export interface SubmitOptions {
   /** Сезон — только для старого маршрута подачи проекта (план 0.2 §2.14). */
