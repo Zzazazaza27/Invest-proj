@@ -52,7 +52,12 @@ import {
 } from './integration/integration.controller';
 import { IntegrationService } from './integration/integration.service';
 import { ContentService } from './content/content.service';
-import { AdminContentController, ContentController } from './content/content.controller';
+import {
+  AdminContentController,
+  AdminTextsController,
+  ContentController,
+} from './content/content.controller';
+import { TextsService } from './content/texts.service';
 import { ServiceAccountStateService } from './integration/service-account-state.service';
 import { ServiceAccountsController } from './integration/service-accounts.controller';
 import { InvestmentsController } from './investments/investments.controller';
@@ -99,6 +104,7 @@ import { S3Service } from './storage/s3.service';
     PricingController,
     ContentController,
     AdminContentController,
+    AdminTextsController,
     IdentityController,
     PublicationConsentsController,
     VerificationController,
@@ -168,6 +174,7 @@ import { S3Service } from './storage/s3.service';
     IntegrationService,
     ServiceAccountStateService,
     ContentService,
+    TextsService,
     NatsClient,
     WebhooksService,
     OutboxPublisherService,

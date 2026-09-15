@@ -40,6 +40,29 @@ import {
   type UpsertNotificationTemplate,
   AdminProjectSummarySchema,
   AdminUserSummarySchema,
+  uuidv7,
+  ApplicationFormVersionSchema,
+  ApplicationFormVersionsSchema,
+  ApplicationFormViewSchema,
+  ApplicationPolicyVersionSchema,
+  LanguageSchema,
+  ReadinessConfigVersionSchema,
+  TextEntrySchema,
+  TextVersionSchema,
+  type ApplicationFormConfig,
+  type ApplicationFormVersion,
+  type ApplicationFormVersions,
+  type ApplicationFormView,
+  type ApplicationPolicy,
+  type ApplicationPolicyVersion,
+  type Language,
+  type ProjectStage,
+  type ReadinessConfig,
+  type ReadinessConfigVersion,
+  type TextEntry,
+  type TextNamespace,
+  type TextVersion,
+  type UpsertTextEntry,
   AiProviderCheckResultSchema,
   AiProviderModelsSchema,
   AiProviderCredentialSchema,
@@ -649,5 +672,135 @@ export const api = {
       body,
       schema: SupportTicketDetailSchema,
     });
+  },
+
+  // ------------------------------------------ вопросы заявки (этап 5, план 0.2 §0в)
+
+  applicationForms: {
+    list: (): Promise<ApplicationFormVersions> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/application-forms',
+        schema: ApplicationFormVersionsSchema,
+      }),
+    draft: (): Promise<ApplicationFormVersion> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/application-forms/draft',
+        schema: ApplicationFormVersionSchema,
+      }),
+    version: (version: number): Promise<ApplicationFormVersion> =>
+      client.request({
+        method: 'GET',
+        path: `/v1/admin/application-forms/${version}`,
+        schema: ApplicationFormVersionSchema,
+      }),
+    saveDraft: (config: ApplicationFormConfig): Promise<ApplicationFormVersion> =>
+      client.request({
+        method: 'PUT',
+        path: '/v1/admin/application-forms/draft',
+        body: { config },
+        schema: ApplicationFormVersionSchema,
+      }),
+    preview: (stage: ProjectStage, locale: string): Promise<ApplicationFormView> =>
+      client.request({
+        method: 'GET',
+        path: `/v1/admin/application-forms/draft/preview?stage=${stage}&locale=${encodeURIComponent(locale)}`,
+        schema: ApplicationFormViewSchema,
+      }),
+    publish: (reason: string): Promise<ApplicationFormVersion> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/application-forms/draft/publish',
+        body: { reason },
+        schema: ApplicationFormVersionSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    activate: (version: number, reason: string): Promise<ApplicationFormVersion> =>
+      client.request({
+        method: 'POST',
+        path: `/v1/admin/application-forms/${version}/activate`,
+        body: { reason },
+        schema: ApplicationFormVersionSchema,
+        idempotencyKey: uuidv7(),
+      }),
+  },
+
+  // --------------------------------------------- веса готовности (план 0.2 §2.7)
+
+  readinessConfigs: {
+    list: async (): Promise<ReadinessConfigVersion[]> => {
+      const { items } = await client.request({
+        method: 'GET',
+        path: '/v1/admin/readiness-configs',
+        schema: listOf(ReadinessConfigVersionSchema),
+      });
+      return items;
+    },
+    activate: (config: ReadinessConfig, reason: string): Promise<ReadinessConfigVersion> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/readiness-configs',
+        body: { config, reason },
+        schema: ReadinessConfigVersionSchema,
+        idempotencyKey: uuidv7(),
+      }),
+  },
+
+  // --------------------------------------- политика ограничений (план 0.2 §2.8)
+
+  applicationPolicies: {
+    list: async (): Promise<ApplicationPolicyVersion[]> => {
+      const { items } = await client.request({
+        method: 'GET',
+        path: '/v1/admin/application-policies',
+        schema: listOf(ApplicationPolicyVersionSchema),
+      });
+      return items;
+    },
+    activate: (config: ApplicationPolicy, reason: string): Promise<ApplicationPolicyVersion> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/application-policies',
+        body: { config, reason },
+        schema: ApplicationPolicyVersionSchema,
+        idempotencyKey: uuidv7(),
+      }),
+  },
+
+  // ------------------------------------------- словарь и ЧАВО (план 0.2 §2.6)
+
+  texts: {
+    languages: async (): Promise<Language[]> => {
+      const { items } = await client.request({
+        method: 'GET',
+        path: '/v1/content/languages',
+        schema: listOf(LanguageSchema),
+      });
+      return items;
+    },
+    list: async (namespace: TextNamespace): Promise<TextEntry[]> => {
+      const { items } = await client.request({
+        method: 'GET',
+        path: `/v1/admin/content/texts?namespace=${namespace}`,
+        schema: listOf(TextEntrySchema),
+      });
+      return items;
+    },
+    upsert: (namespace: TextNamespace, key: string, body: UpsertTextEntry): Promise<TextEntry> =>
+      client.request({
+        method: 'PUT',
+        path: `/v1/admin/content/texts/${namespace}/${encodeURIComponent(key)}`,
+        body,
+        schema: TextEntrySchema,
+      }),
+    history: async (namespace: TextNamespace, key: string): Promise<TextVersion[]> => {
+      const { items } = await client.request({
+        method: 'GET',
+        path: `/v1/admin/content/texts/${namespace}/${encodeURIComponent(key)}/history`,
+        schema: listOf(TextVersionSchema),
+      });
+      return items;
+    },
   },
 };

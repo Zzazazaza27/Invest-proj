@@ -8,6 +8,7 @@ import {
   ApplicationListSchema,
   ApplicationPreviewSchema,
   ReadinessConfigVersionSchema,
+  TextsResponseSchema,
   AuthSessionSchema,
   FeaturesSchema,
   InvestmentApplicationSchema,
@@ -65,6 +66,7 @@ import {
   type ApplicationFormConfig,
   type ProjectStage,
   type ReadinessConfig,
+  type TextNamespace,
   type AddEntityMemberRequest,
   type CreateEntityRequest,
   type StartKybRequest,
@@ -585,6 +587,12 @@ export class UnicornApi {
         schema: ApplicationFormVersionSchema,
       }),
 
+    version: (version: number) =>
+      this.http.request({
+        path: `/admin/application-forms/${version}`,
+        schema: ApplicationFormVersionSchema,
+      }),
+
     /** Сохранить черновик целиком; сервер проверяет схему и правила эволюции. */
     saveDraft: (config: ApplicationFormConfig) =>
       this.http.request({
@@ -621,6 +629,13 @@ export class UnicornApi {
         idempotencyKey: uuidv7(),
       }),
   };
+
+  /** Словарь и ЧАВО на языке — публично, с fallback на ru-RU (план 0.2 §2.6). */
+  readonly texts = (namespace: TextNamespace, locale = 'ru-RU') =>
+    this.http.request({
+      path: `/content/texts?namespace=${namespace}&locale=${encodeURIComponent(locale)}`,
+      schema: TextsResponseSchema,
+    });
 
   /** Веса готовности — отдельная версия и активация (план 0.2 §2.7). */
   readonly readinessConfigs = {

@@ -88,6 +88,19 @@ export class ApplicationFormsService {
     });
   }
 
+  async getVersion(ctx: RequestContext, version: number): Promise<ApplicationFormVersion> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<VersionRow>(
+        `SELECT ${VERSION_COLUMNS} FROM lab.application_form_versions
+          WHERE version = $1 AND status = 'published'`,
+        [version],
+      );
+      const row = rows[0];
+      if (!row) throw errors.notFound({ subject: 'application_form_version', version });
+      return mapVersion(row);
+    });
+  }
+
   /** Черновик целиком; если его нет — создаётся копией активной версии. */
   async getDraft(ctx: RequestContext): Promise<ApplicationFormVersion> {
     return this.db.transaction(ctx, async (tx) => {

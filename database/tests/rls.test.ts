@@ -1234,7 +1234,10 @@ describe('RLS: покрытие манифеста', () => {
     //
     // +1 в M075: lab.readiness_configs — веса готовности отдельной версией
     // от конфигурации вопросов (план 0.2 §2.7, поправка владельца).
-    expect(Number(tables.rows[0]!.count)).toBe(76);
+    //
+    // +3 в M079: content.languages, content.text_entries, content.text_versions —
+    // словарь и ЧАВО версиями в БД (план 0.2 §2.6, этап 5.3).
+    expect(Number(tables.rows[0]!.count)).toBe(79);
   });
 });
 

@@ -74,3 +74,85 @@ export const WithdrawLandingBlockSchema = z.object({
   reason: boundedString(3, 500),
 });
 export type WithdrawLandingBlock = z.infer<typeof WithdrawLandingBlockSchema>;
+
+// ------------------------------------------------ продуктовые тексты (M079)
+
+/**
+ * Словарь и ЧАВО — записи со стабильным ключом и версионированными текстами
+ * по языкам (план 0.2 §2.6). Поля записи задаёт пространство: у термина —
+ * `term`, `short_md`, `full_md`; у вопроса ЧАВО — `question`, `answer_md`.
+ * Тексты вопросов анкеты сюда не входят — они в документе конфигурации.
+ */
+export const TextNamespaceSchema = z.enum(['glossary', 'faq']);
+export type TextNamespace = z.infer<typeof TextNamespaceSchema>;
+
+export const TEXT_FIELDS: Record<TextNamespace, readonly string[]> = {
+  glossary: ['term', 'short_md', 'full_md'],
+  faq: ['question', 'answer_md'],
+};
+
+export const TextKeySchema = z.string().regex(/^[a-z][a-z0-9_]{0,63}$/, 'ключ записи');
+export const TextLocaleSchema = z.string().regex(/^[a-z]{2}-[A-Z]{2}$/, 'код языка');
+const TextFieldSchema = z.string().regex(/^[a-z][a-z0-9_]{0,40}$/);
+
+export const LanguageSchema = z.object({
+  code: TextLocaleSchema,
+  name: z.string(),
+  isActive: z.boolean(),
+  sortOrder: z.number().int(),
+});
+export type Language = z.infer<typeof LanguageSchema>;
+
+/** Действующие тексты записи по языкам: `{ 'ru-RU': { term: '…', short_md: '…' } }`. */
+export const TextBodiesSchema = z.record(TextLocaleSchema, z.record(TextFieldSchema, z.string()));
+
+export const TextEntrySchema = z.object({
+  id: UuidSchema,
+  namespace: TextNamespaceSchema,
+  key: TextKeySchema,
+  sortOrder: z.number().int(),
+  isActive: z.boolean(),
+  texts: TextBodiesSchema,
+  updatedAt: IsoDateTimeSchema,
+});
+export type TextEntry = z.infer<typeof TextEntrySchema>;
+
+/** Публичная выдача на языке с fallback на `ru-RU`; `missing` — пути без перевода. */
+export const TextsResponseSchema = z.object({
+  namespace: TextNamespaceSchema,
+  locale: TextLocaleSchema,
+  entries: z.array(
+    z.object({
+      key: TextKeySchema,
+      sortOrder: z.number().int(),
+      texts: z.record(TextFieldSchema, z.string()),
+    }),
+  ),
+  missing: z.array(z.string()),
+});
+export type TextsResponse = z.infer<typeof TextsResponseSchema>;
+
+/**
+ * Сохранить запись: создаётся при отсутствии; изменившиеся тексты
+ * публикуются новыми версиями с одним основанием; порядок и активность —
+ * свойства записи. Пустая строка в поле закрывает действующую версию.
+ */
+export const UpsertTextEntrySchema = z.object({
+  sortOrder: z.number().int().min(0).max(100_000).optional(),
+  isActive: z.boolean().optional(),
+  texts: z.record(TextLocaleSchema, z.record(TextFieldSchema, z.string().max(20_000))).optional(),
+  reason: boundedString(3, 500),
+});
+export type UpsertTextEntry = z.infer<typeof UpsertTextEntrySchema>;
+
+export const TextVersionSchema = z.object({
+  id: UuidSchema,
+  locale: TextLocaleSchema,
+  field: TextFieldSchema,
+  body: z.string(),
+  version: z.number().int().positive(),
+  validFrom: IsoDateTimeSchema,
+  validTo: IsoDateTimeSchema.nullable(),
+  reason: z.string(),
+});
+export type TextVersion = z.infer<typeof TextVersionSchema>;

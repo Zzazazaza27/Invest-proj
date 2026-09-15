@@ -81,6 +81,13 @@ export class AdminApplicationFormsController {
     return ApplicationFormVersionSchema.parse(await this.forms.publish(ctx, input.reason));
   }
 
+  /** Опубликованная версия целиком — для сравнения с черновиком и истории. */
+  @Get(':version')
+  async version(@Param('version') rawVersion: string, @Ctx() ctx: RequestContext) {
+    const version = parseOrThrow(VersionParamSchema, rawVersion);
+    return ApplicationFormVersionSchema.parse(await this.forms.getVersion(ctx, version));
+  }
+
   /** Откат или возврат: активировать ранее опубликованную версию. */
   @Post(':version/activate')
   async activate(

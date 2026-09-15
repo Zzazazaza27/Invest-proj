@@ -12,6 +12,9 @@ import { AccessPage } from './pages/AccessPage';
 import { FunnelPage } from './pages/FunnelPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { SupportPage } from './pages/SupportPage';
+import { QuestionsPage } from './pages/QuestionsPage';
+import { ApplicationSettingsPage } from './pages/ApplicationSettingsPage';
+import { TextsPage } from './pages/TextsPage';
 
 /**
  * Корень админки.
@@ -79,6 +82,9 @@ export function App() {
         <NavItem to="/templates" label="Уведомления" />
         <NavItem to="/support" label="Поддержка" />
         <NavItem to="/integrations" label="Интеграции" />
+        <NavItem to="/questions" label="Вопросы заявки" />
+        <NavItem to="/application-settings" label="Настройки заявки" />
+        <NavItem to="/texts" label="Словарь и ЧАВО" />
         <NavItem to="/flags" label="Функции платформы" />
         <NavItem to="/access" label="Доступ" />
         {/*
@@ -128,6 +134,9 @@ export function App() {
           <Route path="/support" element={<SupportPage />} />
           <Route path="/support/:id" element={<SupportPage />} />
           <Route path="/integrations" element={<IntegrationsPage />} />
+          <Route path="/questions" element={<QuestionsPage />} />
+          <Route path="/application-settings" element={<ApplicationSettingsPage />} />
+          <Route path="/texts" element={<TextsPage />} />
           <Route path="/flags" element={<FlagsPage />} />
           <Route path="/access" element={<AccessPage />} />
           <Route path="*" element={<Navigate to="/plans" replace />} />
