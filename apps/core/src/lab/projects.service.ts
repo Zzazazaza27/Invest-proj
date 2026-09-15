@@ -126,10 +126,12 @@ export class ProjectsService {
       // новых проектов.
       const applicationId = uuidv7();
       await tx.query(
+        // Старая форма (схема 0) не различает предмет финансирования — заявка
+        // проекта всегда «на проект в целом»; с M078 это пишется явно.
         `INSERT INTO lab.investment_applications
            (id, project_id, stage, investment_ask, ask_currency, schema_version,
-            answers_jsonb, created_by)
-         VALUES ($1, $2, $3, $4::numeric, $5, 0, $6::jsonb, $7)`,
+            answers_jsonb, created_by, funding_scope)
+         VALUES ($1, $2, $3, $4::numeric, $5, 0, $6::jsonb, $7, 'project')`,
         [
           applicationId,
           id,
@@ -350,8 +352,8 @@ export class ProjectsService {
         await tx.query(
           `INSERT INTO lab.investment_applications
              (id, project_id, stage, investment_ask, ask_currency, schema_version,
-              answers_jsonb, created_by)
-           VALUES ($1, $2, $3, $4::numeric, $5, 0, $6::jsonb, $7)`,
+              answers_jsonb, created_by, funding_scope)
+           VALUES ($1, $2, $3, $4::numeric, $5, 0, $6::jsonb, $7, 'project')`,
           [
             applicationId,
             projectId,

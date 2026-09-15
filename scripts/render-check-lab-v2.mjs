@@ -143,6 +143,10 @@ page.on('console', (message) => {
   consoleErrors.push(text);
 });
 page.on('pageerror', (error) => consoleErrors.push(String(error)));
+let patchCount = 0;
+page.on('request', (request) => {
+  if (request.method() === 'PATCH' && request.url().includes('/v1/applications/')) patchCount += 1;
+});
 
 let shot = 0;
 async function screenshot(name) {
@@ -340,7 +344,17 @@ try {
   await page.getByRole('button', { name: /^1\. Проект/ }).click();
   await page.waitForSelector('[data-question="founded_year"] input', { timeout: 10_000 });
   await page.locator('[data-question="founded_year"] input').fill('1800');
-  await page.waitForTimeout(1500);
+  // Пауза автосохранения 1,5 с плюс запрос — ждём состояния, а не времени.
+  await page
+    .waitForFunction(
+      /* eslint-disable no-undef */
+      () =>
+        document.querySelector('[data-save-state]')?.getAttribute('data-save-state') === 'failed',
+      /* eslint-enable no-undef */
+      null,
+      { timeout: 10_000 },
+    )
+    .catch(() => undefined);
   check(
     'ошибка типа/диапазона показана у поля, черновик не потерян',
     (await page.locator('[data-question="founded_year"] [role="alert"]').count()) > 0 &&
@@ -389,6 +403,23 @@ try {
       q.type === 'number' ? 3 : q.type === 'money' ? '100.00' : `Ответ прогона: ${q.label}`,
     );
   }
+  // Предмет финансирования больше не подставляется базой (M078): пока не
+  // выбран — обязательный вопрос не засчитан и подача закрыта.
+  await page.getByRole('button', { name: /^11\. Инвестиционный запрос/ }).click();
+  await page.waitForSelector('[data-question="funding_scope"] select', { timeout: 10_000 });
+  check(
+    'предмет финансирования не выбран по умолчанию',
+    (await page.locator('[data-question="funding_scope"] select').inputValue()) === '',
+  );
+  const scopeBefore = await page.locator('[data-readiness]').innerText();
+  check(
+    'без выбора предмета финансирования подача закрыта',
+    scopeBefore.includes('До подачи осталось'),
+  );
+  const s6 = await savedCount();
+  await page.locator('[data-question="funding_scope"] select').selectOption('project');
+  await waitSaved('предмет финансирования', s6);
+
   // Сумма — системное поле в разделе «Инвестиционный запрос».
   await page.getByRole('button', { name: /^11\. Инвестиционный запрос/ }).click();
   await page.waitForSelector('[data-question="investment_ask"] input', { timeout: 10_000 });
@@ -412,6 +443,34 @@ try {
     (await page.getByRole('button', { name: /^2\. Проблема/ }).innerText()).includes('частично'),
   );
   await screenshot('wizard-section-funding-ready');
+
+  // ------------------------------------------------ частота автосохранения
+  console.warn('\n[6b] Автосохранение при наборе длинного текста');
+  await page.getByRole('button', { name: /^12\. Риски/ }).click();
+  await page.waitForSelector('[data-question="key_assumptions"] textarea', { timeout: 10_000 });
+  const patchesBefore = patchCount;
+  const sBefore = await savedCount();
+  const longText =
+    'Сети сервисов купят при цене полторы тысячи за точку; холодные выезды масштабируются до пяти менеджеров; '.repeat(
+      4,
+    );
+  // ~430 знаков по 40 мс — 17 секунд непрерывного набора без пауз.
+  await page.locator('[data-question="key_assumptions"] textarea').pressSequentially(longText, {
+    delay: 40,
+  });
+  await waitSaved('длинный текст', sBefore);
+  await page.waitForTimeout(2500);
+  const patchesDuring = patchCount - patchesBefore;
+  check(
+    'длинный текст ушёл единицами запросов, а не запросом на букву',
+    patchesDuring >= 1 && patchesDuring <= 3,
+    `PATCH за набор: ${patchesDuring}`,
+  );
+  check(
+    'набранный текст сохранён целиком',
+    (await page.locator('[data-question="key_assumptions"] textarea').inputValue()) === longText &&
+      (await page.locator('[data-save-state]').getAttribute('data-save-state')) === 'saved',
+  );
 
   // ------------------------------------------------- неизменность версии
   console.warn('\n[7] Публикация новой версии анкеты не трогает заявку');
@@ -459,6 +518,11 @@ try {
 
   // ----------------------------------------------------------------- подача
   console.warn('\n[9] Подача без сезона и без ИИ');
+  // Процент к моменту подачи: после замера в [6] добавился рекомендуемый ответ.
+  const percentAtSubmit = Number(
+    /Заполненность заявки: (\d+)%/.exec(await page.locator('[data-readiness]').innerText())?.[1] ??
+      '-1',
+  );
   const submitButton = page.getByRole('button', { name: 'Подать заявку' });
   check('кнопка подачи активна при выполненном минимуме', !(await submitButton.isDisabled()));
   await submitButton.click();
@@ -481,7 +545,7 @@ try {
   check(
     'снимок хранит форму, процент и версию весов',
     version?.has_form === true &&
-      version?.completeness_pct === percent &&
+      version?.completeness_pct === percentAtSubmit &&
       version?.schema_version === activeVersion.version,
     JSON.stringify(version),
   );

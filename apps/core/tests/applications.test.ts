@@ -82,6 +82,14 @@ describe('Условия подачи', () => {
     expect(check.missing.map((m) => m.path)).toEqual(['investmentAsk']);
   });
 
+  it('предмет финансирования без выбора — не ответ: при подаче требуется (M078)', () => {
+    const check = checkSubmission(
+      { status: 'draft', investmentAsk: '1000000.00', fundingScope: null, fundingScopeNote: null },
+      policy,
+    );
+    expect(check.missing.map((m) => m.path)).toEqual(['fundingScope']);
+  });
+
   it('направление требует уточнения только на подаче', () => {
     const check = checkSubmission(
       {

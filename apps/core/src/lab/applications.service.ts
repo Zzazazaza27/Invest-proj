@@ -126,7 +126,9 @@ export class ApplicationsService {
           input.title ?? null,
           input.stage ?? project.rows[0].stage,
           input.businessType ?? null,
-          input.fundingScope ?? 'project',
+          // Без значения по умолчанию (M078): выбор предмета финансирования —
+          // ответ основателя, а не подстановка базы.
+          input.fundingScope ?? null,
           input.fundingScopeNote ?? null,
           input.investmentAsk ?? null,
           schemaVersion,
@@ -810,7 +812,9 @@ export function checkSubmission(
       message: `сумма заявки не может превышать ${policy.maxAskPerApplication} ₽`,
     });
   }
-  if (application.fundingScope === 'direction' && !application.fundingScopeNote) {
+  if (application.fundingScope === null) {
+    missing.push({ path: 'fundingScope', message: 'выберите, на что привлекаете инвестиции' });
+  } else if (application.fundingScope === 'direction' && !application.fundingScopeNote) {
     missing.push({ path: 'fundingScopeNote', message: 'уточните направление или этап' });
   }
   return { canSubmit: missing.length === 0, missing };

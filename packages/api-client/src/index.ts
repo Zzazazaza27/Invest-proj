@@ -524,12 +524,13 @@ export class UnicornApi {
       this.http.request({ path: `/applications/${id}`, schema: ApplicationDetailSchema }),
 
     /** Автосохранение: частичное тело, `null` очищает поле; ответы проверяются по форме версии. */
-    update: (id: string, body: UpdateApplicationRequest) =>
+    update: (id: string, body: UpdateApplicationRequest, opts: { keepalive?: boolean } = {}) =>
       this.http.request({
         method: 'PATCH',
         path: `/applications/${id}`,
         body,
         schema: ApplicationDetailSchema,
+        keepalive: opts.keepalive,
       }),
 
     archive: (id: string) =>

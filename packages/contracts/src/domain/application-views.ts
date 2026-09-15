@@ -68,7 +68,7 @@ export const ApplicationPreviewSchema = z.object({
     title: z.string().nullable(),
     stage: ProjectStageSchema,
     businessType: BusinessTypeSchema.nullable(),
-    fundingScope: FundingScopeSchema,
+    fundingScope: FundingScopeSchema.nullable(),
     fundingScopeNote: z.string().nullable(),
     investmentAsk: MoneyAmountSchema.nullable(),
     askCurrency: CurrencySchema,

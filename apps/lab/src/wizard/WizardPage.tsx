@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import { Badge, Button, Card, ErrorState, LoadingState, Markdown, Stack } from '@unicorn/ui';
 import type { ApplicationDetail, FormQuestionView } from '@unicorn/contracts';
@@ -90,7 +90,7 @@ function Frame({
             {S.wizard.intro.versionNote(form.schemaVersion)}
           </span>
         </div>
-        <SaveIndicator state={app.save} count={app.savedCount} />
+        <SaveIndicator state={app.save} count={app.savedCount} onRetry={app.retryNow} />
       </div>
       <ReadinessPanel detail={detail} />
       <div
@@ -110,28 +110,64 @@ function Frame({
   );
 }
 
-function SaveIndicator({ state, count }: { state: SaveState; count: number }) {
+/**
+ * Состояние сохранения — всегда на виду. «Не сохранено» — красным и с кнопкой
+ * повтора: набранное не должно пропасть молча (замечание владельца, этап 4).
+ */
+function SaveIndicator({
+  state,
+  count,
+  onRetry,
+}: {
+  state: SaveState;
+  count: number;
+  onRetry: () => void;
+}) {
+  const [, tick] = useState(0);
+  useEffect(() => {
+    if (state.kind !== 'retrying') return;
+    const id = window.setInterval(() => tick((n) => n + 1), 1000);
+    return () => window.clearInterval(id);
+  }, [state]);
+
+  const problem = state.kind === 'retrying' || state.kind === 'failed';
   const text =
-    state.kind === 'saving' || state.kind === 'pending'
+    state.kind === 'saving'
       ? S.wizard.save.saving
-      : state.kind === 'saved'
-        ? S.wizard.save.saved(
-            state.at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-          )
-        : state.kind === 'failed'
-          ? `${S.wizard.save.failed}: ${state.message}`
-          : S.wizard.save.idle;
+      : state.kind === 'pending'
+        ? S.wizard.save.pending
+        : state.kind === 'saved'
+          ? S.wizard.save.saved(
+              state.at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+            )
+          : state.kind === 'retrying'
+            ? `${S.wizard.save.retrying(Math.max(0, Math.ceil((state.at.getTime() - Date.now()) / 1000)))}: ${state.message}`
+            : state.kind === 'failed'
+              ? `${S.wizard.save.failed}: ${state.message}`
+              : S.wizard.save.idle;
   return (
     <span
-      role="status"
+      role={problem ? 'alert' : 'status'}
       data-save-state={state.kind}
       data-save-count={count}
       style={{
+        display: 'inline-flex',
+        gap: 'var(--u-space-2)',
+        alignItems: 'center',
         fontSize: 'var(--u-text-sm)',
-        color: state.kind === 'failed' ? 'var(--u-danger)' : 'var(--u-text-muted)',
+        color: problem ? 'var(--u-danger)' : 'var(--u-text-muted)',
       }}
     >
       {text}
+      {problem ? (
+        <Button
+          variant="secondary"
+          style={{ minHeight: 32, padding: '0 var(--u-space-3)' }}
+          onClick={onRetry}
+        >
+          {S.wizard.save.retryNow}
+        </Button>
+      ) : null}
     </span>
   );
 }

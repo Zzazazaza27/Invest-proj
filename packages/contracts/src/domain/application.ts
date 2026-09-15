@@ -65,7 +65,8 @@ export const InvestmentApplicationSchema = z.object({
   title: z.string().nullable(),
   stage: ProjectStageSchema,
   businessType: BusinessTypeSchema.nullable(),
-  fundingScope: FundingScopeSchema,
+  /** `null` в черновике — основатель ещё не выбирал (M078); при подаче обязателен. */
+  fundingScope: FundingScopeSchema.nullable(),
   fundingScopeNote: z.string().nullable(),
   investmentAsk: MoneyAmountSchema.nullable(),
   askCurrency: CurrencySchema,

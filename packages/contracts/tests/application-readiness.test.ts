@@ -141,6 +141,22 @@ describe('Готовность: обязательное и подача', () =>
     expect(r.sections.every((s) => s.status === 'complete')).toBe(true);
   });
 
+  it('предмет финансирования не выбран — обязательный вопрос не засчитан', () => {
+    const r = computeCompleteness(
+      form,
+      weights,
+      {
+        ...empty,
+        fundingScope: null,
+        investmentAsk: '1.00',
+        answers: fillFor('idea', ['mandatory']),
+      },
+      meta,
+    );
+    expect(r.missingMandatory).toEqual(['funding_scope']);
+    expect(r.sections.find((s) => s.key === 'funding')?.status).toBe('attention');
+  });
+
   it('уточнение направления обязательно только при «направлении»', () => {
     const base = { ...empty, investmentAsk: '1.00', answers: fillFor('idea', ['mandatory']) };
     expect(

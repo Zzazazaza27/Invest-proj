@@ -35,6 +35,8 @@ export class ApiError extends Error {
   readonly status: number;
   readonly problem: ProblemDetails | null;
   readonly traceId: string | null;
+  /** Через сколько секунд сервер разрешает повтор (429 / 503 с `Retry-After`). */
+  readonly retryAfterSeconds: number | null;
 
   constructor(
     message: string,
@@ -43,6 +45,7 @@ export class ApiError extends Error {
       status: number;
       problem?: ProblemDetails | null;
       cause?: unknown;
+      retryAfterSeconds?: number | null;
     },
   ) {
     super(message, { cause: opts.cause });
@@ -51,6 +54,7 @@ export class ApiError extends Error {
     this.status = opts.status;
     this.problem = opts.problem ?? null;
     this.traceId = opts.problem?.traceId ?? null;
+    this.retryAfterSeconds = opts.retryAfterSeconds ?? null;
   }
 
   /** Требуется повышение уровня аутентификации (step-up MFA). */
@@ -79,6 +83,11 @@ export interface RequestOptions<TResponse> {
   idempotencyKey?: string;
   timeoutMs?: number;
   signal?: AbortSignal;
+  /**
+   * Запрос переживает закрытие страницы (`fetch keepalive`): для последнего
+   * автосохранения при уходе со страницы, чтобы набранное не пропало.
+   */
+  keepalive?: boolean;
 }
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -224,6 +233,7 @@ export class ApiClient {
       // Ответы API не кешируются промежуточными узлами: в них персональные данные.
       cache: 'no-store',
       redirect: 'error',
+      keepalive: options.keepalive ?? false,
     });
   }
 
@@ -257,8 +267,23 @@ export class ApiClient {
 
     const code = problem?.code ?? statusToCode(response.status);
     const message = problem?.detail ?? problem?.title ?? defaultMessage(code);
-    return new ApiError(message, { code, status: response.status, problem });
+    return new ApiError(message, {
+      code,
+      status: response.status,
+      problem,
+      retryAfterSeconds: parseRetryAfter(response.headers.get('Retry-After')),
+    });
   }
+}
+
+/** `Retry-After` бывает числом секунд или датой; всё остальное — «неизвестно». */
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) return Math.ceil(seconds);
+  const at = Date.parse(header);
+  if (Number.isNaN(at)) return null;
+  return Math.max(0, Math.ceil((at - Date.now()) / 1000));
 }
 
 function statusToCode(status: number): ErrorCodeValue {

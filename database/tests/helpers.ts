@@ -273,8 +273,8 @@ export async function createProject(
   await client.query('SELECT set_config($1, $2, true)', ['app.current_roles', 'founder']);
   await client.query(
     `INSERT INTO lab.investment_applications
-       (id, project_id, status, stage, investment_ask, schema_version, created_by)
-     VALUES ($1, $2, 'draft', 'mvp', $3, 0, $4)`,
+       (id, project_id, status, stage, investment_ask, schema_version, created_by, funding_scope)
+     VALUES ($1, $2, 'draft', 'mvp', $3, 0, $4, 'project')`,
     [applicationId, id, ask, ownerUserId],
   );
   await client.query(`UPDATE lab.projects SET current_application_id = $2 WHERE id = $1`, [

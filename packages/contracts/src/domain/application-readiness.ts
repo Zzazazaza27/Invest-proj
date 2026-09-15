@@ -103,7 +103,7 @@ export type ApplicationDetail = z.infer<typeof ApplicationDetailSchema>;
 export interface ReadinessInput {
   stage: ProjectStage;
   businessType: string | null;
-  fundingScope: FundingScope;
+  fundingScope: FundingScope | null;
   fundingScopeNote: string | null;
   investmentAsk: string | null;
   answers: Record<string, unknown>;
