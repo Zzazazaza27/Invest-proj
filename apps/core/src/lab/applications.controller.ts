@@ -1,11 +1,14 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   ActivateApplicationPolicyRequestSchema,
   ActivateReadinessConfigRequestSchema,
   ApplicationDetailSchema,
+  ApplicationFormQuerySchema,
   ApplicationListSchema,
   ApplicationPolicyVersionSchema,
+  ApplicationPreviewSchema,
   CreateApplicationRequestSchema,
+  DEFAULT_FORM_LOCALE,
   InvestmentApplicationSchema,
   ProjectVersionSchema,
   ReadinessConfigVersionSchema,
@@ -57,6 +60,20 @@ export class ApplicationsController {
     const id = parseOrThrow(UuidSchema, rawId);
     const input = parseOrThrow(UpdateApplicationRequestSchema, rawBody);
     return ApplicationDetailSchema.parse(await this.applications.update(ctx, id, input));
+  }
+
+  /** Сводка «как увидит инвестор» из черновика — по правилам видимости (§2.11). */
+  @Get('applications/:id/preview')
+  async preview(
+    @Param('id') rawId: string,
+    @Query() rawQuery: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const query = parseOrThrow(ApplicationFormQuerySchema, rawQuery ?? {});
+    return ApplicationPreviewSchema.parse(
+      await this.applications.preview(ctx, id, query.locale ?? DEFAULT_FORM_LOCALE),
+    );
   }
 
   @Roles('founder', 'admin')

@@ -96,8 +96,17 @@ describe('Готовность: обязательное и подача', () =>
       'use_of_funds',
       'milestones',
     ]);
-    expect(r.sections.find((s) => s.key === 'problem')?.status).toBe('attention');
+    // Нетронутый раздел — «не начат», а не «требует внимания»: оранжевая метка
+    // появляется только у начатого раздела с незаполненными обязательными.
+    expect(r.sections.find((s) => s.key === 'problem')?.status).toBe('not_started');
     expect(r.sections.find((s) => s.key === 'market')?.status).toBe('not_started');
+    const started = computeCompleteness(
+      form,
+      weights,
+      { ...empty, answers: { problem_statement: 'есть' } },
+      meta,
+    );
+    expect(started.sections.find((s) => s.key === 'problem')?.status).toBe('attention');
   });
 
   it('заполненные обязательные открывают подачу до 100%', () => {

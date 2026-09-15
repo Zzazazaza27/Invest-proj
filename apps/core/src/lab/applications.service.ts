@@ -5,11 +5,13 @@ import {
   ReadinessConfigSchema,
   applicableQuestions,
   buildAnswersSchema,
+  buildApplicationPreview,
   buildStageForm,
   computeCompleteness,
   uuidv7,
   type ActivateReadinessConfigRequest,
   type ApplicationDetail,
+  type ApplicationPreview,
   type ApplicationFormConfig,
   type ApplicationLimits,
   type ApplicationPolicy,
@@ -235,6 +237,55 @@ export class ApplicationsService {
    * Архив — терминальный статус: обратно не открывается, инвестор архивную не
    * видит, слот в лимите освобождается. Снимки остаются.
    */
+  /**
+   * Предпросмотр-сводка (план 0.2 §2.11, этап 4.4): что увидит инвестор,
+   * собранное из черновика ТЕМ ЖЕ модулем, который позже питает карточку.
+   * Поля `platform` и `private` не попадают по конструкции; пустые ответы
+   * не показываются.
+   */
+  async preview(
+    ctx: RequestContext,
+    applicationId: string,
+    locale: string,
+  ): Promise<ApplicationPreview> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const application = await this.load(tx, applicationId);
+      const { rows } = await tx.query<SnapshotProjectRow>(
+        `SELECT title, tagline, description, taxonomy_id, geo_country, geo_region, status
+           FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
+        [application.projectId],
+      );
+      const project = rows[0];
+      if (!project) throw errors.notFound({ subject: 'project' });
+      const form = await loadFormConfig(tx, application.schemaVersion);
+      return buildApplicationPreview(
+        form,
+        { schemaVersion: application.schemaVersion, stage: application.stage, locale },
+        {
+          core: {
+            title: application.title,
+            stage: application.stage,
+            businessType: application.businessType,
+            fundingScope: application.fundingScope,
+            fundingScopeNote: application.fundingScopeNote,
+            investmentAsk: application.investmentAsk,
+            askCurrency: application.askCurrency,
+          },
+          answers: application.answers,
+          evidence: application.evidence,
+          project: {
+            title: project.title,
+            tagline: project.tagline,
+            description: project.description,
+            taxonomyId: project.taxonomy_id,
+            geoCountry: project.geo_country,
+            geoRegion: project.geo_region,
+          },
+        },
+      );
+    });
+  }
+
   async archive(ctx: RequestContext, applicationId: string): Promise<InvestmentApplication> {
     return this.db.transaction(ctx, async (tx) => {
       const current = await this.load(tx, applicationId);

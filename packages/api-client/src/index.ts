@@ -6,6 +6,7 @@ import {
   ApplicationFormVersionsSchema,
   ApplicationFormViewSchema,
   ApplicationListSchema,
+  ApplicationPreviewSchema,
   ReadinessConfigVersionSchema,
   AuthSessionSchema,
   FeaturesSchema,
@@ -556,6 +557,13 @@ export class UnicornApi {
       this.http.request({
         path: `/applications/${id}/form${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`,
         schema: ApplicationFormViewSchema,
+      }),
+
+    /** Сводка «как увидит инвестор»: только public / investors, только заполненное. */
+    preview: (id: string, locale?: string) =>
+      this.http.request({
+        path: `/applications/${id}/preview${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`,
+        schema: ApplicationPreviewSchema,
       }),
   };
 

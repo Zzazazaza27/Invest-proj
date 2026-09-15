@@ -195,13 +195,16 @@ export function computeCompleteness(
     const score = bucket.possible > 0 ? bucket.earned / bucket.possible : 1;
     weightedSum += weight * score;
     weightTotal += weight;
+    // Нетронутый раздел — «не начат», даже если в нём есть обязательные:
+    // «требует внимания» — сигнал о начатом, но не доведённом разделе, а не
+    // оранжевая метка на всём подряд до первого ответа.
     sections.push({
       key: section.key,
       status:
-        bucket.missing.length > 0
-          ? 'attention'
-          : bucket.filled === 0
-            ? 'not_started'
+        bucket.filled === 0
+          ? 'not_started'
+          : bucket.missing.length > 0
+            ? 'attention'
             : bucket.filled === bucket.applicable
               ? 'complete'
               : 'partial',
