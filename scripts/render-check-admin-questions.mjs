@@ -20,7 +20,7 @@
 import { chromium } from 'playwright';
 import pg from 'pg';
 import { createHmac, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -33,6 +33,9 @@ const ADMIN_URL = process.env.ADMIN_URL ?? frontendUrl('admin');
 const LAB_URL = process.env.LAB_URL ?? frontendUrl('lab');
 const CORE_URL = process.env.CORE_URL ?? DEFAULT_CORE_URL;
 const OUT = join(ROOT, 'out', 'render-admin-questions');
+// Снимки прошлого прогона удаляются: нумерация сквозная, и старые файлы
+// иначе смешиваются с новыми.
+rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
 
 /** Вопрос, чью обязательность меняем: рекомендуемый для идеи в стартовой конфигурации. */
