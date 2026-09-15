@@ -162,6 +162,42 @@ export function Input(props: React.InputHTMLAttributes<HTMLInputElement>): React
   );
 }
 
+const CONTROL_STYLE: React.CSSProperties = {
+  padding: 'var(--u-space-3)',
+  borderRadius: 'var(--u-radius-md)',
+  border: '1px solid var(--u-border-strong)',
+  background: 'var(--u-surface)',
+  color: 'var(--u-text)',
+  fontSize: 'var(--u-text-md)',
+  fontFamily: 'inherit',
+  width: '100%',
+  boxSizing: 'border-box',
+};
+
+/** Многострочное поле: тот же вид, что у `Input`; высота растёт с содержимым до предела. */
+export function TextArea(
+  props: React.TextareaHTMLAttributes<HTMLTextAreaElement>,
+): React.ReactElement {
+  const { style, rows = 4, ...rest } = props;
+  return (
+    <textarea
+      {...rest}
+      rows={rows}
+      style={{ ...CONTROL_STYLE, minHeight: 44, resize: 'vertical', lineHeight: 1.5, ...style }}
+    />
+  );
+}
+
+/** Выпадающий список: нативный `<select>` — клавиатура и телефон работают сами. */
+export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>): React.ReactElement {
+  const { style, children, ...rest } = props;
+  return (
+    <select {...rest} style={{ ...CONTROL_STYLE, minHeight: 44, ...style }}>
+      {children}
+    </select>
+  );
+}
+
 // ----------------------------------------------------------------- контейнеры
 
 export function Card({

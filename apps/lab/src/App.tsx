@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import {
   Badge,
   Button,
@@ -37,6 +38,7 @@ import type {
 } from '@unicorn/contracts';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectPage } from './pages/ProjectPage';
+import { WizardPage } from './wizard/WizardPage';
 
 /**
  * Кабинет основателя.
@@ -45,6 +47,11 @@ import { ProjectPage } from './pages/ProjectPage';
  * кнопка не является защитой — любая операция всё равно проверяется ролью и
  * политикой БД на бэкенде, поэтому здесь нет ни одной проверки прав «на
  * всякий случай».
+ *
+ * Мастер заявки (этап 4) включается флагом `lab.ui.application_v2` из
+ * публичного `GET /features`: при выключенном флаге кабинет v1 работает как
+ * прежде, при включённом на странице проекта появляются заявки и мастер.
+ * Обе ветки бьют в одно ядро (план 0.2 §2.15).
  */
 /**
  * Транспорт для общих блоков кабинета.
@@ -124,7 +131,8 @@ const bugReportPort = {
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [checking, setChecking] = useState(true);
-  const [openProject, setOpenProject] = useState<string | null>(null);
+  const [applicationV2, setApplicationV2] = useState(false);
+  const navigate = useNavigate();
 
   const load = useCallback(async () => {
     try {
@@ -155,6 +163,12 @@ export default function App() {
 
   useEffect(() => {
     void load();
+    // Флаг интерфейса читается один раз при старте: переключение — без релиза,
+    // но с перезагрузкой страницы, а не посреди заполнения.
+    api
+      .features()
+      .then((features) => setApplicationV2(features.flags['lab.ui.application_v2'] === true))
+      .catch(() => setApplicationV2(false));
   }, [load]);
 
   return (
@@ -170,7 +184,6 @@ export default function App() {
           await api.auth.logout().catch(() => undefined);
           setCsrf(null);
           setMe(null);
-          setOpenProject(null);
           // Уводим на единый вход: своей формы у кабинета больше нет, а
           // оставлять человека на странице кабинета без сессии — показывать
           // ему пустой каркас чужого раздела.
@@ -180,26 +193,36 @@ export default function App() {
       <main id="content">
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
-          {!checking && me && openProject === null ? (
-            <Stack gap="var(--u-space-6)">
-              <ProjectsPage onOpen={(id) => setOpenProject(id)} />
-              {/*
-                Юрлицо основателю нужно раньше, чем предложение: без
-                проверенной компании выпуск закрыт. Поэтому карточка стоит в
-                списке проектов, а не прячется внутри одного из них.
-              */}
-              {/*
-                Верификация личности стоит рядом с юрлицом: оба шага
-                обязательны для публикации, и оба сервер требует до неё.
-              */}
-              <VerificationCard port={verificationPort} />
-              <BusinessEntitiesCard port={entitiesPort} />
-              <NotificationsCard port={notificationsPort} />
-              <SupportCard port={supportPort} />
-            </Stack>
-          ) : null}
-          {!checking && me && openProject !== null ? (
-            <ProjectPage projectId={openProject} onBack={() => setOpenProject(null)} />
+          {!checking && me ? (
+            <Routes>
+              <Route
+                path="/"
+                element={
+                  <Stack gap="var(--u-space-6)">
+                    <ProjectsPage onOpen={(id) => navigate(`/projects/${id}`)} />
+                    {/*
+                      Юрлицо основателю нужно раньше, чем предложение: без
+                      проверенной компании выпуск закрыт. Поэтому карточка стоит в
+                      списке проектов, а не прячется внутри одного из них.
+                    */}
+                    {/*
+                      Верификация личности стоит рядом с юрлицом: оба шага
+                      обязательны для публикации, и оба сервер требует до неё.
+                    */}
+                    <VerificationCard port={verificationPort} />
+                    <BusinessEntitiesCard port={entitiesPort} />
+                    <NotificationsCard port={notificationsPort} />
+                    <SupportCard port={supportPort} />
+                  </Stack>
+                }
+              />
+              <Route
+                path="/projects/:id"
+                element={<ProjectRoute applicationV2={applicationV2} />}
+              />
+              <Route path="/applications/:id/*" element={<WizardPage />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
           ) : null}
           {me ? (
             <div
@@ -220,6 +243,19 @@ export default function App() {
       */}
       {me ? <BugReportWidget port={bugReportPort} appVersion={__APP_VERSION__} /> : null}
     </>
+  );
+}
+
+function ProjectRoute({ applicationV2 }: { applicationV2: boolean }) {
+  const { id = '' } = useParams();
+  const navigate = useNavigate();
+  return (
+    <ProjectPage
+      projectId={id}
+      onBack={() => navigate('/')}
+      applicationV2={applicationV2}
+      onOpenApplication={(applicationId) => navigate(`/applications/${applicationId}`)}
+    />
   );
 }
 

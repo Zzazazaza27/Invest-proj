@@ -15,6 +15,7 @@ import { ProjectBadges } from '../App';
 import { MaterialsCard, RoadmapCard } from './MaterialsCard';
 import { PublicationConsentsCard } from './PublicationConsentsCard';
 import { BillingCard } from './BillingCard';
+import { ApplicationsCard } from '../wizard/ApplicationsCard';
 import { ScoreProvenance } from '@unicorn/cabinet';
 
 /**
@@ -67,7 +68,18 @@ const SCORE_AXIS_TITLES: Record<string, string> = {
  * условия публикации (действующий KYC, тариф по сумме запроса, активная
  * подписка) знает только сервер. Отказ показывается его же словами.
  */
-export function ProjectPage({ projectId, onBack }: { projectId: string; onBack: () => void }) {
+export function ProjectPage({
+  projectId,
+  onBack,
+  applicationV2 = false,
+  onOpenApplication,
+}: {
+  projectId: string;
+  onBack: () => void;
+  /** Флаг `lab.ui.application_v2`: показывать заявки и мастер (этап 4). */
+  applicationV2?: boolean;
+  onOpenApplication?: (applicationId: string) => void;
+}) {
   const [state, setState] = useState<
     | { status: 'loading' }
     | { status: 'ready'; project: ProjectFull }
@@ -164,6 +176,10 @@ export function ProjectPage({ projectId, onBack }: { projectId: string; onBack: 
           </dl>
         </Stack>
       </Card>
+
+      {applicationV2 && onOpenApplication ? (
+        <ApplicationsCard projectId={project.id} onOpen={onOpenApplication} />
+      ) : null}
 
       {notice ? (
         <div
