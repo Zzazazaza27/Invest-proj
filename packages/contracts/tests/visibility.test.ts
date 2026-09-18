@@ -120,15 +120,12 @@ describe('projectAudience — приоритеты', () => {
       'private',
     );
   });
-  it('организатор: только тизер и только проект сезона', () => {
-    expect(projectAudience({ visibility: 'private', inSeason: true }, organizer, 'teaser')).toBe(
-      'public',
-    );
+  it('организатор прав не даёт (сезоны отложены): как обычный вошедший без допуска', () => {
+    expect(projectAudience({ visibility: 'private' }, organizer, 'teaser')).toBeNull();
+    expect(projectAudience({ visibility: 'public' }, organizer, 'teaser')).toBe('public');
+    expect(projectAudience({ visibility: 'public' }, organizer, 'materials')).toBeNull();
     expect(
-      projectAudience({ visibility: 'public', inSeason: false }, organizer, 'teaser'),
-    ).toBeNull();
-    expect(
-      projectAudience({ visibility: 'public', inSeason: true }, organizer, 'profile'),
+      projectAudience({ visibility: 'registered_investors' }, organizer, 'profile'),
     ).toBeNull();
   });
   it('перечисления и строже-из-двух', () => {

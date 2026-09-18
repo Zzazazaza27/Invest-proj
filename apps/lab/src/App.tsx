@@ -327,7 +327,7 @@ const TRUST_ITEMS = [
 /** Общие ярлыки статусов: они одинаковы во всех экранах кабинета. */
 export const PROJECT_STATUS_LABEL: Record<string, string> = {
   draft: 'Черновик',
-  submitted: 'Подан в сезон',
+  submitted: 'Подан',
   ai_review: 'AI-анализ',
   expert_review: 'Экспертиза',
   bootcamp: 'Буткемп',

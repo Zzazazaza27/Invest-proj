@@ -257,7 +257,7 @@ console.warn('--- доступ рецензента к материалам ---'
 console.warn('\n--- этапы сезона ---');
 
 {
-  const { response, json } = await organizer.client.call(`/v1/seasons/${season.id}/funnel`, {
+  const { response, json } = await admin.client.call(`/v1/seasons/${season.id}/funnel`, {
     method: 'POST',
     body: { quotas: { bootcamp: 1 }, schedule: {} },
   });
@@ -268,7 +268,7 @@ console.warn('\n--- этапы сезона ---');
   );
 }
 {
-  const { response, json } = await organizer.client.call(
+  const { response, json } = await admin.client.call(
     `/v1/seasons/${season.id}/projects/${assigned}/stage`,
     { method: 'POST', body: { status: 'graduated', reason: 'попытка перепрыгнуть этапы' } },
   );
@@ -279,7 +279,7 @@ console.warn('\n--- этапы сезона ---');
   );
 }
 {
-  const { response, json } = await organizer.client.call(
+  const { response, json } = await admin.client.call(
     `/v1/seasons/${season.id}/projects/${assigned}/stage`,
     { method: 'POST', body: { status: 'bootcamp', reason: 'прошёл экспертизу' } },
   );
@@ -291,7 +291,7 @@ console.warn('\n--- этапы сезона ---');
   check('золотой билет при этом не гасился', json?.goldenTicketRedeemed === false);
 }
 {
-  const { response, json } = await organizer.client.call(
+  const { response, json } = await admin.client.call(
     `/v1/seasons/${season.id}/projects/${foreign}/stage`,
     { method: 'POST', body: { status: 'bootcamp', reason: 'второй в квоте на одно место' } },
   );
@@ -306,7 +306,7 @@ console.warn('\n--- этапы сезона ---');
 console.warn('\n--- золотой билет ---');
 
 {
-  const { response } = await organizer.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
+  const { response } = await admin.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
     method: 'POST',
     body: { projectId: foreign, reason: 'решение организатора' },
   });
@@ -317,7 +317,7 @@ console.warn('\n--- золотой билет ---');
   );
 }
 {
-  const { response, json } = await organizer.client.call(
+  const { response, json } = await admin.client.call(
     `/v1/seasons/${season.id}/projects/${foreign}/stage`,
     {
       method: 'POST',

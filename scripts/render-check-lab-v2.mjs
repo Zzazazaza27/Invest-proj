@@ -759,6 +759,9 @@ try {
 
   await page.waitForURL(/\/projects\//, { timeout: 10_000 });
   await page.waitForSelector('text=Инвестиционные заявки', { timeout: 15_000 });
+  // Заголовок карточки появляется до загрузки списка: ждём сами строки заявок,
+  // иначе подсчёт бейджа гоняется с запросом списка.
+  await page.waitForSelector('[data-application]', { timeout: 15_000 });
   check(
     'после подачи заявка в списке помечена «Подана»',
     (await page.getByText('Подана').count()) > 0,
@@ -874,10 +877,13 @@ try {
     waitUntil: 'networkidle',
   });
   await page.waitForSelector('text=Действия', { timeout: 15_000 });
+  // Сезоны отложены (M088): кнопки «Подать в сезон» в кабинете больше нет ни
+  // при каком положении флага мастера v2.
   check(
-    'при выключенном флаге карточки заявок нет, кнопка «Подать в сезон» на месте',
+    'при выключенном флаге карточки заявок нет, кнопки «Подать в сезон» нет',
     (await page.getByText('Инвестиционные заявки').count()) === 0 &&
-      (await page.getByRole('button', { name: 'Подать в сезон' }).count()) === 1,
+      (await page.getByRole('button', { name: 'Подать в сезон' }).count()) === 0 &&
+      (await page.getByRole('button', { name: 'Запустить анализ' }).count()) === 1,
   );
   await screenshot('project-page-v1');
 

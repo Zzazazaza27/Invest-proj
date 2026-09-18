@@ -56,7 +56,7 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
     <Stack gap="var(--u-space-5)">
       <PageHeading
         title="Мои проекты"
-        description="Заявка, материалы и статус прохождения сезона"
+        description="Заявка, материалы и раунды привлечения"
         aside={
           <Button
             variant={creating ? 'secondary' : 'brand'}

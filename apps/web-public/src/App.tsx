@@ -225,13 +225,8 @@ function SeasonStrip() {
           onRetry={reload}
         />
       ) : null}
-      {state.status === 'ready' && state.data === null ? (
-        <Card>
-          <span style={{ color: 'var(--u-text-muted)' }}>
-            Сейчас активного сезона нет. Приём заявок откроется в следующем.
-          </span>
-        </Card>
-      ) : null}
+      {/* Сезона нет (в том числе пока сезонный контур отложен, M088) —
+          полоса не показывается: обещать «следующий сезон» витрина не может. */}
       {state.status === 'ready' && state.data !== null ? (
         <Card
           style={{

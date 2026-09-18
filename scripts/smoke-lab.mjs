@@ -347,6 +347,11 @@ async function restoreSuspendedSeasons() {
   ]);
 }
 
+// Положение сезонного контура читается тем же публичным маршрутом, что и
+// кабинеты: подача «в сезон» и публичные сезонные выдачи есть только при
+// включённом флаге (M088).
+const seasonsOn = (await raw('/v1/features')).json?.flags?.['seasons.enabled'] === true;
+
 let seasonId;
 {
   const [row] = await sql(
@@ -357,19 +362,27 @@ let seasonId;
      RETURNING id`,
   );
   seasonId = row.id;
-  const { json } = await raw('/v1/seasons/current');
-  // Публичность метронома проверяется отдельно от того, какой сезон текущий:
-  // маршрут обязан отвечать анониму в любом состоянии воронки.
-  check('текущий сезон публичен', Boolean(json?.season?.id), json?.season?.status ?? 'нет сезона');
+  const { response, json } = await raw('/v1/seasons/current');
+  // Сезоны отложены (M088): метроном отвечает анониму пустым сезоном при
+  // любом состоянии воронки; при включённом флаге — текущим сезоном.
+  check(
+    seasonsOn
+      ? 'текущий сезон публичен'
+      : 'сезоны отложены: метроном отвечает анониму пустым сезоном',
+    response.status === 200 && (seasonsOn ? Boolean(json?.season?.id) : json?.season === null),
+    `статус ${response.status} ${json?.season?.status ?? 'нет сезона'}`,
+  );
 }
 {
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
     method: 'POST',
   });
   check(
-    'подача при закрытом приёме отвергнута',
-    response.status === 409 && json?.code === 'state_transition_not_allowed',
-    `статус ${response.status}`,
+    seasonsOn ? 'подача при закрытом приёме отвергнута' : 'сезоны отложены: подача в сезон закрыта',
+    seasonsOn
+      ? response.status === 409 && json?.code === 'state_transition_not_allowed'
+      : response.status === 503 && json?.code === 'feature_disabled',
+    `статус ${response.status} ${json?.code ?? ''}`,
   );
 }
 {
@@ -401,7 +414,7 @@ let seasonId;
     `статус ${response.status} ${json?.code ?? ''}`,
   );
 }
-{
+if (seasonsOn) {
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
     method: 'POST',
   });
@@ -411,15 +424,13 @@ let seasonId;
     `статус ${response.status}`,
   );
   check('создана первая версия', json?.versionNo === 1, `версия ${json?.versionNo}`);
-}
-{
-  const { json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
+  const again = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
     method: 'POST',
   });
   check(
     'повторная подача создаёт новую версию',
-    json?.versionNo === 2,
-    `версия ${json?.versionNo}`,
+    again.json?.versionNo === 2,
+    `версия ${again.json?.versionNo}`,
   );
 
   const versions = await sql('SELECT id FROM lab.project_versions WHERE project_id = $1', [
@@ -434,6 +445,17 @@ let seasonId;
     'снимок заявки неизменяем',
     failedUpdate !== null,
     failedUpdate?.message?.slice(0, 60) ?? '',
+  );
+} else {
+  // Подача «в сезон» закрыта и при открытом приёме: путь основателя — мастер
+  // заявки без сезона (проверяется ниже, в блоке v2).
+  const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
+    method: 'POST',
+  });
+  check(
+    'сезоны отложены: подача в сезон закрыта и при открытом приёме',
+    response.status === 503 && json?.code === 'feature_disabled',
+    `статус ${response.status} ${json?.code ?? ''}`,
   );
 }
 
@@ -1154,9 +1176,11 @@ let ticket;
     after.json?.limits?.applications?.remaining === remainingBefore - 1,
     `${after.json?.limits?.applications?.remaining}`,
   );
+  // При отложенных сезонах подача v1 закрыта, поэтому поданных заявок одна
+  // (мастер v2); при включённых — две.
   check(
-    'в списке две открытые заявки',
-    (after.json?.items ?? []).filter((a) => a.status === 'submitted').length >= 2,
+    seasonsOn ? 'в списке две открытые заявки' : 'в списке поданная заявка мастера',
+    (after.json?.items ?? []).filter((a) => a.status === 'submitted').length >= (seasonsOn ? 2 : 1),
   );
 
   const archived = await founderA.client.call(`/v1/applications/${appId}/archive`, {
@@ -1366,7 +1390,19 @@ let ticket;
   );
   const verbs = rows.map((r) => r.verb);
   check('создание проекта попало в журнал', verbs.includes('lab.project.created'));
-  check('подача заявки попала в журнал', verbs.includes('lab.project.submitted'));
+  // Подача v1 («в сезон») закрыта при отложенных сезонах — в журнале тогда
+  // подача мастера v2 (subject — заявка, не проект): проверяется отдельно.
+  if (seasonsOn) {
+    check('подача заявки попала в журнал', verbs.includes('lab.project.submitted'));
+  } else {
+    const appSubmits = await sql(
+      `SELECT count(*)::int AS n FROM audit.events e
+        JOIN lab.investment_applications a ON a.id = e.subject_id
+       WHERE a.project_id = $1 AND e.verb = 'lab.application.submitted'`,
+      [projectId],
+    );
+    check('подача заявки мастером попала в журнал', (appSubmits[0]?.n ?? 0) >= 1);
+  }
   check('публикация листинга попала в журнал', verbs.includes('lab.listing.published'));
   check('снятие листинга попало в журнал', verbs.includes('lab.listing.unpublished'));
 }

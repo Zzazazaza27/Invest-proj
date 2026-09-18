@@ -16,6 +16,7 @@ import {
 } from '@unicorn/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { errors } from '../common/errors';
+import { seasonsEnabled } from '../common/seasons-gate';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { issueServiceToken, type IntegrationContext } from './service-auth';
 import { ServiceAccountStateService } from './service-account-state.service';
@@ -557,6 +558,9 @@ export class IntegrationService {
     endsAt: string;
   } | null> {
     return this.db.asServiceRole('app_integration', { traceId: ctx.traceId }, async (tx) => {
+      // Сезоны отложены (M088): партнёр получает «сезона нет», а не данные
+      // отключённого контура.
+      if (!(await seasonsEnabled(tx))) return null;
       const { rows } = await tx.query<{
         id: string;
         number: number;

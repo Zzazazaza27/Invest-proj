@@ -12,7 +12,7 @@ import {
 import type { InvestmentPassport, ProjectFull, ReadinessEntry } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
-import { MaterialsCard, RoadmapCard } from './MaterialsCard';
+import { MaterialsCard } from './MaterialsCard';
 import { PublicationConsentsCard } from './PublicationConsentsCard';
 import { BillingCard } from './BillingCard';
 import { ApplicationsCard } from '../wizard/ApplicationsCard';
@@ -204,14 +204,8 @@ export function ProjectPage({
         <Stack>
           <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Действия</h2>
           <div style={{ display: 'flex', gap: 'var(--u-space-3)', flexWrap: 'wrap' }}>
-            <Button
-              loading={busy === 'submit'}
-              onClick={() =>
-                run('submit', () => api.projects.submit(project.id), 'Заявка подана в сезон')
-              }
-            >
-              Подать в сезон
-            </Button>
+            {/* «Подать в сезон» убрана: сезонный контур отложен (M088);
+                профиль подаётся мастером заявки без сезона. */}
             <Button
               variant="secondary"
               loading={busy === 'analysis'}
@@ -251,7 +245,6 @@ export function ProjectPage({
       </Card>
 
       <BillingCard projectId={project.id} requiredPlanId={project.requiredPlanId ?? null} />
-      <RoadmapCard projectId={project.id} status={project.status} />
       <MaterialsCard projectId={project.id} />
       <PassportCard projectId={project.id} />
       <ReadinessCard projectId={project.id} />

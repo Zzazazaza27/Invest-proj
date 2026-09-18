@@ -376,9 +376,11 @@ console.warn('\n[3] Проекции');
   check('выпускники отдаются', response.status === 200, `HTTP ${response.status}`);
   const item = (json?.items ?? []).find((g) => g.projectId === graduate);
   check('выпускник в выдаче с фактическим IRS', item?.irs === 83.25, `irs=${item?.irs}`);
+  // С 5.6.4 сумма запроса — только из незавершённого раунда; у фикстуры
+  // раунда нет, кеш `investment_ask` проекта наружу не отдаётся.
   check(
-    'сумма запроса — строка, копейки не теряются',
-    typeof item?.investmentAsk === 'string',
+    'сумма запроса без открытого раунда — null (кеш проекта не отдаётся)',
+    item !== undefined && item.investmentAsk === null,
     `${item?.investmentAsk}`,
   );
   check('момент выпуска проставлен триггером', typeof item?.graduatedAt === 'string');

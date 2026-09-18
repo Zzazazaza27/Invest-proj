@@ -11,7 +11,8 @@ import type { FastifyRequest } from 'fastify';
 import type { Role } from '@unicorn/contracts';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
-import type { RequestContext } from '../db/unit-of-work';
+import { seasonsEnabled } from '../common/seasons-gate';
+import { Database, type RequestContext } from '../db/unit-of-work';
 import { TokenVerifier } from './token.verifier';
 import { SessionEpochService } from './session-epoch.service';
 import { TokenRevocationService } from './token-revocation.service';
@@ -78,7 +79,22 @@ export class AuthGuard implements CanActivate {
     private readonly verifier: TokenVerifier,
     private readonly epochs: SessionEpochService,
     private readonly revocations: TokenRevocationService,
+    private readonly db: Database,
   ) {}
+
+  /**
+   * Сезоны отложены (M088): роль organizer не даёт прав, пока флаг
+   * `seasons.enabled` выключен. Вырезается из сессии здесь — единственная
+   * точка, где роли токена становятся ролями запроса (`@Roles` и GUC для RLS).
+   * Запрос к флагу идёт только для токенов с этой ролью.
+   */
+  private async effectiveRoles(roles: string[], traceId: string): Promise<string[]> {
+    if (!roles.includes('organizer')) return roles;
+    const enabled = await this.db.readOnly({ userId: null, roles: [], traceId }, (tx) =>
+      seasonsEnabled(tx),
+    );
+    return enabled ? roles : roles.filter((role) => role !== 'organizer');
+  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
@@ -137,14 +153,15 @@ export class AuthGuard implements CanActivate {
       return true;
     }
 
+    const roles = await this.effectiveRoles(verified.roles, traceId);
     request.auth = {
       subject: verified.subject,
-      roles: verified.roles,
+      roles,
       acr: verified.acr,
       tokenId: verified.tokenId,
       expiresAt: verified.expiresAt,
     };
-    request.ctx = { userId: verified.subject, roles: verified.roles, traceId };
+    request.ctx = { userId: verified.subject, roles, traceId };
 
     this.assertCsrf(request);
 
@@ -153,8 +170,8 @@ export class AuthGuard implements CanActivate {
       context.getClass(),
     ]);
     if (required && required.length > 0) {
-      const has = required.some((role) => verified.roles.includes(role));
-      if (!has) throw errors.forbidden({ required, actual: verified.roles });
+      const has = required.some((role) => roles.includes(role));
+      if (!has) throw errors.forbidden({ required, actual: roles });
     }
 
     const needsStepUp = this.reflector.getAllAndOverride<boolean>(REQUIRES_STEP_UP, [

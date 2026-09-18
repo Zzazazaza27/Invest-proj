@@ -20,6 +20,7 @@ import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
 import { getEnv } from '../config/env';
+import { SEASONS_FLAG, seasonsEnabled } from '../common/seasons-gate';
 import { ApplicationsService, loadActivePolicy } from './applications.service';
 import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 
@@ -360,6 +361,9 @@ export class ProjectsService {
         throw errors.stateTransition('Проект уже в работе: подача новой версии недоступна');
       }
 
+      // Сезоны отложены (M088): подача «в сезон» (кабинет v1) закрыта;
+      // профиль подаётся мастером v2 без сезона (`POST /applications/:id/submit`).
+      if (!(await seasonsEnabled(tx))) throw errors.featureDisabled(SEASONS_FLAG);
       const season = await tx.query<{ id: string }>(
         `SELECT id FROM seasons.seasons
           WHERE status = 'applications_open'

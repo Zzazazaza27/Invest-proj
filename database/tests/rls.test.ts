@@ -1044,7 +1044,9 @@ describe('RLS: рабочая зона эксперта (M064)', () => {
   it('рецензию нельзя переписать после решения консенсуса', async () => {
     await inRollbackTx(async (c) => {
       const { expert, project, assignment } = await assignExpert(c);
-      const organizer = await createUser(c, { role: 'organizer' });
+      // Решение консенсуса принимает администратор: роль organizer бездействует,
+      // пока сезонный контур отложен (M088, флаг seasons.enabled).
+      const decider = await createUser(c, { role: 'admin' });
 
       const scores = JSON.stringify({
         team: 7,
@@ -1069,11 +1071,11 @@ describe('RLS: рабочая зона эксперта (M064)', () => {
       );
       expect(before.rowCount).toBe(1);
 
-      await actAs(c, { userId: organizer.id, roles: ['organizer'], dbRole: 'app_backend' });
+      await actAs(c, { userId: decider.id, roles: ['admin'], dbRole: 'app_backend' });
       await c.query(
         `INSERT INTO experts.review_consensus (id, project_id, final_decision, decided_by)
               VALUES ($1, $2, 'needs_review', $3)`,
-        [uuidv7(), project, organizer.id],
+        [uuidv7(), project, decider.id],
       );
 
       await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });

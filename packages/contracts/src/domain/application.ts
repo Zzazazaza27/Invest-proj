@@ -225,6 +225,8 @@ export type ApplicationWithChecks = z.infer<typeof ApplicationWithChecksSchema>;
 export const PUBLIC_FEATURE_KEYS = [
   'billing.listing_requires_subscription',
   'lab.ui.application_v2',
+  /** Сезонный контур отложен (M088): выключен — сезонных действий и выдач нет. */
+  'seasons.enabled',
 ] as const;
 export type PublicFeatureKey = (typeof PUBLIC_FEATURE_KEYS)[number];
 

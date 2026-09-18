@@ -254,7 +254,7 @@ describe('M087: предикат аудитории — матрица режи�
     });
   });
 
-  it('заблокированный и удалённый проект закрыты внешним; команда и админ видят; организатор — тизер сезона', async () => {
+  it('заблокированный и удалённый проект закрыты внешним; команда и админ видят; организатор прав не даёт', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const admin = await createUser(c, { role: 'admin' });
@@ -276,26 +276,23 @@ describe('M087: предикат аудитории — матрица режи�
         [projectId],
       );
 
-      // Организатор: тизер проекта сезона даже в private; без сезона — ничего; профиль — никогда.
+      // Организатор (сезоны отложены, M088): роль прав не даёт — как обычный
+      // вошедший без допуска инвестора; в private — ничего, даже для проекта
+      // сезона; `app.has_role('organizer')` — false, пока флаг выключен.
       const org = asUser(organizer.id, 'organizer');
-      const { rows } = await c.query<{ season_id: string | null }>(
-        `SELECT season_id FROM lab.projects WHERE id = $1`,
-        [projectId],
-      );
-      if (rows[0]!.season_id === null) {
-        const { rows: s } = await c.query<{ id: string }>(`SELECT id FROM seasons.seasons LIMIT 1`);
-        expect(s[0]).toBeDefined();
-        await c.query(`UPDATE lab.projects SET season_id = $2 WHERE id = $1`, [
-          projectId,
-          s[0]!.id,
-        ]);
-      }
       await setMode(c, projectId, 'private');
-      expect(await audience(c, org, projectId, 'teaser')).toBe('public');
-      expect(await audience(c, org, projectId, 'profile')).toBeNull();
-      await c.query(`UPDATE lab.projects SET season_id = NULL WHERE id = $1`, [projectId]);
-      await setMode(c, projectId, 'public');
       expect(await audience(c, org, projectId, 'teaser')).toBeNull();
+      expect(await audience(c, org, projectId, 'profile')).toBeNull();
+      await setMode(c, projectId, 'public');
+      expect(await audience(c, org, projectId, 'teaser')).toBe('public');
+      expect(await audience(c, org, projectId, 'materials')).toBeNull();
+      await actAs(c, { userId: organizer.id, roles: ['organizer'], dbRole: 'app_backend' });
+      const hasRole = await c.query<{ r: boolean }>(`SELECT app.has_role('organizer') AS r`);
+      const viewer = await c.query<{ a: string }>(`SELECT lab.viewer_audience() AS a`);
+      await resetRole(c);
+      await actAs(c, { userId: null, roles: [] });
+      expect(hasRole.rows[0]!.r).toBe(false);
+      expect(viewer.rows[0]!.a).toBe('public');
 
       await c.query(`UPDATE lab.projects SET deleted_at = now() WHERE id = $1`, [projectId]);
       expect(await audience(c, anon, projectId, 'teaser')).toBeNull();
@@ -469,33 +466,39 @@ describe('M087: перенос ничего не раскрыл; проекци�
     });
   });
 
-  it('v_season_projects: перечисленные поля и только проекты сезона', async () => {
+  it('сезоны отложены (M088): сезонной проекции нет, флаг выключен, организатор без прав на строки проектов', async () => {
     await inRollbackTx(async (c) => {
-      const cols = await c.query<{ column_name: string }>(
-        `SELECT column_name FROM information_schema.columns
-          WHERE table_schema = 'lab' AND table_name = 'v_season_projects' ORDER BY ordinal_position`,
+      const view = await c.query(
+        `SELECT 1 FROM information_schema.views WHERE table_schema = 'lab' AND table_name = 'v_season_projects'`,
       );
-      expect(cols.rows.map((r) => r.column_name)).toEqual([
-        'id',
-        'title',
-        'stage',
-        'status',
-        'season_id',
-        'taxonomy_id',
-        'geo_country',
-        'listed_at',
-        'created_at',
-        'updated_at',
-      ]);
+      expect(view.rowCount).toBe(0);
+      const flag = await c.query<{ enabled: boolean }>(
+        `SELECT enabled FROM audit.feature_flags WHERE key = 'seasons.enabled'`,
+      );
+      expect(flag.rows[0]?.enabled).toBe(false);
+
       const owner = await createUser(c, { role: 'founder' });
+      const organizer = await createUser(c, { role: 'organizer' });
       const projectId = await createProject(c, owner.id);
-      await c.query(`UPDATE lab.projects SET season_id = NULL WHERE id = $1`, [projectId]);
-      await actAs(c, { userId: owner.id, roles: ['organizer'], dbRole: 'app_backend' });
-      const { rowCount } = await c.query(`SELECT id FROM lab.v_season_projects WHERE id = $1`, [
-        projectId,
-      ]);
+      await actAs(c, { userId: organizer.id, roles: ['organizer'], dbRole: 'app_backend' });
+      const rows = await c.query(`SELECT id FROM lab.projects WHERE id = $1`, [projectId]);
+      const apps = await c.query(
+        `SELECT id FROM lab.investment_applications WHERE project_id = $1`,
+        [projectId],
+      );
       await resetRole(c);
-      expect(rowCount).toBe(0);
+      await actAs(c, { userId: null, roles: [] });
+      expect(rows.rowCount).toBe(0);
+      expect(apps.rowCount).toBe(0);
+
+      // Включённый флаг возвращает прежние ветки RLS — контур отключён, не удалён.
+      await actAs(c, { roles: ['admin'] });
+      await c.query(`UPDATE audit.feature_flags SET enabled = true WHERE key = 'seasons.enabled'`);
+      await actAs(c, { userId: organizer.id, roles: ['organizer'], dbRole: 'app_backend' });
+      const after = await c.query(`SELECT id FROM lab.projects WHERE id = $1`, [projectId]);
+      await resetRole(c);
+      await actAs(c, { userId: null, roles: [] });
+      expect(after.rowCount).toBe(1);
     });
   });
 

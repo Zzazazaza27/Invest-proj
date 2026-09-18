@@ -99,8 +99,6 @@ export interface ProjectAccessState {
   visibility: ProjectVisibility;
   deleted?: boolean;
   blocked?: boolean;
-  /** Проект участвует в сезоне (`season_id IS NOT NULL`) — нужно организатору. */
-  inSeason?: boolean;
 }
 
 /**
@@ -109,7 +107,8 @@ export interface ProjectAccessState {
  * Порядок проверок тот же, что в SQL (план `заявка-04` §3.3); паритет
  * проверяет `database/tests/project-access.test.ts`. Разрешение любого вида
  * не поднимает аудиторию выше `investors`: поля `platform` и `private`
- * наружу не попадают.
+ * наружу не попадают. Роль `organizer` прав не даёт: сезонный контур отложен
+ * (M088), в БД роль признаётся только при включённом флаге `seasons.enabled`.
  */
 export function projectAudience(
   project: ProjectAccessState,
@@ -123,9 +122,6 @@ export function projectAudience(
     return 'platform';
   }
   if (project.blocked) return null;
-  if (has('organizer')) {
-    return permission === 'teaser' && project.inSeason ? 'public' : null;
-  }
   if (viewer.userId !== null && viewer.excluded) return null;
   if (project.visibility === 'private') return null;
 

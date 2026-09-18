@@ -16,6 +16,7 @@ import {
   type SeasonStageOccupancy,
 } from '@unicorn/contracts';
 import { errors } from '../common/errors';
+import { SEASONS_FLAG, seasonsEnabled } from '../common/seasons-gate';
 import { AuditRepository } from '../audit/audit.repository';
 import { NotificationsService } from '../comms/notifications.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
@@ -40,9 +41,14 @@ export class SeasonsService {
     private readonly notifications: NotificationsService,
   ) {}
 
-  /** Текущий сезон: сначала открытый на приём, иначе ближайший активный. */
+  /**
+   * Текущий сезон: сначала открытый на приём, иначе ближайший активный.
+   * Сезоны отложены (M088): при выключенном флаге метроном пуст — витрина и
+   * кабинеты не показывают сезонных действий.
+   */
   async current(traceId: string): Promise<Season | null> {
     return this.db.asPublicRole(traceId, async (tx) => {
+      if (!(await seasonsEnabled(tx))) return null;
       const { rows } = await tx.query<SeasonRow>(
         `SELECT id, number, title, status, starts_at, ends_at
            FROM seasons.seasons
@@ -121,6 +127,9 @@ export class SeasonsService {
    */
   async rating(traceId: string, seasonId: string, limit: number): Promise<RatingEntry[]> {
     return this.db.asPublicRole(traceId, async (tx) => {
+      // Сезоны отложены (M088): публичная выдача закрыта целиком, а не
+      // сужена — рейтинг строится по этапу воронки, которой сейчас нет.
+      if (!(await seasonsEnabled(tx))) throw errors.featureDisabled(SEASONS_FLAG);
       const { rows } = await tx.query<RatingRow>(
         `SELECT r.rank, r.project_id, r.title, r.irs, r.score10, r.computed_at
            FROM seasons.mv_season_rating r

@@ -145,7 +145,7 @@ const LOW_RUBRIC = { team: 1, product: 1, strategy: 1, legal: 2, finmodel: 2, sc
 console.warn('\n=== ЖИВОЙ ПРОГОН: ЭКСПЕРТИЗА, СЕЗОН, УВЕДОМЛЕНИЯ ===\n');
 
 const founder = await register('f');
-const organizer = await register('org', 'organizer');
+const coordinator = await register('org', 'admin'); // роль organizer бездействует (M088): назначениями и решениями управляет администратор
 const expert1 = await register('e1', 'expert');
 const expert2 = await register('e2', 'expert');
 const expert3 = await register('e3', 'expert');
@@ -197,7 +197,7 @@ console.warn('\n[1] Назначения');
   check('эксперт не может назначить сам себя', response.status === 403, `HTTP ${response.status}`);
 }
 {
-  const { response } = await organizer.client.call('/v1/experts/assignments', {
+  const { response } = await coordinator.client.call('/v1/experts/assignments', {
     method: 'POST',
     body: { projectId: project.id, expertIds: [expert1.userId], dueAt, reason: 'past' },
   });
@@ -211,7 +211,7 @@ console.warn('\n[1] Назначения');
 let assignment1;
 let assignment2;
 {
-  const { response, json } = await organizer.client.call('/v1/experts/assignments', {
+  const { response, json } = await coordinator.client.call('/v1/experts/assignments', {
     method: 'POST',
     body: {
       projectId: project.id,
@@ -231,7 +231,7 @@ let assignment2;
   check('назначено ровно два рецензента', items.length === 2, `получено ${items.length}`);
 }
 {
-  const { response } = await organizer.client.call('/v1/experts/assignments', {
+  const { response } = await coordinator.client.call('/v1/experts/assignments', {
     method: 'POST',
     body: { projectId: project.id, expertIds: [expert1.userId], dueAt, reason: 'manual' },
   });
@@ -335,7 +335,7 @@ for (const [person, assignment] of [
 // ----------------------------------------------------------------- консенсус
 console.warn('\n[3] Консенсус');
 {
-  const { response } = await organizer.client.call('/v1/experts/consensus', {
+  const { response } = await coordinator.client.call('/v1/experts/consensus', {
     method: 'POST',
     body: { projectId: project.id, finalDecision: 'pass' },
   });
@@ -364,7 +364,7 @@ console.warn('\n[3] Консенсус');
   );
 }
 {
-  const { response, json } = await organizer.client.call(
+  const { response, json } = await coordinator.client.call(
     `/v1/experts/projects/${project.id}/reviews`,
   );
   check('организатор видит обе рецензии', json?.items?.length === 2, `HTTP ${response.status}`);
@@ -379,7 +379,7 @@ console.warn('\n[3] Консенсус');
   check('эксперт не читает сводку рецензий', response.status === 403, `HTTP ${response.status}`);
 }
 {
-  const { response, json } = await organizer.client.call('/v1/experts/consensus', {
+  const { response, json } = await coordinator.client.call('/v1/experts/consensus', {
     method: 'POST',
     body: { projectId: project.id, finalDecision: 'pass' },
   });
@@ -390,7 +390,7 @@ console.warn('\n[3] Консенсус');
   );
 }
 {
-  const { response, json } = await organizer.client.call('/v1/experts/consensus', {
+  const { response, json } = await coordinator.client.call('/v1/experts/consensus', {
     method: 'POST',
     body: { projectId: project.id, finalDecision: 'needs_review', thirdReviewerId: expert3.userId },
   });
@@ -407,7 +407,7 @@ console.warn('\n[3] Консенсус');
   const [row] = await sql(`SELECT decided_by FROM experts.review_consensus WHERE project_id = $1`, [
     project.id,
   ]);
-  check('решение подписано человеком из контекста запроса', row.decided_by === organizer.userId);
+  check('решение подписано человеком из контекста запроса', row.decided_by === coordinator.userId);
 }
 {
   // Агрегат решения — сам консенсус, поэтому и в журнале, и в outbox запись
@@ -456,7 +456,7 @@ let conflictId;
   conflictId = json?.id;
 }
 {
-  const { response } = await organizer.client.call('/v1/experts/assignments', {
+  const { response } = await coordinator.client.call('/v1/experts/assignments', {
     method: 'POST',
     body: { projectId: project.id, expertIds: [expert3.userId], dueAt, reason: 'third_reviewer' },
   });
@@ -474,7 +474,7 @@ let conflictId;
   check('эксперт не разрешает конфликт сам', response.status === 403, `HTTP ${response.status}`);
 }
 {
-  const { response } = await organizer.client.call(
+  const { response } = await coordinator.client.call(
     `/v1/experts/conflicts/${conflictId}/resolution`,
     {
       method: 'POST',
@@ -488,7 +488,7 @@ let conflictId;
   );
 }
 {
-  const { response } = await organizer.client.call('/v1/experts/assignments', {
+  const { response } = await coordinator.client.call('/v1/experts/assignments', {
     method: 'POST',
     body: { projectId: project.id, expertIds: [expert3.userId], dueAt, reason: 'third_reviewer' },
   });
@@ -508,49 +508,49 @@ console.warn('\n[5] Рейтинг и золотые билеты');
   check('эксперт не пересчитывает рейтинг', response.status === 403, `HTTP ${response.status}`);
 }
 {
-  const { response, json } = await organizer.client.call(
+  const { response, json } = await coordinator.client.call(
     `/v1/seasons/${season.id}/rating/refresh`,
     {
       method: 'POST',
     },
   );
   check(
-    'организатор пересчитывает рейтинг',
+    'администратор пересчитывает рейтинг (роль organizer бездействует)',
     response.status === 200 || response.status === 201,
     `HTTP ${response.status} ${json?.detail ?? ''}`,
   );
 }
 {
-  // 5.6.0: рейтинг публичен, но отдаёт только проекты, доступные публичной
-  // аудитории. Проект смоука не опубликован — анонимно его в рейтинге нет.
-  const hidden = await raw(`/v1/seasons/${season.id}/rating`);
-  check(
-    'рейтинг читается анонимно',
-    hidden.response.status === 200,
-    `HTTP ${hidden.response.status}`,
+  const seasonsOn = (await raw('/v1/features')).json?.flags?.['seasons.enabled'] === true;
+  await sql(
+    `UPDATE lab.projects SET listing_status = 'listed', listed_at = now(),
+            visibility = 'public', visibility_changed_at = now()
+      WHERE id = $1`,
+    [project.id],
   );
-  check(
-    'неопубликованный проект не виден в публичном рейтинге',
-    !(hidden.json?.items ?? []).some((i) => i.projectId === project.id),
-  );
-  await sql(`UPDATE lab.projects SET listing_status = 'listed', listed_at = now() WHERE id = $1`, [
-    project.id,
-  ]);
   const { response, json } = await raw(`/v1/seasons/${season.id}/rating`);
-  check(
-    'рейтинг читается анонимно после публикации',
-    response.status === 200,
-    `HTTP ${response.status}`,
-  );
-  const entry = (json?.items ?? []).find((i) => i.projectId === project.id);
-  check(
-    'опубликованный проект попал в рейтинг с фактическим IRS',
-    entry?.irs === 71.5,
-    `значение: ${entry?.irs}`,
-  );
+  if (seasonsOn) {
+    // 5.6.0: рейтинг публичен, но отдаёт только проекты, доступные публичной
+    // аудитории.
+    check('рейтинг читается анонимно', response.status === 200, `HTTP ${response.status}`);
+    const entry = (json?.items ?? []).find((i) => i.projectId === project.id);
+    check(
+      'опубликованный проект попал в рейтинг с фактическим IRS',
+      entry?.irs === 71.5,
+      `значение: ${entry?.irs}`,
+    );
+  } else {
+    // Сезоны отложены (M088): публичный рейтинг закрыт целиком, даже для
+    // опубликованного проекта.
+    check(
+      'сезоны отложены: публичный рейтинг недоступен',
+      response.status === 503 && json?.code === 'feature_disabled',
+      `HTTP ${response.status} ${json?.code ?? ''}`,
+    );
+  }
 }
 {
-  const { response } = await organizer.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
+  const { response } = await coordinator.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
     method: 'POST',
     body: { projectId: project.id, reason: 'Победитель зрительского голосования сезона' },
   });
@@ -561,7 +561,7 @@ console.warn('\n[5] Рейтинг и золотые билеты');
   );
 }
 {
-  const { response } = await organizer.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
+  const { response } = await coordinator.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
     method: 'POST',
     body: { projectId: project.id, reason: 'Повторная выдача тому же проекту' },
   });
@@ -585,7 +585,7 @@ console.warn('\n[5] Рейтинг и золотые билеты');
     );
     extra.push(row.id);
   }
-  const second = await organizer.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
+  const second = await coordinator.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
     method: 'POST',
     body: { projectId: extra[0], reason: 'Второй билет в пределах лимита сезона' },
   });
@@ -594,7 +594,7 @@ console.warn('\n[5] Рейтинг и золотые билеты');
     second.response.status < 400,
     `HTTP ${second.response.status}`,
   );
-  const third = await organizer.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
+  const third = await coordinator.client.call(`/v1/seasons/${season.id}/golden-tickets`, {
     method: 'POST',
     body: { projectId: extra[1], reason: 'Третий билет сверх лимита сезона' },
   });
@@ -733,7 +733,7 @@ await sql(
 
 let wsAssignment;
 {
-  const { response, json } = await organizer.client.call('/v1/experts/assignments', {
+  const { response, json } = await coordinator.client.call('/v1/experts/assignments', {
     method: 'POST',
     body: { projectId: wsProject.id, expertIds: [expert3.userId], dueAt, reason: 'manual' },
   });
@@ -953,7 +953,7 @@ let wsAssignment;
   // консенсуса нет, и проверка «после решения пересмотр закрыт» была бы
   // зелёной по неверной причине (поймано прогоном: 409 на решении и всё равно
   // 409 на пересмотре).
-  const { json: second } = await organizer.client.call('/v1/experts/assignments', {
+  const { json: second } = await coordinator.client.call('/v1/experts/assignments', {
     method: 'POST',
     body: { projectId: wsProject.id, expertIds: [expert2.userId], dueAt, reason: 'manual' },
   });
@@ -967,7 +967,7 @@ let wsAssignment;
     body: { assignmentId: secondAssignment.id, rubricScores: RUBRIC, recommendation: 'pass' },
   });
 
-  const { response } = await organizer.client.call('/v1/experts/consensus', {
+  const { response } = await coordinator.client.call('/v1/experts/consensus', {
     method: 'POST',
     body: { projectId: wsProject.id, finalDecision: 'needs_review' },
   });
