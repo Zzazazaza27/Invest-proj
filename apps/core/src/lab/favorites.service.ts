@@ -100,8 +100,8 @@ export class FavoritesService {
     const ids = marks.map((mark) => mark.project_id);
     const teasers = await this.db.asPublicRole(ctx.traceId, async (tx) => {
       const { rows } = await tx.query<TeaserRow>(
-        `SELECT id, taxonomy_id, title, tagline, stage, geo_country,
-                investment_ask::text AS investment_ask, ask_currency, listed_at
+        `SELECT id, taxonomy_id, title, tagline, stage, geo_country, listed_at,
+                raising, round_target::text AS round_target, round_currency
            FROM lab.v_public_catalog
           WHERE id = ANY($1::uuid[])`,
         [ids],
@@ -125,8 +125,9 @@ export class FavoritesService {
           stage: row.stage,
           taxonomyId: row.taxonomy_id,
           geoCountry: row.geo_country,
-          investmentAsk: row.investment_ask,
-          askCurrency: row.ask_currency as 'RUB',
+          investmentAsk: row.round_target,
+          askCurrency: (row.round_currency?.trim() ?? 'RUB') as 'RUB',
+          raising: row.raising,
           listedAt: row.listed_at ? row.listed_at.toISOString() : null,
           favoritedAt: mark.created_at.toISOString(),
         };
@@ -158,7 +159,8 @@ interface TeaserRow {
   tagline: string | null;
   stage: FavoriteProject['stage'];
   geo_country: string | null;
-  investment_ask: string;
-  ask_currency: string;
+  raising: 'open' | 'paused' | 'none';
+  round_target: string | null;
+  round_currency: string | null;
   listed_at: Date | null;
 }

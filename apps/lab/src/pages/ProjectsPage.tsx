@@ -11,7 +11,7 @@ import {
   LoadingState,
   PageHeading,
   Stack,
-  formatMoney,
+  describeRaising,
 } from '@unicorn/ui';
 import type { ProjectFull, ProjectSummary, TaxonomyNode } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
@@ -157,7 +157,7 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
                     {project.title}
                   </span>
                   <span style={{ fontSize: 'var(--u-text-sm)', color: 'var(--u-text-muted)' }}>
-                    Запрос: {formatMoney(project.investmentAsk, project.askCurrency)}
+                    {describeRaising(project)}
                     {project.requiredPlanCode ? ` · тариф ${project.requiredPlanCode}` : ''}
                   </span>
                 </span>

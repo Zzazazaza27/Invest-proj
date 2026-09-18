@@ -7,8 +7,8 @@ import {
   ErrorState,
   LoadingState,
   Stack,
-  formatMoney,
   formatScore10,
+  describeRaising,
 } from '@unicorn/ui';
 import type { InvestmentPassport, ProjectFull, ProjectMaterial } from '@unicorn/contracts';
 import { ScoreProvenance, publishedScore10 } from '@unicorn/cabinet';
@@ -194,9 +194,7 @@ ${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
           {project.tagline ? (
             <span style={{ color: 'var(--u-text-muted)' }}>{project.tagline}</span>
           ) : null}
-          <strong style={{ fontSize: 'var(--u-text-lg)' }}>
-            {formatMoney(project.investmentAsk, project.askCurrency)}
-          </strong>
+          <strong style={{ fontSize: 'var(--u-text-lg)' }}>{describeRaising(project)}</strong>
         </Stack>
       </Card>
 

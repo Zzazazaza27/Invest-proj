@@ -374,9 +374,11 @@ console.warn('\n[7] Каталог, поиск и фильтры на этих �
   );
 
   const sorted = await raw('/v1/catalog?sort=ask_asc&limit=50');
+  // С M084 в сортировке по сумме участвуют только проекты с незавершённым
+  // раундом; у демо-проектов раундов нет — выдача пуста, и это правильно.
   const asks = (sorted.json?.items ?? []).map((item) => Number(item.investmentAsk));
   check(
-    'сортировка по сумме возрастает',
+    'сортировка по сумме возрастает (только проекты с раундом)',
     asks.every((value, i) => i === 0 || value >= asks[i - 1]),
     asks.slice(0, 4).join(' ≤ '),
   );

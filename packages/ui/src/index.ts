@@ -51,6 +51,7 @@ export {
 } from './nova';
 
 export { formatAmount, formatMoney, formatScore10 } from './format';
+export { describeRaising, raisingTone, RAISING_LABEL, type RaisingState } from './raising';
 
 export { PromptDialog } from './prompt-dialog';
 

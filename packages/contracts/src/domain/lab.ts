@@ -140,15 +140,16 @@ export const ProjectTeaserSchema = z.object({
   stage: ProjectStageSchema,
   taxonomyId: UuidSchema.nullable(),
   geoCountry: CountryCodeSchema.nullable(),
-  investmentAsk: z.string(),
+  /**
+   * Сумма текущего привлечения — target незавершённого раунда (open / paused);
+   * null — сейчас не привлекает. Сумма старой формы из кеша проекта сюда не
+   * попадает (M084, план 0.2 §0г.2 п.9).
+   */
+  investmentAsk: MoneyAmountSchema.nullable(),
   askCurrency: CurrencySchema,
   listedAt: IsoDateTimeSchema.nullable(),
-  /**
-   * Состояние привлечения (план 0.2 §0г.2 п.9): open / paused / none. До
-   * этапа 5.6.6 каталог не читает раунды и поле отсутствует — читать как
-   * `none`; сумму из кеша проекта состоянием привлечения не считать.
-   */
-  raising: z.enum(['open', 'paused', 'none']).optional(),
+  /** Состояние привлечения: open — раунд открыт; paused — приостановлено; none — не привлекает. */
+  raising: z.enum(['open', 'paused', 'none']),
 });
 export type ProjectTeaser = z.infer<typeof ProjectTeaserSchema>;
 
@@ -344,8 +345,10 @@ export const ProjectSummarySchema = z.object({
   stage: ProjectStageSchema,
   status: ProjectStatusSchema,
   listingStatus: ListingStatusSchema,
-  investmentAsk: z.string(),
+  /** Сумма незавершённого раунда или null — как у тизера (M084). */
+  investmentAsk: MoneyAmountSchema.nullable(),
   askCurrency: CurrencySchema,
+  raising: z.enum(['open', 'paused', 'none']),
   requiredPlanId: UuidSchema.nullable(),
   requiredPlanCode: z.string().nullable(),
   role: z.enum(['owner', 'cofounder']),

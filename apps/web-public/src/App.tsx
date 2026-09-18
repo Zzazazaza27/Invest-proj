@@ -13,6 +13,7 @@ import {
   Skeleton,
   Stack,
   UI_KEYFRAMES,
+  describeRaising,
 } from '@unicorn/ui';
 import type { LandingBlock, Pricing, ProjectTeaser, Season } from '@unicorn/contracts';
 import { api } from './api';
@@ -376,7 +377,7 @@ function TeaserCard({ teaser }: { teaser: ProjectTeaser }) {
           {teaser.tagline}
         </span>
       ) : null}
-      <span style={{ fontWeight: 600 }}>{formatMoney(teaser.investmentAsk)}</span>
+      <span style={{ fontWeight: 600 }}>{describeRaising(teaser)}</span>
     </Card>
   );
 }

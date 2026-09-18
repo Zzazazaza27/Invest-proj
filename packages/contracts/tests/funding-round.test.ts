@@ -111,11 +111,13 @@ describe('Раунд привлечения', () => {
       stage: 'idea',
       taxonomyId: null,
       geoCountry: null,
-      investmentAsk: '1000000.00',
+      investmentAsk: null,
       askCurrency: 'RUB',
       listedAt: null,
+      raising: 'none',
     });
-    expect(teaser.raising ?? 'none').toBe('none');
+    expect(teaser.raising).toBe('none');
+    expect(teaser.investmentAsk).toBeNull();
   });
 });
 

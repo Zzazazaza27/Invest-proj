@@ -200,7 +200,13 @@ export class ProjectsService {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<ProjectSummaryRow>(
         `SELECT p.id, p.title, p.stage, p.status, p.listing_status,
-                p.investment_ask::text AS investment_ask, p.ask_currency,
+                p.ask_currency,
+                (SELECT r.status FROM lab.funding_rounds r
+                  WHERE r.project_id = p.id AND r.status IN ('open','paused') LIMIT 1) AS raising,
+                (SELECT r.target::text FROM lab.funding_rounds r
+                  WHERE r.project_id = p.id AND r.status IN ('open','paused') LIMIT 1) AS round_target,
+                (SELECT r.currency FROM lab.funding_rounds r
+                  WHERE r.project_id = p.id AND r.status IN ('open','paused') LIMIT 1) AS round_currency,
                 p.required_plan_id, sp.code AS required_plan_code,
                 fp.role, p.created_at
            FROM lab.founders_projects fp
@@ -217,8 +223,9 @@ export class ProjectsService {
         stage: row.stage,
         status: row.status,
         listingStatus: row.listing_status,
-        investmentAsk: row.investment_ask,
-        askCurrency: row.ask_currency as 'RUB',
+        investmentAsk: row.round_target ?? null,
+        askCurrency: (row.round_currency?.trim() ?? row.ask_currency) as 'RUB',
+        raising: row.raising ?? 'none',
         requiredPlanId: row.required_plan_id,
         requiredPlanCode: row.required_plan_code,
         role: row.role,
@@ -1029,6 +1036,14 @@ export function computeProjectLimits(
 const PROJECT_COLUMNS = `
   id, taxonomy_id, title, tagline, description, stage, geo_country, geo_region,
   investment_ask::text AS investment_ask, ask_currency, required_plan_id,
+  -- Текущее привлечение — из незавершённого раунда (M084); под RLS раундов:
+  -- член команды видит свой, инвестор до 5.7 — нет.
+  (SELECT r.status FROM lab.funding_rounds r
+    WHERE r.project_id = lab.projects.id AND r.status IN ('open','paused') LIMIT 1) AS raising,
+  (SELECT r.target::text FROM lab.funding_rounds r
+    WHERE r.project_id = lab.projects.id AND r.status IN ('open','paused') LIMIT 1) AS round_target,
+  (SELECT r.currency FROM lab.funding_rounds r
+    WHERE r.project_id = lab.projects.id AND r.status IN ('open','paused') LIMIT 1) AS round_currency,
   listing_status, listed_at, status, season_id, current_version_id, current_application_id,
   created_at, updated_at,
   (SELECT s.value::text
@@ -1049,6 +1064,9 @@ interface ProjectRow {
   geo_region: string | null;
   investment_ask: string;
   ask_currency: string;
+  raising: 'open' | 'paused' | null;
+  round_target: string | null;
+  round_currency: string | null;
   required_plan_id: string | null;
   listing_status: ProjectFull['listingStatus'];
   listed_at: Date | null;
@@ -1068,7 +1086,9 @@ interface ProjectSummaryRow {
   stage: ProjectSummary['stage'];
   status: ProjectSummary['status'];
   listing_status: ProjectSummary['listingStatus'];
-  investment_ask: string;
+  raising: 'open' | 'paused' | null;
+  round_target: string | null;
+  round_currency: string | null;
   ask_currency: string;
   required_plan_id: string | null;
   required_plan_code: string | null;
@@ -1094,8 +1114,9 @@ function mapProject(row: ProjectRow): ProjectFull {
     stage: row.stage,
     taxonomyId: row.taxonomy_id,
     geoCountry: row.geo_country,
-    investmentAsk: row.investment_ask,
-    askCurrency: row.ask_currency as 'RUB',
+    investmentAsk: row.round_target ?? null,
+    askCurrency: (row.round_currency?.trim() ?? row.ask_currency) as 'RUB',
+    raising: row.raising ?? 'none',
     listedAt: row.listed_at?.toISOString() ?? null,
     description: row.description,
     geoRegion: row.geo_region,

@@ -70,31 +70,37 @@ export class CatalogService {
 
     const cursor = query.cursor ? decodeCursor(query.cursor) : null;
     const params: unknown[] = [];
-    const where: string[] = ["listing_status = 'listed'", 'deleted_at IS NULL'];
+    const where: string[] = ["p.listing_status = 'listed'", 'p.deleted_at IS NULL'];
 
     if (query.q) {
       params.push(query.q);
-      where.push(`public_search_tsv @@ plainto_tsquery('russian', $${params.length})`);
+      where.push(`p.public_search_tsv @@ plainto_tsquery('russian', $${params.length})`);
     }
     if (query.taxonomyId) {
       params.push(query.taxonomyId);
-      where.push(`taxonomy_id = $${params.length}`);
+      where.push(`p.taxonomy_id = $${params.length}`);
     }
     if (query.stage) {
       params.push(query.stage);
-      where.push(`stage = $${params.length}`);
+      where.push(`p.stage = $${params.length}`);
     }
     if (query.geoCountry) {
       params.push(query.geoCountry);
-      where.push(`geo_country = $${params.length}`);
+      where.push(`p.geo_country = $${params.length}`);
     }
+    // Фильтры и сортировки по сумме — по незавершённому раунду (M084): проект
+    // без раунда под фильтр суммы не попадает, а в сортировке по сумме не
+    // участвует — у него нет текущего запроса, сумма старой формы не в счёт.
     if (query.askMin) {
       params.push(query.askMin);
-      where.push(`investment_ask >= $${params.length}::numeric`);
+      where.push(`r.target >= $${params.length}::numeric`);
     }
     if (query.askMax) {
       params.push(query.askMax);
-      where.push(`investment_ask <= $${params.length}::numeric`);
+      where.push(`r.target <= $${params.length}::numeric`);
+    }
+    if (query.sort === 'ask_asc' || query.sort === 'ask_desc') {
+      where.push('r.target IS NOT NULL');
     }
 
     // Выражение сортировки — из фиксированной таблицы, а не из строки запроса.
@@ -104,19 +110,21 @@ export class CatalogService {
       const valueParam = `$${params.length}${order.cast}`;
       params.push(cursor.id);
       const idParam = `$${params.length}`;
-      where.push(`(${order.expression}, id) ${order.comparator} (${valueParam}, ${idParam})`);
+      where.push(`(${order.expression}, p.id) ${order.comparator} (${valueParam}, ${idParam})`);
     }
 
     params.push(query.limit + 1);
     const limitParam = `$${params.length}`;
 
     const sql = `
-      SELECT id, taxonomy_id, title, tagline, stage, geo_country,
-             investment_ask::text AS investment_ask, ask_currency, listed_at,
+      SELECT p.id, p.taxonomy_id, p.title, p.tagline, p.stage, p.geo_country, p.listed_at,
+             COALESCE(r.status, 'none') AS raising,
+             r.target::text AS round_target, r.currency AS round_currency,
              (${order.expression})::text AS sort_value
-        FROM lab.projects
+        FROM lab.projects p
+        LEFT JOIN LATERAL lab.public_round(p.id) r ON true
        WHERE ${where.join(' AND ')}
-       ORDER BY ${order.expression} ${order.direction}, id ${order.direction}
+       ORDER BY ${order.expression} ${order.direction}, p.id ${order.direction}
        LIMIT ${limitParam}`;
 
     return this.db.asPublicRole(traceId, async (tx) => {
@@ -135,8 +143,8 @@ export class CatalogService {
   async getTeaser(traceId: string, projectId: string): Promise<ProjectTeaser> {
     return this.db.asPublicRole(traceId, async (tx) => {
       const { rows } = await tx.query<TeaserRow>(
-        `SELECT id, taxonomy_id, title, tagline, stage, geo_country,
-                investment_ask::text AS investment_ask, ask_currency, listed_at,
+        `SELECT id, taxonomy_id, title, tagline, stage, geo_country, listed_at,
+                raising, round_target::text AS round_target, round_currency,
                 ''::text AS sort_value
            FROM lab.v_public_catalog
           WHERE id = $1`,
@@ -161,15 +169,15 @@ const ORDERINGS: Record<
   { expression: string; direction: 'ASC' | 'DESC'; comparator: '<' | '>'; cast: string }
 > = {
   listed_at_desc: {
-    expression: 'listed_at',
+    expression: 'p.listed_at',
     direction: 'DESC',
     comparator: '<',
     cast: '::timestamptz',
   },
-  ask_asc: { expression: 'investment_ask', direction: 'ASC', comparator: '>', cast: '::numeric' },
-  ask_desc: { expression: 'investment_ask', direction: 'DESC', comparator: '<', cast: '::numeric' },
+  ask_asc: { expression: 'r.target', direction: 'ASC', comparator: '>', cast: '::numeric' },
+  ask_desc: { expression: 'r.target', direction: 'DESC', comparator: '<', cast: '::numeric' },
   relevance: {
-    expression: "ts_rank(public_search_tsv, plainto_tsquery('russian', $1))",
+    expression: "ts_rank(p.public_search_tsv, plainto_tsquery('russian', $1))",
     direction: 'DESC',
     comparator: '<',
     cast: '::real',
@@ -183,8 +191,9 @@ interface TeaserRow {
   tagline: string | null;
   stage: ProjectTeaser['stage'];
   geo_country: string | null;
-  investment_ask: string;
-  ask_currency: string;
+  raising: 'open' | 'paused' | 'none';
+  round_target: string | null;
+  round_currency: string | null;
   listed_at: Date | null;
   sort_value: string;
 }
@@ -197,9 +206,10 @@ function mapTeaser(row: TeaserRow): ProjectTeaser {
     stage: row.stage,
     taxonomyId: row.taxonomy_id,
     geoCountry: row.geo_country,
-    investmentAsk: row.investment_ask,
-    askCurrency: row.ask_currency as 'RUB',
+    investmentAsk: row.round_target,
+    askCurrency: (row.round_currency?.trim() ?? 'RUB') as 'RUB',
     listedAt: row.listed_at?.toISOString() ?? null,
+    raising: row.raising,
   };
 }
 

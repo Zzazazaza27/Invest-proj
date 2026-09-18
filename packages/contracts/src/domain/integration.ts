@@ -43,7 +43,8 @@ export const GraduateSchema = z.object({
   seasonId: UuidSchema.nullable(),
   taxonomyId: UuidSchema.nullable(),
   stage: z.string(),
-  investmentAsk: z.string(),
+  /** Сумма незавершённого раунда опубликованного проекта; null — сейчас не привлекает (M084). */
+  investmentAsk: z.string().nullable(),
   currency: z.literal('RUB'),
   irs: z.number().min(0).max(100).nullable(),
   graduatedAt: IsoDateTimeSchema.nullable(),

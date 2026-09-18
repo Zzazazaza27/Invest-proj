@@ -6,8 +6,8 @@ import {
   ErrorState,
   LoadingState,
   Stack,
-  formatMoney,
   formatScore10,
+  describeRaising,
 } from '@unicorn/ui';
 import type { InvestmentPassport, ProjectFull, ReadinessEntry } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
@@ -164,9 +164,7 @@ export function ProjectPage({
             <span style={{ color: 'var(--u-text-muted)' }}>{project.tagline}</span>
           ) : null}
           <dl style={{ display: 'grid', gap: 'var(--u-space-2)', margin: 0 }}>
-            <Row label="Запрос инвестиций">
-              {formatMoney(project.investmentAsk, project.askCurrency)}
-            </Row>
+            <Row label="Привлечение">{describeRaising(project)}</Row>
             <Row label="Оценка платформы">
               {project.irs === null ? 'ещё не рассчитана' : formatScore10(project.irs)}
             </Row>

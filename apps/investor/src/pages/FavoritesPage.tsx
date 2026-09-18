@@ -7,7 +7,7 @@ import {
   ErrorState,
   LoadingState,
   Stack,
-  formatMoney,
+  describeRaising,
 } from '@unicorn/ui';
 import type { FavoriteProject } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
@@ -137,9 +137,7 @@ export function FavoritesPage() {
                     {item.tagline}
                   </span>
                 ) : null}
-                <span style={{ fontWeight: 600 }}>
-                  {formatMoney(item.investmentAsk, item.askCurrency)}
-                </span>
+                <span style={{ fontWeight: 600 }}>{describeRaising(item)}</span>
                 <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-xs)' }}>
                   в избранном с {new Date(item.favoritedAt).toLocaleDateString('ru-RU')}
                 </span>

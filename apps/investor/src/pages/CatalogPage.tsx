@@ -8,7 +8,7 @@ import {
   Input,
   LoadingState,
   Stack,
-  formatMoney,
+  describeRaising,
 } from '@unicorn/ui';
 import type { ProjectTeaser } from '@unicorn/contracts';
 import { publishedScore10 } from '@unicorn/cabinet';
@@ -288,9 +288,7 @@ export function CatalogPage({ onOpen }: { onOpen: (projectId: string) => void })
                 >
                   {teaser.tagline ?? ''}
                 </span>
-                <span style={{ fontWeight: 600, alignSelf: 'end' }}>
-                  {formatMoney(teaser.investmentAsk, teaser.askCurrency)}
-                </span>
+                <span style={{ fontWeight: 600, alignSelf: 'end' }}>{describeRaising(teaser)}</span>
                 <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
                   <div
                     style={{ position: 'relative' }}
