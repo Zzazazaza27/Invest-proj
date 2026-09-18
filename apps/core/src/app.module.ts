@@ -22,6 +22,14 @@ import { AnalysisService } from './ai/analysis.service';
 import { AuditRepository } from './audit/audit.repository';
 import { BillingController } from './billing/billing.controller';
 import { BillingService } from './billing/billing.service';
+import {
+  AdminServiceCountriesController,
+  MeServiceCountryController,
+  ServiceCountriesController,
+} from './billing/service-countries.controller';
+import { ServiceCountriesService } from './billing/service-countries.service';
+import { FundingRoundsController } from './lab/funding-rounds.controller';
+import { FundingRoundsService } from './lab/funding-rounds.service';
 import { NotificationsController } from './comms/notifications.controller';
 import { FavoritesController } from './lab/favorites.controller';
 import { FavoritesService } from './lab/favorites.service';
@@ -119,6 +127,10 @@ import { S3Service } from './storage/s3.service';
     CatalogController,
     SeasonsController,
     BillingController,
+    ServiceCountriesController,
+    MeServiceCountryController,
+    AdminServiceCountriesController,
+    FundingRoundsController,
     AdminController,
     InvestmentsController,
     AnalysisController,
@@ -158,6 +170,8 @@ import { S3Service } from './storage/s3.service';
     CatalogService,
     SeasonsService,
     BillingService,
+    ServiceCountriesService,
+    FundingRoundsService,
     AdminService,
     DirectoryService,
     ProviderCredentialsService,

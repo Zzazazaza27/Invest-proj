@@ -1599,6 +1599,243 @@ check(
 // возвращает в то состояние, в котором застал.
 await restoreSuspendedSeasons();
 
+// ------------------------------------------------------------ раунды (5.6.3)
+console.warn('\n[раунды] профиль без раунда, черновик, открытие, пауза, основание');
+{
+  const project = await founderA.client.call('/v1/projects', {
+    method: 'POST',
+    body: {
+      title: `Раунд ${suffix}`,
+      tagline: 'Проверка раундов',
+      stage: 'idea',
+      taxonomyId: (await sql("SELECT id FROM lab.project_taxonomy WHERE slug = 'ai'"))[0].id,
+      investmentAsk: '1000000.00',
+      askCurrency: 'RUB',
+    },
+  });
+  const projectId = project.json?.id;
+  check(
+    'проект для раундов создан',
+    project.response.status === 201,
+    `статус ${project.response.status}`,
+  );
+
+  const limits = await founderA.client.call('/v1/projects/limits');
+  check(
+    'лимит проектов аккаунта отдаётся с источником; 0 — безлимит',
+    limits.response.status === 200 &&
+      limits.json?.source === 'application_policy' &&
+      (limits.json?.projects?.limit === 0 ? limits.json?.projects?.remaining === null : true),
+    JSON.stringify(limits.json?.projects),
+  );
+
+  const apps = await founderA.client.call(`/v1/projects/${projectId}/applications`);
+  check(
+    'анкета старой формы не занимает место в лимите анкет',
+    apps.json?.limits?.applications?.used === 0,
+    `used=${apps.json?.limits?.applications?.used}`,
+  );
+
+  const app = await founderA.client.call(`/v1/projects/${projectId}/applications`, {
+    method: 'POST',
+    body: {},
+  });
+  const appId = app.json?.id;
+  const form = await founderA.client.call(`/v1/applications/${appId}/form`);
+  const profileMandatory = (form.json?.sections ?? [])
+    .filter((s) => s.scope !== 'round')
+    .flatMap((s) => s.questions.filter((q) => q.state === 'mandatory' && !q.coreField));
+  const answers = {};
+  for (const q of profileMandatory) {
+    answers[q.key] =
+      q.type === 'select'
+        ? q.options?.[0]?.code
+        : q.type === 'number'
+          ? 1
+          : q.type === 'multiselect'
+            ? [q.options?.[0]?.code]
+            : 'ответ для проверки';
+  }
+  await founderA.client.call(`/v1/applications/${appId}`, { method: 'PATCH', body: { answers } });
+  const submitted = await founderA.client.call(`/v1/applications/${appId}/submit`, {
+    method: 'POST',
+  });
+  check(
+    'профиль подан без суммы и предмета финансирования',
+    submitted.response.status === 201 || submitted.response.status === 200,
+    `статус ${submitted.response.status} ${JSON.stringify(submitted.json?.errors ?? submitted.json?.detail ?? '')}`,
+  );
+  const versionId = submitted.json?.id;
+
+  const draft = await founderA.client.call(`/v1/projects/${projectId}/rounds`, {
+    method: 'POST',
+    body: {},
+  });
+  const roundId = draft.json?.round?.id;
+  check(
+    'черновик раунда создан с готовностью',
+    draft.response.status === 201 && draft.json?.readiness?.canOpen === false,
+    `статус ${draft.response.status}`,
+  );
+  const again = await founderA.client.call(`/v1/projects/${projectId}/rounds`, {
+    method: 'POST',
+    body: {},
+  });
+  check('повторный вызов возвращает тот же черновик', again.json?.round?.id === roundId);
+
+  const tooEarly = await founderA.client.call(`/v1/rounds/${roundId}/open`, { method: 'POST' });
+  check(
+    'открыть незаполненный раунд нельзя, перечень назван',
+    tooEarly.response.status === 400 || tooEarly.response.status === 422,
+    `статус ${tooEarly.response.status}`,
+  );
+
+  const roundForm = (form.json?.sections ?? []).filter((s) => s.scope === 'round');
+  const roundAnswers = {};
+  for (const q of roundForm.flatMap((s) =>
+    s.questions.filter((x) => x.state === 'mandatory' && !x.coreField),
+  )) {
+    roundAnswers[q.key] = 'ответ раунда';
+  }
+  const filled = await founderA.client.call(`/v1/rounds/${roundId}`, {
+    method: 'PATCH',
+    body: {
+      target: '3000000.00',
+      currency: 'RUB',
+      fundingScope: 'project',
+      investorMode: 'multiple',
+      answers: roundAnswers,
+    },
+  });
+  check(
+    'раунд заполнен',
+    filled.response.status === 200,
+    `статус ${filled.response.status} ${JSON.stringify(filled.json?.errors ?? '')}`,
+  );
+  const badCurrency = await founderA.client.call(`/v1/rounds/${roundId}`, {
+    method: 'PATCH',
+    body: { currency: 'KZT' },
+  });
+  const basis = await founderA.client.call(`/v1/rounds/${roundId}/basis`, {
+    method: 'PUT',
+    body: { applicationVersionId: versionId, reason: 'основание — поданная версия' },
+  });
+  check(
+    'основание — поданная версия профиля',
+    basis.response.status === 200,
+    `статус ${basis.response.status}`,
+  );
+  // Страна обслуживания — явный выбор аккаунта: без неё раунд не открывается.
+  const noCountry = await founderA.client.call(`/v1/rounds/${roundId}/open`, { method: 'POST' });
+  check(
+    'без страны обслуживания раунд не открывается, поле названо',
+    (noCountry.response.status === 400 || noCountry.response.status === 422) &&
+      JSON.stringify(noCountry.json ?? '').includes('serviceCountry'),
+    `статус ${noCountry.response.status}`,
+  );
+  const setCountry = await founderA.client.call('/v1/me/service-country', {
+    method: 'PUT',
+    body: { code: 'ru' },
+  });
+  check(
+    'страна обслуживания выбрана',
+    setCountry.response.status === 200 && setCountry.json?.serviceCountry === 'ru',
+    `статус ${setCountry.response.status}`,
+  );
+  const me = await founderA.client.call('/v1/auth/me');
+  check('страна видна в профиле', me.json?.serviceCountry === 'ru');
+  const openKzt = await founderA.client.call(`/v1/rounds/${roundId}/open`, { method: 'POST' });
+  check(
+    'валюта вне условий страны не даёт открыть раунд',
+    badCurrency.response.status === 200 &&
+      (openKzt.response.status === 400 || openKzt.response.status === 422) &&
+      JSON.stringify(openKzt.json ?? '').includes('currency'),
+    `статус ${openKzt.response.status}`,
+  );
+  await founderA.client.call(`/v1/rounds/${roundId}`, {
+    method: 'PATCH',
+    body: { currency: 'RUB' },
+  });
+  const opened = await founderA.client.call(`/v1/rounds/${roundId}/open`, { method: 'POST' });
+  check(
+    'раунд открыт: страна и версия условий зафиксированы',
+    opened.response.status === 201 &&
+      opened.json?.round?.status === 'open' &&
+      opened.json?.round?.serviceCountry === 'ru' &&
+      opened.json?.round?.policyVersion >= 1,
+    `статус ${opened.response.status} ${JSON.stringify(opened.json?.errors ?? opened.json?.round?.status ?? '')}`,
+  );
+  const projectAfter = await founderA.client.call(`/v1/projects/${projectId}`);
+  check(
+    'сумма проекта — из открытого раунда (кеш)',
+    projectAfter.json?.investmentAsk === '3000000.00',
+    `${projectAfter.json?.investmentAsk}`,
+  );
+
+  const second = await founderA.client.call(`/v1/projects/${projectId}/rounds`, {
+    method: 'POST',
+    body: {},
+  });
+  const secondId = second.json?.round?.id;
+  await founderA.client.call(`/v1/rounds/${secondId}`, {
+    method: 'PATCH',
+    body: { target: '1000000.00', currency: 'RUB', fundingScope: 'project', answers: roundAnswers },
+  });
+  await founderA.client.call(`/v1/rounds/${secondId}/basis`, {
+    method: 'PUT',
+    body: { applicationVersionId: versionId, reason: 'второй' },
+  });
+  const secondOpen = await founderA.client.call(`/v1/rounds/${secondId}/open`, { method: 'POST' });
+  check(
+    'второй незавершённый раунд на проект невозможен',
+    secondOpen.response.status === 409,
+    `статус ${secondOpen.response.status}`,
+  );
+
+  const paused = await founderA.client.call(`/v1/rounds/${roundId}/pause`, { method: 'POST' });
+  check('пауза: привлечение приостановлено', paused.json?.round?.status === 'paused');
+  const stillBlocked = await founderA.client.call(`/v1/rounds/${secondId}/open`, {
+    method: 'POST',
+  });
+  check(
+    'пауза место не освобождает',
+    stillBlocked.response.status === 409,
+    `статус ${stillBlocked.response.status}`,
+  );
+  const resumed = await founderA.client.call(`/v1/rounds/${roundId}/resume`, { method: 'POST' });
+  check(
+    'возобновление тем же раундом',
+    resumed.json?.round?.id === roundId && resumed.json?.round?.status === 'open',
+  );
+
+  const history = await founderA.client.call(`/v1/rounds/${roundId}/basis-history`);
+  check('история оснований ведётся', (history.json?.items ?? []).length >= 1);
+
+  const closed = await founderA.client.call(`/v1/rounds/${roundId}/close`, {
+    method: 'POST',
+    body: { closeReason: 'withdrawn' },
+  });
+  check(
+    'закрытие с причиной',
+    closed.json?.round?.status === 'closed' && closed.json?.round?.closeReason === 'withdrawn',
+  );
+  const cancelSecond = await founderA.client.call(`/v1/rounds/${secondId}/cancel`, {
+    method: 'POST',
+  });
+  check('черновик отменён', cancelSecond.json?.round?.status === 'cancelled');
+
+  const countries = await raw('/v1/service-countries');
+  check(
+    'список стран обслуживания публичен',
+    countries.response.status === 200 && (countries.json?.items ?? []).some((c) => c.code === 'ru'),
+  );
+  const policy = await founderA.client.call('/v1/service-countries/ru/policy');
+  check(
+    'условия страны читает вошедший; бесплатная граница выключена',
+    policy.response.status === 200 && policy.json?.config?.freeAttraction?.enabled === false,
+  );
+}
+
 console.warn(`\nИтог: ${passed} проверок пройдено, ${failed} провалено.\n`);
 await pool.end();
 if (failed > 0) process.exitCode = 1;

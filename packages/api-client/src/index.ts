@@ -2,6 +2,17 @@ import {
   AcceptedSchema,
   AnalysisRunSchema,
   ApplicationDetailSchema,
+  type ChangeFundingRoundBasisRequestSchema,
+  type CloseFundingRoundRequestSchema,
+  type CreateFundingRoundRequestSchema,
+  FundingRoundBasisHistoryEntrySchema,
+  FundingRoundDetailSchema,
+  FundingRoundSchema,
+  ServiceCountryPolicyVersionSchema,
+  ServiceCountrySchema,
+  type UpdateFundingRoundRequestSchema,
+  type UpdateServiceCountryRequestSchema,
+  type ActivateServiceCountryPolicyRequestSchema,
   ApplicationFormVersionSchema,
   ApplicationFormVersionsSchema,
   ApplicationFormViewSchema,
@@ -643,6 +654,137 @@ export class UnicornApi {
     });
 
   /** Веса готовности — отдельная версия и активация (план 0.2 §2.7). */
+  /** Раунды привлечения (план 0.2 §0г): черновик, изменение, переходы, основание. */
+  readonly rounds = {
+    list: (projectId: string) =>
+      this.http.request({
+        path: `/projects/${projectId}/rounds`,
+        schema: z.object({ items: z.array(FundingRoundSchema) }),
+      }),
+    /** Черновик раунда; повторный вызов возвращает существующий. */
+    create: (projectId: string, body: z.input<typeof CreateFundingRoundRequestSchema> = {}) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${projectId}/rounds`,
+        body,
+        schema: FundingRoundDetailSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    get: (id: string) =>
+      this.http.request({ path: `/rounds/${id}`, schema: FundingRoundDetailSchema }),
+    update: (
+      id: string,
+      body: z.input<typeof UpdateFundingRoundRequestSchema>,
+      opts: { keepalive?: boolean } = {},
+    ) =>
+      this.http.request({
+        method: 'PATCH',
+        path: `/rounds/${id}`,
+        body,
+        schema: FundingRoundDetailSchema,
+        keepalive: opts.keepalive,
+      }),
+    open: (id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/rounds/${id}/open`,
+        schema: FundingRoundDetailSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    pause: (id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/rounds/${id}/pause`,
+        schema: FundingRoundDetailSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    resume: (id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/rounds/${id}/resume`,
+        schema: FundingRoundDetailSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    close: (id: string, body: z.input<typeof CloseFundingRoundRequestSchema>) =>
+      this.http.request({
+        method: 'POST',
+        path: `/rounds/${id}/close`,
+        body,
+        schema: FundingRoundDetailSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    cancel: (id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/rounds/${id}/cancel`,
+        schema: FundingRoundDetailSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    changeBasis: (id: string, body: z.input<typeof ChangeFundingRoundBasisRequestSchema>) =>
+      this.http.request({
+        method: 'PUT',
+        path: `/rounds/${id}/basis`,
+        body,
+        schema: FundingRoundDetailSchema,
+      }),
+    basisHistory: (id: string) =>
+      this.http.request({
+        path: `/rounds/${id}/basis-history`,
+        schema: z.object({ items: z.array(FundingRoundBasisHistoryEntrySchema) }),
+      }),
+  };
+
+  /** Страны обслуживания: список публичен, условия — вошедшему; выбор — за аккаунтом. */
+  readonly serviceCountries = {
+    list: () =>
+      this.http.request({
+        path: '/service-countries',
+        schema: z.object({ items: z.array(ServiceCountrySchema) }),
+      }),
+    policy: (code: string) =>
+      this.http.request({
+        path: `/service-countries/${encodeURIComponent(code)}/policy`,
+        schema: ServiceCountryPolicyVersionSchema,
+      }),
+    setMine: (code: string) =>
+      this.http.request({
+        method: 'PUT',
+        path: '/me/service-country',
+        body: { code },
+        schema: z.object({ serviceCountry: z.string() }),
+      }),
+    admin: {
+      list: () =>
+        this.http.request({
+          path: '/admin/service-countries',
+          schema: z.object({ items: z.array(ServiceCountrySchema) }),
+        }),
+      update: (code: string, body: z.input<typeof UpdateServiceCountryRequestSchema>) =>
+        this.http.request({
+          method: 'PATCH',
+          path: `/admin/service-countries/${encodeURIComponent(code)}`,
+          body,
+          schema: ServiceCountrySchema,
+        }),
+      policies: (code: string) =>
+        this.http.request({
+          path: `/admin/service-countries/${encodeURIComponent(code)}/policies`,
+          schema: z.object({ items: z.array(ServiceCountryPolicyVersionSchema) }),
+        }),
+      activatePolicy: (
+        code: string,
+        body: z.input<typeof ActivateServiceCountryPolicyRequestSchema>,
+      ) =>
+        this.http.request({
+          method: 'POST',
+          path: `/admin/service-countries/${encodeURIComponent(code)}/policies`,
+          body,
+          schema: ServiceCountryPolicyVersionSchema,
+          idempotencyKey: uuidv7(),
+        }),
+    },
+  };
+
   readonly readinessConfigs = {
     list: () =>
       this.http

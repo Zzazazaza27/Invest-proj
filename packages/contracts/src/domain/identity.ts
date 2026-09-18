@@ -183,6 +183,8 @@ export const CurrentUserSchema = z.object({
   status: UserStatusSchema,
   locale: LocaleSchema,
   mfaEnabled: z.boolean(),
+  /** Страна обслуживания аккаунта (план 0.2 §0г.2 п.7); null — не выбрана. */
+  serviceCountry: z.string().nullable().optional(),
   /** Маскированные контакты: полные значения наружу не отдаются. */
   emailMasked: z.string().nullable(),
   phoneMasked: z.string().nullable(),

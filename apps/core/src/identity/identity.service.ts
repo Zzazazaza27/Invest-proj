@@ -361,12 +361,13 @@ export class IdentityService {
         status: string;
         locale: string;
         mfa_enabled: boolean;
+        service_country: string | null;
         created_at: Date;
         email_ciphertext: Buffer | null;
         phone_ciphertext: Buffer | null;
         contact_wrapped_dek: Buffer | null;
       }>(
-        `SELECT id, display_name, primary_role, status, locale, mfa_enabled, created_at,
+        `SELECT id, display_name, primary_role, status, locale, mfa_enabled, service_country, created_at,
                 email_ciphertext, phone_ciphertext, contact_wrapped_dek
            FROM identity.users WHERE id = $1 AND deleted_at IS NULL`,
         [ctx.userId],
@@ -408,6 +409,7 @@ export class IdentityService {
         status: user.status as CurrentUser['status'],
         locale: user.locale as CurrentUser['locale'],
         mfaEnabled: user.mfa_enabled,
+        serviceCountry: user.service_country,
         emailMasked,
         phoneMasked,
         createdAt: user.created_at.toISOString(),

@@ -53,6 +53,9 @@ export const RoundCloseReasonSchema = z.enum([
 ]);
 export type RoundCloseReason = z.infer<typeof RoundCloseReasonSchema>;
 
+/** Подтверждённая сумма может быть нулём; иначе — как MoneyAmountSchema. */
+const NonNegativeAmountSchema = z.string().regex(/^\d{1,14}(\.\d{1,2})?$/, 'сумма');
+
 /** Код валюты ISO 4217; допустимые значения задаёт политика страны обслуживания. */
 export const RoundCurrencySchema = z.string().regex(/^[A-Z]{3}$/, 'код валюты');
 
@@ -82,7 +85,7 @@ export const FundingRoundSchema = z.object({
   ticketMin: MoneyAmountSchema.nullable(),
   ticketMax: MoneyAmountSchema.nullable(),
   /** Подтверждено со слов основателя; предварительный интерес инвесторов сюда не входит. */
-  committed: MoneyAmountSchema,
+  committed: NonNegativeAmountSchema,
   committedSource: z.literal('self_reported'),
   answers: ApplicationAnswersSchema,
   evidence: ApplicationEvidenceSchema,
@@ -148,7 +151,7 @@ export const UpdateFundingRoundRequestSchema = z.object({
   investorMode: InvestorModeSchema.nullable().optional(),
   ticketMin: MoneyAmountSchema.nullable().optional(),
   ticketMax: MoneyAmountSchema.nullable().optional(),
-  committed: MoneyAmountSchema.optional(),
+  committed: NonNegativeAmountSchema.optional(),
   answers: ApplicationAnswersSchema.optional(),
   evidence: ApplicationEvidenceSchema.optional(),
 });
