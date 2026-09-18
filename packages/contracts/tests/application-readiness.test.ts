@@ -3,6 +3,7 @@ import {
   APPLICATION_FORM_V1,
   applicableQuestions,
   computeCompleteness,
+  computeRoundReadiness,
   defaultReadinessConfig,
   legacyFormConfig,
   type ApplicationFormConfig,
@@ -82,7 +83,8 @@ describe('Готовность: обязательное и подача', () =>
     // у пустого черновика есть; остальное — нули.
     expect(r.percent).toBeLessThan(10);
     expect(r.canSubmit).toBe(false);
-    // stage и funding_scope заполнены всегда, note не применим при «проект».
+    // stage заполнена всегда; раздел раунда (сумма, use of funds, milestones)
+    // в полноте профиля не участвует с 5.6.3.
     expect(r.missingMandatory).toEqual([
       'problem_statement',
       'current_alternatives',
@@ -92,9 +94,6 @@ describe('Готовность: обязательное и подача', () =>
       'competitors_direct',
       'founders',
       'domain_expertise',
-      'investment_ask',
-      'use_of_funds',
-      'milestones',
     ]);
     // Нетронутый раздел — «не начат», а не «требует внимания»: оранжевая метка
     // появляется только у начатого раздела с незаполненными обязательными.
@@ -141,36 +140,62 @@ describe('Готовность: обязательное и подача', () =>
     expect(r.sections.every((s) => s.status === 'complete')).toBe(true);
   });
 
-  it('предмет финансирования не выбран — обязательный вопрос не засчитан', () => {
+  it('раздел раунда не участвует в полноте профиля (5.6.3)', () => {
     const r = computeCompleteness(
       form,
       weights,
       {
         ...empty,
         fundingScope: null,
-        investmentAsk: '1.00',
+        investmentAsk: null,
         answers: fillFor('idea', ['mandatory']),
       },
       meta,
     );
-    expect(r.missingMandatory).toEqual(['funding_scope']);
-    expect(r.sections.find((s) => s.key === 'funding')?.status).toBe('attention');
+    expect(r.missingMandatory).toEqual([]);
+    expect(r.sections.some((s) => s.key === 'funding')).toBe(false);
+    expect(r.canSubmit).toBe(true);
   });
 
-  it('уточнение направления обязательно только при «направлении»', () => {
-    const base = { ...empty, investmentAsk: '1.00', answers: fillFor('idea', ['mandatory']) };
-    expect(
-      computeCompleteness(form, weights, { ...base, fundingScope: 'direction' }, meta)
-        .missingMandatory,
-    ).toEqual(['funding_scope_note']);
-    expect(
-      computeCompleteness(
-        form,
-        weights,
-        { ...base, fundingScope: 'direction', fundingScopeNote: 'Запуск Taxi' },
-        meta,
-      ).canSubmit,
-    ).toBe(true);
+  it('готовность раунда — отдельно: сумма, валюта, предмет, обязательные вопросы раунда', () => {
+    const none = computeRoundReadiness(form, 'idea', {
+      fundingScope: null,
+      fundingScopeNote: null,
+      target: null,
+      currency: null,
+      answers: {},
+      evidence: {},
+    });
+    expect(none.canOpen).toBe(false);
+    expect(none.missing.map((m) => m.path)).toEqual(
+      expect.arrayContaining([
+        'target',
+        'currency',
+        'fundingScope',
+        'answers.use_of_funds',
+        'answers.milestones',
+      ]),
+    );
+    const direction = computeRoundReadiness(form, 'idea', {
+      fundingScope: 'direction',
+      fundingScopeNote: null,
+      target: '3000000.00',
+      currency: 'RUB',
+      answers: { use_of_funds: 'маркетинг', milestones: '50 клиентов' },
+      evidence: {},
+    });
+    expect(direction.missing.map((m) => m.path)).toEqual(['fundingScopeNote']);
+    const ready = computeRoundReadiness(form, 'idea', {
+      fundingScope: 'project',
+      fundingScopeNote: null,
+      target: '3000000.00',
+      currency: 'RUB',
+      answers: { use_of_funds: 'маркетинг', milestones: '50 клиентов' },
+      evidence: {},
+    });
+    expect(ready.canOpen).toBe(true);
+    expect(ready.percent).toBeGreaterThan(0);
+    expect(ready.percent).toBeLessThan(100);
   });
 });
 
@@ -268,7 +293,7 @@ describe('Готовность: применимость и веса', () => {
     expect(withEvidence.percent).toBe(100);
   });
 
-  it('схема 0: только системные поля, сумма — единственное недостающее', () => {
+  it('схема 0: только системные поля; сумма — у раунда, подача профиля открыта', () => {
     const legacy = legacyFormConfig();
     const r = computeCompleteness(
       legacy,
@@ -276,14 +301,8 @@ describe('Готовность: применимость и веса', () => {
       { ...empty, stage: 'mvp' },
       { schemaVersion: 0, readinessConfigVersion: null },
     );
-    expect(r.missingMandatory).toEqual(['investment_ask']);
-    expect(
-      computeCompleteness(
-        legacy,
-        defaultReadinessConfig(legacy),
-        { ...empty, stage: 'mvp', investmentAsk: '5.00' },
-        { schemaVersion: 0, readinessConfigVersion: null },
-      ).canSubmit,
-    ).toBe(true);
+    expect(r.missingMandatory).toEqual([]);
+    expect(r.canSubmit).toBe(true);
+    expect(r.sections.some((s) => s.key === 'funding')).toBe(false);
   });
 });

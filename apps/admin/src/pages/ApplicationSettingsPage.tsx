@@ -105,6 +105,7 @@ function PolicyBlock({
   const active = versions.find((v) => v.isActive) ?? null;
   const [form, setForm] = useState<ApplicationPolicy>(
     active?.config ?? {
+      maxProjectsPerAccount: 0,
       maxApplicationsPerProject: 3,
       maxApplicationsPerAccount: null,
       count: { draft: true, submitted: true, archived: false },
@@ -146,7 +147,23 @@ function PolicyBlock({
       </div>
       <div className="grid-2">
         <div className="field">
-          <label htmlFor="policy-per-project">Заявок на проект (черновики и открытые)</label>
+          <label htmlFor="policy-projects">Проектов на аккаунт (0 — без ограничения)</label>
+          <input
+            id="policy-projects"
+            type="number"
+            min={0}
+            value={form.maxProjectsPerAccount}
+            onChange={(e) => setForm({ ...form, maxProjectsPerAccount: Number(e.target.value) })}
+          />
+          <div className="field__hint">
+            Стартовое значение 0 — безлимит. Единица подсчёта конечного лимита и поведение при его
+            снижении — вопрос реестра решений; до него считаются все проекты владельца.
+          </div>
+        </div>
+        <div className="field">
+          <label htmlFor="policy-per-project">
+            Заявок на проект (черновики и поданные; анкета старой формы не считается)
+          </label>
           <input
             id="policy-per-project"
             type="number"

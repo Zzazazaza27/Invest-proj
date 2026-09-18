@@ -5,11 +5,13 @@ import { ApplicationWithChecksSchema, QuestionKeySchema, type FundingScope } fro
 import {
   applicableQuestions,
   isAnswerFilled,
+  sectionScope,
   sortedQuestions,
   sortedSections,
   type ApplicationFormConfig,
   type FormQuestion,
 } from './application-form';
+import type { FundingRoundReadiness } from './funding-round';
 
 /**
  * Готовность заявки — расчёт без ИИ (план 0.2 §4, постановка §9).
@@ -151,6 +153,12 @@ export function computeCompleteness(
 ): ApplicationReadiness {
   const levels = applicableQuestions(form, input.stage);
   const questions = new Map(sortedQuestions(form).map((q) => [q.key, q]));
+  // Полнота профиля — только по разделам профиля. Раздел раунда (план 0.2
+  // §0г.2 п.9) в проценте и в условиях подачи не участвует ни при каких
+  // условиях: его готовность — отдельный показатель (computeRoundReadiness).
+  const roundSections = new Set(
+    form.sections.filter((s) => sectionScope(s) === 'round').map((s) => s.key),
+  );
 
   const perSection = new Map<
     string,
@@ -161,6 +169,7 @@ export function computeCompleteness(
   for (const [key, level] of levels) {
     const question = questions.get(key);
     if (!question) continue;
+    if (roundSections.has(question.section)) continue;
     if (question.coreField === 'funding_scope_note' && input.fundingScope !== 'direction') {
       continue;
     }
@@ -189,6 +198,7 @@ export function computeCompleteness(
   let weightedSum = 0;
   let weightTotal = 0;
   for (const section of sortedSections(form)) {
+    if (roundSections.has(section.key)) continue;
     const bucket = perSection.get(section.key);
     if (!bucket || bucket.applicable === 0) continue;
     const weight = readiness.sections[section.key]?.weight ?? 1;
@@ -222,5 +232,79 @@ export function computeCompleteness(
     canSubmit: missingMandatory.length === 0,
     missingMandatory,
     sections,
+  };
+}
+
+// ------------------------------------------------------------ раунд
+
+/** Что нужно от раунда для расчёта готовности к открытию. */
+export interface RoundReadinessInput {
+  fundingScope: FundingScope | null;
+  fundingScopeNote: string | null;
+  target: string | null;
+  currency: string | null;
+  answers: Record<string, unknown>;
+  evidence: Record<string, readonly string[] | undefined>;
+}
+
+function roundCoreValue(question: FormQuestion, input: RoundReadinessInput): unknown {
+  switch (question.coreField) {
+    case 'funding_scope':
+      return input.fundingScope;
+    case 'funding_scope_note':
+      return input.fundingScopeNote;
+    case 'investment_ask':
+      return input.target;
+    default:
+      return input.answers[question.key];
+  }
+}
+
+/**
+ * Готовность раунда к открытию — отдельный показатель (план 0.2 §0г.2 п.9,
+ * заявка-03 §2.6): считается по разделам раунда формы версии раунда для
+ * стадии основания. Системные поля раунда — сумма, валюта, предмет
+ * финансирования и уточнение при «направлении» — проверяются всегда,
+ * даже если конфигурация не содержит соответствующих вопросов.
+ */
+export function computeRoundReadiness(
+  form: ApplicationFormConfig,
+  stage: ProjectStage,
+  input: RoundReadinessInput,
+): FundingRoundReadiness {
+  const roundSections = new Set(
+    form.sections.filter((s) => sectionScope(s) === 'round').map((s) => s.key),
+  );
+  const questions = new Map(sortedQuestions(form).map((q) => [q.key, q]));
+  const missing: FundingRoundReadiness['missing'] = [];
+  let applicable = 0;
+  let filled = 0;
+
+  if (input.target === null) missing.push({ path: 'target', message: 'укажите сумму раунда' });
+  if (input.currency === null) missing.push({ path: 'currency', message: 'укажите валюту' });
+  if (input.fundingScope === null) {
+    missing.push({ path: 'fundingScope', message: 'выберите, на что привлекаете инвестиции' });
+  } else if (input.fundingScope === 'direction' && !input.fundingScopeNote) {
+    missing.push({ path: 'fundingScopeNote', message: 'уточните направление или этап' });
+  }
+
+  for (const [key, level] of applicableQuestions(form, stage)) {
+    const question = questions.get(key);
+    if (!question || !roundSections.has(question.section)) continue;
+    if (question.coreField === 'funding_scope_note' && input.fundingScope !== 'direction') continue;
+    applicable += 1;
+    const ok = isAnswerFilled(question, roundCoreValue(question, input), input.evidence[key]);
+    if (ok) {
+      filled += 1;
+    } else if (level === 'mandatory' && !question.coreField) {
+      missing.push({ path: `answers.${key}`, message: 'заполните обязательный вопрос раунда' });
+    }
+  }
+
+  const percent = applicable > 0 ? Math.round((100 * filled) / applicable) : 0;
+  return {
+    canOpen: missing.length === 0,
+    missing,
+    percent: Math.max(0, Math.min(100, percent)),
   };
 }

@@ -5,7 +5,9 @@ import {
   type UploadableMaterialType,
   type AddProductLink,
   type CreateProjectRequest,
+  type ApplicationPolicy,
   type ProjectFull,
+  type ProjectLimits,
   type ProjectMaterial,
   type ProjectSummary,
   type ProjectVersion,
@@ -18,7 +20,7 @@ import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
 import { getEnv } from '../config/env';
-import { ApplicationsService } from './applications.service';
+import { ApplicationsService, loadActivePolicy } from './applications.service';
 import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 
 /**
@@ -89,6 +91,18 @@ export class ProjectsService {
   async create(ctx: RequestContext, input: CreateProjectRequest): Promise<ProjectFull> {
     const id = uuidv7();
     return this.db.transaction(ctx, async (tx) => {
+      // Лимит проектов аккаунта — одна проверка под локом аккаунта (план 0.2
+      // §0г.2 п.1): 0 — безлимит; источник — политика заявок, точка расширения
+      // под будущую подписку. Два параллельных создания не обойдут лимит.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `account-projects:${ctx.userId}`,
+      ]);
+      const limits = await this.projectLimitsInTx(tx, ctx);
+      if (limits.projects.remaining !== null && limits.projects.remaining <= 0) {
+        throw errors.limitExceeded(
+          `Достигнут предел проектов аккаунта: ${limits.projects.used} из ${limits.projects.limit}`,
+        );
+      }
       const planId = await resolveFounderPlan(tx, input.investmentAsk);
 
       // RETURNING здесь недопустим, и это не стилистика: возврат строки требует
@@ -163,6 +177,25 @@ export class ProjectsService {
   }
 
   /** Проекты, к которым пользователь причастен. RLS отдаёт только свои. */
+  /** Лимит проектов аккаунта и его происхождение — до создания проекта. */
+  async projectLimits(ctx: RequestContext): Promise<ProjectLimits> {
+    return this.db.readOnly(ctx, (tx) => this.projectLimitsInTx(tx, ctx));
+  }
+
+  private async projectLimitsInTx(tx: Tx, ctx: RequestContext): Promise<ProjectLimits> {
+    const policy = await loadActivePolicy(tx);
+    // Единица подсчёта конечного лимита — вопрос реестра решений 2026-09-18;
+    // до него считаются все неудалённые проекты, где аккаунт — владелец.
+    const { rows } = await tx.query<{ count: string }>(
+      `SELECT count(*)::text AS count
+         FROM lab.founders_projects fp
+         JOIN lab.projects p ON p.id = fp.project_id
+        WHERE fp.user_id = $1 AND fp.role = 'owner' AND p.deleted_at IS NULL`,
+      [ctx.userId],
+    );
+    return computeProjectLimits(policy.version, policy.config, Number(rows[0]?.count ?? '0'));
+  }
+
   async listMine(ctx: RequestContext): Promise<ProjectSummary[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<ProjectSummaryRow>(
@@ -973,6 +1006,24 @@ async function resolveFounderPlan(tx: Tx, ask: string): Promise<string> {
     throw errors.internal({ reason: 'no active founder plan for ask', ask });
   }
   return planId;
+}
+
+/** Остаток проектов аккаунта: 0 в политике — безлимит (`remaining: null`). */
+export function computeProjectLimits(
+  policyVersion: number,
+  policy: Pick<ApplicationPolicy, 'maxProjectsPerAccount'>,
+  used: number,
+): ProjectLimits {
+  const limit = policy.maxProjectsPerAccount;
+  return {
+    policyVersion,
+    source: 'application_policy',
+    projects: {
+      limit,
+      used,
+      remaining: limit === 0 ? null : Math.max(0, limit - used),
+    },
+  };
 }
 
 const PROJECT_COLUMNS = `

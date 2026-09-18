@@ -128,6 +128,12 @@ export type ApplicationSubmissionCheck = z.infer<typeof ApplicationSubmissionChe
  * параметры, а правила подсчёта, зафиксированные в контракте.
  */
 export const ApplicationPolicySchema = z.object({
+  /**
+   * Число проектов аккаунта (план 0.2 §0г.2 п.1): 0 — безлимит (стартовое
+   * значение, не неизменяемое правило). Единица подсчёта конечного лимита —
+   * вопрос реестра; пока считаются все неудалённые проекты владельца.
+   */
+  maxProjectsPerAccount: z.number().int().min(0).max(100_000).default(0),
   maxApplicationsPerProject: z.number().int().min(1).max(1000),
   maxApplicationsPerAccount: z.number().int().min(1).max(10_000).nullable(),
   count: z.object({
@@ -182,6 +188,21 @@ export const ApplicationLimitsSchema = z.object({
   openAskTotal: NonNegativeAmountSchema,
 });
 export type ApplicationLimits = z.infer<typeof ApplicationLimitsSchema>;
+
+/**
+ * Лимит проектов аккаунта и его происхождение — основатель видит его до
+ * создания проекта; `remaining: null` — безлимит.
+ */
+export const ProjectLimitsSchema = z.object({
+  policyVersion: z.number().int().positive(),
+  source: z.literal('application_policy'),
+  projects: z.object({
+    limit: z.number().int().nonnegative(),
+    used: z.number().int().nonnegative(),
+    remaining: z.number().int().nonnegative().nullable(),
+  }),
+});
+export type ProjectLimits = z.infer<typeof ProjectLimitsSchema>;
 
 export const ApplicationListSchema = z.object({
   items: z.array(InvestmentApplicationSchema),

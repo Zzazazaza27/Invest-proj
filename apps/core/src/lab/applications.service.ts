@@ -362,7 +362,8 @@ export class ApplicationsService {
     applicationId: string,
     opts: SubmitOptions = {},
   ): Promise<ProjectVersion> {
-    const enforcePolicy = opts.enforcePolicy ?? true;
+    // opts.enforcePolicy остаётся в сигнатуре для старого маршрута: после 5.6.3
+    // политика сумм на подачу не влияет, отличий между путями нет.
     const probe = await this.load(tx, applicationId);
     await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
       `project-write:${probe.projectId}`,
@@ -385,30 +386,11 @@ export class ApplicationsService {
     }
 
     const policy = await loadActivePolicy(tx);
-    const rules = enforcePolicy
-      ? policy.config
-      : { ...policy.config, maxAskPerApplication: null, maxOpenAskTotalPerProject: null };
-    // Обязательные вопросы формы — условие подачи наравне с суммой (план 0.2 §4 п.5).
+    // Обязательные вопросы разделов профиля — условие подачи (план 0.2 §4 п.5).
+    // Сумма и предмет финансирования подаче не мешают: они у раунда (§0г).
     const assessment = await assessApplication(tx, application);
-    const check = checkSubmission(application, rules, assessment.readiness);
+    const check = checkSubmission(application, policy.config, assessment.readiness);
     if (!check.canSubmit) throw errors.validation(check.missing);
-    const ask = application.investmentAsk!;
-
-    if (rules.maxOpenAskTotalPerProject !== null) {
-      // Сумма открытых заявок БЕЗ этой: при повторной подаче она уже в сумме.
-      const { rows } = await tx.query<{ total: string | null }>(
-        `SELECT sum(investment_ask)::text AS total FROM lab.investment_applications
-          WHERE project_id = $1 AND status = 'submitted' AND id <> $2`,
-        [application.projectId, applicationId],
-      );
-      const others = rows[0]?.total ?? '0.00';
-      if (exceedsOpenTotal(rules, others, ask)) {
-        throw errors.limitExceeded(
-          `Сумма открытых запросов проекта превысит потолок ${rules.maxOpenAskTotalPerProject} ₽: ` +
-            `уже открыто ${addAmounts(others, '0')} ₽`,
-        );
-      }
-    }
 
     // Номер версии — внутри заявки; при подаче в сезон он обязан быть уникален
     // и в паре (проект, сезон): у проекта с несколькими заявками номера
@@ -610,9 +592,12 @@ export class ApplicationsService {
 
   private async limits(tx: Tx, ctx: RequestContext, projectId: string): Promise<ApplicationLimits> {
     const policy = await loadActivePolicy(tx);
+    // Анкета старой формы (схема 0) приходит с каждым проектом из старого
+    // кабинета и место в лимите не занимает (решение владельца 2026-09-18):
+    // лимит защищает от накопления черновиков новых анкет.
     const { rows: byStatus } = await tx.query<{ status: string; count: string }>(
       `SELECT status, count(*)::text AS count FROM lab.investment_applications
-        WHERE project_id = $1 GROUP BY status`,
+        WHERE project_id = $1 AND schema_version > 0 GROUP BY status`,
       [projectId],
     );
     const project = tally(byStatus);
@@ -623,7 +608,7 @@ export class ApplicationsService {
         `SELECT a.status, count(*)::text AS count
            FROM lab.investment_applications a
            JOIN lab.founders_projects fp ON fp.project_id = a.project_id
-          WHERE fp.user_id = $1 AND fp.role = 'owner'
+          WHERE fp.user_id = $1 AND fp.role = 'owner' AND a.schema_version > 0
           GROUP BY a.status`,
         [ctx.userId],
       );
@@ -797,43 +782,24 @@ function normalizeAmount(value: string): string {
 }
 
 /**
- * Что мешает подаче. Только core-поля и потолок суммы; обязательные вопросы
- * схемы добавляются в этапе 3 тем же списком `missing`.
+ * Что мешает подаче профиля. С этапа 5.6.3 (план 0.2 §0г.2 п.9) сумма,
+ * валюта и предмет финансирования принадлежат раунду и подаче профиля не
+ * мешают: профиль подаётся без раунда. Остаются обязательные вопросы
+ * разделов профиля (готовность уже исключает раздел раунда) и архив.
  */
 export function checkSubmission(
-  application: Pick<
-    InvestmentApplication,
-    'status' | 'investmentAsk' | 'fundingScope' | 'fundingScopeNote'
-  >,
-  policy: ApplicationPolicy,
-  /** Готовность по форме версии заявки: незаполненные обязательные вопросы тоже мешают подаче. */
+  application: Pick<InvestmentApplication, 'status'>,
+  _policy: ApplicationPolicy,
+  /** Готовность по форме версии заявки: незаполненные обязательные вопросы мешают подаче. */
   readiness?: Pick<ApplicationReadiness, 'missingMandatory'>,
 ): ApplicationSubmissionCheck {
   const missing: ApplicationSubmissionCheck['missing'] = [];
-  // Системные поля проверяются ниже своими сообщениями; из готовности берутся
-  // только вопросы формы, чтобы сумма не попадала в список дважды.
   for (const key of readiness?.missingMandatory ?? []) {
     if (CORE_KEYS.has(key)) continue;
     missing.push({ path: `answers.${key}`, message: 'заполните обязательный вопрос' });
   }
   if (application.status === 'archived') {
     missing.push({ path: 'status', message: 'заявка в архиве' });
-  }
-  if (application.investmentAsk === null) {
-    missing.push({ path: 'investmentAsk', message: 'укажите сумму запроса' });
-  } else if (
-    policy.maxAskPerApplication !== null &&
-    toMinorUnits(application.investmentAsk) > toMinorUnits(policy.maxAskPerApplication)
-  ) {
-    missing.push({
-      path: 'investmentAsk',
-      message: `сумма заявки не может превышать ${policy.maxAskPerApplication} ₽`,
-    });
-  }
-  if (application.fundingScope === null) {
-    missing.push({ path: 'fundingScope', message: 'выберите, на что привлекаете инвестиции' });
-  } else if (application.fundingScope === 'direction' && !application.fundingScopeNote) {
-    missing.push({ path: 'fundingScopeNote', message: 'уточните направление или этап' });
   }
   return { canSubmit: missing.length === 0, missing };
 }
@@ -878,20 +844,28 @@ export function addAmounts(a: string, b: string): string {
 }
 
 /**
- * Проекция открытых заявок в проект (план 0.2 §2.4). Совместимость, а не
- * правило доступа: каталог, фильтры, интеграционный API и триггер биллинга
- * читают одно число — максимум по открытым заявкам; стадия — последней
- * поданной. Если открытых нет, сумма и стадия не меняются: старое значение
- * честнее выдуманного, а колонки NOT NULL.
+ * Проекция в проект (план 0.2 §2.4, §0г). Совместимость, а не правило
+ * доступа: каталог, фильтры, интеграционный API и триггер биллинга читают
+ * одно число. С 5.6.3 сумма берётся из НЕЗАВЕРШЁННОГО раунда проекта (open
+ * или paused, план 0.2 §0г.2 п.9), а не из заявок: сумма принадлежит
+ * раунду. Если раунда нет, колонка не меняется: старое значение честнее
+ * выдуманного, колонка NOT NULL, а «не привлекает» выражается состоянием
+ * раунда, не числом. Стадия — последней поданной заявки; статус проекта —
+ * draft→submitted при первой подаче. Единственный писатель кеша в v2.
  */
 export async function recomputeProjectProjection(tx: Tx, projectId: string): Promise<void> {
   await tx.query(
     `WITH open AS (
-       SELECT id, stage, investment_ask, current_version_id, submitted_at
+       SELECT id, stage, current_version_id, submitted_at
          FROM lab.investment_applications
         WHERE project_id = $1 AND status = 'submitted'
      ),
      latest_open AS (SELECT * FROM open ORDER BY submitted_at DESC, id DESC LIMIT 1),
+     round AS (
+       SELECT target FROM lab.funding_rounds
+        WHERE project_id = $1 AND status IN ('open','paused')
+        LIMIT 1
+     ),
      -- Текущая заявка: последняя открытая, а если открытых нет — последний
      -- незаархивированный черновик (так же её выбирает перенос M071).
      latest_any AS (
@@ -900,10 +874,10 @@ export async function recomputeProjectProjection(tx: Tx, projectId: string): Pro
         ORDER BY (status = 'submitted') DESC, submitted_at DESC NULLS LAST, created_at DESC, id DESC
         LIMIT 1
      ),
-     agg AS (SELECT max(investment_ask) AS max_ask FROM open)
+     agg AS (SELECT (SELECT target FROM round) AS round_target)
      UPDATE lab.projects p
-        SET investment_ask   = COALESCE(agg.max_ask, p.investment_ask),
-            required_plan_id = billing.resolve_founder_plan(COALESCE(agg.max_ask, p.investment_ask)),
+        SET investment_ask   = COALESCE(agg.round_target, p.investment_ask),
+            required_plan_id = billing.resolve_founder_plan(COALESCE(agg.round_target, p.investment_ask)),
             stage            = COALESCE(latest_open.stage, p.stage),
             current_application_id = latest_any.id,
             current_version_id     = COALESCE(latest_open.current_version_id, p.current_version_id),
@@ -943,13 +917,8 @@ function actorRole(ctx: RequestContext): string {
   return ctx.roles.includes('admin') ? 'admin' : 'founder';
 }
 
-const CORE_KEYS = new Set([
-  'stage',
-  'business_type',
-  'funding_scope',
-  'funding_scope_note',
-  'investment_ask',
-]);
+/** Системные вопросы профиля: их значения — колонки заявки, не answers. */
+const CORE_KEYS = new Set(['stage', 'business_type']);
 
 /**
  * Форма версии заявки и её готовность по активным весам. Форма берётся по

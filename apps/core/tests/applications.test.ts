@@ -17,9 +17,11 @@ import {
   exceedsOpenTotal,
   foreignEvidence,
 } from '../src/lab/applications.service';
+import { computeProjectLimits } from '../src/lab/projects.service';
 import { strict } from '../src/common/validation';
 
 const policy: ApplicationPolicy = {
+  maxProjectsPerAccount: 0,
   maxApplicationsPerProject: 3,
   maxApplicationsPerAccount: null,
   count: { draft: true, submitted: true, archived: false },
@@ -78,93 +80,24 @@ describe('Политика ограничений: подсчёт', () => {
   });
 });
 
-describe('Условия подачи', () => {
-  it('черновик без суммы сохраняется, но подать нельзя', () => {
-    const check = checkSubmission(
-      { status: 'draft', investmentAsk: null, fundingScope: 'project', fundingScopeNote: null },
-      policy,
-    );
-    expect(check.canSubmit).toBe(false);
-    expect(check.missing.map((m) => m.path)).toEqual(['investmentAsk']);
-  });
-
-  it('предмет финансирования без выбора — не ответ: при подаче требуется (M078)', () => {
-    const check = checkSubmission(
-      { status: 'draft', investmentAsk: '1000000.00', fundingScope: null, fundingScopeNote: null },
-      policy,
-    );
-    expect(check.missing.map((m) => m.path)).toEqual(['fundingScope']);
-  });
-
-  it('направление требует уточнения только на подаче', () => {
-    const check = checkSubmission(
-      {
-        status: 'draft',
-        investmentAsk: '1000000.00',
-        fundingScope: 'direction',
-        fundingScopeNote: null,
-      },
-      policy,
-    );
-    expect(check.missing.map((m) => m.path)).toEqual(['fundingScopeNote']);
-  });
-
-  it('сумма выше потолка политики блокирует подачу', () => {
-    const check = checkSubmission(
-      {
-        status: 'draft',
-        investmentAsk: '5000000.01',
-        fundingScope: 'project',
-        fundingScopeNote: null,
-      },
-      policy,
-    );
-    expect(check.canSubmit).toBe(false);
-    expect(check.missing[0]!.path).toBe('investmentAsk');
-  });
-
-  it('полная заявка проходит', () => {
-    const check = checkSubmission(
-      {
-        status: 'submitted',
-        investmentAsk: '5000000.00',
-        fundingScope: 'direction',
-        fundingScopeNote: 'Запуск Taxi',
-      },
-      policy,
-    );
+describe('Условия подачи (с 5.6.3 — без суммы: она у раунда)', () => {
+  it('черновик без суммы и предмета финансирования подаётся', () => {
+    const check = checkSubmission({ status: 'draft' }, policy, { missingMandatory: [] });
     expect(check.canSubmit).toBe(true);
+    expect(check.missing).toEqual([]);
   });
 
-  it('незаполненные обязательные вопросы формы мешают подаче; системные не дублируются', () => {
-    const check = checkSubmission(
-      { status: 'draft', investmentAsk: null, fundingScope: 'project', fundingScopeNote: null },
-      policy,
-      { missingMandatory: ['problem_statement', 'investment_ask', 'founders'] },
-    );
+  it('незаполненные обязательные вопросы профиля мешают подаче; системные — нет', () => {
+    const check = checkSubmission({ status: 'draft' }, policy, {
+      missingMandatory: ['stage', 'problem_statement'],
+    });
     expect(check.canSubmit).toBe(false);
-    expect(check.missing.map((m) => m.path)).toEqual([
-      'answers.problem_statement',
-      'answers.founders',
-      'investmentAsk',
-    ]);
+    expect(check.missing.map((m) => m.path)).toEqual(['answers.problem_statement']);
   });
-});
 
-describe('Контракты заявки', () => {
-  it('политика не даёт выключить подсчёт поданных или включить архив', () => {
-    expect(
-      ApplicationPolicySchema.safeParse({
-        ...policy,
-        count: { draft: true, submitted: false, archived: false },
-      }).success,
-    ).toBe(false);
-    expect(
-      ApplicationPolicySchema.safeParse({
-        ...policy,
-        count: { draft: true, submitted: true, archived: true },
-      }).success,
-    ).toBe(false);
+  it('архивную заявку подать нельзя', () => {
+    const check = checkSubmission({ status: 'archived' }, policy);
+    expect(check.missing.map((m) => m.path)).toEqual(['status']);
   });
 
   it('создание черновика допускает пустое тело', () => {
@@ -184,6 +117,24 @@ describe('Контракты заявки', () => {
     expect(strict(UpdateProjectRequestSchema).safeParse({ askCurrency: 'RUB' }).success).toBe(
       false,
     );
+  });
+});
+
+describe('Лимит проектов аккаунта', () => {
+  it('0 — безлимит: остаток не считается', () => {
+    const limits = computeProjectLimits(1, { maxProjectsPerAccount: 0 }, 42);
+    expect(limits.projects).toEqual({ limit: 0, used: 42, remaining: null });
+    expect(limits.source).toBe('application_policy');
+  });
+
+  it('конечный лимит даёт остаток и не уходит в минус', () => {
+    expect(computeProjectLimits(1, { maxProjectsPerAccount: 10 }, 3).projects.remaining).toBe(7);
+    expect(computeProjectLimits(1, { maxProjectsPerAccount: 2 }, 5).projects.remaining).toBe(0);
+  });
+
+  it('политика без поля читается как безлимит', () => {
+    const parsed = ApplicationPolicySchema.parse(policy);
+    expect(parsed.maxProjectsPerAccount).toBe(0);
   });
 });
 

@@ -6,6 +6,7 @@ import {
   ApplicationFormVersionsSchema,
   ApplicationFormViewSchema,
   ApplicationListSchema,
+  ProjectLimitsSchema,
   ApplicationPreviewSchema,
   ReadinessConfigVersionSchema,
   TextsResponseSchema,
@@ -505,6 +506,10 @@ export class UnicornApi {
    * проекта их может быть несколько, у каждой — свои версии и свой архив.
    * Черновик свободен; что мешает подаче — в `submission.missing`.
    */
+  /** Лимит проектов аккаунта (0 — безлимит) и его происхождение. */
+  readonly projectLimits = () =>
+    this.http.request({ path: '/projects/limits', schema: ProjectLimitsSchema });
+
   readonly applications = {
     list: (projectId: string) =>
       this.http.request({

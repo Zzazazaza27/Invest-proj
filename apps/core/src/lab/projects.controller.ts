@@ -4,6 +4,7 @@ import {
   AddProductLinkSchema,
   CreateProjectRequestSchema,
   ProjectFullSchema,
+  ProjectLimitsSchema,
   ProjectMaterialSchema,
   ProjectSummarySchema,
   ProjectVersionSchema,
@@ -42,6 +43,12 @@ export class ProjectsController {
   async listMine(@Ctx() ctx: RequestContext) {
     const items = await this.projects.listMine(ctx);
     return { items: items.map((p) => ProjectSummarySchema.parse(p)) };
+  }
+
+  /** Лимит проектов аккаунта и его источник — до `:id`, иначе перехватит маршрут проекта. */
+  @Get('limits')
+  async limits(@Ctx() ctx: RequestContext) {
+    return ProjectLimitsSchema.parse(await this.projects.projectLimits(ctx));
   }
 
   @Get(':id')

@@ -995,11 +995,15 @@ let ticket;
 
   const got = await founderA.client.call(`/v1/applications/${appId}`);
   const missing = (got.json?.submission?.missing ?? []).map((m) => m.path);
+  // С 5.6.3 сумма и предмет финансирования — у раунда: подаче профиля они
+  // не мешают; мешают только обязательные вопросы разделов профиля.
   check(
-    'подача без суммы и уточнения невозможна, причины названы',
+    'подача без обязательных вопросов профиля невозможна; сумма и предмет подаче не мешают',
     got.json?.submission?.canSubmit === false &&
-      missing.includes('investmentAsk') &&
-      missing.includes('fundingScopeNote'),
+      !missing.includes('investmentAsk') &&
+      !missing.includes('fundingScope') &&
+      !missing.includes('fundingScopeNote') &&
+      missing.some((m) => m.startsWith('answers.')),
     missing.join(','),
   );
 
@@ -1058,9 +1062,9 @@ let ticket;
     body: { investmentAsk: '5000000.01' },
   });
   check(
-    'сумма выше потолка политики сохраняется, но подать нельзя',
+    'сумма выше прежнего потолка политики сохраняется и подаче профиля не мешает (сумма — у раунда)',
     overCap.response.status === 200 &&
-      (overCap.json?.submission?.missing ?? []).some((m) => m.path === 'investmentAsk'),
+      !(overCap.json?.submission?.missing ?? []).some((m) => m.path === 'investmentAsk'),
   );
   await founderA.client.call(`/v1/applications/${appId}`, {
     method: 'PATCH',
