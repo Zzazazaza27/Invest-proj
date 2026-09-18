@@ -521,10 +521,33 @@ console.warn('\n[5] Рейтинг и золотые билеты');
   );
 }
 {
+  // 5.6.0: рейтинг публичен, но отдаёт только проекты, доступные публичной
+  // аудитории. Проект смоука не опубликован — анонимно его в рейтинге нет.
+  const hidden = await raw(`/v1/seasons/${season.id}/rating`);
+  check(
+    'рейтинг читается анонимно',
+    hidden.response.status === 200,
+    `HTTP ${hidden.response.status}`,
+  );
+  check(
+    'неопубликованный проект не виден в публичном рейтинге',
+    !(hidden.json?.items ?? []).some((i) => i.projectId === project.id),
+  );
+  await sql(`UPDATE lab.projects SET listing_status = 'listed', listed_at = now() WHERE id = $1`, [
+    project.id,
+  ]);
   const { response, json } = await raw(`/v1/seasons/${season.id}/rating`);
-  check('рейтинг читается анонимно', response.status === 200, `HTTP ${response.status}`);
+  check(
+    'рейтинг читается анонимно после публикации',
+    response.status === 200,
+    `HTTP ${response.status}`,
+  );
   const entry = (json?.items ?? []).find((i) => i.projectId === project.id);
-  check('проект попал в рейтинг с фактическим IRS', entry?.irs === 71.5, `значение: ${entry?.irs}`);
+  check(
+    'опубликованный проект попал в рейтинг с фактическим IRS',
+    entry?.irs === 71.5,
+    `значение: ${entry?.irs}`,
+  );
 }
 {
   const { response } = await organizer.client.call(`/v1/seasons/${season.id}/golden-tickets`, {

@@ -1041,6 +1041,18 @@ let ticket;
     `статус ${badAnswer.response.status}`,
   );
 
+  // 5.6.0: подтверждение чужим или несуществующим материалом — ошибка у поля.
+  const foreignEvidence = await founderA.client.call(`/v1/applications/${appId}`, {
+    method: 'PATCH',
+    body: { evidence: { problem_statement: ['01a0a50c-0000-7000-8000-00000000ffff'] } },
+  });
+  check(
+    'подтверждение чужим материалом отвергается с адресом поля',
+    (foreignEvidence.response.status === 400 || foreignEvidence.response.status === 422) &&
+      JSON.stringify(foreignEvidence.json ?? '').includes('evidence.problem_statement'),
+    `статус ${foreignEvidence.response.status}`,
+  );
+
   const overCap = await founderA.client.call(`/v1/applications/${appId}`, {
     method: 'PATCH',
     body: { investmentAsk: '5000000.01' },

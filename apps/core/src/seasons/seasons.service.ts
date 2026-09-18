@@ -111,16 +111,22 @@ export class SeasonsService {
 
   /**
    * Рейтинг сезона. Публичен намеренно: смысл сезонного рейтинга в том, что его
-   * видно снаружи. Роль `app_public_read` имеет права только на само
-   * представление — ни черновиков, ни закрытых проектов через неё не достать.
+   * видно снаружи. Но представление строится по этапу воронки, а не по
+   * публикации: до этапа 5.6.0 оно отдавало название и IRS проектов, которых
+   * нет в каталоге (заявка-03 §3.1). Теперь выдача ограничена проектами,
+   * доступными публичной аудитории — тем же `lab.v_public_catalog`, что и
+   * витрина; после появления режимов видимости (5.7) фильтр переходит на
+   * предикат доступа. Позиции (`rank`) остаются как в представлении: сжатие
+   * номеров скрыло бы, что кто-то исключён, а исключение — не тайна.
    */
   async rating(traceId: string, seasonId: string, limit: number): Promise<RatingEntry[]> {
     return this.db.asPublicRole(traceId, async (tx) => {
       const { rows } = await tx.query<RatingRow>(
-        `SELECT rank, project_id, title, irs, score10, computed_at
-           FROM seasons.mv_season_rating
-          WHERE season_id = $1
-          ORDER BY rank ASC
+        `SELECT r.rank, r.project_id, r.title, r.irs, r.score10, r.computed_at
+           FROM seasons.mv_season_rating r
+          WHERE r.season_id = $1
+            AND r.project_id IN (SELECT id FROM lab.v_public_catalog)
+          ORDER BY r.rank ASC
           LIMIT $2`,
         [seasonId, limit],
       );

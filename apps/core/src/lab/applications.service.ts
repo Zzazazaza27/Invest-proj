@@ -208,8 +208,26 @@ export class ApplicationsService {
         sets.push(`answers_jsonb = answers_jsonb || $${params.length}::jsonb`);
       }
       if (input.evidence !== undefined) {
+        // Подтверждение — только материал ЭТОГО проекта, уже загруженный.
+        // Чужой или несуществующий идентификатор раньше принимался молча:
+        // утечки не было (байты отдаются по паре проект+материал), но
+        // готовность и предпросмотр считали такую ссылку заполнением
+        // (заявка-03 §6; этап 5.6.0).
+        const wanted = evidenceIds(input.evidence);
+        const owned =
+          wanted.length === 0
+            ? []
+            : (
+                await tx.query<{ id: string }>(
+                  `SELECT id FROM lab.project_materials
+                    WHERE project_id = $1 AND id = ANY($2::uuid[]) AND uploaded_at IS NOT NULL`,
+                  [current.projectId, wanted],
+                )
+              ).rows.map((r) => r.id);
+        const foreign = foreignEvidence(input.evidence, owned);
+        if (foreign.length > 0) throw errors.validation(foreign);
         params.push(JSON.stringify(input.evidence));
-        sets.push(`evidence_jsonb = evidence_jsonb || $${params.length}::jsonb`);
+        sets.push(`evidence_jsonb = evidence_jsonb || ${params.length}::jsonb`);
       }
 
       const { rows } = await tx.query<ApplicationRow>(
@@ -821,6 +839,30 @@ export function checkSubmission(
 }
 
 /** Потолок суммы открытых заявок — проверка на подаче (защита от дробления). */
+/** Все идентификаторы материалов из привязки подтверждений, без повторов. */
+export function evidenceIds(evidence: Record<string, string[]>): string[] {
+  return [...new Set(Object.values(evidence).flat())];
+}
+
+/**
+ * Ссылки на материалы, которых у проекта нет (чужие, удалённые или ещё не
+ * загруженные). Ошибка адресуется полю вопроса, как ошибки типа ответа:
+ * мастер показывает её у нужной строки и досылает остальное.
+ */
+export function foreignEvidence(
+  evidence: Record<string, string[]>,
+  ownedIds: readonly string[],
+): { path: string; message: string }[] {
+  const owned = new Set(ownedIds);
+  const result: { path: string; message: string }[] = [];
+  for (const [key, ids] of Object.entries(evidence)) {
+    if (ids.some((id) => !owned.has(id))) {
+      result.push({ path: `evidence.${key}`, message: 'материал не принадлежит проекту' });
+    }
+  }
+  return result;
+}
+
 export function exceedsOpenTotal(
   policy: ApplicationPolicy,
   openAskTotal: string,

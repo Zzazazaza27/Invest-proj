@@ -10,7 +10,13 @@ import {
   UpdateProjectRequestSchema,
   type ApplicationPolicy,
 } from '@unicorn/contracts';
-import { checkSubmission, computeLimits, exceedsOpenTotal } from '../src/lab/applications.service';
+import {
+  checkSubmission,
+  computeLimits,
+  evidenceIds,
+  exceedsOpenTotal,
+  foreignEvidence,
+} from '../src/lab/applications.service';
 import { strict } from '../src/common/validation';
 
 const policy: ApplicationPolicy = {
@@ -178,5 +184,31 @@ describe('Контракты заявки', () => {
     expect(strict(UpdateProjectRequestSchema).safeParse({ askCurrency: 'RUB' }).success).toBe(
       false,
     );
+  });
+});
+
+describe('Подтверждения: только материалы своего проекта (5.6.0)', () => {
+  const mine = '01a0a50c-0000-7000-8000-000000000001';
+  const mine2 = '01a0a50c-0000-7000-8000-000000000002';
+  const foreign = '01a0a50c-0000-7000-8000-00000000ffff';
+
+  it('собирает идентификаторы без повторов', () => {
+    expect(evidenceIds({ a: [mine, mine2], b: [mine] })).toEqual([mine, mine2]);
+    expect(evidenceIds({})).toEqual([]);
+  });
+
+  it('чужой или незагруженный материал — ошибка у поля вопроса', () => {
+    const issues = foreignEvidence({ traction_proof: [mine, foreign], team: [mine2] }, [
+      mine,
+      mine2,
+    ]);
+    expect(issues).toEqual([
+      { path: 'evidence.traction_proof', message: 'материал не принадлежит проекту' },
+    ]);
+  });
+
+  it('свои материалы и пустая привязка проходят', () => {
+    expect(foreignEvidence({ a: [mine] }, [mine])).toEqual([]);
+    expect(foreignEvidence({ a: [] }, [])).toEqual([]);
   });
 });
