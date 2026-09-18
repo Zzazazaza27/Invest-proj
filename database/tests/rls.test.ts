@@ -65,7 +65,7 @@ describe('RLS: изоляция проектов', () => {
     });
   });
 
-  it('инвестор С подпиской видит листинг', async () => {
+  it('инвестор С подпиской строку проекта не читает — только проекцию по предикату (M090)', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c, { role: 'founder' });
       const investor = await createUser(c, { role: 'investor' });
@@ -74,7 +74,9 @@ describe('RLS: изоляция проектов', () => {
 
       await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
       const { rows } = await c.query('SELECT id FROM lab.projects WHERE id = $1', [project]);
-      expect(rows).toHaveLength(1);
+      expect(rows).toHaveLength(0);
+      const view = await c.query('SELECT id FROM lab.project_view_base($1)', [project]);
+      expect(view.rows).toHaveLength(1);
     });
   });
 
@@ -838,7 +840,7 @@ describe('RLS: избранные проекты инвестора (M063)', () 
       const owner = await createUser(c, { role: 'founder' });
       const alice = await createUser(c, { role: 'investor' });
       const bob = await createUser(c, { role: 'investor' });
-      const project = await createProject(c, owner.id);
+      const project = await createProject(c, owner.id, { listed: true });
       await favorite(c, alice.id, project);
 
       await actAs(c, { userId: bob.id, roles: ['investor'], dbRole: 'app_backend' });
@@ -852,7 +854,7 @@ describe('RLS: избранные проекты инвестора (M063)', () 
       const owner = await createUser(c, { role: 'founder' });
       const alice = await createUser(c, { role: 'investor' });
       const bob = await createUser(c, { role: 'investor' });
-      const project = await createProject(c, owner.id);
+      const project = await createProject(c, owner.id, { listed: true });
 
       await actAs(c, { userId: bob.id, roles: ['investor'], dbRole: 'app_backend' });
       await expect(
@@ -867,7 +869,7 @@ describe('RLS: избранные проекты инвестора (M063)', () 
   it('без роли инвестора добавить нельзя', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c, { role: 'founder' });
-      const project = await createProject(c, founder.id);
+      const project = await createProject(c, founder.id, { listed: true });
 
       await actAs(c, { userId: founder.id, roles: ['founder'], dbRole: 'app_backend' });
       await expect(
@@ -884,7 +886,7 @@ describe('RLS: избранные проекты инвестора (M063)', () 
       const owner = await createUser(c, { role: 'founder' });
       const alice = await createUser(c, { role: 'investor' });
       const bob = await createUser(c, { role: 'investor' });
-      const project = await createProject(c, owner.id);
+      const project = await createProject(c, owner.id, { listed: true });
       await favorite(c, alice.id, project);
 
       await actAs(c, { userId: bob.id, roles: ['investor'], dbRole: 'app_backend' });
@@ -909,7 +911,7 @@ describe('RLS: избранные проекты инвестора (M063)', () 
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const alice = await createUser(c, { role: 'investor' });
-      const project = await createProject(c, owner.id);
+      const project = await createProject(c, owner.id, { listed: true });
       await favorite(c, alice.id, project);
 
       // 23505 — нарушение первичного ключа: запрет живёт в схеме, а не в коде,
@@ -927,7 +929,7 @@ describe('RLS: избранные проекты инвестора (M063)', () 
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const alice = await createUser(c, { role: 'investor' });
-      const project = await createProject(c, owner.id);
+      const project = await createProject(c, owner.id, { listed: true });
       await favorite(c, alice.id, project);
 
       // Роль снята: добавлять больше нельзя, но собственная строка не должна

@@ -314,20 +314,27 @@ describe('Платёжный барьер: флаг, а не удаление', 
       // Опубликован бесплатно: барьер выключен, подписки основателя нет.
       const project = await createProject(c, founder.id, { listed: false });
       await c.query(
-        `UPDATE lab.projects SET listing_status = 'listed', listed_at = now() WHERE id = $1`,
+        `UPDATE lab.projects SET listing_status = 'listed', listed_at = now(),
+                visibility = 'public' WHERE id = $1`,
         [project],
       );
       await c.query('SET CONSTRAINTS ALL IMMEDIATE');
 
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      const without = await c.query(`SELECT id FROM lab.projects WHERE id = $1`, [project]);
-      expect(without.rows).toHaveLength(0);
-
-      await c.query('RESET ROLE');
+      // С M090 инвестор строку проекта не читает вовсе — доступ идёт через
+      // проекцию по предикату; барьер подписки инвестора (M087) решает, с
+      // какой аудиторией: без членства — public (тизер), с членством — investors.
+      const audience = async (): Promise<string | null> => {
+        await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
+        const { rows } = await c.query<{ a: string | null }>(
+          `SELECT lab.project_audience($1, $2, 'profile') AS a`,
+          [project, investor.id],
+        );
+        await c.query('RESET ROLE');
+        return rows[0]!.a;
+      };
+      expect(await audience()).toBe('public');
       await createInvestorSubscription(c, investor.id);
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      const withSub = await c.query(`SELECT id FROM lab.projects WHERE id = $1`, [project]);
-      expect(withSub.rows).toHaveLength(1);
+      expect(await audience()).toBe('investors');
     });
   });
 });

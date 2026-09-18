@@ -172,6 +172,12 @@ export class ApplicationsService {
       throw errors.validation([{ path: '(корень)', message: 'нет полей для изменения' }]);
     }
     return this.db.transaction(ctx, async (tx) => {
+      const probe = await this.load(tx, applicationId);
+      // Тот же лок, что у подачи: правка черновика не может вклиниться между
+      // проверкой отпечатка предпросмотра и записью снимка (5.7.5).
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `project-write:${probe.projectId}`,
+      ]);
       const current = await this.load(tx, applicationId);
       if (current.status === 'archived') {
         throw errors.stateTransition('Заявка в архиве: её нельзя изменить');

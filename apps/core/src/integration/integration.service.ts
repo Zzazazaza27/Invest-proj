@@ -368,6 +368,9 @@ export class IntegrationService {
            FROM lab.projects p
           WHERE p.status = 'graduated'
             AND p.deleted_at IS NULL
+            -- Партнёр не обходит видимость (M090): только проекты, чей тизер
+            -- доступен анониму (режим public, без блокировки).
+            AND lab.can_view_project(p.id, NULL, 'teaser')
             AND ($1::uuid IS NULL OR p.season_id = $1)
             AND ($2::timestamptz IS NULL
                  OR (p.graduated_at, p.id) < ($2::timestamptz, $3::uuid))
@@ -531,7 +534,8 @@ export class IntegrationService {
                   WHERE sc.project_id = p.id ORDER BY sc.computed_at DESC LIMIT 1) AS irs
            FROM lab.projects p
            LEFT JOIN seasons.seasons s ON s.id = p.season_id
-          WHERE p.id = $1 AND p.deleted_at IS NULL`,
+          WHERE p.id = $1 AND p.deleted_at IS NULL
+            AND lab.can_view_project(p.id, NULL, 'teaser')`,
         [projectId],
       );
       const project = rows[0];

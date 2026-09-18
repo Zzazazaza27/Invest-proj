@@ -38,7 +38,7 @@ export class FavoritesService {
    */
   async add(ctx: RequestContext, projectId: string): Promise<void> {
     if (!ctx.userId) throw errors.unauthenticated();
-    await this.assertInPublicCatalog(ctx.traceId, projectId);
+    await this.assertInPublicCatalog(ctx, projectId);
 
     await this.db.transaction(ctx, async (tx) => {
       try {
@@ -147,13 +147,19 @@ export class FavoritesService {
    * Читается под ролью `app_public_read` — той же, что отдаёт каталог. Иначе
    * проверка сказала бы «есть» про проект, который человеку не показывают.
    */
-  private async assertInPublicCatalog(traceId: string, projectId: string): Promise<void> {
-    const found = await this.db.asPublicRole(traceId, async (tx) => {
-      const { rows } = await tx.query(`SELECT 1 FROM lab.v_public_catalog WHERE id = $1`, [
-        projectId,
-      ]);
-      return rows.length > 0;
-    });
+  private async assertInPublicCatalog(ctx: RequestContext, projectId: string): Promise<void> {
+    // С сессией зрителя (M090): каталог — по предикату доступа, и проект,
+    // открытый только допущенным инвесторам, добавляет только допущенный.
+    const found = await this.db.asPublicRole(
+      ctx.traceId,
+      async (tx) => {
+        const { rows } = await tx.query(`SELECT 1 FROM lab.v_public_catalog WHERE id = $1`, [
+          projectId,
+        ]);
+        return rows.length > 0;
+      },
+      { userId: ctx.userId, roles: ctx.roles },
+    );
     if (!found) throw errors.notFound({ subject: 'listing', projectId });
   }
 }

@@ -163,6 +163,10 @@ export class FundingRoundsService {
       throw errors.validation([{ path: '(корень)', message: 'нет полей для изменения' }]);
     }
     return this.db.transaction(ctx, async (tx) => {
+      const probe = await this.load(tx, roundId);
+      // Лок проекта — тот же, что у открытия и «Применить»: правка параметров
+      // не может вклиниться между проверкой отпечатка и записью (5.7.5).
+      await lockProject(tx, probe.projectId);
       const current = await this.load(tx, roundId);
       if (current.status === 'closed' || current.status === 'cancelled') {
         throw errors.stateTransition('Раунд завершён: его нельзя изменить');

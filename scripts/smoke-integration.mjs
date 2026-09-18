@@ -159,11 +159,16 @@ const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = '
 const [season] = await sql(`SELECT id FROM seasons.seasons ORDER BY number DESC LIMIT 1`);
 
 async function makeProject(title, status) {
+  // 5.7.5 (M090): партнёрская выдача не обходит видимость — выпускник попадает
+  // в неё только в режиме public (листинг — следствие режима).
   const [row] = await sql(
     `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask,
-                               required_plan_id)
+                               required_plan_id, listing_status, listed_at, visibility)
      VALUES (public.uuid_generate_v7(), $1, $2, $3, 'growth', $4, 5000000,
-             billing.resolve_founder_plan(5000000))
+             billing.resolve_founder_plan(5000000),
+             CASE WHEN $4 = 'graduated' THEN 'listed' ELSE 'not_listed' END,
+             CASE WHEN $4 = 'graduated' THEN now() END,
+             CASE WHEN $4 = 'graduated' THEN 'public' ELSE 'private' END)
      RETURNING id`,
     [taxonomy.id, season.id, title, status],
   );

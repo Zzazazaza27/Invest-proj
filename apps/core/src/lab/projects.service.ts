@@ -612,6 +612,9 @@ export class ProjectsService {
 
   async listMaterials(ctx: RequestContext, projectId: string): Promise<ProjectMaterial[]> {
     return this.db.readOnly(ctx, async (tx) => {
+      // Недоступный проект — 404, а не пустой список: старый маршрут не
+      // должен даже намекать, что проект существует (5.7.5).
+      await this.assertProjectVisible(tx, projectId);
       const { rows } = await tx.query<MaterialRow>(
         // Только подтверждённые: выданный и брошенный билет не материал, и
         // показывать его как материал значит вводить в заблуждение и
@@ -824,6 +827,10 @@ export class ProjectsService {
   ): Promise<ProjectFull> {
     return this.runMapped(async () =>
       this.db.transaction(ctx, async (tx) => {
+        // Режим входит в отпечаток «Применить» — смена режима под тем же локом.
+        await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+          `project-write:${projectId}`,
+        ]);
         const { rows: found } = await tx.query<{
           investment_ask: string;
           listing_status: string;
@@ -951,6 +958,9 @@ export class ProjectsService {
 
   async unpublishListing(ctx: RequestContext, projectId: string): Promise<ProjectFull> {
     return this.db.transaction(ctx, async (tx) => {
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `project-write:${projectId}`,
+      ]);
       const { rows: before } = await tx.query<{ visibility: ProjectFull['visibility'] }>(
         `SELECT visibility FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
         [projectId],
@@ -1025,6 +1035,11 @@ export class ProjectsService {
     input: { formVersion: number; roundId?: string; contentDigest: string },
   ): Promise<ApplyDisclosureResult> {
     return this.db.transaction(ctx, async (tx) => {
+      // Лок проекта: проверка отпечатка и запись — одно целое; параллельная
+      // правка раунда или режима ждёт, а не проскакивает между ними (5.7.5).
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `project-write:${projectId}`,
+      ]);
       const { rows } = await tx.query<{
         disclosed_version_id: string | null;
         disclosure_form_version: number | null;

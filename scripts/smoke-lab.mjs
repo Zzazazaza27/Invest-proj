@@ -324,11 +324,14 @@ let projectId = null;
   check('чужой проект не изменяется', response.status === 404, `статус ${response.status}`);
 }
 {
+  // 5.7.5: старый маршрут строки проекта инвестору закрыт ролью (403); карточка
+  // — только Investor View по предикату (непубличный проект — 404).
   const { response } = await investor.client.call(`/v1/projects/${projectId}`);
+  const view = await investor.client.call(`/v1/projects/${projectId}/investor-view`);
   check(
-    'инвестор без подписки не видит непубличную карточку',
-    response.status === 404,
-    `статус ${response.status}`,
+    'инвестор без подписки не видит непубличную карточку: старый маршрут 403, Investor View 404',
+    response.status === 403 && view.response.status === 404,
+    `статусы ${response.status} ${view.response.status}`,
   );
 }
 
@@ -888,14 +891,25 @@ let secondProjectId;
       WHERE sp.code = 'investor_membership'`,
     [investor.userId],
   );
-  const { response, json } = await investor.client.call(`/v1/projects/${projectId}`);
+  const { response, json } = await investor.client.call(`/v1/projects/${projectId}/investor-view`);
   check(
-    'инвестор с подпиской видит полную карточку',
-    response.status === 200,
-    `статус ${response.status}`,
+    'инвестор с подпиской видит карточку через Investor View',
+    response.status === 200 && json?.access?.profile === 'investors',
+    `статус ${response.status} ${JSON.stringify(json?.access ?? null)}`,
   );
-  check('полная карточка содержит описание', typeof json?.description === 'string');
-  check('IRS честно отсутствует до скоринга', json?.irs === null);
+  check('карточка содержит описание (поле есть)', json?.description !== undefined);
+  check('оценка честно отсутствует до скоринга', json?.passport === null);
+  // Старые пути закрыты (5.7.5): полная строка, версии, паспорт, материалы — 403.
+  const old = await Promise.all(
+    ['', '/versions', '/passport', '/readiness', '/roadmap', '/materials'].map((p) =>
+      investor.client.call(`/v1/projects/${projectId}${p}`),
+    ),
+  );
+  check(
+    'старые маршруты инвестору закрыты: строка, версии, паспорт, готовность, дорожная карта, материалы — 403',
+    old.every((r) => r.response.status === 403),
+    old.map((r) => r.response.status).join(' '),
+  );
 }
 {
   const { response } = await investor.client.call(`/v1/projects/${secondProjectId}`, {
@@ -1883,11 +1897,11 @@ console.warn('\n[раунды] профиль без раунда, чернов�
       asInvestor.json?.raising === 'open' && asInvestor.json?.investmentAsk === '3000000.00',
       `${asInvestor.json?.raising} ${asInvestor.json?.investmentAsk}`,
     );
-    const card = await investor.client.call(`/v1/projects/${projectId}`);
+    const card = await investor.client.call(`/v1/projects/${projectId}/investor-view`);
     check(
-      'карточка инвестору — та же проекция раунда',
-      card.json?.raising === 'open' && card.json?.investmentAsk === '3000000.00',
-      `${card.json?.raising} ${card.json?.investmentAsk}`,
+      'карточка инвестору (Investor View) — та же проекция раунда',
+      card.json?.round?.raising === 'open' && card.json?.round?.investmentAsk === '3000000.00',
+      `${card.json?.round?.raising} ${card.json?.round?.investmentAsk}`,
     );
     const asPublic = await founderA.client.call(
       `/v1/applications/${appId}/preview?audience=public`,
@@ -2399,6 +2413,75 @@ console.warn('\n[раунды] профиль без раунда, чернов�
       await founderA.client.call(`/v1/rounds/${draftRound.json?.round?.id}/cancel`, {
         method: 'POST',
       });
+
+      // ------------------------------------ 5.7.5: прямые обращения и исключения
+      // Исключённый инвестор с членством: ни Investor View, ни карточки в
+      // каталоге, ни строки в списке — режим public его не спасает.
+      await sql(
+        `INSERT INTO lab.project_access_exclusions (id, project_id, excluded_user_id, created_by)
+         VALUES (public.uuid_generate_v7(), $1, $2, $3)`,
+        [projectCId, investor.userId, founderA.userId],
+      );
+      const excludedView = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+      const excludedItem = await investor.client.call(`/v1/catalog/${projectCId}`);
+      const excludedList = await investor.client.call('/v1/catalog?limit=100');
+      check(
+        'исключённый инвестор: Investor View 404, карточка каталога 404, в списке нет',
+        excludedView.response.status === 404 &&
+          excludedItem.response.status === 404 &&
+          !(excludedList.json?.items ?? []).some((i) => i.id === projectCId),
+        `${excludedView.response.status} ${excludedItem.response.status}`,
+      );
+      await sql(
+        `UPDATE lab.project_access_exclusions SET revoked_at = now()
+          WHERE project_id = $1 AND excluded_user_id = $2 AND revoked_at IS NULL`,
+        [projectCId, investor.userId],
+      );
+      const restoredView = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+      check(
+        'снятое исключение возвращает доступ',
+        restoredView.response.status === 200,
+        `${restoredView.response.status}`,
+      );
+
+      // Несколько ролей: чужой основатель с ролью инвестора на закрытом проекте
+      // не проходит ни новым, ни старым путём (старый пропускает роль, RLS — нет).
+      await sql(
+        `INSERT INTO identity.user_roles (user_id, role) VALUES ($1, 'investor')
+         ON CONFLICT DO NOTHING`,
+        [founderB.userId],
+      );
+      await founderB.client.call('/v1/auth/login', {
+        method: 'POST',
+        body: { email: founderB.email, password: founderB.password },
+      });
+      await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+        method: 'PUT',
+        body: { visibility: 'private' },
+      });
+      const dualNew = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
+      const dualOld = await founderB.client.call(`/v1/projects/${projectCId}`);
+      const dualMaterials = await founderB.client.call(`/v1/projects/${projectCId}/materials`);
+      check(
+        'founder+investor на чужом private: Investor View 404, старая строка 404, материалы 404',
+        dualNew.response.status === 404 &&
+          dualOld.response.status === 404 &&
+          dualMaterials.response.status === 404,
+        `${dualNew.response.status} ${dualOld.response.status} ${dualMaterials.response.status}`,
+      );
+      await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+        method: 'PUT',
+        body: { visibility: 'public' },
+      });
+      const dualPublicOld = await founderB.client.call(`/v1/projects/${projectCId}/materials`);
+      const dualPublicNew = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
+      check(
+        'founder+investor на чужом public: старый список материалов — 404 (маршрут только команде), Investor View — по допуску',
+        dualPublicOld.response.status === 404 &&
+          dualPublicNew.response.status === 200 &&
+          dualPublicNew.json?.access?.materials === null,
+        `${dualPublicOld.response.status} ${dualPublicNew.response.status} ${JSON.stringify(dualPublicNew.json?.access ?? null)}`,
+      );
     }
   }
 

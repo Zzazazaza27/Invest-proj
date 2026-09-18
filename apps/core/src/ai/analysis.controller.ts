@@ -62,18 +62,21 @@ export class AnalysisController {
     );
   }
 
+  @Roles('founder', 'admin', 'expert')
   @Get(':id/passport')
   async passport(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
     return InvestmentPassportSchema.parse(await this.analysis.getPassport(ctx, id));
   }
 
+  @Roles('founder', 'admin', 'expert')
   @Get(':id/readiness')
   async readiness(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
     return { items: await this.analysis.getReadiness(ctx, id) };
   }
 
+  @Roles('founder', 'admin', 'expert')
   @Get(':id/roadmap')
   async roadmap(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);

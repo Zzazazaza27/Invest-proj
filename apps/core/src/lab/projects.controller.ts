@@ -55,6 +55,7 @@ export class ProjectsController {
     return ProjectLimitsSchema.parse(await this.projects.projectLimits(ctx));
   }
 
+  @Roles('founder', 'admin', 'expert')
   @Get(':id')
   async getOne(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
@@ -77,6 +78,7 @@ export class ProjectsController {
   }
 
   /** История подач. Видимость определяет RLS, не роль в декораторе. */
+  @Roles('founder', 'admin', 'expert')
   @Get(':id/versions')
   async listVersions(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
@@ -86,6 +88,7 @@ export class ProjectsController {
 
   // ------------------------------------------------------------------ материалы
 
+  @Roles('founder', 'admin', 'expert')
   @Get(':id/materials')
   async listMaterials(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);

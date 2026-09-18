@@ -226,9 +226,11 @@ console.warn('--- доступ рецензента к материалам ---'
 }
 {
   const { response, json } = await reviewer.client.call(`/v1/projects/${foreign}/materials`);
+  // 5.7.5: недоступный проект — 404, а не пустой список (маршрут не намекает
+  // на существование проекта).
   check(
     'материалы ЧУЖОГО проекта рецензенту не видны',
-    response.status === 200 && (json?.items?.length ?? 0) === 0,
+    response.status === 404 && (json?.items?.length ?? 0) === 0,
     `${response.status}, материалов ${json?.items?.length ?? 0}`,
   );
 }
@@ -236,7 +238,7 @@ console.warn('--- доступ рецензента к материалам ---'
   const { response, json } = await otherExpert.client.call(`/v1/projects/${assigned}/materials`);
   check(
     'эксперт без назначения материалов не видит',
-    response.status === 200 && (json?.items?.length ?? 0) === 0,
+    response.status === 404 && (json?.items?.length ?? 0) === 0,
     `${response.status}, материалов ${json?.items?.length ?? 0}`,
   );
 }
