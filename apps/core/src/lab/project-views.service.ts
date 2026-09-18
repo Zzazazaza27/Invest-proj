@@ -22,6 +22,32 @@ import {
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { parseStoredConfig } from './application-forms.service';
+import { disclosureDigest, roundDigest } from './disclosure-digest';
+import { ROUND_COLUMNS, mapRound, type RoundRow } from './funding-rounds.service';
+
+/**
+ * Отпечаток содержимого, которое расширяет «Применить новые условия»:
+ * согласованный снимок, режим проекта и незавершённый раунд. Один и тот же
+ * расчёт у предпросмотра владельца и у самого действия (5.7.4).
+ */
+export async function currentDisclosureDigest(tx: Tx, projectId: string): Promise<string> {
+  const { rows } = await tx.query<{ disclosed_version_id: string | null; visibility: string }>(
+    `SELECT disclosed_version_id, visibility FROM lab.projects WHERE id = $1`,
+    [projectId],
+  );
+  const project = rows[0];
+  if (!project) throw errors.notFound({ subject: 'project' });
+  const round = await tx.query<RoundRow>(
+    `SELECT ${ROUND_COLUMNS} FROM lab.funding_rounds
+      WHERE project_id = $1 AND status IN ('open', 'paused') LIMIT 1`,
+    [projectId],
+  );
+  return disclosureDigest({
+    disclosedVersionId: project.disclosed_version_id,
+    visibility: project.visibility,
+    round: round.rows[0] ? mapRound(round.rows[0]) : null,
+  });
+}
 
 /**
  * Представления проекта наружу (5.7.2, план `заявка-04` §3.5).
@@ -234,6 +260,7 @@ export class ProjectViewsService {
         consent,
         pending,
         evidenceConflicts: conflicts,
+        contentDigest: await currentDisclosureDigest(tx, projectId),
       };
     });
   }
@@ -241,24 +268,27 @@ export class ProjectViewsService {
   /** Предпросмотр перед открытием раунда: проекция по активной версии для обеих аудиторий. */
   async roundOpenPreview(ctx: RequestContext, roundId: string): Promise<RoundOpenPreview> {
     return this.db.readOnly(ctx, async (tx) => {
-      const { rows } = await tx.query<{
-        project_id: string;
-        status: string;
-        target: string | null;
-        currency: string | null;
-        funding_scope: RoundProjection['fundingScope'];
-        funding_scope_note: string | null;
-        visibility: ProjectVisibility;
-        disclosed_version_id: string | null;
-      }>(
-        `SELECT r.project_id, r.status, r.target::text AS target, r.currency, r.funding_scope,
-                r.funding_scope_note, p.visibility, p.disclosed_version_id
-           FROM lab.funding_rounds r JOIN lab.projects p ON p.id = r.project_id
-          WHERE r.id = $1`,
+      const { rows } = await tx.query<RoundRow>(
+        `SELECT ${ROUND_COLUMNS} FROM lab.funding_rounds WHERE id = $1`,
         [roundId],
       );
-      const round = rows[0];
-      if (!round) throw errors.notFound({ subject: 'funding_round' });
+      if (!rows[0]) throw errors.notFound({ subject: 'funding_round' });
+      const mapped = mapRound(rows[0]);
+      const { rows: projectRows } = await tx.query<{
+        visibility: ProjectVisibility;
+        disclosed_version_id: string | null;
+      }>(`SELECT visibility, disclosed_version_id FROM lab.projects WHERE id = $1`, [
+        mapped.projectId,
+      ]);
+      const round = {
+        status: mapped.status,
+        target: mapped.target,
+        currency: mapped.currency,
+        funding_scope: mapped.fundingScope,
+        funding_scope_note: mapped.fundingScopeNote,
+        visibility: projectRows[0]?.visibility ?? 'private',
+        disclosed_version_id: projectRows[0]?.disclosed_version_id ?? null,
+      };
 
       const active = await tx.query<{ version: number | null; vis: Record<string, Audience> }>(
         `SELECT (SELECT version FROM lab.application_form_versions WHERE is_active LIMIT 1) AS version,
@@ -293,6 +323,8 @@ export class ProjectViewsService {
         investors: projectionFor('investors'),
         audienceSummary: await this.audienceSummary(tx, round.visibility),
         warnings,
+        // Тот же отпечаток, что сверяет открытие: параметры раунда на момент показа.
+        contentDigest: roundDigest(mapped),
       };
     });
   }

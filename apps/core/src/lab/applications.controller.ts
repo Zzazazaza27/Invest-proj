@@ -99,7 +99,10 @@ export class ApplicationsController {
     const id = parseOrThrow(UuidSchema, rawId);
     const input = parseOrThrow(SubmitApplicationRequestSchema, rawBody ?? {});
     return ProjectVersionSchema.parse(
-      await this.applications.submit(ctx, id, { activeFormVersion: input.activeFormVersion }),
+      await this.applications.submit(ctx, id, {
+        activeFormVersion: input.activeFormVersion,
+        contentDigest: input.contentDigest,
+      }),
     );
   }
 }

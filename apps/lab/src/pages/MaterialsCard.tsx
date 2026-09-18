@@ -16,6 +16,7 @@ import {
   type ProjectVersion,
 } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
+import { S } from '../strings';
 
 // Лимит и допустимые форматы — из контрактов, а не строкой в подсказке:
 // обещание «до N МБ» в интерфейсе разошлось с проверкой сервера ровно один
@@ -81,6 +82,32 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
   useEffect(() => {
     void load();
   }, [load]);
+
+  /** Отметка владельца: единственный способ открыть материал допущенным инвесторам (5.7.3). */
+  const toggleVisibility = useCallback(
+    async (material: ProjectMaterial) => {
+      setBusy(true);
+      setNotice(null);
+      try {
+        await api.projects.setMaterialVisibility(projectId, material.id, {
+          visibility: material.visibility === 'investors' ? 'private' : 'investors',
+        });
+        setNotice({ tone: 'ok', text: S.materials.visibility.done });
+        await load();
+      } catch (error) {
+        setNotice({
+          tone: 'error',
+          text:
+            error instanceof ApiError
+              ? (error.problem?.detail ?? error.message)
+              : 'Сервис недоступен',
+        });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [projectId, load],
+  );
 
   const addLink = useCallback(async () => {
     setBusy(true);
@@ -214,9 +241,34 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
                 <Badge tone={material.parseStatus === 'failed' ? 'warning' : 'neutral'}>
                   {PARSE_STATUS_TITLES[material.parseStatus] ?? material.parseStatus}
                 </Badge>
+                <Badge
+                  tone={material.visibility === 'investors' ? 'success' : 'neutral'}
+                  data-material-visibility={material.visibility}
+                >
+                  {
+                    S.materials.visibility[
+                      material.visibility === 'investors' ? 'investors' : 'private'
+                    ]
+                  }
+                </Badge>
+                <Button
+                  variant="secondary"
+                  loading={busy}
+                  data-material-toggle={material.id}
+                  onClick={() => void toggleVisibility(material)}
+                >
+                  {material.visibility === 'investors'
+                    ? S.materials.visibility.hide
+                    : S.materials.visibility.show}
+                </Button>
               </li>
             ))}
           </ul>
+        ) : null}
+        {state.status === 'ready' && state.items.length > 0 ? (
+          <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+            {S.materials.visibility.hint}
+          </span>
         ) : null}
 
         {notice ? (

@@ -136,6 +136,8 @@ export type FundingRoundReadiness = z.infer<typeof FundingRoundReadinessSchema>;
  */
 export const OpenFundingRoundRequestSchema = z.object({
   confirmDisclosureVersion: z.number().int().nonnegative(),
+  /** Отпечаток параметров раунда из предпросмотра открытия; расхождение — 409. */
+  contentDigest: z.string().min(8).max(64),
 });
 export type OpenFundingRoundRequest = z.infer<typeof OpenFundingRoundRequestSchema>;
 

@@ -606,24 +606,36 @@ function PreviewScreen({ app }: { app: App }) {
   // Версия условий, по которой собран показанный предпросмотр: подача несёт
   // её как подтверждение; смена условий администратором — отказ и повторный
   // просмотр (5.7.3). Без загруженного предпросмотра подавать нечего.
-  const [seenFormVersion, setSeenFormVersion] = useState<number | null>(null);
+  const [seen, setSeen] = useState<{ formVersion: number; contentDigest: string } | null>(null);
+  // Сервер отвечает 409, если условия или ответы изменились после предпросмотра
+  // (в том числе из другой вкладки): предпросмотр перечитывается, подача —
+  // заново по свежему. Запрет кнопки серверную проверку не заменяет.
+  const [previewRefresh, setPreviewRefresh] = useState(0);
 
   const submit = async () => {
-    if (seenFormVersion === null) return;
+    if (seen === null) return;
     setBusy(true);
     setNotice(null);
     try {
       await app.flush();
       const version = await api.applications.submit(detail.application.id, {
-        activeFormVersion: seenFormVersion,
+        activeFormVersion: seen.formVersion,
+        contentDigest: seen.contentDigest,
       });
       setNotice({ tone: 'ok', text: S.wizard.submit.done(version.versionNo) });
       await app.reload();
       window.setTimeout(() => navigate(`/projects/${detail.application.projectId}`), 1500);
     } catch (e) {
+      const stale = e instanceof ApiError && e.status === 409;
+      if (stale) {
+        setSeen(null);
+        setPreviewRefresh((n) => n + 1);
+      }
       setNotice({
         tone: 'error',
-        text: e instanceof ApiError ? (e.problem?.detail ?? e.message) : 'Сервис недоступен',
+        text:
+          (e instanceof ApiError ? (e.problem?.detail ?? e.message) : 'Сервис недоступен') +
+          (stale ? ` ${S.wizard.submit.previewRefreshed}` : ''),
       });
     } finally {
       setBusy(false);
@@ -635,8 +647,14 @@ function PreviewScreen({ app }: { app: App }) {
       <Stack gap="var(--u-space-4)">
         <PreviewPage
           applicationId={detail.application.id}
-          refreshKey={`${app.save.kind}:${app.round.save.kind}`}
-          onPreview={(preview) => setSeenFormVersion(preview.activeFormVersion ?? null)}
+          refreshKey={`${app.save.kind}:${app.round.save.kind}:${previewRefresh}`}
+          onPreview={(preview) =>
+            setSeen(
+              preview.activeFormVersion !== undefined && preview.contentDigest !== undefined
+                ? { formVersion: preview.activeFormVersion, contentDigest: preview.contentDigest }
+                : null,
+            )
+          }
         />
         <Card>
           <Stack gap="var(--u-space-3)">
@@ -668,7 +686,7 @@ function PreviewScreen({ app }: { app: App }) {
               <Button
                 variant="brand"
                 loading={busy}
-                disabled={!detail.submission.canSubmit || seenFormVersion === null}
+                disabled={!detail.submission.canSubmit || seen === null}
                 onClick={() => void submit()}
               >
                 {S.wizard.submit.button}

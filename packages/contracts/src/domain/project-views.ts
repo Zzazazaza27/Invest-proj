@@ -131,6 +131,8 @@ export const ViewPreviewSchema = z.object({
   }),
   /** Ответы, видимые аудитории, чьё подтверждение (материал) для неё закрыто. */
   evidenceConflicts: z.array(z.object({ key: z.string(), label: z.string() })),
+  /** Отпечаток показанного содержимого — «Применить» возвращает его (5.7.4). */
+  contentDigest: z.string(),
 });
 export type ViewPreview = z.infer<typeof ViewPreviewSchema>;
 
@@ -144,5 +146,7 @@ export const RoundOpenPreviewSchema = z.object({
   audienceSummary: AudienceSummarySchema,
   /** Проект в режиме private: раунд никто не увидит. */
   warnings: z.array(z.enum(['private_project', 'no_profile_consent'])),
+  /** Отпечаток параметров раунда — открытие возвращает его (5.7.4). */
+  contentDigest: z.string(),
 });
 export type RoundOpenPreview = z.infer<typeof RoundOpenPreviewSchema>;

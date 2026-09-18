@@ -13,6 +13,7 @@ import type { InvestmentPassport, ProjectFull, ReadinessEntry } from '@unicorn/c
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
 import { MaterialsCard } from './MaterialsCard';
+import { VisibilityCard } from './VisibilityCard';
 import { PublicationConsentsCard } from './PublicationConsentsCard';
 import { BillingCard } from './BillingCard';
 import { ApplicationsCard } from '../wizard/ApplicationsCard';
@@ -215,34 +216,12 @@ export function ProjectPage({
             >
               Запустить анализ
             </Button>
-            {project.listingStatus === 'listed' ? (
-              <Button
-                variant="danger"
-                loading={busy === 'unpublish'}
-                onClick={() =>
-                  run('unpublish', () => api.projects.unpublish(project.id), 'Листинг снят')
-                }
-              >
-                Снять листинг
-              </Button>
-            ) : (
-              <Button
-                variant="secondary"
-                loading={busy === 'publish'}
-                onClick={() =>
-                  run('publish', () => api.projects.publish(project.id), 'Листинг опубликован')
-                }
-              >
-                Опубликовать листинг
-              </Button>
-            )}
           </div>
-          <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-            Публикация требует действующей верификации, тарифа по сумме запроса и активной подписки.
-            Эти условия проверяет сервер — отказ придёт с объяснением.
-          </span>
         </Stack>
       </Card>
+
+      {/* Листинг с 5.7.3 — следствие режима «кто может видеть проект». */}
+      <VisibilityCard project={project} onChanged={load} />
 
       <BillingCard projectId={project.id} requiredPlanId={project.requiredPlanId ?? null} />
       <MaterialsCard projectId={project.id} />

@@ -23,6 +23,7 @@ import { S3Service } from '../storage/s3.service';
 import { getEnv } from '../config/env';
 import { SEASONS_FLAG, seasonsEnabled } from '../common/seasons-gate';
 import { ApplicationsService, activeSchemaVersion, loadActivePolicy } from './applications.service';
+import { currentDisclosureDigest } from './project-views.service';
 import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 
 /**
@@ -1021,7 +1022,7 @@ export class ProjectsService {
   async applyDisclosure(
     ctx: RequestContext,
     projectId: string,
-    input: { formVersion: number; roundId?: string },
+    input: { formVersion: number; roundId?: string; contentDigest: string },
   ): Promise<ApplyDisclosureResult> {
     return this.db.transaction(ctx, async (tx) => {
       const { rows } = await tx.query<{
@@ -1039,6 +1040,14 @@ export class ProjectsService {
         throw errors.conflict(
           'Условия раскрытия изменились после предпросмотра: откройте предпросмотр заново',
           { seen: input.formVersion, active },
+        );
+      }
+      if (input.contentDigest !== (await currentDisclosureDigest(tx, projectId))) {
+        // Снимок, режим или параметры раунда изменились после предпросмотра
+        // (в том числе из другой вкладки): расширять раскрытие молча нельзя.
+        throw errors.conflict(
+          'Содержимое изменилось после предпросмотра: обновите предпросмотр и примените снова',
+          { reason: 'content_changed' },
         );
       }
       if (!project.disclosed_version_id && !input.roundId) {

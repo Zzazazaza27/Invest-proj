@@ -335,6 +335,8 @@ export type SetProjectVisibilityRequest = z.infer<typeof SetProjectVisibilityReq
 export const ApplyDisclosureRequestSchema = z.object({
   formVersion: z.number().int().nonnegative(),
   roundId: UuidSchema.optional(),
+  /** Отпечаток содержимого из предпросмотра владельца; расхождение — 409. */
+  contentDigest: z.string().min(8).max(64),
 });
 export type ApplyDisclosureRequest = z.infer<typeof ApplyDisclosureRequestSchema>;
 

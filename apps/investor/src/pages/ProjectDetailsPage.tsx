@@ -7,11 +7,11 @@ import {
   ErrorState,
   LoadingState,
   Stack,
+  formatMoney,
   formatScore10,
   describeRaising,
 } from '@unicorn/ui';
-import type { InvestmentPassport, ProjectFull, ProjectMaterial } from '@unicorn/contracts';
-import { ScoreProvenance, publishedScore10 } from '@unicorn/cabinet';
+import type { InvestorView } from '@unicorn/contracts';
 import { ApiError, api, apiBaseUrl } from '../api';
 
 const STAGE_TITLES: Record<string, string> = {
@@ -40,14 +40,15 @@ const SCORE_AXIS_TITLES: Record<string, string> = {
   product_readiness: 'готовность продукта',
 };
 
+const FUNDING_SCOPE_TITLES: Record<string, string> = {
+  project: 'проект в целом',
+  direction: 'отдельное направление',
+};
+
 /**
- * Ссылка материала с проверкой схемы.
- *
- * Сервер принимает только `https://` (AddProductLinkSchema), но интерфейс
- * рендерит то, что лежит в базе, — а туда строка могла попасть до появления
- * этой проверки, сидом или через служебный путь. `javascript:` в `href` — это
- * выполнение чужого кода в кабинете смотрящего, поэтому схема проверяется и
- * здесь: защита стоит там, где происходит опасное действие.
+ * Ссылка материала с проверкой схемы: `javascript:` в `href` — выполнение
+ * чужого кода в кабинете смотрящего, поэтому схема проверяется там, где
+ * происходит опасное действие.
  */
 const SAFE_LINK_SCHEMES = new Set(['http:', 'https:']);
 function safeHref(raw: string | null | undefined): string {
@@ -61,23 +62,18 @@ function safeHref(raw: string | null | undefined): string {
 }
 
 /**
- * Карточка проекта глазами инвестора.
+ * Карточка проекта глазами инвестора — Investor View (5.7.4).
  *
- * Отдельная страница, а не раскрывающийся блок в списке: описание проекта —
- * это несколько экранов текста, документы и оценка. Раскрытие такого объёма
- * прямо в сетке каталога сдвигало соседние карточки и заставляло искать место,
- * где ты только что был.
+ * Один серверный ответ вместо трёх вызовов: состав решает предикат доступа
+ * по каждому разрешению отдельно (профиль, раунд, материалы, паспорт), а
+ * страница только показывает, что пришло, и честно называет закрытые
+ * блоки. Ответы анкеты — согласованный владельцем снимок с эффективной
+ * видимостью; поля выше уровня «инвесторам» сюда не попадают по построению.
  *
  * Документы показываются ВНУТРИ платформы: файл приходит с адреса ядра, с
  * `Content-Disposition: inline` и без кнопки «скачать». Прямых ссылок на
- * хранилище страница не получает — они пережили бы и подписку, и снятие
- * листинга. Полная защита от копирования на клиенте невозможна (у того, кто
- * видит документ, он уже есть), и обещать её было бы враньём — но лёгкого пути
- * «сохранить и переслать» здесь нет, а доступ проверяется на каждом запросе.
- *
- * Доступ к материалам открывает активная подписка. Проверяет её СЕРВЕР: экран
- * не прячет раздел, а показывает ответ — включая объяснение, что нужна
- * подписка.
+ * хранилище страница не получает. Поверх лежит водяной знак с именем
+ * смотрящего — не запрет, а ответственность.
  */
 export function ProjectDetailsPage({
   projectId,
@@ -88,22 +84,10 @@ export function ProjectDetailsPage({
 }) {
   const [state, setState] = useState<
     | { status: 'loading' }
-    | { status: 'ready'; project: ProjectFull; passport: InvestmentPassport | null }
+    | { status: 'ready'; view: InvestorView }
     | { status: 'error'; message: string; traceId: string | null }
   >({ status: 'loading' });
-  const [materials, setMaterials] = useState<
-    | { status: 'loading' }
-    | { status: 'ready'; items: ProjectMaterial[] }
-    | { status: 'denied'; message: string }
-  >({ status: 'loading' });
   const [openFile, setOpenFile] = useState<string | null>(null);
-  /**
-   * Подпись водяного знака: кто и когда смотрит.
-   *
-   * Имя берётся из текущей сессии — тем же запросом, что рисует шапку кабинета.
-   * Отказ здесь не должен закрывать документ: если имя не пришло, знак остаётся
-   * с датой и адресом платформы.
-   */
   const [viewer, setViewer] = useState<string | null>(null);
 
   useEffect(() => {
@@ -116,15 +100,15 @@ export function ProjectDetailsPage({
   const load = useCallback(async () => {
     setState({ status: 'loading' });
     try {
-      const project = await api.projects.get(projectId);
-      const passport = await api.projects.passport(projectId).catch(() => null);
-      setState({ status: 'ready', project, passport });
+      setState({ status: 'ready', view: await api.projects.investorView(projectId) });
     } catch (error) {
       setState({
         status: 'error',
         message:
           error instanceof ApiError
-            ? (error.problem?.detail ?? error.message)
+            ? error.status === 404
+              ? 'Проект недоступен: его нет или доступ к нему закрыт'
+              : (error.problem?.detail ?? error.message)
             : 'Сервис недоступен',
         traceId: error instanceof ApiError ? error.traceId : null,
       });
@@ -134,22 +118,6 @@ export function ProjectDetailsPage({
   useEffect(() => {
     void load();
   }, [load]);
-
-  useEffect(() => {
-    setMaterials({ status: 'loading' });
-    api.projects
-      .materials(projectId)
-      .then((items) => setMaterials({ status: 'ready', items }))
-      .catch((error: unknown) =>
-        setMaterials({
-          status: 'denied',
-          message:
-            error instanceof ApiError
-              ? (error.problem?.detail ?? 'Материалы открываются активной подпиской')
-              : 'Материалы открываются активной подпиской',
-        }),
-      );
-  }, [projectId]);
 
   if (state.status === 'loading') return <LoadingState label="Загружаем проект" />;
   if (state.status === 'error') {
@@ -167,14 +135,20 @@ export function ProjectDetailsPage({
     );
   }
 
-  const { project, passport } = state;
+  const { view } = state;
   const watermark = `${viewer ?? 'Пятый элемент'}
 ${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
-  const files = materials.status === 'ready' ? materials.items.filter((m) => m.url === null) : [];
-  const links = materials.status === 'ready' ? materials.items.filter((m) => m.url !== null) : [];
+  const materials = view.materials ?? [];
+  const files = materials.filter((m) => m.url === null);
+  const links = materials.filter((m) => m.url !== null);
+  const questionCount = view.sections.reduce((n, s) => n + s.questions.length, 0);
+  const accessText =
+    view.access.profile === null
+      ? 'Доступ: только тизер — ответы анкеты, материалы и оценка закрыты режимом проекта или вашим допуском.'
+      : `Доступ: профиль${view.access.materials ? ', материалы' : ''}${view.access.passport ? ', оценка платформы' : ''}${view.access.round ? ', раунд' : ''}.`;
 
   return (
-    <Stack gap="var(--u-space-5)">
+    <Stack gap="var(--u-space-5)" data-investor-view>
       <Button variant="secondary" onClick={onBack} style={{ justifySelf: 'start' }}>
         ← К каталогу
       </Button>
@@ -182,32 +156,48 @@ ${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
       <Card>
         <Stack>
           <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
-            <Badge tone="accent">{STAGE_TITLES[project.stage] ?? project.stage}</Badge>
-            {project.geoCountry ? <Badge>{project.geoCountry}</Badge> : null}
-            {passport ? (
-              <Badge tone="success">
-                оценка {publishedScore10(passport) ?? formatScore10(passport.irs?.value)}/10
-              </Badge>
+            <Badge tone="accent">{STAGE_TITLES[view.stage] ?? view.stage}</Badge>
+            {view.geoCountry ? <Badge>{view.geoCountry}</Badge> : null}
+            {view.passport && view.passport.irs !== null ? (
+              <Badge tone="success">оценка {formatScore10(view.passport.irs)}/10</Badge>
             ) : null}
           </div>
-          <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>{project.title}</h1>
-          {project.tagline ? (
-            <span style={{ color: 'var(--u-text-muted)' }}>{project.tagline}</span>
+          <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>{view.title}</h1>
+          {view.tagline ? (
+            <span style={{ color: 'var(--u-text-muted)' }}>{view.tagline}</span>
           ) : null}
-          <strong style={{ fontSize: 'var(--u-text-lg)' }}>{describeRaising(project)}</strong>
+          <strong
+            style={{ fontSize: 'var(--u-text-lg)' }}
+            data-investor-raising={view.round.raising}
+          >
+            {describeRaising({ ...view.round, askCurrency: view.round.askCurrency ?? undefined })}
+          </strong>
+          {view.round.fundingScope ? (
+            <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+              Предмет финансирования: {FUNDING_SCOPE_TITLES[view.round.fundingScope]}
+              {view.round.fundingScopeNote ? ` — ${view.round.fundingScopeNote}` : ''}
+            </span>
+          ) : null}
+          {/* Кто что видит — решил сервер; страница только показывает ответ. */}
+          <span
+            role="status"
+            style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}
+          >
+            {accessText}
+          </span>
         </Stack>
       </Card>
 
       <Card>
         <Stack>
           <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>О проекте</h2>
-          {project.description ? (
-            <p style={{ margin: 0, whiteSpace: 'pre-line', lineHeight: 1.6 }}>
-              {project.description}
-            </p>
+          {view.description ? (
+            <p style={{ margin: 0, whiteSpace: 'pre-line', lineHeight: 1.6 }}>{view.description}</p>
           ) : (
             <span style={{ color: 'var(--u-text-muted)' }}>
-              Основатель пока не добавил подробное описание.
+              {view.access.profile === null
+                ? 'Описание закрыто.'
+                : 'Основатель пока не добавил подробное описание.'}
             </span>
           )}
         </Stack>
@@ -215,31 +205,80 @@ ${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
 
       <Card>
         <Stack>
+          <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Анкета</h2>
+          {view.access.profile === null ? (
+            <EmptyState
+              title="Ответы закрыты"
+              description="Основатель открыл проект не для этой аудитории или ещё не согласовал показ ответов."
+            />
+          ) : questionCount === 0 ? (
+            <EmptyState
+              title="Ответов пока нет"
+              description="Основатель ещё не подал профиль через мастер заявки."
+            />
+          ) : (
+            <Stack gap="var(--u-space-3)">
+              {view.sections.map((section) => (
+                <div key={section.key} data-investor-section={section.key}>
+                  <h3 style={{ margin: '0 0 var(--u-space-2)', fontSize: 'var(--u-text-md)' }}>
+                    {section.title}
+                  </h3>
+                  <dl style={{ display: 'grid', gap: 'var(--u-space-2)', margin: 0 }}>
+                    {section.questions.map((q) => (
+                      <div key={q.key} data-investor-question={q.key}>
+                        <dt style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+                          {q.label}
+                        </dt>
+                        <dd style={{ margin: 0, whiteSpace: 'pre-line' }}>
+                          {q.type === 'money' && typeof q.value === 'string'
+                            ? formatMoney(q.value, 'RUB')
+                            : q.display}
+                        </dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ))}
+              {view.withheld > 0 ? (
+                <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+                  Ещё ответов, закрытых для вас: {view.withheld}.
+                </span>
+              ) : null}
+            </Stack>
+          )}
+        </Stack>
+      </Card>
+
+      <Card>
+        <Stack>
           <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Оценка платформы</h2>
-          {passport ? (
+          {view.passport ? (
             <>
-              {/*
-                Число не показывается без блока происхождения: «8/10» рядом с
-                проектом читается как оценка привлекательности вложения, что бы
-                ни лежало в служебных полях (ADR-008 §4).
-              */}
-              <ScoreProvenance passport={passport} modelVersion={passport.modelVersion ?? null} />
+              <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+                Паспорт версии {view.passport.version}, уровень раскрытия{' '}
+                {view.passport.disclosureTier}
+                {view.passport.publishedAt
+                  ? `, опубликован ${new Date(view.passport.publishedAt).toLocaleDateString('ru-RU')}`
+                  : ''}
+                . Оценка — мнение алгоритма платформы о качестве заявки, не совет о вложении.
+              </span>
+              {view.passport.irs !== null ? (
+                <strong>Итог: {formatScore10(view.passport.irs)}/10</strong>
+              ) : null}
               <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)', lineHeight: 1.6 }}>
-                {passport.scores.map((score) => (
+                {view.passport.axes.map((score) => (
                   <li key={score.axis}>
                     <strong>{SCORE_AXIS_TITLES[score.axis] ?? score.axis}</strong>:{' '}
-                    {formatScore10(score.value)}{' '}
-                    <span style={{ color: 'var(--u-text-muted)' }}>
-                      (интервал {formatScore10(score.confidenceLow)}–
-                      {formatScore10(score.confidenceHigh)})
-                    </span>
+                    {formatScore10(score.value)}
                   </li>
                 ))}
               </ul>
             </>
           ) : (
             <span style={{ color: 'var(--u-text-muted)' }}>
-              Оценка ещё не рассчитана: проект не проходил анализ платформы.
+              {view.access.passport === null
+                ? 'Оценка закрыта для этой аудитории.'
+                : 'Оценка ещё не рассчитана: проект не проходил анализ платформы.'}
             </span>
           )}
         </Stack>
@@ -252,14 +291,16 @@ ${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
             Документы открываются здесь, внутри платформы: скачивание не предусмотрено.
           </span>
 
-          {materials.status === 'loading' ? <LoadingState label="Загружаем материалы" /> : null}
-          {materials.status === 'denied' ? (
-            <EmptyState title="Материалы закрыты" description={materials.message} />
+          {view.materials === null ? (
+            <EmptyState
+              title="Материалы закрыты"
+              description="Материалы открываются допущенным инвесторам по отметке основателя."
+            />
           ) : null}
-          {materials.status === 'ready' && materials.items.length === 0 ? (
+          {view.materials !== null && materials.length === 0 ? (
             <EmptyState
               title="Материалов нет"
-              description="Основатель не приложил ни презентации, ни ссылки на продукт."
+              description="Основатель не открыл инвесторам ни презентации, ни ссылки на продукт."
             />
           ) : null}
 
@@ -285,26 +326,9 @@ ${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
                 </Button>
               </div>
               {openFile === material.id ? (
-                /*
-                  Просмотрщик — встроенный в браузер: файл приходит с адреса
-                  ядра и открывается на месте. Высота фиксирована, чтобы
-                  открытие документа не растягивало страницу рывком.
-
-                  Поверх лежит водяной знак с именем смотрящего. Скопировать
-                  документ он не мешает и не должен: у того, кто видит файл, он
-                  уже есть. Смысл в другом — снимок экрана или пересланная
-                  копия несут имя того, у кого они появились. Это единственная
-                  работающая мера против «переслал знакомому»: не запрет, а
-                  ответственность.
-                */
                 <div style={{ position: 'relative' }}>
                   <iframe
                     title={`Материал: ${MATERIAL_TYPE_TITLES[material.type] ?? material.type}`}
-                    /*
-                      `#toolbar=0` убирает панель встроенного просмотрщика — в
-                      ней Chrome рисует свои кнопки «скачать» и «печать», и они
-                      прямо противоречат обещанию «смотреть здесь».
-                    */
                     src={`${apiBaseUrl}/projects/${projectId}/materials/${material.id}/content#toolbar=0&navpanes=0`}
                     style={{
                       width: '100%',
@@ -320,8 +344,6 @@ ${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
                     style={{
                       position: 'absolute',
                       inset: 0,
-                      // Знак не перехватывает мышь: документ остаётся
-                      // прокручиваемым и выделяемым.
                       pointerEvents: 'none',
                       overflow: 'hidden',
                       borderRadius: 'var(--u-radius-md)',

@@ -419,10 +419,17 @@ export function useRound(projectId: string) {
   // Открытие подтверждает версию условий раскрытия из предпросмотра (5.7.3):
   // сервер отказывает, если администратор успел опубликовать другую.
   const open = useCallback(
-    () =>
+    (confirmation?: { confirmDisclosureVersion: number; contentDigest: string }) =>
       transition(async (id) => {
-        const preview = await api.rounds.openPreview(id);
-        return api.rounds.open(id, { confirmDisclosureVersion: preview.activeFormVersion });
+        // Подтверждение — версия и отпечаток ПОКАЗАННОГО предпросмотра; без него
+        // (старые вызовы) предпросмотр берётся прямо перед открытием.
+        const seen: { confirmDisclosureVersion: number; contentDigest: string } =
+          confirmation ??
+          (await api.rounds.openPreview(id).then((p) => ({
+            confirmDisclosureVersion: p.activeFormVersion,
+            contentDigest: p.contentDigest,
+          })));
+        return api.rounds.open(id, seen);
       }),
     [transition],
   );

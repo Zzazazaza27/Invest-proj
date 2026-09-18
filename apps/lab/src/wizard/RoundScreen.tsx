@@ -10,7 +10,9 @@ import {
   Markdown,
   Select,
   Stack,
+  describeRaising,
   formatMoney,
+  raisingTone,
 } from '@unicorn/ui';
 import { sectionScope } from '@unicorn/contracts';
 import type {
@@ -19,9 +21,10 @@ import type {
   FundingRoundDetail,
   ProjectMaterial,
   RoundCloseReason,
+  RoundOpenPreview,
   UpdateFundingRoundRequest,
 } from '@unicorn/contracts';
-import { ApiError } from '../api';
+import { ApiError, api } from '../api';
 import { S } from '../strings';
 import { QuestionField } from './QuestionField';
 import { SaveIndicator } from './SaveIndicator';
@@ -81,7 +84,9 @@ export function RoundScreen({
         text:
           e instanceof ApiError
             ? `${problem?.detail ?? e.message}${details ? `: ${details}` : ''}`
-            : 'Сервис недоступен',
+            : e instanceof Error && e.message
+              ? e.message
+              : 'Сервис недоступен',
       });
     } finally {
       setBusy(null);
@@ -287,6 +292,33 @@ function Actions({
   const [closeReason, setCloseReason] = useState<RoundCloseReason>('completed');
   const status = detail.round.status;
   const confirm = (text: string) => window.confirm(text);
+  // Предпросмотр раскрытия перед открытием (5.7.4): открытие подтверждает
+  // версию условий и отпечаток параметров именно показанного предпросмотра.
+  const [seen, setSeen] = useState<RoundOpenPreview | null>(null);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [previewRefresh, setPreviewRefresh] = useState(0);
+  useEffect(() => {
+    if (status !== 'draft') return;
+    let cancelled = false;
+    setSeen(null);
+    api.rounds
+      .openPreview(detail.round.id)
+      .then((p) => {
+        if (!cancelled) {
+          setSeen(p);
+          setPreviewError(null);
+        }
+      })
+      .catch((e: unknown) => {
+        if (!cancelled)
+          setPreviewError(
+            e instanceof ApiError ? (e.problem?.detail ?? e.message) : 'Сервис недоступен',
+          );
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [status, detail.round.id, detail.round.updatedAt, previewRefresh]);
 
   if (status === 'closed' || status === 'cancelled') {
     return (
@@ -309,6 +341,13 @@ function Actions({
           {S.round.actions.openHint}
         </p>
       ) : null}
+      {status === 'draft' ? (
+        <OpenPreviewCard
+          preview={seen}
+          error={previewError}
+          onRefresh={() => setPreviewRefresh((n) => n + 1)}
+        />
+      ) : null}
       <div
         style={{ display: 'flex', gap: 'var(--u-space-3)', flexWrap: 'wrap', alignItems: 'center' }}
       >
@@ -318,10 +357,35 @@ function Actions({
               variant="brand"
               data-round-open
               loading={busy === 'open'}
-              disabled={!detail.readiness.canOpen || !profileSubmitted || !countryChosen}
+              disabled={
+                !detail.readiness.canOpen || !profileSubmitted || !countryChosen || seen === null
+              }
               onClick={() => {
-                if (!confirm(S.round.actions.confirmOpen)) return;
-                void run('open', () => round.open(), S.round.actions.done.open);
+                if (!seen) return;
+                // Не window.confirm: подтверждение — показанный предпросмотр.
+                void run(
+                  'open',
+                  async () => {
+                    try {
+                      return await round.open({
+                        confirmDisclosureVersion: seen.activeFormVersion,
+                        contentDigest: seen.contentDigest,
+                      });
+                    } catch (e) {
+                      // 409: условия или параметры изменились после просмотра —
+                      // предпросмотр перечитывается, открытие — заново.
+                      if (e instanceof ApiError && e.status === 409) {
+                        setPreviewRefresh((n) => n + 1);
+                        throw new Error(
+                          `${e.problem?.detail ?? e.message} ${S.round.openPreview.stale}`,
+                          { cause: e },
+                        );
+                      }
+                      throw e;
+                    }
+                  },
+                  S.round.actions.done.open,
+                );
               }}
             >
               {S.round.actions.open}
@@ -394,6 +458,128 @@ function Actions({
         ) : null}
       </div>
     </Stack>
+  );
+}
+
+// ------------------------------------------------- предпросмотр перед открытием
+
+/**
+ * Что увидят после открытия — по активной версии условий для обеих аудиторий,
+ * с фактической аудиторией по режиму проекта. Кнопка открытия подтверждает
+ * именно этот предпросмотр (версия + отпечаток параметров).
+ */
+function OpenPreviewCard({
+  preview,
+  error,
+  onRefresh,
+}: {
+  preview: RoundOpenPreview | null;
+  error: string | null;
+  onRefresh: () => void;
+}) {
+  const summary = preview?.audienceSummary;
+  const audienceText = summary
+    ? summary.mode === 'private'
+      ? S.round.openPreview.audience.nobody
+      : summary.mode === 'public'
+        ? S.round.openPreview.audience.everyone
+        : summary.mode === 'selected_investors'
+          ? S.round.openPreview.audience.selected
+          : summary.subscriptionRequired
+            ? S.round.openPreview.audience.subscribed
+            : S.round.openPreview.audience.registered
+    : null;
+  return (
+    <Card data-open-preview={preview ? 'ready' : error ? 'error' : 'loading'}>
+      <Stack gap="var(--u-space-2)">
+        <h3 style={{ margin: 0, fontSize: 'var(--u-text-md)' }}>{S.round.openPreview.title}</h3>
+        <p style={{ margin: 0, fontSize: 'var(--u-text-sm)', color: 'var(--u-text-muted)' }}>
+          {S.round.openPreview.note}
+        </p>
+        {error ? <ErrorState description={error} onRetry={onRefresh} /> : null}
+        {!preview && !error ? <LoadingState label={S.round.openPreview.title} /> : null}
+        {preview ? (
+          <>
+            <span style={{ fontSize: 'var(--u-text-sm)' }} data-open-preview-version>
+              {S.round.openPreview.version(preview.activeFormVersion)}
+            </span>
+            <div
+              style={{
+                display: 'grid',
+                gap: 'var(--u-space-3)',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+              }}
+            >
+              <AudienceProjection
+                title={S.round.openPreview.anonymous}
+                audience="public"
+                projection={preview.public}
+              />
+              <AudienceProjection
+                title={S.round.openPreview.investors}
+                audience="investors"
+                projection={preview.investors}
+              />
+            </div>
+            {audienceText ? (
+              <span style={{ fontSize: 'var(--u-text-sm)' }} data-open-preview-audience>
+                {audienceText}
+              </span>
+            ) : null}
+            {preview.warnings.map((w) => (
+              <span
+                key={w}
+                style={{ fontSize: 'var(--u-text-sm)', color: 'var(--u-warning)' }}
+                data-open-preview-warning={w}
+              >
+                {S.round.openPreview.warnings[w]}
+              </span>
+            ))}
+            <div>
+              <Button variant="secondary" onClick={onRefresh}>
+                {S.round.openPreview.refresh}
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </Stack>
+    </Card>
+  );
+}
+
+function AudienceProjection({
+  title,
+  audience,
+  projection,
+}: {
+  title: string;
+  audience: 'public' | 'investors';
+  projection: RoundOpenPreview['public'];
+}) {
+  return (
+    <div
+      data-open-preview-projection={audience}
+      data-open-preview-raising={projection.raising}
+      style={{
+        border: '1px solid var(--u-border)',
+        borderRadius: 'var(--u-radius-md)',
+        padding: 'var(--u-space-3)',
+        display: 'grid',
+        gap: 'var(--u-space-1)',
+      }}
+    >
+      <strong style={{ fontSize: 'var(--u-text-sm)' }}>{title}</strong>
+      <Badge tone={raisingTone(projection.raising)}>
+        {describeRaising({ ...projection, askCurrency: projection.askCurrency ?? undefined })}
+      </Badge>
+      {projection.fundingScope ? (
+        <span style={{ fontSize: 'var(--u-text-sm)', color: 'var(--u-text-muted)' }}>
+          {S.wizard.preview.fundingScopeLabel}:{' '}
+          {S.wizard.preview.fundingScope[projection.fundingScope]}
+          {projection.fundingScopeNote ? ` — ${projection.fundingScopeNote}` : ''}
+        </span>
+      ) : null}
+    </div>
   );
 }
 

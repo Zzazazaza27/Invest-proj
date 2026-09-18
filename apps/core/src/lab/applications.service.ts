@@ -32,6 +32,7 @@ import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { loadFormConfig } from './application-forms.service';
+import { applicationDigest } from './disclosure-digest';
 import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 
 /**
@@ -342,7 +343,7 @@ export class ApplicationsService {
           },
         },
       );
-      return { ...built, activeFormVersion };
+      return { ...built, activeFormVersion, contentDigest: applicationDigest(application) };
     });
   }
 
@@ -421,6 +422,14 @@ export class ApplicationsService {
           { seen: opts.activeFormVersion, active },
         );
       }
+    }
+    if (opts.contentDigest !== undefined && opts.contentDigest !== applicationDigest(application)) {
+      // Ответы изменились после предпросмотра (в том числе из другой вкладки):
+      // подтверждать раскрытие изменённых данных молча нельзя.
+      throw errors.conflict(
+        'Ответы заявки изменились после предпросмотра: обновите предпросмотр и подайте снова',
+        { reason: 'content_changed' },
+      );
     }
 
     const { rows: projectRows } = await tx.query<SnapshotProjectRow>(
@@ -737,6 +746,8 @@ export interface SubmitOptions {
    * (старый маршрут) согласие не ставится.
    */
   activeFormVersion?: number;
+  /** Отпечаток содержимого из предпросмотра (5.7.4); расхождение с черновиком — 409. */
+  contentDigest?: string;
 }
 
 export interface SnapshotProjectRow {

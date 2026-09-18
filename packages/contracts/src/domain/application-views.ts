@@ -102,6 +102,12 @@ export const ApplicationPreviewSchema = z.object({
    * В чистой сборке (`buildApplicationPreview`) отсутствует — ставит сервер.
    */
   activeFormVersion: z.number().int().nonnegative().optional(),
+  /**
+   * Отпечаток показанного содержимого (5.7.4): подача возвращает его, и
+   * сервер сверяет с текущим состоянием заявки — изменённые после
+   * предпросмотра ответы нельзя подтвердить молча. Ставит сервер.
+   */
+  contentDigest: z.string().optional(),
 });
 export type ApplicationPreview = z.infer<typeof ApplicationPreviewSchema>;
 
@@ -113,6 +119,8 @@ export type ApplicationPreview = z.infer<typeof ApplicationPreviewSchema>;
  */
 export const SubmitApplicationRequestSchema = z.object({
   activeFormVersion: z.number().int().nonnegative(),
+  /** Отпечаток содержимого из предпросмотра; расхождение с текущим черновиком — 409. */
+  contentDigest: z.string().min(8).max(64),
 });
 export type SubmitApplicationRequest = z.infer<typeof SubmitApplicationRequestSchema>;
 

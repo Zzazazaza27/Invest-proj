@@ -23,6 +23,7 @@ import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { ServiceCountriesService } from '../billing/service-countries.service';
 import { loadFormConfig } from './application-forms.service';
+import { roundDigest } from './disclosure-digest';
 import {
   activeSchemaVersion,
   evidenceIds,
@@ -292,6 +293,14 @@ export class FundingRoundsService {
         throw errors.conflict(
           'Условия раскрытия изменились после предпросмотра: откройте предпросмотр раунда заново',
           { seen: input.confirmDisclosureVersion, active: activeVersion },
+        );
+      }
+      if (input.contentDigest !== roundDigest(round)) {
+        // Параметры раунда изменились после предпросмотра (в том числе из
+        // другой вкладки): открывать с изменёнными данными молча нельзя.
+        throw errors.conflict(
+          'Параметры раунда изменились после предпросмотра: обновите предпросмотр и откройте снова',
+          { reason: 'content_changed' },
         );
       }
       const missing: { path: string; message: string }[] = [];
@@ -756,14 +765,14 @@ function actorRole(ctx: RequestContext): string {
   return ctx.roles.includes('admin') ? 'admin' : 'founder';
 }
 
-const ROUND_COLUMNS = `
+export const ROUND_COLUMNS = `
   id, project_id, application_version_id, schema_version, status, funding_scope,
   funding_scope_note, target::text AS target, currency, investor_mode,
   ticket_min::text AS ticket_min, ticket_max::text AS ticket_max, committed::text AS committed,
   committed_source, answers_jsonb, evidence_jsonb, service_country, policy_version, close_reason,
   created_at, updated_at, opened_at, paused_at, closed_at, cancelled_at`;
 
-interface RoundRow {
+export interface RoundRow {
   id: string;
   project_id: string;
   application_version_id: string | null;

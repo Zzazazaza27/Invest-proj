@@ -75,6 +75,22 @@ const activeForm = async () =>
   (await sql('SELECT version FROM lab.application_form_versions WHERE is_active'))[0]?.version ?? 0;
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Подтверждение подачи: версия условий и отпечаток черновика из предпросмотра (5.7.4). */
+const confirmSubmit = async (client, appId) => {
+  const { json } = await client.call(`/v1/applications/${appId}/preview?audience=investors`);
+  return { activeFormVersion: json?.activeFormVersion, contentDigest: json?.contentDigest };
+};
+/** Подтверждение открытия раунда: версия условий и отпечаток параметров из предпросмотра. */
+const confirmOpen = async (client, roundId) => {
+  const { json } = await client.call(`/v1/rounds/${roundId}/open-preview`);
+  return { confirmDisclosureVersion: json?.activeFormVersion, contentDigest: json?.contentDigest };
+};
+/** Подтверждение «Применить»: активная версия и отпечаток из предпросмотра владельца. */
+const confirmApply = async (client, projectId) => {
+  const { json } = await client.call(`/v1/projects/${projectId}/view-preview?audience=investors`);
+  return { formVersion: json?.consent?.activeFormVersion, contentDigest: json?.contentDigest };
+};
+
 async function sql(text, params = []) {
   const { rows } = await pool.query(text, params);
   return rows;
@@ -1037,7 +1053,7 @@ let ticket;
 
   const early = await founderA.client.call(`/v1/applications/${appId}/submit`, {
     method: 'POST',
-    body: { activeFormVersion: await activeForm() },
+    body: await confirmSubmit(founderA.client, appId),
   });
   check(
     'преждевременная подача отвергнута валидацией',
@@ -1104,7 +1120,7 @@ let ticket;
 
   const premature = await founderA.client.call(`/v1/applications/${appId}/submit`, {
     method: 'POST',
-    body: { activeFormVersion: await activeForm() },
+    body: await confirmSubmit(founderA.client, appId),
   });
   check(
     'подача без обязательных вопросов отвергается с перечнем',
@@ -1152,7 +1168,7 @@ let ticket;
 
   const submitted = await founderA.client.call(`/v1/applications/${appId}/submit`, {
     method: 'POST',
-    body: { activeFormVersion: await activeForm() },
+    body: await confirmSubmit(founderA.client, appId),
   });
   check(
     'снимок версии хранит версию весов и процент готовности',
@@ -1706,7 +1722,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   await founderA.client.call(`/v1/applications/${appId}`, { method: 'PATCH', body: { answers } });
   const submitted = await founderA.client.call(`/v1/applications/${appId}/submit`, {
     method: 'POST',
-    body: { activeFormVersion: await activeForm() },
+    body: await confirmSubmit(founderA.client, appId),
   });
   check(
     'профиль подан без суммы и предмета финансирования',
@@ -1733,7 +1749,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
 
   const tooEarly = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
     method: 'POST',
-    body: { confirmDisclosureVersion: await activeForm() },
+    body: await confirmOpen(founderA.client, roundId),
   });
   check(
     'открыть незаполненный раунд нельзя, перечень назван',
@@ -1779,7 +1795,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   // Страна обслуживания — явный выбор аккаунта: без неё раунд не открывается.
   const noCountry = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
     method: 'POST',
-    body: { confirmDisclosureVersion: await activeForm() },
+    body: await confirmOpen(founderA.client, roundId),
   });
   check(
     'без страны обслуживания раунд не открывается, поле названо',
@@ -1800,7 +1816,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   check('страна видна в профиле', me.json?.serviceCountry === 'ru');
   const openKzt = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
     method: 'POST',
-    body: { confirmDisclosureVersion: await activeForm() },
+    body: await confirmOpen(founderA.client, roundId),
   });
   check(
     'валюта вне условий страны не даёт открыть раунд',
@@ -1815,7 +1831,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   });
   const opened = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
     method: 'POST',
-    body: { confirmDisclosureVersion: await activeForm() },
+    body: await confirmOpen(founderA.client, roundId),
   });
   check(
     'раунд открыт: страна и версия условий зафиксированы',
@@ -1962,7 +1978,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     });
     const submittedC = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
       method: 'POST',
-      body: { activeFormVersion: await activeForm() },
+      body: await confirmSubmit(founderA.client, appC.json?.id),
     });
     const roundC = await founderA.client.call(`/v1/projects/${projectCId}/rounds`, {
       method: 'POST',
@@ -1979,7 +1995,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     });
     const openedC = await founderA.client.call(`/v1/rounds/${roundC.json?.round?.id}/open`, {
       method: 'POST',
-      body: { confirmDisclosureVersion: await activeForm() },
+      body: await confirmOpen(founderA.client, roundC.json?.round?.id),
     });
     await grantFounderSubscription(founderA.userId, projectCId);
     await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'POST' });
@@ -2148,6 +2164,10 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     }
 
     // ---------------------------------------------- 5.7.3: действия владельца
+    // Каждое подтверждение (подача, открытие, «Применить») — отдельный запрос
+    // предпросмотра; блоки 5.7.2–5.7.4 подряд упираются в потолок частоты
+    // основателя (120/мин). Пауза — как в рендер-проверках.
+    await pause(61_000);
     {
       // Посторонний без допуска не узнаёт даже о существовании проекта в
       // закрытых режимах: ни названия, ни 403 — только 404.
@@ -2217,7 +2237,10 @@ console.warn('\n[раунды] профиль без раунда, чернов�
       const active = await activeForm();
       const staleApply = await founderA.client.call(`/v1/projects/${projectCId}/disclosure/apply`, {
         method: 'POST',
-        body: { formVersion: consentBefore.json?.consent?.formVersion },
+        body: {
+          formVersion: consentBefore.json?.consent?.formVersion,
+          contentDigest: consentBefore.json?.contentDigest,
+        },
       });
       check(
         'применение устаревшей версии условий отклонено — повторный просмотр',
@@ -2228,7 +2251,10 @@ console.warn('\n[раунды] профиль без раунда, чернов�
       );
       const applied = await founderA.client.call(`/v1/projects/${projectCId}/disclosure/apply`, {
         method: 'POST',
-        body: { formVersion: active, roundId: roundC.json?.round?.id },
+        body: {
+          ...(await confirmApply(founderA.client, projectCId)),
+          roundId: roundC.json?.round?.id,
+        },
       });
       const consentAfter = await founderA.client.call(
         `/v1/projects/${projectCId}/view-preview?audience=investors`,
@@ -2279,11 +2305,30 @@ console.warn('\n[раунды] профиль без раунда, чернов�
       // Подача = согласие на конкретный снимок; смена условий — повторный просмотр.
       const staleSubmit = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
         method: 'POST',
-        body: { activeFormVersion: active + 1 },
+        body: {
+          ...(await confirmSubmit(founderA.client, appC.json?.id)),
+          activeFormVersion: active + 1,
+        },
       });
+      // Содержимое изменилось после предпросмотра (другая вкладка): подать по
+      // старому отпечатку нельзя — 409, а не молчаливая подача изменённых данных.
+      const seenDraft = await confirmSubmit(founderA.client, appC.json?.id);
+      await founderA.client.call(`/v1/applications/${appC.json?.id}`, {
+        method: 'PATCH',
+        body: { title: 'Изменено из другой вкладки' },
+      });
+      const changedSubmit = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
+        method: 'POST',
+        body: seenDraft,
+      });
+      check(
+        'ответы изменились после предпросмотра — подача по старому отпечатку отклонена (409)',
+        changedSubmit.response.status === 409,
+        `${changedSubmit.response.status} ${changedSubmit.json?.detail ?? ''}`,
+      );
       const resubmitted = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
         method: 'POST',
-        body: { activeFormVersion: active },
+        body: await confirmSubmit(founderA.client, appC.json?.id),
       });
       const projectAfter = await founderA.client.call(`/v1/projects/${projectCId}`);
       check(
@@ -2304,7 +2349,10 @@ console.warn('\n[раунды] профиль без раунда, чернов�
         `/v1/rounds/${draftRound.json?.round?.id}/open`,
         {
           method: 'POST',
-          body: { confirmDisclosureVersion: active + 1 },
+          body: {
+            ...(await confirmOpen(founderA.client, draftRound.json?.round?.id)),
+            confirmDisclosureVersion: active + 1,
+          },
         },
       );
       const noBodyOpen = await founderA.client.call(
@@ -2312,6 +2360,36 @@ console.warn('\n[раунды] профиль без раунда, чернов�
         {
           method: 'POST',
         },
+      );
+      // Параметры раунда изменились после предпросмотра открытия — 409.
+      const seenRound = await confirmOpen(founderA.client, draftRound.json?.round?.id);
+      await founderA.client.call(`/v1/rounds/${draftRound.json?.round?.id}`, {
+        method: 'PATCH',
+        body: { target: '1500000.00', currency: 'RUB', fundingScope: 'project' },
+      });
+      const changedOpen = await founderA.client.call(
+        `/v1/rounds/${draftRound.json?.round?.id}/open`,
+        { method: 'POST', body: seenRound },
+      );
+      check(
+        'параметры раунда изменились после предпросмотра — открытие по старому отпечатку отклонено (409)',
+        changedOpen.response.status === 409,
+        `${changedOpen.response.status} ${changedOpen.json?.detail ?? ''}`,
+      );
+      // «Применить» по устаревшему отпечатку (раунд изменён из другой вкладки) — 409.
+      const seenApply = await confirmApply(founderA.client, projectCId);
+      await founderA.client.call(`/v1/rounds/${roundC.json?.round?.id}`, {
+        method: 'PATCH',
+        body: { investorMode: 'multiple' },
+      });
+      const changedApply = await founderA.client.call(
+        `/v1/projects/${projectCId}/disclosure/apply`,
+        { method: 'POST', body: { ...seenApply, roundId: roundC.json?.round?.id } },
+      );
+      check(
+        'раунд изменился после предпросмотра владельца — «Применить» по старому отпечатку отклонено (409)',
+        changedApply.response.status === 409,
+        `${changedApply.response.status} ${changedApply.json?.detail ?? ''}`,
       );
       check(
         'открытие раунда без подтверждения версии — 400, с устаревшей — 409',
@@ -2344,7 +2422,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   });
   const secondOpen = await founderA.client.call(`/v1/rounds/${secondId}/open`, {
     method: 'POST',
-    body: { confirmDisclosureVersion: await activeForm() },
+    body: await confirmOpen(founderA.client, secondId),
   });
   check(
     'второй незавершённый раунд на проект невозможен',
@@ -2356,7 +2434,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   check('пауза: привлечение приостановлено', paused.json?.round?.status === 'paused');
   const stillBlocked = await founderA.client.call(`/v1/rounds/${secondId}/open`, {
     method: 'POST',
-    body: { confirmDisclosureVersion: await activeForm() },
+    body: await confirmOpen(founderA.client, secondId),
   });
   check(
     'пауза место не освобождает',

@@ -275,7 +275,8 @@ function CatalogSection() {
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
             <h2 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Проекты в каталоге</h2>
             <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-              Тизеры доступны всем. Полная карточка — по подписке инвестора.
+              Тизеры доступны всем. Полная карточка — в кабинете инвестора, по режиму, который
+              выбрал основатель.
             </span>
           </div>
 
