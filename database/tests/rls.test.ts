@@ -1242,7 +1242,11 @@ describe('RLS: покрытие манифеста', () => {
     // страна обслуживания за аккаунтом и её условия версиями; lab.funding_rounds
     // и lab.funding_round_basis_history — раунд привлечения отдельно от заявки
     // с историей оснований (план 0.2 §0г, заявка-03 §2.5).
-    expect(Number(tables.rows[0]!.count)).toBe(83);
+    //
+    // +2 в M087: lab.project_access_grants и lab.project_access_exclusions —
+    // разрешения выбранных получателей (набор разрешений, не уровень) и
+    // исключения с приоритетом (план 5.7 §3.2).
+    expect(Number(tables.rows[0]!.count)).toBe(85);
   });
 });
 

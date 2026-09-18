@@ -856,9 +856,15 @@ export class ProjectsService {
           );
         }
 
+        // Совместимость 5.7.1: с M087 доступ наружу решает режим видимости
+        // (lab.project_audience), листинг — его следствие. Пока действие
+        // «Кто может видеть проект» не заведено (5.7.3), публикация листинга
+        // ставит режим public — то же, что перенос данных M087 (тизер;
+        // согласия на ответы нет, материалы закрыты).
         await tx.query(
           `UPDATE lab.projects
               SET listing_status = 'listed', listed_at = now(),
+                  visibility = 'public', visibility_changed_at = now(),
                   required_plan_id = $2, updated_at = now()
             WHERE id = $1`,
           [projectId, planId],
@@ -895,7 +901,8 @@ export class ProjectsService {
     return this.db.transaction(ctx, async (tx) => {
       const { rows } = await tx.query<ProjectRow>(
         `UPDATE lab.projects
-            SET listing_status = 'unlisted', updated_at = now()
+            SET listing_status = 'unlisted', updated_at = now(),
+                visibility = 'private', visibility_changed_at = now()
           WHERE id = $1 AND deleted_at IS NULL AND listing_status = 'listed'
           RETURNING ${PROJECT_COLUMNS}`,
         [projectId],

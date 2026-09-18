@@ -286,8 +286,13 @@ export async function createProject(
 
   if (opts.listed) {
     await createFounderSubscription(client, ownerUserId, id);
+    // С M087 листинг — следствие режима видимости: опубликованный проект в
+    // фикстуре получает режим public (тизер), как и при переносе данных.
     await client.query(
-      `UPDATE lab.projects SET listing_status = 'listed', listed_at = now() WHERE id = $1`,
+      `UPDATE lab.projects
+          SET listing_status = 'listed', listed_at = now(),
+              visibility = 'public', visibility_changed_at = now()
+        WHERE id = $1`,
       [id],
     );
   }
