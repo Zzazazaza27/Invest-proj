@@ -1237,7 +1237,12 @@ describe('RLS: покрытие манифеста', () => {
     //
     // +3 в M079: content.languages, content.text_entries, content.text_versions —
     // словарь и ЧАВО версиями в БД (план 0.2 §2.6, этап 5.3).
-    expect(Number(tables.rows[0]!.count)).toBe(79);
+    //
+    // +4 в M081: billing.service_countries и billing.service_country_policies —
+    // страна обслуживания за аккаунтом и её условия версиями; lab.funding_rounds
+    // и lab.funding_round_basis_history — раунд привлечения отдельно от заявки
+    // с историей оснований (план 0.2 §0г, заявка-03 §2.5).
+    expect(Number(tables.rows[0]!.count)).toBe(83);
   });
 });
 

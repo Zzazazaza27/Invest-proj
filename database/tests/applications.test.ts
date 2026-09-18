@@ -102,36 +102,42 @@ describe('Заявка: черновик свободен, обязательн�
     });
   });
 
-  it('подать без суммы нельзя — CHECK последнего рубежа', async () => {
+  it('профиль подаётся без суммы: CHECK подачи сняты в M081, сумма — у раунда', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c);
       const project = await createProject(c, founder.id);
-      const error = await expectError(() =>
-        createApplication(c, project, founder.id, { ask: null, status: 'submitted' }),
+      const app = await createApplication(c, project, founder.id, {
+        ask: null,
+        status: 'submitted',
+      });
+      const { rows } = await c.query<{ status: string; ask: string | null }>(
+        `SELECT status, investment_ask::text AS ask FROM lab.investment_applications WHERE id = $1`,
+        [app],
       );
-      expect(error.message).toMatch(/applications_submitted_has_ask/);
+      expect(rows[0]!.status).toBe('submitted');
+      expect(rows[0]!.ask).toBeNull();
     });
   });
 
-  it('уточнение направления обязательно только при подаче', async () => {
+  it('направление без уточнения при подаче не отвергается БД: предмет финансирования — у раунда (M081)', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c);
       const project = await createProject(c, founder.id);
       const app = await createApplication(c, project, founder.id);
-      // Черновик: направление без уточнения — можно.
       await c.query(
         `UPDATE lab.investment_applications SET funding_scope = 'direction' WHERE id = $1`,
         [app],
       );
-      // Подача без уточнения — нельзя.
-      const error = await expectError(() =>
-        c.query(
-          `UPDATE lab.investment_applications
-              SET status = 'submitted', submitted_at = now() WHERE id = $1`,
-          [app],
-        ),
+      await c.query(
+        `UPDATE lab.investment_applications
+            SET status = 'submitted', submitted_at = now() WHERE id = $1`,
+        [app],
       );
-      expect(error.message).toMatch(/applications_submitted_has_scope_note/);
+      const { rows } = await c.query<{ status: string }>(
+        `SELECT status FROM lab.investment_applications WHERE id = $1`,
+        [app],
+      );
+      expect(rows[0]!.status).toBe('submitted');
     });
   });
 
