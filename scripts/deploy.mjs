@@ -200,7 +200,10 @@ try {
   // трогает, чтобы она не уезжала туда, где не нужна. Здесь нужна — доступ к
   // ней закрыт привратником, а не отсутствием файлов.
   remote('npm run build:console', { show: true });
-  ok('собрано');
+  // Фронты обязаны быть production-сборкой: отладочный React удваивает запросы
+  // (StrictMode) и тянет предупреждения в консоль (этап 5.6.4д).
+  remote('npm run check:front-builds', { show: true });
+  ok('собрано, сборки production');
 
   step('База');
   remote('npm run db:migrate', { show: true });

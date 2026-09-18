@@ -295,6 +295,13 @@ try {
     (await regPage.locator('#serviceCountry').getAttribute('type')) === 'checkbox' &&
       (await regPage.locator('[data-service-country]').innerText()).includes('RU'),
   );
+  await regPage.locator('input[name=role][value=investor]').check();
+  await regPage.waitForSelector('[data-service-country]', { timeout: 5_000 });
+  check(
+    'инвестору страна обслуживания предлагается так же, как основателю',
+    (await regPage.locator('#serviceCountry').count()) === 1,
+  );
+  await regPage.locator('input[name=role][value=founder]').check();
   check(
     'страна не подставляется молча: до подтверждения не выбрана',
     (await regPage.locator('[data-service-country]').getAttribute('data-service-country')) ===

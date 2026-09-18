@@ -313,6 +313,14 @@ try {
     .getByRole('button', { name: 'Идея', exact: true })
     .click();
   await adminPage.waitForSelector('[data-preview-form]', { timeout: 15_000 });
+  // Предпросмотр сначала сохраняет черновик, потом собирает форму: секция
+  // появляется раньше содержимого — ждём сам вопрос, а не контейнер.
+  await adminPage
+    .locator('[data-preview-form]')
+    .getByText('Какую проблему вы решаете?')
+    .first()
+    .waitFor({ timeout: 15_000 })
+    .catch(() => undefined);
   const previewText = await adminPage.locator('[data-preview-form]').innerText();
   check(
     'предпросмотр формы для стадии «идея» собран из черновика',
@@ -532,9 +540,14 @@ try {
 
   await labPage.goto(projectUrl, { waitUntil: 'networkidle' });
   await labPage.waitForSelector('text=Инвестиционные заявки', { timeout: 15_000 });
+  // С 5.6.3 анкета старой формы (схема 0) не занимает место в лимите «3 на
+  // проект»: после заявок A и B занято 2 из 3, кнопка открыта.
+  const limitText = await appsCard().innerText();
   check(
-    'лимит политики (3 заявки на проект) закрыл кнопку на первом проекте',
-    await appsCard().getByRole('button', { name: 'Новая заявка' }).isDisabled(),
+    'анкета старой формы не считается в лимите: 2 из 3, кнопка «Новая заявка» открыта',
+    limitText.includes('Заявок: 2 из 3') &&
+      !(await appsCard().getByRole('button', { name: 'Новая заявка' }).isDisabled()),
+    limitText.match(/Заявок: d+ из d+/)?.[0] ?? '—',
   );
   await createProject(`Откат анкеты ${suffix}`);
   await appsCard().getByRole('button', { name: 'Новая заявка' }).click();

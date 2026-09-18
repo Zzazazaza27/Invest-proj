@@ -11,6 +11,9 @@ import type { ApplicationFormConfig } from './application-form';
 export const APPLICATION_FORM_V1: ApplicationFormConfig = {
   locales: ['ru-RU'],
   defaultLocale: 'ru-RU',
+  disclosure: {
+    raising_status: 'investors',
+  },
   sections: [
     {
       key: 'project',
@@ -2334,7 +2337,7 @@ export const APPLICATION_FORM_V1: ApplicationFormConfig = {
         early_revenue: 'mandatory',
         growth: 'mandatory',
       },
-      visibility: 'public',
+      visibility: 'investors',
       coreField: 'funding_scope',
       texts: {
         'ru-RU': {
@@ -2355,7 +2358,7 @@ export const APPLICATION_FORM_V1: ApplicationFormConfig = {
         early_revenue: 'mandatory',
         growth: 'mandatory',
       },
-      visibility: 'public',
+      visibility: 'investors',
       constraints: {
         maxLength: 200,
       },
@@ -2381,7 +2384,7 @@ export const APPLICATION_FORM_V1: ApplicationFormConfig = {
         early_revenue: 'mandatory',
         growth: 'mandatory',
       },
-      visibility: 'public',
+      visibility: 'investors',
       coreField: 'investment_ask',
       texts: {
         'ru-RU': {

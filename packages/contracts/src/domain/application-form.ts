@@ -178,11 +178,26 @@ export const FormQuestionSchema = z.object({
 });
 export type FormQuestion = z.infer<typeof FormQuestionSchema>;
 
+/**
+ * Настройки раскрытия, у которых нет вопроса формы (M086): те же уровни
+ * видимости, та же публикация версии с основанием. `raising_status` —
+ * состояние привлечения (открыт / приостановлено / не привлекает) отдельно
+ * от суммы и валюты (`investment_ask`). Версия без блока: статус наследует
+ * видимость `investment_ask` (правило до M086).
+ */
+export const FormDisclosureSchema = z
+  .object({
+    raising_status: FormVisibilitySchema,
+  })
+  .partial();
+export type FormDisclosure = z.infer<typeof FormDisclosureSchema>;
+
 const FormConfigShapeSchema = z.object({
   locales: z.array(FormLocaleSchema).min(1).max(20),
   defaultLocale: FormLocaleSchema,
   sections: z.array(FormSectionSchema).min(1).max(50),
   questions: z.array(FormQuestionSchema).max(500),
+  disclosure: FormDisclosureSchema.optional(),
 });
 export type ApplicationFormConfig = z.infer<typeof FormConfigShapeSchema>;
 

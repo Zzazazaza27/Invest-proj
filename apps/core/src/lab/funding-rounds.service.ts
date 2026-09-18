@@ -325,7 +325,11 @@ export class FundingRoundsService {
 
       await tx.query(
         `UPDATE lab.funding_rounds
-            SET status = 'open', opened_at = now(), service_country = $2, policy_version = $3
+            SET status = 'open', opened_at = now(), service_country = $2, policy_version = $3,
+                -- Версия условий раскрытия фиксируется при открытии (M086):
+                -- расширение публичности потом этот раунд не затронет.
+                disclosure_version = (SELECT version FROM lab.application_form_versions
+                                       WHERE is_active LIMIT 1)
           WHERE id = $1`,
         [roundId, country, policy!.version],
       );

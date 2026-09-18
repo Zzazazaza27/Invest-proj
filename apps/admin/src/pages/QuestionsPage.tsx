@@ -66,7 +66,7 @@ const VISIBILITY_LABEL = {
  */
 const ROUND_VISIBILITY_HINT: Record<string, string> = {
   investment_ask:
-    'Управляет группой «текущий запрос»: состояние привлечения, сумма и валюта раунда — в каталоге, карточках и предпросмотре. Закрыто для аудитории → зритель не видит даже того, идёт ли привлечение.',
+    'Управляет суммой и валютой раунда (вместе) — в каталоге, карточках и предпросмотре. Состояние привлечения настраивается отдельно в блоке «Раскрытие раунда»; сумма показывается только вместе с состоянием.',
   funding_scope:
     'Управляет раскрытием предмета финансирования раунда (проект или направление) наружу.',
   funding_scope_note:
@@ -292,6 +292,53 @@ export function QuestionsPage() {
           </button>
         </div>
       </div>
+
+      <section className="card" data-disclosure>
+        <h2 style={{ marginBottom: 2 }}>Раскрытие раунда</h2>
+        <div className="small muted" style={{ marginBottom: 8 }}>
+          Настройки раскрытия, у которых нет вопроса формы. Уровни те же, что у видимости вопросов;
+          действуют после публикации версии. Ограничение применяется ко всем раундам сразу;
+          расширение публичности — только к раундам, открытым после публикации (у открытого раунда
+          сохраняется версия условий на момент открытия).
+        </div>
+        <div className="grid-2">
+          <div className="field">
+            <label htmlFor="disclosure-raising-status">
+              Состояние привлечения (открыт / приостановлено / не привлекает)
+            </label>
+            <select
+              id="disclosure-raising-status"
+              value={config.disclosure?.raising_status ?? ''}
+              onChange={(e) =>
+                setConfig((current) =>
+                  current === null
+                    ? current
+                    : {
+                        ...current,
+                        disclosure: {
+                          ...(current.disclosure ?? {}),
+                          ...(e.target.value === ''
+                            ? { raising_status: undefined }
+                            : { raising_status: e.target.value as FormQuestion['visibility'] }),
+                        },
+                      },
+                )
+              }
+            >
+              <option value="">как у суммы (investment_ask)</option>
+              {(Object.keys(VISIBILITY_LABEL) as (keyof typeof VISIBILITY_LABEL)[]).map((v) => (
+                <option key={v} value={v}>
+                  {VISIBILITY_LABEL[v]}
+                </option>
+              ))}
+            </select>
+            <div className="field__hint">
+              Можно показывать состояние, скрывая сумму: состояние — публично, сумма
+              (investment_ask) — инвесторам. Сумма без состояния не показывается.
+            </div>
+          </div>
+        </div>
+      </section>
 
       <div className="toolbar" data-form-status>
         <span className={`badge ${dirty ? 'badge--warn' : 'badge--muted'}`}>

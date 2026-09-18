@@ -146,7 +146,8 @@ export default function App() {
   const [consentGiven, setConsentGiven] = useState(false);
   const [passwordRepeat, setPasswordRepeat] = useState('');
   /**
-   * Страна обслуживания (этап 5.6.5): список активных стран — публичный;
+   * Страна обслуживания (этап 5.6.5, обеим ролям — владелец 2026-09-18): список
+   * активных стран — публичный; язык от страны не зависит;
    * одна страна предлагается для подтверждения, несколько — выбор. Пустой
    * список — регистрация без страны, её попросят перед открытием раунда.
    */
@@ -319,7 +320,7 @@ export default function App() {
               displayName,
               role,
               locale: LOCALE,
-              ...(role === 'founder' && serviceCountry ? { serviceCountry } : {}),
+              ...(serviceCountry ? { serviceCountry } : {}),
               consents: await requiredConsents(),
             });
 
@@ -677,7 +678,7 @@ export default function App() {
                 </Field>
               ) : null}
 
-              {mode === 'register' && role === 'founder' && countries && countries.length > 0 ? (
+              {mode === 'register' && countries && countries.length > 0 ? (
                 <div data-service-country={serviceCountry || 'none'}>
                   {countries.length === 1 ? (
                     <label className="auth-consent">

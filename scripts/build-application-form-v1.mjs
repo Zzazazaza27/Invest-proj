@@ -282,6 +282,9 @@ if (questions.length !== rows.size) throw new Error('строки таблиц �
 const config = {
   locales: [LOCALE],
   defaultLocale: LOCALE,
+  // Статус привлечения — отдельная настройка раскрытия (M086), стартово
+  // закрыт от анонима, как и сумма.
+  disclosure: { raising_status: 'investors' },
   sections: sections.map(({ _questions: _q, ...s }) => s),
   questions,
 };
