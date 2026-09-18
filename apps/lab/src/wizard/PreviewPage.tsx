@@ -1,5 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Badge, Card, ErrorState, LoadingState, Stack, formatMoney } from '@unicorn/ui';
+import {
+  Badge,
+  Card,
+  ErrorState,
+  LoadingState,
+  Stack,
+  describeRaising,
+  formatMoney,
+  raisingTone,
+  type RaisingState,
+} from '@unicorn/ui';
 import type { ApplicationPreview } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { S } from '../strings';
@@ -12,10 +22,13 @@ import { S } from '../strings';
 export function PreviewPage({
   applicationId,
   refreshKey,
+  raising,
 }: {
   applicationId: string;
   /** Любое изменение ключа перечитывает сводку (после сохранения). */
   refreshKey?: string;
+  /** Состояние привлечения — из раунда проекта; сумма заявки текущим запросом не считается. */
+  raising?: { raising: RaisingState; investmentAsk: string | null; askCurrency?: string };
 }) {
   const [state, setState] = useState<
     | { status: 'loading' }
@@ -80,10 +93,8 @@ export function PreviewPage({
             <Badge tone="accent">
               {S.applications.stage[preview.core.stage] ?? preview.core.stage}
             </Badge>
-            {preview.core.investmentAsk ? (
-              <Badge tone="success">
-                {formatMoney(preview.core.investmentAsk, preview.core.askCurrency)}
-              </Badge>
+            {raising ? (
+              <Badge tone={raisingTone(raising.raising)}>{describeRaising(raising)}</Badge>
             ) : null}
             {preview.project.geoCountry ? <Badge>{preview.project.geoCountry}</Badge> : null}
           </div>

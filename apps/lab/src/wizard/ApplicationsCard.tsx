@@ -6,9 +6,12 @@ import {
   LoadingState,
   SectionCard,
   Stack,
+  describeRaising,
   formatMoney,
+  raisingTone,
 } from '@unicorn/ui';
-import type { ApplicationList } from '@unicorn/contracts';
+import type { ApplicationList, FundingRound } from '@unicorn/contracts';
+import { raisingState } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { S } from '../strings';
 
@@ -16,14 +19,20 @@ import { S } from '../strings';
  * Заявки проекта в кабинете v2 (этап 4): список, остаток по политике,
  * создание новой и переход в мастер. У проекта может быть несколько заявок;
  * каждая живёт на своей версии анкеты и подаётся отдельно.
+ *
+ * Строка раунда (этап 5.6.4): состояние привлечения — из раундов проекта, не
+ * из суммы заявки; переход к раунду идёт через мастер последней заявки.
  */
 export function ApplicationsCard({
   projectId,
   onOpen,
+  onOpenRound,
 }: {
   projectId: string;
   onOpen: (applicationId: string) => void;
+  onOpenRound?: (applicationId: string) => void;
 }) {
+  const [rounds, setRounds] = useState<FundingRound[] | null>(null);
   const [state, setState] = useState<
     | { status: 'loading' }
     | { status: 'ready'; list: ApplicationList }
@@ -34,7 +43,12 @@ export function ApplicationsCard({
 
   const load = useCallback(async () => {
     try {
-      setState({ status: 'ready', list: await api.applications.list(projectId) });
+      const [list, roundList] = await Promise.all([
+        api.applications.list(projectId),
+        api.rounds.list(projectId),
+      ]);
+      setState({ status: 'ready', list });
+      setRounds(roundList.items);
     } catch (e) {
       setState({
         status: 'error',
@@ -62,6 +76,17 @@ export function ApplicationsCard({
   };
 
   const limits = state.status === 'ready' ? state.list.limits : null;
+  const unfinished = rounds?.find((r) => r.status === 'open' || r.status === 'paused') ?? null;
+  const draft = rounds?.find((r) => r.status === 'draft') ?? null;
+  const raising = {
+    raising: raisingState(unfinished),
+    investmentAsk: unfinished?.target ?? null,
+    askCurrency: unfinished?.currency ?? 'RUB',
+  };
+  const latestOpenable =
+    state.status === 'ready'
+      ? (state.list.items.find((i) => i.status !== 'archived' && i.schemaVersion > 0) ?? null)
+      : null;
 
   return (
     <SectionCard
@@ -87,6 +112,29 @@ export function ApplicationsCard({
               ? ` · сумма одной заявки до ${formatMoney(limits.maxAskPerApplication, 'RUB')}`
               : ''}
           </span>
+        ) : null}
+        {rounds && onOpenRound ? (
+          <div
+            data-round-line={raising.raising}
+            style={{
+              display: 'flex',
+              gap: 'var(--u-space-3)',
+              alignItems: 'center',
+              flexWrap: 'wrap',
+              padding: 'var(--u-space-3)',
+              border: '1px solid var(--u-border)',
+              borderRadius: 'var(--u-radius-md)',
+            }}
+          >
+            <Badge tone={raisingTone(raising.raising)}>{describeRaising(raising)}</Badge>
+            {draft ? <Badge tone="accent">{S.round.state.draft}</Badge> : null}
+            <span style={{ flex: 1 }} />
+            {latestOpenable ? (
+              <Button variant="secondary" onClick={() => onOpenRound(latestOpenable.id)}>
+                {unfinished || draft ? S.round.intro.toRound : S.round.intro.yes}
+              </Button>
+            ) : null}
+          </div>
         ) : null}
         {notice ? (
           <div role="alert" style={{ color: 'var(--u-danger)' }}>
@@ -123,10 +171,10 @@ export function ApplicationsCard({
                   <strong>{item.title ?? S.applications.untitled}</strong>
                   <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
                     {S.applications.stage[item.stage] ?? item.stage} ·{' '}
-                    {item.investmentAsk
-                      ? formatMoney(item.investmentAsk, item.askCurrency)
-                      : 'сумма не указана'}{' '}
-                    · {S.applications.version(item.schemaVersion)}
+                    {S.applications.version(item.schemaVersion)}
+                    {item.schemaVersion === 0 && item.investmentAsk
+                      ? ` · ${formatMoney(item.investmentAsk, item.askCurrency)} (старая форма)`
+                      : ''}
                   </span>
                 </div>
                 <Badge

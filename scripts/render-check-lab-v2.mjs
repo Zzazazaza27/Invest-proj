@@ -156,7 +156,35 @@ async function screenshot(name) {
   return file;
 }
 
-const savedState = () => page.locator('[data-save-state]').first();
+const savedState = () => page.locator('[data-save-state][data-save-scope="application"]').first();
+const roundSaved = () => page.locator('[data-save-state][data-save-scope="round"]').first();
+async function roundSavedCount() {
+  return Number((await roundSaved().getAttribute('data-save-count')) ?? '0');
+}
+async function waitRoundSaved(stage, since) {
+  try {
+    await page.waitForFunction(
+      /* eslint-disable no-undef */
+      (n) =>
+        Number(
+          document
+            .querySelector('[data-save-state][data-save-scope="round"]')
+            ?.getAttribute('data-save-count') ?? '0',
+        ) > n,
+      /* eslint-enable no-undef */
+      since,
+      { timeout: 10_000 },
+    );
+  } catch {
+    check(
+      `сохранение раунда (${stage})`,
+      false,
+      await roundSaved()
+        .innerText()
+        .catch(() => '—'),
+    );
+  }
+}
 /** Число завершённых сохранений — чтобы ждать ИМЕННО следующую запись, а не прошлую. */
 async function savedCount() {
   return Number((await savedState().getAttribute('data-save-count')) ?? '0');
@@ -168,7 +196,9 @@ async function waitSaved(stage, since) {
       /* eslint-disable no-undef */
       (n) =>
         Number(
-          document.querySelector('[data-save-state]')?.getAttribute('data-save-count') ?? '0',
+          document
+            .querySelector('[data-save-state][data-save-scope="application"]')
+            ?.getAttribute('data-save-count') ?? '0',
         ) > n,
       /* eslint-enable no-undef */
       since,
@@ -200,6 +230,8 @@ async function fillQuestion(key, value) {
     await control.blur();
   }
 }
+
+page.on('dialog', (dialog) => void dialog.accept());
 
 try {
   await setFlag(true);
@@ -268,7 +300,14 @@ try {
   check(
     'разделы перечислены в навигации',
     (await page.getByRole('button', { name: /^1\. Проект/ }).count()) === 1 &&
-      (await page.getByRole('button', { name: /^14\. Материалы/ }).count()) === 1,
+      (await page.getByRole('button', { name: /^13\. Материалы/ }).count()) === 1 &&
+      (await page.getByRole('button', { name: /^Раунд привлечения/ }).count()) === 1,
+  );
+  check(
+    'вопрос «привлекаете ли инвестиции» — развилка к раунду, не флаг',
+    introText.includes('Вы сейчас привлекаете инвестиции?') &&
+      introText.includes('Ответ ничего не переключает') &&
+      (await page.getByRole('button', { name: 'Да — подготовить раунд' }).count()) === 1,
   );
   check(
     'два сообщения о готовности: минимум для подачи и процент',
@@ -379,11 +418,17 @@ try {
   const form = await fetch(`${CORE_URL}/v1/applications/${wizardUrl.split('/').pop()}/form`, {
     headers: { cookie: (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ') },
   }).then((r) => r.json());
-  const mandatory = form.sections.flatMap((s) =>
-    s.questions
-      .filter((q) => q.state === 'mandatory' && !q.coreField)
-      .map((q) => ({ ...q, section: s.key })),
-  );
+  const scopeOf = (section) => section.scope ?? (section.key === 'funding' ? 'round' : 'profile');
+  const mandatory = form.sections
+    .filter((section) => scopeOf(section) === 'profile')
+    .flatMap((s) =>
+      s.questions
+        .filter((q) => q.state === 'mandatory' && !q.coreField)
+        .map((q) => ({ ...q, section: s.key })),
+    );
+  const roundMandatory = form.sections
+    .filter((section) => scopeOf(section) === 'round')
+    .flatMap((s) => s.questions.filter((q) => q.state === 'mandatory' && !q.coreField));
   check(
     'форма отдаёт обязательные вопросы для стадии',
     mandatory.length >= 8,
@@ -406,31 +451,21 @@ try {
       q.type === 'number' ? 3 : q.type === 'money' ? '100.00' : `Ответ прогона: ${q.label}`,
     );
   }
-  // Предмет финансирования больше не подставляется базой (M078): пока не
-  // выбран — обязательный вопрос не засчитан и подача закрыта.
-  await page.getByRole('button', { name: /^11\. Инвестиционный запрос/ }).click();
-  await page.waitForSelector('[data-question="funding_scope"] select', { timeout: 10_000 });
-  check(
-    'предмет финансирования не выбран по умолчанию',
-    (await page.locator('[data-question="funding_scope"] select').inputValue()) === '',
+  // Предмет финансирования и сумма — поля РАУНДА (план 0.2 §0г, 5.6.4):
+  // профиль подаётся без них, минимум считается по вопросам профиля.
+  await page.waitForFunction(
+    /* eslint-disable no-undef */
+    () => document.querySelector('[data-save-state]')?.getAttribute('data-save-state') === 'saved',
+    /* eslint-enable no-undef */
+    undefined,
+    { timeout: 15_000 },
   );
-  const scopeBefore = await page.locator('[data-readiness]').innerText();
-  check(
-    'без выбора предмета финансирования подача закрыта',
-    scopeBefore.includes('До подачи осталось'),
-  );
-  const s6 = await savedCount();
-  await page.locator('[data-question="funding_scope"] select').selectOption('project');
-  await waitSaved('предмет финансирования', s6);
-
-  // Сумма — системное поле в разделе «Инвестиционный запрос».
-  await page.getByRole('button', { name: /^11\. Инвестиционный запрос/ }).click();
-  await page.waitForSelector('[data-question="investment_ask"] input', { timeout: 10_000 });
-  const s5 = await savedCount();
-  await fillQuestion('investment_ask', '3000000.00');
-  await waitSaved('сумма', s5);
   await page.waitForTimeout(800);
   const after = await page.locator('[data-readiness]').innerText();
+  check(
+    'раздел «Инвестиционный запрос» не в навигации профиля — он на экране раунда',
+    (await page.getByRole('button', { name: /^\d+\. Инвестиционный запрос/ }).count()) === 0,
+  );
   const percent = Number(/Заполненность заявки: (\d+)%/.exec(after)?.[1] ?? '-1');
   check(
     'минимум для подачи выполнен — сказано отдельно',
@@ -445,11 +480,74 @@ try {
     'разделы с обязательными теперь «частично» или «готов», не «требует внимания»',
     (await page.getByRole('button', { name: /^2\. Проблема/ }).innerText()).includes('частично'),
   );
-  await screenshot('wizard-section-funding-ready');
+  await screenshot('wizard-section-profile-ready');
+
+  // --------------------------------------------- раунд: черновик до подачи
+  console.warn('\n[6a] Раунд привлечения: черновик готовится до подачи профиля');
+  await page.getByRole('button', { name: /^Раунд привлечения/ }).click();
+  await page.waitForSelector('[data-round-state="none"]', { timeout: 10_000 });
+  check(
+    'раунда нет — предложена подготовка черновика, флага «привлекаю» нет',
+    (await page.locator('main').innerText()).includes('Раунд ещё не готовится'),
+  );
+  await page.getByRole('button', { name: 'Начать подготовку раунда' }).click();
+  await page.waitForSelector('[data-round-state="draft"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-round-country]', { timeout: 10_000 });
+  if ((await page.locator('[data-round-country]').getAttribute('data-round-country')) === 'none') {
+    await page.getByRole('button', { name: /Подтвердить страну: RU/ }).click();
+    await page.waitForSelector('[data-round-country="ru"]', { timeout: 10_000 });
+  }
+  check(
+    'страна аккаунта выбрана один раз; условия страны показаны рядом с суммой',
+    (await page.locator('[data-round-country="ru"]').innerText()).includes('Валюты раунда'),
+  );
+  await page.waitForSelector('[data-question="funding_scope"] select', { timeout: 10_000 });
+  check(
+    'предмет финансирования не выбран по умолчанию',
+    (await page.locator('[data-question="funding_scope"] select').inputValue()) === '',
+  );
+  const roundBefore = await page.locator('[data-round-readiness]').innerText();
+  check(
+    'до заполнения раунд открыть нельзя — сказано отдельно от профиля',
+    roundBefore.includes('До открытия осталось'),
+  );
+  const r1 = await roundSavedCount();
+  await page.locator('[data-question="funding_scope"] select').selectOption('project');
+  await waitRoundSaved('предмет финансирования', r1);
+  const r2 = await roundSavedCount();
+  await fillQuestion('investment_ask', '3000000.00');
+  await waitRoundSaved('сумма раунда', r2);
+  const r3 = await roundSavedCount();
+  await page.locator('#round-currency').selectOption('RUB');
+  await waitRoundSaved('валюта', r3);
+  for (const q of roundMandatory) {
+    const r = await roundSavedCount();
+    await fillQuestion(
+      q.key,
+      q.type === 'number' ? 3 : q.type === 'money' ? '100.00' : `Ответ прогона: ${q.label}`,
+    );
+    await waitRoundSaved(q.key, r);
+  }
+  await page.waitForTimeout(800);
+  const roundReady = await page.locator('[data-round-readiness]').innerText();
+  check(
+    'готовность раунда считается отдельно от профиля и достигнута',
+    roundReady.includes('Раунд можно открыть') && /Готовность раунда: \d+%/.test(roundReady),
+    roundReady.replace(/\s+/g, ' ').slice(0, 120),
+  );
+  check(
+    'открыть раунд до подачи профиля нельзя — кнопка недоступна',
+    await page.locator('[data-round-open]').isDisabled(),
+  );
+  check(
+    'основание не выбрано: подсказано подать профиль',
+    (await page.locator('[data-round-basis="none"]').count()) === 1,
+  );
+  await screenshot('wizard-round-draft');
 
   // ------------------------------------------------ частота автосохранения
   console.warn('\n[6b] Автосохранение при наборе длинного текста');
-  await page.getByRole('button', { name: /^12\. Риски/ }).click();
+  await page.getByRole('button', { name: /^11\. Риски/ }).click();
   await page.waitForSelector('[data-question="key_assumptions"] textarea', { timeout: 10_000 });
   const patchesBefore = patchCount;
   const sBefore = await savedCount();
@@ -476,6 +574,8 @@ try {
   );
 
   // ------------------------------------------------- неизменность версии
+  // Черновик раунда добавил запросов; даём окну потолка частоты закрыться.
+  await page.waitForTimeout(61_000);
   console.warn('\n[7] Публикация новой версии анкеты не трогает заявку');
   await sql(`UPDATE lab.application_form_versions SET is_active = false WHERE is_active`);
   const [nextRow] = await sql(
@@ -513,9 +613,8 @@ try {
   );
   check('предпросмотр объясняет, что это вид инвестора', preview.includes('так увидит инвестор'));
   check(
-    'в предпросмотре есть сумма и стадия',
-    // Разряды разделены неразрывным пробелом — между группами любой один символ.
-    /3.000.000/.test(preview) && preview.includes('Идея'),
+    'в предпросмотре стадия и состояние привлечения из раунда: черновик — «не привлекает»',
+    preview.includes('Идея') && preview.includes('не привлекает') && !/3.000.000/.test(preview),
   );
   await screenshot('wizard-preview');
 
@@ -559,6 +658,12 @@ try {
     'после подачи заявка в списке помечена «Подана»',
     (await page.getByText('Подана').count()) > 0,
   );
+  await page.waitForSelector('[data-round-line]', { timeout: 15_000 });
+  check(
+    'строка раунда на проекте: состояние из раунда, черновик отмечен, суммы заявки нет',
+    (await page.locator('[data-round-line="none"]').innerText()).includes('Черновик раунда') &&
+      !/3.000.000/.test(await page.locator('[data-round-line]').innerText()),
+  );
 
   // ------------------------------------------------------- мобильная ширина
   // Предыдущие шаги делают десятки запросов подряд (автосохранение,
@@ -585,8 +690,65 @@ try {
   await screenshot('wizard-mobile');
   await page.setViewportSize({ width: 1280, height: 900 });
 
+  // ----------------------------------------- раунд: основание и открытие
+  console.warn('\n[10a] Раунд: основание из поданной версии, открытие, пауза');
+  await page.goto(`${wizardUrl}/round`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-round-state="draft"]', { timeout: 15_000 });
+  await page.waitForSelector('[data-round-basis]', { timeout: 10_000 });
+  check(
+    'после подачи предложена последняя поданная версия как основание',
+    (await page.locator('[data-round-basis]').innerText()).includes(
+      'более новая поданная версия: v1',
+    ),
+  );
+  await page.getByRole('button', { name: 'Взять последнюю версию' }).click();
+  await page.waitForSelector('[data-round-basis="1"]', { timeout: 10_000 });
+  check(
+    'основание установлено явно, с причиной',
+    (await page.locator('[data-round-basis="1"]').innerText()).includes('Анкета v1'),
+  );
+  check('кнопка открытия доступна', !(await page.locator('[data-round-open]').isDisabled()));
+  await page.locator('[data-round-open]').click();
+  await page.waitForSelector('[data-round-state="open"]', { timeout: 15_000 });
+  const [openedRound] = await sql(
+    `SELECT status, service_country, policy_version, target::text AS target
+       FROM lab.funding_rounds WHERE project_id = $1 AND status = 'open'`,
+    [await projectIdOf(wizardUrl)],
+  );
+  check(
+    'раунд открыт явным действием: страна и версия условий зафиксированы',
+    openedRound?.service_country === 'ru' &&
+      openedRound?.policy_version >= 1 &&
+      openedRound?.target === '3000000.00',
+    JSON.stringify(openedRound),
+  );
+  await screenshot('wizard-round-open');
+  await page.goto(`${LAB_URL.replace(/\/$/, '')}/projects/${await projectIdOf(wizardUrl)}`, {
+    waitUntil: 'networkidle',
+  });
+  await page.waitForSelector('[data-round-line="open"]', { timeout: 15_000 });
+  check(
+    'на проекте текущий запрос — сумма открытого раунда',
+    /3.000.000/.test(await page.locator('[data-round-line="open"]').innerText()),
+  );
+  await page.goto(`${wizardUrl}/round`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-round-state="open"]', { timeout: 15_000 });
+  await page.getByRole('button', { name: 'Приостановить' }).click();
+  await page.waitForSelector('[data-round-state="paused"]', { timeout: 15_000 });
+  await page.goto(`${LAB_URL.replace(/\/$/, '')}/projects/${await projectIdOf(wizardUrl)}`, {
+    waitUntil: 'networkidle',
+  });
+  await page.waitForSelector('[data-round-line="paused"]', { timeout: 15_000 });
+  check(
+    'пауза показана как «приостановлено», не как активный сбор',
+    (await page.locator('[data-round-line="paused"]').innerText()).includes('приостановлено'),
+  );
+  await screenshot('project-round-paused');
+
   // --------------------------------------------------------- старый интерфейс
   console.warn('\n[11] Старый интерфейс при выключенном флаге');
+  // [10a] added requests after the cooldown; let the rate-limit window close.
+  await page.waitForTimeout(61_000);
   await setFlag(false);
   await page.goto(wizardUrl.replace(/\/applications\/.*$/, ''), { waitUntil: 'networkidle' });
   await page.goto(`${LAB_URL.replace(/\/$/, '')}/projects/${await projectIdOf(wizardUrl)}`, {

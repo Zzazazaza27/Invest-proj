@@ -257,6 +257,7 @@ function ProjectRoute({ applicationV2 }: { applicationV2: boolean }) {
       onBack={() => navigate('/')}
       applicationV2={applicationV2}
       onOpenApplication={(applicationId) => navigate(`/applications/${applicationId}`)}
+      onOpenRound={(applicationId) => navigate(`/applications/${applicationId}/round`)}
     />
   );
 }

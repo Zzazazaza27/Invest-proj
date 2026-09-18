@@ -1,18 +1,35 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
-import { Badge, Button, Card, ErrorState, LoadingState, Markdown, Stack } from '@unicorn/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  ErrorState,
+  LoadingState,
+  Markdown,
+  Stack,
+  describeRaising,
+  raisingTone,
+} from '@unicorn/ui';
 import type { ApplicationDetail, FormQuestionView } from '@unicorn/contracts';
+import { sectionScope } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { S } from '../strings';
 import { QuestionField } from './QuestionField';
 import { ReadinessPanel } from './ReadinessPanel';
 import { PreviewPage } from './PreviewPage';
-import { useApplication, type SaveState, type WizardData } from './useApplication';
+import { RoundScreen } from './RoundScreen';
+import { SaveIndicator } from './SaveIndicator';
+import { useApplication, type WizardData } from './useApplication';
+import { useRound, type RoundHook } from './useRound';
 
 /**
  * Пошаговый мастер заявки (этап 4, ранний прототип для проверки формы).
  *
- * Маршруты внутри мастера: вводный экран, раздел по ключу, предпросмотр.
+ * Маршруты внутри мастера: вводный экран, раздел профиля по ключу, экран
+ * раунда, предпросмотр. Разделы формы со scope=round показываются на экране
+ * раунда и в навигации профиля не участвуют; состояние «привлекаем ли
+ * инвестиции» определяется раундом, отдельного флага нет (этап 5.6.4).
  * Разделы, вопросы, состояния и тексты — из опубликованной конфигурации
  * той версии, на которой создана заявка; мастер ничего о вопросах не знает
  * и не решает, что показать, — он отражает форму с сервера. Подача не
@@ -32,19 +49,30 @@ export function WizardPage() {
     );
   }
   if (!app.data) return <LoadingState label="Загружаем заявку" />;
-  const ready: App = { ...app, data: app.data };
+  return <Loaded app={{ ...app, data: app.data }} />;
+}
 
+/** Раунд читается по проекту заявки — один хук на весь мастер. */
+function Loaded({ app }: { app: Omit<App, 'round'> }) {
+  const round = useRound(app.data.detail.application.projectId);
+  const ready: App = { ...app, round };
   return (
     <Routes>
       <Route path="/" element={<IntroScreen app={ready} />} />
       <Route path="s/:sectionKey" element={<SectionScreen app={ready} />} />
+      <Route path="round" element={<RoundRoute app={ready} />} />
       <Route path="preview" element={<PreviewScreen app={ready} />} />
       <Route path="*" element={<Navigate to="." replace />} />
     </Routes>
   );
 }
 
-type App = ReturnType<typeof useApplication> & { data: WizardData };
+type App = ReturnType<typeof useApplication> & { data: WizardData; round: RoundHook };
+
+/** Разделы профиля — без разделов раунда; их место на экране раунда. */
+function profileSections(form: WizardData['form']) {
+  return form.sections.filter((s) => sectionScope(s) === 'profile');
+}
 
 function sectionStatus(detail: ApplicationDetail, key: string) {
   return detail.readiness.sections.find((s) => s.key === key)?.status ?? 'hidden';
@@ -113,68 +141,6 @@ function Frame({
   );
 }
 
-/**
- * Состояние сохранения — всегда на виду. «Не сохранено» — красным и с кнопкой
- * повтора: набранное не должно пропасть молча (замечание владельца, этап 4).
- */
-function SaveIndicator({
-  state,
-  count,
-  onRetry,
-}: {
-  state: SaveState;
-  count: number;
-  onRetry: () => void;
-}) {
-  const [, tick] = useState(0);
-  useEffect(() => {
-    if (state.kind !== 'retrying') return;
-    const id = window.setInterval(() => tick((n) => n + 1), 1000);
-    return () => window.clearInterval(id);
-  }, [state]);
-
-  const problem = state.kind === 'retrying' || state.kind === 'failed';
-  const text =
-    state.kind === 'saving'
-      ? S.wizard.save.saving
-      : state.kind === 'pending'
-        ? S.wizard.save.pending
-        : state.kind === 'saved'
-          ? S.wizard.save.saved(
-              state.at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
-            )
-          : state.kind === 'retrying'
-            ? `${S.wizard.save.retrying(Math.max(0, Math.ceil((state.at.getTime() - Date.now()) / 1000)))}: ${state.message}`
-            : state.kind === 'failed'
-              ? `${S.wizard.save.failed}: ${state.message}`
-              : S.wizard.save.idle;
-  return (
-    <span
-      role={problem ? 'alert' : 'status'}
-      data-save-state={state.kind}
-      data-save-count={count}
-      style={{
-        display: 'inline-flex',
-        gap: 'var(--u-space-2)',
-        alignItems: 'center',
-        fontSize: 'var(--u-text-sm)',
-        color: problem ? 'var(--u-danger)' : 'var(--u-text-muted)',
-      }}
-    >
-      {text}
-      {problem ? (
-        <Button
-          variant="secondary"
-          style={{ minHeight: 32, padding: '0 var(--u-space-3)' }}
-          onClick={onRetry}
-        >
-          {S.wizard.save.retryNow}
-        </Button>
-      ) : null}
-    </span>
-  );
-}
-
 function SectionNav({ app, active }: { app: App; active?: string }) {
   const navigate = useNavigate();
   const { detail, form } = app.data;
@@ -188,7 +154,7 @@ function SectionNav({ app, active }: { app: App; active?: string }) {
             onClick={() => navigate(`/applications/${detail.application.id}`)}
           />
         </li>
-        {form.sections.map((section, index) => {
+        {profileSections(form).map((section, index) => {
           const status = sectionStatus(detail, section.key);
           return (
             <li key={section.key}>
@@ -202,6 +168,15 @@ function SectionNav({ app, active }: { app: App; active?: string }) {
             </li>
           );
         })}
+        <li>
+          <NavItem
+            label={S.round.nav}
+            badge={S.round.state[app.round.data?.current?.round.status ?? 'none']}
+            tone={raisingTone(app.round.raising.raising)}
+            active={active === '__round'}
+            onClick={() => navigate(`/applications/${detail.application.id}/round`)}
+          />
+        </li>
         <li>
           <NavItem
             label={S.wizard.nav.toPreview}
@@ -261,10 +236,11 @@ function NavItem({
 function IntroScreen({ app }: { app: App }) {
   const navigate = useNavigate();
   const { detail, form } = app.data;
-  const first = form.sections[0];
+  const sections = profileSections(form);
+  const first = sections[0];
   const answered = Object.values(detail.application.answers).some((v) => v !== null && v !== '');
   const counts = useMemo(() => {
-    const all = form.sections.flatMap((s) => s.questions);
+    const all = profileSections(form).flatMap((s) => s.questions);
     return {
       mandatory: all.filter((q) => q.state === 'mandatory').length,
       recommended: all.filter((q) => q.state === 'recommended').length,
@@ -305,6 +281,105 @@ function IntroScreen({ app }: { app: App }) {
           ) : null}
         </Stack>
       </Card>
+      <RaisingPrompt app={app} firstKey={first?.key ?? null} />
+    </Frame>
+  );
+}
+
+/**
+ * «Вы сейчас привлекаете инвестиции?» — не флаг, а развилка к раунду.
+ * Состояние берётся из раунда: есть незавершённый — показываем его; есть
+ * черновик — предлагаем продолжить; нет — предлагаем подготовить. Ответ
+ * «пока нет» ничего не отменяет и не скрывает: он ведёт к профилю.
+ */
+function RaisingPrompt({ app, firstKey }: { app: App; firstKey: string | null }) {
+  const navigate = useNavigate();
+  const { detail } = app.data;
+  const { round } = app;
+  const [busy, setBusy] = useState(false);
+  const [problem, setProblem] = useState<string | null>(null);
+  const toRound = () => navigate(`/applications/${detail.application.id}/round`);
+  const current = round.data?.current?.round ?? null;
+  const unfinished = current && (current.status === 'open' || current.status === 'paused');
+
+  const prepare = async () => {
+    setBusy(true);
+    setProblem(null);
+    try {
+      await round.prepare();
+      toRound();
+    } catch (e) {
+      setProblem(e instanceof ApiError ? (e.problem?.detail ?? e.message) : 'Сервис недоступен');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Card data-raising-prompt={round.raising.raising}>
+      <Stack gap="var(--u-space-3)">
+        <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>{S.round.intro.question}</h2>
+        {round.data ? (
+          <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
+            <Badge tone={raisingTone(round.raising.raising)}>
+              {describeRaising(round.raising)}
+            </Badge>
+            {current?.status === 'draft' ? (
+              <Badge tone="accent">{S.round.state.draft}</Badge>
+            ) : null}
+          </div>
+        ) : null}
+        <p style={{ margin: 0, fontSize: 'var(--u-text-sm)', color: 'var(--u-text-muted)' }}>
+          {S.round.intro.explain}
+        </p>
+        {problem ? (
+          <div role="alert" style={{ color: 'var(--u-danger)' }}>
+            {problem}
+          </div>
+        ) : null}
+        <div style={{ display: 'flex', gap: 'var(--u-space-3)', flexWrap: 'wrap' }}>
+          {unfinished ? (
+            <Button variant="brand" onClick={toRound}>
+              {S.round.intro.toRound}
+            </Button>
+          ) : current?.status === 'draft' ? (
+            <Button variant="brand" onClick={toRound}>
+              {S.round.intro.continueDraft}
+            </Button>
+          ) : (
+            <Button
+              variant="brand"
+              loading={busy}
+              disabled={!round.data}
+              onClick={() => void prepare()}
+            >
+              {S.round.intro.yes}
+            </Button>
+          )}
+          {firstKey ? (
+            <Button
+              variant="secondary"
+              onClick={() => navigate(`/applications/${detail.application.id}/s/${firstKey}`)}
+            >
+              {S.round.intro.no}
+            </Button>
+          ) : null}
+        </div>
+      </Stack>
+    </Card>
+  );
+}
+
+function RoundRoute({ app }: { app: App }) {
+  const { form, materials, detail } = app.data;
+  return (
+    <Frame app={app} active="__round">
+      <RoundScreen
+        round={app.round}
+        form={form}
+        materials={materials}
+        profileSubmitted={detail.application.status === 'submitted'}
+      />
     </Frame>
   );
 }
@@ -313,11 +388,20 @@ function SectionScreen({ app }: { app: App }) {
   const navigate = useNavigate();
   const { sectionKey = '' } = useParams();
   const { detail, form, project, materials } = app.data;
-  const index = form.sections.findIndex((s) => s.key === sectionKey);
-  if (index < 0) return <Navigate to={`/applications/${detail.application.id}`} replace />;
-  const section = form.sections[index]!;
-  const prev = form.sections[index - 1];
-  const next = form.sections[index + 1];
+  const sections = profileSections(form);
+  const index = sections.findIndex((s) => s.key === sectionKey);
+  if (index < 0) {
+    const roundSection = form.sections.find((s) => s.key === sectionKey);
+    return (
+      <Navigate
+        to={`/applications/${detail.application.id}${roundSection ? '/round' : ''}`}
+        replace
+      />
+    );
+  }
+  const section = sections[index]!;
+  const prev = sections[index - 1];
+  const next = sections[index + 1];
   const status = sectionStatus(detail, section.key);
 
   return (
@@ -344,7 +428,7 @@ function SectionScreen({ app }: { app: App }) {
               <Markdown source={section.introMd} />
             </div>
           ) : null}
-          {section.key === form.sections[0]?.key ? <ProjectFacts project={project} /> : null}
+          {index === 0 ? <ProjectFacts project={project} /> : null}
           {section.questions.map((question) => (
             <QuestionRow key={question.key} question={question} app={app} materials={materials} />
           ))}
@@ -542,7 +626,11 @@ function PreviewScreen({ app }: { app: App }) {
   return (
     <Frame app={app} active="__preview">
       <Stack gap="var(--u-space-4)">
-        <PreviewPage applicationId={detail.application.id} refreshKey={app.save.kind} />
+        <PreviewPage
+          applicationId={detail.application.id}
+          refreshKey={app.save.kind}
+          raising={app.round.raising}
+        />
         <Card>
           <Stack gap="var(--u-space-3)">
             <p style={{ margin: 0, color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
@@ -564,7 +652,7 @@ function PreviewScreen({ app }: { app: App }) {
                 variant="secondary"
                 onClick={() =>
                   navigate(
-                    `/applications/${detail.application.id}/s/${app.data.form.sections[0]?.key ?? ''}`,
+                    `/applications/${detail.application.id}/s/${profileSections(app.data.form)[0]?.key ?? ''}`,
                   )
                 }
               >

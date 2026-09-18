@@ -73,12 +73,14 @@ export function ProjectPage({
   onBack,
   applicationV2 = false,
   onOpenApplication,
+  onOpenRound,
 }: {
   projectId: string;
   onBack: () => void;
   /** Флаг `lab.ui.application_v2`: показывать заявки и мастер (этап 4). */
   applicationV2?: boolean;
   onOpenApplication?: (applicationId: string) => void;
+  onOpenRound?: (applicationId: string) => void;
 }) {
   const [state, setState] = useState<
     | { status: 'loading' }
@@ -176,7 +178,11 @@ export function ProjectPage({
       </Card>
 
       {applicationV2 && onOpenApplication ? (
-        <ApplicationsCard projectId={project.id} onOpen={onOpenApplication} />
+        <ApplicationsCard
+          projectId={project.id}
+          onOpen={onOpenApplication}
+          onOpenRound={onOpenRound}
+        />
       ) : null}
 
       {notice ? (
