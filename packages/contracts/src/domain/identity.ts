@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { boundedString, IsoDateTimeSchema, LocaleSchema, UuidSchema } from '../common/primitives';
+import { ServiceCountryCodeSchema } from './service-country';
 
 /** Роли. `corporate` и `showrunner` зарезервированы под Capital и медиаконтур. */
 export const RoleSchema = z.enum([
@@ -79,6 +80,12 @@ export const RegisterRequestSchema = z
     displayName: boundedString(2, 120),
     role: SelfServiceRoleSchema,
     locale: LocaleSchema,
+    /**
+     * Страна обслуживания аккаунта (этап 5.6.5): первичный выбор при
+     * регистрации из активных стран; необязательна — без неё страну попросят
+     * выбрать перед открытием раунда. Смены страны нет (реестр решений).
+     */
+    serviceCountry: ServiceCountryCodeSchema.optional(),
     consents: z.array(ConsentAcceptanceSchema).min(REQUIRED_CONSENT_KINDS.length),
   })
   .refine((v) => v.email !== undefined || v.phone !== undefined, {

@@ -15,6 +15,7 @@ import { SupportPage } from './pages/SupportPage';
 import { QuestionsPage } from './pages/QuestionsPage';
 import { ApplicationSettingsPage } from './pages/ApplicationSettingsPage';
 import { TextsPage } from './pages/TextsPage';
+import { ServiceCountriesPage } from './pages/ServiceCountriesPage';
 
 /**
  * Корень админки.
@@ -85,6 +86,7 @@ export function App() {
         <NavItem to="/questions" label="Вопросы заявки" />
         <NavItem to="/application-settings" label="Настройки заявки" />
         <NavItem to="/texts" label="Словарь и ЧАВО" />
+        <NavItem to="/service-countries" label="Страны обслуживания" />
         <NavItem to="/flags" label="Функции платформы" />
         <NavItem to="/access" label="Доступ" />
         {/*
@@ -137,6 +139,7 @@ export function App() {
           <Route path="/questions" element={<QuestionsPage />} />
           <Route path="/application-settings" element={<ApplicationSettingsPage />} />
           <Route path="/texts" element={<TextsPage />} />
+          <Route path="/service-countries" element={<ServiceCountriesPage />} />
           <Route path="/flags" element={<FlagsPage />} />
           <Route path="/access" element={<AccessPage />} />
           <Route path="*" element={<Navigate to="/plans" replace />} />

@@ -132,7 +132,7 @@ const suffix = `${Date.now() % 1e9}`;
 const TEST_INN = `77${suffix.padStart(8, '0').slice(-8)}`;
 const TEST_OGRN = `1${suffix.padStart(12, '0').slice(-12)}`;
 
-async function register(role, tag) {
+async function register(role, tag, extra = {}) {
   const client = makeClient();
   const email = `lab-${tag}-${suffix}@test.local`;
   const password = `Pw-${crypto.randomUUID()}`;
@@ -145,6 +145,7 @@ async function register(role, tag) {
       role,
       locale: 'ru-RU',
       consents: CONSENTS,
+      ...extra,
     },
   });
   if (response.status >= 400) {
@@ -1993,6 +1994,36 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     method: 'PATCH',
     body: { isActive: false },
   });
+
+  // Регистрация со страной (5.6.5): активная — принимается и видна в профиле;
+  // выключенная — отказ с полем serviceCountry.
+  {
+    const withCountry = await register('founder', 'country', { serviceCountry: 'ru' });
+    const me = await withCountry.client.call('/v1/auth/me');
+    check(
+      'регистрация со страной обслуживания: страна в профиле',
+      me.json?.serviceCountry === 'ru',
+      `${me.json?.serviceCountry}`,
+    );
+    const inactive = await makeClient().call('/v1/auth/register', {
+      method: 'POST',
+      body: {
+        email: `lab-inactive-${suffix}@test.local`,
+        password: `Pw-${crypto.randomUUID()}`,
+        displayName: 'Тест выключенной страны',
+        role: 'founder',
+        locale: 'ru-RU',
+        consents: CONSENTS,
+        serviceCountry: 'kz',
+      },
+    });
+    check(
+      'регистрация с выключенной страной отклонена с указанием поля',
+      (inactive.response.status === 400 || inactive.response.status === 422) &&
+        JSON.stringify(inactive.json ?? '').includes('serviceCountry'),
+      `статус ${inactive.response.status}`,
+    );
+  }
 
   const policy = await founderA.client.call('/v1/service-countries/ru/policy');
   check(

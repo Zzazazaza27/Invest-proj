@@ -152,12 +152,26 @@ export class IdentityService {
       if (emailIndex) await this.assertContactFree(tx, 'email_hmac', emailIndex);
       if (phoneIndex) await this.assertContactFree(tx, 'phone_hmac', phoneIndex);
 
+      // Страна обслуживания — только из активных стран справочника (5.6.5):
+      // выключенную выбрать нельзя ни в кабинете, ни при регистрации.
+      if (input.serviceCountry) {
+        const { rows: countries } = await tx.query<{ code: string }>(
+          `SELECT code FROM billing.service_countries WHERE code = $1 AND is_active`,
+          [input.serviceCountry],
+        );
+        if (countries.length === 0) {
+          throw errors.validation([
+            { path: 'serviceCountry', message: 'страна обслуживания недоступна для выбора' },
+          ]);
+        }
+      }
+
       try {
         await tx.query(
           `INSERT INTO identity.users
              (id, email_ciphertext, phone_ciphertext, contact_wrapped_dek, email_hmac, phone_hmac,
-              password_hash, display_name, primary_role, status, locale)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_consents', $10)`,
+              password_hash, display_name, primary_role, status, locale, service_country)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_consents', $10, $11)`,
           [
             userId,
             contact.ciphertexts.email,
@@ -169,6 +183,7 @@ export class IdentityService {
             input.displayName,
             input.role,
             input.locale,
+            input.serviceCountry ?? null,
           ],
         );
       } catch (error) {

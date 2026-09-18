@@ -75,6 +75,12 @@ import {
   type UpsertAiProviderCredentialRequest,
   type AdminProjectSummary,
   type AdminUserSummary,
+  ServiceCountrySchema,
+  ServiceCountryPolicyVersionSchema,
+  type ServiceCountry,
+  type ServiceCountryPolicy,
+  type ServiceCountryPolicyVersion,
+  type UpdateServiceCountryRequest,
 } from '@unicorn/contracts';
 import { z } from 'zod';
 
@@ -770,6 +776,49 @@ export const api = {
 
   // ------------------------------------------- словарь и ЧАВО (план 0.2 §2.6)
 
+  /** Страны обслуживания и их условия (этап 5.6.5): справочник строками, условия версиями. */
+  serviceCountries: {
+    admin: {
+      list: (): Promise<{ items: ServiceCountry[] }> =>
+        client.request({
+          method: 'GET',
+          path: '/v1/admin/service-countries',
+          schema: listOf(ServiceCountrySchema),
+        }),
+      create: (code: string): Promise<ServiceCountry> =>
+        client.request({
+          method: 'POST',
+          path: '/v1/admin/service-countries',
+          body: { code },
+          schema: ServiceCountrySchema,
+          idempotencyKey: uuidv7(),
+        }),
+      update: (code: string, body: UpdateServiceCountryRequest): Promise<ServiceCountry> =>
+        client.request({
+          method: 'PATCH',
+          path: `/v1/admin/service-countries/${encodeURIComponent(code)}`,
+          body,
+          schema: ServiceCountrySchema,
+        }),
+      policies: (code: string): Promise<{ items: ServiceCountryPolicyVersion[] }> =>
+        client.request({
+          method: 'GET',
+          path: `/v1/admin/service-countries/${encodeURIComponent(code)}/policies`,
+          schema: listOf(ServiceCountryPolicyVersionSchema),
+        }),
+      activatePolicy: (
+        code: string,
+        body: { config: ServiceCountryPolicy; reason: string },
+      ): Promise<ServiceCountryPolicyVersion> =>
+        client.request({
+          method: 'POST',
+          path: `/v1/admin/service-countries/${encodeURIComponent(code)}/policies`,
+          body,
+          schema: ServiceCountryPolicyVersionSchema,
+          idempotencyKey: uuidv7(),
+        }),
+    },
+  },
   texts: {
     languages: async (): Promise<Language[]> => {
       const { items } = await client.request({

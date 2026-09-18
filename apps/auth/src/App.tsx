@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Badge, Button, Card, Container, Field, IconTile, Input, Stack } from '@unicorn/ui';
+import { Badge, Button, Card, Container, Field, IconTile, Input, Select, Stack } from '@unicorn/ui';
+import type { ServiceCountry } from '@unicorn/contracts';
 import { ApiError, api, setCsrf } from './api';
 import { cabinetUrl, cabinetsForRoles, type Cabinet } from './routing';
 import './auth.css';
@@ -144,6 +145,27 @@ export default function App() {
   const [role, setRole] = useState<'founder' | 'investor'>('founder');
   const [consentGiven, setConsentGiven] = useState(false);
   const [passwordRepeat, setPasswordRepeat] = useState('');
+  /**
+   * Страна обслуживания (этап 5.6.5): список активных стран — публичный;
+   * одна страна предлагается для подтверждения, несколько — выбор. Пустой
+   * список — регистрация без страны, её попросят перед открытием раунда.
+   */
+  const [countries, setCountries] = useState<ServiceCountry[] | null>(null);
+  const [serviceCountry, setServiceCountry] = useState<string>('');
+  const [countryConfirmed, setCountryConfirmed] = useState(false);
+
+  useEffect(() => {
+    if (mode !== 'register' || countries !== null) return;
+    api.serviceCountries
+      .list()
+      .then((list) => {
+        const active = list.items.filter((c) => c.isActive);
+        // Одна страна предлагается для подтверждения, а не подставляется молча:
+        // выбор становится значением только после флажка.
+        setCountries(active);
+      })
+      .catch(() => setCountries([]));
+  }, [mode, countries]);
 
   /**
    * Токены подтверждения, уже отправленные на сервер.
@@ -297,6 +319,7 @@ export default function App() {
               displayName,
               role,
               locale: LOCALE,
+              ...(role === 'founder' && serviceCountry ? { serviceCountry } : {}),
               consents: await requiredConsents(),
             });
 
@@ -652,6 +675,47 @@ export default function App() {
                     onChange={(e) => setDisplayName(e.target.value)}
                   />
                 </Field>
+              ) : null}
+
+              {mode === 'register' && role === 'founder' && countries && countries.length > 0 ? (
+                <div data-service-country={serviceCountry || 'none'}>
+                  {countries.length === 1 ? (
+                    <label className="auth-consent">
+                      <input
+                        type="checkbox"
+                        id="serviceCountry"
+                        checked={countryConfirmed}
+                        onChange={(e) => {
+                          setCountryConfirmed(e.target.checked);
+                          setServiceCountry(e.target.checked ? countries[0]!.code : '');
+                        }}
+                      />
+                      <span>
+                        Страна обслуживания — {countries[0]!.code.toUpperCase()}. Подтверждаю: от
+                        неё зависят валюта и условия привлечения; сменить её позже нельзя.
+                      </span>
+                    </label>
+                  ) : (
+                    <Field
+                      label="Страна обслуживания"
+                      htmlFor="serviceCountry"
+                      hint="От страны зависят валюта и условия привлечения. Выбор делается один раз; сменить её позже нельзя."
+                    >
+                      <Select
+                        id="serviceCountry"
+                        value={serviceCountry}
+                        onChange={(e) => setServiceCountry(e.target.value)}
+                      >
+                        <option value="">— выбрать позже —</option>
+                        {countries.map((c) => (
+                          <option key={c.code} value={c.code}>
+                            {c.code.toUpperCase()}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                  )}
+                </div>
               ) : null}
 
               <Field
