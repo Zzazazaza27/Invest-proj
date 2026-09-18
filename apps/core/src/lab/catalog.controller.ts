@@ -2,6 +2,7 @@ import { Controller, Get, Param, Query } from '@nestjs/common';
 import {
   CatalogQuerySchema,
   ProjectTeaserSchema,
+  PublicViewSchema,
   TaxonomyNodeSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -9,6 +10,7 @@ import { Ctx, Public } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';
 import { CatalogService } from './catalog.service';
+import { ProjectViewsService } from './project-views.service';
 
 /**
  * Публичная витрина.
@@ -21,7 +23,10 @@ import { CatalogService } from './catalog.service';
  */
 @Controller()
 export class CatalogController {
-  constructor(private readonly catalog: CatalogService) {}
+  constructor(
+    private readonly catalog: CatalogService,
+    private readonly views: ProjectViewsService,
+  ) {}
 
   @Public()
   @Get('taxonomy')
@@ -41,11 +46,23 @@ export class CatalogController {
     };
   }
 
+  /**
+   * Public View (5.7.2): тизер плюс ответы согласованного владельцем снимка с
+   * эффективной видимостью для аудитории зрителя. Совместим с тизером:
+   * прежние поля на месте. Доступ решает предикат `lab.project_audience`
+   * (режим проекта, исключения, блокировка) — не сам маршрут.
+   */
   @Public()
   @Get('catalog/:id')
-  async getOne(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+  async getOne(
+    @Param('id') rawId: string,
+    @Query('locale') locale: string | undefined,
+    @Ctx() ctx: RequestContext,
+  ) {
     const id = parseOrThrow(UuidSchema, rawId);
-    return ProjectTeaserSchema.parse(await this.catalog.getTeaser(ctx.traceId, id, viewerOf(ctx)));
+    return PublicViewSchema.parse(
+      await this.views.publicView(ctx.traceId, id, viewerOf(ctx), locale ?? 'ru-RU'),
+    );
   }
 }
 

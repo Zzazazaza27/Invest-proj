@@ -13,7 +13,7 @@ import {
   type FormQuestion,
 } from './application-form';
 import { RoundProjectionSchema } from './funding-round';
-import { visibleTo } from './visibility';
+import { visibleTo, type Audience } from './visibility';
 
 /**
  * Представления заявки по правилам видимости (план 0.2 §2.11).
@@ -169,6 +169,12 @@ export function buildApplicationPreview(
     stage: ProjectStage;
     locale: string;
     audience?: PreviewAudience;
+    /**
+     * Эффективная видимость по ключу (5.7: строже из активной конфигурации и
+     * версии условий, на которую согласился владелец). Без карты — видимость
+     * вопроса из переданной формы; ключ, отсутствующий в карте, — `private`.
+     */
+    effectiveVisibility?: Readonly<Record<string, Audience>>;
   },
   source: PreviewSource,
 ): ApplicationPreview {
@@ -188,7 +194,10 @@ export function buildApplicationPreview(
     const evidence = [...(source.evidence[question.key] ?? [])];
     if (!isAnswerFilled(question, value, evidence)) continue;
 
-    if (!visibleTo(question.visibility, audience)) {
+    const visibility = params.effectiveVisibility
+      ? (params.effectiveVisibility[question.key] ?? 'private')
+      : question.visibility;
+    if (!visibleTo(visibility, audience)) {
       withheld += 1;
       continue;
     }
@@ -198,7 +207,7 @@ export function buildApplicationPreview(
     list.push({
       key: question.key,
       type: question.type,
-      visibility: question.visibility as 'public' | 'investors',
+      visibility: visibility as 'public' | 'investors',
       label,
       value: value ?? null,
       display: displayValue(question, value, evidence, params.locale, defaultLocale),

@@ -52,6 +52,11 @@ import {
   ProjectSummarySchema,
   ProjectVersionSchema,
   ProjectTeaserSchema,
+  PublicViewSchema,
+  InvestorViewSchema,
+  ViewPreviewSchema,
+  RoundOpenPreviewSchema,
+  type PreviewAudience,
   PublicationConsentSchema,
   RatingEntrySchema,
   ReadinessEntrySchema,
@@ -210,6 +215,14 @@ export class UnicornApi {
       path: '/catalog',
       query: filter as Record<string, string | number | undefined>,
       schema: pageResponseSchema(ProjectTeaserSchema),
+    });
+
+  /** Public View проекта (5.7.2): тизер плюс ответы, согласованные владельцем, для аудитории сессии. */
+  readonly catalogItem = (id: string, locale?: string) =>
+    this.http.request({
+      path: `/catalog/${id}`,
+      query: { locale },
+      schema: PublicViewSchema,
     });
 
   // ------------------------------------------------------------- аутентификация
@@ -388,6 +401,22 @@ export class UnicornApi {
         .then((response) => response.items),
 
     get: (id: string) => this.http.request({ path: `/projects/${id}`, schema: ProjectFullSchema }),
+
+    /** Investor View (5.7.2): блоки по разрешениям зрителя — предикат решает состав. */
+    investorView: (id: string, locale?: string) =>
+      this.http.request({
+        path: `/projects/${id}/investor-view`,
+        query: { locale },
+        schema: InvestorViewSchema,
+      }),
+
+    /** Предпросмотр владельца: что увидит аудитория, кто это увидит, что станет видно после «Применить». */
+    viewPreview: (id: string, params: { audience?: PreviewAudience; locale?: string } = {}) =>
+      this.http.request({
+        path: `/projects/${id}/view-preview`,
+        query: params,
+        schema: ViewPreviewSchema,
+      }),
 
     create: (body: CreateProjectRequest) =>
       this.http.request({
@@ -738,6 +767,10 @@ export class UnicornApi {
         path: `/rounds/${id}/basis-history`,
         schema: z.object({ items: z.array(FundingRoundBasisHistoryEntrySchema) }),
       }),
+
+    /** Предпросмотр перед открытием: что увидят аноним и инвестор по активной версии условий. */
+    openPreview: (id: string) =>
+      this.http.request({ path: `/rounds/${id}/open-preview`, schema: RoundOpenPreviewSchema }),
   };
 
   /** Страны обслуживания: список публичен, условия — вошедшему; выбор — за аккаунтом. */

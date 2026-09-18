@@ -286,7 +286,10 @@ export async function loadFormConfig(tx: Tx, version: number): Promise<Applicati
  * Документ из БД проверяется той же схемой, что и вход админки: испорченная
  * строка — ошибка сервера, а не тихий рендер половины формы.
  */
-function parseStoredConfig(raw: unknown, version: number | string | null): ApplicationFormConfig {
+export function parseStoredConfig(
+  raw: unknown,
+  version: number | string | null,
+): ApplicationFormConfig {
   const parsed = ApplicationFormConfigSchema.safeParse(raw);
   if (!parsed.success) {
     throw new Error(

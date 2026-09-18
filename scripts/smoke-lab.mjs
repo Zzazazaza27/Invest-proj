@@ -2000,6 +2000,127 @@ console.warn('\n[раунды] профиль без раунда, чернов�
       restored.response.status === 201 && anonAfter.json?.raising === 'undisclosed',
       `статус ${restored.response.status} ${anonAfter.json?.raising}`,
     );
+
+    // ------------------------------------------- 5.7.2: Public View, Investor View
+    // Согласие владельца на снимок пока ставится напрямую (действия владельца —
+    // 5.7.3): снимок — версия, поданная выше мастером; условия — её версия формы.
+    {
+      const [disclosed] = await sql(
+        `UPDATE lab.projects p
+          SET disclosed_version_id = v.id, disclosure_form_version = v.schema_version,
+              disclosed_at = now(), disclosed_by = $2
+         FROM lab.project_versions v
+        WHERE p.id = $1 AND v.id = $3
+        RETURNING v.schema_version`,
+        [projectCId, founderA.userId, submittedC.json?.id],
+      );
+      const anonView = await raw(`/v1/catalog/${projectCId}`);
+      const anonQuestions = (anonView.json?.sections ?? []).flatMap((s) => s.questions);
+      check(
+        'Public View: анониму — только ответы с эффективной видимостью public',
+        anonView.response.status === 200 &&
+          anonView.json?.profileAudience === 'public' &&
+          anonView.json?.schemaVersion === disclosed?.schema_version &&
+          anonQuestions.length > 0 &&
+          anonQuestions.every((q) => q.visibility === 'public'),
+        `статус ${anonView.response.status}, вопросов ${anonQuestions.length}, аудитория ${anonView.json?.profileAudience}`,
+      );
+      check(
+        'Public View совместим с тизером: id, название, состояние привлечения на месте',
+        anonView.json?.id === projectCId &&
+          typeof anonView.json?.title === 'string' &&
+          typeof anonView.json?.raising === 'string',
+      );
+      const investorView = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+      const investorQuestions = (investorView.json?.sections ?? []).flatMap((s) => s.questions);
+      check(
+        'Investor View: допущенному инвестору — профиль уровня investors, блоки по разрешениям',
+        investorView.response.status === 200 &&
+          investorView.json?.access?.profile === 'investors' &&
+          investorView.json?.access?.round === 'investors' &&
+          investorView.json?.access?.materials === 'investors' &&
+          investorQuestions.length >= anonQuestions.length &&
+          investorView.json?.withheld <= anonView.json?.withheld &&
+          Array.isArray(investorView.json?.materials) &&
+          investorView.json?.passport === null,
+        `статус ${investorView.response.status}, вопросов ${investorQuestions.length}/${anonQuestions.length}, скрыто ${investorView.json?.withheld}/${anonView.json?.withheld}`,
+      );
+      check(
+        'Investor View: поле описания на месте (у проекта прогона пустое) и раунд с суммой инвестору',
+        investorView.json?.description !== undefined &&
+          investorView.json?.round?.raising === 'open' &&
+          investorView.json?.round?.investmentAsk === '2500000.00',
+        `${investorView.json?.round?.raising} ${investorView.json?.round?.investmentAsk}`,
+      );
+      const stranger = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
+      check(
+        'Investor View чужому основателю без допуска: тизер есть, профиль и материалы закрыты',
+        stranger.response.status === 200 &&
+          stranger.json?.access?.profile === 'public' &&
+          stranger.json?.access?.materials === null &&
+          stranger.json?.materials === null,
+        `статус ${stranger.response.status} ${JSON.stringify(stranger.json?.access ?? null)}`,
+      );
+
+      const previewPublic = await founderA.client.call(
+        `/v1/projects/${projectCId}/view-preview?audience=public`,
+      );
+      check(
+        'предпросмотр владельца: аудитория, режим и согласие названы явно',
+        previewPublic.response.status === 200 &&
+          previewPublic.json?.audienceSummary?.mode === 'public' &&
+          previewPublic.json?.audienceSummary?.anonymous === true &&
+          previewPublic.json?.consent?.formVersion === disclosed?.schema_version &&
+          typeof previewPublic.json?.consent?.activeFormVersion === 'number' &&
+          Array.isArray(previewPublic.json?.pending?.profile) &&
+          Array.isArray(previewPublic.json?.pending?.round) &&
+          (previewPublic.json?.view?.sections ?? [])
+            .flatMap((s) => s.questions)
+            .every((q) => q.visibility === 'public'),
+        `статус ${previewPublic.response.status} ${JSON.stringify(previewPublic.json?.audienceSummary ?? null)}`,
+      );
+      const previewByStranger = await founderB.client.call(
+        `/v1/projects/${projectCId}/view-preview?audience=public`,
+      );
+      check(
+        'предпросмотр чужого проекта запрещён',
+        previewByStranger.response.status === 403,
+        `статус ${previewByStranger.response.status}`,
+      );
+      const openPreview = await founderA.client.call(
+        `/v1/rounds/${roundC.json?.round?.id}/open-preview`,
+      );
+      check(
+        'предпросмотр раунда: проекции для обеих аудиторий по активной версии',
+        openPreview.response.status === 200 &&
+          typeof openPreview.json?.activeFormVersion === 'number' &&
+          openPreview.json?.investors?.raising === 'open' &&
+          openPreview.json?.investors?.investmentAsk === '2500000.00' &&
+          ['open', 'undisclosed'].includes(openPreview.json?.public?.raising) &&
+          Array.isArray(openPreview.json?.warnings) &&
+          !openPreview.json.warnings.includes('private_project'),
+        `статус ${openPreview.response.status} ${JSON.stringify(openPreview.json?.public ?? null)}`,
+      );
+
+      // Снятие листинга = режим private: анониму 404, инвестору 404, владельцу —
+      // предпросмотр с предупреждением «никто не увидит».
+      await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'DELETE' });
+      const hidden = await raw(`/v1/catalog/${projectCId}`);
+      const hiddenInv = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+      const previewPrivate = await founderA.client.call(
+        `/v1/projects/${projectCId}/view-preview?audience=investors`,
+      );
+      check(
+        'режим private: Public View и Investor View — 404, предпросмотр владельцу — «никто»',
+        hidden.response.status === 404 &&
+          hiddenInv.response.status === 404 &&
+          previewPrivate.response.status === 200 &&
+          previewPrivate.json?.view === null &&
+          previewPrivate.json?.audienceSummary?.investors === 'never',
+        `${hidden.response.status} ${hiddenInv.response.status} ${previewPrivate.response.status} ${previewPrivate.json?.audienceSummary?.investors}`,
+      );
+      await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'POST' });
+    }
   }
 
   const second = await founderA.client.call(`/v1/projects/${projectId}/rounds`, {

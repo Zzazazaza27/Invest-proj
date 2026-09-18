@@ -297,9 +297,27 @@ export class ApplicationsService {
       const project = rows[0];
       if (!project) throw errors.notFound({ subject: 'project' });
       const form = await loadFormConfig(tx, application.schemaVersion);
+      // Эффективная видимость (5.7): строже из активной конфигурации и версии
+      // формы этой заявки — ровно то, что станет действовать после подачи
+      // (подача = согласие на версию формы заявки). Ужесточение
+      // администратором видно в предпросмотре сразу; смягчение — нет.
+      const keys = form.questions.filter((q) => !q.archivedAt).map((q) => q.key);
+      const eff = await tx.query<{
+        m: Record<string, 'public' | 'investors' | 'platform' | 'private'>;
+      }>(
+        `SELECT COALESCE(jsonb_object_agg(k, lab.effective_visibility(k, $2)), '{}'::jsonb) AS m
+           FROM unnest($1::text[]) k`,
+        [keys, application.schemaVersion],
+      );
       return buildApplicationPreview(
         form,
-        { schemaVersion: application.schemaVersion, stage: application.stage, locale, audience },
+        {
+          schemaVersion: application.schemaVersion,
+          stage: application.stage,
+          locale,
+          audience,
+          effectiveVisibility: eff.rows[0]?.m ?? {},
+        },
         {
           round,
           core: {
