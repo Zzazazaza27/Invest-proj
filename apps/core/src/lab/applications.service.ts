@@ -309,7 +309,8 @@ export class ApplicationsService {
            FROM unnest($1::text[]) k`,
         [keys, application.schemaVersion],
       );
-      return buildApplicationPreview(
+      const activeFormVersion = await activeSchemaVersion(tx);
+      const built = buildApplicationPreview(
         form,
         {
           schemaVersion: application.schemaVersion,
@@ -341,6 +342,7 @@ export class ApplicationsService {
           },
         },
       );
+      return { ...built, activeFormVersion };
     });
   }
 
@@ -411,6 +413,15 @@ export class ApplicationsService {
     if (application.status === 'archived') {
       throw errors.stateTransition('Заявка в архиве: подать её нельзя');
     }
+    if (opts.activeFormVersion !== undefined) {
+      const active = await activeSchemaVersion(tx);
+      if (opts.activeFormVersion !== active) {
+        throw errors.conflict(
+          'Условия раскрытия изменились после предпросмотра: откройте предпросмотр заново и подайте снова',
+          { seen: opts.activeFormVersion, active },
+        );
+      }
+    }
 
     const { rows: projectRows } = await tx.query<SnapshotProjectRow>(
       `SELECT title, tagline, description, taxonomy_id, geo_country, geo_region, status
@@ -478,6 +489,34 @@ export class ApplicationsService {
         application.projectId,
         opts.seasonId,
       ]);
+    }
+    if (opts.activeFormVersion !== undefined) {
+      // Согласие владельца (5.7.3, план заявка-04 §3.4): наружу показывается
+      // ИМЕННО этот снимок по условиям версии формы заявки — то, что владелец
+      // видел в предпросмотре. Новая подача любой анкеты проекта переключает
+      // снимок; расширение условий потом — только явным «Применить».
+      await tx.query(
+        `UPDATE lab.projects
+            SET disclosed_version_id = $2, disclosure_form_version = $3,
+                disclosed_at = now(), disclosed_by = $4, updated_at = now()
+          WHERE id = $1`,
+        [application.projectId, versionId, application.schemaVersion, ctx.userId],
+      );
+      await this.audit.emit(tx, {
+        verb: 'lab.project.disclosure_confirmed',
+        actorId: ctx.userId,
+        actorRole: actorRole(ctx),
+        subjectType: 'project',
+        subjectId: application.projectId,
+        context: {
+          applicationId,
+          versionId,
+          versionNo,
+          formVersion: application.schemaVersion,
+          activeFormVersion: opts.activeFormVersion,
+        },
+        traceId: ctx.traceId,
+      });
     }
     await recomputeProjectProjection(tx, application.projectId);
 
@@ -691,6 +730,13 @@ export interface SubmitOptions {
   seasonId?: string;
   /** Старый маршрут политику ограничений не проверяет: v1 работает как прежде. */
   enforcePolicy?: boolean;
+  /**
+   * Подача мастером (5.7.3) = согласие владельца показывать поданный снимок
+   * по условиям версии формы заявки. Версия, которую владелец видел в
+   * предпросмотре, обязана быть активной и сейчас — иначе 409. Без значения
+   * (старый маршрут) согласие не ставится.
+   */
+  activeFormVersion?: number;
 }
 
 export interface SnapshotProjectRow {

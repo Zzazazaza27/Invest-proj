@@ -342,6 +342,21 @@ describe('M089: visible_materials и visible_passport', () => {
         (await as(c, anon, () => c.query(`SELECT 1 FROM lab.project_view_base($1)`, [projectId])))
           .rowCount,
       ).toBe(0);
+
+      // selected_investors без разрешения: ни допущенный инвестор, ни посторонний
+      // основатель не получают даже тизера — факт существования проекта закрыт.
+      await c.query(`UPDATE lab.projects SET visibility = 'selected_investors' WHERE id = $1`, [
+        projectId,
+      ]);
+      const memberInv = await createUser(c, { role: 'investor' });
+      await createInvestorSubscription(c, memberInv.id);
+      const stranger = await createUser(c, { role: 'founder' });
+      for (const v of [anon, asUser(memberInv.id, 'investor'), asUser(stranger.id, 'founder')]) {
+        expect(
+          (await as(c, v, () => c.query(`SELECT 1 FROM lab.project_view_base($1)`, [projectId])))
+            .rowCount,
+        ).toBe(0);
+      }
     });
   });
 });

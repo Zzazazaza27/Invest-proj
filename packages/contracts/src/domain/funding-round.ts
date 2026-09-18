@@ -129,6 +129,16 @@ export const FundingRoundReadinessSchema = z.object({
 });
 export type FundingRoundReadiness = z.infer<typeof FundingRoundReadinessSchema>;
 
+/**
+ * Открытие раунда (5.7.3): владелец видел предпросмотр раскрытия по активной
+ * версии условий и подтверждает именно её; смена версии между предпросмотром
+ * и открытием — 409, повторный просмотр.
+ */
+export const OpenFundingRoundRequestSchema = z.object({
+  confirmDisclosureVersion: z.number().int().nonnegative(),
+});
+export type OpenFundingRoundRequest = z.infer<typeof OpenFundingRoundRequestSchema>;
+
 export const FundingRoundDetailSchema = z.object({
   round: FundingRoundSchema,
   readiness: FundingRoundReadinessSchema,

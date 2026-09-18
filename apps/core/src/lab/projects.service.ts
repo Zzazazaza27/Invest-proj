@@ -6,6 +6,7 @@ import {
   type AddProductLink,
   type CreateProjectRequest,
   type ApplicationPolicy,
+  type ApplyDisclosureResult,
   type ProjectFull,
   type ProjectLimits,
   type ProjectMaterial,
@@ -21,7 +22,7 @@ import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
 import { getEnv } from '../config/env';
 import { SEASONS_FLAG, seasonsEnabled } from '../common/seasons-gate';
-import { ApplicationsService, loadActivePolicy } from './applications.service';
+import { ApplicationsService, activeSchemaVersion, loadActivePolicy } from './applications.service';
 import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 
 /**
@@ -521,7 +522,7 @@ export class ProjectsService {
         // объект в хранилище, а подтверждение затем проставляет `uploaded_at` —
         // и получается «готовый» материал без файла (SEC-04). Блокировка
         // сериализует подтверждение и уборку одной строки.
-        `SELECT id, project_id, type, version, url, parse_status, created_at, s3_key, uploaded_at
+        `SELECT id, project_id, type, version, url, parse_status, created_at, visibility, s3_key, uploaded_at
            FROM lab.project_materials
           WHERE id = $1 AND project_id = $2
             FOR UPDATE`,
@@ -582,7 +583,7 @@ export class ProjectsService {
                 size_bytes = $3,
                 content_hash = coalesce(content_hash, $4)
           WHERE id = $1 AND project_id = $2
-        RETURNING id, project_id, type, version, url, parse_status, created_at`,
+        RETURNING id, project_id, type, version, url, parse_status, created_at, visibility`,
         [materialId, projectId, object.sizeBytes, `sha256:${object.sha256}`],
       );
       // Строки может не быть, если её убрали между чтением и записью. Прежний
@@ -614,7 +615,7 @@ export class ProjectsService {
         // Только подтверждённые: выданный и брошенный билет не материал, и
         // показывать его как материал значит вводить в заблуждение и
         // основателя, и рецензента.
-        `SELECT id, project_id, type, version, url, parse_status, created_at
+        `SELECT id, project_id, type, version, url, parse_status, created_at, visibility
            FROM lab.project_materials
           WHERE project_id = $1 AND uploaded_at IS NOT NULL
           ORDER BY created_at DESC
@@ -703,7 +704,7 @@ export class ProjectsService {
           `INSERT INTO lab.project_materials
              (id, project_id, type, version, url, parse_status, uploaded_by, uploaded_at)
            VALUES ($1, $2, 'product_link', $3, $4, 'not_required', $5, now())
-           RETURNING id, project_id, type, version, url, parse_status, created_at`,
+           RETURNING id, project_id, type, version, url, parse_status, created_at, visibility`,
           [id, input.projectId, version, input.url, ctx.userId],
         );
 
@@ -786,15 +787,49 @@ export class ProjectsService {
 
   // -------------------------------------------------------------------- листинг
 
+  /** Старый маршрут листинга: обёртка над режимом `public` (5.7.3). */
   async publishListing(ctx: RequestContext, projectId: string): Promise<ProjectFull> {
+    return this.publishAs(ctx, projectId, 'public');
+  }
+
+  /**
+   * «Кто может видеть проект» (5.7.3, план заявка-04 §3.1). Режим — решение
+   * владельца; `listing_status` — его следствие (кеш для v1 и Integration API).
+   * Открытые режимы проходят проверки листинга (KYC владельца, комплаенс,
+   * барьер по флагу); `selected_investors` — вместе с выдачей разрешений (5.8).
+   * Открытие, пауза и закрытие раунда режим не меняют.
+   */
+  async setVisibility(
+    ctx: RequestContext,
+    projectId: string,
+    mode: ProjectFull['visibility'],
+  ): Promise<ProjectFull> {
+    if (mode === 'selected_investors') {
+      throw errors.validation([
+        {
+          path: 'visibility',
+          message: 'режим «выбранные инвесторы» появится вместе с выдачей разрешений (этап 5.8)',
+        },
+      ]);
+    }
+    if (mode === 'private') return this.unpublishListing(ctx, projectId);
+    return this.publishAs(ctx, projectId, mode);
+  }
+
+  private async publishAs(
+    ctx: RequestContext,
+    projectId: string,
+    mode: 'public' | 'registered_investors',
+  ): Promise<ProjectFull> {
     return this.runMapped(async () =>
       this.db.transaction(ctx, async (tx) => {
         const { rows: found } = await tx.query<{
           investment_ask: string;
           listing_status: string;
+          visibility: ProjectFull['visibility'];
           owner_id: string | null;
         }>(
-          `SELECT p.investment_ask::text AS investment_ask, p.listing_status,
+          `SELECT p.investment_ask::text AS investment_ask, p.listing_status, p.visibility,
                   (SELECT fp.user_id FROM lab.founders_projects fp
                     WHERE fp.project_id = p.id AND fp.role = 'owner') AS owner_id
              FROM lab.projects p
@@ -803,7 +838,18 @@ export class ProjectsService {
         );
         const project = found[0];
         if (!project) throw errors.notFound({ subject: 'project' });
+        if (project.visibility === mode) {
+          return this.reread(tx, projectId);
+        }
         if (project.listing_status === 'listed') {
+          // Проверки листинга уже пройдены: меняется только аудитория.
+          await tx.query(
+            `UPDATE lab.projects
+                SET visibility = $2, visibility_changed_at = now(), updated_at = now()
+              WHERE id = $1`,
+            [projectId, mode],
+          );
+          await this.auditVisibility(ctx, tx, projectId, project.visibility, mode);
           return this.reread(tx, projectId);
         }
 
@@ -868,11 +914,12 @@ export class ProjectsService {
         await tx.query(
           `UPDATE lab.projects
               SET listing_status = 'listed', listed_at = now(),
-                  visibility = 'public', visibility_changed_at = now(),
+                  visibility = $3, visibility_changed_at = now(),
                   required_plan_id = $2, updated_at = now()
             WHERE id = $1`,
-          [projectId, planId],
+          [projectId, planId, mode],
         );
+        await this.auditVisibility(ctx, tx, projectId, project.visibility, mode);
 
         await this.audit.record(tx, {
           verb: 'lab.listing.published',
@@ -903,6 +950,10 @@ export class ProjectsService {
 
   async unpublishListing(ctx: RequestContext, projectId: string): Promise<ProjectFull> {
     return this.db.transaction(ctx, async (tx) => {
+      const { rows: before } = await tx.query<{ visibility: ProjectFull['visibility'] }>(
+        `SELECT visibility FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
+        [projectId],
+      );
       const { rows } = await tx.query<ProjectRow>(
         `UPDATE lab.projects
             SET listing_status = 'unlisted', updated_at = now(),
@@ -917,6 +968,7 @@ export class ProjectsService {
         // наружу незачем.
         throw errors.notFound({ subject: 'listing' });
       }
+      await this.auditVisibility(ctx, tx, projectId, before[0]?.visibility ?? 'public', 'private');
 
       await this.audit.record(tx, {
         verb: 'lab.listing.unpublished',
@@ -939,6 +991,144 @@ export class ProjectsService {
   }
 
   // ------------------------------------------------------------------ private
+
+  private async auditVisibility(
+    ctx: RequestContext,
+    tx: Tx,
+    projectId: string,
+    from: ProjectFull['visibility'],
+    to: ProjectFull['visibility'],
+  ): Promise<void> {
+    await this.audit.emit(tx, {
+      verb: 'lab.project.visibility_changed',
+      actorId: ctx.userId,
+      actorRole: ctx.roles.includes('admin') ? 'admin' : 'founder',
+      subjectType: 'project',
+      subjectId: projectId,
+      context: { from, to },
+      traceId: ctx.traceId,
+    });
+  }
+
+  /**
+   * «Применить новые условия раскрытия» (5.7.3, план заявка-04 §3.4):
+   * согласие владельца переводится на активную версию конфигурации — только
+   * на ту, которую он видел в предпросмотре (`formVersion`); иначе 409 и
+   * повторный просмотр. Тем же действием расширяются условия незавершённого
+   * раунда (`roundId`) — без нового раунда. Сужение администратором
+   * действует и без этого действия (эффективная видимость — строже из двух).
+   */
+  async applyDisclosure(
+    ctx: RequestContext,
+    projectId: string,
+    input: { formVersion: number; roundId?: string },
+  ): Promise<ApplyDisclosureResult> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows } = await tx.query<{
+        disclosed_version_id: string | null;
+        disclosure_form_version: number | null;
+      }>(
+        `SELECT disclosed_version_id, disclosure_form_version
+           FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
+        [projectId],
+      );
+      const project = rows[0];
+      if (!project) throw errors.notFound({ subject: 'project' });
+      const active = await activeSchemaVersion(tx);
+      if (input.formVersion !== active) {
+        throw errors.conflict(
+          'Условия раскрытия изменились после предпросмотра: откройте предпросмотр заново',
+          { seen: input.formVersion, active },
+        );
+      }
+      if (!project.disclosed_version_id && !input.roundId) {
+        throw errors.stateTransition(
+          'Согласия на показ ответов ещё нет: подайте профиль через мастер, подача с предпросмотром и есть согласие',
+        );
+      }
+
+      let formVersion = project.disclosure_form_version;
+      if (project.disclosed_version_id) {
+        await tx.query(
+          `UPDATE lab.projects
+              SET disclosure_form_version = $2, disclosed_at = now(), disclosed_by = $3,
+                  updated_at = now()
+            WHERE id = $1`,
+          [projectId, active, ctx.userId],
+        );
+        formVersion = active;
+      }
+
+      let roundDisclosureVersion: number | null = null;
+      if (input.roundId) {
+        const round = await tx.query<{ id: string }>(
+          `UPDATE lab.funding_rounds
+              SET disclosure_version = $3, updated_at = now()
+            WHERE id = $2 AND project_id = $1 AND status IN ('open', 'paused')
+            RETURNING id`,
+          [projectId, input.roundId, active],
+        );
+        if (!round.rows[0]) {
+          throw errors.notFound({ subject: 'funding_round' });
+        }
+        roundDisclosureVersion = active;
+      }
+
+      await this.audit.emit(tx, {
+        verb: 'lab.project.disclosure_applied',
+        actorId: ctx.userId,
+        actorRole: ctx.roles.includes('admin') ? 'admin' : 'founder',
+        subjectType: 'project',
+        subjectId: projectId,
+        context: {
+          formVersion: active,
+          previousFormVersion: project.disclosure_form_version,
+          roundId: input.roundId ?? null,
+        },
+        traceId: ctx.traceId,
+      });
+      return {
+        projectId,
+        formVersion,
+        roundId: input.roundId ?? null,
+        roundDisclosureVersion,
+      };
+    });
+  }
+
+  /**
+   * Отметка материала (5.7.3): показывать допущенным инвесторам или только
+   * команде. Привязка материала как подтверждения к ответу сама по себе его
+   * не открывает — только эта отметка.
+   */
+  async setMaterialVisibility(
+    ctx: RequestContext,
+    projectId: string,
+    materialId: string,
+    visibility: 'private' | 'investors',
+  ): Promise<ProjectMaterial> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows } = await tx.query<MaterialRow>(
+        `UPDATE lab.project_materials
+            SET visibility = $3
+          WHERE id = $2 AND project_id = $1 AND uploaded_at IS NOT NULL
+          RETURNING id, project_id, type, version, url, parse_status, created_at, visibility`,
+        [projectId, materialId, visibility],
+      );
+      const row = rows[0];
+      if (!row) throw errors.notFound({ subject: 'material' });
+      await this.audit.emit(tx, {
+        verb: 'lab.project_material.visibility_changed',
+        actorId: ctx.userId,
+        actorRole: ctx.roles.includes('admin') ? 'admin' : 'founder',
+        subjectType: 'project',
+        subjectId: projectId,
+        context: { materialId, visibility },
+        traceId: ctx.traceId,
+      });
+      return mapMaterial(row);
+    });
+  }
 
   private async reread(tx: Tx, projectId: string): Promise<ProjectFull> {
     const { rows } = await tx.query<ProjectRow>(
@@ -1049,6 +1239,7 @@ const PROJECT_COLUMNS = `
   (SELECT v.target::text FROM lab.round_view(lab.projects.id) v) AS round_target,
   (SELECT v.currency FROM lab.round_view(lab.projects.id) v) AS round_currency,
   listing_status, listed_at, status, season_id, current_version_id, current_application_id,
+  visibility, disclosed_version_id, disclosure_form_version,
   created_at, updated_at,
   (SELECT s.value::text
      FROM scoring.irs_scores s
@@ -1078,6 +1269,9 @@ interface ProjectRow {
   season_id: string | null;
   current_version_id: string | null;
   current_application_id: string | null;
+  visibility: ProjectFull['visibility'];
+  disclosed_version_id: string | null;
+  disclosure_form_version: number | null;
   created_at: Date;
   updated_at: Date;
   /** Последний IRS проекта; NUMERIC приходит строкой, чтобы не терять точность. */
@@ -1108,6 +1302,7 @@ interface MaterialRow {
   url: string | null;
   parse_status: ProjectMaterial['parseStatus'];
   created_at: Date;
+  visibility: ProjectMaterial['visibility'];
 }
 
 function mapProject(row: ProjectRow): ProjectFull {
@@ -1130,6 +1325,9 @@ function mapProject(row: ProjectRow): ProjectFull {
     requiredPlanId: row.required_plan_id,
     currentVersionId: row.current_version_id,
     currentApplicationId: row.current_application_id,
+    visibility: row.visibility,
+    disclosedVersionId: row.disclosed_version_id,
+    disclosureFormVersion: row.disclosure_form_version,
     // Последний рассчитанный IRS проекта. Раньше здесь стоял жёсткий `null` с
     // припиской «скоринга в этой фазе нет» — скоринг появился, а строка
     // осталась, и кабинет показывал «IRS ещё не рассчитан» рядом с посчитанным
@@ -1149,6 +1347,7 @@ function mapMaterial(row: MaterialRow): ProjectMaterial {
     version: row.version,
     url: row.url,
     parseStatus: row.parse_status,
+    visibility: row.visibility,
     createdAt: row.created_at.toISOString(),
   };
 }

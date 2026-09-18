@@ -96,8 +96,25 @@ export const ApplicationPreviewSchema = z.object({
   sections: z.array(ApplicationPreviewSectionSchema),
   /** Сколько заполненных ответов НЕ показано этой аудитории. */
   withheld: z.number().int().nonnegative(),
+  /**
+   * Активная версия конфигурации на момент сборки (5.7.3): подача несёт её
+   * обратно как подтверждение «я видел предпросмотр по этим условиям».
+   * В чистой сборке (`buildApplicationPreview`) отсутствует — ставит сервер.
+   */
+  activeFormVersion: z.number().int().nonnegative().optional(),
 });
 export type ApplicationPreview = z.infer<typeof ApplicationPreviewSchema>;
+
+/**
+ * Подача профиля (5.7.3) = согласие владельца показывать поданный снимок по
+ * условиям версии формы заявки. `activeFormVersion` — версия, которую
+ * владелец видел в предпросмотре; если администратор успел опубликовать
+ * другую, сервер отвечает 409 и просит посмотреть предпросмотр заново.
+ */
+export const SubmitApplicationRequestSchema = z.object({
+  activeFormVersion: z.number().int().nonnegative(),
+});
+export type SubmitApplicationRequest = z.infer<typeof SubmitApplicationRequestSchema>;
 
 export interface PreviewSource {
   core: ApplicationPreview['core'];

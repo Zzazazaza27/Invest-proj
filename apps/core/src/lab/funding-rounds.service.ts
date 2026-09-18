@@ -13,6 +13,7 @@ import {
   type FundingRoundDetail,
   type FundingRoundReadiness,
   type FundingRoundStatus,
+  type OpenFundingRoundRequest,
   type ProjectStage,
   type ServiceCountryPolicy,
   type UpdateFundingRoundRequest,
@@ -277,9 +278,22 @@ export class FundingRoundsService {
    * фиксируются в раунде как снимок; валюта — из разрешённых; основание —
    * поданная версия того же проекта; готовность по стадии основания.
    */
-  async open(ctx: RequestContext, roundId: string): Promise<FundingRoundDetail> {
+  async open(
+    ctx: RequestContext,
+    roundId: string,
+    input: OpenFundingRoundRequest,
+  ): Promise<FundingRoundDetail> {
     return this.transition(ctx, roundId, 'open', async (tx, round) => {
       if (round.status !== 'draft') return; // resume — отдельное действие
+      // Подтверждение версии условий (5.7.3): владелец видел предпросмотр по
+      // активной версии; если она сменилась — повторный просмотр, не открытие.
+      const activeVersion = await activeSchemaVersion(tx);
+      if (input.confirmDisclosureVersion !== activeVersion) {
+        throw errors.conflict(
+          'Условия раскрытия изменились после предпросмотра: откройте предпросмотр раунда заново',
+          { seen: input.confirmDisclosureVersion, active: activeVersion },
+        );
+      }
       const missing: { path: string; message: string }[] = [];
       const country = await this.countries.userCountry(tx, ctx.userId);
       if (!country) {

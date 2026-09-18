@@ -12,6 +12,7 @@ import {
   InvestmentApplicationSchema,
   ProjectVersionSchema,
   ReadinessConfigVersionSchema,
+  SubmitApplicationRequestSchema,
   UpdateApplicationRequestSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -94,9 +95,12 @@ export class ApplicationsController {
    */
   @Roles('founder', 'admin')
   @Post('applications/:id/submit')
-  async submit(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+  async submit(@Param('id') rawId: string, @Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
-    return ProjectVersionSchema.parse(await this.applications.submit(ctx, id));
+    const input = parseOrThrow(SubmitApplicationRequestSchema, rawBody ?? {});
+    return ProjectVersionSchema.parse(
+      await this.applications.submit(ctx, id, { activeFormVersion: input.activeFormVersion }),
+    );
   }
 }
 

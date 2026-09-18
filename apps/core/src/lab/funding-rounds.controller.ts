@@ -6,6 +6,7 @@ import {
   FundingRoundBasisHistoryEntrySchema,
   FundingRoundDetailSchema,
   FundingRoundSchema,
+  OpenFundingRoundRequestSchema,
   UpdateFundingRoundRequestSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -54,11 +55,17 @@ export class FundingRoundsController {
     return FundingRoundDetailSchema.parse(await this.rounds.update(ctx, id, input));
   }
 
+  /**
+   * Открытие требует подтверждения версии условий раскрытия, которую владелец
+   * видел в предпросмотре (`GET /rounds/:id/open-preview`): смена активной
+   * версии между предпросмотром и открытием — 409 (5.7.3).
+   */
   @Roles('founder', 'admin')
   @Post('rounds/:id/open')
-  async open(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+  async open(@Param('id') rawId: string, @Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(OpenFundingRoundRequestSchema, rawBody ?? {});
     return FundingRoundDetailSchema.parse(
-      await this.rounds.open(ctx, parseOrThrow(UuidSchema, rawId)),
+      await this.rounds.open(ctx, parseOrThrow(UuidSchema, rawId), input),
     );
   }
 

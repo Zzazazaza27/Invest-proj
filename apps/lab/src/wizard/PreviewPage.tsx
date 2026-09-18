@@ -25,10 +25,13 @@ import { S } from '../strings';
 export function PreviewPage({
   applicationId,
   refreshKey,
+  onPreview,
 }: {
   applicationId: string;
   /** Любое изменение ключа перечитывает сводку (после сохранения). */
   refreshKey?: string;
+  /** Собранная сводка — экрану подачи нужна версия условий, которую видел владелец (5.7.3). */
+  onPreview?: (preview: ApplicationPreview) => void;
 }) {
   const [audience, setAudience] = useState<PreviewAudience>('investors');
   const [state, setState] = useState<
@@ -42,7 +45,9 @@ export function PreviewPage({
     api.applications
       .preview(applicationId, { audience })
       .then((preview) => {
-        if (!cancelled) setState({ status: 'ready', preview });
+        if (cancelled) return;
+        setState({ status: 'ready', preview });
+        onPreview?.(preview);
       })
       .catch((e: unknown) => {
         if (cancelled) return;

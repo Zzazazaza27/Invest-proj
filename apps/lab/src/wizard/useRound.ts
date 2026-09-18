@@ -416,7 +416,16 @@ export function useRound(projectId: string) {
     [flush, load],
   );
 
-  const open = useCallback(() => transition((id) => api.rounds.open(id)), [transition]);
+  // Открытие подтверждает версию условий раскрытия из предпросмотра (5.7.3):
+  // сервер отказывает, если администратор успел опубликовать другую.
+  const open = useCallback(
+    () =>
+      transition(async (id) => {
+        const preview = await api.rounds.openPreview(id);
+        return api.rounds.open(id, { confirmDisclosureVersion: preview.activeFormVersion });
+      }),
+    [transition],
+  );
   const pause = useCallback(() => transition((id) => api.rounds.pause(id)), [transition]);
   const resume = useCallback(() => transition((id) => api.rounds.resume(id)), [transition]);
   const close = useCallback(

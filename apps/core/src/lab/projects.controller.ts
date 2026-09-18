@@ -1,7 +1,9 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import {
   AddProductLinkSchema,
+  ApplyDisclosureRequestSchema,
+  ApplyDisclosureResultSchema,
   CreateProjectRequestSchema,
   ProjectFullSchema,
   ProjectLimitsSchema,
@@ -9,6 +11,8 @@ import {
   ProjectSummarySchema,
   ProjectVersionSchema,
   RequestUploadSchema,
+  SetMaterialVisibilityRequestSchema,
+  SetProjectVisibilityRequestSchema,
   UpdateProjectRequestSchema,
   UploadTicketSchema,
   UuidSchema,
@@ -190,6 +194,51 @@ export class ProjectsController {
   async unpublish(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
     return ProjectFullSchema.parse(await this.projects.unpublishListing(ctx, id));
+  }
+
+  // ------------------------------------------------------ раскрытие (5.7.3)
+
+  /** «Кто может видеть проект»: режим с проверками листинга; listing_status — следствие. */
+  @Roles('founder', 'admin')
+  @Put(':id/visibility')
+  async setVisibility(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const input = parseOrThrow(SetProjectVisibilityRequestSchema, rawBody);
+    return ProjectFullSchema.parse(await this.projects.setVisibility(ctx, id, input.visibility));
+  }
+
+  /** «Применить новые условия раскрытия» — к профилю и (по желанию) незавершённому раунду. */
+  @Roles('founder', 'admin')
+  @Post(':id/disclosure/apply')
+  async applyDisclosure(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const input = parseOrThrow(ApplyDisclosureRequestSchema, rawBody);
+    return ApplyDisclosureResultSchema.parse(await this.projects.applyDisclosure(ctx, id, input));
+  }
+
+  /** Отметка материала: показывать допущенным инвесторам или только команде. */
+  @Roles('founder', 'admin')
+  @Put(':id/materials/:materialId/visibility')
+  async setMaterialVisibility(
+    @Param('id') rawId: string,
+    @Param('materialId') rawMaterialId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const materialId = parseOrThrow(UuidSchema, rawMaterialId);
+    const input = parseOrThrow(SetMaterialVisibilityRequestSchema, rawBody);
+    return ProjectMaterialSchema.parse(
+      await this.projects.setMaterialVisibility(ctx, id, materialId, input.visibility),
+    );
   }
 }
 

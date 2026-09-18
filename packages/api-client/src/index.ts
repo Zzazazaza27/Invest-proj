@@ -56,7 +56,13 @@ import {
   InvestorViewSchema,
   ViewPreviewSchema,
   RoundOpenPreviewSchema,
+  ApplyDisclosureResultSchema,
+  type ApplyDisclosureRequest,
+  type OpenFundingRoundRequest,
   type PreviewAudience,
+  type SetMaterialVisibilityRequest,
+  type SetProjectVisibilityRequest,
+  type SubmitApplicationRequest,
   PublicationConsentSchema,
   RatingEntrySchema,
   ReadinessEntrySchema,
@@ -418,6 +424,36 @@ export class UnicornApi {
         schema: ViewPreviewSchema,
       }),
 
+    /** «Кто может видеть проект» (5.7.3): режим с проверками листинга; listing_status — следствие. */
+    setVisibility: (id: string, body: SetProjectVisibilityRequest) =>
+      this.http.request({
+        method: 'PUT',
+        path: `/projects/${id}/visibility`,
+        body,
+        schema: ProjectFullSchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    /** «Применить новые условия раскрытия» к профилю и (по желанию) незавершённому раунду. */
+    applyDisclosure: (id: string, body: ApplyDisclosureRequest) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/disclosure/apply`,
+        body,
+        schema: ApplyDisclosureResultSchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    /** Отметка материала: показывать допущенным инвесторам или только команде. */
+    setMaterialVisibility: (id: string, materialId: string, body: SetMaterialVisibilityRequest) =>
+      this.http.request({
+        method: 'PUT',
+        path: `/projects/${id}/materials/${materialId}/visibility`,
+        body,
+        schema: ProjectMaterialSchema,
+        idempotencyKey: uuidv7(),
+      }),
+
     create: (body: CreateProjectRequest) =>
       this.http.request({
         method: 'POST',
@@ -587,11 +623,16 @@ export class UnicornApi {
         schema: InvestmentApplicationSchema,
       }),
 
-    /** Подача без сезона: неизменяемый снимок версии заявки. */
-    submit: (id: string) =>
+    /**
+     * Подача без сезона: неизменяемый снимок версии заявки и согласие владельца
+     * показывать его (5.7.3). `activeFormVersion` — версия из предпросмотра;
+     * смена условий между предпросмотром и подачей — 409.
+     */
+    submit: (id: string, body: SubmitApplicationRequest) =>
       this.http.request({
         method: 'POST',
         path: `/applications/${id}/submit`,
+        body,
         schema: ProjectVersionSchema,
         idempotencyKey: uuidv7(),
       }),
@@ -719,10 +760,12 @@ export class UnicornApi {
         schema: FundingRoundDetailSchema,
         keepalive: opts.keepalive,
       }),
-    open: (id: string) =>
+    /** Открытие с подтверждением версии условий раскрытия из `openPreview` (5.7.3). */
+    open: (id: string, body: OpenFundingRoundRequest) =>
       this.http.request({
         method: 'POST',
         path: `/rounds/${id}/open`,
+        body,
         schema: FundingRoundDetailSchema,
         idempotencyKey: uuidv7(),
       }),

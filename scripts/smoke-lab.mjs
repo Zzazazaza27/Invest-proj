@@ -70,6 +70,11 @@ const pool = new pg.Pool({
   application_name: 'unicorn-smoke-lab',
 });
 
+/** Активная версия конфигурации — подтверждение «я видел предпросмотр по этим условиям» (5.7.3). */
+const activeForm = async () =>
+  (await sql('SELECT version FROM lab.application_form_versions WHERE is_active'))[0]?.version ?? 0;
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function sql(text, params = []) {
   const { rows } = await pool.query(text, params);
   return rows;
@@ -1030,7 +1035,10 @@ let ticket;
     missing.join(','),
   );
 
-  const early = await founderA.client.call(`/v1/applications/${appId}/submit`, { method: 'POST' });
+  const early = await founderA.client.call(`/v1/applications/${appId}/submit`, {
+    method: 'POST',
+    body: { activeFormVersion: await activeForm() },
+  });
   check(
     'преждевременная подача отвергнута валидацией',
     early.response.status === 422 || early.response.status === 400,
@@ -1096,6 +1104,7 @@ let ticket;
 
   const premature = await founderA.client.call(`/v1/applications/${appId}/submit`, {
     method: 'POST',
+    body: { activeFormVersion: await activeForm() },
   });
   check(
     'подача без обязательных вопросов отвергается с перечнем',
@@ -1143,6 +1152,7 @@ let ticket;
 
   const submitted = await founderA.client.call(`/v1/applications/${appId}/submit`, {
     method: 'POST',
+    body: { activeFormVersion: await activeForm() },
   });
   check(
     'снимок версии хранит версию весов и процент готовности',
@@ -1696,6 +1706,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   await founderA.client.call(`/v1/applications/${appId}`, { method: 'PATCH', body: { answers } });
   const submitted = await founderA.client.call(`/v1/applications/${appId}/submit`, {
     method: 'POST',
+    body: { activeFormVersion: await activeForm() },
   });
   check(
     'профиль подан без суммы и предмета финансирования',
@@ -1720,7 +1731,10 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   });
   check('повторный вызов возвращает тот же черновик', again.json?.round?.id === roundId);
 
-  const tooEarly = await founderA.client.call(`/v1/rounds/${roundId}/open`, { method: 'POST' });
+  const tooEarly = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
+    method: 'POST',
+    body: { confirmDisclosureVersion: await activeForm() },
+  });
   check(
     'открыть незаполненный раунд нельзя, перечень назван',
     tooEarly.response.status === 400 || tooEarly.response.status === 422,
@@ -1763,7 +1777,10 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     `статус ${basis.response.status}`,
   );
   // Страна обслуживания — явный выбор аккаунта: без неё раунд не открывается.
-  const noCountry = await founderA.client.call(`/v1/rounds/${roundId}/open`, { method: 'POST' });
+  const noCountry = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
+    method: 'POST',
+    body: { confirmDisclosureVersion: await activeForm() },
+  });
   check(
     'без страны обслуживания раунд не открывается, поле названо',
     (noCountry.response.status === 400 || noCountry.response.status === 422) &&
@@ -1781,7 +1798,10 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   );
   const me = await founderA.client.call('/v1/auth/me');
   check('страна видна в профиле', me.json?.serviceCountry === 'ru');
-  const openKzt = await founderA.client.call(`/v1/rounds/${roundId}/open`, { method: 'POST' });
+  const openKzt = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
+    method: 'POST',
+    body: { confirmDisclosureVersion: await activeForm() },
+  });
   check(
     'валюта вне условий страны не даёт открыть раунд',
     badCurrency.response.status === 200 &&
@@ -1793,7 +1813,10 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     method: 'PATCH',
     body: { currency: 'RUB' },
   });
-  const opened = await founderA.client.call(`/v1/rounds/${roundId}/open`, { method: 'POST' });
+  const opened = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
+    method: 'POST',
+    body: { confirmDisclosureVersion: await activeForm() },
+  });
   check(
     'раунд открыт: страна и версия условий зафиксированы',
     opened.response.status === 201 &&
@@ -1939,6 +1962,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     });
     const submittedC = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
       method: 'POST',
+      body: { activeFormVersion: await activeForm() },
     });
     const roundC = await founderA.client.call(`/v1/projects/${projectCId}/rounds`, {
       method: 'POST',
@@ -1955,6 +1979,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     });
     const openedC = await founderA.client.call(`/v1/rounds/${roundC.json?.round?.id}/open`, {
       method: 'POST',
+      body: { confirmDisclosureVersion: await activeForm() },
     });
     await grantFounderSubscription(founderA.userId, projectCId);
     await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'POST' });
@@ -2121,7 +2146,188 @@ console.warn('\n[раунды] профиль без раунда, чернов�
       );
       await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'POST' });
     }
+
+    // ---------------------------------------------- 5.7.3: действия владельца
+    {
+      // Посторонний без допуска не узнаёт даже о существовании проекта в
+      // закрытых режимах: ни названия, ни 403 — только 404.
+      await sql(`UPDATE lab.projects SET visibility = 'selected_investors' WHERE id = $1`, [
+        projectCId,
+      ]);
+      const strangerSelected = await founderB.client.call(
+        `/v1/projects/${projectCId}/investor-view`,
+      );
+      const investorSelected = await investor.client.call(
+        `/v1/projects/${projectCId}/investor-view`,
+      );
+      const anonSelected = await raw(`/v1/catalog/${projectCId}`);
+      check(
+        'selected_investors без разрешения: посторонний, инвестор с членством и аноним получают 404 без названия',
+        strangerSelected.response.status === 404 &&
+          investorSelected.response.status === 404 &&
+          anonSelected.response.status === 404 &&
+          !JSON.stringify(strangerSelected.json ?? '').includes('Раунд после публикации'),
+        `${strangerSelected.response.status} ${investorSelected.response.status} ${anonSelected.response.status}`,
+      );
+      const selectedByApi = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+        method: 'PUT',
+        body: { visibility: 'selected_investors' },
+      });
+      check(
+        'режим «выбранные инвесторы» через API отклоняется до 5.8',
+        selectedByApi.response.status === 400 || selectedByApi.response.status === 422,
+        `статус ${selectedByApi.response.status}`,
+      );
+      const registered = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+        method: 'PUT',
+        body: { visibility: 'registered_investors' },
+      });
+      const anonRegistered = await raw(`/v1/catalog/${projectCId}`);
+      const investorRegistered = await investor.client.call(
+        `/v1/projects/${projectCId}/investor-view`,
+      );
+      check(
+        'режим registered_investors: анониму 404, допущенному инвестору — Investor View',
+        registered.response.status === 200 &&
+          registered.json?.visibility === 'registered_investors' &&
+          registered.json?.listingStatus === 'listed' &&
+          anonRegistered.response.status === 404 &&
+          investorRegistered.response.status === 200,
+        `${registered.response.status} ${registered.json?.visibility} ${anonRegistered.response.status} ${investorRegistered.response.status}`,
+      );
+      const backPublic = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+        method: 'PUT',
+        body: { visibility: 'public' },
+      });
+      check(
+        'режим public: анониму снова Public View',
+        backPublic.response.status === 200 &&
+          backPublic.json?.visibility === 'public' &&
+          (await raw(`/v1/catalog/${projectCId}`)).response.status === 200,
+      );
+
+      // Применение новых условий: только той версии, что видел владелец.
+      const consentBefore = await founderA.client.call(
+        `/v1/projects/${projectCId}/view-preview?audience=investors`,
+      );
+      const published = await setRoundVisibility(
+        'investors',
+        'дымовой прогон 5.7.3: новая версия условий для «Применить»',
+      );
+      const active = await activeForm();
+      const staleApply = await founderA.client.call(`/v1/projects/${projectCId}/disclosure/apply`, {
+        method: 'POST',
+        body: { formVersion: consentBefore.json?.consent?.formVersion },
+      });
+      check(
+        'применение устаревшей версии условий отклонено — повторный просмотр',
+        published.response.status === 201 &&
+          staleApply.response.status === 409 &&
+          consentBefore.json?.consent?.formVersion !== active,
+        `${staleApply.response.status} ${consentBefore.json?.consent?.formVersion} → ${active}`,
+      );
+      const applied = await founderA.client.call(`/v1/projects/${projectCId}/disclosure/apply`, {
+        method: 'POST',
+        body: { formVersion: active, roundId: roundC.json?.round?.id },
+      });
+      const consentAfter = await founderA.client.call(
+        `/v1/projects/${projectCId}/view-preview?audience=investors`,
+      );
+      check(
+        '«Применить» переводит согласие профиля и существующего раунда на активную версию без нового раунда',
+        applied.response.status === 201 &&
+          applied.json?.formVersion === active &&
+          applied.json?.roundDisclosureVersion === active &&
+          consentAfter.json?.consent?.formVersion === active &&
+          consentAfter.json?.consent?.roundDisclosureVersion === active &&
+          consentAfter.json?.consent?.roundId === roundC.json?.round?.id,
+        `${applied.response.status} ${JSON.stringify(applied.json ?? null)}`,
+      );
+
+      // Материал: закрыт по умолчанию, открывается только отметкой владельца.
+      const link = await founderA.client.call(`/v1/projects/${projectCId}/materials/link`, {
+        method: 'POST',
+        body: { url: 'https://example.com/product-573' },
+      });
+      const materialId = link.json?.id;
+      const beforeMark = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+      const marked = await founderA.client.call(
+        `/v1/projects/${projectCId}/materials/${materialId}/visibility`,
+        { method: 'PUT', body: { visibility: 'investors' } },
+      );
+      const afterMark = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+      check(
+        'материал закрыт по умолчанию и виден инвестору только после отметки владельца',
+        link.response.status === 201 &&
+          link.json?.visibility === 'private' &&
+          !(beforeMark.json?.materials ?? []).some((m) => m.id === materialId) &&
+          marked.response.status === 200 &&
+          marked.json?.visibility === 'investors' &&
+          (afterMark.json?.materials ?? []).some((m) => m.id === materialId),
+        `${link.response.status} ${marked.response.status} до ${(beforeMark.json?.materials ?? []).length} после ${(afterMark.json?.materials ?? []).length}`,
+      );
+      const publicMark = await founderA.client.call(
+        `/v1/projects/${projectCId}/materials/${materialId}/visibility`,
+        { method: 'PUT', body: { visibility: 'public' } },
+      );
+      check(
+        'отметка public для материала не принимается',
+        publicMark.response.status === 400,
+        `${publicMark.response.status}`,
+      );
+
+      // Подача = согласие на конкретный снимок; смена условий — повторный просмотр.
+      const staleSubmit = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
+        method: 'POST',
+        body: { activeFormVersion: active + 1 },
+      });
+      const resubmitted = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
+        method: 'POST',
+        body: { activeFormVersion: active },
+      });
+      const projectAfter = await founderA.client.call(`/v1/projects/${projectCId}`);
+      check(
+        'подача с устаревшей версией — 409; подача с активной переключает согласие на новый снимок',
+        staleSubmit.response.status === 409 &&
+          resubmitted.response.status === 201 &&
+          projectAfter.json?.disclosedVersionId === resubmitted.json?.id &&
+          projectAfter.json?.disclosureFormVersion === resubmitted.json?.schemaVersion,
+        `${staleSubmit.response.status} ${resubmitted.response.status} ${projectAfter.json?.disclosedVersionId === resubmitted.json?.id}`,
+      );
+
+      // Открытие раунда — только с подтверждением активной версии.
+      const draftRound = await founderA.client.call(`/v1/projects/${projectCId}/rounds`, {
+        method: 'POST',
+        body: {},
+      });
+      const staleOpen = await founderA.client.call(
+        `/v1/rounds/${draftRound.json?.round?.id}/open`,
+        {
+          method: 'POST',
+          body: { confirmDisclosureVersion: active + 1 },
+        },
+      );
+      const noBodyOpen = await founderA.client.call(
+        `/v1/rounds/${draftRound.json?.round?.id}/open`,
+        {
+          method: 'POST',
+        },
+      );
+      check(
+        'открытие раунда без подтверждения версии — 400, с устаревшей — 409',
+        noBodyOpen.response.status === 400 && staleOpen.response.status === 409,
+        `${noBodyOpen.response.status} ${staleOpen.response.status}`,
+      );
+      await founderA.client.call(`/v1/rounds/${draftRound.json?.round?.id}/cancel`, {
+        method: 'POST',
+      });
+    }
   }
+
+  // Блоки 5.7.2–5.7.3 добавили основателю десятки запросов: потолок частоты
+  // (120/мин) успевает сработать на следующих проверках. Пауза — как в
+  // рендер-проверках, а не ослабление потолка ради прогона.
+  await pause(61_000);
 
   const second = await founderA.client.call(`/v1/projects/${projectId}/rounds`, {
     method: 'POST',
@@ -2136,7 +2342,10 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     method: 'PUT',
     body: { applicationVersionId: versionId, reason: 'второй' },
   });
-  const secondOpen = await founderA.client.call(`/v1/rounds/${secondId}/open`, { method: 'POST' });
+  const secondOpen = await founderA.client.call(`/v1/rounds/${secondId}/open`, {
+    method: 'POST',
+    body: { confirmDisclosureVersion: await activeForm() },
+  });
   check(
     'второй незавершённый раунд на проект невозможен',
     secondOpen.response.status === 409,
@@ -2147,6 +2356,7 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   check('пауза: привлечение приостановлено', paused.json?.round?.status === 'paused');
   const stillBlocked = await founderA.client.call(`/v1/rounds/${secondId}/open`, {
     method: 'POST',
+    body: { confirmDisclosureVersion: await activeForm() },
   });
   check(
     'пауза место не освобождает',

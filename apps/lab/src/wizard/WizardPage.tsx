@@ -603,13 +603,20 @@ function PreviewScreen({ app }: { app: App }) {
   const { detail } = app.data;
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  // Версия условий, по которой собран показанный предпросмотр: подача несёт
+  // её как подтверждение; смена условий администратором — отказ и повторный
+  // просмотр (5.7.3). Без загруженного предпросмотра подавать нечего.
+  const [seenFormVersion, setSeenFormVersion] = useState<number | null>(null);
 
   const submit = async () => {
+    if (seenFormVersion === null) return;
     setBusy(true);
     setNotice(null);
     try {
       await app.flush();
-      const version = await api.applications.submit(detail.application.id);
+      const version = await api.applications.submit(detail.application.id, {
+        activeFormVersion: seenFormVersion,
+      });
       setNotice({ tone: 'ok', text: S.wizard.submit.done(version.versionNo) });
       await app.reload();
       window.setTimeout(() => navigate(`/projects/${detail.application.projectId}`), 1500);
@@ -629,6 +636,7 @@ function PreviewScreen({ app }: { app: App }) {
         <PreviewPage
           applicationId={detail.application.id}
           refreshKey={`${app.save.kind}:${app.round.save.kind}`}
+          onPreview={(preview) => setSeenFormVersion(preview.activeFormVersion ?? null)}
         />
         <Card>
           <Stack gap="var(--u-space-3)">
@@ -660,7 +668,7 @@ function PreviewScreen({ app }: { app: App }) {
               <Button
                 variant="brand"
                 loading={busy}
-                disabled={!detail.submission.canSubmit}
+                disabled={!detail.submission.canSubmit || seenFormVersion === null}
                 onClick={() => void submit()}
               >
                 {S.wizard.submit.button}

@@ -182,6 +182,11 @@ export const ProjectFullSchema = ProjectTeaserSchema.extend({
   currentVersionId: UuidSchema.nullable(),
   /** Последняя поданная открытая заявка (M071); проект — производный кеш от неё. */
   currentApplicationId: UuidSchema.nullable(),
+  /** Режим «кто может видеть проект» (5.7); листинг — его следствие. */
+  visibility: z.enum(['private', 'public', 'registered_investors', 'selected_investors']),
+  /** Снимок, который владелец согласился показывать, и версия условий согласия; null — согласия нет. */
+  disclosedVersionId: UuidSchema.nullable(),
+  disclosureFormVersion: z.number().int().nonnegative().nullable(),
   irs: z.number().min(0).max(100).nullable(),
   createdAt: IsoDateTimeSchema,
   updatedAt: IsoDateTimeSchema,
@@ -311,6 +316,43 @@ export const PublishListingRequestSchema = z.object({
   projectId: UuidSchema,
 });
 
+/**
+ * «Кто может видеть проект» (5.7.3): режим ставит владелец с теми же
+ * проверками, что листинг (KYC, комплаенс); `listing_status` — следствие.
+ * `selected_investors` появится вместе с выдачей разрешений (5.8).
+ */
+export const SetProjectVisibilityRequestSchema = z.object({
+  visibility: z.enum(['private', 'public', 'registered_investors', 'selected_investors']),
+});
+export type SetProjectVisibilityRequest = z.infer<typeof SetProjectVisibilityRequestSchema>;
+
+/**
+ * «Применить новые условия раскрытия» (5.7.3): владелец видел предпросмотр
+ * по версии `formVersion`; сервер применяет её только если она всё ещё
+ * активна — иначе 409 и повторный просмотр. `roundId` — расширить условия
+ * незавершённого раунда тем же действием, без нового раунда.
+ */
+export const ApplyDisclosureRequestSchema = z.object({
+  formVersion: z.number().int().nonnegative(),
+  roundId: UuidSchema.optional(),
+});
+export type ApplyDisclosureRequest = z.infer<typeof ApplyDisclosureRequestSchema>;
+
+export const ApplyDisclosureResultSchema = z.object({
+  projectId: UuidSchema,
+  /** Версия условий профиля после применения; null — согласия на снимок ещё нет. */
+  formVersion: z.number().int().nonnegative().nullable(),
+  roundId: UuidSchema.nullable(),
+  roundDisclosureVersion: z.number().int().nonnegative().nullable(),
+});
+export type ApplyDisclosureResult = z.infer<typeof ApplyDisclosureResultSchema>;
+
+/** Отметка материала владельцем; `public` в интерфейсе 5.7 не предлагается. */
+export const SetMaterialVisibilityRequestSchema = z.object({
+  visibility: z.enum(['private', 'investors']),
+});
+export type SetMaterialVisibilityRequest = z.infer<typeof SetMaterialVisibilityRequestSchema>;
+
 /** Материал проекта. Ни `s3Key`, ни presigned-URL наружу не отдаются. */
 export const ProjectMaterialSchema = z.object({
   id: UuidSchema,
@@ -320,6 +362,8 @@ export const ProjectMaterialSchema = z.object({
   /** Внешняя ссылка — только для `product_link`, иначе null. */
   url: z.url().nullable(),
   parseStatus: z.enum(['queued', 'running', 'succeeded', 'failed', 'not_required']),
+  /** Отметка владельца (M087): кому материал показывается по предикату `materials`. */
+  visibility: z.enum(['private', 'investors', 'public']),
   createdAt: IsoDateTimeSchema,
 });
 export type ProjectMaterial = z.infer<typeof ProjectMaterialSchema>;
