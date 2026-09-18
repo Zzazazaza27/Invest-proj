@@ -1829,6 +1829,49 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     'список стран обслуживания публичен',
     countries.response.status === 200 && (countries.json?.items ?? []).some((c) => c.code === 'ru'),
   );
+  // Повторный выбор той же страны идемпотентен; смена уже установленной —
+  // другая операция, переключения нет (реестр: контролируемая смена).
+  const sameAgain = await founderA.client.call('/v1/me/service-country', {
+    method: 'PUT',
+    body: { code: 'ru' },
+  });
+  check('повторный выбор той же страны — без ошибки', sameAgain.response.status === 200);
+  const kz = await adminClient.call('/v1/admin/service-countries', {
+    method: 'POST',
+    body: { code: 'kz' },
+  });
+  check(
+    'администратор заводит страну выключенной',
+    (kz.response.status === 201 && kz.json?.isActive === false) || kz.response.status === 409,
+    `статус ${kz.response.status}`,
+  );
+  const toInactive = await founderA.client.call('/v1/me/service-country', {
+    method: 'PUT',
+    body: { code: 'kz' },
+  });
+  check(
+    'выключенную страну выбрать нельзя',
+    toInactive.response.status === 400 || toInactive.response.status === 422,
+    `статус ${toInactive.response.status}`,
+  );
+  await adminClient.call('/v1/admin/service-countries/kz', {
+    method: 'PATCH',
+    body: { isActive: true },
+  });
+  const switchTry = await founderA.client.call('/v1/me/service-country', {
+    method: 'PUT',
+    body: { code: 'kz' },
+  });
+  check(
+    'смена уже выбранной страны отклонена: свободного переключения нет',
+    switchTry.response.status === 409,
+    `статус ${switchTry.response.status}`,
+  );
+  await adminClient.call('/v1/admin/service-countries/kz', {
+    method: 'PATCH',
+    body: { isActive: false },
+  });
+
   const policy = await founderA.client.call('/v1/service-countries/ru/policy');
   check(
     'условия страны читает вошедший; бесплатная граница выключена',

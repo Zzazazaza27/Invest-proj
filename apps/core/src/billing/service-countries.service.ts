@@ -48,6 +48,32 @@ export class ServiceCountriesService {
     });
   }
 
+  /** Новая страна — строка, не миграция; создаётся выключенной, включается отдельно. */
+  async createCountry(ctx: RequestContext, code: string): Promise<ServiceCountry> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows } = await tx.query<CountryRow>(
+        `INSERT INTO billing.service_countries (code, is_active, sort_order)
+         VALUES ($1, false, (SELECT COALESCE(MAX(sort_order), 0) + 10 FROM billing.service_countries))
+         ON CONFLICT (code) DO NOTHING
+         RETURNING code, is_active, sort_order`,
+        [code],
+      );
+      const row = rows[0];
+      if (!row) throw errors.conflict(`Страна ${code} уже заведена`);
+      await this.audit.emit(tx, {
+        verb: 'billing.service_country.updated',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'service_country',
+        // subject_id в аудите — UUID; код страны — в контексте.
+        subjectId: null,
+        context: { code, created: true, isActive: false },
+        traceId: ctx.traceId,
+      });
+      return mapCountry(row);
+    });
+  }
+
   async updateCountry(
     ctx: RequestContext,
     code: string,
@@ -68,8 +94,8 @@ export class ServiceCountriesService {
         actorId: ctx.userId,
         actorRole: 'admin',
         subjectType: 'service_country',
-        subjectId: code,
-        context: { isActive: row.is_active, sortOrder: row.sort_order },
+        subjectId: null,
+        context: { code, isActive: row.is_active, sortOrder: row.sort_order },
         traceId: ctx.traceId,
       });
       return mapCountry(row);

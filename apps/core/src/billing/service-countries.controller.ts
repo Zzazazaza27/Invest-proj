@@ -56,6 +56,13 @@ export class AdminServiceCountriesController {
     return { items: items.map((c) => ServiceCountrySchema.parse(c)) };
   }
 
+  /** Новая страна обслуживания — выключенной; условия и включение — отдельно. */
+  @Post()
+  async create(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(z.object({ code: ServiceCountryCodeSchema }), rawBody);
+    return ServiceCountrySchema.parse(await this.countries.createCountry(ctx, input.code));
+  }
+
   @Patch(':code')
   async update(
     @Param('code') rawCode: string,

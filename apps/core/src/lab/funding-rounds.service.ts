@@ -174,7 +174,26 @@ export class FundingRoundsService {
       };
       if (input.fundingScope !== undefined) set('funding_scope', input.fundingScope);
       if (input.fundingScopeNote !== undefined) set('funding_scope_note', input.fundingScopeNote);
-      if (input.target !== undefined) set('target', input.target, '::numeric');
+      if (input.target !== undefined) {
+        if (
+          (current.status === 'open' || current.status === 'paused') &&
+          input.target !== null &&
+          current.target !== null &&
+          Number(input.target) > Number(current.target)
+        ) {
+          // Увеличение суммы незавершённого раунда — коммерческое действие
+          // (план 0.2 §0г, реестр: границы оплаченного раунда): проходит тот же
+          // гейт, что открытие и возобновление.
+          const policy = current.serviceCountry
+            ? await this.countries.activePolicy(tx, current.serviceCountry)
+            : null;
+          if (!policy) {
+            throw errors.stateTransition('Для страны раунда нет действующих условий');
+          }
+          assertCommercialConditions(policy, 'increase');
+        }
+        set('target', input.target, '::numeric');
+      }
       if (input.currency !== undefined) set('currency', input.currency);
       if (input.investorMode !== undefined) set('investor_mode', input.investorMode);
       if (input.ticketMin !== undefined) set('ticket_min', input.ticketMin, '::numeric');
@@ -302,6 +321,7 @@ export class FundingRoundsService {
       const readiness = await this.readiness(tx, round);
       missing.push(...readiness.missing);
       if (missing.length > 0) throw errors.validation(missing);
+      assertCommercialConditions(policy!, 'open');
 
       await tx.query(
         `UPDATE lab.funding_rounds
@@ -325,6 +345,17 @@ export class FundingRoundsService {
     return this.transition(ctx, roundId, 'open', async (tx, round) => {
       if (round.status !== 'paused')
         throw errors.stateTransition('Возобновить можно только приостановленный раунд');
+      // Возобновление проходит те же коммерческие условия, что открытие:
+      // иначе «пауза → возобновление» стало бы обходом оплаты в 5.9.
+      const policy = round.serviceCountry
+        ? await this.countries.activePolicy(tx, round.serviceCountry)
+        : null;
+      if (!policy) {
+        throw errors.stateTransition(
+          'Для страны раунда нет действующих условий: возобновление недоступно',
+        );
+      }
+      assertCommercialConditions(policy, 'resume');
       await tx.query(
         `UPDATE lab.funding_rounds SET status = 'open', paused_at = NULL WHERE id = $1`,
         [roundId],
@@ -482,7 +513,12 @@ export class FundingRoundsService {
         aggregateType: 'funding_round',
         aggregateId: roundId,
         aggregateVersion,
-        payload: { projectId: round.projectId, from: round.status, to },
+        payload: {
+          projectId: round.projectId,
+          from: round.status,
+          to,
+          commercial: COMMERCIAL_MODE,
+        },
         traceId: ctx.traceId,
       });
       await recomputeProjectProjection(tx, round.projectId);
@@ -532,6 +568,39 @@ export class FundingRoundsService {
       [uuidv7(), roundId, from, to, ctx.userId, reason],
     );
   }
+}
+
+/**
+ * Временный режим коммерческих условий до пакетов раунда (этап 5.9, план 0.2
+ * §0г.2 п.2–3): открытие, возобновление и увеличение суммы бесплатны, пока в
+ * условиях страны выключены и платные пакеты, и бесплатная граница. Это ОДНО
+ * место проверки: в 5.9 сюда встанет расчёт пакета и оплаты, и ни один из
+ * трёх маршрутов не станет обходом. Включённая, но не реализованная
+ * настройка — отказ (fail-closed), а не молчаливое «бесплатно».
+ */
+export const COMMERCIAL_MODE = 'free_until_packages' as const;
+
+export function assertCommercialConditions(
+  policy: { version: number; config: ServiceCountryPolicy },
+  action: 'open' | 'resume' | 'increase',
+): typeof COMMERCIAL_MODE {
+  if (policy.config.paidPackages.enabled) {
+    throw errors.validation([
+      {
+        path: 'serviceCountry',
+        message: `платные пакеты раунда включены в условиях страны (версия ${policy.version}), но ещё не реализованы: действие «${action}» недоступно`,
+      },
+    ]);
+  }
+  if (policy.config.freeAttraction.enabled) {
+    throw errors.validation([
+      {
+        path: 'serviceCountry',
+        message: `бесплатная граница включена в условиях страны (версия ${policy.version}), но учёт ещё не реализован: действие «${action}» недоступно`,
+      },
+    ]);
+  }
+  return COMMERCIAL_MODE;
 }
 
 const VERB_BY_TRANSITION: Record<string, string> = {

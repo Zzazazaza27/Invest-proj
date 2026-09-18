@@ -754,6 +754,14 @@ export class UnicornApi {
         schema: z.object({ serviceCountry: z.string() }),
       }),
     admin: {
+      create: (code: string) =>
+        this.http.request({
+          method: 'POST',
+          path: '/admin/service-countries',
+          body: { code },
+          schema: ServiceCountrySchema,
+          idempotencyKey: uuidv7(),
+        }),
       list: () =>
         this.http.request({
           path: '/admin/service-countries',
