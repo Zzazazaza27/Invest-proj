@@ -77,6 +77,13 @@ export function FlagsPage() {
                     {flag.key.startsWith('investments.') && (
                       <div className="small muted">регулируемый контур — гейт A</div>
                     )}
+                    {flag.key === 'seasons.enabled' && (
+                      <div className="small muted" data-flag-warning="seasons">
+                        Сезоны отложены. Включение до переработки прав организатора не
+                        поддерживается: оно возвращает старые широкие полномочия роли organizer
+                        (TODO «Направление «Сезоны»»).
+                      </div>
+                    )}
                   </td>
                   <td>
                     <span className={`badge ${flag.enabled ? 'badge--ok' : 'badge--muted'}`}>
@@ -108,7 +115,9 @@ export function FlagsPage() {
         description={
           changing?.key.startsWith('investments.')
             ? 'Регулируемый контур: включение допустимо только после внесения оператора в реестр Банка России и согласования Правил платформы.'
-            : 'Изменение попадёт в неизменяемый журнал вместе с автором.'
+            : changing?.key === 'seasons.enabled' && !changing.enabled
+              ? 'Не поддерживаемое действие: включение возвращает старые широкие полномочия роли organizer во всех политиках доступа. Сначала переработка сезонных прав (TODO «Направление «Сезоны»»).'
+              : 'Изменение попадёт в неизменяемый журнал вместе с автором.'
         }
         label="Основание"
         confirmText={changing?.enabled ? 'Выключить' : 'Включить'}

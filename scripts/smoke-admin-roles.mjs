@@ -4,8 +4,8 @@
  *
  * Проверяется главное: роли раздаёт только администратор и только другим;
  * последнего администратора нельзя разжаловать; каждая выдача и снятие
- * попадают в журнал; описание API отдаётся анониму и не содержит ничего, кроме
- * типов.
+ * попадают в журнал; описание API отдаётся только по сессии (анониму — 404,
+ * SEC-21) и не содержит ничего, кроме типов.
  *
  * Запуск: node scripts/smoke-admin-roles.mjs (нужны БД и core на 4300)
  */
@@ -302,8 +302,16 @@ console.warn('\n[4] Журнал');
 // ------------------------------------------------------------- описание API
 console.warn('\n[5] Машиночитаемое описание API');
 {
-  const { response, json } = await raw('/v1/openapi.json');
-  check('описание отдаётся анониму', response.status === 200, `HTTP ${response.status}`);
+  // SEC-21 (2026-09-13): описание — карта поверхности атаки, анониму 404
+  // (не 403, чтобы не подтверждать существование). Читается по сессии.
+  const anon = await raw('/v1/openapi.json');
+  check(
+    'описание анониму не отдаётся — 404',
+    anon.response.status === 404,
+    `HTTP ${anon.response.status}`,
+  );
+  const { response, json } = await admin.client.call('/v1/openapi.json');
+  check('описание отдаётся по сессии', response.status === 200, `HTTP ${response.status}`);
   check('версия OpenAPI объявлена', json?.openapi === '3.1.0', json?.openapi);
   const schemas = Object.keys(json?.components?.schemas ?? {});
   check('схемы выведены из контрактов', schemas.length > 50, `схем: ${schemas.length}`);
