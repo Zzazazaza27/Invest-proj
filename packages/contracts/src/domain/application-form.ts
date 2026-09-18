@@ -83,12 +83,33 @@ export const FormOptionSchema = z.object({
 });
 export type FormOption = z.infer<typeof FormOptionSchema>;
 
+/**
+ * Назначение раздела (план 0.2 §0г, заявка-03 §2.4): `profile` — вопросы
+ * инвестиционного профиля; `round` — вопросы раунда привлечения. Раздел
+ * раунда остаётся в той же конфигурации (тексты и обязательность правятся
+ * той же таблицей), но показывается только при раунде, а его ответы живут в
+ * раунде, не в заявке. Это системная зависимость кодом, не редактор условий.
+ */
+export const FormSectionScopeSchema = z.enum(['profile', 'round']);
+export type FormSectionScope = z.infer<typeof FormSectionScopeSchema>;
+
 export const FormSectionSchema = z.object({
   key: QuestionKeySchema,
   order: z.number().int().min(0),
   texts: LocalizedTextsSchema,
+  /** Отсутствие = совместимость: раздел `funding` конфигураций до M081 — раунд. */
+  scope: FormSectionScopeSchema.optional(),
 });
 export type FormSection = z.infer<typeof FormSectionSchema>;
+
+/**
+ * Назначение раздела с учётом совместимости: конфигурации, опубликованные до
+ * появления признака (версия 1, схема 0), держат вопросы раунда в разделе
+ * `funding`. Явный признак имеет приоритет.
+ */
+export function sectionScope(section: Pick<FormSection, 'key' | 'scope'>): FormSectionScope {
+  return section.scope ?? (section.key === 'funding' ? 'round' : 'profile');
+}
 
 export const FormStageStatesSchema = z.object({
   idea: FormStageStateSchema,
@@ -407,6 +428,7 @@ export type FormQuestionView = z.infer<typeof FormQuestionViewSchema>;
 
 export const FormSectionViewSchema = z.object({
   key: QuestionKeySchema,
+  scope: FormSectionScopeSchema,
   title: z.string(),
   introMd: z.string().nullable(),
   questions: z.array(FormQuestionViewSchema),
@@ -477,6 +499,7 @@ export function buildStageForm(
     const path = `section.${s.key}`;
     sections.push({
       key: s.key,
+      scope: sectionScope(s),
       title: text(s.texts, 'title', path) ?? s.key,
       introMd: text(s.texts, 'intro_md', path),
       questions,
@@ -586,6 +609,7 @@ export function legacyFormConfig(): ApplicationFormConfig {
       {
         key: 'funding',
         order: 20,
+        scope: 'round',
         texts: { [DEFAULT_FORM_LOCALE]: { title: 'Инвестиционный запрос' } },
       },
     ],

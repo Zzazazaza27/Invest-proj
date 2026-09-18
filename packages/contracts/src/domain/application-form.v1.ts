@@ -125,6 +125,7 @@ export const APPLICATION_FORM_V1: ApplicationFormConfig = {
     {
       key: 'funding',
       order: 110,
+      scope: 'round',
       texts: {
         'ru-RU': {
           title: 'Инвестиционный запрос',
@@ -2597,8 +2598,8 @@ export const APPLICATION_FORM_V1: ApplicationFormConfig = {
     },
     {
       key: 'previous_funding',
-      section: 'funding',
-      order: 100,
+      section: 'traction',
+      order: 140,
       type: 'textarea',
       stages: {
         idea: 'recommended',

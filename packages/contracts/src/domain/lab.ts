@@ -143,6 +143,12 @@ export const ProjectTeaserSchema = z.object({
   investmentAsk: z.string(),
   askCurrency: CurrencySchema,
   listedAt: IsoDateTimeSchema.nullable(),
+  /**
+   * Состояние привлечения (план 0.2 §0г.2 п.9): open / paused / none. До
+   * этапа 5.6.6 каталог не читает раунды и поле отсутствует — читать как
+   * `none`; сумму из кеша проекта состоянием привлечения не считать.
+   */
+  raising: z.enum(['open', 'paused', 'none']).optional(),
 });
 export type ProjectTeaser = z.infer<typeof ProjectTeaserSchema>;
 

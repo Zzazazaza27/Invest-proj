@@ -23,6 +23,8 @@ export * from './domain/application-form';
 export * from './domain/application-form.v1';
 export * from './domain/application-readiness';
 export * from './domain/application-views';
+export * from './domain/funding-round';
+export * from './domain/service-country';
 export * from './domain/content';
 export * from './domain/billing';
 export * from './domain/investments';

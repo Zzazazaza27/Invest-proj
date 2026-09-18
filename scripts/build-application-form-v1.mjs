@@ -101,6 +101,9 @@ for (let i = 0; i < lines.length; i += 1) {
   const section = {
     key: m[3],
     order: order * 10,
+    // Раздел раунда (план 0.2 §0г): показывается только при раунде, ответы —
+    // в раунде. Остальные разделы — профиль.
+    ...(m[3] === 'funding' ? { scope: 'round' } : {}),
     texts: { [LOCALE]: { title: m[2], ...(intro ? { intro_md: intro } : {}) } },
     _questions: [],
   };
@@ -256,6 +259,20 @@ for (const section of sections) {
   });
 }
 if (questions.length !== rows.size) throw new Error('строки таблиц и карточки разошлись');
+
+// previous_funding — история проекта, а не условие текущего привлечения
+// (заявка-03 §2.4): инвестору она нужна и без раунда, поэтому вопрос живёт в
+// профиле, в конце раздела «Результаты и динамика».
+{
+  const moved = questions.find((q) => q.key === 'previous_funding');
+  if (!moved) throw new Error('нет вопроса previous_funding');
+  const last = Math.max(
+    0,
+    ...questions.filter((q) => q.section === 'traction').map((q) => q.order),
+  );
+  moved.section = 'traction';
+  moved.order = last + 10;
+}
 
 const config = {
   locales: [LOCALE],
