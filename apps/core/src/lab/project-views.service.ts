@@ -301,7 +301,10 @@ export class ProjectViewsService {
         const ok = (key: (typeof ROUND_KEYS)[number]): boolean =>
           visibleTo(vis[key] ?? 'private', audience);
         const statusOk = ok('raising_status');
-        const status: RoundProjection['raising'] = round.status === 'open' ? 'open' : 'paused';
+        // Предпросмотр показывает состояние ПОСЛЕ открытия: для черновика это
+        // «раунд открыт», а не текущее «приостановлено» (проверено вручную
+        // 2026-09-19: черновик показывался как «не привлекает»).
+        const status: RoundProjection['raising'] = round.status === 'paused' ? 'paused' : 'open';
         return {
           raising: statusOk ? status : 'undisclosed',
           investmentAsk: statusOk && ok('investment_ask') ? round.target : null,

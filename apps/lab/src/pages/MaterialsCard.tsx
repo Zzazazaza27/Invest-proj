@@ -241,16 +241,17 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
                 <Badge tone={material.parseStatus === 'failed' ? 'warning' : 'neutral'}>
                   {PARSE_STATUS_TITLES[material.parseStatus] ?? material.parseStatus}
                 </Badge>
-                <Badge
-                  tone={material.visibility === 'investors' ? 'success' : 'neutral'}
-                  data-material-visibility={material.visibility}
-                >
-                  {
-                    S.materials.visibility[
-                      material.visibility === 'investors' ? 'investors' : 'private'
-                    ]
-                  }
-                </Badge>
+                {/* Маркер на обёртке: Badge не пробрасывает произвольные
+                    атрибуты, а проверкам нужна отметка материала. */}
+                <span data-material-visibility={material.visibility}>
+                  <Badge tone={material.visibility === 'investors' ? 'success' : 'neutral'}>
+                    {
+                      S.materials.visibility[
+                        material.visibility === 'investors' ? 'investors' : 'private'
+                      ]
+                    }
+                  </Badge>
+                </span>
                 <Button
                   variant="secondary"
                   loading={busy}

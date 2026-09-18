@@ -72,7 +72,9 @@ export function PreviewPage({
     <Card data-preview data-preview-audience={preview.audience}>
       <Stack gap="var(--u-space-4)">
         <div>
-          <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>{S.wizard.preview.title}</h2>
+          <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>
+            {S.wizard.preview.title(preview.audience)}
+          </h2>
           <p
             style={{
               margin: '4px 0 0',
@@ -80,7 +82,7 @@ export function PreviewPage({
               fontSize: 'var(--u-text-sm)',
             }}
           >
-            {S.wizard.preview.note}
+            {S.wizard.preview.note(preview.audience)}
           </p>
         </div>
         <div
@@ -173,7 +175,7 @@ export function PreviewPage({
         ))}
         {preview.withheld > 0 ? (
           <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-            {S.wizard.preview.withheld(preview.withheld)}
+            {S.wizard.preview.withheld(preview.withheld, preview.audience)}
           </span>
         ) : null}
       </Stack>
