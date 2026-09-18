@@ -6,7 +6,7 @@
   "description": "Служебная консоль разработки и тестирования: все операции API /v1 в одном окне",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "build": "tsc --noEmit -p tsconfig.json && node ../../scripts/vite-build.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import {
   Badge,
+  Button,
   Card,
   ErrorState,
   LoadingState,
@@ -8,28 +9,28 @@ import {
   describeRaising,
   formatMoney,
   raisingTone,
-  type RaisingState,
 } from '@unicorn/ui';
-import type { ApplicationPreview } from '@unicorn/contracts';
+import type { ApplicationPreview, PreviewAudience } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { S } from '../strings';
 
 /**
  * Предпросмотр-сводка (план 0.2 §2.11, этап 4.4): ровно те данные, которые
- * получит инвестор, собранные сервером по правилам видимости. Мастер их не
- * фильтрует и не дополняет — иначе предпросмотр перестал бы быть честным.
+ * получит зритель выбранной аудитории, собранные сервером по правилам
+ * видимости. Мастер их не фильтрует и не дополняет — иначе предпросмотр
+ * перестал бы быть честным. Аудитория переключается: анонимный посетитель
+ * или инвестор с доступом; проекция раунда (состояние, сумма, предмет)
+ * приходит с сервера той же функцией, что питает каталог (M085).
  */
 export function PreviewPage({
   applicationId,
   refreshKey,
-  raising,
 }: {
   applicationId: string;
   /** Любое изменение ключа перечитывает сводку (после сохранения). */
   refreshKey?: string;
-  /** Состояние привлечения — из раунда проекта; сумма заявки текущим запросом не считается. */
-  raising?: { raising: RaisingState; investmentAsk: string | null; askCurrency?: string };
 }) {
+  const [audience, setAudience] = useState<PreviewAudience>('investors');
   const [state, setState] = useState<
     | { status: 'loading' }
     | { status: 'ready'; preview: ApplicationPreview }
@@ -39,7 +40,7 @@ export function PreviewPage({
   useEffect(() => {
     let cancelled = false;
     api.applications
-      .preview(applicationId)
+      .preview(applicationId, { audience })
       .then((preview) => {
         if (!cancelled) setState({ status: 'ready', preview });
       })
@@ -54,7 +55,7 @@ export function PreviewPage({
     return () => {
       cancelled = true;
     };
-  }, [applicationId, refreshKey]);
+  }, [applicationId, refreshKey, audience]);
 
   if (state.status === 'loading') return <LoadingState label="Собираем предпросмотр" />;
   if (state.status === 'error') {
@@ -63,7 +64,7 @@ export function PreviewPage({
   const { preview } = state;
 
   return (
-    <Card data-preview>
+    <Card data-preview data-preview-audience={preview.audience}>
       <Stack gap="var(--u-space-4)">
         <div>
           <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>{S.wizard.preview.title}</h2>
@@ -77,6 +78,35 @@ export function PreviewPage({
             {S.wizard.preview.note}
           </p>
         </div>
+        <div
+          role="group"
+          aria-label={S.wizard.preview.audienceLabel}
+          style={{
+            display: 'flex',
+            gap: 'var(--u-space-2)',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+          }}
+        >
+          <span style={{ fontSize: 'var(--u-text-sm)', color: 'var(--u-text-muted)' }}>
+            {S.wizard.preview.audienceLabel}:
+          </span>
+          {(['public', 'investors'] as const).map((a) => (
+            <Button
+              key={a}
+              variant={audience === a ? 'brand' : 'secondary'}
+              aria-pressed={audience === a}
+              data-preview-audience-choice={a}
+              style={{ minHeight: 32, padding: '0 var(--u-space-3)' }}
+              onClick={() => setAudience(a)}
+            >
+              {S.wizard.preview.audience[a]}
+            </Button>
+          ))}
+        </div>
+        <p style={{ margin: 0, fontSize: 'var(--u-text-xs)', color: 'var(--u-text-muted)' }}>
+          {S.wizard.preview.audienceNote}
+        </p>
 
         <div
           style={{
@@ -93,11 +123,25 @@ export function PreviewPage({
             <Badge tone="accent">
               {S.applications.stage[preview.core.stage] ?? preview.core.stage}
             </Badge>
-            {raising ? (
-              <Badge tone={raisingTone(raising.raising)}>{describeRaising(raising)}</Badge>
-            ) : null}
+            <span data-preview-raising={preview.round.raising}>
+              <Badge tone={raisingTone(preview.round.raising)}>
+                {describeRaising({
+                  raising: preview.round.raising,
+                  investmentAsk: preview.round.investmentAsk,
+                  askCurrency: preview.round.askCurrency ?? 'RUB',
+                })}
+              </Badge>
+            </span>
             {preview.project.geoCountry ? <Badge>{preview.project.geoCountry}</Badge> : null}
           </div>
+          {preview.round.fundingScope ? (
+            <span style={{ fontSize: 'var(--u-text-sm)' }}>
+              {S.wizard.preview.fundingScopeLabel}:{' '}
+              {S.wizard.preview.fundingScope[preview.round.fundingScope] ??
+                preview.round.fundingScope}
+              {preview.round.fundingScopeNote ? ` — ${preview.round.fundingScopeNote}` : ''}
+            </span>
+          ) : null}
         </div>
 
         {preview.sections.length === 0 ? (

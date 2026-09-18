@@ -6,7 +6,7 @@
   "description": "Административный кабинет: тарифы, подписки, комплаенс, фичефлаги",
   "scripts": {
     "dev": "vite",
-    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "build": "tsc --noEmit -p tsconfig.json && node ../../scripts/vite-build.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },

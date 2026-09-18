@@ -58,6 +58,21 @@ const VISIBILITY_LABEL = {
   private: 'только владельцу и админу',
 } as const;
 
+/**
+ * Системные вопросы раунда управляют раскрытием полей раунда (M085): одна
+ * настройка на связанную группу. Публикация версии применяет её сразу ко
+ * всем раундам — в каталоге, карточках, избранном, Integration API и
+ * предпросмотре.
+ */
+const ROUND_VISIBILITY_HINT: Record<string, string> = {
+  investment_ask:
+    'Управляет группой «текущий запрос»: состояние привлечения, сумма и валюта раунда — в каталоге, карточках и предпросмотре. Закрыто для аудитории → зритель не видит даже того, идёт ли привлечение.',
+  funding_scope:
+    'Управляет раскрытием предмета финансирования раунда (проект или направление) наружу.',
+  funding_scope_note:
+    'Пояснение направления показывается только вместе с предметом финансирования и не шире его.',
+};
+
 const QUESTION_TEXT_FIELDS: { field: string; label: string; multiline: boolean }[] = [
   { field: 'label', label: 'Формулировка', multiline: false },
   { field: 'placeholder', label: 'Подсказка в поле (placeholder)', multiline: false },
@@ -819,6 +834,11 @@ function QuestionCard({
               </option>
             ))}
           </select>
+          {question.coreField && ROUND_VISIBILITY_HINT[question.coreField] ? (
+            <div className="small muted" data-round-visibility-hint={question.coreField}>
+              {ROUND_VISIBILITY_HINT[question.coreField]}
+            </div>
+          ) : null}
         </div>
         <div className="field">
           <label className="switch" style={{ marginTop: 26 }}>

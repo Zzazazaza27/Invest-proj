@@ -1,0 +1,27 @@
+#!/usr/bin/env node
+/**
+ * `vite build` всегда в production-режиме.
+ *
+ * Корневой `.env` держит `NODE_ENV=development` для ядра, а Vite читает этот
+ * файл и при `vite build` честно собирает РАЗРАБОТЧЕСКИЙ бандл: React в
+ * development-сборке, `<React.StrictMode>` дважды вызывает эффекты — каждый
+ * запрос данных уходит по два раза, подсказки DevTools в консоли, бандл
+ * тяжелее. На локальном стенде это удваивало запросы мастера и приближало
+ * потолок частоты (найдено рендер-проверкой 2026-09-18, этап 5.6.4д).
+ *
+ * Переопределить NODE_ENV из `vite.config` нельзя: Vite применяет значение
+ * из `.env` после чтения конфигурации, если переменная окружения не была
+ * задана до запуска. Поэтому значение задаётся здесь, до старта Vite, и
+ * только для сборки; dev-сервер (`vite`) не затрагивается.
+ *
+ *   node ../../scripts/vite-build.mjs   # из package.json приложения
+ */
+import { spawnSync } from 'node:child_process';
+
+process.env.NODE_ENV = 'production';
+const result = spawnSync('npx', ['vite', 'build', ...process.argv.slice(2)], {
+  stdio: 'inherit',
+  shell: true,
+  env: process.env,
+});
+process.exit(result.status ?? 1);

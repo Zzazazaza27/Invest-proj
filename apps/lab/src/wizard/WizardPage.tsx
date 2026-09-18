@@ -628,8 +628,7 @@ function PreviewScreen({ app }: { app: App }) {
       <Stack gap="var(--u-space-4)">
         <PreviewPage
           applicationId={detail.application.id}
-          refreshKey={app.save.kind}
-          raising={app.round.raising}
+          refreshKey={`${app.save.kind}:${app.round.save.kind}`}
         />
         <Card>
           <Stack gap="var(--u-space-3)">

@@ -144,8 +144,22 @@ page.on('console', (message) => {
 });
 page.on('pageerror', (error) => consoleErrors.push(String(error)));
 let patchCount = 0;
+let roundsListCount = 0;
+let roundContextCount = 0;
 page.on('request', (request) => {
+  if (process.env.TRACE_REQUESTS && request.url().includes('/v1/')) {
+    console.warn(`      -> ${request.method()} ${request.url().replace(/^.*[/]v1/, '/v1')}`);
+  }
   if (request.method() === 'PATCH' && request.url().includes('/v1/applications/')) patchCount += 1;
+  if (request.method() === 'GET' && /\/v1\/projects\/[^/]+\/rounds$/.test(request.url())) {
+    roundsListCount += 1;
+  }
+  if (
+    request.method() === 'GET' &&
+    /\/v1\/(service-countries|projects\/[^/]+\/versions)/.test(request.url())
+  ) {
+    roundContextCount += 1;
+  }
 });
 
 let shot = 0;
@@ -410,6 +424,80 @@ try {
   await fillQuestion('stage_evidence', 'Есть 20 интервью и лист ожидания');
   await waitSaved('platform-вопрос', s4);
 
+  // ------------------------------------------ временная ошибка сохранения
+  console.warn('\n[5a] Временная ошибка сохранения: ввод сохраняется повтором');
+  {
+    const listsBefore = roundsListCount;
+    const contextBefore = roundContextCount;
+    await page.goto(sectionUrl, { waitUntil: 'networkidle' });
+    await page.waitForSelector('[data-question="problem_statement"] textarea', { timeout: 10_000 });
+    check(
+      'экран профиля делает один запрос списка раундов и не грузит контекст раунда',
+      roundsListCount - listsBefore === 1 && roundContextCount - contextBefore === 0,
+      `список раундов: ${roundsListCount - listsBefore}, контекст: ${roundContextCount - contextBefore}`,
+    );
+    let failed = 0;
+    await page.route(/\/v1\/applications\/[^/]+$/, async (route) => {
+      if (route.request().method() === 'PATCH' && failed === 0) {
+        failed += 1;
+        await route.fulfill({
+          status: 503,
+          contentType: 'application/problem+json',
+          body: JSON.stringify({ code: 'unavailable', detail: 'временно недоступно' }),
+        });
+        return;
+      }
+      await route.continue();
+    });
+    const patchesBefore = patchCount;
+    const sBefore = await savedCount();
+    const text = 'Ответ при сбое сети: должен сохраниться повтором';
+    await page.locator('[data-question="problem_statement"] textarea').fill(text);
+    await page.waitForFunction(
+      /* eslint-disable no-undef */
+      () =>
+        ['retrying', 'failed'].includes(
+          document
+            .querySelector('[data-save-state][data-save-scope="application"]')
+            ?.getAttribute('data-save-state') ?? '',
+        ),
+      /* eslint-enable no-undef */
+      undefined,
+      { timeout: 15_000 },
+    );
+    const during = await savedState().innerText();
+    check(
+      'после сбоя показано «не сохранено» с обратным отсчётом повтора, не молчание',
+      during.includes('Не сохранено') && (await savedState().getAttribute('role')) === 'alert',
+      during.slice(0, 80),
+    );
+    check(
+      'ввод при сбое не потерян',
+      (await page.locator('[data-question="problem_statement"] textarea').inputValue()) === text,
+    );
+    await page.getByRole('button', { name: 'Повторить сейчас' }).click();
+    await waitSaved('после сбоя', sBefore);
+    await page.unroute(/\/v1\/applications\/[^/]+$/);
+    check(
+      'повтор сохранил введённое одним запросом; лишних повторов нет',
+      patchCount - patchesBefore === 2 && failed === 1,
+      `PATCH: ${patchCount - patchesBefore}`,
+    );
+    await page.reload({ waitUntil: 'networkidle' });
+    await page.waitForSelector('[data-question="problem_statement"] textarea', { timeout: 10_000 });
+    check(
+      'после перезагрузки сохранённый после сбоя ответ на месте',
+      (await page.locator('[data-question="problem_statement"] textarea').inputValue()) === text,
+    );
+    // Вернуть исходный ответ: дальнейшие шаги ищут его в предпросмотре.
+    const sRestore = await savedCount();
+    await page.locator('[data-question="problem_statement"] textarea').fill(problemText);
+    await waitSaved('возврат ответа', sRestore);
+  }
+
+  if (process.env.RENDER_STOP_AFTER === '5a')
+    throw new Error('остановлено по RENDER_STOP_AFTER=5a');
+
   // ------------------------------------------------- обязательные до подачи
   console.warn('\n[6] Обязательные вопросы и готовность');
   const before = await page.locator('[data-readiness]').innerText();
@@ -484,8 +572,15 @@ try {
 
   // --------------------------------------------- раунд: черновик до подачи
   console.warn('\n[6a] Раунд привлечения: черновик готовится до подачи профиля');
+  const contextBeforeRound = roundContextCount;
   await page.getByRole('button', { name: /^Раунд привлечения/ }).click();
   await page.waitForSelector('[data-round-state="none"]', { timeout: 10_000 });
+  await page.waitForTimeout(1500);
+  check(
+    'контекст раунда (профиль, страны, версии) запрошен один раз при входе на экран',
+    roundContextCount - contextBeforeRound === 2,
+    `запросов контекста: ${roundContextCount - contextBeforeRound}`,
+  );
   check(
     'раунда нет — предложена подготовка черновика, флага «привлекаю» нет',
     (await page.locator('main').innerText()).includes('Раунд ещё не готовится'),
@@ -616,6 +711,16 @@ try {
     'в предпросмотре стадия и состояние привлечения из раунда: черновик — «не привлекает»',
     preview.includes('Идея') && preview.includes('не привлекает') && !/3.000.000/.test(preview),
   );
+  await page.locator('[data-preview-audience-choice="public"]').click();
+  await page.waitForSelector('[data-preview-audience="public"]', { timeout: 10_000 });
+  check(
+    'предпросмотр для анонима: группа «текущий запрос» закрыта стартовой настройкой',
+    (await page.locator('[data-preview-raising]').getAttribute('data-preview-raising')) ===
+      'undisclosed' &&
+      (await page.locator('[data-preview]').innerText()).includes('не раскрываются'),
+  );
+  await page.locator('[data-preview-audience-choice="investors"]').click();
+  await page.waitForSelector('[data-preview-audience="investors"]', { timeout: 10_000 });
   await screenshot('wizard-preview');
 
   // ----------------------------------------------------------------- подача
@@ -731,6 +836,20 @@ try {
     'на проекте текущий запрос — сумма открытого раунда',
     /3.000.000/.test(await page.locator('[data-round-line="open"]').innerText()),
   );
+  await page.goto(`${wizardUrl}/preview`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-preview-audience="investors"]', { timeout: 15_000 });
+  check(
+    'после открытия раунда инвестору в предпросмотре — сумма',
+    /3.000.000/.test(await page.locator('[data-preview]').innerText()),
+  );
+  await page.locator('[data-preview-audience-choice="public"]').click();
+  await page.waitForSelector('[data-preview-audience="public"]', { timeout: 10_000 });
+  const anonPreview = await page.locator('[data-preview]').innerText();
+  check(
+    'анониму сумма открытого раунда не раскрывается, пока администратор не откроет группу',
+    !/3.000.000/.test(anonPreview) && anonPreview.includes('не раскрываются'),
+  );
+  await screenshot('wizard-preview-anonymous');
   await page.goto(`${wizardUrl}/round`, { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-round-state="open"]', { timeout: 15_000 });
   await page.getByRole('button', { name: 'Приостановить' }).click();
@@ -762,10 +881,11 @@ try {
   );
   await screenshot('project-page-v1');
 
-  // 400/422 вызываются намеренно (неверный тип ответа); 429 — потолок частоты
+  // 400/422 вызываются намеренно (неверный тип ответа); 503 — подстроенный сбой
+  // сохранения в [5a]; 429 — потолок частоты
   // стенда после серии автосохранений и соседних прогонов, клиент его
   // переживает повтором. Настоящие дефекты — 5xx, исключения страницы, разбор.
-  const unexpected = consoleErrors.filter((t) => !/status of (400|403|422|429)/.test(t));
+  const unexpected = consoleErrors.filter((t) => !/status of (400|403|422|429|503)/.test(t));
   check(
     'непредвиденных ошибок в консоли нет',
     unexpected.length === 0,
