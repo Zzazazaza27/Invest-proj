@@ -356,7 +356,9 @@ export class IntegrationService {
     return this.db.asServiceRole('app_integration', { traceId: ctx.traceId }, async (tx) => {
       const { rows } = await tx.query<GraduateRow>(
         `SELECT p.id, p.title, p.season_id, p.taxonomy_id, p.stage,
-                (SELECT r.target::text FROM lab.public_round(p.id) r) AS investment_ask,
+                -- Партнёрская выдача = публичная аудитория (M085): сумма только при
+                -- публичной видимости группы «текущий запрос».
+                (SELECT r.target::text FROM lab.round_view(p.id) r) AS investment_ask,
                 p.graduated_at,
                 (SELECT s.value FROM scoring.irs_scores s
                   WHERE s.project_id = p.id ORDER BY s.computed_at DESC LIMIT 1) AS irs,

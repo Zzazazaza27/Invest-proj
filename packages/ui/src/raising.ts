@@ -8,12 +8,14 @@ import { formatMoney } from './format';
  * не читалось как активный сбор. Пакет не знает доменных типов: на вход —
  * три строки, на выход — подпись.
  */
-export type RaisingState = 'open' | 'paused' | 'none';
+export type RaisingState = 'open' | 'paused' | 'none' | 'undisclosed';
 
 export const RAISING_LABEL: Record<RaisingState, string> = {
   open: 'Раунд открыт',
   paused: 'Привлечение приостановлено',
   none: 'Сейчас не привлекает инвестиции',
+  /** Группа «текущий запрос» закрыта для этой аудитории настройкой видимости. */
+  undisclosed: 'Условия привлечения не раскрываются',
 };
 
 export function describeRaising(input: {
@@ -21,6 +23,7 @@ export function describeRaising(input: {
   investmentAsk: string | null;
   askCurrency?: string;
 }): string {
+  if (input.raising === 'undisclosed') return RAISING_LABEL.undisclosed;
   if (input.raising === 'none' || input.investmentAsk === null) return RAISING_LABEL.none;
   const money = formatMoney(input.investmentAsk, input.askCurrency ?? 'RUB');
   return input.raising === 'open' ? money : `${RAISING_LABEL.paused} · ${money}`;

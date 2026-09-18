@@ -46,7 +46,31 @@ const source: PreviewSource = {
     geoCountry: 'RU',
     geoRegion: null,
   },
+  round: {
+    raising: 'open',
+    investmentAsk: '3000000.00',
+    askCurrency: 'RUB',
+    fundingScope: 'project',
+    fundingScopeNote: null,
+  },
 };
+
+describe('Предпросмотр для анонимного посетителя', () => {
+  it('содержит только public; investors считаются скрытыми; проекция раунда — как передана', () => {
+    const investors = buildApplicationPreview(form, params, source);
+    const view = buildApplicationPreview(form, { ...params, audience: 'public' }, source);
+    expect(ApplicationPreviewSchema.safeParse(view).success).toBe(true);
+    expect(view.audience).toBe('public');
+    const keys = view.sections.flatMap((s) => s.questions.map((q) => q.key));
+    expect(keys).toContain('stage');
+    expect(keys).not.toContain('deal_terms'); // investors
+    expect(view.withheld).toBeGreaterThan(investors.withheld);
+    expect(view.round).toEqual(source.round);
+    for (const q of view.sections.flatMap((s) => s.questions)) {
+      expect(q.visibility).toBe('public');
+    }
+  });
+});
 
 describe('Предпросмотр для инвестора', () => {
   it('содержит только public / investors и только заполненное', () => {

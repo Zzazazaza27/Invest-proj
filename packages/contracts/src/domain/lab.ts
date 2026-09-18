@@ -7,6 +7,7 @@ import {
   MoneyAmountSchema,
   UuidSchema,
 } from '../common/primitives';
+import { RaisingStateSchema } from './visibility';
 
 export const ProjectStageSchema = z.enum(['idea', 'mvp', 'early_revenue', 'growth']);
 export type ProjectStage = z.infer<typeof ProjectStageSchema>;
@@ -148,8 +149,12 @@ export const ProjectTeaserSchema = z.object({
   investmentAsk: MoneyAmountSchema.nullable(),
   askCurrency: CurrencySchema,
   listedAt: IsoDateTimeSchema.nullable(),
-  /** Состояние привлечения: open — раунд открыт; paused — приостановлено; none — не привлекает. */
-  raising: z.enum(['open', 'paused', 'none']),
+  /**
+   * Состояние привлечения: open — раунд открыт; paused — приостановлено; none —
+   * не привлекает; undisclosed — группа «текущий запрос» закрыта для этой
+   * аудитории настройкой видимости (тогда сумма и валюта — null).
+   */
+  raising: RaisingStateSchema,
 });
 export type ProjectTeaser = z.infer<typeof ProjectTeaserSchema>;
 
@@ -348,7 +353,7 @@ export const ProjectSummarySchema = z.object({
   /** Сумма незавершённого раунда или null — как у тизера (M084). */
   investmentAsk: MoneyAmountSchema.nullable(),
   askCurrency: CurrencySchema,
-  raising: z.enum(['open', 'paused', 'none']),
+  raising: RaisingStateSchema,
   requiredPlanId: UuidSchema.nullable(),
   requiredPlanCode: z.string().nullable(),
   role: z.enum(['owner', 'cofounder']),

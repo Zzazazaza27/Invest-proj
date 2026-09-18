@@ -579,11 +579,17 @@ export class UnicornApi {
       }),
 
     /** Сводка «как увидит инвестор»: только public / investors, только заполненное. */
-    preview: (id: string, locale?: string) =>
-      this.http.request({
-        path: `/applications/${id}/preview${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`,
+    /** Предпросмотр для аудитории: `public` — аноним, `investors` — инвестор с доступом. */
+    preview: (id: string, opts: { locale?: string; audience?: 'public' | 'investors' } = {}) => {
+      const params = new URLSearchParams();
+      if (opts.locale) params.set('locale', opts.locale);
+      if (opts.audience) params.set('audience', opts.audience);
+      const qs = params.toString();
+      return this.http.request({
+        path: `/applications/${id}/preview${qs ? `?${qs}` : ''}`,
         schema: ApplicationPreviewSchema,
-      }),
+      });
+    },
   };
 
   /**

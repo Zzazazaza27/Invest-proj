@@ -10,6 +10,7 @@ import {
   ApplicationEvidenceSchema,
   FundingScopeSchema,
 } from './application';
+import { RaisingStateSchema, type RaisingState } from './visibility';
 
 /**
  * Раунд привлечения (план 0.2 §0г, заявка-03 §2.5; таблица M081).
@@ -29,8 +30,22 @@ export type FundingRoundStatus = z.infer<typeof FundingRoundStatusSchema>;
  * Приостановленный раунд — не активный поиск денег, и одним `true` их не
  * смешивают.
  */
-export const RaisingStateSchema = z.enum(['open', 'paused', 'none']);
-export type RaisingState = z.infer<typeof RaisingStateSchema>;
+/**
+ * Проекция раунда для зрителя — то, что о раунде отдаётся наружу. Две
+ * связанные группы: «текущий запрос» (состояние + сумма + валюта; видимость
+ * вопроса `investment_ask`) и «предмет финансирования» (`funding_scope`;
+ * пояснение — только вместе с предметом и по видимости `funding_scope_note`).
+ * Остальные поля раунда (формат сделки, чек, подтверждённое) наружу не
+ * отдаются: у них нет вопроса формы, а значит и настройки раскрытия.
+ */
+export const RoundProjectionSchema = z.object({
+  raising: RaisingStateSchema,
+  investmentAsk: MoneyAmountSchema.nullable(),
+  askCurrency: z.string().nullable(),
+  fundingScope: FundingScopeSchema.nullable(),
+  fundingScopeNote: z.string().nullable(),
+});
+export type RoundProjection = z.infer<typeof RoundProjectionSchema>;
 
 export function raisingState(
   round: { status: FundingRoundStatus } | null | undefined,

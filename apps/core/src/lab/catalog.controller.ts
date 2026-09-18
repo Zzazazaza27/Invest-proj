@@ -34,7 +34,7 @@ export class CatalogController {
   @Get('catalog')
   async list(@Query() rawQuery: unknown, @Ctx() ctx: RequestContext) {
     const query = parseOrThrow(CatalogQuerySchema, rawQuery ?? {});
-    const page = await this.catalog.list(ctx.traceId, query);
+    const page = await this.catalog.list(ctx.traceId, query, viewerOf(ctx));
     return {
       items: page.items.map((t) => ProjectTeaserSchema.parse(t)),
       nextCursor: page.nextCursor,
@@ -45,6 +45,11 @@ export class CatalogController {
   @Get('catalog/:id')
   async getOne(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
-    return ProjectTeaserSchema.parse(await this.catalog.getTeaser(ctx.traceId, id));
+    return ProjectTeaserSchema.parse(await this.catalog.getTeaser(ctx.traceId, id, viewerOf(ctx)));
   }
+}
+
+/** Публичный маршрут, но зритель может быть вошедшим: аудитория проекции раунда — по сессии. */
+function viewerOf(ctx: RequestContext): { userId: string | null; roles: readonly string[] } | null {
+  return ctx.userId ? { userId: ctx.userId, roles: ctx.roles } : null;
 }

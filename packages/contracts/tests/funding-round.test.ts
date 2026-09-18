@@ -2,6 +2,24 @@
  * Контракты раунда и условий страны обслуживания (этап 5.6.2, план 0.2 §0г).
  */
 import { describe, expect, it } from 'vitest';
+import { AudienceSchema, visibleTo } from '../src';
+
+describe('visibleTo — одно правило раскрытия', () => {
+  it('поле видно аудитории, если его видимость не строже уровня аудитории', () => {
+    const levels = AudienceSchema.options;
+    const expected: Record<string, string[]> = {
+      public: ['public', 'investors', 'platform', 'private'],
+      investors: ['investors', 'platform', 'private'],
+      platform: ['platform', 'private'],
+      private: ['private'],
+    };
+    for (const visibility of levels) {
+      for (const audience of levels) {
+        expect(visibleTo(visibility, audience)).toBe(expected[visibility]!.includes(audience));
+      }
+    }
+  });
+});
 import {
   APPLICATION_FORM_V1,
   ActivateServiceCountryPolicyRequestSchema,

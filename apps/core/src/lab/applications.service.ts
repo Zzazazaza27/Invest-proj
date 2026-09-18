@@ -267,9 +267,28 @@ export class ApplicationsService {
     ctx: RequestContext,
     applicationId: string,
     locale: string,
+    audience: 'public' | 'investors' = 'investors',
   ): Promise<ApplicationPreview> {
     return this.db.readOnly(ctx, async (tx) => {
       const application = await this.load(tx, applicationId);
+      // Проекция раунда для выбранной аудитории — той же функцией и по той же
+      // настройке видимости, что каталог и карточки (M085): предпросмотр
+      // честен по конструкции. Без незавершённого раунда — none / undisclosed.
+      const roundRows = await tx.query<{
+        raising: 'open' | 'paused' | 'none' | 'undisclosed';
+        target: string | null;
+        currency: string | null;
+        funding_scope: 'project' | 'direction' | null;
+        funding_scope_note: string | null;
+      }>(`SELECT * FROM lab.round_view_as($1, $2)`, [application.projectId, audience]);
+      const roundRow = roundRows.rows[0];
+      const round: ApplicationPreview['round'] = {
+        raising: roundRow?.raising ?? 'undisclosed',
+        investmentAsk: roundRow?.target ?? null,
+        askCurrency: roundRow?.currency?.trim() ?? null,
+        fundingScope: roundRow?.funding_scope ?? null,
+        fundingScopeNote: roundRow?.funding_scope_note ?? null,
+      };
       const { rows } = await tx.query<SnapshotProjectRow>(
         `SELECT title, tagline, description, taxonomy_id, geo_country, geo_region, status
            FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
@@ -280,8 +299,9 @@ export class ApplicationsService {
       const form = await loadFormConfig(tx, application.schemaVersion);
       return buildApplicationPreview(
         form,
-        { schemaVersion: application.schemaVersion, stage: application.stage, locale },
+        { schemaVersion: application.schemaVersion, stage: application.stage, locale, audience },
         {
+          round,
           core: {
             title: application.title,
             stage: application.stage,

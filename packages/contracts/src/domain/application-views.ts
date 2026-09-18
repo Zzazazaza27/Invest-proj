@@ -12,16 +12,24 @@ import {
   type ApplicationFormConfig,
   type FormQuestion,
 } from './application-form';
+import { RoundProjectionSchema } from './funding-round';
+import { visibleTo } from './visibility';
 
 /**
  * Представления заявки по правилам видимости (план 0.2 §2.11).
  *
- * Один модуль собирает то, что увидит инвестор, — из черновика (предпросмотр
- * в мастере, этап 4.4) и из снимка (карточка, этап 7). Правило одно: в
- * представление попадают только вопросы с видимостью `public` или
- * `investors`; `platform` (только платформа и скоринг) и `private` (владелец
- * и админ) не попадают никогда. Пустые ответы не показываются — инвестор
- * видит то, что есть, а не форму с прочерками.
+ * Один модуль собирает то, что увидит зритель выбранной аудитории, — из
+ * черновика (предпросмотр в мастере, этап 4.4) и из снимка (карточка, этап
+ * 7). Правило одно (`visibleTo`): вопрос попадает в представление, если его
+ * видимость не строже аудитории — анонимному посетителю только `public`,
+ * инвестору `public` и `investors`; `platform` (только платформа и скоринг) и
+ * `private` (владелец и админ) наружу не попадают никогда. Пустые ответы не
+ * показываются — зритель видит то, что есть, а не форму с прочерками.
+ *
+ * Системные поля раунда (состояние, сумма, валюта, предмет) в предпросмотр
+ * приходят готовой проекцией `round`, которую сервер считает по той же
+ * настройке видимости из активной конфигурации (`lab.round_view_as`, M085) —
+ * тем же путём, что каталог и карточки.
  *
  * Предпросмотр честен ровно потому, что собирается этой же функцией из тех
  * же данных, что и представление после подачи: расхождения нет по
@@ -29,6 +37,16 @@ import {
  */
 
 export const PreviewVisibilitySchema = z.enum(['public', 'investors']);
+/** Аудитория предпросмотра: анонимный посетитель или инвестор с доступом. */
+export const PreviewAudienceSchema = z.enum(['public', 'investors']);
+export type PreviewAudience = z.infer<typeof PreviewAudienceSchema>;
+
+export const ApplicationPreviewQuerySchema = z.object({
+  locale: FormLocaleSchema.optional(),
+  /** По умолчанию — инвестор с доступом (как до 5.6.4). */
+  audience: PreviewAudienceSchema.optional(),
+});
+export type ApplicationPreviewQuery = z.infer<typeof ApplicationPreviewQuerySchema>;
 
 export const ApplicationPreviewQuestionSchema = z.object({
   key: QuestionKeySchema,
@@ -54,8 +72,8 @@ export const ApplicationPreviewSchema = z.object({
   schemaVersion: z.number().int().nonnegative(),
   stage: ProjectStageSchema,
   locale: FormLocaleSchema,
-  /** Для кого собрано: инвестор с подпиской видит `public` + `investors`. */
-  audience: z.literal('investors'),
+  /** Для кого собрано: аноним видит `public`, инвестор с доступом — `public` + `investors`. */
+  audience: PreviewAudienceSchema,
   project: z.object({
     title: z.string(),
     tagline: z.string().nullable(),
@@ -73,8 +91,10 @@ export const ApplicationPreviewSchema = z.object({
     investmentAsk: MoneyAmountSchema.nullable(),
     askCurrency: CurrencySchema,
   }),
+  /** Проекция раунда для этой аудитории — по настройке видимости, как в каталоге. */
+  round: RoundProjectionSchema,
   sections: z.array(ApplicationPreviewSectionSchema),
-  /** Сколько заполненных ответов НЕ показано инвестору (platform / private). */
+  /** Сколько заполненных ответов НЕ показано этой аудитории. */
   withheld: z.number().int().nonnegative(),
 });
 export type ApplicationPreview = z.infer<typeof ApplicationPreviewSchema>;
@@ -84,6 +104,7 @@ export interface PreviewSource {
   answers: Record<string, unknown>;
   evidence: Record<string, readonly string[] | undefined>;
   project: ApplicationPreview['project'];
+  round: ApplicationPreview['round'];
 }
 
 function coreValue(question: FormQuestion, core: ApplicationPreview['core']): unknown {
@@ -143,9 +164,15 @@ function displayValue(
  */
 export function buildApplicationPreview(
   form: ApplicationFormConfig,
-  params: { schemaVersion: number; stage: ProjectStage; locale: string },
+  params: {
+    schemaVersion: number;
+    stage: ProjectStage;
+    locale: string;
+    audience?: PreviewAudience;
+  },
   source: PreviewSource,
 ): ApplicationPreview {
+  const audience = params.audience ?? 'investors';
   const { defaultLocale } = form;
   const bySection = new Map<string, ApplicationPreviewQuestion[]>();
   let withheld = 0;
@@ -161,7 +188,7 @@ export function buildApplicationPreview(
     const evidence = [...(source.evidence[question.key] ?? [])];
     if (!isAnswerFilled(question, value, evidence)) continue;
 
-    if (question.visibility === 'platform' || question.visibility === 'private') {
+    if (!visibleTo(question.visibility, audience)) {
       withheld += 1;
       continue;
     }
@@ -171,7 +198,7 @@ export function buildApplicationPreview(
     list.push({
       key: question.key,
       type: question.type,
-      visibility: question.visibility,
+      visibility: question.visibility as 'public' | 'investors',
       label,
       value: value ?? null,
       display: displayValue(question, value, evidence, params.locale, defaultLocale),
@@ -192,9 +219,10 @@ export function buildApplicationPreview(
     schemaVersion: params.schemaVersion,
     stage: params.stage,
     locale: params.locale,
-    audience: 'investors',
+    audience,
     project: source.project,
     core: source.core,
+    round: source.round,
     sections,
     withheld,
   };

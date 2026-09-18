@@ -1772,6 +1772,128 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     `${projectAfter.json?.investmentAsk}`,
   );
 
+  // ---------------------------------------- видимость суммы раунда (M085)
+  console.warn('\n[видимость раунда] настройка поля × доступ к объекту × аудитория');
+  // До листинга проект закрыт для анонима и инвестора при любой настройке.
+  {
+    const anonBefore = await raw(`/v1/catalog/${projectId}`);
+    check(
+      'неопубликованный проект: тизера нет, настройка поля доступ не расширяет',
+      anonBefore.response.status === 404,
+      `статус ${anonBefore.response.status}`,
+    );
+  }
+  await grantFounderSubscription(founderA.userId, projectId);
+  await founderA.client.call(`/v1/projects/${projectId}/listing`, { method: 'POST' });
+  {
+    const anon = await raw(`/v1/catalog/${projectId}`);
+    check(
+      'стартовая настройка: анониму сумма и состояние раунда не раскрываются',
+      anon.response.status === 200 &&
+        anon.json?.raising === 'undisclosed' &&
+        anon.json?.investmentAsk === null,
+      `${anon.json?.raising} ${anon.json?.investmentAsk}`,
+    );
+    const filtered = await raw('/v1/catalog?askMin=2999999&askMax=3000001');
+    const sorted = await raw('/v1/catalog?sort=ask_desc&limit=100');
+    check(
+      'скрытую сумму нельзя определить фильтром или сортировкой по сумме',
+      !(filtered.json?.items ?? []).some((i) => i.id === projectId) &&
+        !(sorted.json?.items ?? []).some((i) => i.id === projectId),
+    );
+    const asInvestor = await investor.client.call(`/v1/catalog/${projectId}`);
+    check(
+      'инвестор с членством видит состояние и сумму (уровень investors)',
+      asInvestor.json?.raising === 'open' && asInvestor.json?.investmentAsk === '3000000.00',
+      `${asInvestor.json?.raising} ${asInvestor.json?.investmentAsk}`,
+    );
+    const card = await investor.client.call(`/v1/projects/${projectId}`);
+    check(
+      'карточка инвестору — та же проекция раунда',
+      card.json?.raising === 'open' && card.json?.investmentAsk === '3000000.00',
+      `${card.json?.raising} ${card.json?.investmentAsk}`,
+    );
+    const asPublic = await founderA.client.call(
+      `/v1/applications/${appId}/preview?audience=public`,
+    );
+    const asInvestors = await founderA.client.call(
+      `/v1/applications/${appId}/preview?audience=investors`,
+    );
+    check(
+      'предпросмотр владельцу: аноним — закрыто, инвестор — сумма; по тем же правилам',
+      asPublic.json?.audience === 'public' &&
+        asPublic.json?.round?.raising === 'undisclosed' &&
+        asPublic.json?.round?.investmentAsk === null &&
+        asInvestors.json?.round?.raising === 'open' &&
+        asInvestors.json?.round?.investmentAsk === '3000000.00' &&
+        asInvestors.json?.round?.askCurrency === 'RUB',
+      `${asPublic.json?.round?.raising} / ${asInvestors.json?.round?.raising}`,
+    );
+    const foreignPreview = await founderB.client.call(
+      `/v1/applications/${appId}/preview?audience=investors`,
+    );
+    check(
+      'чужой предпросмотр недоступен',
+      foreignPreview.response.status === 403 || foreignPreview.response.status === 404,
+      `статус ${foreignPreview.response.status}`,
+    );
+  }
+  // Администратор открывает группу публично — конфигурацией, не кодом.
+  const setRoundVisibility = async (visibility, reason) => {
+    const draft = await adminClient.call('/v1/admin/application-forms/draft');
+    const config = draft.json?.config;
+    for (const q of config?.questions ?? []) {
+      if (['investment_ask', 'funding_scope', 'funding_scope_note'].includes(q.key)) {
+        q.visibility = visibility;
+      }
+    }
+    await adminClient.call('/v1/admin/application-forms/draft', {
+      method: 'PUT',
+      body: { config },
+    });
+    return adminClient.call('/v1/admin/application-forms/draft/publish', {
+      method: 'POST',
+      body: { reason },
+    });
+  };
+  {
+    const published = await setRoundVisibility('public', 'дымовой прогон: сумма раунда публично');
+    check(
+      'публикация версии с public — обычная публикация конфигурации',
+      published.response.status === 201 && published.json?.isActive === true,
+      `статус ${published.response.status}`,
+    );
+    const anon = await raw(`/v1/catalog/${projectId}`);
+    check(
+      'после настройки public аноним видит состояние и сумму',
+      anon.json?.raising === 'open' && anon.json?.investmentAsk === '3000000.00',
+      `${anon.json?.raising} ${anon.json?.investmentAsk}`,
+    );
+    const filtered = await raw('/v1/catalog?askMin=2999999&askMax=3000001');
+    check(
+      'публичная сумма участвует в фильтре по сумме',
+      (filtered.json?.items ?? []).some((i) => i.id === projectId),
+    );
+    const asPublic = await founderA.client.call(
+      `/v1/applications/${appId}/preview?audience=public`,
+    );
+    check(
+      'предпросмотр для анонима следует новой настройке',
+      asPublic.json?.round?.raising === 'open' &&
+        asPublic.json?.round?.investmentAsk === '3000000.00',
+    );
+    const restored = await setRoundVisibility(
+      'investors',
+      'дымовой прогон: откат видимости суммы к investors',
+    );
+    const anonAfter = await raw(`/v1/catalog/${projectId}`);
+    check(
+      'откат настройки снова закрывает группу анониму',
+      restored.response.status === 201 && anonAfter.json?.raising === 'undisclosed',
+      `статус ${restored.response.status} ${anonAfter.json?.raising}`,
+    );
+  }
+
   const second = await founderA.client.call(`/v1/projects/${projectId}/rounds`, {
     method: 'POST',
     body: {},

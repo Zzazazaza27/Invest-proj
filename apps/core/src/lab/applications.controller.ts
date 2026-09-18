@@ -3,7 +3,7 @@ import {
   ActivateApplicationPolicyRequestSchema,
   ActivateReadinessConfigRequestSchema,
   ApplicationDetailSchema,
-  ApplicationFormQuerySchema,
+  ApplicationPreviewQuerySchema,
   ApplicationListSchema,
   ApplicationPolicyVersionSchema,
   ApplicationPreviewSchema,
@@ -70,9 +70,14 @@ export class ApplicationsController {
     @Ctx() ctx: RequestContext,
   ) {
     const id = parseOrThrow(UuidSchema, rawId);
-    const query = parseOrThrow(ApplicationFormQuerySchema, rawQuery ?? {});
+    const query = parseOrThrow(ApplicationPreviewQuerySchema, rawQuery ?? {});
     return ApplicationPreviewSchema.parse(
-      await this.applications.preview(ctx, id, query.locale ?? DEFAULT_FORM_LOCALE),
+      await this.applications.preview(
+        ctx,
+        id,
+        query.locale ?? DEFAULT_FORM_LOCALE,
+        query.audience ?? 'investors',
+      ),
     );
   }
 

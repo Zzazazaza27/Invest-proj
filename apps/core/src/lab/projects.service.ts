@@ -201,17 +201,13 @@ export class ProjectsService {
       const { rows } = await tx.query<ProjectSummaryRow>(
         `SELECT p.id, p.title, p.stage, p.status, p.listing_status,
                 p.ask_currency,
-                (SELECT r.status FROM lab.funding_rounds r
-                  WHERE r.project_id = p.id AND r.status IN ('open','paused') LIMIT 1) AS raising,
-                (SELECT r.target::text FROM lab.funding_rounds r
-                  WHERE r.project_id = p.id AND r.status IN ('open','paused') LIMIT 1) AS round_target,
-                (SELECT r.currency FROM lab.funding_rounds r
-                  WHERE r.project_id = p.id AND r.status IN ('open','paused') LIMIT 1) AS round_currency,
+                rv.raising, rv.target::text AS round_target, rv.currency AS round_currency,
                 p.required_plan_id, sp.code AS required_plan_code,
                 fp.role, p.created_at
            FROM lab.founders_projects fp
            JOIN lab.projects p ON p.id = fp.project_id
            LEFT JOIN billing.subscription_plans sp ON sp.id = p.required_plan_id
+           LEFT JOIN LATERAL lab.round_view(p.id) rv ON true
           WHERE fp.user_id = $1 AND p.deleted_at IS NULL
           ORDER BY p.created_at DESC
           LIMIT 100`,
@@ -225,7 +221,7 @@ export class ProjectsService {
         listingStatus: row.listing_status,
         investmentAsk: row.round_target ?? null,
         askCurrency: (row.round_currency?.trim() ?? row.ask_currency) as 'RUB',
-        raising: row.raising ?? 'none',
+        raising: row.raising ?? 'undisclosed',
         requiredPlanId: row.required_plan_id,
         requiredPlanCode: row.required_plan_code,
         role: row.role,
@@ -1036,14 +1032,11 @@ export function computeProjectLimits(
 const PROJECT_COLUMNS = `
   id, taxonomy_id, title, tagline, description, stage, geo_country, geo_region,
   investment_ask::text AS investment_ask, ask_currency, required_plan_id,
-  -- Текущее привлечение — из незавершённого раунда (M084); под RLS раундов:
-  -- член команды видит свой, инвестор до 5.7 — нет.
-  (SELECT r.status FROM lab.funding_rounds r
-    WHERE r.project_id = lab.projects.id AND r.status IN ('open','paused') LIMIT 1) AS raising,
-  (SELECT r.target::text FROM lab.funding_rounds r
-    WHERE r.project_id = lab.projects.id AND r.status IN ('open','paused') LIMIT 1) AS round_target,
-  (SELECT r.currency FROM lab.funding_rounds r
-    WHERE r.project_id = lab.projects.id AND r.status IN ('open','paused') LIMIT 1) AS round_currency,
+  -- Текущее привлечение — проекция раунда по зрителю (M085): член команды и
+  -- админ видят всё, инвестор — по настройке видимости и аудитории сессии.
+  (SELECT v.raising FROM lab.round_view(lab.projects.id) v) AS raising,
+  (SELECT v.target::text FROM lab.round_view(lab.projects.id) v) AS round_target,
+  (SELECT v.currency FROM lab.round_view(lab.projects.id) v) AS round_currency,
   listing_status, listed_at, status, season_id, current_version_id, current_application_id,
   created_at, updated_at,
   (SELECT s.value::text
@@ -1064,7 +1057,7 @@ interface ProjectRow {
   geo_region: string | null;
   investment_ask: string;
   ask_currency: string;
-  raising: 'open' | 'paused' | null;
+  raising: 'open' | 'paused' | 'none' | 'undisclosed' | null;
   round_target: string | null;
   round_currency: string | null;
   required_plan_id: string | null;

@@ -184,14 +184,30 @@ export class Database implements OnModuleDestroy {
    * ошибка в SQL каталога не сможет вытащить чужой черновик: прав на остальные
    * колонки у роли просто нет.
    */
-  async asPublicRole<T>(traceId: string, work: (tx: Tx) => Promise<T>): Promise<T> {
+  /**
+   * Публичная роль: таблицы — только allowlist тизера. `viewer` — проверенная
+   * сессия зрителя (если есть): роль БД остаётся публичной, но функции
+   * проекции (`lab.round_view`, M085) определяют по ней аудиторию —
+   * инвестор с членством получает поля уровня `investors`, аноним — `public`.
+   */
+  async asPublicRole<T>(
+    traceId: string,
+    work: (tx: Tx) => Promise<T>,
+    viewer: { userId: string | null; roles: readonly string[] } | null = null,
+  ): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN READ ONLY');
       await client.query('SET LOCAL ROLE app_public_read');
       await client.query(`SET LOCAL statement_timeout = ${this.statementTimeoutMs}`);
-      await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', '']);
-      await client.query('SELECT set_config($1, $2, true)', ['app.current_roles', '']);
+      await client.query('SELECT set_config($1, $2, true)', [
+        'app.current_user_id',
+        viewer?.userId ?? '',
+      ]);
+      await client.query('SELECT set_config($1, $2, true)', [
+        'app.current_roles',
+        viewer?.userId ? viewer.roles.join(',') : '',
+      ]);
       await client.query('SELECT set_config($1, $2, true)', ['app.trace_id', traceId]);
       const result = await work(client);
       await client.query('COMMIT');

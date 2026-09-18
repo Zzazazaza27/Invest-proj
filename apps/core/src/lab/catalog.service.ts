@@ -58,6 +58,7 @@ export class CatalogService {
   async list(
     traceId: string,
     query: CatalogQuery,
+    viewer: Viewer = null,
   ): Promise<{ items: ProjectTeaser[]; nextCursor: string | null }> {
     if (query.sort === 'relevance' && !query.q) {
       throw errors.validation([
@@ -88,9 +89,12 @@ export class CatalogService {
       params.push(query.geoCountry);
       where.push(`p.geo_country = $${params.length}`);
     }
-    // Фильтры и сортировки по сумме — по незавершённому раунду (M084): проект
-    // без раунда под фильтр суммы не попадает, а в сортировке по сумме не
-    // участвует — у него нет текущего запроса, сумма старой формы не в счёт.
+    // Фильтры и сортировки по сумме — по незавершённому раунду (M084) и по
+    // настройке видимости для аудитории зрителя (M085): проект без раунда или
+    // с закрытой для зрителя суммой под фильтр суммы не попадает и в
+    // сортировке по сумме не участвует. Скрытую сумму нельзя определить ни
+    // фильтром, ни сортировкой: для зрителя её нет (NULL), а не «есть, но не
+    // показана».
     if (query.askMin) {
       params.push(query.askMin);
       where.push(`r.target >= $${params.length}::numeric`);
@@ -118,44 +122,59 @@ export class CatalogService {
 
     const sql = `
       SELECT p.id, p.taxonomy_id, p.title, p.tagline, p.stage, p.geo_country, p.listed_at,
-             COALESCE(r.status, 'none') AS raising,
+             COALESCE(r.raising, 'undisclosed') AS raising,
              r.target::text AS round_target, r.currency AS round_currency,
              (${order.expression})::text AS sort_value
         FROM lab.projects p
-        LEFT JOIN LATERAL lab.public_round(p.id) r ON true
+        LEFT JOIN LATERAL lab.round_view(p.id) r ON true
        WHERE ${where.join(' AND ')}
        ORDER BY ${order.expression} ${order.direction}, p.id ${order.direction}
        LIMIT ${limitParam}`;
 
-    return this.db.asPublicRole(traceId, async (tx) => {
-      const { rows } = await tx.query<TeaserRow>(sql, params);
-      const hasMore = rows.length > query.limit;
-      const page = hasMore ? rows.slice(0, query.limit) : rows;
-      const last = page.at(-1);
+    return this.db.asPublicRole(
+      traceId,
+      async (tx) => {
+        const { rows } = await tx.query<TeaserRow>(sql, params);
+        const hasMore = rows.length > query.limit;
+        const page = hasMore ? rows.slice(0, query.limit) : rows;
+        const last = page.at(-1);
 
-      return {
-        items: page.map(mapTeaser),
-        nextCursor: hasMore && last ? encodeCursor({ v: last.sort_value, id: last.id }) : null,
-      };
-    });
+        return {
+          items: page.map(mapTeaser),
+          nextCursor: hasMore && last ? encodeCursor({ v: last.sort_value, id: last.id }) : null,
+        };
+      },
+      viewer,
+    );
   }
 
-  async getTeaser(traceId: string, projectId: string): Promise<ProjectTeaser> {
-    return this.db.asPublicRole(traceId, async (tx) => {
-      const { rows } = await tx.query<TeaserRow>(
-        `SELECT id, taxonomy_id, title, tagline, stage, geo_country, listed_at,
-                raising, round_target::text AS round_target, round_currency,
-                ''::text AS sort_value
-           FROM lab.v_public_catalog
-          WHERE id = $1`,
-        [projectId],
-      );
-      const row = rows[0];
-      if (!row) throw errors.notFound({ subject: 'listing' });
-      return mapTeaser(row);
-    });
+  async getTeaser(
+    traceId: string,
+    projectId: string,
+    viewer: Viewer = null,
+  ): Promise<ProjectTeaser> {
+    return this.db.asPublicRole(
+      traceId,
+      async (tx) => {
+        const { rows } = await tx.query<TeaserRow>(
+          `SELECT id, taxonomy_id, title, tagline, stage, geo_country, listed_at,
+                  raising, round_target::text AS round_target, round_currency,
+                  ''::text AS sort_value
+             FROM lab.v_public_catalog
+            WHERE id = $1`,
+          [projectId],
+        );
+        const row = rows[0];
+        if (!row) throw errors.notFound({ subject: 'listing' });
+        return mapTeaser(row);
+      },
+      viewer,
+    );
   }
 }
+
+/** Проверенная сессия зрителя — для аудитории проекции раунда (M085); null — аноним. */
+export type Viewer = { userId: string | null; roles: readonly string[] } | null;
 
 /**
  * Допустимые сортировки. Ключ приходит из zod-перечисления, поэтому обращение
@@ -191,7 +210,7 @@ interface TeaserRow {
   tagline: string | null;
   stage: ProjectTeaser['stage'];
   geo_country: string | null;
-  raising: 'open' | 'paused' | 'none';
+  raising: 'open' | 'paused' | 'none' | 'undisclosed';
   round_target: string | null;
   round_currency: string | null;
   listed_at: Date | null;

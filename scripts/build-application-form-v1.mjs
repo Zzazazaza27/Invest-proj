@@ -27,6 +27,7 @@ const CHECK = process.argv.includes('--check');
 const LOCALE = 'ru-RU';
 const STAGES = ['idea', 'mvp', 'early_revenue', 'growth'];
 const STATE = { M: 'mandatory', 'M¹': 'mandatory', R: 'recommended', '—': 'hidden' };
+const ROUND_DISCLOSURE_DEFAULT = new Set(['investment_ask', 'funding_scope', 'funding_scope_note']);
 const CORE_FIELDS = new Set([
   'stage',
   'business_type',
@@ -138,7 +139,11 @@ for (const line of lines) {
     section: currentSection.key,
     type,
     stages: Object.fromEntries(STAGES.map((s, i) => [s, states[i]])),
-    visibility: cells[6],
+    // Группа «текущий запрос» и предмет финансирования стартуют закрытыми от
+    // анонимного посетителя (владелец, 2026-09-18): публичность — явная
+    // настройка в админке, не умолчание. Каталог берёт значение из активной
+    // конфигурации (M085).
+    visibility: ROUND_DISCLOSURE_DEFAULT.has(key) ? 'investors' : cells[6],
     evidence: cells[7] === 'да',
     constraints,
     core: cells[0].includes('core'),

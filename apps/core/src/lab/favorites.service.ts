@@ -98,16 +98,22 @@ export class FavoritesService {
     if (marks.length === 0) return [];
 
     const ids = marks.map((mark) => mark.project_id);
-    const teasers = await this.db.asPublicRole(ctx.traceId, async (tx) => {
-      const { rows } = await tx.query<TeaserRow>(
-        `SELECT id, taxonomy_id, title, tagline, stage, geo_country, listed_at,
-                raising, round_target::text AS round_target, round_currency
-           FROM lab.v_public_catalog
-          WHERE id = ANY($1::uuid[])`,
-        [ids],
-      );
-      return rows;
-    });
+    // Тизеры — публичной ролью, но с сессией инвестора: проекция раунда (M085)
+    // отдаёт поля по аудитории зрителя, а не всегда анонимную.
+    const teasers = await this.db.asPublicRole(
+      ctx.traceId,
+      async (tx) => {
+        const { rows } = await tx.query<TeaserRow>(
+          `SELECT id, taxonomy_id, title, tagline, stage, geo_country, listed_at,
+                  raising, round_target::text AS round_target, round_currency
+             FROM lab.v_public_catalog
+            WHERE id = ANY($1::uuid[])`,
+          [ids],
+        );
+        return rows;
+      },
+      { userId: ctx.userId, roles: ctx.roles },
+    );
 
     const byId = new Map(teasers.map((row) => [row.id, row]));
     // Порядок задают отметки, а не выдача каталога: человек ждёт «сверху то,
@@ -159,7 +165,7 @@ interface TeaserRow {
   tagline: string | null;
   stage: FavoriteProject['stage'];
   geo_country: string | null;
-  raising: 'open' | 'paused' | 'none';
+  raising: 'open' | 'paused' | 'none' | 'undisclosed';
   round_target: string | null;
   round_currency: string | null;
   listed_at: Date | null;
