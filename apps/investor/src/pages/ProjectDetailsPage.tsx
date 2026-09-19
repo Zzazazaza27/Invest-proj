@@ -62,6 +62,31 @@ function safeHref(raw: string | null | undefined): string {
 }
 
 /**
+ * Строка «Доступ»: разрешение смотреть и фактическое наличие данных — разные
+ * вещи. Прежнее перечисление разрешений читалось как обещание: «оценка
+ * платформы» в списке выглядела готовой оценкой, хотя паспорт мог быть не
+ * рассчитан, а материалы — не добавлены (замечание ручного прохода 5.7).
+ * Поэтому каждый открытый блок называется вместе с его состоянием, а сам
+ * список по-прежнему строится по ответу сервера, а не по догадке страницы.
+ */
+function describeAccess(view: InvestorView, questionCount: number): string {
+  if (view.access.profile === null) {
+    return 'Доступ: только тизер — ответы анкеты, материалы и оценка закрыты режимом проекта или вашим допуском.';
+  }
+  const parts = [questionCount > 0 ? 'профиль' : 'профиль (ответов пока нет)'];
+  if (view.access.round !== null) {
+    parts.push(view.round.raising === 'none' ? 'раунд (не открыт)' : 'раунд');
+  }
+  if (view.access.materials !== null) {
+    parts.push((view.materials?.length ?? 0) > 0 ? 'материалы' : 'материалы (не добавлены)');
+  }
+  if (view.access.passport !== null) {
+    parts.push(view.passport ? 'оценка платформы' : 'оценка платформы (ещё не рассчитана)');
+  }
+  return `Доступ открыт: ${parts.join(', ')}.`;
+}
+
+/**
  * Карточка проекта глазами инвестора — Investor View (5.7.4).
  *
  * Один серверный ответ вместо трёх вызовов: состав решает предикат доступа
@@ -142,10 +167,7 @@ ${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
   const files = materials.filter((m) => m.url === null);
   const links = materials.filter((m) => m.url !== null);
   const questionCount = view.sections.reduce((n, s) => n + s.questions.length, 0);
-  const accessText =
-    view.access.profile === null
-      ? 'Доступ: только тизер — ответы анкеты, материалы и оценка закрыты режимом проекта или вашим допуском.'
-      : `Доступ: профиль${view.access.materials ? ', материалы' : ''}${view.access.passport ? ', оценка платформы' : ''}${view.access.round ? ', раунд' : ''}.`;
+  const accessText = describeAccess(view, questionCount);
 
   return (
     <Stack gap="var(--u-space-5)" data-investor-view>

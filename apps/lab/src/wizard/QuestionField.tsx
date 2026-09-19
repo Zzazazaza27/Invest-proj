@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Badge, Field, Input, Markdown, Select, TextArea } from '@unicorn/ui';
 import type { FormQuestionView, ProjectMaterial } from '@unicorn/contracts';
 import { S } from '../strings';
 import { TermHints, useGlossary, useTermsFor } from './glossary';
+import { MoneyControl } from './MoneyControl';
 
 /**
  * Один вопрос анкеты — по типу из опубликованной конфигурации.
@@ -36,6 +38,11 @@ export function QuestionField({
   const mandatory = question.state === 'mandatory';
   const glossary = useGlossary();
   const terms = useTermsFor(glossary, question.label, question.helpMd);
+  /**
+   * Ошибка разбора суммы. Показывается вместо серверной: она говорит о том,
+   * что в поле ПРЯМО СЕЙЧАС, а серверная — о последнем отправленном значении.
+   */
+  const [moneyError, setMoneyError] = useState<string | null>(null);
 
   return (
     <div
@@ -55,7 +62,12 @@ export function QuestionField({
         </Badge>
         {question.evidence ? <Badge tone="neutral">{S.wizard.field.evidence}</Badge> : null}
       </div>
-      <Field label={question.label} htmlFor={id} error={error ?? null}>
+      <Field
+        label={question.label}
+        htmlFor={id}
+        hint={question.type === 'money' ? S.wizard.field.moneyHint : undefined}
+        error={moneyError ?? error ?? null}
+      >
         <div onBlur={onBlurCommit}>
           <Control
             question={question}
@@ -63,6 +75,7 @@ export function QuestionField({
             value={value}
             materials={materials}
             onChange={onChange}
+            onMoneyError={setMoneyError}
           />
         </div>
       </Field>
@@ -135,12 +148,14 @@ function Control({
   value,
   materials,
   onChange,
+  onMoneyError,
 }: {
   question: FormQuestionView;
   id: string;
   value: unknown;
   materials: ProjectMaterial[];
   onChange: (value: unknown) => void;
+  onMoneyError: (message: string | null) => void;
 }) {
   const max = question.constraints?.maxLength ?? undefined;
   switch (question.type) {
@@ -180,13 +195,12 @@ function Control({
     case 'money':
       return (
         <div style={{ display: 'flex', gap: 'var(--u-space-2)', alignItems: 'center' }}>
-          <Input
+          <MoneyControl
             id={id}
-            inputMode="decimal"
-            value={typeof value === 'string' ? value : ''}
-            placeholder="1000000.00"
-            onChange={(e) => onChange(e.target.value === '' ? null : e.target.value.trim())}
-            aria-describedby={`${id}-hint`}
+            value={typeof value === 'string' ? value : null}
+            describedBy={`${id}-hint`}
+            onError={onMoneyError}
+            onCommit={onChange}
           />
           <span style={{ color: 'var(--u-text-muted)' }}>{S.wizard.field.currency}</span>
         </div>

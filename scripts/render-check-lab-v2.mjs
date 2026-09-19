@@ -815,7 +815,26 @@ try {
     'основание установлено явно, с причиной',
     (await page.locator('[data-round-basis="1"]').innerText()).includes('Анкета v1'),
   );
-  check('кнопка открытия доступна', !(await page.locator('[data-round-open]').isDisabled()));
+  // Открытие подтверждает ПОКАЗАННЫЙ предпросмотр (5.7.4): после смены
+  // основания он перезапрашивается, и на это время кнопка обоснованно
+  // недоступна. Проверка ждёт конца этого промежутка, а не измеряет мгновение
+  // сразу после смены — иначе она меряет скорость сети, а не поведение.
+  await page
+    .waitForFunction(
+      /* eslint-disable no-undef */
+      () => {
+        const button = document.querySelector('[data-round-open]');
+        return button !== null && !button.disabled;
+      },
+      /* eslint-enable no-undef */
+      undefined,
+      { timeout: 15_000 },
+    )
+    .catch(() => undefined);
+  check(
+    'кнопка открытия доступна, когда предпросмотр показан',
+    !(await page.locator('[data-round-open]').isDisabled()),
+  );
   await page.locator('[data-round-open]').click();
   await page.waitForSelector('[data-round-state="open"]', { timeout: 15_000 });
   const [openedRound] = await sql(

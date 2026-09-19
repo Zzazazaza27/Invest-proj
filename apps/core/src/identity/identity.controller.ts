@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 import { parseOrThrow } from '../common/validation';
-import { Ctx, Public, Roles, type AuthenticatedRequest } from '../auth/guards';
+import { Ctx, CsrfOriginFallback, Public, Roles, type AuthenticatedRequest } from '../auth/guards';
 import { TokenVerifier } from '../auth/token.verifier';
 import type { RequestContext } from '../db/unit-of-work';
 import { IdentityService } from './identity.service';
@@ -139,6 +139,7 @@ export class IdentityController {
    * идентификатора (внешний IdP без claim `jti`): сессия закрыта только на
    * клиенте, и ответ говорит об этом прямо, а не изображает успех.
    */
+  @CsrfOriginFallback()
   @Post('logout')
   async logout(
     @Ctx() ctx: RequestContext,

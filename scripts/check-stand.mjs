@@ -11,7 +11,7 @@
  */
 import { chromium } from 'playwright';
 
-import { frontendUrl } from './lib/ports.mjs';
+import { CORE_URL, frontendUrl } from './lib/ports.mjs';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -47,6 +47,22 @@ function check(name, condition, detail = '') {
   } else {
     failed += 1;
     console.warn(`  FAIL  ${name}${detail ? ` — ${detail}` : ''}`);
+  }
+}
+
+/**
+ * Положение флага сезонов — из публичного перечня флагов интерфейса.
+ * Отдельного доступа к базе скрипту не нужно: кабинеты читают то же самое.
+ */
+async function seasonsEnabled() {
+  try {
+    const response = await fetch(`${CORE_URL}/v1/features`, {
+      signal: AbortSignal.timeout(10_000),
+    });
+    const json = await response.json();
+    return json?.flags?.['seasons.enabled'] === true;
+  } catch {
+    return false;
   }
 }
 
@@ -224,17 +240,30 @@ console.warn('\n--- админка (stand-admin) ---');
     'stand-admin',
     'Тарифы',
   );
-  check('вход выполнен', text.includes('Тарифы') && text.includes('Воронка сезона'));
+  check('вход выполнен', text.includes('Тарифы'));
 
-  await page.getByRole('link', { name: 'Воронка сезона', exact: true }).click();
-  await page.getByRole('heading', { name: 'Воронка сезона' }).waitFor({ timeout: 15_000 });
-  await page.waitForTimeout(1500);
-  const funnel = await page.locator('main').innerText();
-  check(
-    'воронка показывает сезон стенда и квоты',
-    funnel.includes('Буткемп'),
-    funnel.replace(/\s+/g, ' ').slice(0, 90),
-  );
+  // Сезоны отложены (M088): при выключенном `seasons.enabled` пунктов сезона в
+  // меню нет, и это ожидаемое состояние, а не пропажа экрана. Проверка идёт по
+  // фактическому положению флага, чтобы оставаться честной в обоих состояниях.
+  const seasonsOn = await seasonsEnabled();
+  if (seasonsOn) {
+    check('пункт воронки на месте при включённых сезонах', text.includes('Воронка сезона'));
+    await page.getByRole('link', { name: 'Воронка сезона', exact: true }).click();
+    await page.getByRole('heading', { name: 'Воронка сезона' }).waitFor({ timeout: 15_000 });
+    await page.waitForTimeout(1500);
+    const funnel = await page.locator('main').innerText();
+    check(
+      'воронка показывает сезон стенда и квоты',
+      funnel.includes('Буткемп'),
+      funnel.replace(/\s+/g, ' ').slice(0, 90),
+    );
+  } else {
+    check(
+      'при отложенных сезонах пунктов сезона в меню нет',
+      !text.includes('Воронка сезона') && !text.includes('Сезон'),
+      text.replace(/\s+/g, ' ').slice(0, 90),
+    );
+  }
   check('исключений на странице нет', errors.length === 0, errors.slice(0, 1).join(' | '));
   await context.close();
 }

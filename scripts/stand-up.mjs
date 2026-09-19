@@ -21,15 +21,23 @@ import { resolve } from 'node:path';
 const ROOT = resolve(import.meta.dirname, '..');
 const CHECK_ONLY = process.argv.includes('--check');
 
+/**
+ * Маршруты и ожидаемый ответ БЕЗ входа.
+ *
+ * Служебная консоль анониму отвечает 404 — так решает привратник
+ * `auth_request` (`infra/nginx/default.conf`): её прячут ролью, а не
+ * отдельным контуром. Проверка, ждавшая от неё 200, красила поднятый стенд в
+ * красный и требовала каждый раз вспоминать, что это норма.
+ */
 const ROUTES = [
-  '/',
-  '/login/',
-  '/lab/',
-  '/investor/',
-  '/expert/',
-  '/admin/',
-  '/console/',
-  '/v1/health',
+  ['/', 200],
+  ['/login/', 200],
+  ['/lab/', 200],
+  ['/investor/', 200],
+  ['/expert/', 200],
+  ['/admin/', 200],
+  ['/console/', 404],
+  ['/v1/health', 200],
 ];
 
 const t0 = Date.now();
@@ -210,9 +218,11 @@ function check() {
   let bad = [];
   for (let attempt = 0; attempt < 12; attempt += 1) {
     bad = [];
-    for (const route of ROUTES) {
+    for (const [route, expected] of ROUTES) {
       const { code } = probe(`http://127.0.0.1${route}`);
-      if (code !== 200) bad.push(`${route} → ${code || 'нет ответа'}`);
+      if (code !== expected) {
+        bad.push(`${route} → ${code || 'нет ответа'} (ожидалось ${expected})`);
+      }
     }
     if (bad.length === 0) break;
     sleep(2500);
@@ -222,7 +232,7 @@ function check() {
     for (const b of bad) fail(b);
     return false;
   }
-  ok(`все ${ROUTES.length} маршрутов отвечают 200`);
+  ok(`все ${ROUTES.length} маршрутов отвечают как ожидалось`);
   ok('база отвечает — /v1/health вернул 200');
   return true;
 }

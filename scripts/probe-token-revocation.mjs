@@ -86,13 +86,19 @@ function makeClient() {
     get csrf() {
       return state.csrf;
     },
-    async call(path, { method = 'GET', body, cookies } = {}) {
+    async call(path, { method = 'GET', body, cookies, extraHeaders } = {}) {
       const jar = cookies ?? [state.session, state.csrf].filter(Boolean).join('; ');
-      const headers = { Cookie: jar };
+      const headers = { Cookie: jar, ...extraHeaders };
       if (body !== undefined) headers['Content-Type'] = 'application/json';
-      const csrf = (cookies ?? '').includes(`${CSRF_COOKIE}=`)
-        ? cookies.split(`${CSRF_COOKIE}=`)[1].split(';')[0]
-        : state.csrf?.split('=').slice(1).join('=');
+      // Заголовок берётся из ТОГО ЖЕ набора cookie, что ушёл в запрос: если
+      // вызывающий сам задал cookie без CSRF, заголовка тоже быть не должно —
+      // иначе прогон «потерянной куки» проверял бы не тот случай.
+      const csrf =
+        cookies !== undefined
+          ? cookies.includes(`${CSRF_COOKIE}=`)
+            ? cookies.split(`${CSRF_COOKIE}=`)[1].split(';')[0]
+            : null
+          : state.csrf?.split('=').slice(1).join('=');
       if (method !== 'GET' && csrf) headers['X-CSRF-Token'] = csrf;
       const response = await fetch(`${BASE}${path}`, {
         method,
@@ -197,10 +203,52 @@ check(
   `HTTP ${otherSession.status}`,
 );
 
+// ---- Выход при потерянной CSRF-куке (5.7, замечание ручного прохода) -----
+// Пара «cookie + заголовок» может не дожить до конца сессии: её чистят
+// расширения, настройки приватности, ручная уборка. Раньше это запирало
+// человека внутри: выход отвечал 403, экран менялся, а сессия оставалась
+// живой. Проверяем обе стороны: без доказанного same-origin отказ остаётся,
+// с ним — выход проходит и токен действительно отзывается.
+const third = makeClient();
+await third.call('/v1/auth/login', { method: 'POST', body: { email, password } });
+const thirdJti = tokenPayload(third.session).jti;
+const thirdSession = third.session;
+
+const noCsrfCrossSite = await third.call('/v1/auth/logout', {
+  method: 'POST',
+  cookies: thirdSession,
+  extraHeaders: { 'Sec-Fetch-Site': 'cross-site' },
+});
+check(
+  'выход без CSRF со стороннего сайта отклонён',
+  noCsrfCrossSite.status === 403,
+  `HTTP ${noCsrfCrossSite.status}`,
+);
+
+const noCsrfSameOrigin = await third.call('/v1/auth/logout', {
+  method: 'POST',
+  cookies: thirdSession,
+  extraHeaders: { 'Sec-Fetch-Site': 'same-origin' },
+});
+const noCsrfBody = await noCsrfSameOrigin.json().catch(() => ({}));
+check(
+  'выход без CSRF-куки из своего же кабинета проходит',
+  noCsrfSameOrigin.status === 200 || noCsrfSameOrigin.status === 201,
+  `HTTP ${noCsrfSameOrigin.status}`,
+);
+check('токен третьей сессии отозван', noCsrfBody.tokenRevoked === true, JSON.stringify(noCsrfBody));
+
+const thirdReplay = await third.call('/v1/auth/me', { cookies: thirdSession });
+check(
+  'сессия после такого выхода действительно закрыта',
+  thirdReplay.status === 401,
+  `HTTP ${thirdReplay.status}`,
+);
+
 const registry = await sql(
   `SELECT jti, reason, user_id, revoked_by, expires_at > now() AS active
-     FROM identity.revoked_tokens WHERE user_id = $1`,
-  [user.id],
+     FROM identity.revoked_tokens WHERE user_id = $1 AND jti <> $2`,
+  [user.id, thirdJti],
 );
 check('в реестре ровно одна запись', registry.length === 1, `записей: ${registry.length}`);
 check('записан отозванный идентификатор', registry[0]?.jti === firstJti);

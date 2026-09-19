@@ -30,6 +30,7 @@ export const IS_PUBLIC = 'auth:public';
 export const REQUIRED_ROLES = 'auth:roles';
 export const REQUIRES_STEP_UP = 'auth:step-up';
 export const AUTH_SCHEME = 'auth:scheme';
+export const CSRF_ORIGIN_FALLBACK = 'auth:csrf-origin-fallback';
 
 /** Маршрут доступен без аутентификации. Ставится осознанно и заметно. */
 export const Public = () => SetMetadata(IS_PUBLIC, true);
@@ -50,6 +51,23 @@ export const Roles = (...roles: Role[]) => SetMetadata(REQUIRED_ROLES, roles);
 
 /** Операция требует подтверждения вторым фактором (Architect_Launch §7). */
 export const StepUp = () => SetMetadata(REQUIRES_STEP_UP, true);
+
+/**
+ * Запасной путь проверки для выхода (5.7, замечание ручного прохода).
+ *
+ * Обычные действия требуют пару «cookie + заголовок» с подписью, связанной с
+ * владельцем сессии. У выхода это создавало тупик: если CSRF-cookie потеряна
+ * или устарела (её вычистили, она не дожила до конца сессии), пользователь не
+ * мог выйти вообще — сессия оставалась живой, а интерфейс лишь менял экран.
+ *
+ * Поэтому у выхода — и только у него — есть второй путь: запрос обязан быть
+ * `Sec-Fetch-Site: same-origin`. Этот заголовок ставит сам браузер, подделать
+ * его со стороннего сайта нельзя, а запрос без него (curl, чужой origin) по
+ * этому пути не проходит. Защита не снимается: цена ложного срабатывания —
+ * чужой сайт мог бы разлогинить пользователя, но не совершить действие от его
+ * имени; цена прежнего поведения — невозможность закрыть сессию.
+ */
+export const CsrfOriginFallback = () => SetMetadata(CSRF_ORIGIN_FALLBACK, true);
 
 export interface AuthenticatedRequest extends FastifyRequest {
   ctx?: RequestContext;
@@ -163,7 +181,12 @@ export class AuthGuard implements CanActivate {
     };
     request.ctx = { userId: verified.subject, roles, traceId };
 
-    this.assertCsrf(request);
+    const originFallback =
+      this.reflector.getAllAndOverride<boolean>(CSRF_ORIGIN_FALLBACK, [
+        context.getHandler(),
+        context.getClass(),
+      ]) === true;
+    this.assertCsrf(request, originFallback);
 
     const required = this.reflector.getAllAndOverride<Role[]>(REQUIRED_ROLES, [
       context.getHandler(),
@@ -202,7 +225,7 @@ export class AuthGuard implements CanActivate {
    * CSRF неприменим: браузер не подставляет заголовок Authorization
    * автоматически, а значит и подделать межсайтовый запрос нечем.
    */
-  private assertCsrf(request: AuthenticatedRequest): void {
+  private assertCsrf(request: AuthenticatedRequest, originFallback = false): void {
     const method = request.method.toUpperCase();
     if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return;
 
@@ -213,13 +236,20 @@ export class AuthGuard implements CanActivate {
     const cookies = (request as unknown as { cookies?: Record<string, string> }).cookies;
     const fromCookie = cookies?.[env.CSRF_COOKIE_NAME];
     const fromHeader = request.headers['x-csrf-token'];
+    // `Sec-Fetch-Site` ставит браузер, а не страница: со стороннего сайта
+    // сюда попадёт `cross-site`, из curl заголовка не будет вовсе.
+    const sameOrigin = request.headers['sec-fetch-site'] === 'same-origin';
 
     if (typeof fromCookie !== 'string' || typeof fromHeader !== 'string') {
+      // Выход с потерянной парой: пропускаем только доказанный same-origin,
+      // иначе закрыть сессию было бы невозможно (5.7, ручной проход).
+      if (originFallback && sameOrigin) return;
       throw errors.forbidden({ stage: 'csrf-missing' });
     }
     const a = Buffer.from(fromCookie);
     const b = Buffer.from(fromHeader);
     if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      if (originFallback && sameOrigin) return;
       throw errors.forbidden({ stage: 'csrf-mismatch' });
     }
 
@@ -229,6 +259,9 @@ export class AuthGuard implements CanActivate {
     // сессии: изготовить её под чужой аккаунт без ключа сервера нельзя (SEC-12).
     const subject = request.auth?.subject;
     if (!subject || !isCsrfTokenValid(subject, fromCookie)) {
+      // Устаревшая подпись (смена владельца cookie, истёкший токен) — тот же
+      // запасной путь: выход обязан оставаться доступным.
+      if (originFallback && sameOrigin) return;
       throw errors.forbidden({ stage: 'csrf-unbound' });
     }
 

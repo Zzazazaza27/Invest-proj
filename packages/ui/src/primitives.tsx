@@ -469,16 +469,24 @@ export function Container({
   );
 }
 
+/**
+ * Колонка с равными промежутками.
+ *
+ * Прочие атрибуты пробрасываются на `div`, как у `Card`: без этого пометки
+ * вроде `data-investor-view` молча исчезали из разметки, и проверки,
+ * опирающиеся на них, проходили вхолостую (найдено проходом 5.7).
+ */
 export function Stack({
   gap = 'var(--u-space-4)',
   children,
   style,
-}: {
-  gap?: string;
-  children: React.ReactNode;
-  style?: React.CSSProperties;
-}): React.ReactElement {
-  return <div style={{ display: 'grid', gap, ...style }}>{children}</div>;
+  ...rest
+}: React.HTMLAttributes<HTMLDivElement> & { gap?: string }): React.ReactElement {
+  return (
+    <div {...rest} style={{ display: 'grid', gap, ...style }}>
+      {children}
+    </div>
+  );
 }
 
 /** Ключевые кадры анимаций: подключаются один раз вместе с примитивами. */

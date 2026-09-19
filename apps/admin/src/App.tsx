@@ -34,11 +34,25 @@ interface Me {
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
   const [checking, setChecking] = useState(true);
+  /**
+   * Сезоны отложены (M088): пункты сезона показываются только при включённом
+   * `seasons.enabled`. Экраны и маршруты остаются — контур отключён, а не
+   * удалён; администратор увидит их сразу, как флаг вернут.
+   */
+  const [seasonsEnabled, setSeasonsEnabled] = useState(false);
 
   const load = useCallback(async () => {
     try {
       const user = await api.me();
       setMe(user);
+      // Отказ здесь не должен ломать кабинет: без ответа пункты остаются
+      // скрытыми — это безопасная сторона.
+      await api
+        .featureFlags()
+        .then((flags) =>
+          setSeasonsEnabled(flags.some((f) => f.key === 'seasons.enabled' && f.enabled)),
+        )
+        .catch(() => setSeasonsEnabled(false));
     } catch (error) {
       // 401 здесь — норма: пользователь просто не вошёл.
       if (!(error instanceof ApiError) || error.status !== 401) {
@@ -78,8 +92,12 @@ export function App() {
         <NavItem to="/plans" label="Тарифы" />
         <NavItem to="/subscriptions" label="Подписки" />
         <NavItem to="/compliance" label="Комплаенс" />
-        <NavItem to="/season" label="Сезон" />
-        <NavItem to="/funnel" label="Воронка сезона" />
+        {seasonsEnabled ? (
+          <>
+            <NavItem to="/season" label="Сезон" />
+            <NavItem to="/funnel" label="Воронка сезона" />
+          </>
+        ) : null}
         <NavItem to="/templates" label="Уведомления" />
         <NavItem to="/support" label="Поддержка" />
         <NavItem to="/integrations" label="Интеграции" />

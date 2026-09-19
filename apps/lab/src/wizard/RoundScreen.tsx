@@ -26,6 +26,7 @@ import type {
 } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { S } from '../strings';
+import { MoneyControl } from './MoneyControl';
 import { QuestionField } from './QuestionField';
 import { SaveIndicator } from './SaveIndicator';
 import type { RoundHook } from './useRound';
@@ -765,7 +766,9 @@ function RoundQuestion({
             : { target: (raw as string | null) ?? null };
       return round.setField(patch);
     };
-    const isText = question.type === 'text' || question.type === 'money';
+    // Сумма ведёт собственный черновик внутри MoneyControl и отдаёт наружу
+    // только разобранное значение, поэтому текстовый черновик ей не нужен.
+    const isText = question.type === 'text';
     return (
       <QuestionField
         question={question}
@@ -875,6 +878,7 @@ function ExtraFields({ round, detail }: { round: RoundHook; detail: FundingRound
         hint={S.round.fields.committedHint}
         value={r.committed}
         error={round.fieldErrors.committed}
+        allowZero
         onCommit={(v) => round.setField({ committed: v ?? '0' })}
       />
     </div>
@@ -887,6 +891,7 @@ function MoneyField({
   hint,
   value,
   error,
+  allowZero,
   onCommit,
 }: {
   id: string;
@@ -894,23 +899,27 @@ function MoneyField({
   hint?: string;
   value: string | null;
   error?: string;
+  /** Ноль осмыслен (подтверждённые обязательства), в остальных полях — нет. */
+  allowZero?: boolean;
   onCommit: (value: string | null) => Promise<void>;
 }) {
-  const [draft, setDraft] = useState<string | null>(null);
+  // Ошибка разбора относится к тому, что в поле сейчас, и потому важнее
+  // серверной: та описывает последнее отправленное значение.
+  const [inputError, setInputError] = useState<string | null>(null);
   return (
-    <Field label={label} htmlFor={id} hint={hint ?? S.round.fields.moneyHint} error={error ?? null}>
-      <Input
+    <Field
+      label={label}
+      htmlFor={id}
+      hint={hint ?? S.round.fields.moneyHint}
+      error={inputError ?? error ?? null}
+    >
+      <MoneyControl
         id={id}
-        inputMode="decimal"
-        value={draft !== null ? draft : (value ?? '')}
-        placeholder="1000000.00"
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={() => {
-          if (draft === null) return;
-          const next = draft.trim() === '' ? null : draft.trim();
-          setDraft(null);
-          if (next !== value) void onCommit(next);
-        }}
+        value={value}
+        allowZero={allowZero}
+        describedBy={`${id}-hint`}
+        onError={setInputError}
+        onCommit={(next) => void onCommit(next)}
       />
     </Field>
   );
