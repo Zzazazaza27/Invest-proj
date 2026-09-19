@@ -57,8 +57,8 @@ for (const row of open) console.warn(`    FAIL ${row.fn}(${row.args})`);
 // отсутствие GRANT в каталоге и невозможность вызова — разные утверждения.
 const NEGATIVE = [
   ['app_readonly', 'audit.app_emit_event'],
-  ['app_backend', 'billing.confirm_first_tranche'],
-  ['app_billing', 'billing.confirm_first_tranche'],
+  ['app_backend', 'billing.confirm_tranche'],
+  ['app_billing', 'billing.confirm_tranche'],
 ];
 let denied = 0;
 for (const [role, fn] of NEGATIVE) {

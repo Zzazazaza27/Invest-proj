@@ -24,6 +24,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
+import { activePolicyConfig, restoreCountryPolicy } from './lib/country-policy.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -120,6 +121,12 @@ const [maxRu] = await sql(
 );
 const NEXT = Number(maxRu.max) + 1;
 console.warn(`  ·     активная версия условий RU: ${activeRu?.version ?? '—'}`);
+
+// Проверка активирует версии условий RU и возвращает прежнее значение шагом
+// сценария. Если она упадёт между этими шагами, условия остались бы
+// изменёнными — поэтому исходное значение запоминается здесь и
+// восстанавливается в `finally` независимо от исхода.
+const originalPolicy = await activePolicyConfig(sql, 'ru');
 
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
@@ -337,6 +344,14 @@ try {
 } finally {
   await browser.close();
   await sql(`UPDATE billing.service_countries SET is_active = false WHERE code = $1`, [TEST_CODE]);
+  // Возврат — новой версией: переписывать версии нельзя. Ничего не делает,
+  // если сценарий уже вернул прежнее значение своим шагом.
+  await restoreCountryPolicy(
+    sql,
+    'ru',
+    originalPolicy,
+    'рендер-проверка: возврат исходных условий после прогона',
+  );
   await pool.end();
 }
 

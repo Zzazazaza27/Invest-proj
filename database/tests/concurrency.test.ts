@@ -43,7 +43,7 @@ async function prepareSignedAgreement(amount = 1_000_000): Promise<string> {
   });
 }
 
-/** Один вызов confirm_first_tranche в отдельном соединении. */
+/** Один вызов confirm_tranche в отдельном соединении. */
 async function callConfirm(
   agreementId: string,
   bankRef: string,
@@ -54,7 +54,7 @@ async function callConfirm(
     await client.query('BEGIN');
     await client.query('SET LOCAL ROLE app_investments');
     const { rows } = await client.query<{ already_processed: boolean }>(
-      `SELECT * FROM billing.confirm_first_tranche($1, $2, $3, now(), digest('stmt','sha256'), NULL, 'race')`,
+      `SELECT * FROM billing.confirm_tranche($1, $2, $3, now(), digest('stmt','sha256'), NULL, 'race')`,
       [agreementId, bankRef, amount],
     );
     await client.query('COMMIT');
@@ -67,7 +67,7 @@ async function callConfirm(
   }
 }
 
-describe('confirm_first_tranche под конкуренцией', () => {
+describe('confirm_tranche под конкуренцией', () => {
   it('8 параллельных доставок ОДНОГО банковского события дают ровно одно начисление', async () => {
     const amount = 1_000_000;
     const agreementId = await prepareSignedAgreement(amount);
@@ -113,7 +113,8 @@ describe('confirm_first_tranche под конкуренцией', () => {
     expect(nominal.rows[0]!.count).toBe('1');
     expect(agreement.rows[0]!.status).toBe('effective');
 
-    // База — ПОЛНАЯ сумма договора, 10% и 5% от неё (ADR-005).
+    // База — сумма ПОДТВЕРЖДЁННОГО транша (5.9.3): здесь транш равен всей
+    // сумме договора, доли — процентные пункты общей ставки.
     expect(Number(accruals.rows[0]!.base)).toBe(amount);
     expect(Number(accruals.rows[0]!.investor_fee)).toBe(amount * 0.1);
     expect(Number(accruals.rows[0]!.issuer_fee)).toBe(amount * 0.05);
@@ -141,7 +142,12 @@ describe('confirm_first_tranche под конкуренцией', () => {
     expect(rows[0]!.count).toBe('1');
   });
 
-  it('второе банковское событие по тому же договору не создаёт второго начисления', async () => {
+  /**
+   * Модель 5.9.3: вознаграждение берётся с КАЖДОГО подтверждённого транша, а
+   * не разово со всей суммы договора. Прежний тест требовал обратного — это
+   * и есть отменённое поведение, а не регрессия.
+   */
+  it('второй транш начисляется отдельно, на свою сумму', async () => {
     const amount = 800_000;
     const agreementId = await prepareSignedAgreement(amount);
 
@@ -149,21 +155,45 @@ describe('confirm_first_tranche под конкуренцией', () => {
     const second = await callConfirm(agreementId, `bank-${uuidv7()}`, amount / 2);
 
     expect(first.ok).toBe(true);
-    expect(second.ok).toBe(false);
-    if (!second.ok) {
-      expect(second.error).toMatch(
-        /already has a commission accrual|cannot accept the first tranche/i,
-      );
-    }
+    expect(second.ok).toBe(true);
 
-    const { rows } = await getPool().query<{ count: string }>(
-      `SELECT count(*)::text AS count FROM billing.commission_accruals WHERE agreement_id = $1`,
+    const { rows } = await getPool().query<{
+      count: string;
+      base_sum: string;
+      investor_sum: string;
+    }>(
+      `SELECT count(*)::text AS count,
+              sum(base_amount)::text AS base_sum,
+              sum(investor_fee_amount)::text AS investor_sum
+         FROM billing.commission_accruals WHERE agreement_id = $1`,
       [agreementId],
     );
-    expect(rows[0]!.count).toBe('1');
+    expect(rows[0]!.count).toBe('2');
+    // Итог совпадает с расчётом по полной сумме, только деньги берутся по
+    // мере поступления, а не авансом.
+    expect(Number(rows[0]!.base_sum)).toBe(amount);
+    expect(Number(rows[0]!.investor_sum)).toBe(amount * 0.1);
+
+    const tranches = await getPool().query<{ count: string }>(
+      `SELECT count(*)::text AS count FROM investments.investment_tranches WHERE agreement_id = $1`,
+      [agreementId],
+    );
+    expect(tranches.rows[0]!.count).toBe('2');
   });
 
-  it('неподписанный договор не принимает первый транш', async () => {
+  it('транши сверх суммы договора не принимаются', async () => {
+    const amount = 400_000;
+    const agreementId = await prepareSignedAgreement(amount);
+
+    const first = await callConfirm(agreementId, `bank-${uuidv7()}`, amount);
+    const excess = await callConfirm(agreementId, `bank-${uuidv7()}`, 1);
+
+    expect(first.ok).toBe(true);
+    expect(excess.ok).toBe(false);
+    if (!excess.ok) expect(excess.error).toMatch(/exceed contract amount/i);
+  });
+
+  it('неподписанный договор не принимает транш', async () => {
     const agreementId = await inCommittedTx(async (c) => {
       const founder = await createUser(c);
       const investor = await createUser(c, { role: 'investor' });

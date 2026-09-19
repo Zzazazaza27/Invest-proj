@@ -123,6 +123,7 @@ export class BillingService {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<AccrualRow>(
         `SELECT id, agreement_id, base_amount::text AS base_amount, currency,
+                total_pct::text AS total_pct,
                 investor_fee_pct::text AS investor_fee_pct,
                 issuer_fee_pct::text AS issuer_fee_pct,
                 investor_fee_amount::text AS investor_fee_amount,
@@ -303,6 +304,7 @@ interface AccrualRow {
   agreement_id: string;
   base_amount: string;
   currency: string;
+  total_pct: string;
   investor_fee_pct: string;
   issuer_fee_pct: string;
   investor_fee_amount: string;
@@ -317,6 +319,7 @@ function mapAccrual(row: AccrualRow): CommissionAccrual {
     agreementId: row.agreement_id,
     baseAmount: row.base_amount,
     currency: row.currency as 'RUB',
+    totalPct: row.total_pct,
     investorFeePct: row.investor_fee_pct,
     issuerFeePct: row.issuer_fee_pct,
     investorFeeAmount: row.investor_fee_amount,

@@ -17,6 +17,8 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { activePolicyConfig, restoreCountryPolicy } from './country-policy.mjs';
+
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 export function loadDotEnv() {
@@ -259,27 +261,28 @@ export async function closeLeftoverPackages(sql) {
 
 /** Включает платные пакеты новой версией условий и возвращает прежний config. */
 export async function enablePaidPackages(admin, sql) {
-  const [before] = await sql(
-    `SELECT config_jsonb FROM billing.service_country_policies
-      WHERE country_code = 'ru' AND is_active`,
-  );
+  const before = await activePolicyConfig(sql, 'ru');
   await admin.json('/v1/admin/service-countries/ru/policies', {
     method: 'POST',
     body: {
-      config: { ...before.config_jsonb, paidPackages: { enabled: true } },
+      config: { ...before, paidPackages: { enabled: true } },
       reason: 'прогон расчёта: временно включены платные пакеты',
     },
   });
-  return before.config_jsonb;
+  return before;
 }
 
-export async function restorePolicy(admin, sql, config) {
-  await admin.json('/v1/admin/service-countries/ru/policies', {
-    method: 'POST',
-    body: {
-      config,
-      reason: 'прогон расчёта: платные пакеты возвращены в выключенное состояние',
-    },
-  });
+/**
+ * Возврат условий и закрытие версий прогона. Вызывается в `finally`, поэтому
+ * идёт прямо в базу: уборка обязана отработать и тогда, когда проверка упала
+ * из-за недоступного ядра. Идемпотентно — повторный вызов ничего не делает.
+ */
+export async function restorePolicy(sql, config) {
+  await restoreCountryPolicy(
+    sql,
+    'ru',
+    config,
+    'прогон расчёта: платные пакеты возвращены в выключенное состояние',
+  );
   await closeLeftoverPackages(sql);
 }

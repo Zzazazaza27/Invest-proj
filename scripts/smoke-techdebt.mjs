@@ -506,12 +506,38 @@ console.warn('\n--- описание API ---');
 console.warn('\n--- проекция вознаграждения ---');
 
 {
+  // С 5.9.3 начисление создаётся на КАЖДЫЙ подтверждённый транш, а проекция
+  // остаётся по сделке: наружу отдаётся накопленный итог. Поэтому строк
+  // проекции столько же, сколько договоров с начислениями, а суммы должны
+  // сходиться с суммой начислений — вот это и проверяется.
+  const [coverage] = await sql(
+    `SELECT count(*)::int AS deals FROM (
+       SELECT DISTINCT agreement_id FROM billing.commission_accruals) a`,
+  );
   const [projection] = await sql(`SELECT count(*)::int AS n FROM integration.deal_commissions`);
-  const [accruals] = await sql(`SELECT count(*)::int AS n FROM billing.commission_accruals`);
   check(
-    'проекция покрывает все начисления',
-    projection.n === accruals.n,
-    `проекция ${projection.n}, начислений ${accruals.n}`,
+    'проекция покрывает все сделки с начислениями',
+    projection.n === coverage.deals,
+    `проекция ${projection.n}, сделок ${coverage.deals}`,
+  );
+
+  const mismatched = await sql(
+    `SELECT p.agreement_id
+       FROM integration.deal_commissions p
+       JOIN (SELECT agreement_id,
+                    sum(base_amount) AS base,
+                    sum(investor_fee_amount) AS inv,
+                    sum(issuer_fee_amount) AS iss
+               FROM billing.commission_accruals GROUP BY agreement_id) a
+         ON a.agreement_id = p.agreement_id
+      WHERE p.base_amount <> a.base
+         OR p.investor_fee_amount <> a.inv
+         OR p.issuer_fee_amount <> a.iss`,
+  );
+  check(
+    'суммы проекции сходятся с начислениями по сделке',
+    mismatched.length === 0,
+    `расхождений ${mismatched.length}`,
   );
 }
 {

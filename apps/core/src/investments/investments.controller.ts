@@ -109,6 +109,6 @@ export class InvestmentsController {
       }),
       rawBody,
     );
-    return this.investments.confirmFirstTranche(ctx, input);
+    return this.investments.confirmTranche(ctx, input);
   }
 }

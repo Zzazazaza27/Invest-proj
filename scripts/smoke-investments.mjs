@@ -483,13 +483,20 @@ try {
        FROM billing.commission_accruals WHERE id = $1`,
       [accrualId],
     );
+    // Модель 5.9.3: база — сумма ПОДТВЕРЖДЁННОГО транша. Начисление на всю
+    // сумму договора при первом платеже отменено: платформа не берёт денег
+    // за то, что ещё не поступило.
     check(
-      'база начисления — ПОЛНАЯ сумма договора, а не транша',
-      accrual?.base === '1000000.00',
+      'база начисления — сумма подтверждённого транша',
+      accrual?.base === '300000.00',
       `база ${accrual?.base}, транш 300000.00`,
     );
-    check('вознаграждение инвестора 10%', accrual?.inv === '100000.00', accrual?.inv ?? '');
-    check('вознаграждение ЛПИ 5%', accrual?.iss === '50000.00', accrual?.iss ?? '');
+    check('доля инвестора — 10 п. п. от транша', accrual?.inv === '30000.00', accrual?.inv ?? '');
+    check(
+      'доля привлекающего — 5 п. п. от транша',
+      accrual?.iss === '15000.00',
+      accrual?.iss ?? '',
+    );
   }
   {
     const { json } = await admin.call('/v1/investments/tranches/confirm', {
@@ -515,7 +522,7 @@ try {
     );
   }
   {
-    // Второй транш не создаёт нового начисления и не меняет базу.
+    // Второй транш начисляется отдельно, на свою сумму (5.9.3).
     const { json } = await admin.call('/v1/investments/tranches/confirm', {
       method: 'POST',
       body: {
@@ -526,15 +533,31 @@ try {
         statementSha256: 'b'.repeat(64),
       },
     });
-    void json;
+    check('второй транш получил свой номер', json?.trancheNo === 2, `${json?.trancheNo}`);
     const accruals = await sql(
-      'SELECT base_amount::text AS base FROM billing.commission_accruals WHERE agreement_id = $1',
+      `SELECT base_amount::text AS base FROM billing.commission_accruals
+        WHERE agreement_id = $1 ORDER BY accrued_at`,
       [agreementId],
     );
     check(
-      'последующий транш не создаёт второго начисления',
-      accruals.length === 1 && accruals[0]?.base === '1000000.00',
-      `начислений ${accruals.length}`,
+      'второй транш начислен отдельно',
+      accruals.length === 2 && accruals[1]?.base === '700000.00',
+      `начислений ${accruals.length}, база второго ${accruals[1]?.base}`,
+    );
+    const [projection] = await sql(
+      `SELECT base_amount::text AS base, total_fee_amount::text AS total
+         FROM integration.deal_commissions WHERE agreement_id = $1`,
+      [agreementId],
+    );
+    check(
+      'проекция по сделке накопила обе базы',
+      projection?.base === '1000000.00',
+      `${projection?.base}`,
+    );
+    check(
+      'итог вознаграждения по сделке — 15 % от поступившего',
+      projection?.total === '150000.00',
+      `${projection?.total}`,
     );
   }
 

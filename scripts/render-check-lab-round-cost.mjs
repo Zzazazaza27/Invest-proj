@@ -20,6 +20,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
+import { activePolicyConfig } from './lib/country-policy.mjs';
 import {
   CONSENTS,
   GRID,
@@ -144,6 +145,10 @@ const [flagBefore] = await sql(
 );
 await sql(`UPDATE audit.feature_flags SET enabled = true WHERE key = 'lab.ui.application_v2'`);
 
+// Исходные условия запоминаются до первого изменения: упавшая проверка
+// обязана вернуть их так же, как успешная.
+const originalPolicy = await activePolicyConfig(sql, 'ru');
+
 const codes = codesFor(suffix);
 await closeLeftoverPackages(sql);
 const { application, roundId } = await createProjectWithDraftRound(founder.client, sql, suffix);
@@ -179,7 +184,6 @@ async function openRoundScreen() {
   await page.waitForSelector('[data-round-country]', { timeout: 20_000 });
 }
 
-let previousPolicy = null;
 try {
   console.warn('[1] Вход и экран раунда при бесплатном запуске');
   await page.goto(LAB_URL, { waitUntil: 'networkidle', timeout: 30_000 });
@@ -199,7 +203,7 @@ try {
   await screenshot('free');
 
   console.warn('\n[2] Платные пакеты включены: стоимость объяснена');
-  previousPolicy = await enablePaidPackages(admin, sql);
+  await enablePaidPackages(admin, sql);
   await openRoundScreen();
   await page.waitForSelector('[data-round-cost="priced"]', { timeout: 20_000 });
   const cost = await page.locator('[data-round-cost]').innerText();
@@ -234,8 +238,7 @@ try {
   );
 
   console.warn('\n[4] Возврат условий: раздел про деньги исчезает');
-  await restorePolicy(admin, sql, previousPolicy);
-  previousPolicy = null;
+  await restorePolicy(sql, originalPolicy);
   await openRoundScreen();
   check(
     'после возврата условий стоимости снова нет',
@@ -245,7 +248,7 @@ try {
 
   check('ошибок в консоли нет', consoleErrors.length === 0, consoleErrors.join(' | '));
 } finally {
-  if (previousPolicy) await restorePolicy(admin, sql, previousPolicy);
+  await restorePolicy(sql, originalPolicy);
   await sql(`UPDATE audit.feature_flags SET enabled = $1 WHERE key = 'lab.ui.application_v2'`, [
     flagBefore?.enabled ?? false,
   ]);

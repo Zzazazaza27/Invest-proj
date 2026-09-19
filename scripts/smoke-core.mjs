@@ -97,16 +97,28 @@ console.warn('\n=== ДЫМОВАЯ ПРОВЕРКА CORE ===\n');
 {
   const { response, json } = await req('/v1/pricing');
   check('тарифы доступны без авторизации', response.status === 200);
-  check('шесть тарифов', json?.plans?.length === 6, `получено ${json?.plans?.length}`);
+  // Тарифы остались только инвесторскими: подписка основателя отменена и
+  // удалена (M094), запуск раунда оплачивается разово.
   check(
-    'вознаграждение 10%/5%',
-    json?.feeSchedule?.investorFeePct === '10.00' && json?.feeSchedule?.issuerFeePct === '5.00',
+    'тарифы только инвесторские',
+    (json?.plans ?? []).length > 0 &&
+      (json?.plans ?? []).every((p) => p.code.startsWith('investor')),
+    `получено ${json?.plans?.length}`,
   );
   check(
-    'раскрыто: база — полная сумма договора',
-    json?.feeDisclosure?.baseIsFullContractAmount === true,
+    'вознаграждение: общая ставка и доли, складывающиеся в неё',
+    Number(json?.feeSchedule?.investorFeePct) + Number(json?.feeSchedule?.issuerFeePct) ===
+      Number(json?.feeSchedule?.totalPct),
+    `${json?.feeSchedule?.investorFeePct} + ${json?.feeSchedule?.issuerFeePct} = ${json?.feeSchedule?.totalPct}`,
   );
-  check('раскрыто: начисление однократное', json?.feeDisclosure?.accrualIsOneTime === true);
+  check(
+    'раскрыто: база — сумма подтверждённого транша',
+    json?.feeDisclosure?.baseIsConfirmedTranche === true,
+  );
+  check(
+    'раскрыто: начисление по каждому подтверждённому траншу',
+    json?.feeDisclosure?.accrualPerTranche === true,
+  );
 }
 
 // ------------------------------------------------------- deny by default

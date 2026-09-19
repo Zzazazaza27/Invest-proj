@@ -42,9 +42,10 @@ export class PricingController {
 
       const fee = await tx.query(
         `SELECT id, code, version,
+                total_pct::text AS total_pct,
                 investor_fee_pct::text AS investor_fee_pct,
                 issuer_fee_pct::text AS issuer_fee_pct,
-                rules_version, valid_from, valid_to
+                rules_version, reason, valid_from, valid_to
            FROM billing.fee_schedules
           WHERE code = 'operator_success_fee'
             AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now())
@@ -63,13 +64,15 @@ export class PricingController {
         announcedPlans: announced.rows.map(mapPlan),
         feeSchedule: mapFee(feeRow),
         feeDisclosure: {
-          baseIsFullContractAmount: true,
-          accrualIsOneTime: true,
+          baseIsConfirmedTranche: true,
+          accrualPerTranche: true,
           triggerDescription:
-            'Вознаграждение оператора начисляется один раз: после подписания договора ' +
-            'обеими сторонами и подтверждения первого транша через номинальный счёт. ' +
-            'База — полная сумма договора, а не размер транша. Последующие транши ' +
-            'нового начисления не создают и уже возникшее обязательство не уменьшают.',
+            'Вознаграждение платформы начисляется с каждого подтверждённого транша: ' +
+            'база — сумма этого транша, а не вся сумма договора. Первый транш ' +
+            'дополнительно требует подписей обеих сторон и вводит договор в силу. ' +
+            `Общая ставка — ${feeRow.total_pct} %, она распределяется между сторонами: ` +
+            `${feeRow.investor_fee_pct} п. п. инвестор, ${feeRow.issuer_fee_pct} п. п. ` +
+            'привлекающий. Пока транш не подтверждён, обязательства по нему нет.',
         },
       });
     });
@@ -107,9 +110,11 @@ interface FeeRow {
   id: string;
   code: string;
   version: number;
+  total_pct: string;
   investor_fee_pct: string;
   issuer_fee_pct: string;
   rules_version: string;
+  reason: string;
   valid_from: Date;
   valid_to: Date | null;
 }
@@ -120,9 +125,11 @@ function mapFee(row: unknown) {
     id: r.id,
     code: r.code,
     version: r.version,
+    totalPct: r.total_pct,
     investorFeePct: r.investor_fee_pct,
     issuerFeePct: r.issuer_fee_pct,
     rulesVersion: r.rules_version,
+    reason: r.reason,
     validFrom: r.valid_from.toISOString(),
     validTo: r.valid_to?.toISOString() ?? null,
   };

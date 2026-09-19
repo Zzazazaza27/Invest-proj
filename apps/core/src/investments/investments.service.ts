@@ -363,17 +363,18 @@ export class InvestmentsService {
   }
 
   /**
-   * Подтверждение первого транша по банковскому событию.
+   * Подтверждение транша по банковскому событию.
    *
-   * Вся логика — в команде БД `billing.confirm_first_tranche`: она атомарно
-   * заводит транш, переводит договор в силу и создаёт ЕДИНСТВЕННОЕ начисление
-   * вознаграждения на полную сумму договора. Повторная доставка того же
-   * банковского события возвращает прежний результат вместо дубликата.
+   * Вся логика — в команде БД `billing.confirm_tranche` (5.9.3): она атомарно
+   * заводит очередной транш, первым траншем переводит договор в силу и
+   * создаёт начисление вознаграждения НА СУММУ ЭТОГО ТРАНША. Повторная
+   * доставка того же банковского события возвращает прежний результат вместо
+   * дубликата.
    *
    * Сервисный слой сознательно не повторяет эти правила: два источника истины
    * для денег рано или поздно разойдутся.
    */
-  async confirmFirstTranche(
+  async confirmTranche(
     ctx: RequestContext,
     input: {
       agreementId: string;
@@ -382,7 +383,12 @@ export class InvestmentsService {
       bookedAt: string;
       statementSha256: string;
     },
-  ): Promise<{ trancheId: string; accrualId: string | null; alreadyProcessed: boolean }> {
+  ): Promise<{
+    trancheId: string;
+    accrualId: string | null;
+    trancheNo: number;
+    alreadyProcessed: boolean;
+  }> {
     return mapInvestmentErrors(async () => {
       await this.assertContourEnabled(ctx);
 
@@ -392,10 +398,11 @@ export class InvestmentsService {
         const { rows } = await tx.query<{
           tranche_id: string;
           accrual_id: string | null;
+          tranche_no: number;
           already_processed: boolean;
         }>(
-          `SELECT tranche_id, accrual_id, already_processed
-             FROM billing.confirm_first_tranche($1, $2, $3::numeric, $4::timestamptz, $5, $6, $7)`,
+          `SELECT tranche_id, accrual_id, tranche_no, already_processed
+             FROM billing.confirm_tranche($1, $2, $3::numeric, $4::timestamptz, $5, $6, $7)`,
           [
             input.agreementId,
             input.bankTransactionRef,
@@ -407,10 +414,11 @@ export class InvestmentsService {
           ],
         );
         const row = rows[0];
-        if (!row) throw errors.internal({ reason: 'confirm_first_tranche returned no row' });
+        if (!row) throw errors.internal({ reason: 'confirm_tranche returned no row' });
         return {
           trancheId: row.tranche_id,
           accrualId: row.accrual_id,
+          trancheNo: Number(row.tranche_no),
           alreadyProcessed: row.already_processed,
         };
       });

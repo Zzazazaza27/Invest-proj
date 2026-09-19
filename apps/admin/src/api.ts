@@ -11,6 +11,12 @@ import {
   SeasonSchema,
   SeasonStageOccupancySchema,
   ServiceAccountSchema,
+  FeeOffsetRuleSchema,
+  FeeTermsSchema,
+  type ActivateFeeOffsetRuleRequest,
+  type FeeOffsetRule,
+  type FeeTerms,
+  type PublishFeeTermsRequest,
   RoundPackageSchema,
   RoundServiceOfferSchema,
   RoundServiceSchema,
@@ -768,6 +774,41 @@ export const api = {
   },
 
   // ------------------------------------------- словарь и ЧАВО (план 0.2 §2.6)
+
+  /**
+   * Вознаграждение платформы и зачёт услуг (этап 5.9.3): версии условий со
+   * ставкой и долями, версии правила зачёта. Начисления здесь не создаются.
+   */
+  commission: {
+    terms: (): Promise<{ items: FeeTerms[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/fee-schedules',
+        schema: listOf(FeeTermsSchema),
+      }),
+    publishTerms: (body: PublishFeeTermsRequest): Promise<FeeTerms> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/fee-schedules',
+        body,
+        schema: FeeTermsSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    offsetRules: (): Promise<{ items: FeeOffsetRule[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/fee-offset-rules',
+        schema: listOf(FeeOffsetRuleSchema),
+      }),
+    activateOffsetRule: (body: ActivateFeeOffsetRuleRequest): Promise<FeeOffsetRule> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/fee-offset-rules',
+        body,
+        schema: FeeOffsetRuleSchema,
+        idempotencyKey: uuidv7(),
+      }),
+  },
 
   /**
    * Пакеты запуска раунда (этап 5.9.1): каталог услуг, версии пакетов и цены

@@ -16,6 +16,7 @@
  * Запуск: node scripts/smoke-round-pricing.mjs [--api http://127.0.0.1:4300]
  */
 import { CORE_URL } from './lib/ports.mjs';
+import { activePolicyConfig } from './lib/country-policy.mjs';
 import {
   CONSENTS,
   GRID,
@@ -144,6 +145,12 @@ const founder = await register('founder', 'f');
 const admin = await makeAdmin(await register('founder', 'a'));
 const codes = codesFor(suffix);
 
+// Исходные условия страны запоминаются ДО первого изменения: вернуть их
+// обязан даже упавший прогон, иначе следующая проверка увидит чужое
+// состояние. История версий при этом растёт — для локальных тестовых данных
+// это норма, переписывать версии нельзя.
+const originalPolicy = await activePolicyConfig(sql, 'ru');
+
 await closeLeftoverPackages(sql);
 const { roundId } = await createProjectWithDraftRound(founder.client, sql, suffix);
 console.warn(`  ·     проект и черновик раунда на ${GRID.target} RUB созданы`);
@@ -165,12 +172,11 @@ console.warn(`  ·     проект и черновик раунда на ${GRID
   check('посторонний расчёт не видит', response.status === 403, `статус ${response.status}`);
 }
 
-await publishGrid(admin, codes);
-console.warn('  ·     сетка прогона опубликована (три пакета, одна цена докупки)');
-
-const previousPolicy = await enablePaidPackages(admin, sql);
-
 try {
+  await publishGrid(admin, codes);
+  console.warn('  ·     сетка прогона опубликована (три пакета, одна цена докупки)');
+  await enablePaidPackages(admin, sql);
+
   {
     const quote = await founder.client.json(`/v1/rounds/${roundId}/quote`);
     check('режим стал платным', quote.mode === 'priced', `режим ${quote.mode}`);
@@ -278,7 +284,7 @@ try {
     check('покупка не создавалась: продажи выключены', live?.n === 0, `${live?.n}`);
   }
 } finally {
-  await restorePolicy(admin, sql, previousPolicy);
+  await restorePolicy(sql, originalPolicy);
 }
 
 {

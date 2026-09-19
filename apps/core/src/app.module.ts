@@ -35,6 +35,11 @@ import {
 } from './billing/round-packages.controller';
 import { RoundPackagesService } from './billing/round-packages.service';
 import { RoundPricingService } from './billing/round-pricing.service';
+import {
+  AdminFeeOffsetRulesController,
+  AdminFeeTermsController,
+} from './billing/commission.controller';
+import { CommissionService } from './billing/commission.service';
 import { FundingRoundsController } from './lab/funding-rounds.controller';
 import { FundingRoundsService } from './lab/funding-rounds.service';
 import { NotificationsController } from './comms/notifications.controller';
@@ -146,6 +151,8 @@ import { S3Service } from './storage/s3.service';
     AdminRoundServicesController,
     AdminRoundPackagesController,
     AdminRoundServiceOffersController,
+    AdminFeeTermsController,
+    AdminFeeOffsetRulesController,
     FundingRoundsController,
     AdminController,
     InvestmentsController,
@@ -191,6 +198,7 @@ import { S3Service } from './storage/s3.service';
     ServiceCountriesService,
     RoundPackagesService,
     RoundPricingService,
+    CommissionService,
     FundingRoundsService,
     AdminService,
     DirectoryService,

@@ -39,14 +39,23 @@ export const SubscriptionPlanSchema = z.object({
 });
 export type SubscriptionPlan = z.infer<typeof SubscriptionPlanSchema>;
 
-/** Условия вознаграждения ОИП. Тоже публичны. */
+/**
+ * Условия вознаграждения платформы. Публичны.
+ *
+ * Ставка ОДНА (`totalPct`) и считается от одной базы; между сторонами она
+ * распределяется в процентных пунктах, и доли обязаны в неё складываться
+ * (5.9.3). Два независимых процента давали бы тот же итог, но прятали
+ * главное: договорённость — про общую ставку.
+ */
 export const FeeScheduleSchema = z.object({
   id: UuidSchema,
   code: z.string(),
   version: z.number().int().positive(),
+  totalPct: z.string(),
   investorFeePct: z.string(),
   issuerFeePct: z.string(),
   rulesVersion: z.string(),
+  reason: z.string(),
   validFrom: IsoDateTimeSchema,
   validTo: IsoDateTimeSchema.nullable(),
 });
@@ -69,8 +78,10 @@ export const PricingSchema = z.object({
    * полная сумма договора, начисление однократное.
    */
   feeDisclosure: z.object({
-    baseIsFullContractAmount: z.literal(true),
-    accrualIsOneTime: z.literal(true),
+    /** База начисления — сумма подтверждённого транша (5.9.3), не весь договор. */
+    baseIsConfirmedTranche: z.literal(true),
+    /** Начисление происходит по каждому подтверждённому траншу. */
+    accrualPerTranche: z.literal(true),
     triggerDescription: z.string(),
   }),
 });
@@ -203,17 +214,19 @@ export const InvoiceSchema = z.object({
 export type Invoice = z.infer<typeof InvoiceSchema>;
 
 /**
- * Начисление вознаграждения ОИП.
+ * Начисление вознаграждения платформы.
  *
- * `baseAmount` — ПОЛНАЯ сумма договора, а не размер транша. Начисление
- * возникает ровно один раз, по составному триггеру: обе подписи + подтверждённый
- * банковским событием первый транш (ADR-005).
+ * `baseAmount` — сумма ПОДТВЕРЖДЁННОГО транша (5.9.3). Начисление возникает
+ * по каждому подтверждённому траншу: первый дополнительно требует обеих
+ * подписей и переводит договор в силу. До 5.9.3 начисление было однократным
+ * и считалось от полной суммы договора — это отменено.
  */
 export const CommissionAccrualSchema = z.object({
   id: UuidSchema,
   agreementId: UuidSchema,
   baseAmount: z.string(),
   currency: CurrencySchema,
+  totalPct: z.string(),
   investorFeePct: z.string(),
   issuerFeePct: z.string(),
   investorFeeAmount: z.string(),
