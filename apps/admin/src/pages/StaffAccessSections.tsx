@@ -4,6 +4,7 @@ import type {
   AdminProjectSummary,
   AdminUserSummary,
   DealSupportAssignmentRow,
+  ExpertConflict,
   ProjectReviewAssignment,
   StaffCapability,
 } from '@unicorn/contracts';
@@ -302,7 +303,7 @@ export function CapabilitiesSection() {
 
   return (
     // `data-section` — якорь для браузерных проверок: разделов на странице
-    // четыре, и «первая кнопка «Снять»» легко оказывается из чужого.
+    // четыре, и «первая кнопка прекращения» легко оказывается из чужого.
     <Card data-section="capabilities">
       <Stack>
         <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Полномочия сотрудника</h2>
@@ -381,19 +382,48 @@ export function CapabilitiesSection() {
   );
 }
 
+/**
+ * Состояние РАБОТЫ, а не доступа: прекращение доступа показывается отдельной
+ * отметкой и эти подписи не меняет (M120).
+ */
 const STATUS_LABEL: Record<string, string> = {
   assigned: 'назначен, ещё не ответил',
-  accepted: 'принял',
+  accepted: 'принял, рецензии пока нет',
   declined: 'отказался',
-  completed: 'завершено',
-  expired: 'снято или просрочено',
+  completed: 'работа выполнена',
+  expired: 'назначение закрыто или просрочено',
 };
 
 /** Назначения на ОЦЕНКУ проекта. Открывают рецензенту материалы проекта. */
+/**
+ * Конфликт интересов, о котором УЖЕ известно.
+ *
+ * Назначение эксперта с незакрытым конфликтом отвергает сервер (триггер
+ * `assignments_conflict_guard`, M007) — и это остаётся единственной защитой.
+ * Экран лишь показывает то же ограничение заранее, чтобы человек не узнавал о
+ * нём из отказа после нажатия. Своего правила здесь нет: решение о том, что
+ * блокирует, а что нет, целиком повторяет серверное.
+ */
+function blockingConflict(conflicts: ExpertConflict[], expertId: string): ExpertConflict | null {
+  return (
+    conflicts.find(
+      (c) => c.expertId === expertId && (c.resolution === null || c.resolution === 'recused'),
+    ) ?? null
+  );
+}
+
+function disclosedConflict(conflicts: ExpertConflict[], expertId: string): ExpertConflict | null {
+  return (
+    conflicts.find((c) => c.expertId === expertId && c.resolution === 'approved_with_disclosure') ??
+    null
+  );
+}
+
 export function ReviewAssignmentsSection() {
   const [projectId, setProjectId] = useState('');
   const [projectTitle, setProjectTitle] = useState('');
   const [items, setItems] = useState<ProjectReviewAssignment[]>([]);
+  const [conflicts, setConflicts] = useState<ExpertConflict[]>([]);
   const [expertId, setExpertId] = useState('');
   const [expertName, setExpertName] = useState('');
   const [dueAt, setDueAt] = useState('');
@@ -402,9 +432,18 @@ export function ReviewAssignmentsSection() {
   const [notice, setNotice] = useState<Notice>(null);
 
   const load = useCallback(async (id: string) => {
-    const page = await api.expertAssignments.ofProject(id);
+    // Назначения и конфликты грузятся вместе: показывать список рецензентов,
+    // не зная про заявленные конфликты, — это и есть «узнать из отказа».
+    const [page, declared] = await Promise.all([
+      api.expertAssignments.ofProject(id),
+      api.expertAssignments.conflictsOfProject(id),
+    ]);
     setItems(page.items);
+    setConflicts(declared.items);
   }, []);
+
+  const blocking = expertId ? blockingConflict(conflicts, expertId) : null;
+  const disclosed = expertId ? disclosedConflict(conflicts, expertId) : null;
 
   async function assign(): Promise<void> {
     setBusy(true);
@@ -421,17 +460,22 @@ export function ReviewAssignmentsSection() {
     }
   }
 
-  async function withdraw(assignmentId: string): Promise<void> {
+  async function revokeAccess(assignmentId: string): Promise<void> {
     if (reason.trim().length < 3) {
-      setNotice({ tone: 'error', text: 'Укажите основание снятия: оно попадёт в журнал' });
+      setNotice({ tone: 'error', text: 'Укажите основание: оно попадёт в журнал' });
       return;
     }
     setBusy(true);
     setNotice(null);
     try {
-      await api.expertAssignments.withdraw(assignmentId, reason.trim());
+      const after = await api.expertAssignments.revokeAccess(assignmentId, reason.trim());
       await load(projectId);
-      setNotice({ tone: 'ok', text: 'Назначение снято' });
+      setNotice({
+        tone: 'ok',
+        text: after.reviewSubmitted
+          ? 'Доступ прекращён. Поданная рецензия осталась — прекращение доступа работу не отменяет'
+          : 'Доступ прекращён, назначение закрыто',
+      });
     } catch (error) {
       setNotice({ tone: 'error', text: describe(error) });
     } finally {
@@ -446,6 +490,11 @@ export function ReviewAssignmentsSection() {
         <span className="small muted">
           Открывает рецензенту материалы проекта и даёт написать рецензию. Требует роли эксперта у
           человека. Это НЕ то же, что сопровождение сделки: одно другого не заменяет и не включает.
+        </span>
+        <span className="small muted">
+          «Прекратить доступ» закрывает именно доступ, а не работу: поданная рецензия остаётся
+          поданной и остаётся за своим автором. Если рецензии ещё нет, назначение при этом
+          закрывается — ждать её больше не от кого. Вернуть доступ можно только новым назначением.
         </span>
 
         <ProjectPicker
@@ -485,20 +534,28 @@ export function ReviewAssignmentsSection() {
                   <Badge tone={item.status === 'expired' ? 'neutral' : 'success'}>
                     {STATUS_LABEL[item.status] ?? item.status}
                   </Badge>
+                  {item.reviewSubmitted ? <Badge tone="success">рецензия подана</Badge> : null}
+                  {item.accessRevokedAt ? <Badge tone="neutral">доступ прекращён</Badge> : null}
                   <span className="small muted">
                     срок {new Date(item.dueAt).toLocaleDateString('ru-RU')}
-                    {item.reviewSubmitted ? ' · рецензия подана' : ''}
+                    {item.accessRevokedAt
+                      ? ` · доступ прекращён ${new Date(item.accessRevokedAt).toLocaleDateString('ru-RU')}`
+                      : ''}
                   </span>
-                  {item.status === 'assigned' || item.status === 'accepted' ? (
+                  {/*
+                    Кнопка доступна при любом состоянии работы, в том числе после
+                    сданной рецензии: иначе прекратить доступ было бы нечем. Она
+                    пропадает только когда доступ уже прекращён.
+                  */}
+                  {item.accessRevokedAt ? null : (
                     <Button
                       variant="danger"
                       loading={busy}
-                      onClick={() => void withdraw(item.id)}
-                      disabled={item.reviewSubmitted}
+                      onClick={() => void revokeAccess(item.id)}
                     >
-                      Снять
+                      Прекратить доступ
                     </Button>
-                  ) : null}
+                  )}
                 </li>
               ))}
             </ul>
@@ -521,6 +578,45 @@ export function ReviewAssignmentsSection() {
               </div>
             ) : null}
 
+            {/*
+              Известное ограничение показывается ДО попытки работы. Правило
+              остаётся серверным: этот блок ничего не решает, он повторяет то,
+              чем ответит сервер, чтобы человек не узнавал об этом из отказа.
+            */}
+            {blocking ? (
+              <div
+                role="alert"
+                style={{
+                  padding: 'var(--u-space-3)',
+                  borderRadius: 'var(--u-radius-md)',
+                  background: 'var(--u-danger-subtle)',
+                  color: 'var(--u-danger)',
+                }}
+              >
+                У этого эксперта по проекту заявлен конфликт интересов
+                {blocking.resolution === 'recused'
+                  ? ' и принято решение об отводе'
+                  : ', решения по нему ещё нет'}
+                . Назначение отклонит сервер. Сначала — решение комплаенса, потом работа эксперта.
+                <div className="small" style={{ marginTop: 4 }}>
+                  Заявлено {new Date(blocking.createdAt).toLocaleDateString('ru-RU')}:{' '}
+                  {blocking.description}
+                </div>
+              </div>
+            ) : null}
+            {!blocking && disclosed ? (
+              <div className="small muted">
+                Конфликт интересов по этому проекту заявлен и разрешён с раскрытием (
+                {new Date(disclosed.createdAt).toLocaleDateString('ru-RU')}). Назначение возможно.
+              </div>
+            ) : null}
+            {conflicts.length > 0 && !expertId ? (
+              <div className="small muted">
+                По проекту заявлено конфликтов интересов: {conflicts.length}. Выберите человека,
+                чтобы увидеть, касается ли это его.
+              </div>
+            ) : null}
+
             <Field label="Срок рецензии" htmlFor="review-due" hint="Должен быть в будущем">
               <Input
                 id="review-due"
@@ -531,20 +627,24 @@ export function ReviewAssignmentsSection() {
             </Field>
 
             <Field
-              label="Основание снятия"
+              label="Основание прекращения доступа"
               htmlFor="review-reason"
-              hint="Нужно только для снятия назначения"
+              hint="Нужно только для прекращения доступа; попадёт в журнал"
             >
               <Input
                 id="review-reason"
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
-                placeholder="Например: заявлен конфликт интересов"
+                placeholder="Например: работа по проекту завершена"
               />
             </Field>
 
             <div>
-              <Button loading={busy} disabled={!expertId || !dueAt} onClick={() => void assign()}>
+              <Button
+                loading={busy}
+                disabled={!expertId || !dueAt || blocking !== null}
+                onClick={() => void assign()}
+              >
                 Назначить на оценку
               </Button>
             </div>
@@ -604,7 +704,9 @@ export function DealSupportSection() {
         <span className="small muted">
           Область работы для денежных действий: чьи сделки сотрудник ведёт. Рецензентом от этого не
           становятся — анкета, внутренние оценки и материалы проекта не открываются. Само по себе
-          назначение ничего не позволяет: нужны ещё полномочия из раздела выше.
+          назначение ничего не позволяет: нужны ещё полномочия из раздела выше. Прекращение доступа
+          закрывает область работы; уже сделанные записи о деньгах остаются — они о состоявшихся
+          событиях, и переписывать их нечем.
         </span>
 
         <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'grid', gap: 6 }}>
@@ -634,11 +736,11 @@ export function DealSupportSection() {
                         item.userId,
                         reason.trim(),
                       ),
-                    'Назначение снято',
+                    'Доступ прекращён',
                   )
                 }
               >
-                Снять
+                Прекратить доступ
               </Button>
             </li>
           ))}

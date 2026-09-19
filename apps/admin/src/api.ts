@@ -20,6 +20,7 @@ import {
   type PlanCapability,
   type SetCapabilityBaselineRequest,
   DealSupportAssignmentRowSchema,
+  ExpertConflictSchema,
   DealSupportAssignmentSchema,
   ProjectReviewAssignmentSchema,
   StaffCapabilityGrantSchema,
@@ -32,6 +33,7 @@ import {
   type RecordTrancheReturnRequest,
   type DealSupportAssignment,
   type DealSupportAssignmentRow,
+  type ExpertConflict,
   type ProjectReviewAssignment,
   type StaffCapability,
   type StaffCapabilityGrant,
@@ -969,12 +971,23 @@ export const api = {
         body: { projectId, expertIds, dueAt, reason: 'manual' },
         schema: z.object({ items: z.array(z.unknown()) }),
       }),
-    withdraw: (assignmentId: string, reason: string): Promise<ProjectReviewAssignment> =>
+    /**
+     * Прекратить ДОСТУП по назначению. Работу не отменяет: поданная рецензия
+     * и её авторство остаются (M120).
+     */
+    revokeAccess: (assignmentId: string, reason: string): Promise<ProjectReviewAssignment> =>
       client.request({
         method: 'POST',
-        path: `/v1/experts/assignments/${encodeURIComponent(assignmentId)}/withdraw`,
+        path: `/v1/experts/assignments/${encodeURIComponent(assignmentId)}/revoke-access`,
         body: { reason },
         schema: ProjectReviewAssignmentSchema,
+      }),
+    /** Заявленные конфликты интересов по проекту — показать ДО назначения. */
+    conflictsOfProject: (projectId: string): Promise<{ items: ExpertConflict[] }> =>
+      client.request({
+        method: 'GET',
+        path: `/v1/experts/projects/${encodeURIComponent(projectId)}/conflicts`,
+        schema: listOf(ExpertConflictSchema),
       }),
   },
 

@@ -313,6 +313,8 @@ console.warn('\n=== БРАУЗЕРНЫЙ ПРОХОД: УПРАВЛЕНИЕ ЭК
 const founder = await register('founder');
 const investor = await register('investor');
 const expertUser = await register('expert');
+// Второй эксперт — для проверки показа заявленного конфликта интересов.
+const conflicted = await register('conflict');
 // Отдельный основатель для проверки поведения при 429: у владельца сделки в
 // обстановке лежит фиктивное юрлицо (шифртекст подделан ради фикстуры), и его
 // кабинет показал бы ошибку разбора, не относящуюся к проверяемому.
@@ -330,6 +332,15 @@ await sql(
   `INSERT INTO experts.experts (user_id, expertise_tags) VALUES ($1, ARRAY['fintech'])
    ON CONFLICT (user_id) DO NOTHING`,
   [expertUser.userId],
+);
+await sql(
+  `INSERT INTO identity.user_roles (user_id, role) VALUES ($1, 'expert') ON CONFLICT DO NOTHING`,
+  [conflicted.userId],
+);
+await sql(
+  `INSERT INTO experts.experts (user_id, expertise_tags) VALUES ($1, ARRAY['fintech'])
+   ON CONFLICT (user_id) DO NOTHING`,
+  [conflicted.userId],
 );
 
 const admin = makeClient();
@@ -497,6 +508,67 @@ try {
     'эксперт в списке рецензентов проекта',
   );
 
+  // ---------------------- 5а. заявленный конфликт виден ДО попытки работы
+  console.warn('\n[5а] Заявленный конфликт интересов показан до назначения');
+  {
+    const client = makeClient();
+    await client.json('/v1/auth/login', {
+      method: 'POST',
+      body: { email: conflicted.email, password: conflicted.password },
+    });
+    await client.json('/v1/experts/conflicts', {
+      method: 'POST',
+      body: {
+        projectId: reviewProject.id,
+        description: 'Проход проверки: доля в конкурирующем проекте.',
+      },
+    });
+  }
+  await page.reload({ waitUntil: 'networkidle', timeout: 30_000 });
+  await pick('review-project-search', reviewProject.title, reviewProject.title);
+  await page.waitForTimeout(1000);
+  await pick(
+    'review-expert-search',
+    `Сотрудник conflict ${suffix}`,
+    `Сотрудник conflict ${suffix}`,
+  );
+  await page.waitForTimeout(800);
+  await screenshot(page, 'conflict-shown');
+  {
+    const card = await section('review-assignments').innerText();
+    expect(
+      'Конфликт интересов назван до попытки работы',
+      /заявлен конфликт интересов/i.test(card) && /решения по нему ещё нет/i.test(card),
+      'объяснение в форме назначения',
+    );
+    expect(
+      'Кнопка назначения на этом эксперте недоступна',
+      await section('review-assignments')
+        .getByRole('button', { name: 'Назначить на оценку' })
+        .isDisabled(),
+      'интерфейс не предлагает то, что сервер отклонит',
+    );
+  }
+  {
+    // Серверная проверка остаётся единственной защитой: показ на экране её не
+    // заменяет и решения не принимает.
+    const due = new Date(Date.now() + 14 * 24 * 3600_000).toISOString();
+    const { response } = await admin.call('/v1/experts/assignments', {
+      method: 'POST',
+      body: {
+        projectId: reviewProject.id,
+        expertIds: [conflicted.userId],
+        dueAt: due,
+        reason: 'manual',
+      },
+    });
+    expect(
+      'Сервер по-прежнему отклоняет назначение с незакрытым конфликтом',
+      response.status >= 400,
+      `HTTP ${response.status} в обход экрана`,
+    );
+  }
+
   // ------------------------------------------- кабинет эксперта: что он видит
   console.warn('\n[6] Кабинет эксперта: назначения на оценку и ничего лишнего');
   // Отдельный контекст: сессионная кука одна на origin, и в общем окне
@@ -546,6 +618,11 @@ try {
   // ------------------------------------------------------ 5. отзыв полномочия
   console.warn('\n[7] Отзыв полномочия галочкой');
   await page.bringToFront();
+  // Страница между шагами перезагружалась: выбор человека в разделе полномочий
+  // держится состоянием экрана, а не адресом, и после перезагрузки его нет.
+  await pick('cap-user-search', `Сотрудник expert ${suffix}`, `Сотрудник expert ${suffix}`);
+  await page.fill('#cap-reason', 'проход проверки: отзываем полномочие');
+  await page.waitForTimeout(800);
   await toggleCapability(page, 'finance.tranche_return.record', false);
   await screenshot(page, 'capability-revoked');
   {
@@ -557,8 +634,8 @@ try {
     );
   }
 
-  // ---------------------------- 6. восстановление и снятие назначения
-  console.warn('\n[8] Возврат полномочия и снятие назначения на сопровождение');
+  // ---------------------------- 6. восстановление полномочия
+  console.warn('\n[8] Возврат полномочия');
   await toggleCapability(page, 'finance.tranche_return.record', true);
   {
     const attempt = await tryRecordReturn(expert, deal.trancheId);
@@ -569,9 +646,125 @@ try {
     );
   }
 
+  // ------------------- 7. работа выполнена, затем доступ прекращён
+  //
+  // Главная проверка замечания: сданная рецензия остаётся, а доступ по тому же
+  // назначению закрывается. До M120 это было невозможно — «снять назначение»
+  // означало отменить работу, и приложение такое снятие запрещало.
+  console.warn('\n[9] Рецензия подана, затем администратор прекращает доступ');
+  const myAssignment = (await expert.json('/v1/experts/assignments')).items.find(
+    (a) => a.projectId === reviewProject.id,
+  );
+  await expert.json(`/v1/experts/assignments/${myAssignment.id}/decision`, {
+    method: 'POST',
+    body: { decision: 'accepted' },
+  });
+  const review = await expert.json('/v1/experts/reviews', {
+    method: 'POST',
+    body: {
+      assignmentId: myAssignment.id,
+      rubricScores: { team: 7, product: 6, strategy: 6, legal: 8, finmodel: 5, scalability: 7 },
+      comment: 'Проход проверки: рецензия должна пережить прекращение доступа.',
+      recommendation: 'needs_review',
+    },
+  });
+  expect(
+    'Эксперт подал рецензию по своему назначению',
+    review?.assignmentId === myAssignment.id && review?.expertId === expertUser.userId,
+    `рекомендация «${review?.recommendation}», автор ${review?.expertId?.slice(0, 8)}`,
+  );
+
+  {
+    const { response } = await expert.call(`/v1/projects/${reviewProject.id}`);
+    expect(
+      'До прекращения доступа закрытые данные проекта эксперту открыты',
+      response.status === 200,
+      `HTTP ${response.status} на карточке проекта`,
+    );
+  }
+
+  await page.reload({ waitUntil: 'networkidle', timeout: 30_000 });
+  await pick('review-project-search', reviewProject.title, reviewProject.title);
+  await page.waitForTimeout(1000);
+  expect(
+    'Экран показывает, что работа выполнена',
+    (await section('review-assignments').innerText()).includes('рецензия подана'),
+    'отметка о поданной рецензии в строке назначения',
+  );
+
+  const reviewCard = section('review-assignments');
+  await page.fill('#review-reason', 'проход проверки: работа по проекту завершена');
+  await reviewCard.getByRole('button', { name: 'Прекратить доступ' }).first().click();
+  await page.waitForTimeout(2500);
+  await screenshot(page, 'review-access-revoked');
+
+  {
+    const after = await admin.json(`/v1/experts/projects/${reviewProject.id}/assignments`);
+    const mine = after.items.find((a) => a.expertId === expertUser.userId);
+    expect(
+      'Доступ прекращён, а состояние работы не переписано',
+      mine?.accessRevokedAt !== null && mine?.status === 'completed',
+      `статус ${mine?.status}, доступ прекращён ${mine?.accessRevokedAt ? 'да' : 'нет'}`,
+    );
+    expect(
+      'Рецензия числится поданной и после прекращения доступа',
+      mine?.reviewSubmitted === true,
+      'отметка о работе осталась',
+    );
+  }
+  {
+    const reviews = await admin.json(`/v1/experts/projects/${reviewProject.id}/reviews`);
+    // Рецензия опознаётся по назначению: своего идентификатора в контракте у
+    // неё нет — она одна на назначение, и это само по себе правило.
+    const mine = reviews.items.find((r) => r.assignmentId === myAssignment.id);
+    expect(
+      'Рецензия не удалена и осталась за своим автором',
+      Boolean(mine) && mine.expertId === expertUser.userId,
+      `назначение ${myAssignment.id.slice(0, 8)}, автор ${mine?.expertId?.slice(0, 8) ?? 'нет'}`,
+    );
+  }
+  {
+    const { response } = await expert.call(`/v1/projects/${reviewProject.id}`);
+    expect(
+      'Закрытые данные через это назначение больше недоступны',
+      response.status === 404 || response.status === 403,
+      `HTTP ${response.status} на карточке проекта`,
+    );
+  }
+  {
+    const own = await expert.json('/v1/experts/assignments');
+    expect(
+      'Назначение исчезло из рабочего списка эксперта',
+      own.items.every((a) => a.projectId !== reviewProject.id),
+      `назначений в кабинете: ${own.items.length}`,
+    );
+  }
+  {
+    const { response } = await admin.call(
+      `/v1/experts/assignments/${myAssignment.id}/revoke-access`,
+      { method: 'POST', body: { reason: 'повторное прекращение того же доступа' } },
+    );
+    expect(
+      'Повторное прекращение отвергается, а не переписывает запись',
+      response.status === 409,
+      `HTTP ${response.status}`,
+    );
+  }
+
+  // --------- 8. другие основания доступа считаются отдельно
+  console.warn('\n[10] Другие основания доступа учитываются отдельно');
+  {
+    const attempt = await tryRecordReturn(expert, deal.trancheId);
+    expect(
+      'Прекращение доступа рецензента не тронуло сопровождение сделки',
+      attempt.status === 200 || attempt.status === 201,
+      `HTTP ${attempt.status} — другое назначение, другое основание`,
+    );
+  }
+
   const dealCard = section('deal-support');
-  await page.fill('#deal-reason', 'проход проверки: снимаем назначение');
-  await dealCard.getByRole('button', { name: 'Снять' }).first().click();
+  await page.fill('#deal-reason', 'проход проверки: прекращаем сопровождение');
+  await dealCard.getByRole('button', { name: 'Прекратить доступ' }).first().click();
   await page.waitForTimeout(2000);
   await screenshot(page, 'deal-support-revoked');
   {
@@ -579,41 +772,15 @@ try {
     // Причина другая, и ответ другой: без области работы сделка для
     // сотрудника просто не существует — 404, а не «нет полномочия» 403.
     expect(
-      'Снятие назначения закрывает действие ПО ДРУГОЙ причине',
+      'Прекращение сопровождения закрывает действие ПО ДРУГОЙ причине',
       attempt.status === 404,
       `HTTP ${attempt.status}: ${attempt.detail} (без полномочия было 403)`,
-    );
-  }
-
-  // -------------------------------------------------- независимость назначений
-  console.warn('\n[9] Независимость оценки и сопровождения');
-  {
-    const stillAssigned = await admin.json(`/v1/experts/projects/${reviewProject.id}/assignments`);
-    expect(
-      'Снятие сопровождения не тронуло назначение на оценку',
-      stillAssigned.items.some((a) => a.expertId === expertUser.userId && a.status === 'assigned'),
-      'рецензентское назначение осталось действующим',
-    );
-  }
-
-  const reviewCard = section('review-assignments');
-  await page.fill('#review-reason', 'проход проверки: снимаем рецензента');
-  await reviewCard.getByRole('button', { name: 'Снять' }).first().click();
-  await page.waitForTimeout(2000);
-  await screenshot(page, 'review-withdrawn');
-  {
-    const after = await admin.json(`/v1/experts/projects/${reviewProject.id}/assignments`);
-    const mine = after.items.find((a) => a.expertId === expertUser.userId);
-    expect(
-      'Назначение на оценку снимается через интерфейс',
-      mine?.status === 'expired',
-      `статус назначения: ${mine?.status ?? 'нет строки'}`,
     );
   }
   {
     const grantsAfter = await admin.json(`/v1/admin/capabilities/users/${expertUser.userId}`);
     expect(
-      'Снятие назначения не трогает выданное полномочие',
+      'Прекращение доступа не трогает выданное полномочие',
       grantsAfter.items.some(
         (g) => g.capability === 'finance.tranche_return.record' && g.revokedAt === null,
       ),
@@ -622,7 +789,7 @@ try {
   }
 
   // ------------------------------ замечание прохода: 429 на проверке сессии
-  console.warn('\n[10] Ответ 429 на проверке сессии не выглядит как выход из аккаунта');
+  console.warn('\n[11] Ответ 429 на проверке сессии не выглядит как выход из аккаунта');
   const labContext = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const labPage = await labContext.newPage();
   await signIn(labPage, LAB_URL, labUser);

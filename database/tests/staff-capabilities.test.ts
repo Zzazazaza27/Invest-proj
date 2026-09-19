@@ -424,3 +424,160 @@ describe('M097: корректировка вознаграждения', () => 
     });
   });
 });
+
+/**
+ * M120 — прекращение доступа отдельно от завершённой работы.
+ *
+ * Разбор замечания владельца: «снять назначение» означало отменить саму
+ * работу, поэтому после сданной рецензии закрыть эксперту доступ было нечем.
+ * Здесь проверяется, что эти два факта разошлись и ни один не подменяет
+ * другой.
+ */
+describe('M120: прекращение доступа не отменяет выполненную работу', () => {
+  it('доступ закрывается при любом состоянии работы, рецензия остаётся', async () => {
+    await inRollbackTx(async (c) => {
+      const reviewer = await createUser(c, { role: 'expert' });
+      const admin = await createUser(c, { role: 'admin' });
+      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
+      const deal = await dealWithTranche(c);
+      const assignmentId = uuidv7();
+      await c.query(
+        `INSERT INTO experts.expert_assignments
+           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
+         VALUES ($1, $2, $3, 'manual', 'review', 'completed', now() + interval '30 days')`,
+        [assignmentId, deal.projectId, reviewer.id],
+      );
+      const reviewId = uuidv7();
+      await c.query(
+        `INSERT INTO experts.expert_reviews
+           (id, assignment_id, rubric_scores_jsonb, recommendation)
+         VALUES ($1, $2, '{"team":5,"product":5,"strategy":5,"legal":5,"finmodel":5,"scalability":5}'::jsonb,
+                 'pass')`,
+        [reviewId, assignmentId],
+      );
+
+      const before = await c.query<{ reviewer: boolean }>(
+        `SELECT experts.is_assigned_reviewer($1, $2) AS reviewer`,
+        [deal.projectId, reviewer.id],
+      );
+      // Сданная рецензия доступ не закрывает: автор видит то, о чём писал.
+      expect(before.rows[0]!.reviewer).toBe(true);
+
+      await c.query(
+        `UPDATE experts.expert_assignments
+            SET access_revoked_at = now(), access_revoked_by = $2,
+                access_revoke_reason = 'работа по проекту завершена'
+          WHERE id = $1`,
+        [assignmentId, admin.id],
+      );
+
+      const after = await c.query<{ reviewer: boolean; status: string; review_kept: boolean }>(
+        `SELECT experts.is_assigned_reviewer(a.project_id, a.expert_id) AS reviewer,
+                a.status,
+                EXISTS (SELECT 1 FROM experts.expert_reviews r WHERE r.id = $2) AS review_kept
+           FROM experts.expert_assignments a WHERE a.id = $1`,
+        [assignmentId, reviewId],
+      );
+      expect(after.rows[0]!.reviewer).toBe(false);
+      // Работа не переписана, рецензия на месте — закрылся только доступ.
+      expect(after.rows[0]!.status).toBe('completed');
+      expect(after.rows[0]!.review_kept).toBe(true);
+    });
+  });
+
+  it('прекращение доступа нельзя отменить правкой записи', async () => {
+    await inRollbackTx(async (c) => {
+      const reviewer = await createUser(c, { role: 'expert' });
+      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
+      const deal = await dealWithTranche(c);
+      const assignmentId = uuidv7();
+      await c.query(
+        `INSERT INTO experts.expert_assignments
+           (id, project_id, expert_id, assigned_reason, purpose, status, due_at,
+            access_revoked_at, access_revoke_reason)
+         VALUES ($1, $2, $3, 'manual', 'review', 'completed', now() + interval '30 days',
+                 now(), 'работа завершена')`,
+        [assignmentId, deal.projectId, reviewer.id],
+      );
+      // Вернуть доступ можно только новым назначением: иначе запись о
+      // прекращении ничего не доказывала бы.
+      await expect(
+        c.query(`UPDATE experts.expert_assignments SET access_revoked_at = NULL WHERE id = $1`, [
+          assignmentId,
+        ]),
+      ).rejects.toThrow(/уже прекращён/);
+    });
+  });
+
+  it('прекращение без основания невозможно', async () => {
+    await inRollbackTx(async (c) => {
+      const reviewer = await createUser(c, { role: 'expert' });
+      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
+      const deal = await dealWithTranche(c);
+      const assignmentId = uuidv7();
+      await c.query(
+        `INSERT INTO experts.expert_assignments
+           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
+         VALUES ($1, $2, $3, 'manual', 'review', 'accepted', now() + interval '30 days')`,
+        [assignmentId, deal.projectId, reviewer.id],
+      );
+      await expect(
+        c.query(`UPDATE experts.expert_assignments SET access_revoked_at = now() WHERE id = $1`, [
+          assignmentId,
+        ]),
+      ).rejects.toThrow(/assignments_revoke_reason_present/);
+    });
+  });
+
+  it('рецензию нельзя удалить', async () => {
+    await inRollbackTx(async (c) => {
+      const reviewer = await createUser(c, { role: 'expert' });
+      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
+      const deal = await dealWithTranche(c);
+      const assignmentId = uuidv7();
+      await c.query(
+        `INSERT INTO experts.expert_assignments
+           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
+         VALUES ($1, $2, $3, 'manual', 'review', 'completed', now() + interval '30 days')`,
+        [assignmentId, deal.projectId, reviewer.id],
+      );
+      const reviewId = uuidv7();
+      await c.query(
+        `INSERT INTO experts.expert_reviews
+           (id, assignment_id, rubric_scores_jsonb, recommendation)
+         VALUES ($1, $2, '{"team":5,"product":5,"strategy":5,"legal":5,"finmodel":5,"scalability":5}'::jsonb,
+                 'pass')`,
+        [reviewId, assignmentId],
+      );
+      await expect(
+        c.query(`DELETE FROM experts.expert_reviews WHERE id = $1`, [reviewId]),
+      ).rejects.toThrow(/нельзя удалить/);
+    });
+  });
+
+  it('сопровождение сделки закрывается тем же способом', async () => {
+    await inRollbackTx(async (c) => {
+      const staff = await createUser(c, { role: 'expert' });
+      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [staff.id]);
+      const deal = await dealWithTranche(c);
+      const assignmentId = uuidv7();
+      await c.query(
+        `INSERT INTO experts.expert_assignments
+           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
+         VALUES ($1, $2, $3, 'manual', 'deal_support', 'accepted', now() + interval '30 days')`,
+        [assignmentId, deal.projectId, staff.id],
+      );
+      await c.query(
+        `UPDATE experts.expert_assignments
+            SET access_revoked_at = now(), access_revoke_reason = 'сопровождение прекращено'
+          WHERE id = $1`,
+        [assignmentId],
+      );
+      const { rows } = await c.query<{ supporter: boolean }>(
+        `SELECT experts.is_assigned_deal_supporter($1, $2) AS supporter`,
+        [deal.projectId, staff.id],
+      );
+      expect(rows[0]!.supporter).toBe(false);
+    });
+  });
+});

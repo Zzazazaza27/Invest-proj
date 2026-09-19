@@ -83,6 +83,7 @@ export class CapabilitiesService {
            LEFT JOIN identity.users u ON u.id = a.expert_id
           WHERE a.purpose = 'deal_support'
             AND a.status IN ('assigned', 'accepted')
+            AND a.access_revoked_at IS NULL
             AND ($1::uuid IS NULL OR a.project_id = $1)
             AND ($2::uuid IS NULL OR a.expert_id = $2)
           ORDER BY a.created_at DESC
@@ -223,14 +224,27 @@ export class CapabilitiesService {
     });
   }
 
-  /** Снятие области работы закрывает денежные действия по этим сделкам. */
+  /**
+   * Снятие области работы закрывает денежные действия по этим сделкам.
+   *
+   * Записывается тем же способом, что и прекращение доступа рецензента
+   * (M120): отдельным полем с временем, автором и основанием. Состояние
+   * работы закрывается здесь заодно — сопровождение, в отличие от рецензии, не
+   * оставляет после себя сданного документа, и «выполненным» ему становиться
+   * не от чего.
+   */
   async revokeDealSupport(ctx: RequestContext, input: RevokeDealSupportRequest): Promise<void> {
     return this.db.transaction(ctx, async (tx) => {
       const { rowCount } = await tx.query(
-        `UPDATE experts.expert_assignments SET status = 'expired'
+        `UPDATE experts.expert_assignments
+            SET status = 'expired',
+                access_revoked_at = now(),
+                access_revoked_by = $3,
+                access_revoke_reason = $4
           WHERE project_id = $1 AND expert_id = $2 AND purpose = 'deal_support'
-            AND status IN ('assigned','accepted')`,
-        [input.projectId, input.userId],
+            AND status IN ('assigned','accepted')
+            AND access_revoked_at IS NULL`,
+        [input.projectId, input.userId, ctx.userId, input.reason],
       );
       if (rowCount === 0) throw errors.notFound({ subject: 'deal_support_assignment' });
       await this.audit.emit(tx, {

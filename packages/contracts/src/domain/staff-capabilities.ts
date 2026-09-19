@@ -118,19 +118,34 @@ export const ProjectReviewAssignmentSchema = z.object({
   projectId: UuidSchema,
   expertId: UuidSchema,
   expertName: z.string(),
+  /**
+   * Состояние РАБОТЫ. Прекращение доступа его не переписывает: сданная
+   * рецензия остаётся сданной (M120).
+   */
   status: z.enum(['assigned', 'accepted', 'declined', 'completed', 'expired']),
   dueAt: IsoDateTimeSchema,
   createdAt: IsoDateTimeSchema,
-  /** Подана ли рецензия: снятие назначения её не удаляет. */
+  /** Подана ли рецензия. Прекращение доступа её не удаляет и не обезличивает. */
   reviewSubmitted: z.boolean(),
+  /**
+   * Момент прекращения доступа по этому назначению — отдельный от работы факт.
+   * `null` означает, что доступ по назначению открыт.
+   */
+  accessRevokedAt: IsoDateTimeSchema.nullable(),
 });
 export type ProjectReviewAssignment = z.infer<typeof ProjectReviewAssignmentSchema>;
 
-/** Снятие назначения на оценку. Причина обязательна — она попадёт в журнал. */
-export const WithdrawAssignmentRequestSchema = z.object({
+/**
+ * Прекращение доступа по назначению.
+ *
+ * Именно доступа, а не работы: рецензия, её авторство и история назначения
+ * остаются. Основание обязательно — это решение человека, и оно попадает в
+ * журнал вместе с тем, кто его принял.
+ */
+export const RevokeAssignmentAccessRequestSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 });
-export type WithdrawAssignmentRequest = z.infer<typeof WithdrawAssignmentRequestSchema>;
+export type RevokeAssignmentAccessRequest = z.infer<typeof RevokeAssignmentAccessRequestSchema>;
 
 // ------------------------------------------------------- ручные записи о деньгах
 

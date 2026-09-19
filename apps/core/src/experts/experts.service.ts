@@ -72,8 +72,9 @@ export class ExpertsService {
   /**
    * Назначения на оценку ПРОЕКТА — взгляд организатора.
    *
-   * Снятые и отклонённые тоже показываются: администратор должен видеть, что
-   * назначение было и чем кончилось, иначе снятие выглядит как исчезновение.
+   * Закрытые, отклонённые и назначения с прекращённым доступом тоже
+   * показываются: администратор должен видеть, что назначение было и чем
+   * кончилось, иначе прекращение выглядит как исчезновение.
    */
   async projectAssignments(
     ctx: RequestContext,
@@ -81,47 +82,47 @@ export class ExpertsService {
   ): Promise<ProjectReviewAssignment[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<ProjectAssignmentRow>(
-        `SELECT a.id, a.project_id, a.expert_id, a.status, a.due_at, a.created_at,
-                COALESCE(u.display_name, '—') AS expert_name,
-                EXISTS (SELECT 1 FROM experts.expert_reviews r
-                         WHERE r.assignment_id = a.id) AS review_submitted
-           FROM experts.expert_assignments a
-           LEFT JOIN identity.users u ON u.id = a.expert_id
+        `${PROJECT_ASSIGNMENT_SELECT}
           WHERE a.project_id = $1 AND a.purpose = 'review'
           ORDER BY a.created_at DESC
           LIMIT 100`,
         [projectId],
       );
-      return rows.map((row) => ({
-        id: row.id,
-        projectId: row.project_id,
-        expertId: row.expert_id,
-        expertName: row.expert_name,
-        status: row.status,
-        dueAt: row.due_at.toISOString(),
-        createdAt: row.created_at.toISOString(),
-        reviewSubmitted: row.review_submitted,
-      }));
+      return rows.map(mapProjectAssignment);
     });
   }
 
   /**
-   * Снять назначение на оценку.
+   * Прекратить ДОСТУП по назначению на оценку.
    *
-   * Назначение переводится в `expired` — та же дорога, что у истёкшего срока,
-   * и по ней проект перестаёт быть доступен эксперту. Уже поданная рецензия
-   * НЕ удаляется: она была написана и на её основании могли принять решение.
-   * Поэтому снять назначение с поданной рецензией нельзя вовсе — это была бы
-   * попытка переписать прошлое.
+   * Работа и доступ — разные вещи, и здесь закрывается только второе.
+   * Поданная рецензия остаётся поданной, её автор остаётся автором, строка
+   * назначения никуда не девается: иначе рецензия превратилась бы в документ
+   * без полномочия автора, а история — в переписанную.
+   *
+   * Что при этом происходит с работой:
+   *
+   * - рецензия уже сдана (`completed`) — состояние работы не трогаем вовсе;
+   * - работа ещё не сделана (`assigned`/`accepted`) — назначение закрывается
+   *   как истёкшее: ждать рецензию больше не от кого, и оставлять её в списке
+   *   дел эксперта было бы обманом обоих.
+   *
+   * Вернуть доступ этим маршрутом нельзя: возврат — новое решение, то есть
+   * новое назначение. Запрет стоит триггером в БД (M120), а не только здесь.
    */
-  async withdrawAssignment(
+  async revokeAssignmentAccess(
     ctx: RequestContext,
     assignmentId: string,
     reason: string,
   ): Promise<ProjectReviewAssignment> {
     return this.db.transaction(ctx, async (tx) => {
-      const { rows: found } = await tx.query<{ project_id: string; submitted: boolean }>(
-        `SELECT a.project_id,
+      const { rows: found } = await tx.query<{
+        project_id: string;
+        status: string;
+        submitted: boolean;
+        access_revoked_at: Date | null;
+      }>(
+        `SELECT a.project_id, a.status, a.access_revoked_at,
                 EXISTS (SELECT 1 FROM experts.expert_reviews r
                          WHERE r.assignment_id = a.id) AS submitted
            FROM experts.expert_assignments a
@@ -129,21 +130,23 @@ export class ExpertsService {
         [assignmentId],
       );
       if (!found[0]) throw errors.notFound({ subject: 'expert_assignment' });
-      if (found[0].submitted) {
-        throw errors.conflict(
-          'Рецензия уже подана: назначение снять нельзя, иначе результат работы исчезнет из истории',
-          { assignmentId },
-        );
+      if (found[0].access_revoked_at) {
+        throw errors.conflict('Доступ по этому назначению уже прекращён', { assignmentId });
       }
 
-      const { rowCount } = await tx.query(
-        `UPDATE experts.expert_assignments SET status = 'expired'
-          WHERE id = $1 AND status IN ('assigned', 'accepted')`,
-        [assignmentId],
+      // Работа закрывается только если она НЕ сделана. Условие по рецензии, а
+      // не по статусу: назначение с поданной рецензией остаётся выполненным
+      // независимо от того, в каком состоянии его застали.
+      const closeWork = !found[0].submitted && ['assigned', 'accepted'].includes(found[0].status);
+      await tx.query(
+        `UPDATE experts.expert_assignments
+            SET access_revoked_at = now(),
+                access_revoked_by = $2,
+                access_revoke_reason = $3,
+                status = CASE WHEN $4 THEN 'expired' ELSE status END
+          WHERE id = $1`,
+        [assignmentId, ctx.userId, reason, closeWork],
       );
-      if (rowCount === 0) {
-        throw errors.conflict('Назначение уже закрыто', { assignmentId });
-      }
 
       await this.audit.emit(tx, {
         verb: EventVerb.EXPERT_ASSIGNMENT_CLOSED,
@@ -151,30 +154,20 @@ export class ExpertsService {
         actorRole: ctx.roles.includes('admin') ? 'admin' : 'organizer',
         subjectType: 'expert_assignment',
         subjectId: assignmentId,
-        context: { withdrawn: true, reason },
+        context: {
+          accessRevoked: true,
+          reason,
+          reviewKept: found[0].submitted,
+          workClosed: closeWork,
+        },
         traceId: ctx.traceId,
       });
 
-      const all = await tx.query<ProjectAssignmentRow>(
-        `SELECT a.id, a.project_id, a.expert_id, a.status, a.due_at, a.created_at,
-                COALESCE(u.display_name, '—') AS expert_name,
-                false AS review_submitted
-           FROM experts.expert_assignments a
-           LEFT JOIN identity.users u ON u.id = a.expert_id
-          WHERE a.id = $1`,
+      const { rows } = await tx.query<ProjectAssignmentRow>(
+        `${PROJECT_ASSIGNMENT_SELECT} WHERE a.id = $1`,
         [assignmentId],
       );
-      const row = all.rows[0]!;
-      return {
-        id: row.id,
-        projectId: row.project_id,
-        expertId: row.expert_id,
-        expertName: row.expert_name,
-        status: row.status,
-        dueAt: row.due_at.toISOString(),
-        createdAt: row.created_at.toISOString(),
-        reviewSubmitted: false,
-      };
+      return mapProjectAssignment(rows[0]!);
     });
   }
 
@@ -889,6 +882,34 @@ interface ProjectAssignmentRow {
   due_at: Date;
   created_at: Date;
   review_submitted: boolean;
+  access_revoked_at: Date | null;
+}
+
+/**
+ * Выборка назначения глазами администратора. Одна на список и на ответ после
+ * прекращения доступа: два разных запроса расходятся молча.
+ */
+const PROJECT_ASSIGNMENT_SELECT = `
+  SELECT a.id, a.project_id, a.expert_id, a.status, a.due_at, a.created_at,
+         a.access_revoked_at,
+         COALESCE(u.display_name, '—') AS expert_name,
+         EXISTS (SELECT 1 FROM experts.expert_reviews r
+                  WHERE r.assignment_id = a.id) AS review_submitted
+    FROM experts.expert_assignments a
+    LEFT JOIN identity.users u ON u.id = a.expert_id`;
+
+function mapProjectAssignment(row: ProjectAssignmentRow): ProjectReviewAssignment {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    expertId: row.expert_id,
+    expertName: row.expert_name,
+    status: row.status,
+    dueAt: row.due_at.toISOString(),
+    createdAt: row.created_at.toISOString(),
+    reviewSubmitted: row.review_submitted,
+    accessRevokedAt: row.access_revoked_at?.toISOString() ?? null,
+  };
 }
 
 interface AssignmentRow {

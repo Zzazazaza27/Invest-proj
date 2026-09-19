@@ -15,7 +15,7 @@ import {
   ReviewConsensusSchema,
   SubmitReviewRequestSchema,
   UuidSchema,
-  WithdrawAssignmentRequestSchema,
+  RevokeAssignmentAccessRequestSchema,
 } from '@unicorn/contracts';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
@@ -59,16 +59,23 @@ export class ExpertsController {
   }
 
   /**
-   * Снять назначение на оценку. Поданную рецензию не трогает — и назначение с
-   * поданной рецензией снять нельзя вовсе.
+   * Прекратить ДОСТУП по назначению на оценку.
+   *
+   * Не «отменить работу»: поданная рецензия и её авторство остаются, история
+   * назначения тоже. Доступен при любом состоянии работы — иначе после сдачи
+   * рецензии закрыть эксперту доступ было бы нечем (M120).
    */
   @Roles('admin', 'organizer')
-  @Post('assignments/:id/withdraw')
-  async withdraw(@Param('id') rawId: string, @Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+  @Post('assignments/:id/revoke-access')
+  async revokeAccess(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
     const id = parseOrThrow(UuidSchema, rawId);
-    const input = parseOrThrow(WithdrawAssignmentRequestSchema, rawBody);
+    const input = parseOrThrow(RevokeAssignmentAccessRequestSchema, rawBody);
     return ProjectReviewAssignmentSchema.parse(
-      await this.experts.withdrawAssignment(ctx, id, input.reason),
+      await this.experts.revokeAssignmentAccess(ctx, id, input.reason),
     );
   }
 
