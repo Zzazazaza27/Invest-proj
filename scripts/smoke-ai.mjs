@@ -385,13 +385,17 @@ let firstRun;
 }
 
 // ------------------------------------------------------ видимость инвестору
+//
+// Маршрут паспорта закрыт для инвестора с 5.7.5 и остаётся закрытым: оценки
+// доходят до инвестора ТОЛЬКО через проекции видимости (Investor View), где
+// действуют режим проекта, согласие владельца и адресные разрешения. Второй
+// путь раскрытия здесь не заводится — проверки ниже сторожат именно это.
+//
+// Прежние ожидания (404 без подписки, 200 подписчику) описывали механику до
+// 5.7 и с тех пор не соответствовали замыслу: они молча падали.
 {
   const { response } = await investor.client.call(`/v1/projects/${projectId}/passport`);
-  check(
-    'инвестор без подписки паспорт не видит',
-    response.status === 404,
-    `статус ${response.status}`,
-  );
+  check('маршрут паспорта инвестору закрыт', response.status === 403, `статус ${response.status}`);
 }
 {
   await sql(
@@ -401,16 +405,15 @@ let firstRun;
        FROM billing.subscription_plans sp WHERE sp.code = 'investor_membership'`,
     [investor.userId],
   );
-  const notListed = await investor.client.call(`/v1/projects/${projectId}/passport`);
+  const withSubscription = await investor.client.call(`/v1/projects/${projectId}/passport`);
   check(
-    'подписка без листинга доступа не даёт',
-    notListed.response.status === 404,
-    `статус ${notListed.response.status}`,
+    'подписка не открывает закрытый маршрут',
+    withSubscription.response.status === 403,
+    `статус ${withSubscription.response.status}`,
   );
 
   // Публикация листинга не требует денег: подписка основателя отменена
-  // (M094), запуск раунда оплачивается разово (5.9). Достаточно перевести
-  // проект в режим, при котором его видно допущенному инвестору.
+  // (M094), запуск раунда оплачивается разово (5.9).
   await sql(
     `UPDATE lab.projects
         SET listing_status = 'listed', listed_at = now(),
@@ -420,11 +423,18 @@ let firstRun;
   );
   const listed = await investor.client.call(`/v1/projects/${projectId}/passport`);
   check(
-    'подписчик видит паспорт опубликованного листинга',
-    listed.response.status === 200,
+    'и публикация листинга его тоже не открывает',
+    listed.response.status === 403,
     `статус ${listed.response.status}`,
   );
-  check('инвестору видны оценки', listed.json?.scores?.length === 9);
+  // Паспорт существует и виден команде проекта — значит закрыт именно
+  // маршрут, а не данные пропали.
+  const own = await founder.client.call(`/v1/projects/${projectId}/passport`);
+  check(
+    'команде проекта паспорт по-прежнему виден',
+    own.response.status === 200 && own.json?.scores?.length === 9,
+    `статус ${own.response.status}`,
+  );
 }
 
 // ---------------------------------------------------------------- журнал

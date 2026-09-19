@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto';
 import { Injectable, Logger } from '@nestjs/common';
-import { uuidv7 } from '@unicorn/contracts';
+import {
+  buildAnalysisInput,
+  uuidv7,
+  type AnalysisAnswer,
+  type AnalysisMetadata,
+  type SubmittedSnapshot,
+} from '@unicorn/contracts';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
 import { AuditRepository } from '../audit/audit.repository';
@@ -176,32 +182,46 @@ export class AnalysisService {
       // включает и границу слота (ADR-008 §3, Э4). Nonce детерминирован по
       // входу (HMAC с серверным ключом): один и тот же снимок — один и тот же
       // промпт, иначе модель даёт разброс IRS 4+ на одинаковом входе.
-      const title = stripSlotMarkers(row.title);
-      const summary = stripSlotMarkers([row.tagline, row.description].filter(Boolean).join('\n'));
-      const nonce = this.crypto.analysisNonce(
-        `${row.id}|${row.updated_at.toISOString()}|${title.text}|${summary.text}`,
-      );
-      const snapshot = {
-        title: title.text,
-        tagline: row.tagline,
-        description: row.description,
-        summary: summary.text,
-        stage: row.stage,
-        nonce,
-        markersRemoved: title.removed + summary.removed,
-        metadata: {
+      // Вход собирается ОДНИМ местом из снимка поданной версии: ответы с
+      // формулировками вопросов, метаданные, источник каждого поля.
+      const built = buildAnalysisInput({
+        snapshot: submitted?.snapshot ?? null,
+        versionId: submitted?.versionId ?? null,
+        versionNo: submitted?.versionNo ?? null,
+        card: {
+          title: row.title,
+          tagline: row.tagline,
+          description: row.description,
+          stage: row.stage,
           investmentAsk: row.investment_ask,
-          currency: row.ask_currency,
+          askCurrency: row.ask_currency,
           taxonomy: row.taxonomy_name,
           geoCountry: row.geo_country,
         },
+      });
+
+      const title = stripSlotMarkers(built.title);
+      const summary = stripSlotMarkers(built.summary);
+      const nonce = this.crypto.analysisNonce(
+        `${row.id}|${row.updated_at.toISOString()}|${title.text}|${summary.text}`,
+      );
+      // Снимок входа — это и есть ответ на вопрос «что анализировалось».
+      // Поэтому в него попадает ВСЁ: текст, ответы, метаданные и источник
+      // каждого поля. Отпечаток считается по нему целиком.
+      const snapshot = {
+        title: title.text,
+        summary: summary.text,
+        stage: built.stage,
+        nonce,
+        markersRemoved: title.removed + summary.removed,
+        metadata: built.metadata,
+        sources: built.sources,
         projectUpdatedAt: row.updated_at.toISOString(),
         materials: materials.rows.map((m) => ({ id: m.id, type: m.type, version: m.version })),
-        // Версия и ответы входят в снимок и, следовательно, в отпечаток:
-        // отпечаток обязан описывать ФАКТИЧЕСКИ проанализированные данные.
-        versionId: submitted?.versionId ?? null,
-        versionNo: submitted?.versionNo ?? null,
-        answers: submitted?.answers ?? [],
+        versionId: built.versionId,
+        versionNo: built.versionNo,
+        includesAnswers: built.includesAnswers,
+        answers: built.answers,
       };
       const inputSha256 = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
 
@@ -220,7 +240,7 @@ export class AnalysisService {
         [uuidv7(), runId, JSON.stringify({ inputSha256, snapshot })],
       );
 
-      return { row, materials: materials.rows, snapshot, inputSha256, submitted };
+      return { row, materials: materials.rows, snapshot, inputSha256 };
     });
 
     // Ключ провайдера достаётся ПОСЛЕ фиксации входа и только при включённом
@@ -249,13 +269,17 @@ export class AnalysisService {
         {
           title: input.snapshot.title,
           summary: input.snapshot.summary,
-          stage: input.row.stage,
+          stage: input.snapshot.stage,
           nonce: input.snapshot.nonce,
           metadata: input.snapshot.metadata,
           // Ответы анкеты с формулировками вопросов — то, ради чего анализ и
           // существует. Идут они в НАШ шлюз; внешней модели они не достаются,
           // пока не согласованы условия обработки (проверка ниже по флагу).
-          answers: input.snapshot.answers,
+          answers: input.snapshot.answers.map((a) => ({
+            key: a.key,
+            question: a.question,
+            text: a.text,
+          })),
           // Содержимое материалов не передаётся: парсера дек нет, а ходить по
           // пользовательской ссылке сервером — это SSRF. В анализ попадает
           // только факт наличия материала и его тип.
@@ -384,8 +408,10 @@ export class AnalysisService {
       const passportId = uuidv7();
       await tx.query(
         `INSERT INTO scoring.investment_passports
-           (id, project_id, version, jsonb_data, disclosure_tier, sources, model_id, published_at)
-         VALUES ($1, $2, $3, $4::jsonb, 'teaser', $5::jsonb, $6, now())`,
+           (id, project_id, version, jsonb_data, disclosure_tier, sources, model_id, published_at,
+            project_version_id, input_sha256, input_sources, includes_answers)
+         VALUES ($1, $2, $3, $4::jsonb, 'teaser', $5::jsonb, $6, now(),
+                 $7, $8, $9::jsonb, $10)`,
         [
           passportId,
           projectId,
@@ -393,6 +419,12 @@ export class AnalysisService {
           JSON.stringify(computed.stored),
           JSON.stringify([{ type: 'analysis_run', ref: runId }]),
           modelId,
+          // Происхождение живёт в САМОМ паспорте, а не только у прогона услуги:
+          // прямой вызов анализа тоже обязан его нести.
+          input.snapshot.versionId,
+          input.inputSha256,
+          JSON.stringify(input.snapshot.sources),
+          input.snapshot.includesAnswers,
         ],
       );
 
@@ -545,9 +577,9 @@ export class AnalysisService {
         projectId,
         status: 'succeeded' as const,
         inputSha256: input.inputSha256,
-        inputVersionId: input.submitted?.versionId ?? null,
-        inputVersionNo: input.submitted?.versionNo ?? null,
-        includesAnswers: (input.submitted?.answers.length ?? 0) > 0,
+        inputVersionId: input.snapshot.versionId,
+        inputVersionNo: input.snapshot.versionNo,
+        includesAnswers: input.snapshot.includesAnswers,
         provider: result.provider,
         isLlm: result.isLlm,
         modelVersion: result.modelVersion,
@@ -1067,26 +1099,20 @@ interface AnalysisInputSnapshot {
   materials: MaterialRow[];
   snapshot: {
     title: string;
-    tagline: string | null;
-    description: string | null;
     summary: string;
     stage: string;
     nonce: string;
     markersRemoved: number;
-    metadata: {
-      investmentAsk: string | null;
-      currency: string;
-      taxonomy: string | null;
-      geoCountry: string | null;
-    };
+    metadata: AnalysisMetadata;
+    sources: Record<string, string>;
     projectUpdatedAt: string;
     materials: { id: string; type: string; version: number }[];
     versionId: string | null;
     versionNo: number | null;
-    answers: { key: string; question: string; text: string }[];
+    includesAnswers: boolean;
+    answers: AnalysisAnswer[];
   };
   inputSha256: string;
-  submitted: SubmittedAnswers | null;
 }
 
 interface PassportRow {
@@ -1137,73 +1163,19 @@ async function loadSubmittedAnswers(tx: Tx, projectId: string): Promise<Submitte
   const row = rows[0];
   if (!row) return null;
 
-  const snapshot = (row.snapshot_jsonb ?? {}) as SnapshotShape;
-  const answers = snapshot.answers ?? {};
-  const applicable = snapshot.applicableKeys ?? {};
-  const wording = questionWording(snapshot);
-
-  const collected: { key: string; question: string; text: string }[] = [];
-  for (const [key, level] of Object.entries(applicable)) {
-    const raw = answers[key];
-    const text = answerText(raw);
-    if (text.length === 0) continue;
-    collected.push({ key, question: wording[key] ?? key, text });
-    void level;
-  }
-  // Ответы вне списка показанных вопросов игнорируются: они относятся к другой
-  // стадии или к вопросу, который этой заявке не задавали.
-  return { versionId: row.id, versionNo: row.version_no, answers: collected };
-}
-
-/** Формулировки вопросов из снимка формы, по ключу. */
-function questionWording(snapshot: SnapshotShape): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const section of snapshot.form?.sections ?? []) {
-    for (const question of section.questions ?? []) {
-      if (typeof question?.key === 'string' && typeof question?.title === 'string') {
-        out[question.key] = question.title;
-      }
-    }
-  }
-  return out;
-}
-
-/**
- * Ответ в текст.
- *
- * Анкета хранит и строки, и числа, и списки, и объекты со свободным
- * комментарием. Разбору нужен текст, поэтому всё сводится к нему — но без
- * выдумывания: пустое остаётся пустым.
- */
-function answerText(value: unknown): string {
-  if (value === null || value === undefined) return '';
-  if (typeof value === 'string') return value.trim();
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
-  if (Array.isArray(value)) {
-    return value
-      .map((item) => answerText(item))
-      .filter((item) => item.length > 0)
-      .join('; ');
-  }
-  if (typeof value === 'object') {
-    return Object.values(value as Record<string, unknown>)
-      .map((item) => answerText(item))
-      .filter((item) => item.length > 0)
-      .join(' ');
-  }
-  return '';
+  // Разбор снимка делает общий модуль `buildAnalysisInput`: здесь только
+  // чтение. Два места, знающих форму снимка, однажды разошлись бы.
+  return {
+    versionId: row.id,
+    versionNo: row.version_no,
+    snapshot: (row.snapshot_jsonb ?? {}) as SubmittedSnapshot,
+  };
 }
 
 interface SubmittedAnswers {
   versionId: string;
   versionNo: number;
-  answers: { key: string; question: string; text: string }[];
-}
-
-interface SnapshotShape {
-  answers?: Record<string, unknown>;
-  applicableKeys?: Record<string, string>;
-  form?: { sections?: { questions?: { key?: string; title?: string }[] }[] };
+  snapshot: SubmittedSnapshot;
 }
 
 export interface AnalysisRunView {

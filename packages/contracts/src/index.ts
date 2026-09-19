@@ -34,6 +34,7 @@ export * from './domain/round-packages';
 export * from './domain/round-pricing';
 export * from './domain/payments';
 export * from './domain/service-runs';
+export * from './domain/analysis-input';
 export * from './domain/commission';
 export * from './domain/staff-capabilities';
 export * from './domain/investments';

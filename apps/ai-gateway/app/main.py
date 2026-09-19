@@ -174,6 +174,14 @@ class ProjectMetadata(BaseModel):
     taxonomy: str | None = Field(default=None, max_length=200)
     geoCountry: str | None = Field(default=None, max_length=2)
     launchCountry: str | None = Field(default=None, max_length=2)
+    # Поля v2.6 — из неизменяемого снимка поданной версии. Пустое значение
+    # означает, что в заявке этого нет; подставлять догадку нельзя.
+    businessType: str | None = Field(default=None, max_length=64)
+    fundingScope: str | None = Field(default=None, max_length=64)
+    fundingScopeNote: str | None = Field(default=None, max_length=1000)
+    useOfFunds: str | None = Field(default=None, max_length=MAX_TEXT_CHARS)
+    runwayCurrentMonths: str | None = Field(default=None, max_length=64)
+    runwayWithFundsMonths: str | None = Field(default=None, max_length=64)
 
 
 class Answer(BaseModel):

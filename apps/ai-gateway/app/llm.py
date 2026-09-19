@@ -32,7 +32,7 @@ from typing import Any, Final
 
 LOG = logging.getLogger("ai_gateway.llm")
 
-PROMPT_VERSION: Final[str] = "v2.5.2"
+PROMPT_VERSION: Final[str] = "v2.6"
 PROMPTS_DIR: Final[Path] = Path(__file__).resolve().parent.parent / "prompts"
 
 ANTHROPIC_VERSION: Final[str] = "2023-06-01"
@@ -221,6 +221,13 @@ def build_messages(
         "{{TAXONOMY}}": str(metadata.get("taxonomy") or "не указано"),
         "{{GEO_COUNTRY}}": str(metadata.get("geoCountry") or "не указана"),
         "{{LAUNCH_COUNTRY}}": str(metadata.get("launchCountry") or "не указана"),
+        # Метаданные v2.6 — из того же снимка, что и ответы. «Не указано»
+        # означает, что поля в заявке нет, а не что его забыли передать.
+        "{{BUSINESS_TYPE}}": str(metadata.get("businessType") or "не указан"),
+        "{{FUNDING_SCOPE}}": str(metadata.get("fundingScope") or "не указан"),
+        "{{USE_OF_FUNDS}}": str(metadata.get("useOfFunds") or "не указано"),
+        "{{RUNWAY_CURRENT}}": str(metadata.get("runwayCurrentMonths") or "не указано"),
+        "{{RUNWAY_WITH_FUNDS}}": str(metadata.get("runwayWithFundsMonths") or "не указано"),
         "{{MATERIAL_TYPES}}": _material_types(materials),
         "{{TITLE}}": strip_markers(str(project.get("title") or "")),
         "{{SUMMARY}}": strip_markers(str(project.get("summary") or "")),

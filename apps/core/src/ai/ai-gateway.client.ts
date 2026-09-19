@@ -10,6 +10,7 @@ import {
   ReadinessLevelSchema,
   ScoreAxisSchema,
   ScoreSourceTokenSchema,
+  type AnalysisMetadata,
   type Passport,
 } from '@unicorn/contracts';
 
@@ -49,13 +50,13 @@ export interface AnalysisInput {
    * опубликованы вместе с промптом; nonce — нет, и только он закрывает слот.
    */
   nonce: string;
-  /** Доверенные метаданные платформы для шаблона сообщения (раздел 4 промпта). */
-  metadata: {
-    investmentAsk: string | null;
-    currency: string;
-    taxonomy: string | null;
-    geoCountry: string | null;
-  };
+  /**
+   * Доверенные метаданные платформы для шаблона сообщения (раздел 4 промпта).
+   *
+   * Тип совпадает с тем, что собирает `buildAnalysisInput`: два описания
+   * одного набора полей однажды разошлись бы, и разошлись бы молча.
+   */
+  metadata: AnalysisMetadata;
 }
 
 /**

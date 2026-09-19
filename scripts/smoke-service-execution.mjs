@@ -315,6 +315,67 @@ try {
     );
   }
 
+  // ------------------ происхождение хранится в САМОМ паспорте
+  {
+    const [passport] = await sql(
+      `SELECT project_version_id, input_sha256, includes_answers, input_sources
+         FROM scoring.investment_passports WHERE id = $1`,
+      [run.resultRef],
+    );
+    check(
+      'паспорт несёт версию заявки',
+      passport?.project_version_id === run.inputVersionId,
+      `${passport?.project_version_id}`,
+    );
+    check(
+      'паспорт несёт отпечаток входа',
+      passport?.input_sha256 === run.inputSha256,
+      `${passport?.input_sha256}`.slice(0, 16),
+    );
+    check('паспорт помечен как сделанный по ответам', passport?.includes_answers === true);
+    check(
+      'источник каждого поля записан',
+      passport?.input_sources?.title === 'version' && passport?.input_sources?.taxonomy === 'card',
+      JSON.stringify(passport?.input_sources ?? {}).slice(0, 120),
+    );
+    check(
+      'поле без источника помечено absent, а не выдумано',
+      passport?.input_sources?.launchCountry === 'absent',
+      `${passport?.input_sources?.launchCountry}`,
+    );
+  }
+  {
+    // Текст, ушедший в разбор, содержит вопросы и ответы.
+    const [checkpoint] = await sql(
+      `SELECT state_jsonb FROM audit.node_checkpoints
+        WHERE node_name = 'input_snapshot'
+          AND state_jsonb->>'inputSha256' = $1 LIMIT 1`,
+      [run.inputSha256],
+    );
+    const snapshot = checkpoint?.state_jsonb?.snapshot ?? {};
+    // Текст собран парами «вопрос — ответ» по разделам: проверяем, что в нём
+    // есть и раздел, и формулировка первого вопроса, и сам ответ.
+    const first = snapshot.answers?.[0];
+    check(
+      'в текст заявки вошли разделы, формулировки вопросов и ответы',
+      typeof snapshot.summary === 'string' &&
+        snapshot.summary.includes('## ') &&
+        snapshot.summary.includes(first?.question ?? ' ') &&
+        snapshot.summary.includes(first?.text ?? ' '),
+      `${snapshot.summary}`.slice(0, 90),
+    );
+    check(
+      'ответы перечислены отдельным списком',
+      Array.isArray(snapshot.answers) && snapshot.answers.length > 0,
+      `${snapshot.answers?.length}`,
+    );
+    check(
+      'метаданные содержат поля из снимка',
+      snapshot.metadata && 'useOfFunds' in snapshot.metadata && 'businessType' in snapshot.metadata,
+      Object.keys(snapshot.metadata ?? {}).join(','),
+    );
+  }
+
   // -------------------------------- повтор не создаёт второго исполнения
   {
     const again = await founder.client.json(`/v1/billing/purchases/items/${aiItem.id}/run`, {
