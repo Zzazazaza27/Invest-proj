@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
-import type { AdminPlan, PlanCode, PublishPlanRequest } from '@unicorn/contracts';
+import type { AdminPlan, PlanCapability, PlanCode, PublishPlanRequest } from '@unicorn/contracts';
 import { PromptDialog } from '@unicorn/ui';
 import { ApiError, api } from '../api';
 import { FeatureEditor } from '../components/FeatureEditor';
@@ -214,6 +214,8 @@ export function PlansPage() {
             );
         }}
       />
+
+      {plans ? <PlanCapabilitiesBlock plans={plans} /> : null}
     </>
   );
 }
@@ -413,4 +415,156 @@ function toLocalInput(iso: string): string {
 function firstDayOfNextMonth(): Date {
   const now = new Date();
   return new Date(now.getFullYear(), now.getMonth() + 1, 1, 0, 0, 0, 0);
+}
+
+// ------------------------------------- возможности тарифов инвестора (5.9.4)
+
+/**
+ * Состав тарифов инвестора типизированным списком вместо свободного JSON.
+ *
+ * Базовый просмотр не закрывается ничем: такие возможности помечены и к
+ * тарифу не привязываются. Платные ограничения НЕ включены — матрица
+ * бесплатного и платного владельцем не утверждена, поэтому сегодня всё
+ * реализованное доступно всем инвесторам независимо от состава тарифа.
+ * Настройка существует, чтобы решение было видно, а не чтобы его подменить.
+ */
+function PlanCapabilitiesBlock({ plans }: { plans: AdminPlan[] }) {
+  const [items, setItems] = useState<PlanCapability[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [planId, setPlanId] = useState('');
+
+  const load = useCallback(async () => {
+    try {
+      setItems((await api.planCapabilities.list()).items);
+      setError(null);
+    } catch (err) {
+      setError(problemText(err, 'Не удалось загрузить возможности тарифов'));
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  // После M094 тарифы остались только инвесторскими — отбирать по аудитории
+  // больше нечего, но действующие версии показываем первыми.
+  const investorPlans = plans;
+
+  async function toggle(capability: PlanCapability, linked: boolean) {
+    if (planId === '') return;
+    setBusy(true);
+    try {
+      const body = {
+        planId,
+        capability: capability.code,
+        reason: linked ? 'исключена из состава тарифа' : 'включена в состав тарифа',
+      };
+      const result = linked
+        ? await api.planCapabilities.unlink(body)
+        : await api.planCapabilities.link(body);
+      setItems(result.items);
+      setError(null);
+    } catch (err) {
+      setError(problemText(err, 'Состав тарифа не изменён'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (items === null) return null;
+  const sections = [...new Set(items.map((c) => c.section))];
+
+  return (
+    <section className="card" data-plan-capabilities>
+      <div className="page-head" style={{ marginBottom: 10 }}>
+        <div>
+          <h2 style={{ marginBottom: 2 }}>Возможности тарифов инвестора</h2>
+          <div className="small muted">
+            Что входит в тариф. Базовые возможности доступны всем инвесторам всегда и в тариф не
+            включаются; нереализованные включить нельзя.
+          </div>
+        </div>
+      </div>
+
+      <div className="alert alert--warn" data-capabilities-not-enforced>
+        Платные ограничения не включены: матрица бесплатного и платного для инвестора не утверждена.
+        Сегодня всё реализованное доступно всем инвесторам независимо от состава тарифа — настройка
+        ничего не закрывает.
+      </div>
+
+      {error && <div className="alert alert--error">{error}</div>}
+
+      <div className="form-row">
+        <label htmlFor="capability-plan">Версия тарифа</label>
+        <select id="capability-plan" value={planId} onChange={(e) => setPlanId(e.target.value)}>
+          <option value="">— выберите —</option>
+          {investorPlans.map((plan) => (
+            <option key={plan.id} value={plan.id}>
+              {plan.code} v{plan.version} — {plan.name}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {sections.map((section) => (
+        <div key={section} style={{ marginBottom: 12 }}>
+          <strong>{section}</strong>
+          <table className="table">
+            <thead>
+              <tr>
+                <th>Возможность</th>
+                <th>Состояние</th>
+                <th>В тарифах</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {items
+                .filter((c) => c.section === section)
+                .map((capability) => {
+                  const linked = capability.plans.some((link) => link.planId === planId);
+                  return (
+                    <tr key={capability.code} data-plan-capability={capability.code}>
+                      <td>
+                        {capability.title}
+                        <div className="small muted">{capability.description}</div>
+                      </td>
+                      <td className="small">
+                        {capability.isBaseline
+                          ? 'базовая — не закрывается'
+                          : capability.isImplemented
+                            ? 'реализована'
+                            : 'не реализована'}
+                      </td>
+                      <td className="small">
+                        {capability.plans.length === 0
+                          ? '—'
+                          : capability.plans
+                              .map((link) => `${link.code} v${link.version}`)
+                              .join(', ')}
+                      </td>
+                      <td className="row-actions">
+                        {capability.isBaseline || !capability.isImplemented ? (
+                          <span className="muted small">нельзя включить в тариф</span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="btn--sm"
+                            disabled={busy || planId === ''}
+                            onClick={() => void toggle(capability, linked)}
+                          >
+                            {linked ? 'Исключить' : 'Включить'}
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </section>
+  );
 }

@@ -81,3 +81,37 @@ export const ActivateFeeOffsetRuleRequestSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 });
 export type ActivateFeeOffsetRuleRequest = z.infer<typeof ActivateFeeOffsetRuleRequestSchema>;
+
+// ------------------------------------------- возможности тарифов инвестора
+
+/**
+ * Возможность тарифа инвестора (5.9.4; каталог M100).
+ *
+ * `isBaseline` — доступна всем инвесторам всегда и тарифом не закрывается.
+ * `isEnforced` — ограничение применяется на деле; пока матрица бесплатного и
+ * платного не утверждена владельцем, оно везде выключено и включить его
+ * нельзя. `isImplemented` — возможность есть в продукте: нереализованную к
+ * тарифу не привязать, иначе настройка обещала бы несуществующее.
+ */
+export const PlanCapabilitySchema = z.object({
+  code: z.string(),
+  section: z.string(),
+  title: z.string(),
+  description: z.string(),
+  isImplemented: z.boolean(),
+  isBaseline: z.boolean(),
+  isEnforced: z.boolean(),
+  /** Версии тарифов, в состав которых входит возможность. */
+  plans: z.array(z.object({ planId: UuidSchema, code: z.string(), version: z.number().int() })),
+});
+export type PlanCapability = z.infer<typeof PlanCapabilitySchema>;
+
+export const LinkPlanCapabilityRequestSchema = z.object({
+  planId: UuidSchema,
+  capability: z.string(),
+  reason: z.string().trim().min(3).max(500),
+});
+export type LinkPlanCapabilityRequest = z.infer<typeof LinkPlanCapabilityRequestSchema>;
+
+export const UnlinkPlanCapabilityRequestSchema = LinkPlanCapabilityRequestSchema;
+export type UnlinkPlanCapabilityRequest = z.infer<typeof UnlinkPlanCapabilityRequestSchema>;

@@ -3,12 +3,15 @@ import {
   ActivateFeeOffsetRuleRequestSchema,
   FeeOffsetRuleSchema,
   FeeTermsSchema,
+  LinkPlanCapabilityRequestSchema,
+  PlanCapabilitySchema,
+  UnlinkPlanCapabilityRequestSchema,
   PublishFeeTermsRequestSchema,
 } from '@unicorn/contracts';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';
-import { CommissionService } from './commission.service';
+import { CommissionService, PlanCapabilitiesService } from './commission.service';
 
 /**
  * Условия вознаграждения и правило зачёта (5.9.3). Только администратор.
@@ -50,5 +53,38 @@ export class AdminFeeOffsetRulesController {
   async activate(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
     const input = parseOrThrow(ActivateFeeOffsetRuleRequestSchema, rawBody);
     return FeeOffsetRuleSchema.parse(await this.commission.activateOffsetRule(ctx, input));
+  }
+}
+
+/**
+ * Возможности тарифов инвестора (5.9.4). Только администратор.
+ *
+ * Настраивается СОСТАВ тарифа. Платные ограничения не включаются: базовый
+ * просмотр к тарифу не привязывается, а включение проверки отклоняет БД —
+ * матрица бесплатного и платного не утверждена владельцем.
+ */
+@Roles('admin')
+@Controller('admin/plan-capabilities')
+export class AdminPlanCapabilitiesController {
+  constructor(private readonly capabilities: PlanCapabilitiesService) {}
+
+  @Get()
+  async list(@Ctx() ctx: RequestContext) {
+    const items = await this.capabilities.list(ctx);
+    return { items: items.map((c) => PlanCapabilitySchema.parse(c)) };
+  }
+
+  @Post('link')
+  async link(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(LinkPlanCapabilityRequestSchema, rawBody);
+    const items = await this.capabilities.link(ctx, input);
+    return { items: items.map((c) => PlanCapabilitySchema.parse(c)) };
+  }
+
+  @Post('unlink')
+  async unlink(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(UnlinkPlanCapabilityRequestSchema, rawBody);
+    const items = await this.capabilities.unlink(ctx, input);
+    return { items: items.map((c) => PlanCapabilitySchema.parse(c)) };
   }
 }

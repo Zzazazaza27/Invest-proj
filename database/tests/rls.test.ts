@@ -1179,7 +1179,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 12 схем и 96 таблиц', async () => {
+  it('схема соответствует спецификации: 12 схем и 98 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -1262,7 +1262,10 @@ describe('RLS: покрытие манифеста', () => {
     // траншу и корректировка вознаграждения. Полномочие говорит «что можно
     // делать», назначение на проект — «с какими объектами»; роль expert сама
     // по себе не даёт ни того, ни другого.
-    expect(Number(tables.rows[0]!.count)).toBe(96);
+    // + 2 таблицы возможностей тарифов инвестора (M100): каталог и состав
+    // версий тарифа. Базовый просмотр помечен и к тарифу не привязывается;
+    // платные ограничения выключены до утверждения матрицы владельцем.
+    expect(Number(tables.rows[0]!.count)).toBe(98);
   });
 });
 

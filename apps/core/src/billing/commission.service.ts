@@ -4,11 +4,14 @@ import {
   type ActivateFeeOffsetRuleRequest,
   type FeeOffsetRule,
   type FeeTerms,
+  type LinkPlanCapabilityRequest,
+  type PlanCapability,
+  type UnlinkPlanCapabilityRequest,
   type PublishFeeTermsRequest,
 } from '@unicorn/contracts';
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
-import { Database, type RequestContext } from '../db/unit-of-work';
+import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 
 /**
  * Условия вознаграждения платформы и правило зачёта услуг (5.9.3; M096).
@@ -161,6 +164,129 @@ export class CommissionService {
       return mapOffsetRule(rows[0]!);
     });
   }
+}
+
+const PLAN_CAPABILITIES_SELECT = `
+  SELECT c.code, c.section, c.title, c.description,
+         c.is_implemented, c.is_baseline, c.is_enforced,
+         COALESCE(
+           (SELECT jsonb_agg(jsonb_build_object(
+                     'planId', p.id, 'code', p.code, 'version', p.version)
+                   ORDER BY p.code, p.version)
+              FROM billing.plan_capability_links l
+              JOIN billing.subscription_plans p ON p.id = l.plan_id
+             WHERE l.capability = c.code),
+           '[]'::jsonb) AS plans
+    FROM billing.plan_capabilities c
+   ORDER BY c.section, c.sort_order, c.code
+`;
+
+/**
+ * Возможности тарифов инвестора (5.9.4).
+ *
+ * Настраивается СОСТАВ тарифа, а ограничения не включаются: матрица
+ * бесплатного и платного владельцем не утверждена, и включение проверки
+ * отклоняет БД. Базовый просмотр к тарифам не привязывается вовсе.
+ */
+@Injectable()
+export class PlanCapabilitiesService {
+  constructor(
+    private readonly db: Database,
+    private readonly audit: AuditRepository,
+  ) {}
+
+  async list(ctx: RequestContext): Promise<PlanCapability[]> {
+    return this.db.readOnly(ctx, async (tx) => this.listIn(tx));
+  }
+
+  async link(ctx: RequestContext, input: LinkPlanCapabilityRequest): Promise<PlanCapability[]> {
+    return this.db.transaction(ctx, async (tx) => {
+      // Базовую и нереализованную возможность отклоняет БД. Это ошибка
+      // настройки, а не сбой: администратор должен прочитать причину, а не
+      // «обратитесь в поддержку».
+      await asCapabilityValidation(
+        tx.query(
+          `INSERT INTO billing.plan_capability_links (plan_id, capability, reason, created_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (plan_id, capability) DO NOTHING`,
+          [input.planId, input.capability, input.reason, ctx.userId],
+        ),
+      );
+      await this.audit.emit(tx, {
+        verb: 'billing.plan_capability.linked',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'subscription_plan',
+        subjectId: input.planId,
+        context: { capability: input.capability, reason: input.reason },
+        traceId: ctx.traceId,
+      });
+      return this.listIn(tx);
+    });
+  }
+
+  async unlink(ctx: RequestContext, input: UnlinkPlanCapabilityRequest): Promise<PlanCapability[]> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rowCount } = await tx.query(
+        `DELETE FROM billing.plan_capability_links WHERE plan_id = $1 AND capability = $2`,
+        [input.planId, input.capability],
+      );
+      if (rowCount === 0) throw errors.notFound({ subject: 'plan_capability_link' });
+      await this.audit.emit(tx, {
+        verb: 'billing.plan_capability.unlinked',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'subscription_plan',
+        subjectId: input.planId,
+        context: { capability: input.capability, reason: input.reason },
+        traceId: ctx.traceId,
+      });
+      return this.listIn(tx);
+    });
+  }
+
+  private async listIn(tx: Tx): Promise<PlanCapability[]> {
+    const { rows } = await tx.query(PLAN_CAPABILITIES_SELECT);
+    return (rows as PlanCapabilityRow[]).map(mapPlanCapability);
+  }
+}
+
+/** Отказ каталога — ошибка настройки, а не внутренняя ошибка. */
+async function asCapabilityValidation<T>(work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === '23514' || code === '23503') {
+      const message = (error as { message?: string }).message ?? 'возможность недоступна';
+      throw errors.validation([{ path: 'capability', message }]);
+    }
+    throw error;
+  }
+}
+
+interface PlanCapabilityRow {
+  code: string;
+  section: string;
+  title: string;
+  description: string;
+  is_implemented: boolean;
+  is_baseline: boolean;
+  is_enforced: boolean;
+  plans: { planId: string; code: string; version: number }[];
+}
+
+function mapPlanCapability(row: PlanCapabilityRow): PlanCapability {
+  return {
+    code: row.code,
+    section: row.section,
+    title: row.title,
+    description: row.description,
+    isImplemented: row.is_implemented,
+    isBaseline: row.is_baseline,
+    isEnforced: row.is_enforced,
+    plans: row.plans,
+  };
 }
 
 const TERMS_SELECT = `

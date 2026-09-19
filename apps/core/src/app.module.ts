@@ -38,8 +38,9 @@ import { RoundPricingService } from './billing/round-pricing.service';
 import {
   AdminFeeOffsetRulesController,
   AdminFeeTermsController,
+  AdminPlanCapabilitiesController,
 } from './billing/commission.controller';
-import { CommissionService } from './billing/commission.service';
+import { CommissionService, PlanCapabilitiesService } from './billing/commission.service';
 import {
   AdminCapabilitiesController,
   MyCapabilitiesController,
@@ -160,6 +161,7 @@ import { S3Service } from './storage/s3.service';
     AdminRoundServiceOffersController,
     AdminFeeTermsController,
     AdminFeeOffsetRulesController,
+    AdminPlanCapabilitiesController,
     AdminCapabilitiesController,
     MyCapabilitiesController,
     DealLedgerController,
@@ -209,6 +211,7 @@ import { S3Service } from './storage/s3.service';
     RoundPackagesService,
     RoundPricingService,
     CommissionService,
+    PlanCapabilitiesService,
     CapabilitiesService,
     DealLedgerService,
     FundingRoundsService,

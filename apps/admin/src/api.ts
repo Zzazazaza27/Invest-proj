@@ -15,6 +15,9 @@ import {
   DealLedgerSchema,
   DealSummarySchema,
   FeeOffsetRuleSchema,
+  PlanCapabilitySchema,
+  type LinkPlanCapabilityRequest,
+  type PlanCapability,
   StaffCapabilitySchema,
   TrancheReturnSchema,
   type CommissionAdjustment,
@@ -826,6 +829,33 @@ export const api = {
         path: '/v1/investments/deals/commission-adjustments',
         body,
         schema: CommissionAdjustmentSchema,
+      }),
+  },
+
+  /**
+   * Возможности тарифов инвестора (5.9.4). Настраивается состав тарифа;
+   * платные ограничения не включаются, базовый просмотр не закрывается.
+   */
+  planCapabilities: {
+    list: (): Promise<{ items: PlanCapability[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/plan-capabilities',
+        schema: listOf(PlanCapabilitySchema),
+      }),
+    link: (body: LinkPlanCapabilityRequest): Promise<{ items: PlanCapability[] }> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/plan-capabilities/link',
+        body,
+        schema: listOf(PlanCapabilitySchema),
+      }),
+    unlink: (body: LinkPlanCapabilityRequest): Promise<{ items: PlanCapability[] }> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/plan-capabilities/unlink',
+        body,
+        schema: listOf(PlanCapabilitySchema),
       }),
   },
 

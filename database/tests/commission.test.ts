@@ -125,3 +125,66 @@ describe('M096: зачёт услуг выключен', () => {
 function billingOffsetsEnabled(result: { rows: { on: boolean }[] }): boolean {
   return result.rows[0]!.on;
 }
+
+describe('M100: возможности тарифов инвестора', () => {
+  it('базовую возможность нельзя включить в тариф', async () => {
+    await inRollbackTx(async (c) => {
+      const [plan] = (
+        await c.query<{ id: string }>(
+          `SELECT id FROM billing.subscription_plans WHERE valid_to IS NULL LIMIT 1`,
+        )
+      ).rows;
+      await expect(
+        c.query(
+          `INSERT INTO billing.plan_capability_links (plan_id, capability, reason)
+           VALUES ($1, 'catalog.browse', 'попытка закрыть базовый просмотр')`,
+          [plan!.id],
+        ),
+      ).rejects.toThrow(/базовая/);
+    });
+  });
+
+  it('нереализованную возможность нельзя включить в тариф', async () => {
+    await inRollbackTx(async (c) => {
+      const [plan] = (
+        await c.query<{ id: string }>(
+          `SELECT id FROM billing.subscription_plans WHERE valid_to IS NULL LIMIT 1`,
+        )
+      ).rows;
+      await expect(
+        c.query(
+          `INSERT INTO billing.plan_capability_links (plan_id, capability, reason)
+           VALUES ($1, 'analytics.compare', 'попытка продать несделанное')`,
+          [plan!.id],
+        ),
+      ).rejects.toThrow(/не реализована/);
+    });
+  });
+
+  it('платное ограничение включить нельзя: матрица не утверждена', async () => {
+    await inRollbackTx(async (c) => {
+      await expect(
+        c.query(
+          `UPDATE billing.plan_capabilities SET is_enforced = true WHERE code = 'analytics.compare'`,
+        ),
+      ).rejects.toThrow(/не утверждена владельцем/);
+    });
+  });
+
+  it('пока ограничения выключены, реализованное доступно всем инвесторам', async () => {
+    await inRollbackTx(async (c) => {
+      const investor = await createUser(c, { role: 'investor' });
+      const { rows } = await c.query<{ capability: string; source: string }>(
+        `SELECT capability, source FROM billing.investor_capabilities($1) ORDER BY capability`,
+        [investor.id],
+      );
+      const codes = rows.map((r) => r.capability);
+      expect(codes).toContain('catalog.browse');
+      expect(codes).toContain('project.investor_view');
+      // Источник «plan» не встречается: ничего не закрыто, платить не за что.
+      expect(rows.every((r) => r.source !== 'plan')).toBe(true);
+      // Нереализованные возможности не выдаются вовсе.
+      expect(codes).not.toContain('analytics.compare');
+    });
+  });
+});

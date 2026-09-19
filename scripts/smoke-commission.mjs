@@ -315,6 +315,56 @@ let first = null;
   check('прямая запись зачёта отклонена базой', denied);
 }
 
+// ------------------------------------- возможности тарифов инвестора (5.9.4)
+{
+  const { items } = await admin.json('/v1/admin/plan-capabilities');
+  const codes = items.map((c) => c.code);
+  check('каталог возможностей заполнен', codes.includes('catalog.browse'), codes.join(', '));
+  const baseline = items.find((c) => c.code === 'catalog.browse');
+  check('базовый просмотр помечен базовым', baseline?.isBaseline === true);
+  check(
+    'платные ограничения выключены',
+    items.every((c) => c.isEnforced === false),
+  );
+}
+{
+  const [plan] = await sql(
+    `SELECT id FROM billing.subscription_plans WHERE valid_to IS NULL ORDER BY version DESC LIMIT 1`,
+  );
+  const { response, json } = await admin.call('/v1/admin/plan-capabilities/link', {
+    method: 'POST',
+    body: {
+      planId: plan.id,
+      capability: 'catalog.browse',
+      reason: 'прогон: попытка закрыть базовый просмотр',
+    },
+  });
+  check(
+    'базовый просмотр закрыть тарифом нельзя',
+    response.status >= 400,
+    `статус ${response.status}`,
+  );
+  void json;
+
+  const notImplemented = await admin.call('/v1/admin/plan-capabilities/link', {
+    method: 'POST',
+    body: {
+      planId: plan.id,
+      capability: 'analytics.compare',
+      reason: 'прогон: попытка продать нереализованное',
+    },
+  });
+  check(
+    'нереализованную возможность в тариф не включить',
+    notImplemented.response.status === 400,
+    `статус ${notImplemented.response.status}`,
+  );
+}
+{
+  const [{ on }] = await sql(`SELECT bool_or(is_enforced) AS on FROM billing.plan_capabilities`);
+  check('в базе ничего не закрыто платно', on === false, `${on}`);
+}
+
 // --------------------------------------------------------------------- аудит
 {
   const rows = await sql(
