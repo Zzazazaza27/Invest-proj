@@ -67,6 +67,35 @@ export const RevokeCapabilityRequestSchema = z.object({
 });
 export type RevokeCapabilityRequest = z.infer<typeof RevokeCapabilityRequestSchema>;
 
+/**
+ * Назначение на сопровождение сделок проекта (M099).
+ *
+ * Область работы для денежных действий. НЕ делает сотрудника рецензентом:
+ * анкета, внутренние оценки и материалы проекта им не открываются.
+ */
+export const DealSupportAssignmentSchema = z.object({
+  id: UuidSchema,
+  projectId: UuidSchema,
+  userId: UuidSchema,
+  status: z.string(),
+  createdAt: IsoDateTimeSchema,
+});
+export type DealSupportAssignment = z.infer<typeof DealSupportAssignmentSchema>;
+
+export const AssignDealSupportRequestSchema = z.object({
+  projectId: UuidSchema,
+  userId: UuidSchema,
+  reason: z.string().trim().min(3).max(500),
+});
+export type AssignDealSupportRequest = z.infer<typeof AssignDealSupportRequestSchema>;
+
+export const RevokeDealSupportRequestSchema = z.object({
+  projectId: UuidSchema,
+  userId: UuidSchema,
+  reason: z.string().trim().min(3).max(500),
+});
+export type RevokeDealSupportRequest = z.infer<typeof RevokeDealSupportRequestSchema>;
+
 // ------------------------------------------------------- ручные записи о деньгах
 
 /**

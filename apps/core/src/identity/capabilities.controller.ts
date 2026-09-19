@@ -1,6 +1,9 @@
 import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import {
+  AssignDealSupportRequestSchema,
+  DealSupportAssignmentSchema,
   GrantCapabilityRequestSchema,
+  RevokeDealSupportRequestSchema,
   RevokeCapabilityRequestSchema,
   StaffCapabilityGrantSchema,
   StaffCapabilitySchema,
@@ -43,6 +46,23 @@ export class AdminCapabilitiesController {
   async grant(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
     const input = parseOrThrow(GrantCapabilityRequestSchema, rawBody);
     return StaffCapabilityGrantSchema.parse(await this.capabilities.grant(ctx, input));
+  }
+
+  /**
+   * Назначение на сопровождение сделок проекта — ОБЛАСТЬ работы, не права.
+   * Рецензентом от этого не становятся: данные проекта не открываются.
+   */
+  @Post('deal-support')
+  async assignDealSupport(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(AssignDealSupportRequestSchema, rawBody);
+    return DealSupportAssignmentSchema.parse(await this.capabilities.assignDealSupport(ctx, input));
+  }
+
+  @Post('deal-support/revoke')
+  async revokeDealSupport(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(RevokeDealSupportRequestSchema, rawBody);
+    await this.capabilities.revokeDealSupport(ctx, input);
+    return { revoked: true };
   }
 
   /** Отзыв закрывает доступ на следующем запросе. */

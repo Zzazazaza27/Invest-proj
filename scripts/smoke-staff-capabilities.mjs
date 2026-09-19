@@ -355,13 +355,69 @@ await admin.json('/v1/admin/capabilities/grant', {
   );
 }
 
-// ------------------------------------------- назначение открывает свою сделку
+// -------------------- рецензентское назначение область сделки НЕ открывает
+// Цель назначения различается (M099): рецензент оценивает проект, но денег
+// не касается; сопровождающий сделку — наоборот. Роли проверяются на РАЗНЫХ
+// людях: совмести их в одном — и проверка перестанет что-либо доказывать.
+const reviewerUser = await register('founder', 'r');
+await sql(
+  `INSERT INTO identity.user_roles (user_id, role) VALUES ($1, 'expert') ON CONFLICT DO NOTHING`,
+  [reviewerUser.userId],
+);
+await sql(`INSERT INTO experts.experts (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, [
+  reviewerUser.userId,
+]);
 await sql(
   `INSERT INTO experts.expert_assignments
-     (id, project_id, expert_id, assigned_reason, status, due_at)
-   VALUES ($1, $2, $3, 'manual', 'accepted', now() + interval '30 days')`,
-  [randomUUID(), deal.projectId, expertUser.userId],
+     (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
+   VALUES ($1, $2, $3, 'manual', 'review', 'accepted', now() + interval '30 days')`,
+  [randomUUID(), deal.projectId, reviewerUser.userId],
 );
+const reviewer = await login(reviewerUser);
+await admin.json('/v1/admin/capabilities/grant', {
+  method: 'POST',
+  body: {
+    userId: reviewerUser.userId,
+    capability: 'finance.tranche_return.record',
+    reason: 'прогон: у рецензента есть полномочие, но нет области сделки',
+  },
+});
+{
+  const { response } = await reviewer.call('/v1/investments/deals/tranche-returns', {
+    method: 'POST',
+    body: {
+      trancheId: deal.trancheId,
+      amount: '1000.00',
+      currency: 'RUB',
+      occurredOn: '2026-09-19',
+      reason: 'попытка рецензента',
+      idempotencyKey: `reviewer-${suffix}`,
+    },
+  });
+  check(
+    'рецензентское назначение сделку не открывает даже с полномочием',
+    response.status === 403 || response.status === 404,
+    `статус ${response.status}`,
+  );
+}
+{
+  const card = await reviewer.call(`/v1/projects/${deal.projectId}`);
+  check(
+    'рецензент при этом сохраняет доступ к проекту',
+    card.response.status === 200,
+    `статус ${card.response.status}`,
+  );
+}
+
+// --------------------------- назначение на сопровождение открывает сделку
+await admin.json('/v1/admin/capabilities/deal-support', {
+  method: 'POST',
+  body: {
+    projectId: deal.projectId,
+    userId: expertUser.userId,
+    reason: 'прогон: сопровождение сделок проекта',
+  },
+});
 let firstReturn;
 {
   const created = await expert.json('/v1/investments/deals/tranche-returns', {
@@ -438,6 +494,45 @@ let firstReturn;
   check('история аннулированной записи видна', tranche?.returns.length === 1);
 }
 
+// ------------- сопровождение сделки не открывает данные проекта
+{
+  const card = await expert.call(`/v1/projects/${deal.projectId}`);
+  check(
+    'анкета проекта сопровождающему не открывается',
+    card.response.status === 403 || card.response.status === 404,
+    `статус ${card.response.status}`,
+  );
+  const materials = await expert.call(`/v1/projects/${deal.projectId}/materials`);
+  check(
+    'материалы проекта не открываются',
+    materials.response.status === 403 || materials.response.status === 404,
+    `статус ${materials.response.status}`,
+  );
+  // История подач отвечает 200 с ПУСТЫМ списком: строки отсекает RLS. Это не
+  // утечка — данных в ответе нет, — но проверять надо именно содержимое.
+  const versions = await expert.call(`/v1/projects/${deal.projectId}/versions`);
+  check(
+    'версий профиля в ответе нет',
+    (versions.json?.items ?? []).length === 0,
+    `статус ${versions.response.status}, записей ${(versions.json?.items ?? []).length}`,
+  );
+  const [visible] = await sql(`SELECT lab.project_audience($1, $2, 'profile') AS audience`, [
+    deal.projectId,
+    expertUser.userId,
+  ]);
+  check(
+    'предикат аудитории сопровождающему ничего не даёт',
+    visible?.audience === null,
+    `${visible?.audience}`,
+  );
+  const mine = await expert.json('/v1/experts/assignments');
+  check(
+    'сопровождение не попадает в кабинет рецензента',
+    (mine.items ?? []).every((a) => a.projectId !== deal.projectId),
+    `назначений: ${(mine.items ?? []).length}`,
+  );
+}
+
 // --------------------------------- корректировка комиссии — другое полномочие
 {
   const { response, json } = await expert.call('/v1/investments/deals/commission-adjustments', {
@@ -508,6 +603,34 @@ await admin.json('/v1/admin/capabilities/grant', {
     'отказ называет полномочие на возврат уплаченного',
     (json?.detail ?? '').includes('finance.commission.refund_paid'),
     json?.detail ?? '',
+  );
+}
+
+// ------------------------------- снятие области работы закрывает действие
+await admin.json('/v1/admin/capabilities/deal-support/revoke', {
+  method: 'POST',
+  body: {
+    projectId: deal.projectId,
+    userId: expertUser.userId,
+    reason: 'прогон: сопровождение снято',
+  },
+});
+{
+  const { response } = await expert.call('/v1/investments/deals/tranche-returns', {
+    method: 'POST',
+    body: {
+      trancheId: deal.trancheId,
+      amount: '1000.00',
+      currency: 'RUB',
+      occurredOn: '2026-09-19',
+      reason: 'после снятия назначения',
+      idempotencyKey: `after-unassign-${suffix}`,
+    },
+  });
+  check(
+    'снятие назначения закрывает действие',
+    response.status === 403 || response.status === 404,
+    `статус ${response.status}`,
   );
 }
 

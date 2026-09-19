@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import {
   uuidv7,
+  type AssignDealSupportRequest,
+  type DealSupportAssignment,
   type GrantCapabilityRequest,
+  type RevokeDealSupportRequest,
   type RevokeCapabilityRequest,
   type StaffCapability,
   type StaffCapabilityGrant,
@@ -124,6 +127,88 @@ export class CapabilitiesService {
     });
   }
 
+  /**
+   * Назначить сотрудника на сопровождение сделок проекта (M099).
+   *
+   * Это ОБЛАСТЬ РАБОТЫ, а не права: без отдельно выданного финансового
+   * полномочия назначение ничего не позволяет. И наоборот — оно НЕ делает
+   * сотрудника рецензентом: анкета, внутренние оценки и материалы проекта
+   * им не открываются, для этого нужна другая цель назначения.
+   */
+  async assignDealSupport(
+    ctx: RequestContext,
+    input: AssignDealSupportRequest,
+  ): Promise<DealSupportAssignment> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows: project } = await tx.query<{ id: string }>(
+        `SELECT id FROM lab.projects WHERE id = $1`,
+        [input.projectId],
+      );
+      if (!project[0]) throw errors.notFound({ subject: 'project' });
+
+      // Строка в каталоге экспертов нужна ссылочной целостностью; профиль
+      // рецензента она не создаёт и в публичный список не выводит.
+      await tx.query(`INSERT INTO experts.experts (user_id) VALUES ($1) ON CONFLICT DO NOTHING`, [
+        input.userId,
+      ]);
+
+      const id = uuidv7();
+      const { rows } = await tx.query<AssignmentRow>(
+        `INSERT INTO experts.expert_assignments
+           (id, project_id, expert_id, assigned_reason, purpose, status, due_at, assigned_by)
+         VALUES ($1, $2, $3, 'manual', 'deal_support', 'accepted',
+                 now() + interval '365 days', $4)
+         ON CONFLICT (project_id, expert_id, purpose)
+           WHERE status IN ('assigned','accepted') DO NOTHING
+         RETURNING id, project_id, expert_id, status, created_at`,
+        [id, input.projectId, input.userId, ctx.userId],
+      );
+      if (!rows[0]) {
+        const { rows: existing } = await tx.query<AssignmentRow>(
+          `SELECT id, project_id, expert_id, status, created_at
+             FROM experts.expert_assignments
+            WHERE project_id = $1 AND expert_id = $2 AND purpose = 'deal_support'
+              AND status IN ('assigned','accepted')`,
+          [input.projectId, input.userId],
+        );
+        return mapAssignment(existing[0]!);
+      }
+
+      await this.audit.emit(tx, {
+        verb: 'experts.deal_support.assigned',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'project',
+        subjectId: input.projectId,
+        context: { userId: input.userId, reason: input.reason },
+        traceId: ctx.traceId,
+      });
+      return mapAssignment(rows[0]);
+    });
+  }
+
+  /** Снятие области работы закрывает денежные действия по этим сделкам. */
+  async revokeDealSupport(ctx: RequestContext, input: RevokeDealSupportRequest): Promise<void> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rowCount } = await tx.query(
+        `UPDATE experts.expert_assignments SET status = 'expired'
+          WHERE project_id = $1 AND expert_id = $2 AND purpose = 'deal_support'
+            AND status IN ('assigned','accepted')`,
+        [input.projectId, input.userId],
+      );
+      if (rowCount === 0) throw errors.notFound({ subject: 'deal_support_assignment' });
+      await this.audit.emit(tx, {
+        verb: 'experts.deal_support.assigned',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'project',
+        subjectId: input.projectId,
+        context: { userId: input.userId, revoked: true, reason: input.reason },
+        traceId: ctx.traceId,
+      });
+    });
+  }
+
   /** Отзыв закрывает доступ на следующем запросе: проверка идёт по факту. */
   async revoke(ctx: RequestContext, input: RevokeCapabilityRequest): Promise<void> {
     return this.db.transaction(ctx, async (tx) => {
@@ -168,16 +253,16 @@ export async function assertCapability(tx: Tx, code: string, action: string): Pr
 }
 
 /**
- * Проверка ОБЛАСТИ РАБОТЫ: сотрудник назначен на проект этой сделки.
+ * Проверка ОБЛАСТИ РАБОТЫ: сотрудник сопровождает сделки этого проекта.
  *
- * Администратор работает со всеми сделками. Остальным полномочие само по
- * себе сделок не открывает — иначе право фиксировать возврат означало бы
- * доступ ко всей платформе.
+ * Область — назначение с целью `deal_support` (M099), а НЕ рецензентское:
+ * сопровождение сделки не делает человека оценщиком проекта, а рецензент не
+ * получает доступа к деньгам. Администратор работает со всеми сделками.
  */
 export async function assertAssignedToAgreement(tx: Tx, agreementId: string): Promise<void> {
   const { rows } = await tx.query<{ allowed: boolean }>(
     `SELECT app.has_role('admin')
-            OR experts.is_assigned_reviewer(o.project_id, app.current_user_id()) AS allowed
+            OR experts.is_assigned_deal_supporter(o.project_id, app.current_user_id()) AS allowed
        FROM investments.investment_agreements a
        JOIN investments.investment_offers o ON o.id = a.offer_id
       WHERE a.id = $1`,
@@ -187,7 +272,7 @@ export async function assertAssignedToAgreement(tx: Tx, agreementId: string): Pr
   if (!rows[0].allowed) {
     throw errors.forbidden(
       { agreementId },
-      'Сделка вне вашей области работы: нужно назначение на проект этой сделки',
+      'Сделка вне вашей области работы: нужно назначение на сопровождение сделок этого проекта',
     );
   }
 }
@@ -200,6 +285,14 @@ interface CapabilityRow {
   description: string;
   is_implemented: boolean;
   requires_assignment: boolean;
+}
+
+interface AssignmentRow {
+  id: string;
+  project_id: string;
+  expert_id: string;
+  status: string;
+  created_at: Date;
 }
 
 interface GrantRow {
@@ -220,6 +313,16 @@ function mapCapability(row: CapabilityRow): StaffCapability {
     description: row.description,
     isImplemented: row.is_implemented,
     requiresAssignment: row.requires_assignment,
+  };
+}
+
+function mapAssignment(row: AssignmentRow): DealSupportAssignment {
+  return {
+    id: row.id,
+    projectId: row.project_id,
+    userId: row.expert_id,
+    status: row.status,
+    createdAt: row.created_at.toISOString(),
   };
 }
 

@@ -43,7 +43,11 @@ export class ExpertsService {
 
   // -------------------------------------------------------------- назначения
 
-  /** Назначения текущего эксперта. Чужие не видны ни здесь, ни на уровне RLS. */
+  /**
+   * Назначения текущего эксперта НА РЕЦЕНЗИЮ. Чужие не видны ни здесь, ни на
+   * уровне RLS. Сопровождение сделки сюда не попадает: это другая работа, и
+   * в кабинете рецензента ей делать нечего (M099).
+   */
   async myAssignments(ctx: RequestContext): Promise<ExpertAssignment[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<AssignmentRow>(
@@ -55,7 +59,7 @@ export class ExpertsService {
                          WHERE rc.project_id = a.project_id) AS consensus_decided
            FROM experts.expert_assignments a
            JOIN lab.projects p ON p.id = a.project_id
-          WHERE a.expert_id = $1
+          WHERE a.expert_id = $1 AND a.purpose = 'review'
           ORDER BY a.due_at ASC
           LIMIT 200`,
         [ctx.userId],

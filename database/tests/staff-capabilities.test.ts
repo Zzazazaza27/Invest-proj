@@ -179,6 +179,118 @@ describe('M097: полномочия отдельно от области раб
   });
 });
 
+describe('M099: цель назначения различает рецензию и сопровождение сделки', () => {
+  it('сопровождение сделки не даёт ни рецензентских прав, ни данных проекта', async () => {
+    await inRollbackTx(async (c) => {
+      const staff = await createUser(c, { role: 'expert' });
+      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [staff.id]);
+      const deal = await dealWithTranche(c);
+      await c.query(
+        `INSERT INTO experts.expert_assignments
+           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
+         VALUES ($1, $2, $3, 'manual', 'deal_support', 'accepted', now() + interval '30 days')`,
+        [uuidv7(), deal.projectId, staff.id],
+      );
+
+      // Сравниваем с посторонним вошедшим: назначение на сопровождение не
+      // должно поднимать аудиторию НИ НА ШАГ — ни до platform, ни куда-либо
+      // ещё. Абсолютное значение зависит от режима проекта, поэтому важно
+      // именно равенство.
+      const stranger = await createUser(c, { role: 'investor' });
+      const { rows } = await c.query<{
+        reviewer: boolean;
+        supporter: boolean;
+        audience: string | null;
+        stranger_audience: string | null;
+      }>(
+        `SELECT experts.is_assigned_reviewer($1, $2) AS reviewer,
+                experts.is_assigned_deal_supporter($1, $2) AS supporter,
+                lab.project_audience($1, $2, 'profile') AS audience,
+                lab.project_audience($1, $3, 'profile') AS stranger_audience`,
+        [deal.projectId, staff.id, stranger.id],
+      );
+      expect(rows[0]!.supporter).toBe(true);
+      // Главное: рецензентом он не стал, и аудитория у него как у постороннего.
+      expect(rows[0]!.reviewer).toBe(false);
+      expect(rows[0]!.audience).toBe(rows[0]!.stranger_audience);
+      expect(rows[0]!.audience).not.toBe('platform');
+    });
+  });
+
+  it('рецензент сохраняет прежние права', async () => {
+    await inRollbackTx(async (c) => {
+      const reviewer = await createUser(c, { role: 'expert' });
+      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
+      const deal = await dealWithTranche(c);
+      await c.query(
+        `INSERT INTO experts.expert_assignments
+           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
+         VALUES ($1, $2, $3, 'manual', 'review', 'accepted', now() + interval '30 days')`,
+        [uuidv7(), deal.projectId, reviewer.id],
+      );
+      const { rows } = await c.query<{
+        reviewer: boolean;
+        supporter: boolean;
+        audience: string | null;
+      }>(
+        `SELECT experts.is_assigned_reviewer($1, $2) AS reviewer,
+                experts.is_assigned_deal_supporter($1, $2) AS supporter,
+                lab.project_audience($1, $2, 'profile') AS audience`,
+        [deal.projectId, reviewer.id],
+      );
+      expect(rows[0]!.reviewer).toBe(true);
+      expect(rows[0]!.audience).toBe('platform');
+      // И симметрично: рецензент не получает область денежных действий.
+      expect(rows[0]!.supporter).toBe(false);
+    });
+  });
+
+  it('рецензию нельзя подать по назначению на сопровождение', async () => {
+    await inRollbackTx(async (c) => {
+      const staff = await createUser(c, { role: 'expert' });
+      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [staff.id]);
+      const deal = await dealWithTranche(c);
+      const assignmentId = uuidv7();
+      await c.query(
+        `INSERT INTO experts.expert_assignments
+           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
+         VALUES ($1, $2, $3, 'manual', 'deal_support', 'accepted', now() + interval '30 days')`,
+        [assignmentId, deal.projectId, staff.id],
+      );
+      await expect(
+        c.query(
+          `INSERT INTO experts.expert_reviews
+             (id, assignment_id, rubric_scores_jsonb, recommendation)
+           VALUES ($1, $2, '{"team":5,"product":5,"strategy":5,"legal":5,"finmodel":5,"scalability":5}'::jsonb,
+                   'pass')`,
+          [uuidv7(), assignmentId],
+        ),
+      ).rejects.toThrow(/только по назначению на экспертную оценку/);
+    });
+  });
+
+  it('один человек может и рецензировать проект, и сопровождать его сделки', async () => {
+    await inRollbackTx(async (c) => {
+      const staff = await createUser(c, { role: 'expert' });
+      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [staff.id]);
+      const deal = await dealWithTranche(c);
+      const insert = (purpose: string) =>
+        c.query(
+          `INSERT INTO experts.expert_assignments
+             (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
+           VALUES ($1, $2, $3, 'manual', $4, 'accepted', now() + interval '30 days')`,
+          [uuidv7(), deal.projectId, staff.id, purpose],
+        );
+      await expect(insert('review')).resolves.toBeDefined();
+      // Это разные работы, а не дубликат: уникальность считает и цель.
+      await expect(insert('deal_support')).resolves.toBeDefined();
+      await c.query('SAVEPOINT duplicate');
+      await expect(insert('review')).rejects.toThrow(/assignments_active_uq/);
+      await c.query('ROLLBACK TO SAVEPOINT duplicate');
+    });
+  });
+});
+
 describe('M097: фиксация возврата', () => {
   it('частичные возвраты складываются и не превышают сумму транша', async () => {
     await inRollbackTx(async (c) => {
