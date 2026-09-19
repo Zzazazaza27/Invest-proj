@@ -203,7 +203,7 @@ try {
     const quote = await founder.client.json(
       `/v1/rounds/${roundId}/quote?packageCode=${codes.pkgFull}`,
     );
-    check('более полный пакет выбрать можно', quote.mode === 'priced', `режим ${quote.mode}`);
+    check('назначенную замену выбрать можно', quote.mode === 'priced', `режим ${quote.mode}`);
     check(
       'в счёт попал выбранный пакет',
       quote.chosenPackage?.code === codes.pkgFull,
@@ -211,8 +211,8 @@ try {
     );
     check('итог по выбранному пакету', quote.total === GRID.fullPrice, quote.total);
     check(
-      'объяснение называет выбор более полного',
-      quote.explanation.some((line) => line.includes('более полный')),
+      'объяснение называет выбор замены',
+      quote.explanation.some((line) => line.includes('допустимая замена')),
       quote.explanation.join(' | ').slice(0, 120),
     );
   }
@@ -220,10 +220,14 @@ try {
     const quote = await founder.client.json(
       `/v1/rounds/${roundId}/quote?packageCode=${codes.pkgSide}`,
     );
-    check('дороже не значит полнее', quote.mode === 'blocked', `режим ${quote.mode}`);
     check(
-      'отказ называет недостающее',
-      quote.blockers[0]?.message.includes('не включает всё'),
+      'неназначенный пакет заменой не считается',
+      quote.mode === 'blocked',
+      `режим ${quote.mode}`,
+    );
+    check(
+      'отказ называет причину',
+      quote.blockers[0]?.message.includes('не назначен допустимой заменой'),
       quote.blockers[0]?.message,
     );
   }

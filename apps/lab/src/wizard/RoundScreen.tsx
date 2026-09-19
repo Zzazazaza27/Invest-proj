@@ -22,6 +22,7 @@ import type {
   ProjectMaterial,
   RoundCloseReason,
   RoundOpenPreview,
+  RoundPurchaseView,
   RoundQuote,
   ServiceCountryPolicyVersion,
   UpdateFundingRoundRequest,
@@ -696,12 +697,158 @@ function CostBlock({ round, policy }: { round: RoundHook; policy: ServiceCountry
             </span>
           ))}
           <strong>{S.round.cost.total(formatMoney(quote.total, quote.currency))}</strong>
-          <span style={{ color: 'var(--u-text-muted)' }}>{S.round.cost.notSold}</span>
+          {roundId ? <PurchaseBlock roundId={roundId} quote={quote} onQuote={setQuote} /> : null}
         </>
       )}
     </div>
   );
 }
+
+/**
+ * Покупка запуска раунда (5.9.7).
+ *
+ * Здесь основатель выбирает пакет из НАЗНАЧЕННЫХ администратором замен,
+ * докупает услуги, сохраняет выбор и оформляет покупку. Оплату принимает не
+ * кабинет: покупка ждёт подтверждения платформы, и экран честно говорит, чего
+ * не хватает для открытия раунда.
+ */
+function PurchaseBlock({
+  roundId,
+  quote,
+  onQuote,
+}: {
+  roundId: string;
+  quote: RoundQuote;
+  onQuote: (quote: RoundQuote) => void;
+}) {
+  const [purchase, setPurchase] = useState<RoundPurchaseView | null>(null);
+  const [packageCode, setPackageCode] = useState<string>('');
+  const [extras, setExtras] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.rounds
+      .purchase(roundId)
+      .then((result) => {
+        if (cancelled) return;
+        setPurchase('id' in result ? result : null);
+      })
+      .catch(() => {
+        if (!cancelled) setPurchase(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [roundId]);
+
+  const alternatives = quote.requiredPackage?.allowedAlternatives ?? [];
+
+  async function save() {
+    setBusy(true);
+    try {
+      const selection = { packageCode: packageCode || undefined, serviceCodes: extras };
+      await api.rounds.saveSelection(roundId, selection);
+      onQuote(await api.rounds.quote(roundId, selection));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? (e.problem?.detail ?? null) : 'Выбор не сохранён');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function buy() {
+    setBusy(true);
+    try {
+      setPurchase(await api.rounds.createPurchase(roundId));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? (e.problem?.detail ?? null) : 'Покупка не оформлена');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      data-round-purchase={purchase ? purchase.status : 'none'}
+      style={{ display: 'grid', gap: 'var(--u-space-2)' }}
+    >
+      {error ? <span style={{ color: 'var(--u-danger)' }}>{error}</span> : null}
+
+      {purchase === null ? (
+        <>
+          <label htmlFor="purchase-package">{S.round.cost.selectPackage}</label>
+          <select
+            id="purchase-package"
+            value={packageCode}
+            onChange={(e) => setPackageCode(e.target.value)}
+          >
+            <option value="">{S.round.cost.keepRequired}</option>
+            {alternatives.map((code) => (
+              <option key={code} value={code}>
+                {code}
+              </option>
+            ))}
+          </select>
+
+          {quote.extraServices.length > 0 || extras.length > 0 ? null : null}
+          <label htmlFor="purchase-extras">{S.round.cost.extras}</label>
+          <input
+            id="purchase-extras"
+            value={extras.join(',')}
+            placeholder="коды услуг через запятую"
+            onChange={(e) =>
+              setExtras(
+                e.target.value
+                  .split(',')
+                  .map((code) => code.trim())
+                  .filter((code) => code.length > 0),
+              )
+            }
+          />
+
+          <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
+            <Button variant="secondary" loading={busy} onClick={() => void save()}>
+              {S.round.cost.saveSelection}
+            </Button>
+            <Button variant="brand" loading={busy} onClick={() => void buy()}>
+              {S.round.cost.buy}
+            </Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <strong>{S.round.cost.purchaseTitle}</strong>
+          <span>{S.round.cost.purchaseStatus(purchase.status)}</span>
+          {purchase.isTestPayment ? (
+            <span style={{ color: 'var(--u-warning)' }}>{S.round.cost.purchaseTest}</span>
+          ) : null}
+          {purchase.items.map((item) => (
+            <span key={item.id} data-purchase-item={item.fulfillmentStatus}>
+              {item.title} — {FULFILLMENT_TITLES[item.fulfillmentStatus]}
+            </span>
+          ))}
+          <span
+            data-purchase-blocker={purchase.openBlocker === null ? 'none' : 'blocked'}
+            style={{ color: purchase.openBlocker ? 'var(--u-warning)' : 'var(--u-text-muted)' }}
+          >
+            {purchase.openBlocker ? S.round.cost.blocker(purchase.openBlocker) : S.round.cost.ready}
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
+const FULFILLMENT_TITLES: Record<string, string> = {
+  planned: S.round.cost.itemPlanned,
+  in_progress: S.round.cost.itemInProgress,
+  fulfilled: S.round.cost.itemFulfilled,
+  not_fulfilled: S.round.cost.itemNotFulfilled,
+};
 
 // ------------------------------------------------------------------- страна
 

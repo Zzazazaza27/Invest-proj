@@ -214,11 +214,10 @@ try {
     cost.includes('15') && /₽|RUB/.test(cost),
     cost.replace(/\n/g, ' | ').slice(0, 160),
   );
-  check(
-    'сказано, что оплата не подключена',
-    cost.includes('Оплата запуска ещё не подключена'),
-    cost.split('\n').at(-1) ?? '',
-  );
+  // С 5.9.7 вместо «оплата не подключена» основателю предлагается оформить
+  // покупку: путь стал проходимым, и экран зовёт дальше, а не извиняется.
+  check('предложено оформить покупку', cost.includes('Оформить покупку'), cost.slice(0, 80));
+  check('покупки ещё нет', (await page.locator('[data-round-purchase="none"]').count()) === 1);
   await screenshot('priced');
 
   console.warn('\n[3] Открытие отказывает с ценой');

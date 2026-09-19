@@ -8,6 +8,7 @@ import {
   FundingRoundBasisHistoryEntrySchema,
   FundingRoundDetailSchema,
   FundingRoundSchema,
+  RoundPurchaseViewSchema,
   RoundQuoteSchema,
   ServiceCountryPolicyVersionSchema,
   ServiceCountrySchema,
@@ -863,6 +864,33 @@ export class UnicornApi {
      * Выбор основателя — более полный пакет и докупаемые услуги — передаётся
      * параметрами, потому что хранить незавершённый выбор пока негде.
      */
+    /** Сохранить выбор пакета и услуг: черновик намерения, не покупка. */
+    saveSelection: (id: string, selection: { packageCode?: string; serviceCodes?: string[] }) =>
+      this.http.request({
+        method: 'PUT',
+        path: `/rounds/${id}/package-selection`,
+        body: { packageCode: selection.packageCode, serviceCodes: selection.serviceCodes ?? [] },
+        schema: z.object({
+          packageCode: z.string().optional(),
+          serviceCodes: z.array(z.string()),
+        }),
+      }),
+
+    /** Оформить покупку по сохранённому выбору. Сумма берётся из расчёта. */
+    createPurchase: (id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/rounds/${id}/purchase`,
+        schema: RoundPurchaseViewSchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    purchase: (id: string) =>
+      this.http.request({
+        path: `/rounds/${id}/purchase`,
+        schema: z.union([RoundPurchaseViewSchema, z.object({ purchase: z.null() })]),
+      }),
+
     quote: (id: string, selection: { packageCode?: string; serviceCodes?: string[] } = {}) => {
       const query = new URLSearchParams();
       if (selection.packageCode) query.set('packageCode', selection.packageCode);

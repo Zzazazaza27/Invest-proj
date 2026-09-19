@@ -34,6 +34,8 @@ import {
   type FeeTerms,
   type PublishFeeTermsRequest,
   RoundPackageSchema,
+  RoundPurchaseViewSchema,
+  type RoundPurchaseView,
   RoundServiceOfferSchema,
   RoundServiceSchema,
   type CloseRoundPackageRequest,
@@ -909,6 +911,58 @@ export const api = {
         body,
         schema: FeeOffsetRuleSchema,
         idempotencyKey: uuidv7(),
+      }),
+  },
+
+  /**
+   * Покупки запуска раунда (5.9.7): подтверждение тестовой оплаты и отметка
+   * выполнения услуг. Настоящих платежей здесь нет.
+   */
+  roundPurchases: {
+    list: (): Promise<{ items: RoundPurchaseView[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/round-purchases',
+        schema: listOf(RoundPurchaseViewSchema),
+      }),
+    confirmTestPayment: (id: string): Promise<RoundPurchaseView> =>
+      client.request({
+        method: 'POST',
+        path: `/v1/admin/round-purchases/${encodeURIComponent(id)}/test-payment`,
+        schema: RoundPurchaseViewSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    setFulfillment: (
+      itemId: string,
+      body: { status: 'planned' | 'in_progress' | 'fulfilled' | 'not_fulfilled'; note: string },
+    ): Promise<RoundPurchaseView> =>
+      client.request({
+        method: 'POST',
+        path: `/v1/admin/round-purchases/items/${encodeURIComponent(itemId)}/fulfillment`,
+        body,
+        schema: RoundPurchaseViewSchema,
+      }),
+    addAlternative: (body: {
+      packageId: string;
+      alternativeId: string;
+      reason: string;
+    }): Promise<{ items: RoundPackage[]; warning: string | null }> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/round-packages/alternatives',
+        body,
+        schema: listOf(RoundPackageSchema).extend({ warning: z.string().nullable() }),
+      }),
+    removeAlternative: (body: {
+      packageId: string;
+      alternativeId: string;
+      reason: string;
+    }): Promise<{ items: RoundPackage[] }> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/round-packages/alternatives/remove',
+        body,
+        schema: listOf(RoundPackageSchema),
       }),
   },
 

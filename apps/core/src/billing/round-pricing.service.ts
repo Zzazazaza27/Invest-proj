@@ -35,7 +35,13 @@ export class RoundPricingService {
                    FROM billing.round_package_services ps
                    JOIN billing.round_services s ON s.id = ps.service_id
                   WHERE ps.package_id = p.id),
-                '[]'::jsonb) AS services
+                '[]'::jsonb) AS services,
+              COALESCE(
+                (SELECT jsonb_agg(alt.code ORDER BY alt.code)
+                   FROM billing.round_package_alternatives a
+                   JOIN billing.round_packages alt ON alt.id = a.alternative_id
+                  WHERE a.package_id = p.id),
+                '[]'::jsonb) AS allowed_alternatives
          FROM billing.round_packages p
         WHERE p.country_code = $1
           AND p.valid_from <= now()
@@ -63,6 +69,7 @@ export class RoundPricingService {
         minTarget: row.min_target,
         maxTarget: row.max_target,
         services: row.services,
+        allowedAlternatives: row.allowed_alternatives,
       })),
       serviceOffers: offers.map((row) => ({
         code: row.code,
@@ -108,6 +115,7 @@ interface PackageRow {
   min_target: string;
   max_target: string | null;
   services: { code: string; name: string }[];
+  allowed_alternatives: string[];
 }
 
 interface OfferRow {
@@ -120,16 +128,21 @@ interface OfferRow {
 /**
  * Коммерческий гейт трёх маршрутов: открытие, возобновление, увеличение суммы.
  *
- * Пропускает ТОЛЬКО бесплатный режим. Посчитанная стоимость — это отказ с
- * ценой, а не разрешение: оплата запуска ещё не реализована, и пропустить
- * платное действие бесплатно значило бы подарить услугу. Невозможность
- * посчитать — тоже отказ, с причиной из расчёта (fail-closed).
+ * Бесплатный режим проходит всегда. Платный проходит, только когда по этому
+ * раунду нет препятствий по покупке: она оформлена, оплачена и услуги по ней
+ * выполнены (`billing.round_purchase_blocker`). Невозможность посчитать —
+ * отказ с причиной из расчёта (fail-closed).
  */
 export function assertCommercialConditions(
   quote: RoundQuote,
   action: 'open' | 'resume' | 'increase',
+  blocker: string | null = null,
 ): RoundQuote {
   if (quote.mode === 'free') return quote;
+  // Платный режим: если препятствий по покупке нет, действие проходит.
+  // Порядок проверок утверждён владельцем — готовность, оплата, услуги,
+  // допуск: сюда приходит уже готовый ответ «что именно мешает».
+  if (quote.mode === 'priced' && blocker === null) return quote;
 
   if (quote.mode === 'blocked') {
     throw errors.validation(
@@ -143,11 +156,12 @@ export function assertCommercialConditions(
   const what = quote.chosenPackage ?? quote.requiredPackage;
   throw errors.validation([
     {
-      path: 'serviceCountry',
+      path: 'purchase',
       message:
         `запуск раунда платный: ${what ? `пакет «${what.name}», ` : ''}` +
-        `итого ${quote.total} ${quote.currency}. Оплата запуска ещё не реализована, ` +
-        `поэтому действие «${action}» недоступно`,
+        `итого ${quote.total} ${quote.currency}` +
+        (blocker ? `. ${blocker}` : '') +
+        `. Действие «${action}» недоступно`,
     },
   ]);
 }

@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { RoundPackage, RoundService, RoundServiceOffer } from '@unicorn/contracts';
+import type {
+  RoundPackage,
+  RoundPurchaseView,
+  RoundService,
+  RoundServiceOffer,
+} from '@unicorn/contracts';
 import { api } from '../api';
 import { formatDate, problemText } from '../lib/format';
 
@@ -76,7 +81,9 @@ export function RoundPackagesPage() {
         <>
           <ServicesBlock services={services} onDone={done} onError={setError} />
           <PackagesBlock packages={packages} services={services} onDone={done} onError={setError} />
+          <AlternativesBlock packages={packages} onDone={done} onError={setError} />
           <OffersBlock offers={offers} services={services} onDone={done} onError={setError} />
+          <PurchasesBlock onError={setError} />
         </>
       )}
     </>
@@ -622,5 +629,289 @@ function TextField({
       <label htmlFor={id}>{label}</label>
       <input id={id} value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
+  );
+}
+
+// -------------------------------------------- допустимые альтернативы пакета
+
+/**
+ * Чем можно заменить требуемый пакет.
+ *
+ * Список задаёт администратор ЯВНО: ни цена, ни совпадение состава заменой не
+ * делают. Если состав альтернативы не покрывает требуемый пакет, экран
+ * предупреждает — но не запрещает: решение принимает человек.
+ */
+function AlternativesBlock({
+  packages,
+  onDone,
+  onError,
+}: {
+  packages: RoundPackage[];
+  onDone: (text: string) => Promise<void>;
+  onError: (text: string) => void;
+}) {
+  const active = packages.filter((p) => p.isActive);
+  const [packageId, setPackageId] = useState('');
+  const [alternativeId, setAlternativeId] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [warning, setWarning] = useState<string | null>(null);
+
+  async function add() {
+    setBusy(true);
+    try {
+      const result = await api.roundPurchases.addAlternative({
+        packageId,
+        alternativeId,
+        reason: 'назначена допустимой заменой',
+      });
+      setWarning(result.warning);
+      await onDone('Альтернатива назначена.');
+    } catch (err) {
+      onError(problemText(err, 'Альтернатива не назначена'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove(pkg: RoundPackage, code: string) {
+    const alt = active.find((p) => p.code === code);
+    if (!alt) return;
+    setBusy(true);
+    try {
+      await api.roundPurchases.removeAlternative({
+        packageId: pkg.id,
+        alternativeId: alt.id,
+        reason: 'замена отменена',
+      });
+      await onDone('Альтернатива убрана.');
+    } catch (err) {
+      onError(problemText(err, 'Альтернатива не убрана'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section className="card" data-package-alternatives>
+      <div className="page-head" style={{ marginBottom: 10 }}>
+        <div>
+          <h2 style={{ marginBottom: 2 }}>Допустимые замены пакета</h2>
+          <div className="small muted">
+            Чем основатель вправе заменить требуемый пакет. Список явный: ни более высокая цена, ни
+            совпадение состава заменой не делают — это решение, а не вычисление.
+          </div>
+        </div>
+      </div>
+
+      {warning ? (
+        <div className="alert alert--warn" data-alternative-warning>
+          {warning}
+        </div>
+      ) : null}
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Пакет</th>
+            <th>Разрешённые замены</th>
+          </tr>
+        </thead>
+        <tbody>
+          {active.map((pkg) => (
+            <tr key={pkg.id} data-alternatives-of={pkg.code}>
+              <td>{pkg.name}</td>
+              <td className="small">
+                {pkg.alternatives.length === 0 ? '—' : null}
+                {pkg.alternatives.map((alt) => (
+                  <div key={alt.code}>
+                    {alt.name}
+                    {alt.coversComposition ? null : (
+                      <span className="muted"> — состав не покрывает требуемый</span>
+                    )}
+                    <button
+                      type="button"
+                      className="btn--ghost btn--sm"
+                      disabled={busy}
+                      onClick={() => void remove(pkg, alt.code)}
+                    >
+                      Убрать
+                    </button>
+                  </div>
+                ))}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div className="form-row">
+        <label htmlFor="alt-package">Требуемый пакет</label>
+        <select id="alt-package" value={packageId} onChange={(e) => setPackageId(e.target.value)}>
+          <option value="">— выберите —</option>
+          {active.map((pkg) => (
+            <option key={pkg.id} value={pkg.id}>
+              {pkg.name}
+            </option>
+          ))}
+        </select>
+      </div>
+      <div className="form-row">
+        <label htmlFor="alt-alternative">Разрешить замену на</label>
+        <select
+          id="alt-alternative"
+          value={alternativeId}
+          onChange={(e) => setAlternativeId(e.target.value)}
+        >
+          <option value="">— выберите —</option>
+          {active
+            .filter((pkg) => pkg.id !== packageId)
+            .map((pkg) => (
+              <option key={pkg.id} value={pkg.id}>
+                {pkg.name}
+              </option>
+            ))}
+        </select>
+      </div>
+      <button
+        type="button"
+        className="btn--sm"
+        disabled={busy || packageId === '' || alternativeId === ''}
+        onClick={() => void add()}
+      >
+        Назначить замену
+      </button>
+    </section>
+  );
+}
+
+// ------------------------------------------------- покупки запуска раунда
+
+/**
+ * Покупки: подтверждение тестовой оплаты и отметка выполнения услуг.
+ *
+ * Настоящих платежей здесь нет. «Подтвердить тестовую оплату» помечает покупку
+ * тестовой навсегда и работает только при включённом флаге и вне рабочего
+ * окружения. Отметку «выполнено» ставит человек и с основанием: работа
+ * эксперта и разбор ИИ не становятся сделанными оттого, что деньги пришли.
+ */
+function PurchasesBlock({ onError }: { onError: (text: string) => void }) {
+  const [items, setItems] = useState<RoundPurchaseView[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setItems((await api.roundPurchases.list()).items);
+    } catch (err) {
+      onError(problemText(err, 'Не удалось загрузить покупки'));
+    }
+  }, [onError]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  async function confirm(purchase: RoundPurchaseView) {
+    setBusy(true);
+    try {
+      await api.roundPurchases.confirmTestPayment(purchase.id);
+      await load();
+    } catch (err) {
+      onError(problemText(err, 'Оплата не подтверждена'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function fulfil(itemId: string) {
+    const note = window.prompt('Основание: что именно сделано?');
+    if (note === null || note.trim().length < 3) return;
+    setBusy(true);
+    try {
+      await api.roundPurchases.setFulfillment(itemId, { status: 'fulfilled', note: note.trim() });
+      await load();
+    } catch (err) {
+      onError(problemText(err, 'Отметка не сохранена'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (items === null) return null;
+
+  return (
+    <section className="card" data-round-purchases>
+      <div className="page-head" style={{ marginBottom: 10 }}>
+        <div>
+          <h2 style={{ marginBottom: 2 }}>Покупки запуска</h2>
+          <div className="small muted">
+            Настоящих платежей платформа не принимает. Тестовое подтверждение помечает покупку
+            навсегда и доступно только вне рабочего окружения.
+          </div>
+        </div>
+      </div>
+
+      {items.length === 0 ? <div className="muted">Покупок пока нет.</div> : null}
+
+      <table className="table">
+        <thead>
+          <tr>
+            <th>Покупка</th>
+            <th>Состояние</th>
+            <th>Сумма</th>
+            <th>Услуги</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {items.map((purchase) => (
+            <tr
+              key={purchase.id}
+              data-purchase-row={purchase.id}
+              data-purchase-status={purchase.status}
+            >
+              <td className="small">
+                {purchase.packageCode ?? '—'}
+                {purchase.isTestPayment ? <div className="muted">оплата тестовая</div> : null}
+              </td>
+              <td>{purchase.status}</td>
+              <td>
+                {purchase.totalAmount} {purchase.currency}
+              </td>
+              <td className="small">
+                {purchase.items.map((item) => (
+                  <div key={item.id} data-purchase-item={item.fulfillmentStatus}>
+                    {item.title} — {item.fulfillmentStatus}
+                    {item.fulfillmentStatus === 'fulfilled' ? null : (
+                      <button
+                        type="button"
+                        className="btn--ghost btn--sm"
+                        disabled={busy}
+                        onClick={() => void fulfil(item.id)}
+                      >
+                        Отметить выполненной
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </td>
+              <td className="row-actions">
+                {purchase.status === 'pending_payment' ? (
+                  <button
+                    type="button"
+                    className="btn--sm"
+                    disabled={busy}
+                    onClick={() => void confirm(purchase)}
+                  >
+                    Подтвердить тестовую оплату
+                  </button>
+                ) : (
+                  <span className="muted small">{purchase.openBlocker ?? 'условия выполнены'}</span>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }

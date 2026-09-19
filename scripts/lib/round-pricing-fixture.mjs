@@ -227,6 +227,21 @@ export async function publishGrid(admin, codes) {
       reason: 'прогон расчёта: дороже, но с другим набором',
     },
   });
+  // Замена назначается ЯВНО: с 5.9.7 ни цена, ни состав допустимости не дают.
+  const published = await admin.json('/v1/admin/round-packages');
+  const required = published.items.find((p) => p.code === codes.pkgSmall && p.isActive);
+  const alternative = published.items.find((p) => p.code === codes.pkgFull && p.isActive);
+  if (required && alternative) {
+    await admin.json('/v1/admin/round-packages/alternatives', {
+      method: 'POST',
+      body: {
+        packageId: required.id,
+        alternativeId: alternative.id,
+        reason: 'прогон: расширенный пакет разрешён как замена',
+      },
+    });
+  }
+
   await admin.json('/v1/admin/round-service-offers', {
     method: 'POST',
     body: {

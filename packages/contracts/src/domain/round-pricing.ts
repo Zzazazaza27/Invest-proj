@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { IsoDateTimeSchema } from '../common/primitives';
 import { ServiceCountryCodeSchema, PolicyCurrencySchema } from './service-country';
 
 /**
@@ -49,6 +50,12 @@ export const RoundQuotePackageSchema = z.object({
   minTarget: z.string(),
   maxTarget: z.string().nullable(),
   services: z.array(z.object({ code: OfferCodeSchema, name: z.string() })),
+  /**
+   * Чем администратор РАЗРЕШИЛ заменить этот пакет. Список явный: ни цена, ни
+   * совпадение состава альтернативой не делают (решение владельца
+   * 2026-09-19). Пусто — замен нет, берётся требуемый.
+   */
+  allowedAlternatives: z.array(OfferCodeSchema).default([]),
 });
 export type RoundQuotePackage = z.infer<typeof RoundQuotePackageSchema>;
 
@@ -80,12 +87,10 @@ export const RoundQuoteSchema = z.object({
   /**
    * Что выбрано вместо требуемого. `null` — берётся требуемый.
    *
-   * ВРЕМЕННАЯ ТЕХНИЧЕСКАЯ ПРОВЕРКА, а не утверждённое продуктовое правило
-   * (решение владельца 2026-09-19): пока допустимые альтернативы не задаются
-   * администратором явно, расчёт пропускает пакет, СОСТАВ которого включает
-   * весь состав требуемого. Цена допустимость не определяет. Когда в админке
-   * появится явное указание улучшений, оно станет источником истины, а
-   * проверка состава останется предупреждением администратору (TODO).
+   * Заменить требуемый пакет можно только тем, что администратор назначил
+   * допустимой альтернативой ЯВНО (решение владельца 2026-09-19). Ни цена, ни
+   * совпадение состава заменой не делают; проверка состава осталась
+   * предупреждением администратору при настройке.
    */
   chosenPackage: RoundQuotePackageSchema.nullable(),
   /** Докупленные услуги сверх состава пакета. */
@@ -229,21 +234,15 @@ export function computeRoundQuote(input: RoundQuoteInput): RoundQuote {
         message: `пакет «${input.selection.packageCode}» не продаётся сейчас`,
       });
     } else {
-      // ВРЕМЕННО, до явного указания альтернатив в админке: пропускаем
-      // пакет, состав которого включает ВЕСЬ состав требуемого. Это
-      // техническая страховка от подмены обязательного пакета, а не
-      // утверждённое правило — владелец решает, какие пакеты считаются
-      // допустимой заменой. Цена допустимость не определяет ни сейчас, ни
-      // потом: дешёвый пакет с другим набором — не замена обязательному.
-      const missing = required.services
-        .filter((s) => !candidate.services.some((c) => c.code === s.code))
-        .map((s) => s.name);
-      if (missing.length > 0) {
+      // Замена допустима, только если администратор назвал её явно. Ни цена,
+      // ни совпадение состава пакет заменой не делают: это продуктовое
+      // решение, а не вычисление (решение владельца 2026-09-19).
+      if (!required.allowedAlternatives.includes(candidate.code)) {
         blockers.push({
           path: 'packageCode',
           message:
-            `пакет «${candidate.name}» не включает всё, что входит в требуемый ` +
-            `«${required.name}»: ${missing.join(', ')}`,
+            `пакет «${candidate.name}» не назначен допустимой заменой для требуемого ` +
+            `«${required.name}»`,
         });
       } else if (candidate.currency !== currency) {
         blockers.push({
@@ -339,9 +338,8 @@ export function computeRoundQuote(input: RoundQuoteInput): RoundQuote {
   }
   if (chosen && required) {
     explanation.push(
-      `Выбран более полный пакет «${chosen.name}» (${chosen.price} ${currency}): он включает ` +
-        `всё из «${required.name}» и сверх того ` +
-        `${chosen.services.length - required.services.length} услуг(и).`,
+      `Выбран пакет «${chosen.name}» (${chosen.price} ${currency}) — допустимая замена ` +
+        `требуемого «${required.name}», назначенная администратором.`,
     );
   }
   if (extras.length > 0) {
@@ -392,3 +390,51 @@ function minorUnits(amount: string): bigint {
 function fromMinor(minor: bigint): string {
   return `${minor / 100n}.${String(minor % 100n).padStart(2, '0')}`;
 }
+
+// ------------------------------------------------------------- покупка
+
+/**
+ * Покупка запуска раунда для экрана (5.9.7).
+ *
+ * `openBlocker` — что мешает открыть раунд прямо сейчас: покупки нет, не
+ * оплачена или услуги не выполнены. `null` — препятствий нет. Держать это в
+ * одном поле честнее, чем заставлять интерфейс выводить причину самому.
+ */
+export const RoundPurchaseViewSchema = z.object({
+  id: z.uuid(),
+  roundId: z.uuid(),
+  projectId: z.uuid(),
+  status: z.enum(['pending_payment', 'paid', 'cancelled', 'refunded']),
+  totalAmount: z.string(),
+  currency: PolicyCurrencySchema,
+  /** Оплата подтверждена ТЕСТОВЫМ действием, а не деньгами. */
+  isTestPayment: z.boolean(),
+  /** Срок действия покупки в днях; 0 — без ограничения. */
+  validityDays: z.number().int().nonnegative(),
+  createdAt: IsoDateTimeSchema,
+  paidAt: IsoDateTimeSchema.nullable(),
+  packageCode: z.string().nullable(),
+  items: z.array(
+    z.object({
+      id: z.uuid(),
+      kind: z.enum(['package', 'service']),
+      serviceCode: z.string().nullable(),
+      title: z.string(),
+      amount: z.string(),
+      currency: PolicyCurrencySchema,
+      /** Состояние работы по этой покупке; ставится человеком с основанием. */
+      fulfillmentStatus: z.enum(['planned', 'in_progress', 'fulfilled', 'not_fulfilled']),
+      fulfillmentNote: z.string().nullable(),
+      fulfilledAt: IsoDateTimeSchema.nullable(),
+    }),
+  ),
+  openBlocker: z.string().nullable(),
+});
+export type RoundPurchaseView = z.infer<typeof RoundPurchaseViewSchema>;
+
+export const SetItemFulfillmentRequestSchema = z.object({
+  status: z.enum(['planned', 'in_progress', 'fulfilled', 'not_fulfilled']),
+  /** Основание обязательно: «выполнено» без объяснения — это не отчёт. */
+  note: z.string().trim().min(3).max(1000),
+});
+export type SetItemFulfillmentRequest = z.infer<typeof SetItemFulfillmentRequestSchema>;

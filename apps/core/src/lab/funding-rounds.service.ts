@@ -227,6 +227,11 @@ export class FundingRoundsService {
       if (input.fundingScope !== undefined) set('funding_scope', input.fundingScope);
       if (input.fundingScopeNote !== undefined) set('funding_scope_note', input.fundingScopeNote);
       if (input.target !== undefined) {
+        // Изменение суммы после покупки, выходящее за диапазон приобретённого
+        // пакета, отклоняется: доплата и замена оплаченного пакета владельцем
+        // не согласованы. Раунд и покупка сохраняются — это ограничение, а не
+        // повод закрывать привлечение.
+        await assertWithinPurchasedPackage(tx, roundId, input.target);
         if (
           (current.status === 'open' || current.status === 'paused') &&
           input.target !== null &&
@@ -251,7 +256,7 @@ export class FundingRoundsService {
             currency: current.currency,
             selection: { serviceCodes: [] },
           });
-          assertCommercialConditions(quote, 'increase');
+          assertCommercialConditions(quote, 'increase', await purchaseBlocker(tx, roundId));
         }
         set('target', input.target, '::numeric');
       }
@@ -410,7 +415,7 @@ export class FundingRoundsService {
         currency: round.currency,
         selection: { serviceCodes: [] },
       });
-      assertCommercialConditions(quote, 'open');
+      assertCommercialConditions(quote, 'open', await purchaseBlocker(tx, roundId));
 
       await tx.query(
         `UPDATE lab.funding_rounds
@@ -469,7 +474,7 @@ export class FundingRoundsService {
         currency: round.currency,
         selection: { serviceCodes: [] },
       });
-      assertCommercialConditions(quote, 'resume');
+      assertCommercialConditions(quote, 'resume', await purchaseBlocker(tx, roundId));
       await tx.query(
         `UPDATE lab.funding_rounds SET status = 'open', paused_at = NULL WHERE id = $1`,
         [roundId],
@@ -706,6 +711,60 @@ const VERB_BY_TRANSITION: Record<string, string> = {
   'open→cancelled': 'lab.funding_round.cancelled',
   'paused→cancelled': 'lab.funding_round.cancelled',
 };
+
+/**
+ * Что мешает открыть платный раунд: нет покупки, не оплачена, услуги не
+ * выполнены. Ответ берётся из БД одним вопросом — там же, где он проверяется
+ * на записи, и второго правила рядом не заводится.
+ */
+/**
+ * Сумма после покупки не выходит за диапазон оплаченного пакета.
+ *
+ * До покупки сумму можно менять свободно — расчёт просто пересчитается. После
+ * покупки выход за диапазон означал бы либо доплату, либо замену оплаченного
+ * пакета; ни то, ни другое не согласовано, поэтому честнее отказать с
+ * объяснением, чем додумать правило за владельца.
+ */
+async function assertWithinPurchasedPackage(
+  tx: Tx,
+  roundId: string,
+  target: string | null,
+): Promise<void> {
+  if (target === null) return;
+  const { rows } = await tx.query<{ min_target: string; max_target: string | null; name: string }>(
+    `SELECT p.min_target::text AS min_target, p.max_target::text AS max_target, p.name
+       FROM billing.round_purchases rp
+       JOIN billing.round_packages p ON p.id = rp.package_id
+      WHERE rp.round_id = $1 AND rp.status IN ('pending_payment','paid')`,
+    [roundId],
+  );
+  const purchased = rows[0];
+  if (!purchased) return;
+
+  const amount = Number(target);
+  const from = Number(purchased.min_target);
+  const to = purchased.max_target === null ? null : Number(purchased.max_target);
+  if (amount < from || (to !== null && amount >= to)) {
+    throw errors.validation([
+      {
+        path: 'target',
+        message:
+          `сумма выходит за условия оплаченного пакета «${purchased.name}» ` +
+          `(${purchased.min_target} — ${purchased.max_target ?? 'и выше'}). ` +
+          'Доплата и замена оплаченного пакета пока не согласованы: ' +
+          'оставьте сумму в пределах пакета или обратитесь к оператору',
+      },
+    ]);
+  }
+}
+
+async function purchaseBlocker(tx: Tx, roundId: string): Promise<string | null> {
+  const { rows } = await tx.query<{ blocker: string | null }>(
+    `SELECT billing.round_purchase_blocker($1) AS blocker`,
+    [roundId],
+  );
+  return rows[0]?.blocker ?? null;
+}
 
 async function lockProject(tx: Tx, projectId: string): Promise<void> {
   await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [

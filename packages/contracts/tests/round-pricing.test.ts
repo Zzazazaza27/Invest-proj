@@ -29,6 +29,8 @@ const BASIC: RoundQuotePackage = {
   minTarget: '0.00',
   maxTarget: '5000000.00',
   services: [CHECK],
+  // Администратор разрешил заменить «Базовый» только «Расширенным».
+  allowedAlternatives: ['full'],
 };
 
 const FULL: RoundQuotePackage = {
@@ -40,9 +42,13 @@ const FULL: RoundQuotePackage = {
   minTarget: '5000000.00',
   maxTarget: null,
   services: [CHECK, REPORT],
+  allowedAlternatives: [],
 };
 
-/** Пакет дороже базового, но с ДРУГИМ набором: полнее он не становится. */
+/**
+ * Пакет дороже базового и по составу шире — но заменой он НЕ назначен.
+ * Ни цена, ни состав допустимости не дают: её назначает администратор.
+ */
 const SIDEWAYS: RoundQuotePackage = {
   code: 'sideways',
   version: 1,
@@ -51,7 +57,8 @@ const SIDEWAYS: RoundQuotePackage = {
   currency: 'RUB',
   minTarget: '900000000.00',
   maxTarget: null,
-  services: [EXPERT],
+  services: [CHECK, EXPERT],
+  allowedAlternatives: [],
 };
 
 const OFFERING: RoundOffering = {
@@ -126,7 +133,7 @@ describe('расчёт стоимости запуска раунда', () => {
     expect(quote.explanation.at(-1)).toBe('Итого: 15000.00 RUB.');
   });
 
-  it('более полный пакет выбрать можно: состав включает весь требуемый', () => {
+  it('назначенную администратором замену выбрать можно', () => {
     const quote = computeRoundQuote(
       input({ selection: { packageCode: 'full', serviceCodes: [] } }),
     );
@@ -134,17 +141,16 @@ describe('расчёт стоимости запуска раунда', () => {
     expect(quote.chosenPackage?.code).toBe('full');
     expect(quote.lines[0]?.role).toBe('chosen_package');
     expect(quote.total).toBe('40000.00');
-    expect(quote.explanation.some((line) => line.includes('более полный'))).toBe(true);
+    expect(quote.explanation.some((line) => line.includes('допустимая замена'))).toBe(true);
   });
 
-  it('дороже не значит полнее: пакет с другим набором не заменяет требуемый', () => {
+  it('ни цена, ни состав не делают пакет заменой без назначения', () => {
     const quote = computeRoundQuote(
       input({ selection: { packageCode: 'sideways', serviceCodes: [] } }),
     );
     expect(quote.mode).toBe('blocked');
     expect(quote.blockers[0]?.path).toBe('packageCode');
-    expect(quote.blockers[0]?.message).toContain('не включает всё');
-    expect(quote.blockers[0]?.message).toContain('Проверка документов');
+    expect(quote.blockers[0]?.message).toContain('не назначен допустимой заменой');
   });
 
   it('докупка услуги складывается с пакетом без потери копеек', () => {
@@ -164,7 +170,7 @@ describe('расчёт стоимости запуска раунда', () => {
     expect(quote.blockers[0]?.message).toContain('«Проверка документов» уже входит в пакет');
   });
 
-  it('выбор более полного пакета меняет то, что считается докупкой', () => {
+  it('выбор разрешённой замены меняет то, что считается докупкой', () => {
     // report входит в «Расширенный»: с ним докупать его нельзя.
     const quote = computeRoundQuote(
       input({ selection: { packageCode: 'full', serviceCodes: ['report'] } }),

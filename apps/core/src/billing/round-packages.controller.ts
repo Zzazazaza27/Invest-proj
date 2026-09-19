@@ -7,6 +7,7 @@ import {
   RoundPackageSchema,
   RoundServiceOfferSchema,
   RoundServiceSchema,
+  SetPackageAlternativeRequestSchema,
   UpdateRoundServiceRequestSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -63,6 +64,27 @@ export class AdminRoundPackagesController {
   async publish(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
     const input = parseOrThrow(PublishRoundPackageRequestSchema, rawBody);
     return RoundPackageSchema.parse(await this.packages.publishPackage(ctx, input));
+  }
+
+  /**
+   * Назначить допустимую альтернативу. Несовпадение состава возвращается
+   * предупреждением, а не отказом: решение принимает администратор.
+   */
+  @Post('alternatives')
+  async addAlternative(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(SetPackageAlternativeRequestSchema, rawBody);
+    const result = await this.packages.addAlternative(ctx, input);
+    return {
+      items: result.packages.map((p) => RoundPackageSchema.parse(p)),
+      warning: result.warning,
+    };
+  }
+
+  @Post('alternatives/remove')
+  async removeAlternative(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(SetPackageAlternativeRequestSchema, rawBody);
+    const items = await this.packages.removeAlternative(ctx, input);
+    return { items: items.map((p) => RoundPackageSchema.parse(p)) };
   }
 
   @Post(':id/close')

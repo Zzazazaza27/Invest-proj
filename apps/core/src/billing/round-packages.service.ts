@@ -8,6 +8,7 @@ import {
   type RoundPackage,
   type RoundService,
   type RoundServiceOffer,
+  type SetPackageAlternativeRequest,
   type UpdateRoundServiceRequest,
 } from '@unicorn/contracts';
 import { errors } from '../common/errors';
@@ -282,6 +283,96 @@ export class RoundPackagesService {
     });
   }
 
+  /**
+   * Назначить пакету допустимую альтернативу.
+   *
+   * Список задаёт администратор ЯВНО: ни цена, ни совпадение состава заменой
+   * не делают (решение владельца 2026-09-19). Несовпадение состава не
+   * запрещается — оно возвращается предупреждением, потому что решение о
+   * замене принимает человек, а не арифметика.
+   */
+  async addAlternative(
+    ctx: RequestContext,
+    input: SetPackageAlternativeRequest,
+  ): Promise<{ packages: RoundPackage[]; warning: string | null }> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows: missing } = await tx.query<{ name: string }>(
+        `SELECT s.name
+           FROM billing.round_package_services ps
+           JOIN billing.round_services s ON s.id = ps.service_id
+          WHERE ps.package_id = $1
+            AND NOT EXISTS (
+              SELECT 1 FROM billing.round_package_services alt
+               WHERE alt.package_id = $2 AND alt.service_id = ps.service_id)
+          ORDER BY s.name`,
+        [input.packageId, input.alternativeId],
+      );
+
+      await tx.query(
+        `INSERT INTO billing.round_package_alternatives
+           (package_id, alternative_id, reason, created_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (package_id, alternative_id) DO NOTHING`,
+        [input.packageId, input.alternativeId, input.reason, ctx.userId],
+      );
+
+      await this.audit.emit(tx, {
+        verb: 'billing.package_alternative.added',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'round_package',
+        subjectId: input.packageId,
+        context: {
+          alternativeId: input.alternativeId,
+          reason: input.reason,
+          missingServices: missing.map((m) => m.name),
+        },
+        traceId: ctx.traceId,
+      });
+
+      return {
+        packages: await this.listIn(tx),
+        warning:
+          missing.length === 0
+            ? null
+            : `Состав альтернативы не покрывает требуемый пакет: ${missing
+                .map((m) => m.name)
+                .join(', ')}. Замена назначена — решение за вами.`,
+      };
+    });
+  }
+
+  async removeAlternative(
+    ctx: RequestContext,
+    input: SetPackageAlternativeRequest,
+  ): Promise<RoundPackage[]> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rowCount } = await tx.query(
+        `DELETE FROM billing.round_package_alternatives
+          WHERE package_id = $1 AND alternative_id = $2`,
+        [input.packageId, input.alternativeId],
+      );
+      if (rowCount === 0) throw errors.notFound({ subject: 'round_package_alternative' });
+      await this.audit.emit(tx, {
+        verb: 'billing.package_alternative.removed',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'round_package',
+        subjectId: input.packageId,
+        context: { alternativeId: input.alternativeId, reason: input.reason },
+        traceId: ctx.traceId,
+      });
+      return this.listIn(tx);
+    });
+  }
+
+  private async listIn(tx: Tx): Promise<RoundPackage[]> {
+    const { rows } = await tx.query<PackageRow>(
+      `${PACKAGE_SELECT} ORDER BY p.country_code, p.min_target, p.version DESC`,
+    );
+    return rows.map(mapPackage);
+  }
+
   // ------------------------------------------------------- цены докупки
 
   async listServiceOffers(ctx: RequestContext): Promise<RoundServiceOffer[]> {
@@ -433,13 +524,28 @@ const PACKAGE_SELECT = `
   SELECT p.id, p.code, p.version, p.country_code, p.name, p.description,
          p.price::text AS price, p.currency,
          p.min_target::text AS min_target, p.max_target::text AS max_target,
-         p.valid_from, p.valid_to, p.reason,
+         p.valid_from, p.valid_to, p.reason, p.validity_days,
          COALESCE(
            (SELECT jsonb_agg(jsonb_build_object('code', s.code, 'name', s.name) ORDER BY s.code)
               FROM billing.round_package_services ps
               JOIN billing.round_services s ON s.id = ps.service_id
              WHERE ps.package_id = p.id),
-           '[]'::jsonb) AS services
+           '[]'::jsonb) AS services,
+         COALESCE(
+           (SELECT jsonb_agg(jsonb_build_object(
+                     'code', alt.code,
+                     'name', alt.name,
+                     'coversComposition', NOT EXISTS (
+                        SELECT 1 FROM billing.round_package_services ps
+                         WHERE ps.package_id = p.id
+                           AND NOT EXISTS (
+                             SELECT 1 FROM billing.round_package_services a2
+                              WHERE a2.package_id = alt.id AND a2.service_id = ps.service_id)))
+                   ORDER BY alt.code)
+              FROM billing.round_package_alternatives a
+              JOIN billing.round_packages alt ON alt.id = a.alternative_id
+             WHERE a.package_id = p.id),
+           '[]'::jsonb) AS alternatives
     FROM billing.round_packages p
 `;
 
@@ -473,7 +579,9 @@ interface PackageRow {
   valid_from: Date;
   valid_to: Date | null;
   reason: string;
+  validity_days: number;
   services: { code: string; name: string }[];
+  alternatives: { code: string; name: string; coversComposition: boolean }[];
 }
 
 interface OfferRow {
@@ -518,6 +626,8 @@ function mapPackage(row: PackageRow): RoundPackage {
     validFrom: row.valid_from.toISOString(),
     validTo: row.valid_to?.toISOString() ?? null,
     services: row.services,
+    alternatives: row.alternatives,
+    validityDays: row.validity_days,
     isLocked: from <= now,
     isActive: from <= now && (to === null || to > now),
     reason: row.reason,

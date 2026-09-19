@@ -79,6 +79,26 @@ export const RoundPackageSchema = z.object({
   validTo: IsoDateTimeSchema.nullable(),
   /** Что входит в пакет — коды и названия услуг. */
   services: z.array(z.object({ code: OfferCodeSchema, name: z.string() })),
+  /**
+   * Чем администратор разрешил заменить этот пакет. Список явный: ни цена, ни
+   * совпадение состава альтернативой не делают.
+   */
+  alternatives: z
+    .array(
+      z.object({
+        code: OfferCodeSchema,
+        name: z.string(),
+        /**
+         * Состав альтернативы покрывает состав требуемого пакета. Это
+         * ПРЕДУПРЕЖДЕНИЕ администратору при настройке, а не условие допуска:
+         * решение о замене принимает он.
+         */
+        coversComposition: z.boolean(),
+      }),
+    )
+    .default([]),
+  /** Срок действия покупки в днях; 0 — без ограничения. */
+  validityDays: z.number().int().nonnegative().default(0),
   /** Версия уже действует или действовала: денежные условия заморожены. */
   isLocked: z.boolean(),
   /** Продаётся прямо сейчас. */
@@ -175,3 +195,11 @@ export const RoundPurchaseSchema = z.object({
   paidAt: IsoDateTimeSchema.nullable(),
 });
 export type RoundPurchase = z.infer<typeof RoundPurchaseSchema>;
+
+/** Назначение допустимой альтернативы пакету (5.9.7). */
+export const SetPackageAlternativeRequestSchema = z.object({
+  packageId: UuidSchema,
+  alternativeId: UuidSchema,
+  reason: z.string().trim().min(3).max(500),
+});
+export type SetPackageAlternativeRequest = z.infer<typeof SetPackageAlternativeRequestSchema>;
