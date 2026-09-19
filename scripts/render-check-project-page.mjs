@@ -36,10 +36,17 @@ import {
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
-const PUBLIC_URL = process.env.WEB_PUBLIC_URL ?? frontendUrl('webPublic');
-const INVESTOR_URL = process.env.INVESTOR_URL ?? frontendUrl('investor');
-const LAB_URL = process.env.LAB_URL ?? frontendUrl('lab');
-const CORE_URL = process.env.CORE_URL ?? DEFAULT_CORE_URL;
+/**
+ * Адреса приводятся к `localhost`: у сырого IP нет регистрируемого домена, и
+ * браузер не может установить «тот же сайт» — изображение проекта на странице
+ * блокируется политикой встраивания. Свойство адресации стенда, не продукта.
+ */
+const toSite = (url) => url.replace('127.0.0.1', 'localhost');
+
+const PUBLIC_URL = toSite(process.env.WEB_PUBLIC_URL ?? frontendUrl('webPublic'));
+const INVESTOR_URL = toSite(process.env.INVESTOR_URL ?? frontendUrl('investor'));
+const LAB_URL = toSite(process.env.LAB_URL ?? frontendUrl('lab'));
+const CORE_URL = toSite(process.env.CORE_URL ?? DEFAULT_CORE_URL);
 const OUT = join(ROOT, 'out', 'render-project-page');
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(OUT, { recursive: true });
