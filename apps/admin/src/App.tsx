@@ -18,6 +18,7 @@ import { TextsPage } from './pages/TextsPage';
 import { ServiceCountriesPage } from './pages/ServiceCountriesPage';
 import { RoundPackagesPage } from './pages/RoundPackagesPage';
 import { CommissionPage } from './pages/CommissionPage';
+import { DealsPage } from './pages/DealsPage';
 
 /**
  * Корень админки.
@@ -109,6 +110,7 @@ export function App() {
         <NavItem to="/service-countries" label="Страны обслуживания" />
         <NavItem to="/round-packages" label="Пакеты раунда" />
         <NavItem to="/commission" label="Комиссии" />
+        <NavItem to="/deals" label="Сделки" />
         <NavItem to="/flags" label="Функции платформы" />
         <NavItem to="/access" label="Доступ" />
         {/*
@@ -164,6 +166,7 @@ export function App() {
           <Route path="/service-countries" element={<ServiceCountriesPage />} />
           <Route path="/round-packages" element={<RoundPackagesPage />} />
           <Route path="/commission" element={<CommissionPage />} />
+          <Route path="/deals" element={<DealsPage />} />
           <Route path="/flags" element={<FlagsPage />} />
           <Route path="/access" element={<AccessPage />} />
           <Route path="*" element={<Navigate to="/plans" replace />} />

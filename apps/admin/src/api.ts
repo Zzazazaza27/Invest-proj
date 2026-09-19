@@ -11,7 +11,19 @@ import {
   SeasonSchema,
   SeasonStageOccupancySchema,
   ServiceAccountSchema,
+  CommissionAdjustmentSchema,
+  DealLedgerSchema,
+  DealSummarySchema,
   FeeOffsetRuleSchema,
+  StaffCapabilitySchema,
+  TrancheReturnSchema,
+  type CommissionAdjustment,
+  type DealLedger,
+  type DealSummary,
+  type RecordCommissionAdjustmentRequest,
+  type RecordTrancheReturnRequest,
+  type StaffCapability,
+  type TrancheReturn,
   FeeTermsSchema,
   type ActivateFeeOffsetRuleRequest,
   type FeeOffsetRule,
@@ -774,6 +786,58 @@ export const api = {
   },
 
   // ------------------------------------------- словарь и ЧАВО (план 0.2 §2.6)
+
+  /**
+   * Ручные денежные записи по сделке (M097) и каталог полномочий.
+   *
+   * «Зафиксировать возврат» — запись о состоявшемся событии, а не платёжная
+   * команда: платформа денег не перечисляет.
+   */
+  deals: {
+    list: (): Promise<{ items: DealSummary[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/investments/deals',
+        schema: listOf(DealSummarySchema),
+      }),
+    ledger: (id: string): Promise<DealLedger> =>
+      client.request({
+        method: 'GET',
+        path: `/v1/investments/deals/${encodeURIComponent(id)}/ledger`,
+        schema: DealLedgerSchema,
+      }),
+    recordReturn: (body: RecordTrancheReturnRequest): Promise<TrancheReturn> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/investments/deals/tranche-returns',
+        body,
+        schema: TrancheReturnSchema,
+      }),
+    cancelReturn: (id: string, reason: string): Promise<TrancheReturn> =>
+      client.request({
+        method: 'POST',
+        path: `/v1/investments/deals/tranche-returns/${encodeURIComponent(id)}/cancel`,
+        body: { reason },
+        schema: TrancheReturnSchema,
+      }),
+    adjustCommission: (body: RecordCommissionAdjustmentRequest): Promise<CommissionAdjustment> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/investments/deals/commission-adjustments',
+        body,
+        schema: CommissionAdjustmentSchema,
+      }),
+  },
+
+  /** Каталог функциональных полномочий и их выдача (M097). */
+  capabilities: {
+    catalog: (): Promise<{ items: StaffCapability[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/capabilities',
+        schema: listOf(StaffCapabilitySchema),
+      }),
+  },
 
   /**
    * Вознаграждение платформы и зачёт услуг (этап 5.9.3): версии условий со

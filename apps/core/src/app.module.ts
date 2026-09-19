@@ -40,6 +40,13 @@ import {
   AdminFeeTermsController,
 } from './billing/commission.controller';
 import { CommissionService } from './billing/commission.service';
+import {
+  AdminCapabilitiesController,
+  MyCapabilitiesController,
+} from './identity/capabilities.controller';
+import { CapabilitiesService } from './identity/capabilities.service';
+import { DealLedgerController } from './investments/deal-ledger.controller';
+import { DealLedgerService } from './investments/deal-ledger.service';
 import { FundingRoundsController } from './lab/funding-rounds.controller';
 import { FundingRoundsService } from './lab/funding-rounds.service';
 import { NotificationsController } from './comms/notifications.controller';
@@ -153,6 +160,9 @@ import { S3Service } from './storage/s3.service';
     AdminRoundServiceOffersController,
     AdminFeeTermsController,
     AdminFeeOffsetRulesController,
+    AdminCapabilitiesController,
+    MyCapabilitiesController,
+    DealLedgerController,
     FundingRoundsController,
     AdminController,
     InvestmentsController,
@@ -199,6 +209,8 @@ import { S3Service } from './storage/s3.service';
     RoundPackagesService,
     RoundPricingService,
     CommissionService,
+    CapabilitiesService,
+    DealLedgerService,
     FundingRoundsService,
     AdminService,
     DirectoryService,

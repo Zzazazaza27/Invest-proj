@@ -42,8 +42,14 @@ export const errors = {
   unauthenticated: (internal?: Record<string, unknown>) =>
     new AppError(ErrorCode.UNAUTHENTICATED, { publicDetail: 'Требуется вход', internal }),
 
-  forbidden: (internal?: Record<string, unknown>) =>
-    new AppError(ErrorCode.FORBIDDEN, { publicDetail: 'Недостаточно прав', internal }),
+  /**
+   * Отказ по правам. По умолчанию наружу идёт общая формулировка: посторонний
+   * не должен по тексту ошибки узнавать устройство доступа. Для действий
+   * СОТРУДНИКА текст можно уточнить — ему нужно знать, какого именно
+   * полномочия или назначения не хватает, иначе интерфейс непроходим.
+   */
+  forbidden: (internal?: Record<string, unknown>, publicDetail = 'Недостаточно прав') =>
+    new AppError(ErrorCode.FORBIDDEN, { publicDetail, internal }),
 
   stepUpRequired: () =>
     new AppError(ErrorCode.STEP_UP_REQUIRED, {
