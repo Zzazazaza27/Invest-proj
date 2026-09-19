@@ -11,7 +11,7 @@
  *
  * Запуск: npm run stand:status
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readdirSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -36,6 +36,22 @@ function out(cmd, args) {
   } catch {
     return '';
   }
+}
+
+/**
+ * То же, но с потоком ошибок.
+ *
+ * Скрипты проекта печатают человекочитаемый вывод в stderr — так он не мешает
+ * тем, кто разбирает stdout машинно. Читать здесь только stdout значило бы
+ * получить пустую строку и сказать «определить не удалось» при работающем
+ * скрипте.
+ */
+function outBoth(cmd, args) {
+  // Именно spawnSync: execFileSync ВОЗВРАЩАЕТ только stdout, и поток ошибок,
+  // даже перехваченный, до вызывающего не доходит. На этом легко решить, что
+  // скрипт ничего не напечатал, хотя он напечатал всё.
+  const result = spawnSync(cmd, args, { encoding: 'utf8' });
+  return `${result.stdout ?? ''}${result.stderr ?? ''}`;
 }
 
 async function probe(path) {
@@ -149,6 +165,32 @@ for (const [route, expected, label] of ROUTES) {
   const code = await probe(route);
   if (code === expected) ok(`${route} → ${code}  ${label}`);
   else bad(`${route} → ${code || 'нет ответа'} (ожидалось ${expected})  ${label}`);
+}
+
+// ------------------------------------------------------- демонстрационные данные
+step('Демонстрационный комплект');
+/**
+ * Отдельный шаг, потому что его отсутствие однажды выглядело как поломка
+ * входа: стенд отвечал «работает целиком», а учётные записи `demo-*`, по
+ * которым владелец им пользуется, в базе не существовали — база
+ * пересоздавалась, а комплект никто не перезагрузил. Пароль был верный;
+ * не было пользователей.
+ */
+{
+  const status = outBoth(process.execPath, [resolve(ROOT, 'scripts/seed-demo.mjs'), 'status']);
+  const accounts = (status.match(/учётных записей:\s*(\d+)\s*из\s*(\d+)/) || []).slice(1);
+  const projects = (status.match(/проектов:\s*(\d+)\s*из\s*(\d+)/) || []).slice(1);
+  if (accounts.length === 0) {
+    info('состояние комплекта определить не удалось (нужна БД)');
+  } else if (accounts[0] === accounts[1] && projects[0] === projects[1]) {
+    ok(`загружен: учётных записей ${accounts[0]}, проектов ${projects[0]}`);
+  } else {
+    bad(
+      `загружен не полностью: учётных записей ${accounts[0]} из ${accounts[1]}, ` +
+        `проектов ${projects[0]} из ${projects[1]} — вход под demo-* не сработает`,
+    );
+    console.error('        Загрузить: node scripts/seed-demo.mjs load');
+  }
 }
 
 // --------------------------------------------------------------- режимы

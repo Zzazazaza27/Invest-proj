@@ -254,6 +254,34 @@ await sql(
   [conflicted.userId, withoutReview, 'Доля в конкурирующем проекте (обстановка приёмки).'],
 );
 
+/**
+ * Демонстрационный комплект — девять учётных записей `demo-*` и пять проектов
+ * (`fixtures/demo`). Их заводит отдельный скрипт, пароль у них общий и берётся
+ * из `.env`. Здесь они только ПЕРЕЧИСЛЯЮТСЯ: владелец пользуется стендом по
+ * ним, а список «где и под кем входить» должен быть один, а не два.
+ *
+ * Если комплект не загружен, строк не будет — и это честнее, чем напечатать
+ * логины, под которыми не пустят. Ровно этим и обернулось 2026-09-20: список
+ * demo-* жил в заметках, база была пересоздана, комплект никто не перезалил, и
+ * вход не работал при верном пароле.
+ */
+async function demoPeople() {
+  const file = join(ROOT, 'fixtures', 'demo', 'people.json');
+  if (!existsSync(file)) return { password: null, rows: [] };
+  const password = process.env.DEMO_USER_PASSWORD || process.env.DEV_TEST_USER_PASSWORD || null;
+  const { people: all } = JSON.parse(readFileSync(file, 'utf8'));
+  const rows = [];
+  for (const person of all) {
+    const [found] = await sql('SELECT id FROM identity.users WHERE email_hmac = $1', [
+      blindIndex(`${person.login}@unicorn.local`),
+    ]);
+    if (found) rows.push(person);
+  }
+  return { password, rows };
+}
+
+const demo = await demoPeople();
+
 const people = [admin, founder, expert, conflicted, investor];
 for (const who of people) console.warn(`  ·  ${who.login} — ${who.displayName}`);
 
@@ -320,11 +348,31 @@ npm run stand:up
 
 Логин можно вводить коротким: домен \`unicorn.local\` подставляется сам.
 
+### Обстановка приёмки — у каждого свой пароль
+
 | Логин | Кто | Пароль |
 | ----- | --- | ------ |
 ${people.map((w) => `| \`${w.login}\` | ${w.displayName} | \`${w.password}\` |`).join('\n')}
 
 Пароли переустанавливаются при каждом запуске скрипта.
+
+### Демонстрационный комплект — один пароль на всех
+
+${
+  demo.rows.length === 0
+    ? [
+        'Комплект НЕ загружен: учётных записей `demo-*` в базе нет,',
+        'и вход под ними не сработает. Загрузить: `node scripts/seed-demo.mjs load`.',
+      ].join(' ')
+    : `Пять проектов и девять ролей для ручного прохода. Пароль общий: \`${demo.password ?? '(не задан в .env)'}\`
+
+| Логин | Кто |
+| ----- | --- |
+${demo.rows.map((d) => `| \`${d.login}\` | ${d.displayName} (${d.roles.join(', ')}) |`).join('\n')}
+
+Пароль берётся из \`DEMO_USER_PASSWORD\` или \`DEV_TEST_USER_PASSWORD\` в \`.env\`.
+Перезагрузить комплект: \`node scripts/seed-demo.mjs load\`.`
+}
 
 ---
 
