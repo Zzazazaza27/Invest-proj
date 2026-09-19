@@ -280,14 +280,21 @@ export class RoundPurchaseService {
     input: { status: 'planned' | 'in_progress' | 'fulfilled' | 'not_fulfilled'; note: string },
   ): Promise<RoundPurchaseView> {
     return this.db.transaction(ctx, async (tx) => {
-      const { rows } = await tx.query<{ purchase_id: string }>(
-        `UPDATE billing.round_purchase_items
-            SET fulfillment_status = $2, fulfillment_note = $3,
-                fulfilled_by = $4,
-                fulfilled_at = CASE WHEN $2 = 'fulfilled' THEN now() ELSE NULL END
-          WHERE id = $1
-          RETURNING purchase_id`,
-        [itemId, input.status, input.note, ctx.userId],
+      // Правила целостности из БД — это ответ «так нельзя», а не сбой сервера.
+      // Отметка на услуге, которую выполняет платформа, приходит кодом 42501:
+      // отдавать на неё 500 значило бы спрятать понятную причину за
+      // «обратитесь в поддержку».
+      const { rows } = await asRuleError(
+        'fulfillmentStatus',
+        tx.query<{ purchase_id: string }>(
+          `UPDATE billing.round_purchase_items
+              SET fulfillment_status = $2, fulfillment_note = $3,
+                  fulfilled_by = $4,
+                  fulfilled_at = CASE WHEN $2 = 'fulfilled' THEN now() ELSE NULL END
+            WHERE id = $1
+            RETURNING purchase_id`,
+          [itemId, input.status, input.note, ctx.userId],
+        ),
       );
       if (!rows[0]) throw errors.notFound({ subject: 'round_purchase_item' });
 
@@ -425,6 +432,26 @@ export class RoundPurchaseService {
       })),
       openBlocker: blocker,
     };
+  }
+}
+
+/**
+ * Отказ правила целостности — ответ «так нельзя», а не сбой.
+ *
+ * 42501 (insufficient_privilege) и 23514 (check_violation) приходят из
+ * триггеров, которые формулируют причину по-русски и для человека. Их текст и
+ * должен дойти до вызывающего.
+ */
+async function asRuleError<T>(path: string, work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === '42501' || code === '23514') {
+      const message = (error as { message?: string }).message ?? 'действие недопустимо';
+      throw errors.validation([{ path, message }]);
+    }
+    throw error;
   }
 }
 

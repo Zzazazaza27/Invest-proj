@@ -67,6 +67,17 @@ export class AnalysisService {
     private readonly localization: LocalizationService,
   ) {}
 
+  /**
+   * Настроен ли выход к моделям.
+   *
+   * Нужен тем, кто решает, МОЖНО ли вообще запускать разбор, — чтобы не
+   * создавать запись о прогоне, которому нечем работать. Сам адрес шлюза
+   * наружу не отдаётся.
+   */
+  gatewayConfigured(): boolean {
+    return this.gateway.isConfigured;
+  }
+
   async run(ctx: RequestContext, projectId: string): Promise<AnalysisRunView> {
     const flags = await this.assertScoringEnabled(ctx);
 
@@ -507,6 +518,7 @@ export class AnalysisService {
         runId,
         projectId,
         status: 'succeeded' as const,
+        inputSha256: input.inputSha256,
         provider: result.provider,
         isLlm: result.isLlm,
         modelVersion: result.modelVersion,
@@ -1066,6 +1078,15 @@ export interface AnalysisRunView {
   runId: string;
   projectId: string;
   status: 'succeeded';
+  /**
+   * Отпечаток входа, по которому сделан разбор.
+   *
+   * Возвращается вместе с результатом, а не вычитывается потом из снимка:
+   * снимок лежит в `audit.node_checkpoints`, а его читает только
+   * администратор. Вызывающему, который обязан связать отчёт с версией
+   * заявки, отпечаток нужен здесь и сейчас.
+   */
+  inputSha256: string;
   provider: string;
   isLlm: boolean;
   modelVersion: string;

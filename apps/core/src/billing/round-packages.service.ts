@@ -46,7 +46,7 @@ export class RoundPackagesService {
   async listServices(ctx: RequestContext): Promise<RoundService[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<ServiceRow>(
-        `SELECT id, code, name, description, is_implemented, created_at
+        `SELECT id, code, name, description, is_implemented, execution_kind, created_at
            FROM billing.round_services ORDER BY code`,
       );
       return rows.map(mapService);
@@ -62,10 +62,18 @@ export class RoundPackagesService {
       // Код — имя настройки, и повторный код это не сбой сервера, а занятое
       // имя: отвечаем конфликтом, а не падением уникального индекса.
       const { rowCount } = await tx.query(
-        `INSERT INTO billing.round_services (id, code, name, description, created_by)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO billing.round_services
+           (id, code, name, description, execution_kind, created_by)
+         VALUES ($1, $2, $3, $4, COALESCE($5, 'manual'), $6)
          ON CONFLICT (code) DO NOTHING`,
-        [id, input.code, input.name, input.description ?? null, ctx.userId],
+        [
+          id,
+          input.code,
+          input.name,
+          input.description ?? null,
+          input.executionKind ?? null,
+          ctx.userId,
+        ],
       );
       if (rowCount === 0) throw errors.conflict('Услуга с таким кодом уже заведена');
       await this.audit.emit(tx, {
@@ -99,6 +107,7 @@ export class RoundPackagesService {
             SET name           = COALESCE($2, name),
                 description    = CASE WHEN $3::boolean THEN $4 ELSE description END,
                 is_implemented = COALESCE($5, is_implemented),
+                execution_kind = COALESCE($6, execution_kind),
                 updated_at     = now()
           WHERE id = $1
           RETURNING id`,
@@ -108,6 +117,7 @@ export class RoundPackagesService {
           input.description !== undefined,
           input.description ?? null,
           input.isImplemented ?? null,
+          input.executionKind ?? null,
         ],
       );
       if (!rows[0]) throw errors.notFound({ subject: 'round_service' });
@@ -117,7 +127,11 @@ export class RoundPackagesService {
         actorRole: 'admin',
         subjectType: 'round_service',
         subjectId: serviceId,
-        context: { isImplemented: input.isImplemented ?? null, reason: input.reason },
+        context: {
+          isImplemented: input.isImplemented ?? null,
+          executionKind: input.executionKind ?? null,
+          reason: input.reason,
+        },
         traceId: ctx.traceId,
       });
       return this.readService(tx, serviceId);
@@ -505,7 +519,7 @@ export class RoundPackagesService {
 
   private async readService(tx: Tx, id: string): Promise<RoundService> {
     const { rows } = await tx.query<ServiceRow>(
-      `SELECT id, code, name, description, is_implemented, created_at
+      `SELECT id, code, name, description, is_implemented, execution_kind, created_at
          FROM billing.round_services WHERE id = $1`,
       [id],
     );
@@ -562,6 +576,7 @@ interface ServiceRow {
   name: string;
   description: string | null;
   is_implemented: boolean;
+  execution_kind: 'manual' | 'ai_analysis';
   created_at: Date;
 }
 
@@ -604,6 +619,7 @@ function mapService(row: ServiceRow): RoundService {
     name: row.name,
     description: row.description,
     isImplemented: row.is_implemented,
+    executionKind: row.execution_kind,
     createdAt: row.created_at.toISOString(),
   };
 }

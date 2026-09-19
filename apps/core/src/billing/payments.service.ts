@@ -9,7 +9,7 @@ import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { getEnv } from '../config/env';
-import { canonicalPayload, payloadDigest, resolveProvider } from './payment-provider';
+import { payloadDigest, resolveProvider } from './payment-provider';
 
 /**
  * Оплата услуг платформы (5.9.9; структуры — M108/M109).
@@ -201,7 +201,10 @@ export class PaymentsService {
         provider: provider.code,
         notification,
         paymentId: payment?.id ?? null,
-        digest: payloadDigest(canonicalPayload(notification)),
+        // Отпечаток разобранного уведомления, а не схемы конкретного
+        // адаптера: как именно провайдер подписывает своё сообщение —
+        // его дело и дело его адаптера.
+        digest: payloadDigest(JSON.stringify(notification)),
       });
       if (!inserted) {
         // Тот же eventId уже приходил. Второй раз не исполняем — именно это и
@@ -221,9 +224,35 @@ export class PaymentsService {
         return { result: 'amount_mismatch' };
       }
 
+      // Платёж уже завершён — значит решение по нему принято. Второе событие
+      // о том же успехе (у операторов их бывает несколько: «оплачен», затем
+      // «списан») и опоздавшее событие по отменённой попытке сюда и приходят.
       if (isFinal(payment.status)) {
         await markEvent(tx, eventId, 'ignored');
         return { result: 'already_final' };
+      }
+
+      // Покупка уже оплачена — другим платежом или вручную оператором. Тогда
+      // это событие опоздало: активировать покупку второй раз нечем, и
+      // отмечать успешным ещё один платёж по ней нельзя — за ней стоит одна
+      // оплата, а не две.
+      if (payment.purchase_id) {
+        const { rows } = await tx.query<{ status: string }>(
+          `SELECT status FROM billing.round_purchases WHERE id = $1 FOR UPDATE`,
+          [payment.purchase_id],
+        );
+        if (rows[0]?.status === 'paid') {
+          await tx.query(
+            `UPDATE billing.payments
+                SET status = 'canceled',
+                    failure_reason = 'покупка уже оплачена: это подтверждение опоздало',
+                    updated_at = now()
+              WHERE id = $1`,
+            [payment.id],
+          );
+          await markEvent(tx, eventId, 'ignored');
+          return { result: 'purchase_already_paid' };
+        }
       }
 
       const outcome = notification.outcome;

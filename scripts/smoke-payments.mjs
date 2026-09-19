@@ -188,6 +188,7 @@ const originalPolicy = await activePolicyConfig(sql, 'ru');
 
 let purchaseId;
 let payment;
+let paidAtFirst;
 
 try {
   await closeLeftoverPackages(sql);
@@ -334,7 +335,7 @@ try {
     check('платёж подтверждён', pay.status === 'succeeded', pay.status);
     check('время подтверждения записано', pay.confirmed_at !== null);
     const [row] = await sql(
-      `SELECT status, is_test_payment FROM billing.round_purchases WHERE id = $1`,
+      `SELECT status, is_test_payment, paid_at FROM billing.round_purchases WHERE id = $1`,
       [purchaseId],
     );
     check('покупка стала оплаченной', row.status === 'paid', row.status);
@@ -343,6 +344,7 @@ try {
       row.is_test_payment === true,
       `${row.is_test_payment}`,
     );
+    paidAtFirst = row.paid_at;
   }
   {
     const { json } = await notify(base);
@@ -356,6 +358,48 @@ try {
       [base.eventId],
     );
     check('в журнале уведомление осталось одно', n === 1, `${n}`);
+  }
+  {
+    // ДВА РАЗНЫХ события об одном успешном платеже — обычное дело у
+    // операторов («оплачен», затем «списан»). Уникальность события их не
+    // связывает: идентификаторы разные. Решение принимается по состоянию
+    // платежа, поэтому второе событие ничего не переигрывает.
+    const second = { ...base, eventId: `evt-${suffix}-2`, eventType: 'payment.captured' };
+    const { json } = await notify(second);
+    check(
+      'второе событие об одном успехе не активирует покупку заново',
+      json?.result === 'already_final',
+      `${json?.result}`,
+    );
+    const [pay] = await sql(`SELECT status, confirmed_at FROM billing.payments WHERE id = $1`, [
+      payment.id,
+    ]);
+    check('платёж остался подтверждённым', pay.status === 'succeeded', pay.status);
+    const [row] = await sql(`SELECT status, paid_at FROM billing.round_purchases WHERE id = $1`, [
+      purchaseId,
+    ]);
+    check('покупка оплачена ровно один раз', row.status === 'paid', row.status);
+    check(
+      'момент оплаты не переписан вторым событием',
+      row.paid_at.getTime() === paidAtFirst.getTime(),
+      `${row.paid_at.toISOString()} против ${paidAtFirst.toISOString()}`,
+    );
+    const [{ n }] = await sql(
+      `SELECT count(*)::int AS n FROM billing.payment_events
+        WHERE payment_id = $1 AND result = 'applied'`,
+      [payment.id],
+    );
+    check('исполнено ровно одно событие по платежу', n === 1, `${n}`);
+  }
+  {
+    // Понизить подтверждённую оплату нельзя даже в обход приложения.
+    let denied = false;
+    try {
+      await sql(`UPDATE billing.payments SET status = 'pending' WHERE id = $1`, [payment.id]);
+    } catch (error) {
+      denied = /нельзя понизить/.test(String(error));
+    }
+    check('база не даёт понизить подтверждённую оплату', denied);
   }
   {
     const late = { ...base, eventId: `evt-${suffix}-late`, outcome: 'failed' };
@@ -421,20 +465,125 @@ try {
       body: {},
     });
     check('после неуспеха можно заплатить заново', retry.id !== first.id, retry.status);
+
+    // Опоздавшее событие по ПЕРВОЙ, уже неуспешной попытке. Такое приходит,
+    // когда оператор досылает историю или повторяет доставку.
+    const lateOnFailed = {
+      eventId: `evt-${suffix}-late-first`,
+      eventType: 'payment.succeeded',
+      providerRef: first.providerRef,
+      outcome: 'succeeded',
+      amount: first.amount,
+      currency: first.currency,
+    };
+    const lateResult = await notify(lateOnFailed);
+    check(
+      'опоздавший успех по неуспешной попытке не принимается',
+      lateResult.json?.result === 'already_final',
+      `${lateResult.json?.result}`,
+    );
+    const [stillFailed] = await sql(`SELECT status FROM billing.payments WHERE id = $1`, [
+      first.id,
+    ]);
+    check(
+      'первая попытка осталась неуспешной',
+      stillFailed.status === 'failed',
+      stillFailed.status,
+    );
+
+    // Теперь вторая попытка проходит, а следом опаздывает успех по ней же от
+    // другого события — покупка обязана активироваться один раз.
+    const retrySuccess = {
+      eventId: `evt-${suffix}-retry-ok`,
+      eventType: 'payment.succeeded',
+      providerRef: retry.providerRef,
+      outcome: 'succeeded',
+      amount: retry.amount,
+      currency: retry.currency,
+    };
+    await notify(retrySuccess);
+    const [paidRow] = await sql(
+      `SELECT status, paid_at FROM billing.round_purchases WHERE id = $1`,
+      [otherPurchase.id],
+    );
+    check('покупка оплачена второй попыткой', paidRow.status === 'paid', paidRow.status);
   }
 
-  // ------------------------------------- чужой платёж посторонним не виден
+  // ------- опоздавшее подтверждение по уже оплаченной покупке
+  //
+  // Платёж создан, а покупка тем временем оплачена другим путём (ручное
+  // урегулирование оператора). Подтверждение по первому платежу опаздывает.
+  // Уникальность события здесь не помогает — событие новое; уникальный индекс
+  // тоже: платёж по покупке один. Решение принимается по состоянию ПОКУПКИ.
   {
-    const outsider = await register('o');
-    const { response } = await outsider.client.call(`/v1/billing/purchases/${purchaseId}/payment`, {
+    const late = await register('l');
+    const { roundId: lateRound } = await createProjectWithDraftRound(
+      late.client,
+      sql,
+      `${suffix}d`,
+    );
+    const latePurchase = await late.client.json(`/v1/rounds/${lateRound}/purchase`, {
+      method: 'POST',
+    });
+    const hanging = await late.client.json(`/v1/billing/purchases/${latePurchase.id}/payment`, {
       method: 'POST',
       body: {},
     });
-    check(
-      'посторонний оплату чужой покупки не начинает',
-      response.status === 403 || response.status === 404 || response.status === 409,
-      `${response.status}`,
+
+    // Оплата зафиксирована мимо этого платежа.
+    await sql(
+      `UPDATE billing.round_purchases
+          SET status = 'paid', paid_at = now(),
+              status_reason = 'прогон: оплата урегулирована вручную'
+        WHERE id = $1`,
+      [latePurchase.id],
     );
+    const [before] = await sql(`SELECT paid_at FROM billing.round_purchases WHERE id = $1`, [
+      latePurchase.id,
+    ]);
+
+    const result = await notify({
+      eventId: `evt-${suffix}-hanging`,
+      eventType: 'payment.succeeded',
+      providerRef: hanging.providerRef,
+      outcome: 'succeeded',
+      amount: hanging.amount,
+      currency: hanging.currency,
+    });
+    check(
+      'подтверждение по уже оплаченной покупке не активирует её второй раз',
+      result.json?.result === 'purchase_already_paid',
+      `${result.json?.result}`,
+    );
+    const [pay] = await sql(`SELECT status, failure_reason FROM billing.payments WHERE id = $1`, [
+      hanging.id,
+    ]);
+    check('опоздавший платёж снят, а не подтверждён', pay.status === 'canceled', pay.status);
+    check(
+      'причина опоздания названа',
+      typeof pay.failure_reason === 'string' && pay.failure_reason.includes('опоздало'),
+      `${pay.failure_reason}`,
+    );
+    const [after] = await sql(`SELECT paid_at FROM billing.round_purchases WHERE id = $1`, [
+      latePurchase.id,
+    ]);
+    check(
+      'момент оплаты покупки не сдвинулся',
+      after.paid_at.getTime() === before.paid_at.getTime(),
+      `${after.paid_at.toISOString()}`,
+    );
+  }
+  {
+    // Откатить оплаченную покупку в ожидание нельзя даже напрямую в базе.
+    let denied = false;
+    try {
+      await sql(`UPDATE billing.round_purchases SET status = 'pending_payment' WHERE id = $1`, [
+        purchaseId,
+      ]);
+    } catch (error) {
+      denied = /не возвращается в ожидание оплаты/.test(String(error));
+    }
+    check('база не даёт откатить оплаченную покупку', denied);
   }
 
   // ------------- ручное подтверждение снимает незавершённый платёж

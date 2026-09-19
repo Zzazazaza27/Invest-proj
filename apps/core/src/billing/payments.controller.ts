@@ -2,6 +2,8 @@ import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
 import {
   PaymentProviderStatusSchema,
   PaymentViewSchema,
+  ServiceRunAvailabilitySchema,
+  ServiceRunViewSchema,
   StartPaymentRequestSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -11,6 +13,7 @@ import { parseOrThrow } from '../common/validation';
 import { getEnv } from '../config/env';
 import type { RequestContext } from '../db/unit-of-work';
 import { PaymentsService } from './payments.service';
+import { ServiceExecutionService } from './service-execution.service';
 
 /**
  * Оплата покупки запуска раунда (5.9.9).
@@ -104,5 +107,37 @@ export class AdminPaymentsController {
   @Get('provider')
   async provider(@Ctx() ctx: RequestContext) {
     return PaymentProviderStatusSchema.parse(await this.payments.providerStatus(ctx));
+  }
+}
+
+/**
+ * Исполнение услуг, которые выполняет платформа (6.1).
+ *
+ * Запуск доступен команде проекта по ОПЛАЧЕННОЙ позиции покупки. Отдельного
+ * пути выдачи отчёта здесь нет: сам отчёт живёт там же, где жил, и
+ * раскрывается существующими правилами видимости.
+ */
+@Controller('billing/purchases')
+export class ServiceExecutionController {
+  constructor(private readonly runs: ServiceExecutionService) {}
+
+  /** Что по этой покупке можно запустить и что мешает. */
+  @Get(':id/service-runs')
+  async list(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const items = await this.runs.availability(ctx, id);
+    return { items: items.map((item) => ServiceRunAvailabilitySchema.parse(item)) };
+  }
+
+  /**
+   * Запустить разбор по позиции.
+   *
+   * Повторный запрос не создаёт второго исполнения: идущий прогон вернётся
+   * как есть, уже выполненный — тоже.
+   */
+  @Post('items/:itemId/run')
+  async start(@Param('itemId') rawId: string, @Ctx() ctx: RequestContext) {
+    const itemId = parseOrThrow(UuidSchema, rawId);
+    return ServiceRunViewSchema.parse(await this.runs.start(ctx, itemId));
   }
 }

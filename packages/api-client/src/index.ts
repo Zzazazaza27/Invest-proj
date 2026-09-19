@@ -9,6 +9,8 @@ import {
   FundingRoundDetailSchema,
   FundingRoundSchema,
   PaymentViewSchema,
+  ServiceRunAvailabilitySchema,
+  ServiceRunViewSchema,
   RoundPurchaseViewSchema,
   RoundQuoteSchema,
   ServiceCountryPolicyVersionSchema,
@@ -912,6 +914,22 @@ export class UnicornApi {
       this.http.request({
         path: `/billing/purchases/${purchaseId}/payment`,
         schema: z.object({ payment: PaymentViewSchema.nullable() }),
+      }),
+
+    /** Что по покупке можно запустить и что мешает (услуги платформы). */
+    serviceRuns: (purchaseId: string) =>
+      this.http.request({
+        path: `/billing/purchases/${purchaseId}/service-runs`,
+        schema: z.object({ items: z.array(ServiceRunAvailabilitySchema) }),
+      }),
+
+    /** Запустить разбор по позиции. Повтор не создаёт второго исполнения. */
+    startServiceRun: (itemId: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/billing/purchases/items/${itemId}/run`,
+        schema: ServiceRunViewSchema,
+        idempotencyKey: uuidv7(),
       }),
 
     quote: (id: string, selection: { packageCode?: string; serviceCodes?: string[] } = {}) => {

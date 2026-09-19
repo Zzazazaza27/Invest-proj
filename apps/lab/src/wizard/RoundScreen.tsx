@@ -23,6 +23,7 @@ import type {
   RoundCloseReason,
   RoundOpenPreview,
   PaymentView,
+  ServiceRunAvailability,
   RoundPurchaseView,
   RoundQuote,
   ServiceCountryPolicyVersion,
@@ -724,6 +725,7 @@ function PurchaseBlock({
 }) {
   const [purchase, setPurchase] = useState<RoundPurchaseView | null>(null);
   const [payment, setPayment] = useState<PaymentView | null>(null);
+  const [runs, setRuns] = useState<ServiceRunAvailability[]>([]);
   const [packageCode, setPackageCode] = useState<string>('');
   const [extras, setExtras] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -742,6 +744,8 @@ function PurchaseBlock({
         // страницы оплаты не должен ничего подтверждать.
         const view = await api.rounds.payment(found.id).catch(() => null);
         if (!cancelled) setPayment(view?.payment ?? null);
+        const list = await api.rounds.serviceRuns(found.id).catch(() => null);
+        if (!cancelled) setRuns(list?.items ?? []);
       })
       .catch(() => {
         if (!cancelled) setPurchase(null);
@@ -774,6 +778,30 @@ function PurchaseBlock({
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? (e.problem?.detail ?? null) : 'Покупка не оформлена');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Запустить разбор по позиции.
+   *
+   * Повторное нажатие безопасно: второго исполнения не появится, вернётся
+   * текущее состояние.
+   */
+  async function runService(itemId: string) {
+    setBusy(true);
+    try {
+      await api.rounds.startServiceRun(itemId);
+      if (purchase) {
+        const list = await api.rounds.serviceRuns(purchase.id).catch(() => null);
+        setRuns(list?.items ?? []);
+        const fresh = await api.rounds.purchase(roundId).catch(() => null);
+        if (fresh && 'id' in fresh) setPurchase(fresh);
+      }
+      setError(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? (e.problem?.detail ?? null) : 'Разбор не запущен');
     } finally {
       setBusy(false);
     }
@@ -883,6 +911,47 @@ function PurchaseBlock({
                   ) : null}
                 </>
               )}
+            </div>
+          ) : null}
+
+          {runs.length > 0 ? (
+            <div data-service-runs>
+              <strong>{S.round.cost.runsTitle}</strong>
+              {runs.map((entry) => (
+                <div key={entry.itemId} data-service-run={entry.run?.status ?? 'none'}>
+                  {entry.run === null ? (
+                    entry.canStart ? (
+                      <Button
+                        variant="secondary"
+                        loading={busy}
+                        onClick={() => void runService(entry.itemId)}
+                      >
+                        {S.round.cost.runStart}
+                      </Button>
+                    ) : (
+                      <span>{S.round.cost.runBlocked(entry.blocker ?? '')}</span>
+                    )
+                  ) : (
+                    <>
+                      {entry.run.explanation.map((line) => (
+                        <span
+                          key={line}
+                          style={
+                            entry.run?.inputChangedSince && line.includes('изменилась')
+                              ? { color: 'var(--u-warning)' }
+                              : undefined
+                          }
+                        >
+                          {line}
+                        </span>
+                      ))}
+                      {entry.run.resultRef ? (
+                        <span data-service-run-report>{S.round.cost.runReport}</span>
+                      ) : null}
+                    </>
+                  )}
+                </div>
+              ))}
             </div>
           ) : null}
 

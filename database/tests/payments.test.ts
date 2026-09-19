@@ -259,3 +259,230 @@ describe('M108: подписка и автопродление', () => {
     });
   });
 });
+
+/**
+ * M110: состояние оплаты движется только вперёд.
+ *
+ * Проверяется не «триггер есть», а два случая из жизни оператора платежей:
+ * два разных события об одном успешном платеже и опоздавшее событие по уже
+ * завершённой попытке. Оба обязаны разбиться о состояние записи, а не о
+ * уникальность события.
+ */
+describe('M110: повторное исполнение и поздние события', () => {
+  it('подтверждённую оплату нельзя понизить, возврат — можно', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      const purchaseId = await purchase(c, owner.id, projectId);
+      const paymentId = await payment(c, { purchaseId });
+      await c.query(
+        `UPDATE billing.payments SET status = 'succeeded', confirmed_at = now() WHERE id = $1`,
+        [paymentId],
+      );
+
+      for (const status of ['pending', 'authorized', 'failed', 'canceled']) {
+        await c.query('SAVEPOINT downgrade');
+        await expect(
+          c.query(`UPDATE billing.payments SET status = $2 WHERE id = $1`, [paymentId, status]),
+        ).rejects.toThrow(/нельзя понизить/);
+        await c.query('ROLLBACK TO SAVEPOINT downgrade');
+      }
+
+      // Возврат — законное продолжение, а не понижение.
+      await expect(
+        c.query(`UPDATE billing.payments SET status = 'refunded' WHERE id = $1`, [paymentId]),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  it('завершённую неуспехом попытку поздним событием не переигрывают', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      const purchaseId = await purchase(c, owner.id, projectId);
+      const paymentId = await payment(c, { purchaseId });
+      await c.query(`UPDATE billing.payments SET status = 'failed' WHERE id = $1`, [paymentId]);
+
+      await expect(
+        c.query(`UPDATE billing.payments SET status = 'succeeded' WHERE id = $1`, [paymentId]),
+      ).rejects.toThrow(/уже завершён/);
+    });
+  });
+
+  it('оплаченная покупка не возвращается в ожидание и не переставляет момент оплаты', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      const purchaseId = await purchase(c, owner.id, projectId);
+      await c.query(
+        `UPDATE billing.round_purchases SET status = 'paid', paid_at = now() WHERE id = $1`,
+        [purchaseId],
+      );
+
+      await c.query('SAVEPOINT back');
+      await expect(
+        c.query(`UPDATE billing.round_purchases SET status = 'pending_payment' WHERE id = $1`, [
+          purchaseId,
+        ]),
+      ).rejects.toThrow(/не возвращается в ожидание оплаты/);
+      await c.query('ROLLBACK TO SAVEPOINT back');
+
+      await c.query('SAVEPOINT moment');
+      await expect(
+        c.query(
+          `UPDATE billing.round_purchases SET paid_at = now() + interval '1 hour'
+                  WHERE id = $1`,
+          [purchaseId],
+        ),
+      ).rejects.toThrow(/момент оплаты/);
+      await c.query('ROLLBACK TO SAVEPOINT moment');
+
+      // Возврат и отмена остаются доступны.
+      await expect(
+        c.query(`UPDATE billing.round_purchases SET status = 'refunded' WHERE id = $1`, [
+          purchaseId,
+        ]),
+      ).resolves.toBeDefined();
+    });
+  });
+});
+
+/**
+ * M111–M113: услуга платформы закрывается результатом, а не отметкой.
+ *
+ * Это главное правило этапа 6.1, и проверяется оно с обеих сторон: отметку
+ * «выполнено» нельзя поставить без успешного разбора, а успешный разбор
+ * нельзя записать без сохранённого результата и отпечатка входа.
+ */
+describe('M111: исполнение услуги платформой', () => {
+  async function itemWithService(
+    c: Client,
+    owner: string,
+    projectId: string,
+    executionKind: 'manual' | 'ai_analysis',
+  ): Promise<{ purchaseId: string; itemId: string; code: string }> {
+    const purchaseId = await purchase(c, owner, projectId);
+    const code = `svc_${purchaseId.slice(24)}`;
+    await c.query(
+      `INSERT INTO billing.round_services (id, code, name, is_implemented, execution_kind, created_by)
+       VALUES ($1, $2, 'Услуга прогона', true, $3, $4)`,
+      [uuidv7(), code, executionKind, owner],
+    );
+    const itemId = uuidv7();
+    await c.query(
+      `INSERT INTO billing.round_purchase_items
+         (id, purchase_id, kind, service_code, title, amount, currency)
+       VALUES ($1, $2, 'service', $3, 'Услуга', 0, 'RUB')`,
+      [itemId, purchaseId, code],
+    );
+    return { purchaseId, itemId, code };
+  }
+
+  it('услугу сотрудника отмечают руками, услугу платформы — нет', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+
+      const manual = await itemWithService(c, owner.id, projectId, 'manual');
+      await expect(
+        c.query(
+          `UPDATE billing.round_purchase_items
+              SET fulfillment_status = 'fulfilled', fulfillment_note = 'сделано сотрудником'
+            WHERE id = $1`,
+          [manual.itemId],
+        ),
+      ).resolves.toBeDefined();
+
+      const other = await createProject(c, owner.id);
+      const auto = await itemWithService(c, owner.id, other, 'ai_analysis');
+      await expect(
+        c.query(
+          `UPDATE billing.round_purchase_items
+              SET fulfillment_status = 'fulfilled', fulfillment_note = 'галочкой'
+            WHERE id = $1`,
+          [auto.itemId],
+        ),
+      ).rejects.toThrow(/после успешного разбора/);
+    });
+  });
+
+  it('успешный прогон без результата и без отпечатка записать нельзя', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      const { purchaseId, itemId } = await itemWithService(c, owner.id, projectId, 'ai_analysis');
+
+      await expect(
+        c.query(
+          `INSERT INTO billing.purchase_item_runs
+             (id, item_id, purchase_id, project_id, kind, status)
+           VALUES ($1, $2, $3, $4, 'ai_analysis', 'succeeded')`,
+          [uuidv7(), itemId, purchaseId, projectId],
+        ),
+      ).rejects.toThrow(/purchase_item_runs_check/);
+    });
+  });
+
+  it('успешный прогон закрывает услугу и второй раз не повторяется', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      const { purchaseId, itemId } = await itemWithService(c, owner.id, projectId, 'ai_analysis');
+
+      const runId = uuidv7();
+      await c.query(
+        `INSERT INTO billing.purchase_item_runs
+           (id, item_id, purchase_id, project_id, kind, status, input_sha256, result_ref,
+            result_kind, engine)
+         VALUES ($1, $2, $3, $4, 'ai_analysis', 'succeeded', repeat('a', 64), $5,
+                 'passport', 'heuristic')`,
+        [runId, itemId, purchaseId, projectId, uuidv7()],
+      );
+
+      // Теперь отметка разрешена — результат есть.
+      await expect(
+        c.query(
+          `UPDATE billing.round_purchase_items
+              SET fulfillment_status = 'fulfilled', fulfillment_note = 'разбор выполнен'
+            WHERE id = $1`,
+          [itemId],
+        ),
+      ).resolves.toBeDefined();
+
+      await c.query('SAVEPOINT second');
+      await expect(
+        c.query(
+          `INSERT INTO billing.purchase_item_runs
+             (id, item_id, purchase_id, project_id, kind, status, input_sha256, result_ref,
+              result_kind, engine)
+           VALUES ($1, $2, $3, $4, 'ai_analysis', 'succeeded', repeat('b', 64), $5,
+                   'passport', 'heuristic')`,
+          [uuidv7(), itemId, purchaseId, projectId, uuidv7()],
+        ),
+      ).rejects.toThrow(/purchase_item_runs_done/);
+      await c.query('ROLLBACK TO SAVEPOINT second');
+
+      await expect(
+        c.query(`UPDATE billing.purchase_item_runs SET status = 'running' WHERE id = $1`, [runId]),
+      ).rejects.toThrow(/не переигрывается/);
+    });
+  });
+
+  it('два идущих прогона по одной позиции невозможны', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      const { purchaseId, itemId } = await itemWithService(c, owner.id, projectId, 'ai_analysis');
+
+      const insert = (id: string) =>
+        c.query(
+          `INSERT INTO billing.purchase_item_runs
+             (id, item_id, purchase_id, project_id, kind, status)
+           VALUES ($1, $2, $3, $4, 'ai_analysis', 'running')`,
+          [id, itemId, purchaseId, projectId],
+        );
+      await insert(uuidv7());
+      await expect(insert(uuidv7())).rejects.toThrow(/purchase_item_runs_active/);
+    });
+  });
+});
