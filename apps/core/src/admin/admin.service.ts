@@ -41,14 +41,13 @@ export class AdminService {
   async listPlans(ctx: RequestContext): Promise<AdminPlan[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<PlanRow>(
-        `SELECT p.id, p.code, p.version, p.audience, p.name,
-                p.ask_limit::text AS ask_limit, p.individual_pricing,
+        `SELECT p.id, p.code, p.version, p.name,
                 p.price::text AS price, p.currency, p.billing_period,
                 p.features_jsonb, p.valid_from, p.valid_to,
                 (SELECT count(*) FROM billing.subscriptions s WHERE s.plan_id = p.id)::int
                   AS subscriptions_count
            FROM billing.subscription_plans p
-          ORDER BY p.audience, p.code, p.version DESC`,
+          ORDER BY p.code, p.version DESC`,
       );
       return rows.map(mapPlan);
     });

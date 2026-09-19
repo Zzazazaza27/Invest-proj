@@ -50,6 +50,15 @@ async function publishConfig(
              'published', true, $2::jsonb, 'тест видимости раунда', now(), now())`,
     [uuidv7(), JSON.stringify({ questions })],
   );
+  // Открытые раунды переводятся на новую версию условий — эквивалент действия
+  // владельца «Применить новые условия»: иначе раунд остался бы на прежних
+  // условиях (M086), и тест проверял бы не то, что заявляет.
+  await c.query(
+    `UPDATE lab.funding_rounds
+        SET disclosure_version = (SELECT version FROM lab.application_form_versions
+                                   WHERE is_active LIMIT 1)
+      WHERE status IN ('open', 'paused')`,
+  );
 }
 
 async function insertOpenRound(c: Client, projectId: string, by: string): Promise<void> {
@@ -63,11 +72,20 @@ async function insertOpenRound(c: Client, projectId: string, by: string): Promis
      VALUES ($1, $2, $3, 1, '{}', 1)`,
     [versionId, projectId, rows[0]!.id],
   );
+  // Версия условий раскрытия у раунда фиксируется ЯВНО — активной на момент
+  // открытия. Без этого `round_projection` брал бы `schema_version` (1), и тест
+  // молча зависел бы от того, что лежит в первой версии конфигурации: после
+  // пересоздания базы это уже другая конфигурация, и проверка падала бы не по
+  // делу. Публикация новой версии ниже переводит открытый раунд на неё — так
+  // же, как действие владельца «Применить новые условия» (M086).
   await c.query(
     `INSERT INTO lab.funding_rounds
-       (id, project_id, application_version_id, schema_version, status, funding_scope,
-        funding_scope_note, target, currency, service_country, policy_version, opened_at, created_by)
-     VALUES ($1, $2, $3, 1, 'open', 'direction', 'пилот в рознице', 3000000, 'RUB', 'ru', 1, now(), $4)`,
+       (id, project_id, application_version_id, schema_version, disclosure_version, status,
+        funding_scope, funding_scope_note, target, currency, service_country, policy_version,
+        opened_at, created_by)
+     VALUES ($1, $2, $3, 1,
+             (SELECT version FROM lab.application_form_versions WHERE is_active LIMIT 1),
+             'open', 'direction', 'пилот в рознице', 3000000, 'RUB', 'ru', 1, now(), $4)`,
     [uuidv7(), projectId, versionId, by],
   );
 }

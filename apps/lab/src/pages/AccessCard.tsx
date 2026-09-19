@@ -182,11 +182,19 @@ export function AccessCard({
                 {PERMISSIONS.map((permission) => (
                   <label
                     key={permission}
+                    htmlFor={`access-permission-${permission}`}
                     style={{ display: 'flex', gap: 'var(--u-space-2)', alignItems: 'center' }}
                   >
+                    {/*
+                      У поля есть собственный идентификатор, а не только
+                      обёртка-label: проверка доступности ищет именно его, и
+                      без него флажок читался бы как поле без подписи.
+                    */}
                     <input
+                      id={`access-permission-${permission}`}
                       type="checkbox"
                       data-access-permission={permission}
+                      style={{ width: 'auto', flex: '0 0 auto' }}
                       checked={permissions.includes(permission)}
                       onChange={(e) =>
                         setPermissions((current) =>
@@ -344,8 +352,21 @@ function EntryRow({
         paddingBottom: 'var(--u-space-2)',
       }}
     >
-      <strong style={{ minWidth: 160 }}>{entry.subjectName}</strong>
-      <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap', flex: 1 }}>
+      {/*
+        Ширина по содержимому, а не фиксированная: на телефоне строка с именем,
+        набором разрешений и кнопкой обязана переноситься, иначе карточка
+        растягивает страницу и появляется горизонтальная прокрутка.
+      */}
+      <strong style={{ minWidth: 0, overflowWrap: 'anywhere' }}>{entry.subjectName}</strong>
+      <div
+        style={{
+          display: 'flex',
+          gap: 'var(--u-space-2)',
+          flexWrap: 'wrap',
+          flex: '1 1 200px',
+          minWidth: 0,
+        }}
+      >
         {entry.permissions.map((permission) => (
           <Badge key={permission} tone="accent">
             {S.access.permissionLabels[permission] ?? permission}

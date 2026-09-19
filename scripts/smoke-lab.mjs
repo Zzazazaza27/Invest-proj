@@ -278,7 +278,6 @@ let projectId = null;
     response.status === 201 || response.status === 200,
     `статус ${response.status}`,
   );
-  check('тариф резолвлен сервером', Boolean(json?.requiredPlanId), json?.requiredPlanId ?? 'нет');
   check(
     'проект создан как черновик',
     json?.status === 'draft' && json?.listingStatus === 'not_listed',

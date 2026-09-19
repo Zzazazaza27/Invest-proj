@@ -23,25 +23,21 @@ export class PricingController {
 
     return this.db.readOnly(anonymous, async (tx) => {
       const plans = await tx.query(
-        `SELECT id, code, version, audience, name,
-                ask_limit::text AS ask_limit, individual_pricing,
-                price::text AS price, currency, billing_period,
+        `SELECT id, code, version, name, price::text AS price, currency, billing_period,
                 valid_from, valid_to
            FROM billing.subscription_plans
           WHERE valid_from <= now() AND (valid_to IS NULL OR valid_to > now())
-          ORDER BY audience, ask_limit NULLS LAST`,
+          ORDER BY price`,
       );
 
       // Объявленные, но ещё не вступившие в силу версии. Пользователь должен
       // узнавать о повышении цены заранее, а не из первого списания.
       const announced = await tx.query(
-        `SELECT id, code, version, audience, name,
-                ask_limit::text AS ask_limit, individual_pricing,
-                price::text AS price, currency, billing_period,
+        `SELECT id, code, version, name, price::text AS price, currency, billing_period,
                 valid_from, valid_to
            FROM billing.subscription_plans
           WHERE valid_from > now()
-          ORDER BY valid_from, audience`,
+          ORDER BY valid_from, price`,
       );
 
       const fee = await tx.query(
@@ -84,11 +80,8 @@ interface PlanRow {
   id: string;
   code: string;
   version: number;
-  audience: string;
   name: string;
-  ask_limit: string | null;
-  individual_pricing: boolean;
-  price: string | null;
+  price: string;
   currency: string;
   billing_period: string;
   valid_from: Date;
@@ -101,10 +94,7 @@ function mapPlan(row: unknown) {
     id: r.id,
     code: r.code,
     version: r.version,
-    audience: r.audience,
     name: r.name,
-    askLimit: r.ask_limit,
-    individualPricing: r.individual_pricing,
     price: r.price,
     currency: r.currency,
     billingPeriod: r.billing_period,

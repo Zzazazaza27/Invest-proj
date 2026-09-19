@@ -12,7 +12,7 @@ import {
 import type { InvestmentPassport, ProjectFull, ReadinessEntry } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
-import { MaterialsCard } from './MaterialsCard';
+import { MaterialsCard, SubmissionsCard } from './MaterialsCard';
 import { AccessCard } from './AccessCard';
 import { VisibilityCard } from './VisibilityCard';
 import { PublicationConsentsCard } from './PublicationConsentsCard';
@@ -228,6 +228,7 @@ export function ProjectPage({
       <AccessCard projectId={project.id} visibility={project.visibility} />
 
       <MaterialsCard projectId={project.id} />
+      <SubmissionsCard projectId={project.id} />
       <PassportCard projectId={project.id} />
       <ReadinessCard projectId={project.id} />
       <PublicationConsentsCard projectId={project.id} />

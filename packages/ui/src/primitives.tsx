@@ -483,7 +483,15 @@ export function Stack({
   ...rest
 }: React.HTMLAttributes<HTMLDivElement> & { gap?: string }): React.ReactElement {
   return (
-    <div {...rest} style={{ display: 'grid', gap, ...style }}>
+    // `minmax(0, 1fr)`, а не умолчание: у grid-элементов минимальная ширина
+    // равна min-content, поэтому одна широкая карточка растягивала колонку и
+    // вместе с ней всю страницу — на телефоне появлялась горизонтальная
+    // прокрутка. С этим ограничением колонка может быть уже содержимого, а
+    // переносится уже само содержимое.
+    <div
+      {...rest}
+      style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', gap, ...style }}
+    >
       {children}
     </div>
   );

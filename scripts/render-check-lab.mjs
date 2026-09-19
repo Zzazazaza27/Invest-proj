@@ -103,6 +103,27 @@ async function register(tag) {
 
 console.warn('\n=== РЕНДЕР-ПРОВЕРКА: КАБИНЕТ ОСНОВАТЕЛЯ ===\n');
 
+/**
+ * Этот прогон проверяет СТАРЫЙ кабинет (v1): историю подач, материалы и
+ * действия на странице проекта. Мастер заявки v2 показывает вместо них свою
+ * карточку, поэтому флаг на время прогона выключается и возвращается в
+ * исходное положение — так же, как render-check-lab-v2 делает это в обратную
+ * сторону. Без этого исход проверки решало состояние стенда, а не код.
+ */
+async function setWizardV2(enabled) {
+  await sql(`UPDATE audit.feature_flags SET enabled = $1 WHERE key = 'lab.ui.application_v2'`, [
+    enabled,
+  ]);
+}
+const [wizardFlagRow] = await sql(
+  `SELECT enabled FROM audit.feature_flags WHERE key = 'lab.ui.application_v2'`,
+);
+const wizardWas = wizardFlagRow?.enabled ?? false;
+await setWizardV2(false);
+console.warn(
+  `  ·     мастер заявки v2 на время прогона выключен (был ${wizardWas ? 'включён' : 'выключен'})`,
+);
+
 const owner = await register('owner');
 const stranger = await register('stranger');
 
@@ -338,12 +359,19 @@ check(
 console.warn('\n[3] Действия и отказы сервера');
 check('карточка показывает статус проекта', (await page.getByText('Черновик').count()) > 0);
 
-// Публикация листинга без подписки и KYC обязана отказать — и объяснить.
-await page.getByRole('button', { name: 'Опубликовать листинг' }).click();
-await page.waitForTimeout(2000);
-const noticeText = await page.locator('[role="alert"], [role="status"]').first().innerText();
+// Кнопки «Опубликовать листинг» больше нет: с 5.7.3 публикация — следствие
+// режима видимости, а с M094 она не зависит и от денег. Открытый режим без
+// проверенного владельца обязан отказать — и объяснить отказ словами.
+await page.selectOption('[data-visibility-card] select', 'public');
+await page.locator('[data-visibility-save]').click();
+await page.waitForTimeout(2500);
+const noticeText = await page
+  .locator('[data-visibility-card] [role="alert"], [data-visibility-card] [role="status"]')
+  .first()
+  .innerText()
+  .catch(() => '');
 check(
-  'отказ публикации объяснён сервером, а не проглочен',
+  'отказ открытого режима объяснён сервером, а не проглочен',
   noticeText.trim().length > 10,
   noticeText.slice(0, 80),
 );
@@ -514,6 +542,7 @@ check(
   (await page.getByRole('heading', { name: 'Вход' }).count()) === 1,
 );
 
+await setWizardV2(wizardWas);
 await browser.close();
 await pool.end();
 

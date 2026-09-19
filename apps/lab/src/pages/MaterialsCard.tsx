@@ -232,10 +232,18 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
             {state.items.map((material) => (
               <li
                 key={material.id}
-                style={{ display: 'flex', gap: 'var(--u-space-3)', alignItems: 'center' }}
+                // Строка материала переносится: значки, отметка и кнопка не
+                // умещаются в одну строку на телефоне и раньше растягивали
+                // страницу до горизонтальной прокрутки.
+                style={{
+                  display: 'flex',
+                  gap: 'var(--u-space-3)',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                }}
               >
                 <Badge>{TYPE_TITLES[material.type] ?? material.type}</Badge>
-                <span style={{ flex: 1, wordBreak: 'break-all' }}>
+                <span style={{ flex: '1 1 160px', minWidth: 0, wordBreak: 'break-all' }}>
                   {material.url ?? `версия ${material.version}`}
                 </span>
                 <Badge tone={material.parseStatus === 'failed' ? 'warning' : 'neutral'}>
@@ -320,24 +328,15 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
   );
 }
 
-const STAGE_TITLES: { status: string; title: string }[] = [
-  { status: 'draft', title: 'Черновик' },
-  { status: 'submitted', title: 'Заявка подана' },
-  { status: 'ai_review', title: 'AI-оценка' },
-  { status: 'expert_review', title: 'Экспертиза' },
-  { status: 'bootcamp', title: 'Буткемп' },
-  { status: 'finalist', title: 'Финал' },
-  { status: 'graduated', title: 'Выпуск' },
-];
-
 /**
- * Роадмап проекта: путь по воронке сезона и история поданных версий.
+ * История подач заявки.
  *
- * Порядок этапов здесь — отображение той же машины переходов, что действует на
- * сервере. Он показывает, где проект находится, но НЕ обещает, что следующий
- * этап наступит: решение принимает организатор.
+ * Раньше жила внутри карточки «Путь по сезону» и исчезла вместе с ней, когда
+ * сезоны отложили (M088): владелец перестал видеть, какие версии поданы, хотя
+ * к сезонам это не относится — снимок создаётся подачей и идёт на экспертизу
+ * независимо от сезонного контура. Поэтому вынесена отдельной карточкой.
  */
-export function RoadmapCard({ projectId, status }: { projectId: string; status: string }) {
+export function SubmissionsCard({ projectId }: { projectId: string }) {
   const [versions, setVersions] = useState<ProjectVersion[] | 'loading' | 'error'>('loading');
 
   useEffect(() => {
@@ -355,45 +354,10 @@ export function RoadmapCard({ projectId, status }: { projectId: string; status: 
     };
   }, [projectId]);
 
-  const currentIndex = STAGE_TITLES.findIndex((stage) => stage.status === status);
-  const rejected = status === 'rejected' || status === 'archived';
-
   return (
-    <Card>
+    <Card data-submissions-card>
       <Stack>
-        <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Путь по сезону</h2>
-
-        {rejected ? (
-          <span style={{ color: 'var(--u-text-muted)' }}>
-            Проект вышел из воронки сезона (статус «{status}»). Заявку можно доработать и подать в
-            следующем сезоне.
-          </span>
-        ) : null}
-
-        <ol
-          style={{
-            listStyle: 'none',
-            margin: 0,
-            padding: 0,
-            display: 'grid',
-            gap: 'var(--u-space-2)',
-          }}
-        >
-          {STAGE_TITLES.map((stage, index) => {
-            const passed = currentIndex >= 0 && index < currentIndex;
-            const current = index === currentIndex;
-            return (
-              <li key={stage.status} style={{ display: 'flex', gap: 'var(--u-space-3)' }}>
-                <Badge tone={current ? 'accent' : passed ? 'success' : 'neutral'}>
-                  {current ? 'сейчас' : passed ? 'пройден' : 'впереди'}
-                </Badge>
-                <span style={{ fontWeight: current ? 600 : 400 }}>{stage.title}</span>
-              </li>
-            );
-          })}
-        </ol>
-
-        <h3 style={{ margin: 0, fontSize: 'var(--u-text-md)' }}>История подач</h3>
+        <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>История подач</h2>
         {versions === 'loading' ? <LoadingState label="Загружаем историю" /> : null}
         {versions === 'error' ? <ErrorState description="История подач недоступна" /> : null}
         {Array.isArray(versions) && versions.length === 0 ? (
