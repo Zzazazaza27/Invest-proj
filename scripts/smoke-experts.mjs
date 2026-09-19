@@ -169,10 +169,9 @@ const [season] = await sql(
 
 const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
 const [project] = await sql(
-  `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask,
-                             required_plan_id)
+  `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask)
    VALUES (public.uuid_generate_v7(), $1, $2, 'Проект экспертизы', 'growth', 'expert_review',
-           5000000, billing.resolve_founder_plan(5000000))
+           5000000)
    RETURNING id`,
   [taxonomy.id, season.id],
 );
@@ -576,10 +575,8 @@ console.warn('\n[5] Рейтинг и золотые билеты');
   const extra = [];
   for (let i = 0; i < 2; i += 1) {
     const [row] = await sql(
-      `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask,
-                                 required_plan_id)
-       VALUES (public.uuid_generate_v7(), $1, $2, $3, 'growth', 'expert_review', 5000000,
-               billing.resolve_founder_plan(5000000))
+      `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask)
+       VALUES (public.uuid_generate_v7(), $1, $2, $3, 'growth', 'expert_review', 5000000)
        RETURNING id`,
       [taxonomy.id, season.id, `Проект лимита ${i}`],
     );
@@ -719,10 +716,9 @@ let deviceId;
 console.warn('\n[7] Рабочая зона эксперта');
 
 const [wsProject] = await sql(
-  `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask,
-                             required_plan_id)
+  `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask)
    VALUES (public.uuid_generate_v7(), $1, $2, 'Проект рабочей зоны', 'mvp', 'expert_review',
-           3000000, billing.resolve_founder_plan(3000000))
+           3000000)
    RETURNING id`,
   [taxonomy.id, season.id],
 );

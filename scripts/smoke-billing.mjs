@@ -161,9 +161,10 @@ async function makeAdmin(user) {
 
 console.warn('\n=== ЖИВОЙ ПРОГОН: БИЛЛИНГ И АДМИНСКИЙ КАБИНЕТ ===\n');
 
-// Тестовый тариф отдельным кодом не завести — коды ограничены CHECK. Поэтому
-// прогон идёт по founder_t1 и возвращает сетку в исходное состояние в конце.
-const PLAN_CODE = 'founder_t1';
+// Тарифы теперь только инвесторские (M094): подписка основателя по сумме
+// привлечения отменена. Прогон идёт по действующему тарифу инвестора и
+// возвращает сетку в исходное состояние в конце.
+const PLAN_CODE = 'investor_membership';
 
 // Предусловие: сетка возвращается в исходное состояние. Незавершённый прошлый
 // прогон мог оставить объявление о будущей цене, и тогда сценарий проверял бы
@@ -177,9 +178,7 @@ await sql(
 const founder = await register('founder', 'f');
 const outsider = await register('investor', 'o');
 const adminA = await register('founder', 'a1');
-const adminB = await register('founder', 'a2');
 const admin = await makeAdmin(adminA);
-const admin2 = await makeAdmin(adminB);
 
 // --------------------------------------------------------- закрытость контура
 {
@@ -197,7 +196,7 @@ const admin2 = await makeAdmin(adminB);
 {
   const { response, json } = await admin.call('/v1/admin/plans');
   check('администратор видит тарифы', response.status === 200, `статус ${response.status}`);
-  check('версии тарифов пришли', (json?.items?.length ?? 0) >= 6, `версий ${json?.items?.length}`);
+  check('версии тарифов пришли', (json?.items?.length ?? 0) >= 1, `версий ${json?.items?.length}`);
   const current = (json?.items ?? []).find((p) => p.code === PLAN_CODE && p.isActive);
   check('действующая версия помечена запертой', current?.isLocked === true);
 }
@@ -221,13 +220,10 @@ let scheduledId;
     method: 'POST',
     body: {
       code: PLAN_CODE,
-      audience: 'founder',
-      name: 'Старт — новая цена с будущего месяца',
+      name: 'Членство инвестора — новая цена с будущего месяца',
       price: '5990.00',
-      askLimit: '1000000.00',
-      individualPricing: false,
       billingPeriod: 'monthly',
-      features: { included: ['публикация одного проекта', 'базовая аналитика'], maxProjects: 1 },
+      features: { included: ['полные карточки проектов'] },
       validFrom: nextMonth.toISOString(),
     },
   });
@@ -254,10 +250,8 @@ let scheduledId;
     method: 'POST',
     body: {
       code: PLAN_CODE,
-      audience: 'founder',
       name: 'Второе объявление',
       price: '7777.00',
-      individualPricing: false,
       billingPeriod: 'monthly',
       features: {},
       validFrom: nextMonth.toISOString(),
@@ -285,11 +279,9 @@ let scheduledId;
   const { response, json } = await admin.call('/v1/admin/plans', {
     method: 'POST',
     body: {
-      code: 'founder_t3',
-      audience: 'founder',
+      code: PLAN_CODE,
       name: 'Задним числом',
       price: '1.00',
-      individualPricing: false,
       billingPeriod: 'monthly',
       features: {},
       validFrom: past,
@@ -334,32 +326,14 @@ let scheduledId;
   check('витрина вернулась к прежней цене', plan?.price === priceBefore, `цена ${plan?.price}`);
 }
 
-// ----------------------------------------------- подписка основателя
-let projectId;
-{
-  const taxonomy = (await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'saas'`))[0].id;
-  const { json } = await founder.client.call('/v1/projects', {
-    method: 'POST',
-    body: {
-      title: 'Проект для проверки биллинга',
-      stage: 'mvp',
-      taxonomyId: taxonomy,
-      investmentAsk: '900000.00',
-      askCurrency: 'RUB',
-    },
-  });
-  projectId = json?.id;
-  check('проект основателя создан', Boolean(projectId));
-}
+// ----------------------------------------------- подписка инвестора
+// Подписка бывает только у инвестора и только на аккаунт: подписка основателя
+// по сумме привлечения отменена (M094), запуск раунда оплачивается разово.
 let subscriptionId;
 {
-  const { response, json } = await founder.client.call('/v1/billing/subscriptions', {
+  const { response, json } = await outsider.client.call('/v1/billing/subscriptions', {
     method: 'POST',
-    body: {
-      audience: 'founder',
-      projectId,
-      idempotencyKey: `sub-${suffix}-${crypto.randomUUID()}`,
-    },
+    body: { idempotencyKey: `sub-${suffix}-${crypto.randomUUID()}` },
   });
   subscriptionId = json?.id;
   check(
@@ -369,34 +343,35 @@ let subscriptionId;
   );
   check('подписка ждёт оплаты', json?.status === 'pending_payment', json?.status ?? '');
   check(
-    'цена зафиксирована снапшотом по действующему тарифу',
+    'цена зафиксирована снимком по действующему тарифу',
     json?.priceSnapshot === priceBefore,
-    `снапшот ${json?.priceSnapshot}`,
+    `снимок ${json?.priceSnapshot}`,
   );
 }
 {
-  const { json } = await founder.client.call('/v1/billing/subscriptions', {
+  const { json } = await outsider.client.call('/v1/billing/subscriptions', {
     method: 'POST',
-    body: {
-      audience: 'founder',
-      projectId,
-      idempotencyKey: `sub-${suffix}-${crypto.randomUUID()}`,
-    },
+    body: { idempotencyKey: `sub-${suffix}-${crypto.randomUUID()}` },
   });
   check('повторное оформление не плодит подписки', json?.id === subscriptionId);
 }
 {
-  const { response, json } = await founder.client.call(`/v1/projects/${projectId}/listing`, {
+  // Публикация проекта больше не зависит от денег: проверяем именно это.
+  const taxonomy = (await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'saas'`))[0].id;
+  const created = await founder.client.call('/v1/projects', {
     method: 'POST',
+    body: {
+      title: 'Проект для проверки биллинга',
+      stage: 'mvp',
+      taxonomyId: taxonomy,
+      investmentAsk: '900000.00',
+      askCurrency: 'RUB',
+    },
   });
-  check(
-    'публикация с неоплаченной подпиской отклонена',
-    response.status === 403,
-    `статус ${response.status} ${json?.code ?? ''}`,
-  );
+  check('проект основателя создан', Boolean(created.json?.id));
 }
 {
-  const { response, json } = await outsider.client.call(
+  const { response, json } = await founder.client.call(
     `/v1/admin/subscriptions/${subscriptionId}/activate`,
     { method: 'POST', body: { reason: 'сам себе активирую' } },
   );
@@ -424,79 +399,6 @@ let subscriptionId;
     [subscriptionId],
   );
   check('основание активации записано в журнал', row?.reason === 'платёжное поручение №42');
-}
-
-// ------------------------------------------------- персональная цена (4 eyes)
-{
-  const { response, json } = await admin.call(
-    `/v1/admin/subscriptions/${subscriptionId}/custom-price`,
-    { method: 'POST', body: { price: '3990.00', reason: 'пилотный клиент' } },
-  );
-  check(
-    'персональная цена назначена',
-    response.status === 200 || response.status === 201,
-    `статус ${response.status} ${json?.code ?? ''}`,
-  );
-  check('цена ждёт утверждения', json?.customPriceApprovedBy === null);
-}
-{
-  const { response, json } = await admin.call(
-    `/v1/admin/subscriptions/${subscriptionId}/custom-price/approve`,
-    { method: 'POST' },
-  );
-  check(
-    'назначивший цену не может утвердить её сам',
-    response.status === 403,
-    `статус ${response.status} ${json?.code ?? ''}`,
-  );
-}
-{
-  const { response, json } = await admin2.call(
-    `/v1/admin/subscriptions/${subscriptionId}/custom-price/approve`,
-    { method: 'POST' },
-  );
-  check(
-    'второй администратор утвердил цену',
-    response.status === 200 || response.status === 201,
-    `статус ${response.status} ${json?.code ?? ''}`,
-  );
-  check('цена подписки стала персональной', json?.priceSnapshot === '3990.00', json?.priceSnapshot);
-}
-
-// ------------------------------- гонка утверждения персональной цены (4 eyes)
-// Утверждение читает предложение и меняет подписку. Между чтением и записью
-// проходит время: два одновременных утверждения могли записать в журнал ДВА
-// согласования одного предложения — а для контроля «четыре глаза» целостность
-// следа и есть весь смысл.
-{
-  await admin.call(`/v1/admin/subscriptions/${subscriptionId}/custom-price`, {
-    method: 'POST',
-    body: { price: '2990.00', reason: 'проверка гонки утверждения' },
-  });
-  const before = await sql(
-    `SELECT count(*)::int AS n FROM audit.events
-      WHERE verb = 'billing.custom_price.approved' AND subject_id = $1`,
-    [subscriptionId],
-  );
-  const parallel = await Promise.all([
-    admin2.call(`/v1/admin/subscriptions/${subscriptionId}/custom-price/approve`, {
-      method: 'POST',
-    }),
-    admin2.call(`/v1/admin/subscriptions/${subscriptionId}/custom-price/approve`, {
-      method: 'POST',
-    }),
-  ]);
-  const after = await sql(
-    `SELECT count(*)::int AS n FROM audit.events
-      WHERE verb = 'billing.custom_price.approved' AND subject_id = $1`,
-    [subscriptionId],
-  );
-  const added = after[0].n - before[0].n;
-  check(
-    'одновременное утверждение записывает ровно одно согласование',
-    added === 1,
-    `записано согласований: ${added}, ответы: ${parallel.map((p) => p.response.status).join(',')}`,
-  );
 }
 
 // ------------------------------------------------------------- фичефлаги
@@ -542,11 +444,12 @@ let subscriptionId;
 
 // ----------------------------------------------------- снятие тарифа с продажи
 {
-  const [t4] = await sql(
+  const [current] = await sql(
     `SELECT id FROM billing.subscription_plans
-      WHERE code = 'founder_t4' AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now())`,
+      WHERE code = $1 AND valid_from <= now() AND (valid_to IS NULL OR valid_to > now())`,
+    [PLAN_CODE],
   );
-  const { response } = await admin.call(`/v1/admin/plans/${t4.id}/close`, {
+  const { response } = await admin.call(`/v1/admin/plans/${current.id}/close`, {
     method: 'POST',
     body: { reason: 'проверка снятия с продажи' },
   });
@@ -555,16 +458,16 @@ let subscriptionId;
   const { json } = await raw('/v1/pricing');
   check(
     'снятый тариф исчез с публичной витрины',
-    !(json?.plans ?? []).some((p) => p.code === 'founder_t4'),
+    !(json?.plans ?? []).some((p) => p.code === PLAN_CODE),
     `тарифов на витрине: ${json?.plans?.length}`,
   );
 
   // Возврат сетки в исходное состояние: следующий прогон должен начинаться с той же точки.
-  await sql('UPDATE billing.subscription_plans SET valid_to = NULL WHERE id = $1', [t4.id]);
+  await sql('UPDATE billing.subscription_plans SET valid_to = NULL WHERE id = $1', [current.id]);
   const { json: restored } = await raw('/v1/pricing');
   check(
     'сетка восстановлена',
-    (restored?.plans ?? []).some((p) => p.code === 'founder_t4'),
+    (restored?.plans ?? []).some((p) => p.code === PLAN_CODE),
     `тарифов: ${restored?.plans?.length}`,
   );
 }
@@ -581,11 +484,6 @@ let subscriptionId;
   check('отмена объявления в журнале', verbs.includes('billing.plan.schedule_canceled'));
   check('закрытие тарифа в журнале', verbs.includes('billing.plan.closed'));
   check('оформление подписки в журнале', verbs.includes('billing.subscription.created'));
-  check(
-    'согласование персональной цены в журнале',
-    verbs.includes('billing.custom_price.approved'),
-  );
-
   const broken = await sql('SELECT * FROM audit.verify_event_chain(NULL)');
   check('цепочка журнала цела', broken.length === 0, `разрывов ${broken.length}`);
 }

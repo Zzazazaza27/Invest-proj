@@ -112,7 +112,7 @@ try {
   await client.query(
     `INSERT INTO lab.projects
        (id, taxonomy_id, season_id, title, tagline, stage, status, listing_status, listed_at,
-        geo_country, investment_ask, ask_currency, required_plan_id)
+        geo_country, investment_ask, ask_currency)
      SELECT public.uuid_generate_v7(),
             (SELECT id FROM lab.project_taxonomy ORDER BY random() LIMIT 1),
             $1,
@@ -124,8 +124,7 @@ try {
             now() - (g || ' minutes')::interval,
             (ARRAY['RU','KZ','BY','AM'])[1 + (g % 4)],
             (1000000 + (g % 500) * 100000)::numeric,
-            'RUB',
-            billing.resolve_founder_plan((1000000 + (g % 500) * 100000)::numeric)
+            'RUB'
        FROM generate_series(1, $2) AS g`,
     [seasonId, PROJECTS],
   );
@@ -136,21 +135,14 @@ try {
     [seasonId, owner.id],
   );
 
+  // Публикация бесплатна: подписка основателя отменена (M094).
   await client.query(
-    `INSERT INTO billing.subscriptions
-       (id, user_id, plan_id, project_id, price_snapshot, currency_snapshot, terms_version,
-        status, current_period_end)
-     SELECT public.uuid_generate_v7(), $2, p.required_plan_id, p.id,
-            pl.price, 'RUB', 'v1', 'active', now() + interval '30 days'
-       FROM lab.projects p
-       JOIN billing.subscription_plans pl ON pl.id = p.required_plan_id
-      WHERE p.season_id = $1`,
-    [seasonId, owner.id],
+    `UPDATE lab.projects
+        SET listing_status = 'listed', visibility = 'public',
+            visibility_changed_at = now()
+      WHERE season_id = $1`,
+    [seasonId],
   );
-
-  await client.query(`UPDATE lab.projects SET listing_status = 'listed' WHERE season_id = $1`, [
-    seasonId,
-  ]);
 
   // Рейтинг считается по последнему значению IRS: без скорингов представление
   // осталось бы пустым, и замер пересчёта ничего бы не измерил.
@@ -283,11 +275,6 @@ try {
     } finally {
       await client.query('ALTER TABLE scoring.irs_scores ENABLE TRIGGER irs_immutable');
     }
-    await client.query(
-      `DELETE FROM billing.subscriptions WHERE project_id IN
-         (SELECT id FROM lab.projects WHERE season_id = $1)`,
-      [seasonId],
-    );
     await client.query(
       `DELETE FROM lab.founders_projects WHERE project_id IN
          (SELECT id FROM lab.projects WHERE season_id = $1)`,

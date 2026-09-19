@@ -216,12 +216,11 @@ if (!project) {
   [project] = await sql(
     `INSERT INTO lab.projects
        (id, taxonomy_id, season_id, title, tagline, description, stage, status,
-        geo_country, investment_ask, ask_currency, required_plan_id)
+        geo_country, investment_ask, ask_currency)
      VALUES (public.uuid_generate_v7(), $1, $2, 'Стенд · демонстрационный проект',
              'Платёжный сервис для малого бизнеса',
              'Проект стенда: на нём видно карточку, материалы, экспертизу и путь по сезону.',
-             'growth', 'expert_review', 'RU', 5000000, 'RUB',
-             billing.resolve_founder_plan(5000000))
+             'growth', 'expert_review', 'RU', 5000000, 'RUB')
      RETURNING id, title`,
     [taxonomy.id, season.id],
   );
@@ -244,38 +243,28 @@ if (!project) {
   );
 }
 
-// Подписка основателя: без активной подписки нужного тарифа листинг закрыт.
+// Публикация бесплатна: подписка основателя отменена (M094), запуск раунда
+// оплачивается разово (5.9). Режим видимости — public: проект виден в каталоге.
 await sql(
-  `INSERT INTO billing.subscriptions
-     (id, user_id, plan_id, project_id, price_snapshot, currency_snapshot, terms_version,
-      status, current_period_end)
-   SELECT public.uuid_generate_v7(), $2, p.required_plan_id, p.id, pl.price, 'RUB', 'v1',
-          'active', now() + interval '30 days'
-     FROM lab.projects p
-     JOIN billing.subscription_plans pl ON pl.id = p.required_plan_id
-    WHERE p.id = $1
-      AND NOT EXISTS (SELECT 1 FROM billing.subscriptions s
-                       WHERE s.project_id = p.id AND s.status = 'active')`,
-  [project.id, founder.userId],
-);
-await sql(
-  `UPDATE lab.projects SET listing_status = 'listed', listed_at = coalesce(listed_at, now())
+  `UPDATE lab.projects
+      SET listing_status = 'listed', listed_at = coalesce(listed_at, now()),
+          visibility = 'public', visibility_changed_at = coalesce(visibility_changed_at, now())
     WHERE id = $1 AND listing_status <> 'listed'`,
   [project.id],
 );
-console.warn('  проект основателя опубликован в каталоге (подписка активна)');
+console.warn('  проект основателя опубликован в каталоге (публикация бесплатна)');
 
 // Подписка инвестора: она открывает полные карточки каталога.
 await sql(
   `INSERT INTO billing.subscriptions
-     (id, user_id, plan_id, project_id, price_snapshot, currency_snapshot, terms_version,
+     (id, user_id, plan_id, price_snapshot, currency_snapshot, terms_version,
       status, current_period_end)
-   SELECT public.uuid_generate_v7(), $1, pl.id, NULL, pl.price, 'RUB', 'v1',
+   SELECT public.uuid_generate_v7(), $1, pl.id, pl.price, 'RUB', 'v1',
           'active', now() + interval '30 days'
      FROM billing.subscription_plans pl
     WHERE pl.code = 'investor_membership' AND pl.valid_to IS NULL
       AND NOT EXISTS (SELECT 1 FROM billing.subscriptions s
-                       WHERE s.user_id = $1 AND s.project_id IS NULL AND s.status = 'active')
+                       WHERE s.user_id = $1 AND s.status = 'active')
     ORDER BY pl.version DESC
     LIMIT 1`,
   [investor.userId],

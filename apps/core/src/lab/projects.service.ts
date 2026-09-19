@@ -29,15 +29,10 @@ import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 /**
  * Проекты и листинги основателя.
  *
- * Главное правило фазы: **тариф резолвит сервер**, а не клиент. `investment_ask`
- * — единственный вход, из которого берётся `required_plan_id`
- * (Architect_Launch §5.1). Клиент не может ни выбрать план, ни удержать старый
- * после роста запроса: пересчёт происходит при каждом изменении суммы, а
- * публикация с несоответствующим планом отвергается триггером БД.
- *
- * Второе правило: публикация листинга — не смена флага, а прохождение условий.
- * Их три, и все проверяются до записи: действующий KYC владельца, тариф,
- * соответствующий текущему запросу, и активная подписка этого тарифа.
+ * Публикация — не смена флага, а прохождение условий: действующая проверка
+ * личности владельца и отсутствие остановки комплаенса. Тариф основателя в
+ * условия НЕ входит: ежемесячная подписка по сумме привлечения отменена
+ * (M094, 5.9) — запуск конкретного раунда оплачивается разово.
  */
 
 /** Лимиты загрузки по типу материала. Больше — отказ на стороне хранилища. */
@@ -106,8 +101,6 @@ export class ProjectsService {
           `Достигнут предел проектов аккаунта: ${limits.projects.used} из ${limits.projects.limit}`,
         );
       }
-      const planId = await resolveFounderPlan(tx, input.investmentAsk);
-
       // RETURNING здесь недопустим, и это не стилистика: возврат строки требует
       // прав на SELECT, а видимость проекта даёт запись в founders_projects,
       // которой в этот момент ещё нет. INSERT ... RETURNING упал бы на RLS —
@@ -115,8 +108,8 @@ export class ProjectsService {
       await tx.query(
         `INSERT INTO lab.projects
            (id, taxonomy_id, title, tagline, description, stage, geo_country, geo_region,
-            investment_ask, ask_currency, required_plan_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10, $11)`,
+            investment_ask, ask_currency)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10)`,
         [
           id,
           input.taxonomyId,
@@ -128,7 +121,6 @@ export class ProjectsService {
           input.geoRegion ?? null,
           input.investmentAsk,
           input.askCurrency,
-          planId,
         ],
       );
 
@@ -205,11 +197,9 @@ export class ProjectsService {
         `SELECT p.id, p.title, p.stage, p.status, p.listing_status,
                 p.ask_currency,
                 rv.raising, rv.target::text AS round_target, rv.currency AS round_currency,
-                p.required_plan_id, sp.code AS required_plan_code,
                 fp.role, p.created_at
            FROM lab.founders_projects fp
            JOIN lab.projects p ON p.id = fp.project_id
-           LEFT JOIN billing.subscription_plans sp ON sp.id = p.required_plan_id
            LEFT JOIN LATERAL lab.round_view(p.id) rv ON true
           WHERE fp.user_id = $1 AND p.deleted_at IS NULL
           ORDER BY p.created_at DESC
@@ -225,8 +215,6 @@ export class ProjectsService {
         investmentAsk: row.round_target ?? null,
         askCurrency: (row.round_currency?.trim() ?? row.ask_currency) as 'RUB',
         raising: row.raising ?? 'undisclosed',
-        requiredPlanId: row.required_plan_id,
-        requiredPlanCode: row.required_plan_code,
         role: row.role,
         createdAt: row.created_at.toISOString(),
       }));
@@ -266,13 +254,6 @@ export class ProjectsService {
         const existing = current.rows[0];
         if (!existing) throw errors.notFound({ subject: 'project' });
 
-        // Пересчёт тарифа обязателен при любом изменении запроса инвестиций:
-        // без него проект остался бы в каталоге на тарифе, который его больше
-        // не покрывает.
-        const nextAsk = input.investmentAsk ?? existing.investment_ask;
-        const planId =
-          input.investmentAsk === undefined ? null : await resolveFounderPlan(tx, nextAsk);
-
         const { rows } = await tx.query<ProjectRow>(
           `UPDATE lab.projects
               SET title            = COALESCE($2, title),
@@ -283,7 +264,6 @@ export class ProjectsService {
                   geo_country      = COALESCE($7, geo_country),
                   geo_region       = COALESCE($8, geo_region),
                   investment_ask   = COALESCE($9::numeric, investment_ask),
-                  required_plan_id = COALESCE($10, required_plan_id),
                   updated_at       = now()
             WHERE id = $1 AND deleted_at IS NULL
             RETURNING ${PROJECT_COLUMNS}`,
@@ -297,7 +277,6 @@ export class ProjectsService {
             input.geoCountry ?? null,
             input.geoRegion ?? null,
             input.investmentAsk ?? null,
-            planId,
           ],
         );
         const row = rows[0];
@@ -870,30 +849,6 @@ export class ProjectsService {
         );
         if (!kyc.rows[0]?.valid) throw errors.kycRequired();
 
-        // Тариф пересчитывается прямо здесь: между созданием проекта и
-        // публикацией могла смениться версия тарифной сетки.
-        const planId = await resolveFounderPlan(tx, project.investment_ask);
-
-        // Платёжный барьер — флаг, а не удаление (M071, план 0.2 §2.9.2): по
-        // решению владельца в первой очереди подача и листинг бесплатны. При
-        // включённом флаге проверка та же, что раньше; триггер БД повторяет
-        // её на COMMIT. Доступ инвестора от флага не зависит.
-        const barrier = await tx.query<{ on: boolean }>(
-          'SELECT lab.listing_requires_subscription() AS "on"',
-        );
-        if (barrier.rows[0]?.on) {
-          const subscription = await tx.query<{ ok: boolean }>(
-            `SELECT EXISTS (
-               SELECT 1 FROM billing.subscriptions s
-                WHERE s.project_id = $1 AND s.user_id = $2
-                  AND s.plan_id = $3 AND s.status = 'active') AS ok`,
-            [projectId, project.owner_id, planId],
-          );
-          if (!subscription.rows[0]?.ok) {
-            throw errors.subscriptionRequired();
-          }
-        }
-
         // Флаги комплаенса в действующем паспорте останавливают публикацию до
         // решения человека (ADR-008 §4). Обещание гарантированной доходности —
         // это не минус балл, а признак, требующий остановки: и по обязанностям
@@ -915,18 +870,14 @@ export class ProjectsService {
           );
         }
 
-        // Совместимость 5.7.1: с M087 доступ наружу решает режим видимости
-        // (lab.project_audience), листинг — его следствие. Пока действие
-        // «Кто может видеть проект» не заведено (5.7.3), публикация листинга
-        // ставит режим public — то же, что перенос данных M087 (тизер;
-        // согласия на ответы нет, материалы закрыты).
+        // Доступ наружу решает режим видимости (lab.project_audience, M087),
+        // листинг — его следствие и кеш для v1 и Integration API.
         await tx.query(
           `UPDATE lab.projects
               SET listing_status = 'listed', listed_at = now(),
-                  visibility = $3, visibility_changed_at = now(),
-                  required_plan_id = $2, updated_at = now()
+                  visibility = $2, visibility_changed_at = now(), updated_at = now()
             WHERE id = $1`,
-          [projectId, planId, mode],
+          [projectId, mode],
         );
         await this.auditVisibility(ctx, tx, projectId, project.visibility, mode);
 
@@ -1196,15 +1147,6 @@ export class ProjectsService {
     } catch (error) {
       if (error instanceof AppError) throw error;
       const pg = error as { code?: string; message?: string };
-      const message = pg.message ?? '';
-      if (pg.code === '23514' && message.includes('required_plan_id does not match')) {
-        throw errors.planUpgradeRequired(
-          'Запрос инвестиций превысил лимит тарифа: требуется переход на старший тариф',
-        );
-      }
-      if (pg.code === '42501' && message.includes('listing requires an active subscription')) {
-        throw errors.subscriptionRequired();
-      }
       if (pg.code === '23505') {
         throw errors.conflict('Такая запись уже существует', { constraint: pg.code });
       }
@@ -1217,25 +1159,6 @@ export class ProjectsService {
 }
 
 // -------------------------------------------------------------------- helpers
-
-/**
- * Резолвер тарифа — в БД, а не в коде.
- *
- * Тарифная сетка версионируется, и сервер обязан брать ту версию, что
- * действует сейчас. Дублирование таблицы порогов в TypeScript означало бы два
- * источника цены и неизбежное расхождение.
- */
-async function resolveFounderPlan(tx: Tx, ask: string): Promise<string> {
-  const { rows } = await tx.query<{ plan_id: string | null }>(
-    'SELECT billing.resolve_founder_plan($1::numeric) AS plan_id',
-    [ask],
-  );
-  const planId = rows[0]?.plan_id ?? null;
-  if (!planId) {
-    throw errors.internal({ reason: 'no active founder plan for ask', ask });
-  }
-  return planId;
-}
 
 /** Остаток проектов аккаунта: 0 в политике — безлимит (`remaining: null`). */
 export function computeProjectLimits(
@@ -1257,7 +1180,7 @@ export function computeProjectLimits(
 
 const PROJECT_COLUMNS = `
   id, taxonomy_id, title, tagline, description, stage, geo_country, geo_region,
-  investment_ask::text AS investment_ask, ask_currency, required_plan_id,
+  investment_ask::text AS investment_ask, ask_currency,
   -- Текущее привлечение — проекция раунда по зрителю (M085): член команды и
   -- админ видят всё, инвестор — по настройке видимости и аудитории сессии.
   (SELECT v.raising FROM lab.round_view(lab.projects.id) v) AS raising,
@@ -1287,7 +1210,6 @@ interface ProjectRow {
   raising: 'open' | 'paused' | 'none' | 'undisclosed' | null;
   round_target: string | null;
   round_currency: string | null;
-  required_plan_id: string | null;
   listing_status: ProjectFull['listingStatus'];
   listed_at: Date | null;
   status: ProjectFull['status'];
@@ -1313,8 +1235,6 @@ interface ProjectSummaryRow {
   round_target: string | null;
   round_currency: string | null;
   ask_currency: string;
-  required_plan_id: string | null;
-  required_plan_code: string | null;
   role: 'owner' | 'cofounder';
   created_at: Date;
 }
@@ -1347,7 +1267,6 @@ function mapProject(row: ProjectRow): ProjectFull {
     status: row.status,
     listingStatus: row.listing_status,
     seasonId: row.season_id,
-    requiredPlanId: row.required_plan_id,
     currentVersionId: row.current_version_id,
     currentApplicationId: row.current_application_id,
     visibility: row.visibility,

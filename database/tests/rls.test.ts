@@ -1179,7 +1179,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 12 схем и 72 таблицы', async () => {
+  it('схема соответствует спецификации: 12 схем и 84 таблицы', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -1194,9 +1194,9 @@ describe('RLS: покрытие манифеста', () => {
                             'seasons','comms','billing','audit','integration','content')
           AND c.relkind IN ('r','p') AND c.relispartition = false`,
     );
-    // 60 таблиц по docs/architecture/Database_Launch.md + billing.custom_price_proposals (M017):
-    // двухшаговое согласование индивидуальной цены нельзя было уместить в саму
-    // подписку, не ослабив её CHECK-ограничение на четыре глаза.
+    // 60 таблиц по docs/architecture/Database_Launch.md.
+    // − billing.custom_price_proposals (M094): индивидуальная цена жила ради
+    // тарифа основателя t5; вместе с отменённой подпиской основателя ушла и она.
     // + integration.deal_commissions (M028): обезличенная проекция сделок для
     // внешних потребителей.
     // + identity.revoked_tokens (M038): точечный отзыв токена, которого рубеж
@@ -1250,7 +1250,7 @@ describe('RLS: покрытие манифеста', () => {
     // +2 в M087: lab.project_access_grants и lab.project_access_exclusions —
     // разрешения выбранных получателей (набор разрешений, не уровень) и
     // исключения с приоритетом (план 5.7 §3.2).
-    expect(Number(tables.rows[0]!.count)).toBe(85);
+    expect(Number(tables.rows[0]!.count)).toBe(84);
   });
 });
 
@@ -1461,8 +1461,8 @@ describe('M054: переходы подписки и выдача ролей', (
     const id = uuidv7();
     await c.query(
       `INSERT INTO billing.subscriptions
-         (id, user_id, plan_id, project_id, price_snapshot, terms_version, status)
-       SELECT $1, $2, sp.id, NULL, sp.price, 'v1', 'pending_payment'
+         (id, user_id, plan_id, price_snapshot, terms_version, status)
+       SELECT $1, $2, sp.id, sp.price, 'v1', 'pending_payment'
        FROM billing.subscription_plans sp
        WHERE sp.code = 'investor_membership' AND sp.version = 1`,
       [id, userId],
@@ -1528,42 +1528,6 @@ describe('M054: переходы подписки и выдача ролей', (
           [uuidv7(), investor.id],
         ),
       ).rejects.toThrow();
-    });
-  });
-
-  it('INSERT подписки с custom_price отвергается (обход 4-eyes)', async () => {
-    await inRollbackTx(async (c) => {
-      const investor = await createUser(c, { role: 'investor' });
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `INSERT INTO billing.subscriptions
-             (id, user_id, plan_id, price_snapshot, terms_version, status,
-              custom_price, custom_price_set_by, custom_price_approved_by)
-           SELECT $1, $2, sp.id, sp.price, 'v1', 'pending_payment', 0.01, $3, $4
-           FROM billing.subscription_plans sp
-           WHERE sp.code = 'investor_membership' AND sp.version = 1`,
-          [uuidv7(), investor.id, uuidv7(), uuidv7()],
-        ),
-      ).rejects.toThrow();
-    });
-  });
-
-  it('админ НЕ может назначить цену без утверждённого предложения', async () => {
-    await inRollbackTx(async (c) => {
-      const admin = await createUser(c, { role: 'admin' });
-      const investor = await createUser(c, { role: 'investor' });
-      const sub = await pendingSubscription(c, investor.id);
-
-      await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `UPDATE billing.subscriptions
-              SET custom_price = 0.01, custom_price_set_by = $2, custom_price_approved_by = $3
-            WHERE id = $1`,
-          [sub, admin.id, investor.id],
-        ),
-      ).rejects.toThrow(/утверждённого предложения/);
     });
   });
 

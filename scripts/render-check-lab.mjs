@@ -120,9 +120,8 @@ await sql(
 // Чужой проект: он не должен появиться в кабинете первого пользователя.
 const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
 const [strangerProject] = await sql(
-  `INSERT INTO lab.projects (id, taxonomy_id, title, stage, investment_ask, required_plan_id)
-   VALUES (public.uuid_generate_v7(), $1, $2, 'growth', 5000000,
-           billing.resolve_founder_plan(5000000))
+  `INSERT INTO lab.projects (id, taxonomy_id, title, stage, investment_ask)
+   VALUES (public.uuid_generate_v7(), $1, $2, 'growth', 5000000)
    RETURNING id, title`,
   [taxonomy.id, `Чужой проект ${suffix}`],
 );
@@ -401,76 +400,21 @@ check(
 // Проверяется не наличие карточки, а рабочий путь: выдал — видно «выдано» и
 // состав раскрытия; отозвал — назван крайний срок удаления проекции. До Ф50
 // маршрута не существовало вовсе, и любая кнопка здесь отвечала бы 404.
-// ------------------------------------------------- подписка и счета (Ф52)
+// ------------------------------------------ карточки подписки больше нет
 //
-// До Ф52 кабинет отказывал в публикации словами «требуется активная подписка»
-// и не имел НИ ОДНОГО способа её оформить: подписка жила только в служебной
-// консоли. Отказ, не ведущий к действию, которое его снимает, — тупик.
-console.warn('\n[3b2] Подписка и счета');
+// Подписка основателя по сумме привлечения отменена (M094): карточка «Подписка
+// и счета» удалена вместе с моделью, запуск раунда оплачивается разово (5.9).
+// Проверяется именно отсутствие: оставленный экран предлагал бы оплатить то,
+// чего нет.
+console.warn('\n[3b2] Карточки подписки основателя нет');
 check(
-  'карточка подписки есть на странице проекта',
-  (await page.getByText('Подписка и счета').count()) > 0,
+  'карточка подписки убрана со страницы проекта',
+  (await page.getByText('Подписка и счета').count()) === 0,
 );
-
-// С M071 платёжный барьер — флаг, по умолчанию выключенный (подача и листинг
-// бесплатны). Карточка обязана не предлагать оплату при выключенном барьере
-// и вести к подписке при включённом; проверяется ветка, в которой стенд.
-const featuresResponse = await fetch(`${CORE_URL}/v1/features`);
-const featuresJson = await featuresResponse.json().catch(() => null);
-const barrierOn = featuresJson?.flags?.['billing.listing_requires_subscription'] === true;
-console.warn(`  ·     платёжный барьер основателя: ${barrierOn ? 'ВКЛЮЧЁН' : 'выключен'}`);
-
-if (!barrierOn) {
-  check(
-    'при выключенном барьере сказано, что подача и публикация бесплатны',
-    (await page.getByText('Подача и публикация бесплатны').count()) > 0,
-  );
-  check(
-    'при выключенном барьере оплату не предлагают',
-    (await page.getByRole('button', { name: 'Оформить подписку' }).count()) === 0 &&
-      (await page.getByText('Тариф проекта').count()) === 0,
-  );
-} else {
-  check(
-    'отсутствие подписки объяснено словами',
-    (await page.getByText('Подписки на проект нет').count()) > 0,
-  );
-  check(
-    'сказано, что оплата картой не подключена',
-    (await page.getByText('Приём платежей картой пока не подключён').count()) > 0,
-  );
-
-  await page.getByRole('button', { name: 'Оформить подписку' }).click();
-  await page.waitForTimeout(2500);
-  // Сообщение берётся ИЗ ЭТОЙ карточки, а не последнее на странице: выше уже
-  // есть отказы других карточек, и `.last()` читал бы их — проверка была бы
-  // зелёной или красной по чужой причине.
-  const billingCard = page
-    .locator('div')
-    .filter({ has: page.getByRole('heading', { name: 'Подписка и счета' }) })
-    .last();
-  const billingNotice = (
-    await billingCard
-      .locator('[role="status"], [role="alert"]')
-      .first()
-      .innerText()
-      .catch(() => '')
-  ).trim();
-  check(
-    'подписка оформлена и это сказано',
-    billingNotice.includes('Подписка оформлена'),
-    billingNotice.slice(0, 80),
-  );
-  // Коды тарифов заменены словами (e4bb007): проверяется название, а не код.
-  check(
-    'тариф подписки виден в карточке',
-    (await page.getByText(/Старт|Рост|Масштаб|Крупный|Стратегический/).count()) > 0,
-  );
-  check(
-    'счетов по подписке пока нет — и это объяснено',
-    (await page.getByText('Счёт выставляется на оформленную подписку').count()) > 0,
-  );
-}
+check(
+  'оплату основателю не предлагают',
+  (await page.getByRole('button', { name: 'Оформить подписку' }).count()) === 0,
+);
 
 console.warn('\n[3c] Согласия на публичный контур');
 const consentRow = page.locator('li').filter({ hasText: 'Выпуск отбора' }).first();

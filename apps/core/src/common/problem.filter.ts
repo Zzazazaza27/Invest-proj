@@ -161,7 +161,6 @@ const TITLES: Partial<Record<string, string>> = {
   [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 'Повторное использование ключа',
   [ErrorCode.LIMIT_EXCEEDED]: 'Превышен лимит',
   [ErrorCode.SELF_DEAL_FORBIDDEN]: 'Сделка с самим собой запрещена',
-  [ErrorCode.PLAN_UPGRADE_REQUIRED]: 'Требуется смена тарифа',
   [ErrorCode.RATE_LIMITED]: 'Слишком много запросов',
   [ErrorCode.FEATURE_DISABLED]: 'Функция недоступна',
   [ErrorCode.INTERNAL_ERROR]: 'Внутренняя ошибка',

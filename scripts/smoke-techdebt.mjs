@@ -169,10 +169,8 @@ const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = '
 /** Проект в сезоне на заданном этапе, с владельцем и одним материалом. */
 async function makeProject(title, status, ownerId) {
   const [project] = await sql(
-    `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask,
-                               required_plan_id)
-     VALUES (public.uuid_generate_v7(), $1, $2, $3, 'growth', $4, 5000000,
-             billing.resolve_founder_plan(5000000))
+    `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask)
+     VALUES (public.uuid_generate_v7(), $1, $2, $3, 'growth', $4, 5000000)
      RETURNING id`,
     [taxonomy.id, season.id, title, status],
   );

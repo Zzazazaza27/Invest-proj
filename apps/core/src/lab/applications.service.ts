@@ -51,7 +51,7 @@ import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
  *     подписка и тариф в этом не участвуют (решение владельца, §0а). Остаток
  *     отдаётся до создания, чтобы отказ не был первым известием о лимите.
  *
- *  3. ПРОЕКТ — ПРОИЗВОДНЫЙ КЕШ. Колонки stage, investment_ask, required_plan_id
+ *  3. ПРОЕКТ — ПРОИЗВОДНЫЙ КЕШ. Колонки stage, investment_ask
  *     проекта пересчитываются из ОТКРЫТЫХ заявок одной функцией
  *     (`recomputeProjectProjection`) после подачи и архивации. Источник истины
  *     по истории — заявки и их снимки; проекцию никто не редактирует руками.
@@ -978,7 +978,6 @@ export async function recomputeProjectProjection(tx: Tx, projectId: string): Pro
      agg AS (SELECT (SELECT target FROM round) AS round_target)
      UPDATE lab.projects p
         SET investment_ask   = COALESCE(agg.round_target, p.investment_ask),
-            required_plan_id = billing.resolve_founder_plan(COALESCE(agg.round_target, p.investment_ask)),
             stage            = COALESCE(latest_open.stage, p.stage),
             current_application_id = latest_any.id,
             current_version_id     = COALESCE(latest_open.current_version_id, p.current_version_id),

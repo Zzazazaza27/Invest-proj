@@ -11,9 +11,7 @@ import {
   createOffer,
   createProject,
   createSignedAgreement,
-  createFounderSubscription,
   createUser,
-  enableListingBarrier,
   getPool,
   inRollbackTx,
   uuidv7,
@@ -202,25 +200,7 @@ describe('IRS и рейтинг не переписываются', () => {
   });
 });
 
-describe('Тарифы: резолвер и неизменяемость', () => {
-  it.each([
-    [500_000, 'founder_t1'],
-    [1_000_000, 'founder_t1'],
-    [1_000_001, 'founder_t2'],
-    [10_000_000, 'founder_t2'],
-    [10_000_001, 'founder_t3'],
-    [100_000_000, 'founder_t3'],
-    [100_000_001, 'founder_t4'],
-    [1_000_000_000, 'founder_t4'],
-    [1_000_000_001, 'founder_t5'],
-  ])('запрос %s ₽ резолвится в %s', async (ask, expectedCode) => {
-    const { rows } = await getPool().query<{ code: string }>(
-      `SELECT code FROM billing.subscription_plans WHERE id = billing.resolve_founder_plan($1)`,
-      [ask],
-    );
-    expect(rows[0]?.code).toBe(expectedCode);
-  });
-
+describe('Тарифы и условия вознаграждения: неизменяемость', () => {
   it('условия вознаграждения неизменяемы — только новая версия', async () => {
     await inRollbackTx(async (c) => {
       await expect(
@@ -244,64 +224,24 @@ describe('Тарифы: резолвер и неизменяемость', () =>
       await expect(
         c.query(
           `INSERT INTO billing.subscription_plans
-             (id, code, version, audience, name, ask_limit, price, valid_from)
-           VALUES (public.uuid_generate_v7(), 'founder_t1', 2, 'founder', 'Дубль', 1000000, 5990,
+             (id, code, version, name, price, valid_from)
+           VALUES (public.uuid_generate_v7(), 'investor_membership', 99, 'Дубль', 5990,
                    '2026-09-01T00:00:00Z')`,
         ),
       ).rejects.toThrow(/overlapping/i);
     });
   });
-
-  it('сид содержит ровно 10%/5%', async () => {
-    const { rows } = await getPool().query<{ investor: string; issuer: string }>(
-      `SELECT investor_fee_pct::text AS investor, issuer_fee_pct::text AS issuer
-         FROM billing.fee_schedules WHERE code = 'operator_success_fee' AND version = 1`,
-    );
-    expect(rows[0]!.investor).toBe('10.00');
-    expect(rows[0]!.issuer).toBe('5.00');
-  });
 });
 
-describe('Подписки: форма и листинг', () => {
-  it('подписка основателя без проекта отвергается', async () => {
-    await inRollbackTx(async (c) => {
-      const user = await createUser(c);
-      await expect(
-        c.query(
-          `INSERT INTO billing.subscriptions
-             (id, user_id, plan_id, project_id, price_snapshot, terms_version, status)
-           SELECT public.uuid_generate_v7(), $1, id, NULL, price, 'v1', 'active'
-             FROM billing.subscription_plans WHERE code = 'founder_t1' AND version = 1`,
-          [user.id],
-        ),
-      ).rejects.toThrow(/requires project_id/i);
-    });
-  });
-
-  it('подписка инвестора с проектом отвергается', async () => {
-    await inRollbackTx(async (c) => {
-      const user = await createUser(c);
-      const project = await createProject(c, user.id);
-      await expect(
-        c.query(
-          `INSERT INTO billing.subscriptions
-             (id, user_id, plan_id, project_id, price_snapshot, terms_version, status)
-           SELECT public.uuid_generate_v7(), $1, id, $2, price, 'v1', 'active'
-             FROM billing.subscription_plans WHERE code = 'investor_membership' AND version = 1`,
-          [user.id, project],
-        ),
-      ).rejects.toThrow(/must not reference a project/i);
-    });
-  });
-
+describe('Подписки инвестора: форма', () => {
   it('снапшот цены обязан совпадать с ценой тарифа', async () => {
     await inRollbackTx(async (c) => {
       const user = await createUser(c);
       await expect(
         c.query(
           `INSERT INTO billing.subscriptions
-             (id, user_id, plan_id, project_id, price_snapshot, terms_version, status)
-           SELECT public.uuid_generate_v7(), $1, id, NULL, 1, 'v1', 'active'
+             (id, user_id, plan_id, price_snapshot, terms_version, status)
+           SELECT public.uuid_generate_v7(), $1, id, 1, 'v1', 'active'
              FROM billing.subscription_plans WHERE code = 'investor_membership' AND version = 1`,
           [user.id],
         ),
@@ -309,77 +249,27 @@ describe('Подписки: форма и листинг', () => {
     });
   });
 
-  it('тариф t5 требует утверждённой индивидуальной цены по правилу 4 глаз', async () => {
+  it('вторая незакрытая подписка того же человека отвергается', async () => {
     await inRollbackTx(async (c) => {
       const user = await createUser(c);
-      const project = await createProject(c, user.id, { ask: 2_000_000_000 });
-      await expect(
+      const insert = () =>
         c.query(
           `INSERT INTO billing.subscriptions
-             (id, user_id, plan_id, project_id, price_snapshot, terms_version, status)
-           SELECT public.uuid_generate_v7(), $1, id, $2, 500000, 'v1', 'active'
-             FROM billing.subscription_plans WHERE code = 'founder_t5' AND version = 1`,
-          [user.id, project],
-        ),
-      ).rejects.toThrow(/custom_price/i);
+             (id, user_id, plan_id, price_snapshot, terms_version, status)
+           SELECT public.uuid_generate_v7(), $1, id, price, 'v1', 'active'
+             FROM billing.subscription_plans WHERE code = 'investor_membership' AND version = 1`,
+          [user.id],
+        );
+      await insert();
+      await c.query('SAVEPOINT second_subscription');
+      await expect(insert()).rejects.toThrow();
+      await c.query('ROLLBACK TO SAVEPOINT second_subscription');
     });
   });
 
-  it('один и тот же человек не может назначить и утвердить индивидуальную цену', async () => {
-    await inRollbackTx(async (c) => {
-      const user = await createUser(c);
-      const admin = await createUser(c, { role: 'admin' });
-      const project = await createProject(c, user.id, { ask: 2_000_000_000 });
-      await expect(
-        c.query(
-          `INSERT INTO billing.subscriptions
-             (id, user_id, plan_id, project_id, price_snapshot, terms_version, status,
-              custom_price, custom_price_set_by, custom_price_approved_by)
-           SELECT public.uuid_generate_v7(), $1, id, $2, 500000, 'v1', 'active', 500000, $3, $3
-             FROM billing.subscription_plans WHERE code = 'founder_t5' AND version = 1`,
-          [user.id, project, admin.id],
-        ),
-      ).rejects.toThrow();
-    });
-  });
-
-  // Триггер публикации листинга — DEFERRABLE INITIALLY DEFERRED: в проде он
-  // срабатывает на COMMIT, поэтому в тесте его нужно принудительно
-  // материализовать через SET CONSTRAINTS ALL IMMEDIATE. Без этого тест был бы
-  // зелёным просто потому, что проверка ещё не выполнялась.
-  //
-  // С M071 платёжный барьер — флаг billing.listing_requires_subscription, по
-  // умолчанию ВЫКЛЮЧЕННЫЙ (решение владельца: подача и листинг бесплатны).
-  // Эти два теста проверяют прежнее поведение при включённом барьере и потому
-  // включают флаг явно в своей транзакции; поведение по умолчанию — в
-  // applications.test.ts.
-  it('листинг без активной подписки невозможен (барьер включён)', async () => {
-    await inRollbackTx(async (c) => {
-      await enableListingBarrier(c);
-      const founder = await createUser(c);
-      const project = await createProject(c, founder.id, { listed: false });
-      await c.query(
-        `UPDATE lab.projects SET listing_status = 'listed', listed_at = now() WHERE id = $1`,
-        [project],
-      );
-      await expect(c.query('SET CONSTRAINTS ALL IMMEDIATE')).rejects.toThrow(
-        /active subscription/i,
-      );
-    });
-  });
-
-  it('рост запроса инвестиций сверх лимита тарифа блокирует публикацию (барьер включён)', async () => {
-    await inRollbackTx(async (c) => {
-      await enableListingBarrier(c);
-      const founder = await createUser(c);
-      const project = await createProject(c, founder.id, { ask: 500_000, listed: true });
-      // Запрос вырос до уровня t3, а подписка и required_plan_id остались t1.
-      await c.query(`UPDATE lab.projects SET investment_ask = 50000000 WHERE id = $1`, [project]);
-      await expect(c.query('SET CONSTRAINTS ALL IMMEDIATE')).rejects.toThrow(
-        /upgrade needed|active subscription/i,
-      );
-    });
-  });
+  // Публикация проекта больше НЕ зависит от подписки: барьер листинга и тариф
+  // основателя удалены вместе с отменённой моделью (M094). Проверка того, что
+  // листинг обходится без денег, живёт в applications.test.ts.
 });
 
 describe('Регулируемый контур: лимиты и антифрод', () => {
@@ -823,12 +713,12 @@ describe('Тарифы: история цен неизменяема (M015–M01
       // закрываем действующую версию тем моментом, с которого начнётся новая.
       await c.query(
         `UPDATE billing.subscription_plans SET valid_to = now() + interval '10 days'
-          WHERE code = 'founder_t3' AND valid_to IS NULL`,
+          WHERE code = 'investor_membership' AND valid_to IS NULL`,
       );
       await c.query(
         `INSERT INTO billing.subscription_plans
-           (id, code, version, audience, name, price, valid_from)
-         VALUES ($1, 'founder_t3', 99, 'founder', 'Будущая цена', 31990,
+           (id, code, version, name, price, valid_from)
+         VALUES ($1, 'investor_membership', 99, 'Будущая цена', 31990,
                  now() + interval '10 days')`,
         [id],
       );
@@ -850,63 +740,6 @@ describe('Тарифы: история цен неизменяема (M015–M01
       await expect(
         c.query('DELETE FROM billing.subscription_plans WHERE id = $1', [plan.id]),
       ).rejects.toThrow(/уже действует|действовала/);
-    });
-  });
-});
-
-describe('Индивидуальная цена: четыре глаза (M017)', () => {
-  it('предложивший цену не может утвердить её сам', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const admin = await createUser(c, { role: 'admin' });
-      const project = await createProject(c, founder.id);
-      const subscription = await createFounderSubscription(c, founder.id, project);
-
-      await expect(
-        c.query(
-          `INSERT INTO billing.custom_price_proposals
-             (id, subscription_id, price, reason, proposed_by, approved_by, approved_at, status)
-           VALUES (public.uuid_generate_v7(), $1, 1000, 'пилот', $2, $2, now(), 'approved')`,
-          [subscription, admin.id],
-        ),
-      ).rejects.toThrow();
-    });
-  });
-
-  it('два ожидающих предложения на одну подписку невозможны', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const admin = await createUser(c, { role: 'admin' });
-      const project = await createProject(c, founder.id);
-      const subscription = await createFounderSubscription(c, founder.id, project);
-
-      const insert = () =>
-        c.query(
-          `INSERT INTO billing.custom_price_proposals
-             (id, subscription_id, price, reason, proposed_by)
-           VALUES (public.uuid_generate_v7(), $1, 1000, 'пилот', $2)`,
-          [subscription, admin.id],
-        );
-      await insert();
-      await expect(insert()).rejects.toThrow();
-    });
-  });
-
-  it('подписка с назначенной, но не утверждённой ценой невозможна', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const admin = await createUser(c, { role: 'admin' });
-      const project = await createProject(c, founder.id);
-      const subscription = await createFounderSubscription(c, founder.id, project);
-
-      await expect(
-        c.query(
-          `UPDATE billing.subscriptions
-              SET custom_price = 1000, custom_price_set_by = $2, price_snapshot = 1000
-            WHERE id = $1`,
-          [subscription, admin.id],
-        ),
-      ).rejects.toThrow();
     });
   });
 });

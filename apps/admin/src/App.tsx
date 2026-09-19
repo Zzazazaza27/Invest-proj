@@ -146,7 +146,7 @@ export function App() {
         <Routes>
           <Route path="/" element={<Navigate to="/plans" replace />} />
           <Route path="/plans" element={<PlansPage />} />
-          <Route path="/subscriptions" element={<SubscriptionsPage adminId={me.id} />} />
+          <Route path="/subscriptions" element={<SubscriptionsPage />} />
           <Route path="/compliance" element={<CompliancePage />} />
           <Route path="/season" element={<SeasonPage />} />
           <Route path="/funnel" element={<FunnelPage />} />

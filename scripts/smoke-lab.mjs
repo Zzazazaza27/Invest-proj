@@ -284,10 +284,9 @@ let projectId = null;
     json?.status === 'draft' && json?.listingStatus === 'not_listed',
   );
 
-  const [plan] = await sql('SELECT code FROM billing.subscription_plans WHERE id = $1', [
-    json?.requiredPlanId,
-  ]);
-  check('запросу 5 млн ₽ соответствует тариф founder_t2', plan?.code === 'founder_t2', plan?.code);
+  // Тариф основателя отменён (M094): проект больше не несёт ни тарифа, ни
+  // его кеша — запуск раунда оплачивается разово (5.9).
+  check('проект не несёт тарифа основателя', !('requiredPlanId' in (json ?? {})));
 }
 {
   const { response, json } = await founderA.client.call('/v1/projects', {
@@ -298,13 +297,11 @@ let projectId = null;
       taxonomyId: (await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'ai'`))[0].id,
       investmentAsk: '900000000.00',
       askCurrency: 'RUB',
-      requiredPlanId: (
-        await sql(`SELECT id FROM billing.subscription_plans WHERE code='founder_t1'`)
-      )[0].id,
+      requiredPlanId: '00000000-0000-7000-8000-000000000000',
     },
   });
   check(
-    'клиент не может назначить себе тариф: поле отвергнуто',
+    'поле отменённой модели (тариф) отвергается, а не игнорируется',
     response.status === 400 && json?.code === 'validation_failed',
     `статус ${response.status}`,
   );
@@ -717,72 +714,23 @@ let kybId;
   check('юрлицо помечено проверенным', entity?.kybApproved === true);
 }
 
-// --------------------------------------- листинг: платёжный барьер по флагу
-// С M071 барьер основателя — флаг billing.listing_requires_subscription, по
-// умолчанию выключенный: подача и листинг бесплатны (план 0.2 §0а, §2.9.2).
-// Проверяется та ветка, в которой находится стенд, и печатается, какая именно;
-// доступ инвестора от флага не зависит и проверяется ниже как прежде.
-const { json: features } = await raw('/v1/features');
-const barrierOn = features?.flags?.['billing.listing_requires_subscription'] === true;
-console.log(
-  `  ·     платёжный барьер основателя: ${barrierOn ? 'ВКЛЮЧЁН' : 'выключен'} — проверяю эту ветку`,
-);
-{
-  const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/listing`, {
-    method: 'POST',
-  });
-  if (barrierOn) {
-    check(
-      'публикация без активной подписки отклонена (барьер включён)',
-      response.status === 403 && json?.code === 'subscription_required',
-      `статус ${response.status} ${json?.code ?? ''}`,
-    );
-  } else {
-    check(
-      'публикация без подписки разрешена (барьер выключен)',
-      response.status === 201 || response.status === 200,
-      `статус ${response.status} ${json?.code ?? ''}`,
-    );
-    check(
-      'статус листинга — listed без подписки',
-      json?.listingStatus === 'listed',
-      json?.listingStatus ?? '',
-    );
-  }
-}
-
-// Подписка — контур следующей фазы; создаём её как предусловие напрямую в БД.
-async function grantFounderSubscription(userId, project) {
-  await sql(
-    `INSERT INTO billing.subscriptions
-       (id, user_id, plan_id, project_id, price_snapshot, terms_version, status, current_period_end)
-     SELECT public.uuid_generate_v7(), $1, p.required_plan_id, $2, sp.price, 'v1', 'active',
-            now() + interval '30 days'
-       FROM lab.projects p
-       JOIN billing.subscription_plans sp ON sp.id = p.required_plan_id
-      WHERE p.id = $2`,
-    [userId, project],
-  );
-}
-
-await grantFounderSubscription(founderA.userId, projectId);
-
+// ------------------------------------------------------------------ листинг
+// Публикация бесплатна: подписка основателя отменена (M094), а запуск раунда
+// оплачивается разово (5.9). Проверяется, что листинг открывается без денег и
+// что рост суммы у опубликованного проекта ничего не ломает.
 {
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/listing`, {
     method: 'POST',
   });
   check(
-    'листинг опубликован',
+    'листинг опубликован без оплаты',
     response.status === 201 || response.status === 200,
-    `статус ${response.status}`,
+    `статус ${response.status} ${json?.code ?? ''}`,
   );
   check('статус листинга — listed', json?.listingStatus === 'listed', json?.listingStatus ?? '');
   check('дата публикации проставлена', Boolean(json?.listedAt));
 }
 {
-  // При включённом барьере рост запроса сверх оплаченного тарифа обязан ломать
-  // публикацию; при выключенном — проходит, и сумма возвращается, чтобы
-  // проверки каталога ниже не зависели от ветки.
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}`, {
     method: 'PATCH',
     body: { investmentAsk: '80000000.00' },
@@ -790,26 +738,17 @@ await grantFounderSubscription(founderA.userId, projectId);
   const [row] = await sql('SELECT investment_ask::text AS ask FROM lab.projects WHERE id = $1', [
     projectId,
   ]);
-  if (barrierOn) {
-    check(
-      'рост запроса сверх тарифа блокирует опубликованный листинг (барьер включён)',
-      response.status === 403 || response.status === 422,
-      `статус ${response.status} ${json?.code ?? ''}`,
-    );
-    check('сумма запроса не изменилась после отката', row?.ask === '5000000.00', row?.ask ?? '');
-  } else {
-    check(
-      'рост запроса у опубликованного проекта проходит (барьер выключен)',
-      response.status === 200,
-      `статус ${response.status} ${json?.code ?? ''}`,
-    );
-    check('сумма запроса обновилась', row?.ask === '80000000.00', row?.ask ?? '');
-    const restored = await founderA.client.call(`/v1/projects/${projectId}`, {
-      method: 'PATCH',
-      body: { investmentAsk: '5000000.00' },
-    });
-    check('сумма возвращена к исходной', restored.response.status === 200);
-  }
+  check(
+    'рост запроса у опубликованного проекта проходит',
+    response.status === 200,
+    `статус ${response.status} ${json?.code ?? ''}`,
+  );
+  check('сумма запроса обновилась', row?.ask === '80000000.00', row?.ask ?? '');
+  const restored = await founderA.client.call(`/v1/projects/${projectId}`, {
+    method: 'PATCH',
+    body: { investmentAsk: '5000000.00' },
+  });
+  check('сумма возвращена к исходной', restored.response.status === 200);
 }
 
 // ------------------------------------------------------------------ каталог
@@ -861,7 +800,6 @@ let secondProjectId;
     },
   });
   secondProjectId = json.id;
-  await grantFounderSubscription(founderA.userId, secondProjectId);
   await founderA.client.call(`/v1/projects/${secondProjectId}/listing`, { method: 'POST' });
 
   const first = await raw('/v1/catalog?limit=1');
@@ -1873,7 +1811,6 @@ console.warn('\n[раунды] профиль без раунда, чернов�
       `статус ${anonBefore.response.status}`,
     );
   }
-  await grantFounderSubscription(founderA.userId, projectId);
   await founderA.client.call(`/v1/projects/${projectId}/listing`, { method: 'POST' });
   {
     const anon = await raw(`/v1/catalog/${projectId}`);
@@ -2011,7 +1948,6 @@ console.warn('\n[раунды] профиль без раунда, чернов�
       method: 'POST',
       body: await confirmOpen(founderA.client, roundC.json?.round?.id),
     });
-    await grantFounderSubscription(founderA.userId, projectCId);
     await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'POST' });
     const anonC = await raw(`/v1/catalog/${projectCId}`);
     check(

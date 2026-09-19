@@ -293,36 +293,12 @@ export const billingGroup: OperationGroup = {
       summary:
         'У основателя подписка привязана к проекту, у инвестора — к пользователю. Это разные варианты одного запроса.',
       needsAuth: true,
-      fields: [
-        {
-          name: 'audience',
-          label: 'Кто подписывается',
-          kind: 'select',
-          required: true,
-          defaultValue: 'founder',
-          options: [
-            { value: 'founder', label: 'founder — основатель (нужен проект)' },
-            { value: 'investor', label: 'investor — инвестор' },
-          ],
-        },
-        {
-          name: 'projectId',
-          label: 'Проект',
-          kind: 'text',
-          help: 'Только для основателя. Для инвестора поле игнорируется.',
-        },
-        idempotencyField('sub'),
-      ],
+      fields: [idempotencyField('sub')],
       remembers: { subscriptionId: 'id' },
-      run: (values, { api }) => {
-        const audience = str(values, 'audience');
-        const idempotencyKey = str(values, 'idempotencyKey');
-        return api.billing.subscribe(
-          audience === 'founder'
-            ? { audience: 'founder', projectId: str(values, 'projectId'), idempotencyKey }
-            : { audience: 'investor', idempotencyKey },
-        );
-      },
+      // Подписка бывает только у инвестора: подписка основателя по сумме
+      // привлечения отменена (M094) — запуск раунда оплачивается разово.
+      run: (values, { api }) =>
+        api.billing.subscribe({ idempotencyKey: str(values, 'idempotencyKey') }),
     },
     {
       id: 'billing-subscriptions',

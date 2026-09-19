@@ -412,9 +412,9 @@ async function seedGenericRoles(byKey) {
   for (const person of withSubscription) {
     await sql(
       `INSERT INTO billing.subscriptions
-         (id, user_id, plan_id, project_id, price_snapshot, currency_snapshot, terms_version,
+         (id, user_id, plan_id, price_snapshot, currency_snapshot, terms_version,
           status, current_period_end)
-       SELECT $1, $2, pl.id, NULL, pl.price, 'RUB', 'v1', 'active', now() + interval '60 days'
+       SELECT $1, $2, pl.id, pl.price, 'RUB', 'v1', 'active', now() + interval '60 days'
          FROM billing.subscription_plans pl
         WHERE pl.code = 'investor_membership' AND pl.valid_to IS NULL
         ORDER BY pl.version DESC LIMIT 1
@@ -513,9 +513,8 @@ async function load() {
     await sql(
       `INSERT INTO lab.projects
          (id, taxonomy_id, season_id, title, tagline, description, stage,
-          geo_country, geo_region, investment_ask, required_plan_id, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
-               billing.resolve_founder_plan($10), $11)
+          geo_country, geo_region, investment_ask, status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
        ON CONFLICT (id) DO UPDATE SET title       = EXCLUDED.title,
                                       tagline     = EXCLUDED.tagline,
                                       description = EXCLUDED.description,
@@ -603,39 +602,15 @@ async function load() {
       );
     }
 
-    // Подписка основателя: без неё листинг закрыт правилами биллинга.
+    // Публикация бесплатна: подписка основателя отменена (M094), запуск
+    // раунда оплачивается разово (5.9). Листинг — следствие режима видимости.
     if (project.listingStatus === 'listed') {
       await sql(
-        `INSERT INTO billing.subscriptions
-           (id, user_id, plan_id, project_id, price_snapshot, currency_snapshot, terms_version,
-            custom_price, custom_price_set_by, custom_price_approved_by,
-            status, current_period_end)
-         SELECT $1, $2, p.required_plan_id, p.id,
-                -- У тарифа «Стратегический» цены в справочнике нет: она
-                -- индивидуальная и утверждается по правилу четырёх глаз.
-                -- Подписка обязана хранить цену, под которой оформлена, и для
-                -- такого тарифа снимок обязан совпадать с утверждённой
-                -- custom_price. Для тестового комплекта фиксируем условную
-                -- сумму и берём двух разных служебных пользователей —
-                -- назначившего и утвердившего.
-                COALESCE(pl.price, 499990.00), 'RUB', 'v1',
-                CASE WHEN pl.individual_pricing THEN 499990.00 END,
-                CASE WHEN pl.individual_pricing THEN
-                  (SELECT user_id FROM identity.user_roles
-                    WHERE role = 'admin' AND revoked_at IS NULL ORDER BY granted_at LIMIT 1) END,
-                CASE WHEN pl.individual_pricing THEN
-                  (SELECT user_id FROM identity.user_roles
-                    WHERE role IN ('organizer', 'showrunner') AND revoked_at IS NULL
-                    ORDER BY granted_at LIMIT 1) END,
-                'active', now() + interval '60 days'
-           FROM lab.projects p
-           JOIN billing.subscription_plans pl ON pl.id = p.required_plan_id
-          WHERE p.id = $3
-         ON CONFLICT (id) DO NOTHING`,
-        [demoId('subscription', project.key), founder.id, id],
-      );
-      await sql(
-        `UPDATE lab.projects SET listing_status = 'listed', listed_at = coalesce(listed_at, now() - interval '10 days')
+        `UPDATE lab.projects
+            SET listing_status = 'listed',
+                listed_at = coalesce(listed_at, now() - interval '10 days'),
+                visibility = 'public',
+                visibility_changed_at = coalesce(visibility_changed_at, now())
           WHERE id = $1`,
         [id],
       );
@@ -670,9 +645,9 @@ async function load() {
   }
   await sql(
     `INSERT INTO billing.subscriptions
-       (id, user_id, plan_id, project_id, price_snapshot, currency_snapshot, terms_version,
+       (id, user_id, plan_id, price_snapshot, currency_snapshot, terms_version,
         status, current_period_end)
-     SELECT $1, $2, pl.id, NULL, pl.price, 'RUB', 'v1', 'active', now() + interval '60 days'
+     SELECT $1, $2, pl.id, pl.price, 'RUB', 'v1', 'active', now() + interval '60 days'
        FROM billing.subscription_plans pl
       WHERE pl.code = 'investor_membership' AND pl.valid_to IS NULL
       ORDER BY pl.version DESC LIMIT 1

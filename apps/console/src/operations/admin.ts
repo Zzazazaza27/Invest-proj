@@ -1,13 +1,5 @@
 import type { OperationGroup } from '../types';
-import {
-  idField,
-  jsonValue,
-  money,
-  optionalMoney,
-  optionalStr,
-  str,
-  LOCALE_OPTIONS,
-} from './shared';
+import { idField, jsonValue, optionalMoney, optionalStr, str, LOCALE_OPTIONS } from './shared';
 
 /** Список через запятую → массив. Пустые элементы отбрасываются. */
 function list(values: Parameters<typeof str>[0], name: string): string[] {
@@ -142,42 +134,6 @@ export const adminGroup: OperationGroup = {
       needsAuth: true,
       remembers: { subscriptionId: 'items.0.id' },
       run: (_values, { api }) => api.http.request({ path: '/admin/subscriptions' }),
-    },
-    {
-      id: 'custom-price-propose',
-      title: 'Предложить индивидуальную цену',
-      method: 'POST',
-      path: '/v1/admin/subscriptions/:id/custom-price',
-      summary:
-        'Первый из двух шагов «четырёх глаз». Утвердить своё же предложение сервер не даст — в этом весь смысл.',
-      needsAuth: true,
-      fields: [
-        idField('subscriptionId', 'Подписка'),
-        { name: 'price', label: 'Цена', kind: 'number', required: true },
-        { name: 'reason', label: 'Основание', kind: 'textarea', required: true },
-      ],
-      run: (values, { api }) =>
-        api.http.request({
-          method: 'POST',
-          path: `/admin/subscriptions/${str(values, 'subscriptionId')}/custom-price`,
-          body: { price: money(values, 'price'), reason: str(values, 'reason') },
-        }),
-    },
-    {
-      id: 'custom-price-approve',
-      title: 'Утвердить индивидуальную цену',
-      method: 'POST',
-      path: '/v1/admin/subscriptions/:id/custom-price/approve',
-      summary:
-        'Второй шаг. Выполняется ДРУГИМ администратором — попытка утвердить своё предложение обязана быть отвергнута.',
-      needsAuth: true,
-      fields: [idField('subscriptionId', 'Подписка')],
-      run: (values, { api }) =>
-        api.http.request({
-          method: 'POST',
-          path: `/admin/subscriptions/${str(values, 'subscriptionId')}/custom-price/approve`,
-          body: {},
-        }),
     },
     {
       id: 'subscription-activate',

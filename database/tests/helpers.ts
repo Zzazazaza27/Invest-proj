@@ -111,21 +111,6 @@ export async function resetRole(client: Client): Promise<void> {
   await client.query('RESET ROLE');
 }
 
-/**
- * Включает платёжный барьер основателя в текущей транзакции (M071: флаг
- * billing.listing_requires_subscription по умолчанию выключен). Флаги пишет
- * только администратор — контекст выставляется и снимается здесь же, чтобы
- * тест дальше шёл под своими ролями.
- */
-export async function enableListingBarrier(client: Client): Promise<void> {
-  await actAs(client, { roles: ['admin'] });
-  await client.query(
-    `UPDATE audit.feature_flags SET enabled = true
-      WHERE key = 'billing.listing_requires_subscription'`,
-  );
-  await actAs(client, { roles: [] });
-}
-
 /** Ожидает, что запрос упадёт, и возвращает ошибку. Пустой результат — тоже провал. */
 export async function expectError(fn: () => Promise<unknown>): Promise<Error> {
   try {
@@ -254,9 +239,8 @@ export async function createProject(
   const seasonId = rows[0]?.id ?? null;
 
   await client.query(
-    `INSERT INTO lab.projects (id, title, stage, investment_ask, season_id, status,
-                               required_plan_id)
-     VALUES ($1, $2, 'mvp', $3, $4, $5, billing.resolve_founder_plan($3))`,
+    `INSERT INTO lab.projects (id, title, stage, investment_ask, season_id, status)
+     VALUES ($1, $2, 'mvp', $3, $4, $5)`,
     [id, `Проект ${id.slice(0, 6)}`, ask, seasonId, opts.status ?? 'draft'],
   );
   await client.query(
@@ -285,7 +269,7 @@ export async function createProject(
   await client.query('SELECT set_config($1, $2, true)', ['app.current_roles', '']);
 
   if (opts.listed) {
-    await createFounderSubscription(client, ownerUserId, id);
+    // Публикация не требует оплаты: подписка основателя отменена (M094).
     // С M087 листинг — следствие режима видимости: опубликованный проект в
     // фикстуре получает режим public (тизер), как и при переносе данных.
     await client.query(
@@ -299,30 +283,12 @@ export async function createProject(
   return id;
 }
 
-export async function createFounderSubscription(
-  client: Client,
-  userId: string,
-  projectId: string,
-): Promise<string> {
-  const id = uuidv7();
-  await client.query(
-    `INSERT INTO billing.subscriptions
-       (id, user_id, plan_id, project_id, price_snapshot, terms_version, status, current_period_end)
-     SELECT $1, $2, p.required_plan_id, $3, sp.price, 'v1', 'active', now() + interval '30 days'
-     FROM lab.projects p
-     JOIN billing.subscription_plans sp ON sp.id = p.required_plan_id
-     WHERE p.id = $3`,
-    [id, userId, projectId],
-  );
-  return id;
-}
-
 export async function createInvestorSubscription(client: Client, userId: string): Promise<string> {
   const id = uuidv7();
   await client.query(
     `INSERT INTO billing.subscriptions
-       (id, user_id, plan_id, project_id, price_snapshot, terms_version, status, current_period_end)
-     SELECT $1, $2, sp.id, NULL, sp.price, 'v1', 'active', now() + interval '30 days'
+       (id, user_id, plan_id, price_snapshot, terms_version, status, current_period_end)
+     SELECT $1, $2, sp.id, sp.price, 'v1', 'active', now() + interval '30 days'
      FROM billing.subscription_plans sp
      WHERE sp.code = 'investor_membership' AND sp.version = 1`,
     [id, userId],

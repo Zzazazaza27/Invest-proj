@@ -206,21 +206,15 @@ console.warn('\n[4] Связи и обязательные поля соблюд
   );
   check('у каждого проекта есть владелец', orphan.n === 0, `без владельца: ${orphan.n}`);
 
-  const [noPlan] = await sql(
+  // Публикация не требует денег: подписка основателя отменена (M094).
+  // Опубликованный проект обязан быть в открытом режиме видимости — иначе
+  // «listed» не означало бы, что его вообще кто-то видит.
+  const [hidden] = await sql(
     `SELECT count(*)::int AS n FROM lab.projects
-      WHERE id = ANY($1::uuid[]) AND required_plan_id IS NULL`,
+      WHERE id = ANY($1::uuid[]) AND listing_status = 'listed' AND visibility = 'private'`,
     [projectIds],
   );
-  check('тариф определён по сумме запроса', noPlan.n === 0, `без тарифа: ${noPlan.n}`);
-
-  const [noSub] = await sql(
-    `SELECT count(*)::int AS n FROM lab.projects p
-      WHERE p.id = ANY($1::uuid[]) AND p.listing_status = 'listed'
-        AND NOT EXISTS (SELECT 1 FROM billing.subscriptions s
-                         WHERE s.project_id = p.id AND s.status = 'active')`,
-    [projectIds],
-  );
-  check('у опубликованных проектов активная подписка', noSub.n === 0, `без подписки: ${noSub.n}`);
+  check('опубликованные проекты не закрыты режимом', hidden.n === 0, `закрытых: ${hidden.n}`);
 
   const [version] = await sql(
     `SELECT count(*)::int AS n FROM lab.projects
@@ -229,13 +223,14 @@ console.warn('\n[4] Связи и обязательные поля соблюд
   );
   check('у каждого проекта есть версия заявки', version.n === 0, `без версии: ${version.n}`);
 
-  const [tariffs] = await sql(
-    `SELECT count(DISTINCT required_plan_id)::int AS n FROM lab.projects WHERE id = ANY($1::uuid[])`,
+  const [asks] = await sql(
+    `SELECT count(DISTINCT investment_ask)::int AS n FROM lab.projects
+      WHERE id = ANY($1::uuid[])`,
     [projectIds],
   );
-  // Разные тарифы — не украшение: на одном тарифе не видно, что резолвер
-  // тарифа по сумме вообще работает.
-  check('задействовано несколько тарифов', tariffs.n >= 3, `тарифов: ${tariffs.n}`);
+  // Разные суммы запроса — не украшение: на одинаковых суммах не видно ни
+  // сортировок, ни будущей сетки пакетов раунда (5.9).
+  check('суммы запроса различаются', asks.n >= 3, `разных сумм: ${asks.n}`);
 }
 
 console.warn('\n[5] Роли и статусы разнообразны');

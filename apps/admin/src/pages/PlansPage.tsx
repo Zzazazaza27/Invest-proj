@@ -19,14 +19,12 @@ import { formatDate, formatMoney, problemText } from '../lib/format';
  * что разрешает база данных.
  */
 
-const PLAN_CODES: PlanCode[] = [
-  'founder_t1',
-  'founder_t2',
-  'founder_t3',
-  'founder_t4',
-  'founder_t5',
-  'investor_membership',
-];
+/**
+ * Тарифы — только инвесторские (M094): подписка основателя по сумме
+ * привлечения отменена, запуск раунда оплачивается разово. Код тарифа
+ * задаётся здесь, а не выбирается из закрытого списка в коде.
+ */
+const CODE_PATTERN = /^[a-z][a-z0-9_]{2,40}$/;
 
 export function PlansPage() {
   /** Снятие тарифа с продажи: основание вводится диалогом и идёт в журнал. */
@@ -111,9 +109,7 @@ export function PlansPage() {
               <div className="page-head" style={{ marginBottom: 12 }}>
                 <div>
                   <h2 style={{ marginBottom: 2 }}>{current?.name ?? versions[0]?.name ?? code}</h2>
-                  <div className="small muted">
-                    {code} · {versions[0]?.audience === 'founder' ? 'основатели' : 'инвесторы'}
-                  </div>
+                  <div className="small muted">{code} · тариф инвестора</div>
                 </div>
                 <div className="row-actions">
                   {current && (
@@ -131,9 +127,8 @@ export function PlansPage() {
               {scheduled && (
                 <div className="alert alert--info">
                   Объявлено изменение с {formatDate(scheduled.validFrom)}:{' '}
-                  <strong>{formatMoney(scheduled.price)}</strong>
-                  {scheduled.individualPricing && ' (индивидуальная цена)'}. До этой даты действует
-                  текущая цена.
+                  <strong>{formatMoney(scheduled.price)}</strong>. До этой даты действует текущая
+                  цена.
                   <div className="row-actions" style={{ marginTop: 10 }}>
                     <button
                       type="button"
@@ -163,7 +158,6 @@ export function PlansPage() {
                   <tr>
                     <th>Версия</th>
                     <th>Цена</th>
-                    <th>Лимит запроса</th>
                     <th>Действует</th>
                     <th>Подписок</th>
                     <th>Состояние</th>
@@ -173,20 +167,7 @@ export function PlansPage() {
                   {versions.map((plan) => (
                     <tr key={plan.id}>
                       <td>v{plan.version}</td>
-                      <td className="num">
-                        {plan.individualPricing ? (
-                          <span className="muted">индивидуально</span>
-                        ) : (
-                          formatMoney(plan.price)
-                        )}
-                      </td>
-                      <td className="num">
-                        {plan.askLimit ? (
-                          formatMoney(plan.askLimit)
-                        ) : (
-                          <span className="muted">—</span>
-                        )}
-                      </td>
+                      <td className="num">{formatMoney(plan.price)}</td>
                       <td className="small">
                         {formatDate(plan.validFrom)} —{' '}
                         {plan.validTo ? formatDate(plan.validTo) : 'бессрочно'}
@@ -280,12 +261,9 @@ function PlanForm({
   onDone: (message: string) => Promise<void> | void;
   onError: (message: string) => void;
 }) {
-  const [code, setCode] = useState<PlanCode>(plan?.code ?? 'founder_t1');
-  const [audience, setAudience] = useState<'founder' | 'investor'>(plan?.audience ?? 'founder');
+  const [code, setCode] = useState<PlanCode>(plan?.code ?? 'investor_membership');
   const [name, setName] = useState(plan?.name ?? '');
   const [price, setPrice] = useState(plan?.price ?? '');
-  const [askLimit, setAskLimit] = useState(plan?.askLimit ?? '');
-  const [individual, setIndividual] = useState(plan?.individualPricing ?? false);
   const [validFrom, setValidFrom] = useState(
     plan ? toLocalInput(plan.validFrom) : toLocalInput(firstDayOfNextMonth().toISOString()),
   );
@@ -299,8 +277,7 @@ function PlanForm({
       if (mode === 'draft' && plan) {
         await api.updateDraftPlan(plan.id, {
           name,
-          price: individual ? null : price,
-          askLimit: askLimit === '' ? null : askLimit,
+          price,
           features,
           validFrom: new Date(validFrom).toISOString(),
         });
@@ -308,17 +285,19 @@ function PlanForm({
         return;
       }
 
+      if (!CODE_PATTERN.test(code)) {
+        onError('Код тарифа: латиница, цифры и подчёркивание, от 3 до 41 символа');
+        setBusy(false);
+        return;
+      }
       const body: PublishPlanRequest = {
         code,
-        audience,
         name,
-        individualPricing: individual,
+        price,
         billingPeriod: 'monthly',
         features,
         validFrom: new Date(validFrom).toISOString(),
-        ...(individual ? {} : { price }),
-        ...(askLimit === '' ? {} : { askLimit }),
-      } as PublishPlanRequest;
+      };
 
       await api.publishPlan(body);
       await onDone(
@@ -345,23 +324,15 @@ function PlanForm({
 
       <div className="grid-3">
         <div className="field">
-          <label htmlFor="code">Тариф</label>
-          <select
+          <label htmlFor="code">Код тарифа</label>
+          <input
             id="code"
             value={code}
             disabled={mode === 'draft'}
-            onChange={(e) => {
-              const next = e.target.value as PlanCode;
-              setCode(next);
-              setAudience(next === 'investor_membership' ? 'investor' : 'founder');
-            }}
-          >
-            {PLAN_CODES.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
+            placeholder="investor_membership"
+            onChange={(e) => setCode(e.target.value)}
+          />
+          <div className="field__hint">Латиница, цифры и подчёркивание.</div>
         </div>
 
         <div className="field">
@@ -369,34 +340,11 @@ function PlanForm({
           <input
             id="price"
             inputMode="decimal"
-            value={individual ? '' : price}
-            disabled={individual}
+            value={price}
             placeholder="9990.00"
             onChange={(e) => setPrice(e.target.value)}
+            required
           />
-          <div className="field__hint">
-            <label className="switch" style={{ marginTop: 8 }}>
-              <input
-                type="checkbox"
-                style={{ width: 'auto' }}
-                checked={individual}
-                onChange={(e) => setIndividual(e.target.checked)}
-              />
-              Индивидуальная цена (согласуется с каждым клиентом)
-            </label>
-          </div>
-        </div>
-
-        <div className="field">
-          <label htmlFor="askLimit">Лимит запроса инвестиций, ₽</label>
-          <input
-            id="askLimit"
-            inputMode="decimal"
-            value={askLimit ?? ''}
-            placeholder="10000000.00"
-            onChange={(e) => setAskLimit(e.target.value)}
-          />
-          <div className="field__hint">Пусто — без ограничения сверху.</div>
         </div>
       </div>
 

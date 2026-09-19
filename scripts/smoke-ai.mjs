@@ -246,7 +246,7 @@ const investor = await register('investor', 'i');
 const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
 const [{ id: projectId }] = await sql(
   `INSERT INTO lab.projects (id, taxonomy_id, title, tagline, description, stage,
-                             investment_ask, required_plan_id)
+                             investment_ask)
    VALUES (public.uuid_generate_v7(), $1, 'Аналитика для B2B SaaS',
            'Единая витрина метрик продукта',
            'Решаем проблему разрозненных метрик. Рынок TAM 12 млрд руб, сегмент растёт. ' ||
@@ -254,7 +254,7 @@ const [{ id: projectId }] = await sql(
            'Команда: CTO с опытом 10 лет, два инженера. Выручка MRR 450 тыс руб, ' ||
            'retention 92%, LTV/CAC 3.4. Модель — подписка, unit-экономика положительная. ' ||
            'Планируем масштабирование на международный рынок.',
-           'growth', 5000000, billing.resolve_founder_plan(5000000))
+           'growth', 5000000)
    RETURNING id`,
   [taxonomy.id],
 );
@@ -408,21 +408,16 @@ let firstRun;
     `статус ${notListed.response.status}`,
   );
 
-  // Публикация листинга требует активной подписки основателя на тариф,
-  // разрешённый его запросом инвестиций (инвариант Ф5). Прогон не обходит это
-  // правило, а выполняет его: подписка заводится фикстурой.
+  // Публикация листинга не требует денег: подписка основателя отменена
+  // (M094), запуск раунда оплачивается разово (5.9). Достаточно перевести
+  // проект в режим, при котором его видно допущенному инвестору.
   await sql(
-    `INSERT INTO billing.subscriptions
-       (id, user_id, project_id, plan_id, price_snapshot, terms_version, status, current_period_end)
-     SELECT public.uuid_generate_v7(), $1, p.id, p.required_plan_id, sp.price, 'v1', 'active',
-            now() + interval '30 days'
-       FROM lab.projects p JOIN billing.subscription_plans sp ON sp.id = p.required_plan_id
-      WHERE p.id = $2`,
-    [founder.userId, projectId],
+    `UPDATE lab.projects
+        SET listing_status = 'listed', listed_at = now(),
+            visibility = 'public', visibility_changed_at = now()
+      WHERE id = $1`,
+    [projectId],
   );
-  await sql(`UPDATE lab.projects SET listing_status = 'listed', listed_at = now() WHERE id = $1`, [
-    projectId,
-  ]);
   const listed = await investor.client.call(`/v1/projects/${projectId}/passport`);
   check(
     'подписчик видит паспорт опубликованного листинга',

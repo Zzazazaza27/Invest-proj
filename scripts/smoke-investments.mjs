@@ -156,9 +156,8 @@ await admin.call('/v1/auth/login', {
 // Предусловия: проект с одобренным KYC владельца, проверенное юрлицо, подписки.
 const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
 const [{ id: projectId }] = await sql(
-  `INSERT INTO lab.projects (id, taxonomy_id, title, stage, investment_ask, required_plan_id)
-   VALUES (public.uuid_generate_v7(), $1, 'Проект регулируемого контура', 'growth', 5000000,
-           billing.resolve_founder_plan(5000000))
+  `INSERT INTO lab.projects (id, taxonomy_id, title, stage, investment_ask)
+   VALUES (public.uuid_generate_v7(), $1, 'Проект регулируемого контура', 'growth', 5000000)
    RETURNING id`,
   [taxonomy.id],
 );

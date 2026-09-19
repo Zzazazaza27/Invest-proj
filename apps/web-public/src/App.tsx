@@ -460,23 +460,17 @@ function PricingSection() {
                       <Card style={{ height: '100%', display: 'grid', gap: 'var(--u-space-2)' }}>
                         <strong>{plan.name}</strong>
                         <span style={{ fontSize: 'var(--u-text-lg)', fontWeight: 700 }}>
-                          {/*
-                            Цена может отсутствовать: у верхнего тарифа она
-                            индивидуальная. Показать «0 ₽» вместо этого — прямая
-                            дезинформация о стоимости.
-                          */}
-                          {plan.individualPricing || plan.price === null
-                            ? 'Индивидуально'
-                            : `${formatMoney(plan.price)} / ${BILLING_PERIOD_LABEL[plan.billingPeriod]}`}
+                          {`${formatMoney(plan.price)} / ${BILLING_PERIOD_LABEL[plan.billingPeriod]}`}
                         </span>
                         <span
                           style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}
                         >
-                          {plan.audience === 'founder'
-                            ? plan.askLimit
-                              ? `Запрос инвестиций до ${formatMoney(plan.askLimit)}`
-                              : 'Запрос инвестиций сверх верхнего порога'
-                            : 'Доступ инвестора к полным карточкам'}
+                          {/*
+                            Тарифы — только для инвестора: основатель платит
+                            разово за запуск конкретного раунда (5.9), а не
+                            ежемесячно по сумме привлечения.
+                          */}
+                          Доступ инвестора к полным карточкам
                         </span>
                       </Card>
                     </li>

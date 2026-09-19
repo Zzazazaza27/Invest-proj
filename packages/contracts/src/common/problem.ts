@@ -38,7 +38,6 @@ export const ErrorCode = {
   STATE_TRANSITION_NOT_ALLOWED: 'state_transition_not_allowed',
   LIMIT_EXCEEDED: 'limit_exceeded',
   SELF_DEAL_FORBIDDEN: 'self_deal_forbidden',
-  PLAN_UPGRADE_REQUIRED: 'plan_upgrade_required',
   /**
    * Операция потребовала бы передачи ограниченных данных за пределы
    * разрешённых юрисдикций (152-ФЗ, ADR-007). Отдельный код нужен, чтобы
@@ -119,7 +118,6 @@ export const ERROR_STATUS: Record<ErrorCodeValue, number> = {
   [ErrorCode.STATE_TRANSITION_NOT_ALLOWED]: 409,
   [ErrorCode.LIMIT_EXCEEDED]: 422,
   [ErrorCode.SELF_DEAL_FORBIDDEN]: 422,
-  [ErrorCode.PLAN_UPGRADE_REQUIRED]: 422,
   [ErrorCode.RESIDENCY_VIOLATION]: 403,
   [ErrorCode.RATE_LIMITED]: 429,
   [ErrorCode.INTERNAL_ERROR]: 500,

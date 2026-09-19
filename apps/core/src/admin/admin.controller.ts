@@ -4,7 +4,6 @@ import {
   AdminSubscriptionSchema,
   ClosePlanRequestSchema,
   FeatureFlagSchema,
-  ProposeCustomPriceRequestSchema,
   PublishPlanRequestSchema,
   UpdateDraftPlanRequestSchema,
   UpdateFeatureFlagRequestSchema,
@@ -158,23 +157,6 @@ export class AdminController {
     );
     const items = await this.admin.listSubscriptions(ctx, limit);
     return { items: items.map((s) => AdminSubscriptionSchema.parse(s)) };
-  }
-
-  @Post('subscriptions/:id/custom-price')
-  async proposeCustomPrice(
-    @Param('id') rawId: string,
-    @Body() rawBody: unknown,
-    @Ctx() ctx: RequestContext,
-  ) {
-    const id = parseOrThrow(UuidSchema, rawId);
-    const input = parseOrThrow(ProposeCustomPriceRequestSchema, rawBody);
-    return AdminSubscriptionSchema.parse(await this.admin.proposeCustomPrice(ctx, id, input));
-  }
-
-  @Post('subscriptions/:id/custom-price/approve')
-  async approveCustomPrice(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
-    const id = parseOrThrow(UuidSchema, rawId);
-    return AdminSubscriptionSchema.parse(await this.admin.approveCustomPrice(ctx, id));
   }
 
   @Post('subscriptions/:id/activate')

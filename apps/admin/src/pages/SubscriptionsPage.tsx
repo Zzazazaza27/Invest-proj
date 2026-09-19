@@ -5,18 +5,18 @@ import { api } from '../api';
 import { formatDate, formatMoney, problemText } from '../lib/format';
 
 /**
- * Подписки.
+ * Подписки инвесторов.
  *
- * Здесь же живут персональные цены. Правило «четырёх глаз» соблюдается на
- * уровне БД: тот, кто назначил цену, физически не может её утвердить —
- * ограничение таблицы не даст сохранить такую запись. Интерфейс лишь честно
- * показывает, на каком шаге находится согласование.
+ * Подписка основателя по сумме привлечения отменена (M094): запуск раунда
+ * оплачивается разово покупкой пакета (5.9), поэтому здесь только подписки
+ * аккаунта инвестора. Персональная цена удалена вместе с тарифом, ради
+ * которого она существовала.
  *
  * Активация подписки вручную — временная мера: платёжного провайдера пока нет,
  * поэтому оплату подтверждает человек, и каждое такое действие попадает
  * в журнал вместе с причиной.
  */
-export function SubscriptionsPage({ adminId }: { adminId: string }) {
+export function SubscriptionsPage() {
   /**
    * Диалоги вместо `window.prompt`.
    *
@@ -24,7 +24,6 @@ export function SubscriptionsPage({ adminId }: { adminId: string }) {
    * настройки браузера, отключающей системные подсказки, нельзя.
    */
   const [activating, setActivating] = useState<string | null>(null);
-  const [pricing, setPricing] = useState<{ id: string; price: string } | null>(null);
   const [items, setItems] = useState<AdminSubscription[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -60,8 +59,8 @@ export function SubscriptionsPage({ adminId }: { adminId: string }) {
         <div>
           <h1>Подписки</h1>
           <p className="page-hint">
-            Цена подписки фиксируется в момент оформления и не меняется при пересмотре тарифной
-            сетки. Персональная цена назначается одним администратором и утверждается другим.
+            Ежемесячные подписки инвесторов. Цена фиксируется в момент оформления и не меняется при
+            пересмотре тарифной сетки.
           </p>
         </div>
       </div>
@@ -80,7 +79,6 @@ export function SubscriptionsPage({ adminId }: { adminId: string }) {
               <tr>
                 <th>Пользователь</th>
                 <th>Тариф</th>
-                <th>Проект</th>
                 <th>Цена</th>
                 <th>Статус</th>
                 <th>Оформлена</th>
@@ -92,16 +90,7 @@ export function SubscriptionsPage({ adminId }: { adminId: string }) {
                 <tr key={sub.id}>
                   <td>{sub.userDisplayName}</td>
                   <td className="small">{sub.planCode}</td>
-                  <td className="small">{sub.projectTitle ?? <span className="muted">—</span>}</td>
-                  <td className="num">
-                    {formatMoney(sub.priceSnapshot)}
-                    {sub.customPrice && (
-                      <div className="small muted">
-                        персональная: {formatMoney(sub.customPrice)}
-                        {!sub.customPriceApprovedBy && ' · ждёт утверждения'}
-                      </div>
-                    )}
-                  </td>
+                  <td className="num">{formatMoney(sub.priceSnapshot)}</td>
                   <td>
                     <StatusBadge status={sub.status} />
                   </td>
@@ -117,35 +106,6 @@ export function SubscriptionsPage({ adminId }: { adminId: string }) {
                           Активировать
                         </button>
                       )}
-
-                      {sub.customPrice && !sub.customPriceApprovedBy && (
-                        <button
-                          type="button"
-                          className="btn--ghost btn--sm"
-                          disabled={sub.customPriceSetBy === adminId}
-                          title={
-                            sub.customPriceSetBy === adminId
-                              ? 'Назначивший цену не может утвердить её сам'
-                              : undefined
-                          }
-                          onClick={() =>
-                            void act(
-                              () => api.approveCustomPrice(sub.id),
-                              'Персональная цена утверждена.',
-                            )
-                          }
-                        >
-                          Утвердить цену
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        className="btn--ghost btn--sm"
-                        onClick={() => setPricing({ id: sub.id, price: '' })}
-                      >
-                        Персональная цена
-                      </button>
                     </div>
                   </td>
                 </tr>
@@ -167,35 +127,6 @@ export function SubscriptionsPage({ adminId }: { adminId: string }) {
           const id = activating;
           setActivating(null);
           if (id) void act(() => api.activateSubscription(id, reason), 'Подписка активирована.');
-        }}
-      />
-
-      <PromptDialog
-        open={pricing !== null && pricing.price === ''}
-        title="Персональная цена"
-        description="Цену назначает один администратор, утверждает другой — так требует ограничение таблицы."
-        label="Цена, ₽"
-        placeholder="149990.00"
-        confirmText="Дальше"
-        onCancel={() => setPricing(null)}
-        onConfirm={(price) => setPricing(pricing ? { ...pricing, price } : null)}
-      />
-
-      <PromptDialog
-        open={pricing !== null && pricing.price !== ''}
-        title="Основание персональной цены"
-        description="Попадёт в журнал вместе с автором."
-        label="Основание"
-        confirmText="Назначить цену"
-        onCancel={() => setPricing(null)}
-        onConfirm={(reason) => {
-          const current = pricing;
-          setPricing(null);
-          if (current)
-            void act(
-              () => api.proposeCustomPrice(current.id, { price: current.price, reason }),
-              'Цена назначена. Требуется утверждение вторым администратором.',
-            );
         }}
       />
     </>

@@ -50,7 +50,8 @@ export function SubscriptionPage() {
     );
   }
 
-  const investorPlan = state.pricing.plans.find((plan) => plan.audience === 'investor');
+  // Все тарифы теперь инвесторские (M094): подписка основателя отменена.
+  const investorPlan = state.pricing.plans[0];
   const active = state.subscriptions.filter((item) => item.status === 'active');
 
   return (
@@ -119,10 +120,8 @@ export function SubscriptionPage() {
                 setNotice(null);
                 try {
                   await api.billing.subscribe({
-                    // План не передаётся: для инвестора он один, и выбирает
-                    // его сервер. Возможность назвать план в запросе означала
-                    // бы «выберу себе подешевле».
-                    audience: 'investor',
+                    // План не передаётся: его выбирает сервер. Возможность
+                    // назвать план в запросе означала бы «выберу подешевле».
                     // Ключ идемпотентности обязателен: повтор отправки формы
                     // не должен создавать вторую подписку.
                     idempotencyKey: crypto.randomUUID(),

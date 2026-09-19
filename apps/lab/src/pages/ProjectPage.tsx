@@ -16,7 +16,6 @@ import { MaterialsCard } from './MaterialsCard';
 import { AccessCard } from './AccessCard';
 import { VisibilityCard } from './VisibilityCard';
 import { PublicationConsentsCard } from './PublicationConsentsCard';
-import { BillingCard } from './BillingCard';
 import { ApplicationsCard } from '../wizard/ApplicationsCard';
 import { ScoreProvenance } from '@unicorn/cabinet';
 
@@ -228,7 +227,6 @@ export function ProjectPage({
           режим решает, действует ли выданное. */}
       <AccessCard projectId={project.id} visibility={project.visibility} />
 
-      <BillingCard projectId={project.id} requiredPlanId={project.requiredPlanId ?? null} />
       <MaterialsCard projectId={project.id} />
       <PassportCard projectId={project.id} />
       <ReadinessCard projectId={project.id} />

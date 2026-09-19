@@ -12,17 +12,15 @@ import {
  * Инвестиционный principal живёт в `investments` и сюда не попадает (ADR-005).
  */
 
-export const PlanCodeSchema = z.enum([
-  'founder_t1',
-  'founder_t2',
-  'founder_t3',
-  'founder_t4',
-  'founder_t5',
-  'investor_membership',
-]);
+/**
+ * Код тарифа ИНВЕСТОРА. Закрытого перечня больше нет: подписка основателя по
+ * сумме привлечения отменена (M094, 5.9), а состав инвесторских тарифов
+ * задаётся в админке, а не в коде.
+ */
+export const PlanCodeSchema = z
+  .string()
+  .regex(/^[a-z][a-z0-9_]{2,40}$/, 'код тарифа: латиница, цифры и подчёркивание');
 export type PlanCode = z.infer<typeof PlanCodeSchema>;
-
-export const PlanAudienceSchema = z.enum(['founder', 'investor']);
 
 /**
  * Тарифная сетка публикуется открыто, без авторизации — принцип радикальной
@@ -32,12 +30,8 @@ export const SubscriptionPlanSchema = z.object({
   id: UuidSchema,
   code: PlanCodeSchema,
   version: z.number().int().positive(),
-  audience: PlanAudienceSchema,
   name: z.string(),
-  /** Верхняя граница investment_ask. null — «свыше» (t5) или неприменимо. */
-  askLimit: z.string().nullable(),
-  individualPricing: z.boolean(),
-  price: z.string().nullable(),
+  price: z.string(),
   currency: CurrencySchema,
   billingPeriod: z.enum(['monthly', 'yearly']),
   validFrom: IsoDateTimeSchema,
@@ -94,7 +88,6 @@ export const SubscriptionSchema = z.object({
   id: UuidSchema,
   planId: UuidSchema,
   planCode: PlanCodeSchema,
-  projectId: UuidSchema.nullable(),
   priceSnapshot: z.string(),
   currency: CurrencySchema,
   status: SubscriptionStatusSchema,
@@ -105,21 +98,12 @@ export const SubscriptionSchema = z.object({
 export type Subscription = z.infer<typeof SubscriptionSchema>;
 
 /**
- * Оформление подписки. Тариф основателя резолвится сервером из investment_ask
- * проекта — клиент передаёт проект, а не план: иначе цену можно было бы
- * занизить, подставив чужой planId.
+ * Оформление подписки инвестора. Тариф выбирает сервер (действующая версия),
+ * а не клиент: иначе цену можно было бы занизить, подставив чужой planId.
  */
-export const CreateSubscriptionRequestSchema = z.discriminatedUnion('audience', [
-  z.object({
-    audience: z.literal('founder'),
-    projectId: UuidSchema,
-    idempotencyKey: IdempotencyKeySchema,
-  }),
-  z.object({
-    audience: z.literal('investor'),
-    idempotencyKey: IdempotencyKeySchema,
-  }),
-]);
+export const CreateSubscriptionRequestSchema = z.object({
+  idempotencyKey: IdempotencyKeySchema,
+});
 export type CreateSubscriptionRequest = z.infer<typeof CreateSubscriptionRequestSchema>;
 
 // --------------------------------------------------- административное управление
@@ -146,36 +130,22 @@ export type AdminPlan = z.infer<typeof AdminPlanSchema>;
  * Переписать цену, под которой уже подписались, нельзя ни через API, ни в БД
  * (ADR-005, триггер `subscription_plans_history_immutable`).
  */
-export const PublishPlanRequestSchema = z
-  .object({
-    code: PlanCodeSchema,
-    audience: PlanAudienceSchema,
-    name: z.string().trim().min(2).max(160),
-    /** Верхняя граница `investment_ask`. null — без ограничения (t5). */
-    askLimit: MoneyAmountSchema.nullable().optional(),
-    price: MoneyAmountSchema.nullable().optional(),
-    individualPricing: z.boolean().default(false),
-    billingPeriod: z.enum(['monthly', 'yearly']).default('monthly'),
-    /** Состав подписки: что входит. Показывается на витрине и в кабинете. */
-    features: z.record(z.string(), z.unknown()).default({}),
-    /** С какого момента версия действует. Прошлое недопустимо. */
-    validFrom: IsoDateTimeSchema.optional(),
-  })
-  .refine((v) => v.individualPricing || Boolean(v.price), {
-    message: 'нужна цена либо признак индивидуального ценообразования',
-    path: ['price'],
-  })
-  .refine((v) => !(v.individualPricing && v.price), {
-    message: 'у индивидуального тарифа не может быть фиксированной цены',
-    path: ['price'],
-  });
+export const PublishPlanRequestSchema = z.object({
+  code: PlanCodeSchema,
+  name: z.string().trim().min(2).max(160),
+  price: MoneyAmountSchema,
+  billingPeriod: z.enum(['monthly', 'yearly']).default('monthly'),
+  /** Состав подписки: что входит. Показывается на витрине и в кабинете. */
+  features: z.record(z.string(), z.unknown()).default({}),
+  /** С какого момента версия действует. Прошлое недопустимо. */
+  validFrom: IsoDateTimeSchema.optional(),
+});
 export type PublishPlanRequest = z.infer<typeof PublishPlanRequestSchema>;
 
 /** Правка версии, которая ещё не вступила в силу. Действующую править нельзя. */
 export const UpdateDraftPlanRequestSchema = z.object({
   name: z.string().trim().min(2).max(160).optional(),
-  askLimit: MoneyAmountSchema.nullable().optional(),
-  price: MoneyAmountSchema.nullable().optional(),
+  price: MoneyAmountSchema.optional(),
   features: z.record(z.string(), z.unknown()).optional(),
   validFrom: IsoDateTimeSchema.optional(),
 });
@@ -189,24 +159,9 @@ export const ClosePlanRequestSchema = z.object({
 });
 export type ClosePlanRequest = z.infer<typeof ClosePlanRequestSchema>;
 
-/**
- * Индивидуальная цена. Двухшаговая по требованию 4-eyes: назначает один
- * администратор, утверждает другой. Совпадение назначившего и утвердившего
- * запрещено CHECK-ограничением в БД, а не только проверкой в коде.
- */
-export const ProposeCustomPriceRequestSchema = z.object({
-  price: MoneyAmountSchema,
-  reason: z.string().trim().min(3).max(500),
-});
-export type ProposeCustomPriceRequest = z.infer<typeof ProposeCustomPriceRequestSchema>;
-
 export const AdminSubscriptionSchema = SubscriptionSchema.extend({
   userId: UuidSchema,
   userDisplayName: z.string(),
-  projectTitle: z.string().nullable(),
-  customPrice: z.string().nullable(),
-  customPriceSetBy: UuidSchema.nullable(),
-  customPriceApprovedBy: UuidSchema.nullable(),
 });
 export type AdminSubscription = z.infer<typeof AdminSubscriptionSchema>;
 

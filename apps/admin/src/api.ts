@@ -25,7 +25,6 @@ import {
   type KycVerification,
   type NotificationTemplate,
   type ProjectStageChange,
-  type ProposeCustomPriceRequest,
   type PublishPlanRequest,
   type Season,
   type SeasonFunnelConfig,
@@ -287,23 +286,6 @@ export const api = {
       schema: listOf(AdminSubscriptionSchema),
     });
     return items;
-  },
-
-  proposeCustomPrice(id: string, input: ProposeCustomPriceRequest): Promise<AdminSubscription> {
-    return client.request({
-      method: 'POST',
-      path: `/v1/admin/subscriptions/${id}/custom-price`,
-      body: input,
-      schema: AdminSubscriptionSchema,
-    });
-  },
-
-  approveCustomPrice(id: string): Promise<AdminSubscription> {
-    return client.request({
-      method: 'POST',
-      path: `/v1/admin/subscriptions/${id}/custom-price/approve`,
-      schema: AdminSubscriptionSchema,
-    });
   },
 
   activateSubscription(id: string, reason: string): Promise<AdminSubscription> {

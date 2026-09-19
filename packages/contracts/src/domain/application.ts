@@ -223,7 +223,6 @@ export type ApplicationWithChecks = z.infer<typeof ApplicationWithChecksSchema>;
  * флаги — состояние платформы, а не интерфейса, и наружу не отдаются.
  */
 export const PUBLIC_FEATURE_KEYS = [
-  'billing.listing_requires_subscription',
   'lab.ui.application_v2',
   /** Сезонный контур отложен (M088): выключен — сезонных действий и выдач нет. */
   'seasons.enabled',

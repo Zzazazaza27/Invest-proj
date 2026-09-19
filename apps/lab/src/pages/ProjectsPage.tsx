@@ -158,7 +158,6 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
                   </span>
                   <span style={{ fontSize: 'var(--u-text-sm)', color: 'var(--u-text-muted)' }}>
                     {describeRaising(project)}
-                    {project.requiredPlanCode ? ` · тариф ${project.requiredPlanCode}` : ''}
                   </span>
                 </span>
                 <Icon

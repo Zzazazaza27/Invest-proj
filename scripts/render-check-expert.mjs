@@ -113,9 +113,8 @@ await sql(
 
 const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
 const [project] = await sql(
-  `INSERT INTO lab.projects (id, taxonomy_id, title, stage, status, investment_ask, required_plan_id)
-   VALUES (public.uuid_generate_v7(), $1, $2, 'growth', 'expert_review', 5000000,
-           billing.resolve_founder_plan(5000000))
+  `INSERT INTO lab.projects (id, taxonomy_id, title, stage, status, investment_ask)
+   VALUES (public.uuid_generate_v7(), $1, $2, 'growth', 'expert_review', 5000000)
    RETURNING id, title`,
   [taxonomy.id, `Проект на рецензию ${suffix}`],
 );

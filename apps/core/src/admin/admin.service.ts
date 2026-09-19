@@ -5,7 +5,6 @@ import {
   type AdminSubscription,
   type ClosePlanRequest,
   type FeatureFlag,
-  type ProposeCustomPriceRequest,
   type PublishPlanRequest,
   type UpdateDraftPlanRequest,
 } from '@unicorn/contracts';
@@ -107,18 +106,14 @@ export class AdminService {
 
         await tx.query(
           `INSERT INTO billing.subscription_plans
-             (id, code, version, audience, name, ask_limit, individual_pricing, price,
-              currency, billing_period, features_jsonb, valid_from)
-           VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8::numeric, 'RUB', $9, $10::jsonb, $11)`,
+             (id, code, version, name, price, currency, billing_period, features_jsonb, valid_from)
+           VALUES ($1, $2, $3, $4, $5::numeric, 'RUB', $6, $7::jsonb, $8)`,
           [
             id,
             input.code,
             version,
-            input.audience,
             input.name,
-            input.askLimit ?? null,
-            input.individualPricing,
-            input.price ?? null,
+            input.price,
             input.billingPeriod,
             JSON.stringify(input.features),
             validFrom.toISOString(),
@@ -134,7 +129,7 @@ export class AdminService {
           context: {
             code: input.code,
             version,
-            price: input.price ?? null,
+            price: input.price,
             validFrom: validFrom.toISOString(),
             replacedPlanId: current.rows[0]?.id ?? null,
           },
@@ -159,15 +154,13 @@ export class AdminService {
         await tx.query(
           `UPDATE billing.subscription_plans
               SET name           = COALESCE($2, name),
-                  ask_limit      = COALESCE($3::numeric, ask_limit),
-                  price          = COALESCE($4::numeric, price),
-                  features_jsonb = COALESCE($5::jsonb, features_jsonb),
-                  valid_from     = COALESCE($6::timestamptz, valid_from)
+                  price          = COALESCE($3::numeric, price),
+                  features_jsonb = COALESCE($4::jsonb, features_jsonb),
+                  valid_from     = COALESCE($5::timestamptz, valid_from)
             WHERE id = $1`,
           [
             planId,
             input.name ?? null,
-            input.askLimit ?? null,
             input.price ?? null,
             input.features ? JSON.stringify(input.features) : null,
             input.validFrom ?? null,
@@ -292,149 +285,19 @@ export class AdminService {
   async listSubscriptions(ctx: RequestContext, limit: number): Promise<AdminSubscription[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<AdminSubscriptionRow>(
-        `SELECT s.id, s.plan_id, sp.code AS plan_code, s.project_id,
+        `SELECT s.id, s.plan_id, sp.code AS plan_code,
                 s.price_snapshot::text AS price_snapshot, s.currency_snapshot,
                 s.status, s.current_period_end, s.grace_until, s.created_at,
-                s.user_id, u.display_name, p.title AS project_title,
-                COALESCE(pr.price, s.custom_price)::text AS custom_price,
-                COALESCE(pr.proposed_by, s.custom_price_set_by) AS custom_price_set_by,
-                CASE WHEN pr.id IS NULL THEN s.custom_price_approved_by END
-                  AS custom_price_approved_by
+                s.user_id, u.display_name
            FROM billing.subscriptions s
            JOIN billing.subscription_plans sp ON sp.id = s.plan_id
            JOIN identity.users u ON u.id = s.user_id
-           LEFT JOIN lab.projects p ON p.id = s.project_id
-           -- Ожидающее предложение показывается как «цена ждёт утверждения»:
-           -- в самой подписке его нет и быть не может (M017).
-           LEFT JOIN billing.custom_price_proposals pr
-                  ON pr.subscription_id = s.id AND pr.status = 'pending'
           ORDER BY s.created_at DESC
           LIMIT $1`,
         [limit],
       );
       return rows.map(mapAdminSubscription);
     });
-  }
-
-  /**
-   * Первый шаг 4-eyes: назначение индивидуальной цены.
-   *
-   * Записывается только в `custom_price_set_by`; пока второй администратор не
-   * утвердил, цена не применяется — CHECK в БД не даст сохранить подписку с
-   * назначенной, но не утверждённой ценой.
-   */
-  async proposeCustomPrice(
-    ctx: RequestContext,
-    subscriptionId: string,
-    input: ProposeCustomPriceRequest,
-  ): Promise<AdminSubscription> {
-    return mapDbErrors(async () =>
-      this.db.transaction(ctx, async (tx) => {
-        const { rows } = await tx.query<{ status: string }>(
-          'SELECT status FROM billing.subscriptions WHERE id = $1',
-          [subscriptionId],
-        );
-        if (!rows[0]) throw errors.notFound({ subject: 'subscription' });
-
-        // Предложение живёт отдельно от подписки: до утверждения цена подписки
-        // не меняется вовсе. Класть неутверждённую цену прямо в подписку
-        // нельзя — ограничение таблицы требует сразу обе подписи (M017).
-        await tx.query(
-          `UPDATE billing.custom_price_proposals
-              SET status = 'superseded'
-            WHERE subscription_id = $1 AND status = 'pending'`,
-          [subscriptionId],
-        );
-        await tx.query(
-          `INSERT INTO billing.custom_price_proposals
-             (id, subscription_id, price, reason, proposed_by)
-           VALUES ($1, $2, $3::numeric, $4, $5)`,
-          [uuidv7(), subscriptionId, input.price, input.reason, ctx.userId],
-        );
-
-        await this.audit.emit(tx, {
-          verb: 'billing.custom_price.proposed',
-          actorId: ctx.userId,
-          actorRole: 'admin',
-          subjectType: 'subscription',
-          subjectId: subscriptionId,
-          context: { price: input.price, reason: input.reason },
-          traceId: ctx.traceId,
-        });
-
-        return this.readAdminSubscription(tx, subscriptionId);
-      }),
-    );
-  }
-
-  /** Второй шаг 4-eyes: утверждение другим администратором. */
-  async approveCustomPrice(
-    ctx: RequestContext,
-    subscriptionId: string,
-  ): Promise<AdminSubscription> {
-    return mapDbErrors(async () =>
-      this.db.transaction(ctx, async (tx) => {
-        const { rows } = await tx.query<{
-          id: string;
-          price: string;
-          proposed_by: string;
-        }>(
-          // FOR UPDATE — не украшение. Без блокировки строки два одновременных
-          // утверждения читают одно и то же предложение в состоянии `pending`,
-          // оба проходят проверку и оба пишут согласование: в журнале контроля
-          // «четыре глаза» оказывается ДВА согласования одного предложения.
-          // Воспроизведено двумя параллельными запросами — оба вернули 201.
-          //
-          // Блокировка сериализует их: второй дождётся первого, увидит статус
-          // `approved` и получит честный отказ перехода состояния.
-          `SELECT id, price::text AS price, proposed_by
-             FROM billing.custom_price_proposals
-            WHERE subscription_id = $1 AND status = 'pending'
-            FOR UPDATE`,
-          [subscriptionId],
-        );
-        const proposal = rows[0];
-        if (!proposal) {
-          throw errors.stateTransition('Индивидуальная цена по этой подписке не предложена');
-        }
-        if (proposal.proposed_by === ctx.userId) {
-          // Дублирует CHECK в БД. Смысл правила: предложивший цену не может сам
-          // же её утвердить — иначе «четыре глаза» превращаются в два.
-          throw errors.forbidden({ stage: 'four-eyes' });
-        }
-
-        await tx.query(
-          `UPDATE billing.custom_price_proposals
-              SET status = 'approved', approved_by = $2, approved_at = now()
-            WHERE id = $1`,
-          [proposal.id, ctx.userId],
-        );
-
-        // Обе подписи ставятся в подписку одной операцией: промежуточного
-        // состояния «цена есть, утверждения нет» не существует по построению.
-        await tx.query(
-          `UPDATE billing.subscriptions
-              SET custom_price = $2::numeric,
-                  custom_price_set_by = $3,
-                  custom_price_approved_by = $4,
-                  price_snapshot = $2::numeric
-            WHERE id = $1`,
-          [subscriptionId, proposal.price, proposal.proposed_by, ctx.userId],
-        );
-
-        await this.audit.emit(tx, {
-          verb: 'billing.custom_price.approved',
-          actorId: ctx.userId,
-          actorRole: 'admin',
-          subjectType: 'subscription',
-          subjectId: subscriptionId,
-          context: { price: proposal.price, proposedBy: proposal.proposed_by },
-          traceId: ctx.traceId,
-        });
-
-        return this.readAdminSubscription(tx, subscriptionId);
-      }),
-    );
   }
 
   /**
@@ -603,8 +466,7 @@ export class AdminService {
 
   private async readPlan(tx: Tx, planId: string): Promise<AdminPlan> {
     const { rows } = await tx.query<PlanRow>(
-      `SELECT p.id, p.code, p.version, p.audience, p.name,
-              p.ask_limit::text AS ask_limit, p.individual_pricing,
+      `SELECT p.id, p.code, p.version, p.name,
               p.price::text AS price, p.currency, p.billing_period,
               p.features_jsonb, p.valid_from, p.valid_to,
               (SELECT count(*) FROM billing.subscriptions s WHERE s.plan_id = p.id)::int
@@ -619,20 +481,13 @@ export class AdminService {
 
   private async readAdminSubscription(tx: Tx, id: string): Promise<AdminSubscription> {
     const { rows } = await tx.query<AdminSubscriptionRow>(
-      `SELECT s.id, s.plan_id, sp.code AS plan_code, s.project_id,
+      `SELECT s.id, s.plan_id, sp.code AS plan_code,
               s.price_snapshot::text AS price_snapshot, s.currency_snapshot,
               s.status, s.current_period_end, s.grace_until, s.created_at,
-              s.user_id, u.display_name, p.title AS project_title,
-              COALESCE(pr.price, s.custom_price)::text AS custom_price,
-              COALESCE(pr.proposed_by, s.custom_price_set_by) AS custom_price_set_by,
-              CASE WHEN pr.id IS NULL THEN s.custom_price_approved_by END
-                AS custom_price_approved_by
+              s.user_id, u.display_name
          FROM billing.subscriptions s
          JOIN billing.subscription_plans sp ON sp.id = s.plan_id
          JOIN identity.users u ON u.id = s.user_id
-         LEFT JOIN lab.projects p ON p.id = s.project_id
-         LEFT JOIN billing.custom_price_proposals pr
-                ON pr.subscription_id = s.id AND pr.status = 'pending'
         WHERE s.id = $1`,
       [id],
     );
@@ -646,11 +501,8 @@ interface PlanRow {
   id: string;
   code: AdminPlan['code'];
   version: number;
-  audience: AdminPlan['audience'];
   name: string;
-  ask_limit: string | null;
-  individual_pricing: boolean;
-  price: string | null;
+  price: string;
   currency: string;
   billing_period: AdminPlan['billingPeriod'];
   features_jsonb: Record<string, unknown>;
@@ -670,7 +522,6 @@ interface AdminSubscriptionRow {
   id: string;
   plan_id: string;
   plan_code: AdminSubscription['planCode'];
-  project_id: string | null;
   price_snapshot: string;
   currency_snapshot: string;
   status: AdminSubscription['status'];
@@ -679,10 +530,6 @@ interface AdminSubscriptionRow {
   created_at: Date;
   user_id: string;
   display_name: string;
-  project_title: string | null;
-  custom_price: string | null;
-  custom_price_set_by: string | null;
-  custom_price_approved_by: string | null;
 }
 
 function mapPlan(row: PlanRow): AdminPlan {
@@ -693,10 +540,7 @@ function mapPlan(row: PlanRow): AdminPlan {
     id: row.id,
     code: row.code,
     version: row.version,
-    audience: row.audience,
     name: row.name,
-    askLimit: row.ask_limit,
-    individualPricing: row.individual_pricing,
     price: row.price,
     currency: row.currency as 'RUB',
     billingPeriod: row.billing_period,
@@ -716,7 +560,6 @@ function mapAdminSubscription(row: AdminSubscriptionRow): AdminSubscription {
     id: row.id,
     planId: row.plan_id,
     planCode: row.plan_code,
-    projectId: row.project_id,
     priceSnapshot: row.price_snapshot,
     currency: row.currency_snapshot as 'RUB',
     status: row.status,
@@ -725,9 +568,5 @@ function mapAdminSubscription(row: AdminSubscriptionRow): AdminSubscription {
     createdAt: row.created_at.toISOString(),
     userId: row.user_id,
     userDisplayName: row.display_name,
-    projectTitle: row.project_title,
-    customPrice: row.custom_price,
-    customPriceSetBy: row.custom_price_set_by,
-    customPriceApprovedBy: row.custom_price_approved_by,
   };
 }

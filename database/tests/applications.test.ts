@@ -3,7 +3,8 @@
  *
  * Проверяется ровно то, что обещает план 0.2: черновик свободен, обязательность
  * — при подаче; заявку видят члены проекта и администратор, инвестор — нет;
- * платёжный барьер выключен по умолчанию и не касается доступа инвестора;
+ * публикация не требует оплаты (подписка основателя удалена, M094) и не
+ *   касается доступа инвестора;
  * версии без сезона нумеруются внутри заявки; политика ограничений — одна
  * активная версия.
  *
@@ -17,7 +18,6 @@ import {
   createInvestorSubscription,
   createProject,
   createUser,
-  enableListingBarrier,
   expectError,
   getPool,
   inRollbackTx,
@@ -79,12 +79,13 @@ describe('M071: перенос данных', () => {
     });
   });
 
-  it('флаг платёжного барьера заведён и выключен', async () => {
-    const { rows } = await getPool().query<{ enabled: boolean }>(
-      `SELECT enabled FROM audit.feature_flags WHERE key = 'billing.listing_requires_subscription'`,
+  it('флага платёжного барьера основателя больше нет (M094)', async () => {
+    // Барьер удалён вместе с подпиской основателя: публикация проекта не
+    // зависит от денег, запуск раунда оплачивается разово (5.9).
+    const { rows } = await getPool().query(
+      `SELECT 1 FROM audit.feature_flags WHERE key = 'billing.listing_requires_subscription'`,
     );
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.enabled).toBe(false);
+    expect(rows).toHaveLength(0);
   });
 });
 
@@ -250,8 +251,8 @@ describe('Версии заявки', () => {
   });
 });
 
-describe('Платёжный барьер: флаг, а не удаление', () => {
-  it('по умолчанию листинг без подписки разрешён', async () => {
+describe('Публикация без денег: подписка основателя удалена (M094)', () => {
+  it('листинг без подписки разрешён', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c);
       const project = await createProject(c, founder.id, { listed: false });
@@ -268,7 +269,7 @@ describe('Платёжный барьер: флаг, а не удаление', 
     });
   });
 
-  it('по умолчанию рост суммы сверх тарифа у опубликованного проекта проходит', async () => {
+  it('рост суммы у опубликованного проекта ничего не ломает: тарифа основателя нет (M094)', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c);
       const project = await createProject(c, founder.id, { ask: 500_000, listed: false });
@@ -276,34 +277,13 @@ describe('Платёжный барьер: флаг, а не удаление', 
         `UPDATE lab.projects SET listing_status = 'listed', listed_at = now() WHERE id = $1`,
         [project],
       );
-      await c.query(
-        `UPDATE lab.projects
-            SET investment_ask = 50000000,
-                required_plan_id = billing.resolve_founder_plan(50000000)
-          WHERE id = $1`,
-        [project],
-      );
+      await c.query(`UPDATE lab.projects SET investment_ask = 50000000 WHERE id = $1`, [project]);
       await c.query('SET CONSTRAINTS ALL IMMEDIATE');
       const { rows } = await c.query<{ listing_status: string }>(
         `SELECT listing_status FROM lab.projects WHERE id = $1`,
         [project],
       );
       expect(rows[0]!.listing_status).toBe('listed');
-    });
-  });
-
-  it('при включённом барьере прежнее правило возвращается', async () => {
-    await inRollbackTx(async (c) => {
-      await enableListingBarrier(c);
-      const founder = await createUser(c);
-      const project = await createProject(c, founder.id, { listed: false });
-      await c.query(
-        `UPDATE lab.projects SET listing_status = 'listed', listed_at = now() WHERE id = $1`,
-        [project],
-      );
-      await expect(c.query('SET CONSTRAINTS ALL IMMEDIATE')).rejects.toThrow(
-        /active subscription/i,
-      );
     });
   });
 

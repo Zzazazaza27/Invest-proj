@@ -97,9 +97,6 @@ export const errors = {
       publicDetail: 'Нельзя инвестировать в проект, к которому вы имеете отношение',
     }),
 
-  planUpgradeRequired: (publicDetail: string) =>
-    new AppError(ErrorCode.PLAN_UPGRADE_REQUIRED, { publicDetail }),
-
   stateTransition: (publicDetail: string) =>
     new AppError(ErrorCode.STATE_TRANSITION_NOT_ALLOWED, { publicDetail }),
 

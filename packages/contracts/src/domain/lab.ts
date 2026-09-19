@@ -178,7 +178,6 @@ export const ProjectFullSchema = ProjectTeaserSchema.extend({
   status: ProjectStatusSchema,
   listingStatus: ListingStatusSchema,
   seasonId: UuidSchema.nullable(),
-  requiredPlanId: UuidSchema.nullable(),
   currentVersionId: UuidSchema.nullable(),
   /** Последняя поданная открытая заявка (M071); проект — производный кеш от неё. */
   currentApplicationId: UuidSchema.nullable(),
@@ -400,8 +399,6 @@ export const ProjectSummarySchema = z.object({
   investmentAsk: MoneyAmountSchema.nullable(),
   askCurrency: CurrencySchema,
   raising: RaisingStateSchema,
-  requiredPlanId: UuidSchema.nullable(),
-  requiredPlanCode: z.string().nullable(),
   role: z.enum(['owner', 'cofounder']),
   createdAt: IsoDateTimeSchema,
 });
