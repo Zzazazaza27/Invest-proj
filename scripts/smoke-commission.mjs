@@ -364,6 +364,66 @@ let first = null;
   const [{ on }] = await sql(`SELECT bool_or(is_enforced) AS on FROM billing.plan_capabilities`);
   check('в базе ничего не закрыто платно', on === false, `${on}`);
 }
+{
+  // Базовость — настройка, а не вечный запрет: её снимают и возвращают.
+  const off = await admin.json('/v1/admin/plan-capabilities/baseline', {
+    method: 'POST',
+    body: {
+      capability: 'catalog.favorites',
+      isBaseline: false,
+      reason: 'прогон: проверяем, что список бесплатного настраивается',
+    },
+  });
+  check(
+    'пометку «доступно всем» можно снять',
+    off.items.find((c) => c.code === 'catalog.favorites')?.isBaseline === false,
+  );
+
+  const [plan] = await sql(
+    `SELECT id FROM billing.subscription_plans WHERE valid_to IS NULL ORDER BY version DESC LIMIT 1`,
+  );
+  const linked = await admin.call('/v1/admin/plan-capabilities/link', {
+    method: 'POST',
+    body: { planId: plan.id, capability: 'catalog.favorites', reason: 'прогон: включили в тариф' },
+  });
+  check(
+    'после снятия пометки возможность включается в тариф',
+    linked.response.status < 400,
+    `статус ${linked.response.status}`,
+  );
+
+  await admin.json('/v1/admin/plan-capabilities/unlink', {
+    method: 'POST',
+    body: { planId: plan.id, capability: 'catalog.favorites', reason: 'прогон: вернули как было' },
+  });
+  const back = await admin.json('/v1/admin/plan-capabilities/baseline', {
+    method: 'POST',
+    body: {
+      capability: 'catalog.favorites',
+      isBaseline: true,
+      reason: 'прогон: вернули стартовую настройку',
+    },
+  });
+  check(
+    'настройка возвращена в исходное состояние',
+    back.items.find((c) => c.code === 'catalog.favorites')?.isBaseline === true,
+  );
+}
+{
+  // Ответ о доступности обязан учитывать барьер подписки, а не только тариф.
+  const mine = await outsider.client.json('/v1/me/plan-capabilities');
+  const card = mine.items.find((c) => c.capability === 'project.investor_view');
+  const [{ barrier }] = await sql(`SELECT lab.investor_access_requires_subscription() AS barrier`);
+  check(
+    'карточка инвестора не объявлена доступной, пока её закрывает барьер',
+    barrier
+      ? card?.available === false && card.source === 'membership_required'
+      : card?.available === true,
+    `барьер ${barrier}, доступна ${card?.available}, причина ${card?.source}`,
+  );
+  const browse = mine.items.find((c) => c.capability === 'catalog.browse');
+  check('каталог доступен и причина названа', browse?.available === true, browse?.source);
+}
 
 // --------------------------------------------------------------------- аудит
 {

@@ -171,18 +171,75 @@ describe('M100: возможности тарифов инвестора', () =>
     });
   });
 
+  it('базовость — настройка: её можно снять и тогда включить в тариф', async () => {
+    await inRollbackTx(async (c) => {
+      const [plan] = (
+        await c.query<{ id: string }>(
+          `SELECT id FROM billing.subscription_plans WHERE valid_to IS NULL LIMIT 1`,
+        )
+      ).rows;
+
+      await c.query('SAVEPOINT while_baseline');
+      await expect(
+        c.query(
+          `INSERT INTO billing.plan_capability_links (plan_id, capability, reason)
+           VALUES ($1, 'catalog.favorites', 'пока помечена базовой')`,
+          [plan!.id],
+        ),
+      ).rejects.toThrow(/базовая/);
+      await c.query('ROLLBACK TO SAVEPOINT while_baseline');
+
+      // Пометка снимается настройкой — вечного запрета в БД нет.
+      await c.query(
+        `UPDATE billing.plan_capabilities SET is_baseline = false WHERE code = 'catalog.favorites'`,
+      );
+      await expect(
+        c.query(
+          `INSERT INTO billing.plan_capability_links (plan_id, capability, reason)
+           VALUES ($1, 'catalog.favorites', 'матрица согласована')`,
+          [plan!.id],
+        ),
+      ).resolves.toBeDefined();
+    });
+  });
+
+  it('барьер подписки учитывается раньше тарифа', async () => {
+    await inRollbackTx(async (c) => {
+      const investor = await createUser(c, { role: 'investor' });
+      const { rows } = await c.query<{ capability: string; available: boolean; source: string }>(
+        `SELECT capability, available, source FROM billing.investor_capabilities($1)`,
+        [investor.id],
+      );
+      const card = rows.find((r) => r.capability === 'project.investor_view');
+      const [{ barrier }] = (
+        await c.query<{ barrier: boolean }>(
+          `SELECT lab.investor_access_requires_subscription() AS barrier`,
+        )
+      ).rows;
+      if (barrier) {
+        // Барьер включён, членства нет: «доступна» отвечать нельзя.
+        expect(card?.available).toBe(false);
+        expect(card?.source).toBe('membership_required');
+      } else {
+        expect(card?.available).toBe(true);
+      }
+    });
+  });
+
   it('пока ограничения выключены, реализованное доступно всем инвесторам', async () => {
     await inRollbackTx(async (c) => {
       const investor = await createUser(c, { role: 'investor' });
-      const { rows } = await c.query<{ capability: string; source: string }>(
-        `SELECT capability, source FROM billing.investor_capabilities($1) ORDER BY capability`,
+      const { rows } = await c.query<{ capability: string; available: boolean; source: string }>(
+        `SELECT capability, available, source FROM billing.investor_capabilities($1)
+          ORDER BY capability`,
         [investor.id],
       );
       const codes = rows.map((r) => r.capability);
       expect(codes).toContain('catalog.browse');
-      expect(codes).toContain('project.investor_view');
       // Источник «plan» не встречается: ничего не закрыто, платить не за что.
       expect(rows.every((r) => r.source !== 'plan')).toBe(true);
+      // Базовые и невключённые — доступны.
+      expect(rows.find((r) => r.capability === 'catalog.browse')?.available).toBe(true);
       // Нереализованные возможности не выдаются вовсе.
       expect(codes).not.toContain('analytics.compare');
     });

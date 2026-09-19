@@ -3,8 +3,10 @@ import {
   ActivateFeeOffsetRuleRequestSchema,
   FeeOffsetRuleSchema,
   FeeTermsSchema,
+  InvestorCapabilityStateSchema,
   LinkPlanCapabilityRequestSchema,
   PlanCapabilitySchema,
+  SetCapabilityBaselineRequestSchema,
   UnlinkPlanCapabilityRequestSchema,
   PublishFeeTermsRequestSchema,
 } from '@unicorn/contracts';
@@ -86,5 +88,31 @@ export class AdminPlanCapabilitiesController {
     const input = parseOrThrow(UnlinkPlanCapabilityRequestSchema, rawBody);
     const items = await this.capabilities.unlink(ctx, input);
     return { items: items.map((c) => PlanCapabilitySchema.parse(c)) };
+  }
+
+  /**
+   * Сменить стартовую пометку «доступно всем».
+   *
+   * Список бесплатных возможностей — настройка администратора, а не правило,
+   * зашитое в код: после согласования матрицы состав меняется здесь.
+   */
+  @Post('baseline')
+  async setBaseline(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(SetCapabilityBaselineRequestSchema, rawBody);
+    const items = await this.capabilities.setBaseline(ctx, input);
+    return { items: items.map((c) => PlanCapabilitySchema.parse(c)) };
+  }
+}
+
+/** Свои возможности видит сам инвестор: кабинет должен знать, что показывать. */
+@Roles('investor', 'admin')
+@Controller('me')
+export class MyPlanCapabilitiesController {
+  constructor(private readonly capabilities: PlanCapabilitiesService) {}
+
+  @Get('plan-capabilities')
+  async mine(@Ctx() ctx: RequestContext) {
+    const items = await this.capabilities.investorState(ctx, ctx.userId!);
+    return { items: items.map((c) => InvestorCapabilityStateSchema.parse(c)) };
   }
 }

@@ -99,8 +99,17 @@ export const PlanCapabilitySchema = z.object({
   title: z.string(),
   description: z.string(),
   isImplemented: z.boolean(),
+  /**
+   * Стартовая настройка «доступно всем инвесторам». Меняется администратором:
+   * это не вечное правило, а сегодняшнее решение до согласования матрицы.
+   */
   isBaseline: z.boolean(),
   isEnforced: z.boolean(),
+  /**
+   * Возможность закрыта действующим барьером подписки инвестора — отдельным
+   * механизмом рядом с тарифом. Ответ о доступности учитывает оба.
+   */
+  gatedByMembership: z.boolean(),
   /** Версии тарифов, в состав которых входит возможность. */
   plans: z.array(z.object({ planId: UuidSchema, code: z.string(), version: z.number().int() })),
 });
@@ -115,3 +124,25 @@ export type LinkPlanCapabilityRequest = z.infer<typeof LinkPlanCapabilityRequest
 
 export const UnlinkPlanCapabilityRequestSchema = LinkPlanCapabilityRequestSchema;
 export type UnlinkPlanCapabilityRequest = z.infer<typeof UnlinkPlanCapabilityRequestSchema>;
+
+/** Смена стартовой пометки «доступно всем» — настройка, а не запрет в коде. */
+export const SetCapabilityBaselineRequestSchema = z.object({
+  capability: z.string(),
+  isBaseline: z.boolean(),
+  reason: z.string().trim().min(3).max(500),
+});
+export type SetCapabilityBaselineRequest = z.infer<typeof SetCapabilityBaselineRequestSchema>;
+
+/**
+ * Что доступно инвестору и почему.
+ *
+ * Речь о ФУНКЦИЯХ. Доступ к конкретному проекту решает предикат аудитории:
+ * режим владельца, его согласие, адресные разрешения и отметки материалов.
+ * Ни тариф, ни барьер подписки их не заменяют и не обходят.
+ */
+export const InvestorCapabilityStateSchema = z.object({
+  capability: z.string(),
+  available: z.boolean(),
+  source: z.enum(['baseline', 'not_enforced', 'plan', 'plan_required', 'membership_required']),
+});
+export type InvestorCapabilityState = z.infer<typeof InvestorCapabilityStateSchema>;

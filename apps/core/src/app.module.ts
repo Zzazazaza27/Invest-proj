@@ -39,6 +39,7 @@ import {
   AdminFeeOffsetRulesController,
   AdminFeeTermsController,
   AdminPlanCapabilitiesController,
+  MyPlanCapabilitiesController,
 } from './billing/commission.controller';
 import { CommissionService, PlanCapabilitiesService } from './billing/commission.service';
 import {
@@ -56,6 +57,7 @@ import { FavoritesService } from './lab/favorites.service';
 import { SupportController } from './comms/support.controller';
 import { SupportService } from './comms/support.service';
 import { NotificationsService } from './comms/notifications.service';
+import { OperatorNotificationsService } from './comms/operator-notifications.service';
 import { CryptoService } from './crypto/crypto.service';
 import { Database } from './db/unit-of-work';
 import { NatsClient } from './events/nats.client';
@@ -162,6 +164,7 @@ import { S3Service } from './storage/s3.service';
     AdminFeeTermsController,
     AdminFeeOffsetRulesController,
     AdminPlanCapabilitiesController,
+    MyPlanCapabilitiesController,
     AdminCapabilitiesController,
     MyCapabilitiesController,
     DealLedgerController,
@@ -226,6 +229,7 @@ import { S3Service } from './storage/s3.service';
     AnalysisService,
     ExpertsService,
     NotificationsService,
+    OperatorNotificationsService,
     SupportService,
     FavoritesService,
     IntegrationService,

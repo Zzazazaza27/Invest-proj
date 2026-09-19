@@ -451,6 +451,30 @@ function PlanCapabilitiesBlock({ plans }: { plans: AdminPlan[] }) {
   // больше нечего, но действующие версии показываем первыми.
   const investorPlans = plans;
 
+  /** Базовость — настройка: её меняет администратор, а не разработчик. */
+  async function setBaseline(capability: PlanCapability, isBaseline: boolean) {
+    const reason = window.prompt(
+      isBaseline
+        ? 'Основание: почему возможность снова доступна всем?'
+        : 'Основание: почему возможность перестаёт быть доступной всем?',
+    );
+    if (reason === null || reason.trim().length < 3) return;
+    setBusy(true);
+    try {
+      const result = await api.planCapabilities.setBaseline({
+        capability: capability.code,
+        isBaseline,
+        reason: reason.trim(),
+      });
+      setItems(result.items);
+      setError(null);
+    } catch (err) {
+      setError(problemText(err, 'Настройка не изменена'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function toggle(capability: PlanCapability, linked: boolean) {
     if (planId === '') return;
     setBusy(true);
@@ -490,7 +514,9 @@ function PlanCapabilitiesBlock({ plans }: { plans: AdminPlan[] }) {
       <div className="alert alert--warn" data-capabilities-not-enforced>
         Платные ограничения не включены: матрица бесплатного и платного для инвестора не утверждена.
         Сегодня всё реализованное доступно всем инвесторам независимо от состава тарифа — настройка
-        ничего не закрывает.
+        ничего не закрывает. Пометка «доступно всем» — стартовая настройка: её можно снять, когда
+        матрица будет согласована. Карточку инвестора, кроме тарифа, закрывает отдельный барьер
+        подписки — он живёт во флагах платформы, и настройка тарифа его не отменяет.
       </div>
 
       {error && <div className="alert alert--error">{error}</div>}
@@ -532,10 +558,13 @@ function PlanCapabilitiesBlock({ plans }: { plans: AdminPlan[] }) {
                       </td>
                       <td className="small">
                         {capability.isBaseline
-                          ? 'базовая — не закрывается'
+                          ? 'доступна всем (стартовая настройка)'
                           : capability.isImplemented
                             ? 'реализована'
                             : 'не реализована'}
+                        {capability.gatedByMembership ? (
+                          <div className="muted">закрыта барьером подписки инвестора</div>
+                        ) : null}
                       </td>
                       <td className="small">
                         {capability.plans.length === 0
@@ -545,8 +574,17 @@ function PlanCapabilitiesBlock({ plans }: { plans: AdminPlan[] }) {
                               .join(', ')}
                       </td>
                       <td className="row-actions">
-                        {capability.isBaseline || !capability.isImplemented ? (
-                          <span className="muted small">нельзя включить в тариф</span>
+                        {!capability.isImplemented ? (
+                          <span className="muted small">не реализована</span>
+                        ) : capability.isBaseline ? (
+                          <button
+                            type="button"
+                            className="btn--sm"
+                            disabled={busy}
+                            onClick={() => void setBaseline(capability, false)}
+                          >
+                            Сделать настраиваемой
+                          </button>
                         ) : (
                           <button
                             type="button"
@@ -557,6 +595,16 @@ function PlanCapabilitiesBlock({ plans }: { plans: AdminPlan[] }) {
                             {linked ? 'Исключить' : 'Включить'}
                           </button>
                         )}
+                        {capability.isImplemented && !capability.isBaseline ? (
+                          <button
+                            type="button"
+                            className="btn--ghost btn--sm"
+                            disabled={busy}
+                            onClick={() => void setBaseline(capability, true)}
+                          >
+                            Вернуть в доступные всем
+                          </button>
+                        ) : null}
                       </td>
                     </tr>
                   );

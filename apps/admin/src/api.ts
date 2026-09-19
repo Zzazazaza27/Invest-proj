@@ -18,6 +18,7 @@ import {
   PlanCapabilitySchema,
   type LinkPlanCapabilityRequest,
   type PlanCapability,
+  type SetCapabilityBaselineRequest,
   StaffCapabilitySchema,
   TrancheReturnSchema,
   type CommissionAdjustment,
@@ -847,6 +848,13 @@ export const api = {
       client.request({
         method: 'POST',
         path: '/v1/admin/plan-capabilities/link',
+        body,
+        schema: listOf(PlanCapabilitySchema),
+      }),
+    setBaseline: (body: SetCapabilityBaselineRequest): Promise<{ items: PlanCapability[] }> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/plan-capabilities/baseline',
         body,
         schema: listOf(PlanCapabilitySchema),
       }),

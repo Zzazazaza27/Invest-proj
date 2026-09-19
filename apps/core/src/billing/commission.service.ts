@@ -4,8 +4,10 @@ import {
   type ActivateFeeOffsetRuleRequest,
   type FeeOffsetRule,
   type FeeTerms,
+  type InvestorCapabilityState,
   type LinkPlanCapabilityRequest,
   type PlanCapability,
+  type SetCapabilityBaselineRequest,
   type UnlinkPlanCapabilityRequest,
   type PublishFeeTermsRequest,
 } from '@unicorn/contracts';
@@ -168,7 +170,7 @@ export class CommissionService {
 
 const PLAN_CAPABILITIES_SELECT = `
   SELECT c.code, c.section, c.title, c.description,
-         c.is_implemented, c.is_baseline, c.is_enforced,
+         c.is_implemented, c.is_baseline, c.is_enforced, c.gated_by_membership,
          COALESCE(
            (SELECT jsonb_agg(jsonb_build_object(
                      'planId', p.id, 'code', p.code, 'version', p.version)
@@ -245,6 +247,58 @@ export class PlanCapabilitiesService {
     });
   }
 
+  /**
+   * Сменить стартовую пометку «доступно всем».
+   *
+   * Это НАСТРОЙКА, а не правило в коде: когда матрица бесплатного и платного
+   * будет согласована, администратор снимет пометку и включит возможность в
+   * тариф. Пока пометка стоит, привязка к тарифу отклоняется — иначе
+   * настройка противоречила бы сама себе.
+   */
+  async setBaseline(
+    ctx: RequestContext,
+    input: SetCapabilityBaselineRequest,
+  ): Promise<PlanCapability[]> {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rowCount } = await tx.query(
+        `UPDATE billing.plan_capabilities SET is_baseline = $2 WHERE code = $1`,
+        [input.capability, input.isBaseline],
+      );
+      if (rowCount === 0) throw errors.notFound({ subject: 'plan_capability' });
+
+      await this.audit.emit(tx, {
+        verb: 'billing.plan_capability.baseline_changed',
+        actorId: ctx.userId,
+        actorRole: 'admin',
+        subjectType: 'plan_capability',
+        subjectId: null,
+        context: {
+          capability: input.capability,
+          isBaseline: input.isBaseline,
+          reason: input.reason,
+        },
+        traceId: ctx.traceId,
+      });
+      return this.listIn(tx);
+    });
+  }
+
+  /** Что доступно инвестору сейчас и почему: тариф и барьер вместе. */
+  async investorState(ctx: RequestContext, userId: string): Promise<InvestorCapabilityState[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<{
+        capability: string;
+        available: boolean;
+        source: InvestorCapabilityState['source'];
+      }>(`SELECT capability, available, source FROM billing.investor_capabilities($1)`, [userId]);
+      return rows.map((row) => ({
+        capability: row.capability,
+        available: row.available,
+        source: row.source,
+      }));
+    });
+  }
+
   private async listIn(tx: Tx): Promise<PlanCapability[]> {
     const { rows } = await tx.query(PLAN_CAPABILITIES_SELECT);
     return (rows as PlanCapabilityRow[]).map(mapPlanCapability);
@@ -273,6 +327,7 @@ interface PlanCapabilityRow {
   is_implemented: boolean;
   is_baseline: boolean;
   is_enforced: boolean;
+  gated_by_membership: boolean;
   plans: { planId: string; code: string; version: number }[];
 }
 
@@ -285,6 +340,7 @@ function mapPlanCapability(row: PlanCapabilityRow): PlanCapability {
     isImplemented: row.is_implemented,
     isBaseline: row.is_baseline,
     isEnforced: row.is_enforced,
+    gatedByMembership: row.gated_by_membership,
     plans: row.plans,
   };
 }

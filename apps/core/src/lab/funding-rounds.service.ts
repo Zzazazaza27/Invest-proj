@@ -25,6 +25,7 @@ import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { ServiceCountriesService } from '../billing/service-countries.service';
 import { RoundPricingService, assertCommercialConditions } from '../billing/round-pricing.service';
+import { OperatorNotificationsService } from '../comms/operator-notifications.service';
 import { loadFormConfig } from './application-forms.service';
 import { roundDigest } from './disclosure-digest';
 import {
@@ -66,6 +67,7 @@ export class FundingRoundsService {
     private readonly audit: AuditRepository,
     private readonly countries: ServiceCountriesService,
     private readonly pricing: RoundPricingService,
+    private readonly operatorNotifications: OperatorNotificationsService,
   ) {}
 
   async listForProject(ctx: RequestContext, projectId: string): Promise<FundingRound[]> {
@@ -420,6 +422,19 @@ export class FundingRoundsService {
           WHERE id = $1`,
         [roundId, country, policy!.version],
       );
+
+      // Порог уведомления — последнее действие и НЕ условие открытия: раунд
+      // уже открыт, и неудача уведомления его не отменяет. Иначе настройка
+      // уведомлений начала бы решать, кому можно привлекать деньги.
+      await this.operatorNotifications.notifyRoundOpened(tx, ctx, {
+        roundId,
+        projectId: round.projectId,
+        countryCode: country!,
+        policy: policy!,
+        target: round.target,
+        currency: round.currency ?? policy!.config.baseCurrency,
+      });
+
       return quote;
     });
   }
