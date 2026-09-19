@@ -83,22 +83,54 @@ const CONSENTS = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind)
   locale: 'ru-RU',
 }));
 
+/**
+ * Запрос, который считается с ограничителем частоты.
+ *
+ * Прогон мастера — сотни запросов за минуту: автосохранения, перезагрузки
+ * страницы, проверки готовности. Он упирался в лимит и падал, причём падал
+ * невнятно: сырой `fetch` не смотрел на статус, и 429 превращался в
+ * `TypeError` десятью строками ниже.
+ *
+ * Правильный клиент при 429 ЖДЁТ столько, сколько назвал сервер, и повторяет —
+ * это и сделано здесь. Поднимать лимиты ради зелёного прогона нельзя: они
+ * защищают вход, а проверка, которая для своей зелени просит ослабить защиту,
+ * проверяет уже не тот продукт.
+ *
+ * Ожидание ограничено одной попыткой: если сервер отказывает и после паузы,
+ * это не «ещё подождать», а повод разобраться.
+ */
+async function fetchPaced(url, init, { label = 'запрос' } = {}) {
+  let response = await fetch(url, init);
+  if (response.status === 429) {
+    const wait = Number(response.headers.get('retry-after') ?? 0);
+    const seconds = Number.isFinite(wait) && wait > 0 ? Math.min(wait, 90) : 30;
+    console.warn(`  ·     ограничитель частоты на «${label}»: ждём ${seconds} с и повторяем`);
+    await new Promise((resolve) => setTimeout(resolve, (seconds + 1) * 1000));
+    response = await fetch(url, init);
+  }
+  return response;
+}
+
 async function register(tag) {
   const email = `labv2-${tag}-${suffix}@test.local`;
   const password = `Pw-${randomUUID()}`;
-  const response = await fetch(`${CORE_URL}/v1/auth/register`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal: AbortSignal.timeout(15_000),
-    body: JSON.stringify({
-      email,
-      password,
-      displayName: `Основатель ${tag}`,
-      role: 'founder',
-      locale: 'ru-RU',
-      consents: CONSENTS,
-    }),
-  });
+  const response = await fetchPaced(
+    `${CORE_URL}/v1/auth/register`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(15_000),
+      body: JSON.stringify({
+        email,
+        password,
+        displayName: `Основатель ${tag}`,
+        role: 'founder',
+        locale: 'ru-RU',
+        consents: CONSENTS,
+      }),
+    },
+    { label: 'регистрация' },
+  );
   if (!response.ok) throw new Error(`регистрация ${tag}: HTTP ${response.status}`);
   const [row] = await sql('SELECT id FROM identity.users WHERE email_hmac = $1', [
     blindIndex(email),
@@ -507,11 +539,12 @@ try {
   // нескольких прогонов подряд) превращался в `TypeError: sections undefined`
   // на десять строк ниже — и выглядел как поломка проверки, а не как «стенд
   // упёрся в ограничитель частоты».
-  const formResponse = await fetch(
+  const formResponse = await fetchPaced(
     `${CORE_URL}/v1/applications/${wizardUrl.split('/').pop()}/form`,
     {
       headers: { cookie: (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ') },
     },
+    { label: 'форма заявки' },
   );
   if (!formResponse.ok) {
     const retryAfter = formResponse.headers.get('retry-after');

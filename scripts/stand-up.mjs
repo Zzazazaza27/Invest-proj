@@ -11,15 +11,23 @@
  * запуск на работающем стенде безопасен и заканчивается проверкой.
  *
  * Запуск:
- *   npm run stand:up              поднять и проверить
- *   npm run stand:up -- --check   только проверить, ничего не поднимая
+ *   npm run stand:up                поднять и проверить
+ *   npm run stand:up -- --no-build  без пересборки статики (быстрее)
+ *   npm run stand:up -- --check     только проверить, ничего не поднимая
+ *
+ * Останавливается командой `npm run stand:down`, состояние показывает
+ * `npm run stand:status`.
  */
 import { execSync, spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
+import { PORTS } from './lib/ports.mjs';
+import { commandLine, portOwner, stopTree } from './lib/stand-processes.mjs';
+
 const ROOT = resolve(import.meta.dirname, '..');
 const CHECK_ONLY = process.argv.includes('--check');
+const NO_BUILD = process.argv.includes('--no-build');
 
 /**
  * Маршруты и ожидаемый ответ БЕЗ входа.
@@ -149,6 +157,69 @@ function ensureDocker() {
   return false;
 }
 
+/**
+ * Сборка приложений.
+ *
+ * nginx раздаёт собранные каталоги `dist`, а не проксирует на dev-серверы: локальная
+ * раздача устроена ровно как боевая. Плата за это — статика должна быть
+ * собрана, и собрана ИЗ ТЕКУЩЕГО кода. Молчаливо раздать вчерашнюю сборку
+ * хуже, чем не раздать ничего: проверяешь одно, а работает другое.
+ *
+ * Пропустить можно явно (`--no-build`) — когда код не менялся и нужен быстрый
+ * подъём.
+ */
+function build() {
+  step('Сборка приложений');
+  if (NO_BUILD) {
+    warn('пропущена по --no-build: nginx раздаст то, что собрано сейчас');
+    return true;
+  }
+  const t = Date.now();
+  if (run('npm run build', { quiet: true }) === null) {
+    fail('сборка не прошла');
+    if (lastError) console.error(lastError.replace(/^/gm, '        '));
+    return false;
+  }
+  ok(`собрано за ${Math.round((Date.now() - t) / 1000)} с`);
+  return true;
+}
+
+/**
+ * Dev-серверы Vite при поднятой единой точке входа — это ВТОРОЙ стенд.
+ *
+ * Те же приложения, но из исходников и на своих портах. Пока они работают,
+ * «проверил на стенде» перестаёт быть однозначным: половина проверок ходит на
+ * :5175, половина на единый адрес, и расхождение между собранным и исходным
+ * кодом видно не сразу. Поэтому они останавливаются — но только свои, по
+ * командной строке.
+ */
+function stopDevServers() {
+  step('Дубли dev-серверов');
+  const ports = [
+    PORTS.webPublic,
+    PORTS.admin,
+    PORTS.lab,
+    PORTS.investor,
+    PORTS.expert,
+    PORTS.auth,
+    PORTS.console,
+  ];
+  let stopped = 0;
+  for (const port of ports) {
+    const pid = portOwner(port);
+    if (!pid) continue;
+    const cmd = commandLine(pid);
+    if (!cmd.toLowerCase().includes('vite')) {
+      warn(`:${port} занят не dev-сервером (pid ${pid}) — оставлен`);
+      continue;
+    }
+    stopTree(pid);
+    stopped += 1;
+  }
+  ok(stopped === 0 ? 'нет — работает только единая точка входа' : `остановлено: ${stopped}`);
+  return true;
+}
+
 function infra() {
   step('Инфраструктура');
   if (run('node scripts/infra.mjs up') === null) {
@@ -201,6 +272,40 @@ function core() {
   return true;
 }
 
+/**
+ * Шлюз анализа. Без него разбор заявки падает, и падает невнятно: маршрут
+ * анализа отвечает «сервис недоступен», а причина — что процесс не запущен.
+ *
+ * Не блокирует подъём стенда: витрина, кабинеты и покупка работают и без
+ * него. Поэтому предупреждение, а не отказ.
+ */
+function gateway() {
+  step('Шлюз анализа');
+  if (probe(`http://127.0.0.1:${PORTS.aiGateway}/healthz`).code === 200) {
+    ok(`уже работает на :${PORTS.aiGateway}`);
+    return true;
+  }
+  const venv =
+    existsSync(resolve(ROOT, 'apps/ai-gateway/.venv/Scripts/python.exe')) ||
+    existsSync(resolve(ROOT, 'apps/ai-gateway/.venv/bin/python'));
+  if (!venv) {
+    warn('венв не создан — разбор заявки работать не будет');
+    warn('  python -m venv apps/ai-gateway/.venv');
+    warn(
+      '  apps/ai-gateway/.venv/Scripts/python -m pip install -r apps/ai-gateway/requirements.txt',
+    );
+    return true;
+  }
+  const out = run('node scripts/dev-ai-gateway.mjs --detached');
+  if (out === null) {
+    warn('не запустился — смотрите ai-gateway.log; разбор заявки будет недоступен');
+    return true;
+  }
+  const pid = /pid (\d+)/.exec(out)?.[1];
+  ok(`запущен${pid ? `, pid ${pid}` : ''}, лог ai-gateway.log`);
+  return true;
+}
+
 function web() {
   step('Единая точка входа');
   if (run('node scripts/infra.mjs web-up') === null) {
@@ -245,7 +350,18 @@ if (CHECK_ONLY) {
   process.exit(good ? 0 : 1);
 }
 
-const steps = [ensureDocker, infra, migrate, nats, core, web, check];
+const steps = [
+  build,
+  ensureDocker,
+  infra,
+  migrate,
+  nats,
+  core,
+  gateway,
+  stopDevServers,
+  web,
+  check,
+];
 for (const fn of steps) {
   const good = fn();
   if (!good) {
@@ -257,10 +373,17 @@ for (const fn of steps) {
 console.warn(`
 Стенд поднят за ${Math.round((Date.now() - t0) / 1000)} с.
 
-  http://127.0.0.1/         витрина
-  http://127.0.0.1/login/   вход — учётки demo-* из
-                            docs/product/чек-лист-сценариев.md
-  http://127.0.0.1/console/ служебная консоль
+  http://127.0.0.1/          витрина
+  http://127.0.0.1/login/    вход
+  http://127.0.0.1/lab/      кабинет основателя
+  http://127.0.0.1/investor/ кабинет инвестора
+  http://127.0.0.1/expert/   кабинет эксперта
+  http://127.0.0.1/admin/    админка
+  http://127.0.0.1/console/  служебная консоль (только администратору)
 
-Остановить: npm run web:down && npm run infra:down
+  Учётные записи для проверки: .local/приёмка.md (вне Git)
+  Пересобрать этот файл:       node scripts/seed-acceptance.mjs
+
+Остановить:  npm run stand:down
+Состояние:   npm run stand:status
 `);

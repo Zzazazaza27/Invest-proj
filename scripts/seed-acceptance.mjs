@@ -32,7 +32,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { frontendUrl, CORE_URL, PORTS } from './lib/ports.mjs';
+import { publicUrl, PORTS } from './lib/ports.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -270,23 +270,49 @@ const route = `# Маршрут приёмки — управление эксп
 
 ---
 
-## Адреса
+## Основной адрес
 
-| Что                | Адрес                                   |
-| ------------------ | --------------------------------------- |
-| Вход               | ${frontendUrl('auth').replace('127.0.0.1', 'localhost')}    |
-| Админка            | ${frontendUrl('admin').replace('127.0.0.1', 'localhost')}    |
-| Кабинет эксперта   | ${frontendUrl('expert').replace('127.0.0.1', 'localhost')}   |
-| Кабинет основателя | ${frontendUrl('lab').replace('127.0.0.1', 'localhost')}      |
-| Кабинет инвестора  | ${frontendUrl('investor').replace('127.0.0.1', 'localhost')} |
-| Витрина            | ${frontendUrl('webPublic').replace('127.0.0.1', 'localhost')} |
-| Ядро API           | ${CORE_URL.replace('127.0.0.1', 'localhost')} |
+**${publicUrl('webPublic')}** — с него начинается всё остальное.
 
-Ходить по \`localhost\`, а не по \`127.0.0.1\`: для браузера это разные origin, и
-сессия, полученная на одном, на другом не действует.
+| Что                | Адрес                        |
+| ------------------ | ---------------------------- |
+| Витрина            | ${publicUrl('webPublic')}    |
+| Вход               | ${publicUrl('auth')}         |
+| Кабинет основателя | ${publicUrl('lab')}          |
+| Кабинет инвестора  | ${publicUrl('investor')}     |
+| Кабинет эксперта   | ${publicUrl('expert')}       |
+| Админка            | ${publicUrl('admin')}        |
+| Служебная консоль  | ${publicUrl('console')}      |
+
+Один адрес без портов — это не косметика: страница и API лежат на одном
+origin, поэтому сессия работает во всех кабинетах, а изображения проектов не
+упираются в политику встраивания.
 
 Админка открывает свою форму входа. Остальные кабинеты формы не содержат и
 перенаправляют на приложение входа — это нормально.
+
+---
+
+## После перезагрузки компьютера
+
+\`\`\`
+npm run stand:up
+\`\`\`
+
+Одна команда: собирает приложения, поднимает контейнеры, накатывает миграции,
+запускает ядро и шлюз анализа, включает единый адрес и проверяет маршруты.
+Повторный запуск на работающем стенде безопасен.
+
+Контейнеры Docker поднимаются сами вместе с Docker Desktop
+(\`restart: unless-stopped\`); ядро и шлюз — процессы на хосте, их поднимает эта
+команда.
+
+| Команда | Что делает |
+| ------- | ---------- |
+| \`npm run stand:up\` | поднять всё и проверить |
+| \`npm run stand:up -- --no-build\` | то же, но без пересборки (быстрее) |
+| \`npm run stand:status\` | что работает, что нет и почему |
+| \`npm run stand:down\` | остановить; **данные остаются** |
 
 ---
 
@@ -386,12 +412,10 @@ ${people.map((w) => `| \`${w.login}\` | ${w.displayName} | \`${w.password}\` |`)
 
 ## Если что-то не открывается
 
-1. Поднято ли всё: ядро (${PORTS.core}), вход (${PORTS.auth}), админка
-   (${PORTS.admin}), кабинет эксперта (${PORTS.expert}), кабинет основателя
-   (${PORTS.lab}), кабинет инвестора (${PORTS.investor}), витрина
-   (${PORTS.webPublic}), шлюз анализа (${PORTS.aiGateway}).
-   Порядок запуска — \`docs/runbooks/демонстрационный-маршрут.md\`, раздел 1.
-2. Пустая страница кабинета — почти всегда не поднято приложение входа.
+1. \`npm run stand:status\` — покажет, что именно не работает: контейнеры,
+   ядро, шлюз анализа (:${PORTS.aiGateway}), собранная статика или маршруты.
+2. \`npm run stand:up\` — поднимет недостающее. Повторный запуск на
+   работающем стенде безопасен.
 3. Учётка не пускает — перезапустить \`node scripts/seed-acceptance.mjs\`:
    пароли переустановятся и попадут в этот файл.
 `;
