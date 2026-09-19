@@ -103,7 +103,7 @@ export function VisibilityCard({
           >
             {(['private', 'public', 'registered_investors', 'selected_investors'] as const).map(
               (value) => (
-                <option key={value} value={value} disabled={value === 'selected_investors'}>
+                <option key={value} value={value}>
                   {S.visibility.modes[value]}
                 </option>
               ),

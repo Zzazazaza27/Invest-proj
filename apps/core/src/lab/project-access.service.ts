@@ -53,9 +53,13 @@ export class ProjectAccessService {
     return this.db.readOnly(ctx, async (tx) => {
       const visibility = await this.projectVisibility(tx, projectId);
       const { rows } = await tx.query<EntryRow>(
+        // Только действующие: карточка отвечает на вопрос «кому доступ открыт
+        // СЕЙЧАС». Отозванные записи остаются в БД и в журнале как история,
+        // но в списке рядом с действующими читались бы как открытый доступ.
         `SELECT kind, entry_id, subject_kind, subject_id, subject_name, permissions,
                 created_at, reason, revoked_at
-           FROM lab.project_access_entries($1)`,
+           FROM lab.project_access_entries($1)
+          WHERE revoked_at IS NULL`,
         [projectId],
       );
       const entries = rows.map(mapEntry);

@@ -13,6 +13,7 @@ import type { InvestmentPassport, ProjectFull, ReadinessEntry } from '@unicorn/c
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
 import { MaterialsCard } from './MaterialsCard';
+import { AccessCard } from './AccessCard';
 import { VisibilityCard } from './VisibilityCard';
 import { PublicationConsentsCard } from './PublicationConsentsCard';
 import { BillingCard } from './BillingCard';
@@ -222,6 +223,10 @@ export function ProjectPage({
 
       {/* Листинг с 5.7.3 — следствие режима «кто может видеть проект». */}
       <VisibilityCard project={project} onChanged={load} />
+
+      {/* Выдача разрешений выбранным получателям (5.8) — рядом с режимом:
+          режим решает, действует ли выданное. */}
+      <AccessCard projectId={project.id} visibility={project.visibility} />
 
       <BillingCard projectId={project.id} requiredPlanId={project.requiredPlanId ?? null} />
       <MaterialsCard projectId={project.id} />

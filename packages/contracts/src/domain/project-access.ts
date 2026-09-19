@@ -35,6 +35,10 @@ export const ProjectAccessEntrySchema = z.object({
 });
 export type ProjectAccessEntry = z.infer<typeof ProjectAccessEntrySchema>;
 
+/**
+ * Список отвечает на вопрос «кому доступ открыт сейчас»: отозванные записи
+ * в него не входят. История отзывов остаётся в журнале аудита.
+ */
 export const ProjectAccessListSchema = z.object({
   /** Режим проекта рядом: без `selected_investors` выданное не действует. */
   visibility: ProjectVisibilitySchema,
