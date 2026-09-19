@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ReadinessDimensionSchema, ScoreAxisSchema } from '@unicorn/contracts';
 import { AnalysisResultSchema, AiGatewayClient } from '../src/ai/ai-gateway.client';
+import { PROMPT_VERSION, llmModelVersion } from '../src/ai/provider-credentials.service';
 
 /**
  * Boundary-схема ответа AI-шлюза (Ф33, CODE-HIGH-06).
@@ -169,5 +173,37 @@ describe('потоковый предел ответа шлюза (CODE-HIGH-08)
     });
     await expect(readBounded(new Response(stream))).rejects.toThrow();
     expect(sent).toBeLessThanOrEqual(4_000_000);
+  });
+});
+
+/**
+ * Версия промпта живёт в двух местах: в ядре (оно собирает строку версии
+ * модели и проверяет eval-гейт до обращения к шлюзу) и в самом шлюзе (он
+ * выбирает файлы промпта). Дублирование неизбежно, молчаливое расхождение —
+ * нет.
+ *
+ * Расхождение уже случалось: шлюз перешёл на v2.6, ядро осталось на v2.5.2.
+ * Последствие не в неудобстве, а в неправде: паспорт получал бы метку
+ * рубрики, которой его не считали, — и `--only-stale` считал бы такие
+ * паспорта свежими.
+ */
+describe('Версия промпта ядра и шлюза', () => {
+  it('совпадает с PROMPT_VERSION шлюза', () => {
+    const llmPy = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'ai-gateway', 'app', 'llm.py'),
+      'utf8',
+    );
+    const match = llmPy.match(/PROMPT_VERSION\s*:\s*Final\[str\]\s*=\s*"([^"]+)"/);
+    expect(match, 'PROMPT_VERSION не найден в apps/ai-gateway/app/llm.py').not.toBeNull();
+    expect(PROMPT_VERSION).toBe(match![1]);
+  });
+
+  it('строка версии модели содержит версию промпта', () => {
+    // По ней читается, какой рубрикой посчитан паспорт: без версии промпта
+    // строка отвечала бы только «каким провайдером».
+    expect(llmModelVersion('deepseek', 'deepseek-v4-flash')).toBe(
+      `llm:deepseek:deepseek-v4-flash:${PROMPT_VERSION}`,
+    );
+    expect(llmModelVersion('openai', null)).toBe(`llm:openai:default:${PROMPT_VERSION}`);
   });
 });

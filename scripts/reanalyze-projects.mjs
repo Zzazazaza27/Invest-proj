@@ -14,7 +14,8 @@
  *   node scripts/reanalyze-projects.mjs --concurrency 3
  *   node scripts/reanalyze-projects.mjs --dry-run       только список
  *   node scripts/reanalyze-projects.mjs --only-stale    только те, чей действующий паспорт
- *                                                       не от активной модели (возобновление)
+ *                                                       посчитан НЕ той версией разбора,
+ *                                                       которой считает платформа сейчас
  *
  * Учётка администратора — из окружения: REANALYZE_ADMIN_EMAIL (по умолчанию
  * stand-admin@unicorn.local) и REANALYZE_ADMIN_PASSWORD (по умолчанию
@@ -95,22 +96,95 @@ function makeClient() {
   return { call };
 }
 
+/**
+ * Версия промпта ядра — из исходника, а не из копии здесь.
+ *
+ * Третья копия константы означала бы третье место, где она разойдётся.
+ * Совпадение ядра и шлюза проверяет тест ядра, поэтому читать достаточно
+ * одного файла.
+ */
+function corePromptVersion() {
+  const file = join(ROOT, 'apps', 'core', 'src', 'ai', 'provider-credentials.service.ts');
+  const match = readFileSync(file, 'utf8').match(/PROMPT_VERSION\s*=\s*'([^']+)'/);
+  if (!match) throw new Error(`не удалось прочитать PROMPT_VERSION из ${file}`);
+  return match[1];
+}
+
+/**
+ * Версия разбора, которой будет посчитан СЛЕДУЮЩИЙ прогон.
+ *
+ * Прежний `--only-stale` сравнивал паспорт с моделью, помеченной `is_active` в
+ * базе. Это не то же самое: строка `is_active` переключается администратором
+ * при включении LLM и остаётся прежней, когда версия промпта меняется в коде.
+ * Поэтому после перехода на новую версию промпта скрипт отвечал «0 к анализу»,
+ * хотя устарели все паспорта. «0» читается как «всё свежее» — так можно уйти в
+ * бой с паспортами от старой рубрики.
+ *
+ * Считаем так же, как считает ядро: при включённом LLM и активном ключе —
+ * `llm:<провайдер>:<модель>:<версия промпта из кода>`, иначе версия активной
+ * модели правил.
+ */
+async function expectedModelVersion(pool) {
+  const { rows: flag } = await pool.query(
+    `SELECT enabled FROM audit.feature_flags WHERE key = 'ai.scoring.llm.enabled'`,
+  );
+  const llmEnabled = flag[0]?.enabled === true;
+  if (!llmEnabled) {
+    const { rows } = await pool.query(
+      `SELECT version FROM scoring.score_models WHERE name = 'ai_score' AND is_active`,
+    );
+    return { version: rows[0]?.version ?? null, mode: 'по правилам, без языковой модели' };
+  }
+  const { rows: cred } = await pool.query(
+    `SELECT provider, model_name FROM scoring.ai_provider_credentials WHERE is_active`,
+  );
+  const active = cred[0];
+  if (!active) return { version: null, mode: 'LLM включён, но активного ключа нет' };
+  const model = active.model_name ?? 'default';
+  return {
+    version: `llm:${active.provider}:${model}:${corePromptVersion()}`,
+    mode: `языковая модель ${active.provider}/${model}`,
+  };
+}
+
 async function listProjects() {
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER, max: 1 });
   try {
+    const expected = await expectedModelVersion(pool);
+    if (onlyStale && !expected.version) {
+      // Нечего сравнивать — значит и «свежих» назвать нельзя. Молчаливый
+      // пустой список здесь был бы худшим из ответов.
+      throw new Error(
+        `не удалось определить версию разбора (${expected.mode}): ` +
+          'сравнивать паспорта не с чем',
+      );
+    }
     const staleOnly = `AND NOT EXISTS (
         SELECT 1 FROM scoring.investment_passports ip
         JOIN scoring.score_models m ON m.id = ip.model_id
        WHERE ip.project_id = p.id AND ip.superseded_at IS NULL
-         AND m.name = 'ai_score' AND m.is_active)`;
+         AND m.name = 'ai_score' AND m.version = $1)`;
     const { rows } = await pool.query(
-      `SELECT p.id, p.title, p.listed_at IS NOT NULL AS listed
+      `SELECT p.id, p.title, p.listed_at IS NOT NULL AS listed,
+              EXISTS (SELECT 1 FROM scoring.investment_passports ip
+                       WHERE ip.project_id = p.id AND ip.superseded_at IS NULL) AS has_passport
          FROM lab.projects p
         WHERE p.deleted_at IS NULL ${onlyListed ? 'AND p.listed_at IS NOT NULL' : ''}
           ${onlyStale ? staleOnly : ''}
         ORDER BY p.created_at`,
+      onlyStale ? [expected.version] : [],
     );
-    return rows;
+
+    // Картина целиком, а не только число к обработке: «0 к анализу» обязано
+    // отличаться от «сравнить не с чем» и от «все уже на этой версии».
+    const { rows: byVersion } = await pool.query(
+      `SELECT COALESCE(m.version, '(без модели)') AS version, count(*)::int AS n
+         FROM scoring.investment_passports ip
+         LEFT JOIN scoring.score_models m ON m.id = ip.model_id
+        WHERE ip.superseded_at IS NULL
+        GROUP BY 1 ORDER BY 2 DESC`,
+    );
+    return { rows, expected, byVersion };
   } finally {
     await pool.end();
   }
@@ -123,12 +197,23 @@ async function main() {
     );
     process.exit(2);
   }
-  let projects = await listProjects();
+  const { rows, expected, byVersion } = await listProjects();
+  let projects = rows;
   if (limit > 0) projects = projects.slice(0, limit);
+  console.warn(`версия разбора сейчас: ${expected.version ?? '—'} (${expected.mode})`);
+  console.warn('действующие паспорта по версиям:');
+  if (byVersion.length === 0) console.warn('  (паспортов нет)');
+  for (const row of byVersion) {
+    const mark = row.version === expected.version ? 'на текущей' : 'устарели';
+    console.warn(`  ${String(row.n).padStart(4)}  ${row.version}  — ${mark}`);
+  }
+  // «Устарел» и «не анализировался ни разу» — разные причины попасть в список,
+  // и одно число на двоих скрывает, что именно предстоит сделать.
+  const stale = projects.filter((p) => p.has_passport).length;
+  const never = projects.length - stale;
   console.warn(
-    `проектов к анализу: ${projects.length}${onlyListed ? ' (только опубликованные)' : ''}${
-      onlyStale ? ' (без паспорта от активной модели)' : ''
-    }`,
+    `проектов к анализу: ${projects.length}${onlyListed ? ' (только опубликованные)' : ''}` +
+      (onlyStale ? ` — из них с устаревшим паспортом ${stale}, без паспорта вовсе ${never}` : ''),
   );
   if (dryRun) {
     for (const p of projects) console.warn(`  ${p.id}  ${p.listed ? '●' : '○'}  ${p.title}`);

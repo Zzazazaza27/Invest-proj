@@ -13,7 +13,7 @@ import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { type ScoringReviewItem, type StoredPassport } from '@unicorn/contracts';
 import { AiGatewayClient, type AnalysisResult } from './ai-gateway.client';
-import { ProviderCredentialsService } from './provider-credentials.service';
+import { PROMPT_VERSION, ProviderCredentialsService } from './provider-credentials.service';
 import { CryptoService } from '../crypto/crypto.service';
 import { LocalizationService } from './localization.service';
 import {
@@ -297,6 +297,31 @@ export class AnalysisService {
         );
       });
       throw error;
+    }
+
+    // Шлюз обязан считать той же рубрикой, которой ядро подписывает паспорт.
+    //
+    // Версия промпта живёт в двух местах: ядро выбирает `model_id` ДО вызова,
+    // шлюз выбирает файлы промпта у себя. Совпадение проверяется тестом при
+    // сборке, но сборка и запуск — разные события: шлюз может быть поднят из
+    // другой ревизии. Если он отвечает чужой версией, паспорт получил бы метку
+    // рубрики, которой его не считали, — и это хуже, чем отсутствие паспорта:
+    // неверная метка не видна, а по ней потом решают, устарел разбор или нет.
+    //
+    // Проверяется только LLM-ответ: у разбора по правилам версии промпта нет
+    // и быть не должно.
+    if (result.isLlm && result.promptVersion && result.promptVersion !== PROMPT_VERSION) {
+      await this.journal(ctx, runId, 'prompt_version_mismatch', {
+        expected: PROMPT_VERSION,
+        received: result.promptVersion,
+      });
+      await this.failRun(ctx, runId);
+      throw errors.conflict(
+        `Шлюз анализа считает промптом ${result.promptVersion}, а платформа подписывает ` +
+          `результат как ${PROMPT_VERSION}. Разбор не сохранён: метка рубрики должна ` +
+          'соответствовать тому, чем разбор выполнен. Обновите шлюз или ядро до одной версии.',
+        { runId, expected: PROMPT_VERSION, received: result.promptVersion },
+      );
     }
 
     // Публикация обёрнута целиком: ЛЮБАЯ ошибка после успешного ответа шлюза
