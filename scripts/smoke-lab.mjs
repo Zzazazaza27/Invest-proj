@@ -2203,14 +2203,18 @@ console.warn('\n[раунды] профиль без раунда, чернов�
           !JSON.stringify(strangerSelected.json ?? '').includes('Раунд после публикации'),
         `${strangerSelected.response.status} ${investorSelected.response.status} ${anonSelected.response.status}`,
       );
+      // С 5.8 режим ставится действием владельца; сам по себе он ничего не
+      // открывает — проверка выше это и показывает. Выдача разрешений
+      // проверяется отдельным прогоном (scripts/smoke-project-access.mjs).
       const selectedByApi = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
         method: 'PUT',
         body: { visibility: 'selected_investors' },
       });
       check(
-        'режим «выбранные инвесторы» через API отклоняется до 5.8',
-        selectedByApi.response.status === 400 || selectedByApi.response.status === 422,
-        `статус ${selectedByApi.response.status}`,
+        'режим «выбранные инвесторы» ставится действием владельца (5.8)',
+        selectedByApi.response.status === 200 &&
+          selectedByApi.json?.visibility === 'selected_investors',
+        `статус ${selectedByApi.response.status} ${selectedByApi.json?.visibility ?? ''}`,
       );
       const registered = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
         method: 'PUT',

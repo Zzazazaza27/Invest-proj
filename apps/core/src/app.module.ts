@@ -74,6 +74,8 @@ import { KycController } from './kyc/kyc.controller';
 import { KycService } from './kyc/kyc.service';
 import { CatalogController } from './lab/catalog.controller';
 import { CatalogService } from './lab/catalog.service';
+import { ProjectAccessController } from './lab/project-access.controller';
+import { ProjectAccessService } from './lab/project-access.service';
 import { ProjectViewsController } from './lab/project-views.controller';
 import { ProjectViewsService } from './lab/project-views.service';
 import { ProjectsController } from './lab/projects.controller';
@@ -127,6 +129,7 @@ import { S3Service } from './storage/s3.service';
     AdminReadinessConfigsController,
     FeaturesController,
     CatalogController,
+    ProjectAccessController,
     ProjectViewsController,
     SeasonsController,
     BillingController,
@@ -171,6 +174,7 @@ import { S3Service } from './storage/s3.service';
     ApplicationsService,
     ApplicationFormsService,
     CatalogService,
+    ProjectAccessService,
     ProjectViewsService,
     SeasonsService,
     BillingService,

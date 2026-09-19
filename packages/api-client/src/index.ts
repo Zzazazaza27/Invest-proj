@@ -54,6 +54,10 @@ import {
   ProjectTeaserSchema,
   PublicViewSchema,
   InvestorViewSchema,
+  ProjectAccessEntrySchema,
+  ProjectAccessListSchema,
+  type ExcludeAccessRequest,
+  type GrantAccessRequest,
   ViewPreviewSchema,
   RoundOpenPreviewSchema,
   ApplyDisclosureResultSchema,
@@ -442,6 +446,44 @@ export class UnicornApi {
         body,
         schema: ApplyDisclosureResultSchema,
         idempotencyKey: uuidv7(),
+      }),
+
+    /**
+     * Разрешения выбранных получателей (5.8): список выданного и исключений.
+     * Тизера в наборе нет — он следствие любого действующего разрешения.
+     */
+    access: (id: string) =>
+      this.http.request({ path: `/projects/${id}/access`, schema: ProjectAccessListSchema }),
+
+    /** Выдать набор разрешений получателю, названному точным адресом почты. */
+    grantAccess: (id: string, body: GrantAccessRequest) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/access/grants`,
+        body,
+        schema: ProjectAccessEntrySchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    /** Закрыть выданный доступ; запись остаётся историей. */
+    revokeAccess: (id: string, grantId: string) =>
+      this.http.request({ method: 'DELETE', path: `/projects/${id}/access/grants/${grantId}` }),
+
+    /** Исключение: доступ закрыт при любом режиме и любом разрешении. */
+    excludeAccess: (id: string, body: ExcludeAccessRequest) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/access/exclusions`,
+        body,
+        schema: ProjectAccessEntrySchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    /** Снять исключение. Разрешения оно не возвращает — они живут отдельно. */
+    revokeExclusion: (id: string, exclusionId: string) =>
+      this.http.request({
+        method: 'DELETE',
+        path: `/projects/${id}/access/exclusions/${exclusionId}`,
       }),
 
     /** Отметка материала: показывать допущенным инвесторам или только команде. */

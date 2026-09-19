@@ -808,22 +808,23 @@ export class ProjectsService {
     projectId: string,
     mode: ProjectFull['visibility'],
   ): Promise<ProjectFull> {
-    if (mode === 'selected_investors') {
-      throw errors.validation([
-        {
-          path: 'visibility',
-          message: 'режим «выбранные инвесторы» появится вместе с выдачей разрешений (этап 5.8)',
-        },
-      ]);
-    }
     if (mode === 'private') return this.unpublishListing(ctx, projectId);
     return this.publishAs(ctx, projectId, mode);
   }
 
+  /**
+   * Режим шире `private` проходит одни и те же проверки — включая
+   * «выбранных инвесторов» (5.8): за карточкой, которую кто-то увидит,
+   * должен стоять проверенный владелец, и остановка комплаенса действует
+   * одинаково. Выбранный получатель видит проект, только если ему выдано
+   * разрешение (`lab.project_access_grants`), поэтому режим сам по себе
+   * ничего не раскрывает; анониму и Integration API он не виден вовсе
+   * (предикат с `NULL`-пользователем).
+   */
   private async publishAs(
     ctx: RequestContext,
     projectId: string,
-    mode: 'public' | 'registered_investors',
+    mode: 'public' | 'registered_investors' | 'selected_investors',
   ): Promise<ProjectFull> {
     return this.runMapped(async () =>
       this.db.transaction(ctx, async (tx) => {
