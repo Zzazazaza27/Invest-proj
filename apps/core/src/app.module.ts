@@ -28,6 +28,12 @@ import {
   ServiceCountriesController,
 } from './billing/service-countries.controller';
 import { ServiceCountriesService } from './billing/service-countries.service';
+import {
+  AdminRoundPackagesController,
+  AdminRoundServiceOffersController,
+  AdminRoundServicesController,
+} from './billing/round-packages.controller';
+import { RoundPackagesService } from './billing/round-packages.service';
 import { FundingRoundsController } from './lab/funding-rounds.controller';
 import { FundingRoundsService } from './lab/funding-rounds.service';
 import { NotificationsController } from './comms/notifications.controller';
@@ -136,6 +142,9 @@ import { S3Service } from './storage/s3.service';
     ServiceCountriesController,
     MeServiceCountryController,
     AdminServiceCountriesController,
+    AdminRoundServicesController,
+    AdminRoundPackagesController,
+    AdminRoundServiceOffersController,
     FundingRoundsController,
     AdminController,
     InvestmentsController,
@@ -179,6 +188,7 @@ import { S3Service } from './storage/s3.service';
     SeasonsService,
     BillingService,
     ServiceCountriesService,
+    RoundPackagesService,
     FundingRoundsService,
     AdminService,
     DirectoryService,

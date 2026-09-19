@@ -11,6 +11,17 @@ import {
   SeasonSchema,
   SeasonStageOccupancySchema,
   ServiceAccountSchema,
+  RoundPackageSchema,
+  RoundServiceOfferSchema,
+  RoundServiceSchema,
+  type CloseRoundPackageRequest,
+  type CreateRoundServiceRequest,
+  type PublishRoundPackageRequest,
+  type PublishRoundServiceOfferRequest,
+  type RoundPackage,
+  type RoundService,
+  type RoundServiceOffer,
+  type UpdateRoundServiceRequest,
   SupportMessageSchema,
   SupportTicketDetailSchema,
   SupportTicketSchema,
@@ -757,6 +768,70 @@ export const api = {
   },
 
   // ------------------------------------------- словарь и ЧАВО (план 0.2 §2.6)
+
+  /**
+   * Пакеты запуска раунда (этап 5.9.1): каталог услуг, версии пакетов и цены
+   * докупки. Только настройка предложения — продаж здесь нет.
+   */
+  roundPackages: {
+    services: (): Promise<{ items: RoundService[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/round-services',
+        schema: listOf(RoundServiceSchema),
+      }),
+    createService: (body: CreateRoundServiceRequest): Promise<RoundService> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/round-services',
+        body,
+        schema: RoundServiceSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    updateService: (id: string, body: UpdateRoundServiceRequest): Promise<RoundService> =>
+      client.request({
+        method: 'PATCH',
+        path: `/v1/admin/round-services/${encodeURIComponent(id)}`,
+        body,
+        schema: RoundServiceSchema,
+      }),
+    list: (): Promise<{ items: RoundPackage[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/round-packages',
+        schema: listOf(RoundPackageSchema),
+      }),
+    publish: (body: PublishRoundPackageRequest): Promise<RoundPackage> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/round-packages',
+        body,
+        schema: RoundPackageSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    close: (id: string, body: CloseRoundPackageRequest): Promise<RoundPackage> =>
+      client.request({
+        method: 'POST',
+        path: `/v1/admin/round-packages/${encodeURIComponent(id)}/close`,
+        body,
+        schema: RoundPackageSchema,
+        idempotencyKey: uuidv7(),
+      }),
+    offers: (): Promise<{ items: RoundServiceOffer[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/round-service-offers',
+        schema: listOf(RoundServiceOfferSchema),
+      }),
+    publishOffer: (body: PublishRoundServiceOfferRequest): Promise<RoundServiceOffer> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/round-service-offers',
+        body,
+        schema: RoundServiceOfferSchema,
+        idempotencyKey: uuidv7(),
+      }),
+  },
 
   /** Страны обслуживания и их условия (этап 5.6.5): справочник строками, условия версиями. */
   serviceCountries: {

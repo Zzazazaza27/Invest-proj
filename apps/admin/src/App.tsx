@@ -16,6 +16,7 @@ import { QuestionsPage } from './pages/QuestionsPage';
 import { ApplicationSettingsPage } from './pages/ApplicationSettingsPage';
 import { TextsPage } from './pages/TextsPage';
 import { ServiceCountriesPage } from './pages/ServiceCountriesPage';
+import { RoundPackagesPage } from './pages/RoundPackagesPage';
 
 /**
  * Корень админки.
@@ -105,6 +106,7 @@ export function App() {
         <NavItem to="/application-settings" label="Настройки заявки" />
         <NavItem to="/texts" label="Словарь и ЧАВО" />
         <NavItem to="/service-countries" label="Страны обслуживания" />
+        <NavItem to="/round-packages" label="Пакеты раунда" />
         <NavItem to="/flags" label="Функции платформы" />
         <NavItem to="/access" label="Доступ" />
         {/*
@@ -158,6 +160,7 @@ export function App() {
           <Route path="/application-settings" element={<ApplicationSettingsPage />} />
           <Route path="/texts" element={<TextsPage />} />
           <Route path="/service-countries" element={<ServiceCountriesPage />} />
+          <Route path="/round-packages" element={<RoundPackagesPage />} />
           <Route path="/flags" element={<FlagsPage />} />
           <Route path="/access" element={<AccessPage />} />
           <Route path="*" element={<Navigate to="/plans" replace />} />

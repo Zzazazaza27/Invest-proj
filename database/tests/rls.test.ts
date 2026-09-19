@@ -1179,7 +1179,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 12 схем и 84 таблицы', async () => {
+  it('схема соответствует спецификации: 12 схем и 90 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -1250,7 +1250,11 @@ describe('RLS: покрытие манифеста', () => {
     // +2 в M087: lab.project_access_grants и lab.project_access_exclusions —
     // разрешения выбранных получателей (набор разрешений, не уровень) и
     // исключения с приоритетом (план 5.7 §3.2).
-    expect(Number(tables.rows[0]!.count)).toBe(84);
+    // + 6 таблиц разовой оплаты запуска раунда (M095, 5.9.1): каталог услуг,
+    // версии пакетов и их состав, цены докупаемых услуг, покупка и её позиции
+    // с денежной базой. Продажи выключены; структуры заведены отдельно от
+    // расчёта, чтобы цены настраивались до включения оплаты.
+    expect(Number(tables.rows[0]!.count)).toBe(90);
   });
 });
 
