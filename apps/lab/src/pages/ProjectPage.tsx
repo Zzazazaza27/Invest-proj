@@ -15,6 +15,7 @@ import { ProjectBadges } from '../App';
 import { MaterialsCard, SubmissionsCard } from './MaterialsCard';
 import { AccessCard } from './AccessCard';
 import { VisibilityCard } from './VisibilityCard';
+import { MediaCard } from './MediaCard';
 import { PublicationConsentsCard } from './PublicationConsentsCard';
 import { ApplicationsCard } from '../wizard/ApplicationsCard';
 import { ScoreProvenance } from '@unicorn/cabinet';
@@ -227,6 +228,7 @@ export function ProjectPage({
           режим решает, действует ли выданное. */}
       <AccessCard projectId={project.id} visibility={project.visibility} />
 
+      <MediaCard projectId={project.id} />
       <MaterialsCard projectId={project.id} />
       <SubmissionsCard projectId={project.id} />
       <PassportCard projectId={project.id} />

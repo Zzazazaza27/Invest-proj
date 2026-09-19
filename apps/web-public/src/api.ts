@@ -54,3 +54,16 @@ export const api = new UnicornApi({
 });
 
 export { ApiError } from '@unicorn/api-client';
+
+/**
+ * Адрес изображения проекта.
+ *
+ * Сервер отдаёт путь вида `/v1/projects/.../media/...` — он относителен API, а
+ * не страницы. При прямом запуске dev-сервером страница и API живут на разных
+ * портах, и относительный путь увёл бы браузер на витрину вместо ядра.
+ */
+export function mediaUrl(path: string): string {
+  if (/^https?:\/\//i.test(path)) return path;
+  const base = baseUrl.replace(/\/v1$/, '');
+  return `${base}${path}`;
+}

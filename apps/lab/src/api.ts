@@ -93,3 +93,15 @@ export function setCsrf(token: string | null): void {
 }
 
 export { ApiError };
+
+/**
+ * Адрес изображения проекта.
+ *
+ * Сервер отдаёт путь относительно API. При запуске dev-сервером страница и
+ * ядро живут на разных портах, и относительный путь увёл бы браузер в кабинет
+ * вместо ядра.
+ */
+export function mediaUrl(path: string): string {
+  if (path === '' || /^https?:/i.test(path)) return path;
+  return `${BASE_URL.replace(/\/v1$/, '')}${path}`;
+}

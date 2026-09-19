@@ -568,6 +568,10 @@ export class ProjectViewsService {
       stage: base.stage,
       taxonomyId: base.taxonomy_id,
       geoCountry: base.geo_country,
+      // Здесь логотип не подставляется: наличие изображения эта выборка не
+      // знает, а выдать адрес несуществующей картинки — значит показать
+      // зрителю сломанный значок. Страница спрашивает `/media` отдельно.
+      logoUrl: null,
       investmentAsk: round.investmentAsk,
       askCurrency: (round.askCurrency ?? 'RUB') as 'RUB',
       listedAt: base.listed_at?.toISOString() ?? null,

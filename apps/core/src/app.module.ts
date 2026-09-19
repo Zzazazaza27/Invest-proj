@@ -115,6 +115,8 @@ import { ProjectViewsController } from './lab/project-views.controller';
 import { ProjectViewsService } from './lab/project-views.service';
 import { ProjectsController } from './lab/projects.controller';
 import { ProjectsService } from './lab/projects.service';
+import { ProjectMediaController } from './lab/project-media.controller';
+import { ProjectMediaService } from './lab/project-media.service';
 import {
   AdminApplicationPoliciesController,
   AdminReadinessConfigsController,
@@ -180,6 +182,7 @@ import { S3Service } from './storage/s3.service';
     PaymentNotificationsController,
     PurchasePaymentsController,
     ServiceExecutionController,
+    ProjectMediaController,
     AdminFeeTermsController,
     AdminFeeOffsetRulesController,
     AdminPlanCapabilitiesController,
@@ -235,6 +238,7 @@ import { S3Service } from './storage/s3.service';
     RoundPurchaseService,
     PaymentsService,
     ServiceExecutionService,
+    ProjectMediaService,
     CommissionService,
     PlanCapabilitiesService,
     CapabilitiesService,

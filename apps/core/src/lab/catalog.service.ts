@@ -124,9 +124,13 @@ export class CatalogService {
       SELECT p.id, p.taxonomy_id, p.title, p.tagline, p.stage, p.geo_country, p.listed_at,
              COALESCE(r.raising, 'undisclosed') AS raising,
              r.target::text AS round_target, r.currency AS round_currency,
+             (m.project_id IS NOT NULL) AS has_logo,
              (${order.expression})::text AS sort_value
         FROM lab.projects p
         LEFT JOIN LATERAL lab.round_view(p.id) r ON true
+        -- Логотип виден тем же, кому виден проект: политика чтения
+        -- lab.project_media стоит на том же предикате аудитории.
+        LEFT JOIN lab.project_media m ON m.project_id = p.id AND m.kind = 'logo'
        WHERE ${where.join(' AND ')}
        ORDER BY ${order.expression} ${order.direction}, p.id ${order.direction}
        LIMIT ${limitParam}`;
@@ -214,6 +218,7 @@ interface TeaserRow {
   round_target: string | null;
   round_currency: string | null;
   listed_at: Date | null;
+  has_logo: boolean | null;
   sort_value: string;
 }
 
@@ -228,6 +233,7 @@ function mapTeaser(row: TeaserRow): ProjectTeaser {
     investmentAsk: row.round_target,
     askCurrency: (row.round_currency?.trim() ?? 'RUB') as 'RUB',
     listedAt: row.listed_at?.toISOString() ?? null,
+    logoUrl: row.has_logo ? `/v1/projects/${row.id}/media/logo/card` : null,
     raising: row.raising,
   };
 }

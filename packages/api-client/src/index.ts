@@ -9,6 +9,8 @@ import {
   FundingRoundDetailSchema,
   FundingRoundSchema,
   PaymentViewSchema,
+  MediaUploadTicketSchema,
+  ProjectMediaSchema,
   ServiceRunAvailabilitySchema,
   ServiceRunViewSchema,
   RoundPurchaseViewSchema,
@@ -112,6 +114,8 @@ import {
   type PublicationConsentRequest,
   type RegisterDeviceRequest,
   type RegisterRequest,
+  type FinalizeMedia,
+  type RequestMediaUpload,
   type RequestUpload,
   type UpdateSupportTicketRequest,
   type SeasonFunnelConfig,
@@ -233,6 +237,18 @@ export class UnicornApi {
     });
 
   /** Public View проекта (5.7.2): тизер плюс ответы, согласованные владельцем, для аудитории сессии. */
+  /**
+   * Логотип и обложка проекта.
+   *
+   * Отдаются адреса маршрутов ядра, а не ссылки в хранилище: доступ к
+   * изображению проверяется на каждом запросе.
+   */
+  readonly projectMedia = (id: string) =>
+    this.http.request({
+      path: `/projects/${id}/media`,
+      schema: z.object({ items: z.array(ProjectMediaSchema) }),
+    });
+
   readonly catalogItem = (id: string, locale?: string) =>
     this.http.request({
       path: `/catalog/${id}`,
@@ -563,6 +579,43 @@ export class UnicornApi {
      * Подтверждение загрузки после отправки файла в хранилище. Сервер проверяет
      * наличие объекта сам: «я загрузил» от клиента доказательством не является.
      */
+    /** Логотип и обложка проекта (7.2). */
+    media: (id: string) =>
+      this.http.request({
+        path: `/projects/${id}/media`,
+        schema: z.object({ items: z.array(ProjectMediaSchema) }),
+      }),
+
+    requestMediaUpload: (id: string, body: RequestMediaUpload) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/media/upload`,
+        body,
+        schema: MediaUploadTicketSchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    /**
+     * Подтвердить загрузку и задать кадрирование.
+     *
+     * До этого вызова платформа файл не разбирала: отказ по формату, размеру
+     * или размерам изображения приходит именно здесь.
+     */
+    finalizeMedia: (id: string, kind: 'logo' | 'cover', body: FinalizeMedia) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/media/${kind}/finalize`,
+        body,
+        schema: ProjectMediaSchema,
+      }),
+
+    removeMedia: (id: string, kind: 'logo' | 'cover') =>
+      this.http.request({
+        method: 'DELETE',
+        path: `/projects/${id}/media/${kind}`,
+        schema: z.object({ removed: z.string() }),
+      }),
+
     finalizeUpload: (id: string, materialId: string) =>
       this.http.request({
         method: 'POST',

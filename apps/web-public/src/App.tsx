@@ -16,7 +16,7 @@ import {
   describeRaising,
 } from '@unicorn/ui';
 import type { LandingBlock, Pricing, ProjectTeaser, Season } from '@unicorn/contracts';
-import { api } from './api';
+import { api, mediaUrl } from './api';
 import { useAsync } from './useAsync';
 
 /**
@@ -380,9 +380,21 @@ function CatalogSection() {
 function TeaserCard({ teaser }: { teaser: ProjectTeaser }) {
   return (
     <Card style={{ height: '100%', display: 'grid', gap: 'var(--u-space-3)' }}>
-      <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
-        <Badge tone="accent">{STAGE_LABEL[teaser.stage] ?? teaser.stage}</Badge>
-        {teaser.geoCountry ? <Badge>{teaser.geoCountry}</Badge> : null}
+      <div style={{ display: 'flex', gap: 'var(--u-space-2)', alignItems: 'center' }}>
+        {teaser.logoUrl ? (
+          <img
+            data-teaser-logo
+            src={mediaUrl(teaser.logoUrl)}
+            alt=""
+            width={48}
+            height={48}
+            style={{ width: 48, height: 48, borderRadius: 'var(--u-radius-md)' }}
+          />
+        ) : null}
+        <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
+          <Badge tone="accent">{STAGE_LABEL[teaser.stage] ?? teaser.stage}</Badge>
+          {teaser.geoCountry ? <Badge>{teaser.geoCountry}</Badge> : null}
+        </div>
       </div>
       <strong style={{ fontSize: 'var(--u-text-lg)', lineHeight: 'var(--u-leading-tight)' }}>
         {teaser.title}
@@ -594,6 +606,9 @@ function formatDate(iso: string): string {
  */
 function ProjectPage({ id }: { id: string }) {
   const { state, reload } = useAsync(() => api.catalogItem(id), [id]);
+  // Изображения запрашиваются отдельно: их наличие проекция каталога не
+  // знает, а показывать рамку несуществующей картинки нельзя.
+  const media = useAsync(() => api.projectMedia(id).catch(() => ({ items: [] })), [id]);
 
   if (state.status === 'loading') {
     return (
@@ -603,14 +618,19 @@ function ProjectPage({ id }: { id: string }) {
     );
   }
   if (state.status === 'error') {
-    // 404 у публичной страницы означает не только «нет такого проекта», но и
-    // «этому зрителю он не показывается». Разницу сервер намеренно не
-    // раскрывает, и витрина её не додумывает.
+    // Ответ ОДИНАКОВЫЙ для несуществующего и для недоступного проекта.
+    //
+    // Это не обобщение ради краткости. «Проект снят с публикации» подтверждает
+    // постороннему, что проект существует, а иногда и то, что он был
+    // опубликован. По разным формулировкам чужой каталог перебирается
+    // адресами: одна страница отвечает «нет такого», другая — «есть, но не
+    // для вас». Поэтому текст нейтральный, без названия и без намёка на
+    // существование.
     return (
       <Container>
         <ErrorState
-          title="Проект недоступен"
-          description="Возможно, он снят с публикации или открыт не для всех."
+          title="Страница не найдена"
+          description="Проверьте адрес или вернитесь к списку проектов."
           traceId={state.traceId}
           onRetry={reload}
         />
@@ -620,6 +640,9 @@ function ProjectPage({ id }: { id: string }) {
 
   const view = state.data;
   const sections = view.sections.filter((section) => section.questions.length > 0);
+  const items = media.state.status === 'ready' ? media.state.data.items : [];
+  const cover = items.find((item) => item.kind === 'cover');
+  const logo = items.find((item) => item.kind === 'logo');
 
   return (
     <Container>
@@ -628,6 +651,31 @@ function ProjectPage({ id }: { id: string }) {
           <a href="/" style={{ fontSize: 'var(--u-text-sm)' }}>
             ← Ко всем проектам
           </a>
+          {cover?.urls.page ? (
+            <img
+              data-project-cover
+              src={mediaUrl(cover.urls.page)}
+              alt=""
+              width={1600}
+              height={900}
+              style={{
+                width: '100%',
+                height: 'auto',
+                borderRadius: 'var(--u-radius-lg)',
+                display: 'block',
+              }}
+            />
+          ) : null}
+          {logo?.urls.page ? (
+            <img
+              data-project-logo
+              src={mediaUrl(logo.urls.page)}
+              alt=""
+              width={96}
+              height={96}
+              style={{ width: 96, height: 96, borderRadius: 'var(--u-radius-md)' }}
+            />
+          ) : null}
           <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
             <Badge tone="accent">{STAGE_LABEL[view.stage] ?? view.stage}</Badge>
             {view.geoCountry ? <Badge>{view.geoCountry}</Badge> : null}

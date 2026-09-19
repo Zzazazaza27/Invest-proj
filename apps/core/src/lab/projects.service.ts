@@ -1256,6 +1256,9 @@ function mapProject(row: ProjectRow): ProjectFull {
     title: row.title,
     tagline: row.tagline,
     stage: row.stage,
+    // Наличие логотипа эта выборка не знает: кабинет спрашивает `/media`
+    // отдельно и показывает то, что есть на самом деле.
+    logoUrl: null,
     taxonomyId: row.taxonomy_id,
     geoCountry: row.geo_country,
     investmentAsk: row.round_target ?? null,

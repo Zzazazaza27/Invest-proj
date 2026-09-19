@@ -150,6 +150,13 @@ export const ProjectTeaserSchema = z.object({
   askCurrency: CurrencySchema,
   listedAt: IsoDateTimeSchema.nullable(),
   /**
+   * Адрес логотипа для карточки; `null` — логотипа нет.
+   *
+   * Это маршрут ядра, а не ссылка в хранилище: доступ проверяется на каждом
+   * запросе, и знание адреса ничего не открывает (7.2).
+   */
+  logoUrl: z.string().nullable().default(null),
+  /**
    * Состояние привлечения: open — раунд открыт; paused — приостановлено; none —
    * не привлекает; undisclosed — группа «текущий запрос» закрыта для этой
    * аудитории настройкой видимости (тогда сумма и валюта — null).
