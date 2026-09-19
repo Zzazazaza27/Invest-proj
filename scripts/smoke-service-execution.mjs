@@ -120,7 +120,36 @@ async function register(tag) {
   return { client, email, password, userId: row?.id ?? null };
 }
 
+/**
+ * Шлюз обязан быть поднят — и прогон обязан сказать это прямо.
+ *
+ * Без него разбор падает внутри, а проверка сообщает «анализ завершился
+ * ошибкой»: причина не видна, и проверка выглядит сломанной сама по себе.
+ * Ровно так четыре проверки `smoke-ai` выпали из регрессии — запустить их
+ * было нечем (виртуальное окружение шлюза не создано), и никто не заметил.
+ */
+async function requireGateway() {
+  const url = process.env.AI_GATEWAY_URL ?? '';
+  if (!url) {
+    console.warn('\n  AI_GATEWAY_URL не задан: разбор выполнять нечем.\n');
+    process.exit(1);
+  }
+  const alive = await fetch(new URL('/docs', url), { signal: AbortSignal.timeout(5_000) })
+    .then(() => true)
+    .catch(() => false);
+  if (!alive) {
+    console.warn(
+      `\n  AI-шлюз не отвечает (${url}). Подними его и повтори:\n` +
+        '    node scripts/dev-ai-gateway.mjs\n' +
+        '  Окружение ставится один раз: python -m venv apps/ai-gateway/.venv\n',
+    );
+    process.exit(1);
+  }
+}
+
 console.warn('\n=== ЖИВОЙ ПРОГОН: ИСПОЛНЕНИЕ УСЛУГИ ИИ-РАЗБОРА ===\n');
+
+await requireGateway();
 
 const founder = await register('f');
 const adminUser = await register('a');
@@ -360,8 +389,8 @@ try {
       'в текст заявки вошли разделы, формулировки вопросов и ответы',
       typeof snapshot.summary === 'string' &&
         snapshot.summary.includes('## ') &&
-        snapshot.summary.includes(first?.question ?? ' ') &&
-        snapshot.summary.includes(first?.text ?? ' '),
+        snapshot.summary.includes(first?.question ?? '(нет ответа)') &&
+        snapshot.summary.includes(first?.text ?? '(нет ответа)'),
       `${snapshot.summary}`.slice(0, 90),
     );
     check(
@@ -442,6 +471,81 @@ try {
       found?.canStart === false && found?.blocker?.includes('уже выполнен'),
       `${found?.blocker}`,
     );
+  }
+
+  // ---------- 6.2: пересчёт создаёт НОВЫЙ отчёт и не подменяет оплаченный
+  {
+    const [before] = await sql(
+      `SELECT version, superseded_at, input_metadata FROM scoring.investment_passports
+        WHERE id = $1`,
+      [run.resultRef],
+    );
+    check('отчёт услуги опубликован', before?.superseded_at === null, `версия ${before?.version}`);
+
+    // Справочник отрасли переименован ПОСЛЕ отчёта. Объяснение старого отчёта
+    // меняться от этого не должно.
+    const [tax] = await sql(
+      `SELECT t.id, t.name_ru FROM lab.project_taxonomy t
+         JOIN lab.projects p ON p.taxonomy_id = t.id WHERE p.id = $1`,
+      [projectId],
+    );
+    await sql(`UPDATE lab.project_taxonomy SET name_ru = $2 WHERE id = $1`, [
+      tax.id,
+      `${tax.name_ru} (переименовано ${suffix})`,
+    ]);
+    const [after] = await sql(
+      `SELECT input_metadata FROM scoring.investment_passports WHERE id = $1`,
+      [run.resultRef],
+    );
+    check(
+      'использованное значение отрасли сохранено в отчёте',
+      after?.input_metadata?.taxonomy === before?.input_metadata?.taxonomy,
+      `${after?.input_metadata?.taxonomy}`,
+    );
+    check(
+      'и оно не равно новому имени справочника',
+      after?.input_metadata?.taxonomy !== `${tax.name_ru} (переименовано ${suffix})`,
+    );
+    await sql(`UPDATE lab.project_taxonomy SET name_ru = $2 WHERE id = $1`, [tax.id, tax.name_ru]);
+
+    // Пересчёт: прямой вызов анализа по тому же проекту.
+    const again = await founder.client.json(`/v1/projects/${projectId}/analysis`, {
+      method: 'POST',
+      body: {},
+    });
+    check('пересчёт создал НОВЫЙ отчёт', again.passportId !== run.resultRef, `${again.passportId}`);
+    check(
+      'новая версия паспорта выше прежней',
+      again.passportVersion > before.version,
+      `${before.version} → ${again.passportVersion}`,
+    );
+
+    const [old] = await sql(
+      `SELECT superseded_at, version FROM scoring.investment_passports WHERE id = $1`,
+      [run.resultRef],
+    );
+    check('прежний отчёт помечен как замещённый, но сохранён', old?.superseded_at !== null);
+
+    const [stillLinked] = await sql(
+      `SELECT result_ref FROM billing.purchase_item_runs WHERE id = $1`,
+      [run.id],
+    );
+    check(
+      'оплаченная услуга ссылается на ПРЕЖНИЙ отчёт',
+      stillLinked?.result_ref === run.resultRef,
+      `${stillLinked?.result_ref}`,
+    );
+
+    let denied = false;
+    try {
+      await sql(`UPDATE billing.purchase_item_runs SET result_ref = $2 WHERE id = $1`, [
+        run.id,
+        again.passportId,
+      ]);
+    } catch (error) {
+      denied = /не подменяется/.test(String(error));
+    }
+    check('подменить результат оплаченной услуги нельзя и напрямую в базе', denied);
   }
 
   // -------------------- выключенный контур отказывает с причиной

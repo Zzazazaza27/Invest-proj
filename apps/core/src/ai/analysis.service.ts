@@ -409,9 +409,9 @@ export class AnalysisService {
       await tx.query(
         `INSERT INTO scoring.investment_passports
            (id, project_id, version, jsonb_data, disclosure_tier, sources, model_id, published_at,
-            project_version_id, input_sha256, input_sources, includes_answers)
+            project_version_id, input_sha256, input_sources, includes_answers, input_metadata)
          VALUES ($1, $2, $3, $4::jsonb, 'teaser', $5::jsonb, $6, now(),
-                 $7, $8, $9::jsonb, $10)`,
+                 $7, $8, $9::jsonb, $10, $11::jsonb)`,
         [
           passportId,
           projectId,
@@ -425,6 +425,9 @@ export class AnalysisService {
           input.inputSha256,
           JSON.stringify(input.snapshot.sources),
           input.snapshot.includesAnswers,
+          // Не только «откуда», но и «что именно»: справочник отрасли ещё
+          // переименуют, а объяснение этого отчёта меняться не должно.
+          JSON.stringify(input.snapshot.metadata),
         ],
       );
 
