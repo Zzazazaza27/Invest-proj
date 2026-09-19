@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Button,
   Container,
@@ -15,7 +15,7 @@ import type {
   CurrentUser,
   SupportTicketStatus,
 } from '@unicorn/contracts';
-import { ApiError, api, setCsrf } from './api';
+import { api, setCsrf } from './api';
 import { CatalogPage } from './pages/CatalogPage';
 import { ProjectDetailsPage } from './pages/ProjectDetailsPage';
 import { FavoritesPage } from './pages/FavoritesPage';
@@ -26,9 +26,11 @@ import {
   BugReportWidget,
   BusinessEntitiesCard,
   NotificationsCard,
+  SessionCheckFailed,
   SupportCard,
   decideAccess,
   hrefFor,
+  useSessionCheck,
 } from '@unicorn/cabinet';
 import type {
   AddEntityMemberRequest,
@@ -117,7 +119,6 @@ const bugReportPort = {
 
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
-  const [checking, setChecking] = useState(true);
   const [tab, setTab] = useState<Tab>('catalog');
   /**
    * Открытая карточка проекта.
@@ -127,35 +128,28 @@ export default function App() {
    */
   const [openProject, setOpenProject] = useState<string | null>(null);
 
-  const load = useCallback(async () => {
-    try {
-      const profile = await api.auth.me();
+  // 401 и временная неудача проверки — разные вещи. Пока они сходились в одну
+  // ветку, ответ 429 на `GET /v1/auth/me` показывался как выход из аккаунта.
+  const { checking, failure, retry } = useSessionCheck(() => api.auth.me(), {
+    onReady: (profile) => {
       // Кабинет открывается только своей роли: до этого войти здесь мог кто
       // угодно и остаться в чужом разделе, где сервер отвечает отказом.
       const decision = decideAccess(profile.roles, 'investor');
       if (decision.kind !== 'allowed') {
         const target = decision.kind === 'elsewhere' ? decision.to : 'login';
         window.location.replace(hrefFor(target, __CABINET_PORTS__));
-        return;
+        return false;
       }
       setMe(profile);
-    } catch (error) {
-      // 401 — не ошибка, а отсутствие сессии: человека ждёт единый вход.
-      // Своей формы у кабинета больше нет, оставлять его здесь незачем.
-      if (error instanceof ApiError && error.status === 401) {
-        window.location.replace(hrefFor('login', __CABINET_PORTS__));
-        return;
-      }
-      console.warn('профиль не получен', error);
-      setMe(null);
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+      return true;
+    },
+    onAbsent: () => {
+      window.location.replace(hrefFor('login', __CABINET_PORTS__));
+      // `false` — «уводим отсюда»: состояние проверки не снимаем, иначе на
+      // месте уходящей страницы мелькнёт пустой каркас кабинета.
+      return false;
+    },
+  });
 
   return (
     <>
@@ -300,6 +294,9 @@ export default function App() {
       <main id="content">
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
+          {!checking && failure ? (
+            <SessionCheckFailed failure={failure} onRetry={retry} busy={checking} />
+          ) : null}
           {!checking && me && tab === 'catalog' && openProject === null ? (
             <CatalogPage onOpen={(id) => setOpenProject(id)} />
           ) : null}

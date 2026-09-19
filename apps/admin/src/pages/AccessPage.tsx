@@ -12,6 +12,11 @@ import {
 } from '@unicorn/ui';
 import type { AdminUserSummary } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
+import {
+  CapabilitiesSection,
+  DealSupportSection,
+  ReviewAssignmentsSection,
+} from './StaffAccessSections';
 
 /**
  * Управление доступом: роли пользователей и сервисные клиенты внешних систем.
@@ -27,6 +32,15 @@ export function AccessPage() {
     <Stack gap="var(--u-space-6)">
       <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Доступ</h1>
       <RolesSection />
+      {/*
+        Дальше — второе и третье условия доступа. Роль отвечает на вопрос «кто
+        он», полномочие — «что вправе делать», назначение — «с какими
+        объектами». Раньше два последних жили только в API; экранов не было, и
+        оператор не мог ни выдать, ни увидеть, ни снять.
+      */}
+      <CapabilitiesSection />
+      <ReviewAssignmentsSection />
+      <DealSupportSection />
       {/* Клиенты Integration API переехали в «Интеграции»: там всё внешнее в одном месте. */}
     </Stack>
   );

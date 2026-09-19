@@ -1,6 +1,7 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
 import {
   AssignDealSupportRequestSchema,
+  DealSupportAssignmentRowSchema,
   DealSupportAssignmentSchema,
   GrantCapabilityRequestSchema,
   RevokeDealSupportRequestSchema,
@@ -40,6 +41,21 @@ export class AdminCapabilitiesController {
     const userId = parseOrThrow(UuidSchema, rawId);
     const items = await this.capabilities.grantsOf(ctx, userId);
     return { items: items.map((g) => StaffCapabilityGrantSchema.parse(g)) };
+  }
+
+  /** Действующие назначения на сопровождение: кого и на какой проект. */
+  @Get('deal-support')
+  async dealSupport(
+    @Query('projectId') rawProject: string | undefined,
+    @Query('userId') rawUser: string | undefined,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const filter = {
+      ...(rawProject ? { projectId: parseOrThrow(UuidSchema, rawProject) } : {}),
+      ...(rawUser ? { userId: parseOrThrow(UuidSchema, rawUser) } : {}),
+    };
+    const items = await this.capabilities.listDealSupport(ctx, filter);
+    return { items: items.map((a) => DealSupportAssignmentRowSchema.parse(a)) };
   }
 
   @Post('grant')

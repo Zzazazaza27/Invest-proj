@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 import {
   Badge,
@@ -21,15 +21,17 @@ import type {
   ProjectFull,
   SupportTicketStatus,
 } from '@unicorn/contracts';
-import { ApiError, api, setCsrf } from './api';
+import { api, setCsrf } from './api';
 import {
   BugReportWidget,
   BusinessEntitiesCard,
   NotificationsCard,
+  SessionCheckFailed,
   SupportCard,
   VerificationCard,
   decideAccess,
   hrefFor,
+  useSessionCheck,
 } from '@unicorn/cabinet';
 import type {
   AddEntityMemberRequest,
@@ -131,13 +133,15 @@ const bugReportPort = {
 
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
-  const [checking, setChecking] = useState(true);
   const [applicationV2, setApplicationV2] = useState(false);
   const navigate = useNavigate();
 
-  const load = useCallback(async () => {
-    try {
-      const profile = await api.auth.me();
+  // Проверка сессии различает подтверждённое «сессии нет» (401) и временную
+  // неудачу проверки (429, 5xx, обрыв связи). Раньше второе показывалось как
+  // первое: страница кабинета без содержимого, то есть вид вышедшего
+  // пользователя. Cookie при этом никуда не девалась.
+  const { checking, failure, retry } = useSessionCheck(() => api.auth.me(), {
+    onReady: (profile) => {
       // Кабинет открывается только своей роли. Раньше проверки не было вовсе:
       // войдя здесь инвестором, человек оставался в кабинете основателя — с
       // формой создания проекта, на которую сервер отвечал отказом.
@@ -145,32 +149,28 @@ export default function App() {
       if (decision.kind !== 'allowed') {
         const target = decision.kind === 'elsewhere' ? decision.to : 'login';
         window.location.replace(hrefFor(target, __CABINET_PORTS__));
-        return;
+        return false;
       }
       setMe(profile);
-      setChecking(false);
-    } catch (error) {
-      // 401 — не ошибка, а отсутствие сессии: человека ждёт единый вход.
-      // Сюда он вернётся уже с ролью, и решение примет ветка выше.
-      if (error instanceof ApiError && error.status === 401) {
-        window.location.replace(hrefFor('login', __CABINET_PORTS__));
-        return;
-      }
-      console.warn('профиль не получен', error);
-      setMe(null);
-      setChecking(false);
-    }
-  }, []);
+      return true;
+    },
+    // Единый вход — только по подтверждённому отсутствию сессии.
+    onAbsent: () => {
+      window.location.replace(hrefFor('login', __CABINET_PORTS__));
+      // `false` — «уводим отсюда»: состояние проверки не снимаем, иначе на
+      // месте уходящей страницы мелькнёт пустой каркас кабинета.
+      return false;
+    },
+  });
 
   useEffect(() => {
-    void load();
     // Флаг интерфейса читается один раз при старте: переключение — без релиза,
     // но с перезагрузкой страницы, а не посреди заполнения.
     api
       .features()
       .then((features) => setApplicationV2(features.flags['lab.ui.application_v2'] === true))
       .catch(() => setApplicationV2(false));
-  }, [load]);
+  }, []);
 
   return (
     <>
@@ -194,6 +194,9 @@ export default function App() {
       <main id="content">
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
+          {!checking && failure ? (
+            <SessionCheckFailed failure={failure} onRetry={retry} busy={checking} />
+          ) : null}
           {!checking && me ? (
             <Routes>
               <Route

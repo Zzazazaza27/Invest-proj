@@ -96,6 +96,42 @@ export const RevokeDealSupportRequestSchema = z.object({
 });
 export type RevokeDealSupportRequest = z.infer<typeof RevokeDealSupportRequestSchema>;
 
+/**
+ * Строка списка назначений на сопровождение. Имена рядом с идентификаторами:
+ * администратор снимает назначение у человека с проекта, а не у UUID с UUID.
+ */
+export const DealSupportAssignmentRowSchema = DealSupportAssignmentSchema.extend({
+  projectTitle: z.string(),
+  userName: z.string(),
+});
+export type DealSupportAssignmentRow = z.infer<typeof DealSupportAssignmentRowSchema>;
+
+/**
+ * Назначение на оценку проекта глазами администратора.
+ *
+ * Отдельно от `ExpertAssignmentSchema`: та — взгляд эксперта на СВОИ
+ * назначения и говорит о проекте. Здесь наоборот — взгляд на проект, и
+ * называется эксперт.
+ */
+export const ProjectReviewAssignmentSchema = z.object({
+  id: UuidSchema,
+  projectId: UuidSchema,
+  expertId: UuidSchema,
+  expertName: z.string(),
+  status: z.enum(['assigned', 'accepted', 'declined', 'completed', 'expired']),
+  dueAt: IsoDateTimeSchema,
+  createdAt: IsoDateTimeSchema,
+  /** Подана ли рецензия: снятие назначения её не удаляет. */
+  reviewSubmitted: z.boolean(),
+});
+export type ProjectReviewAssignment = z.infer<typeof ProjectReviewAssignmentSchema>;
+
+/** Снятие назначения на оценку. Причина обязательна — она попадёт в журнал. */
+export const WithdrawAssignmentRequestSchema = z.object({
+  reason: z.string().trim().min(3).max(500),
+});
+export type WithdrawAssignmentRequest = z.infer<typeof WithdrawAssignmentRequestSchema>;
+
 // ------------------------------------------------------- ручные записи о деньгах
 
 /**

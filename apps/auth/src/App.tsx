@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Badge, Button, Card, Container, Field, IconTile, Input, Select, Stack } from '@unicorn/ui';
 import type { ServiceCountry } from '@unicorn/contracts';
+import { SessionCheckFailed, classifySessionFailure, type SessionFailure } from '@unicorn/cabinet';
 import { ApiError, api, setCsrf } from './api';
 import { cabinetUrl, cabinetsForRoles, type Cabinet } from './routing';
 import './auth.css';
@@ -134,6 +135,17 @@ export default function App() {
   const [linkToken, setLinkToken] = useState<string>(initial?.token ?? '');
   const [notice, setNotice] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
+  /**
+   * Проверку сессии выполнить не удалось.
+   *
+   * Отдельно от «сессии нет»: при 429 или обрыве связи про сессию ничего не
+   * известно, и показывать вошедшему человеку форму входа — значит предлагать
+   * ему ввести пароль в тот же исчерпанный лимит.
+   */
+  const [probeFailure, setProbeFailure] = useState<Extract<
+    SessionFailure,
+    { kind: 'unavailable' }
+  > | null>(null);
   const [user, setUser] = useState<SessionUser | null>(null);
   const [cabinets, setCabinets] = useState<Cabinet[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -225,9 +237,14 @@ export default function App() {
       try {
         const me = (await api.auth.me()) as SessionUser;
         if (cancelled) return;
+        setProbeFailure(null);
         applySession(me);
-      } catch {
-        if (!cancelled) setUser(null);
+      } catch (error) {
+        if (cancelled) return;
+        const verdict = classifySessionFailure(error);
+        // Форма входа — только по подтверждённому 401.
+        if (verdict.kind === 'absent') setUser(null);
+        else setProbeFailure(verdict);
       } finally {
         if (!cancelled) setChecking(false);
       }
@@ -257,7 +274,15 @@ export default function App() {
   function describe(err: unknown): string {
     if (err instanceof ApiError) {
       if (err.status === 401) return 'Неверная почта или пароль';
-      if (err.status === 429) return 'Слишком много попыток. Повторите через минуту';
+      if (err.status === 429) {
+        // Срок берётся из ответа сервера (`Retry-After`), а не называется
+        // наугад: «через минуту» при ведре на 60 секунд ещё случайно совпадало,
+        // но человек всё равно повторял раньше времени и получал тот же отказ.
+        const wait = err.retryAfterSeconds;
+        return wait && wait > 0
+          ? `Слишком много попыток. Повторите через ${wait} с — введённое сохранится`
+          : 'Слишком много попыток. Повторите чуть позже — введённое сохранится';
+      }
       if (err.status === 409) return 'Такая учётная запись уже существует';
       if (err.status === 422 || err.status === 400) {
         return err.problem?.detail ?? 'Проверьте заполнение полей';
@@ -435,6 +460,38 @@ export default function App() {
     return (
       <Container>
         <p className="auth-status">Проверяем сессию…</p>
+      </Container>
+    );
+  }
+
+  // Повтор по нажатию, без автоматического цикла: 429 лечится паузой, а
+  // клиент, повторяющий запрос сам, эту паузу и съедает.
+  if (probeFailure) {
+    return (
+      <Container>
+        <div className="auth-shell">
+          <SessionCheckFailed
+            failure={probeFailure}
+            onRetry={() => {
+              setChecking(true);
+              void api.auth
+                .me()
+                .then((me) => {
+                  setProbeFailure(null);
+                  applySession(me as SessionUser);
+                })
+                .catch((error: unknown) => {
+                  const verdict = classifySessionFailure(error);
+                  if (verdict.kind === 'absent') {
+                    setUser(null);
+                    setProbeFailure(null);
+                  } else setProbeFailure(verdict);
+                })
+                .finally(() => setChecking(false));
+            }}
+            busy={checking}
+          />
+        </div>
       </Container>
     );
   }

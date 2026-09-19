@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
-import { ApiError, api } from './api';
+import { SessionCheckFailed, useSessionCheck } from '@unicorn/cabinet';
+import { api } from './api';
 import { LoginPage } from './pages/LoginPage';
 import { PlansPage } from './pages/PlansPage';
 import { SubscriptionsPage } from './pages/SubscriptionsPage';
@@ -36,7 +37,6 @@ interface Me {
 
 export function App() {
   const [me, setMe] = useState<Me | null>(null);
-  const [checking, setChecking] = useState(true);
   /**
    * Сезоны отложены (M088): пункты сезона показываются только при включённом
    * `seasons.enabled`. Экраны и маршруты остаются — контур отключён, а не
@@ -44,32 +44,25 @@ export function App() {
    */
   const [seasonsEnabled, setSeasonsEnabled] = useState(false);
 
-  const load = useCallback(async () => {
-    try {
-      const user = await api.me();
+  // Форма входа показывается только по подтверждённому 401. Раньше сюда
+  // приводила ЛЮБАЯ неудача запроса профиля: ответ 429 от ограничителя
+  // частоты выглядел как выход из аккаунта, и человек начинал вводить пароль
+  // заново — в тот же исчерпанный лимит.
+  const { checking, failure, retry } = useSessionCheck(() => api.me(), {
+    onReady: (user) => {
       setMe(user);
       // Отказ здесь не должен ломать кабинет: без ответа пункты остаются
       // скрытыми — это безопасная сторона.
-      await api
+      void api
         .featureFlags()
         .then((flags) =>
           setSeasonsEnabled(flags.some((f) => f.key === 'seasons.enabled' && f.enabled)),
         )
         .catch(() => setSeasonsEnabled(false));
-    } catch (error) {
-      // 401 здесь — норма: пользователь просто не вошёл.
-      if (!(error instanceof ApiError) || error.status !== 401) {
-        console.warn('не удалось получить профиль', error);
-      }
-      setMe(null);
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+      return true;
+    },
+    onAbsent: () => setMe(null),
+  });
 
   if (checking) {
     return (
@@ -79,8 +72,16 @@ export function App() {
     );
   }
 
+  if (failure) {
+    return (
+      <div style={{ padding: 40, maxWidth: 560 }}>
+        <SessionCheckFailed failure={failure} onRetry={retry} busy={checking} />
+      </div>
+    );
+  }
+
   if (!me) {
-    return <LoginPage onLoggedIn={() => void load()} />;
+    return <LoginPage onLoggedIn={retry} />;
   }
 
   const isAdmin = me.roles.includes('admin');

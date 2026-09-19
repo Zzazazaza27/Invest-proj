@@ -735,8 +735,35 @@ describe('Классы ограничения частоты (Ф52)', () => {
   it('вход и выдача сервисного токена — класс auth', () => {
     expect(rateLimitClass('/v1/auth/login', 'POST')).toBe('auth');
     expect(rateLimitClass('/v1/integration/token', 'POST')).toBe('auth');
-    // Чтение профиля — тоже auth: класс определяется путём, не методом.
-    expect(rateLimitClass('/v1/auth/me', 'GET')).toBe('auth');
+    // Все маршруты, где проверяется секрет, — мутации, и они в auth.
+    expect(rateLimitClass('/v1/auth/register', 'POST')).toBe('auth');
+    expect(rateLimitClass('/v1/auth/password/reset', 'POST')).toBe('auth');
+    expect(rateLimitClass('/v1/auth/logout', 'POST')).toBe('auth');
+  });
+
+  it('чтение собственной сессии в класс входа НЕ попадает', () => {
+    // Ведро auth считается по адресу целиком, поэтому `GET /v1/auth/me`
+    // упирался в 30/мин на обычной работе: каждый кабинет спрашивает профиль
+    // при загрузке, вкладок несколько. Интерфейс показывал это как выход из
+    // аккаунта. Подбирать здесь нечего — секрета маршрут не принимает.
+    expect(rateLimitClass('/v1/auth/me', 'GET')).toBe('default');
+    expect(rateLimitClass('/v1/auth/authz/console', 'GET')).toBe('default');
+    expect(rateLimitClass('/v1/auth/me', 'HEAD')).toBe('default');
+  });
+
+  it('послабление не распространяется на остальные GET под /v1/auth/', () => {
+    // Здесь в запросе одноразовый токен из письма — это подбираемый секрет.
+    expect(rateLimitClass('/v1/auth/email/verify/status', 'GET')).toBe('auth');
+    expect(rateLimitClass('/v1/auth/consents/templates', 'GET')).toBe('auth');
+    // И на мутацию того же пути: послабление только для чтения.
+    expect(rateLimitClass('/v1/auth/me', 'POST')).toBe('auth');
+  });
+
+  it('percent-encoded чтение сессии классифицируется так же', () => {
+    // Классификатор смотрит на нормализованный путь, поэтому обход
+    // кодированием не даёт ни послабления, ни ужесточения.
+    expect(rateLimitClass(normalizedPath('/v1/%61uth/me'), 'GET')).toBe('default');
+    expect(rateLimitClass(normalizedPath('/v1/%61uth/login'), 'POST')).toBe('auth');
   });
 
   it('денежный класс — только мутации', () => {

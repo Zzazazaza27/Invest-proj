@@ -10,10 +10,12 @@ import {
   ExpertHistoryEntrySchema,
   ExpertNoteSchema,
   ExpertReviewSchema,
+  ProjectReviewAssignmentSchema,
   ResolveConflictRequestSchema,
   ReviewConsensusSchema,
   SubmitReviewRequestSchema,
   UuidSchema,
+  WithdrawAssignmentRequestSchema,
 } from '@unicorn/contracts';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
@@ -45,6 +47,29 @@ export class ExpertsController {
     const input = parseOrThrow(CreateAssignmentsRequestSchema, rawBody);
     const items = await this.experts.assign(ctx, input);
     return { items: items.map((item) => ExpertAssignmentSchema.parse(item)) };
+  }
+
+  /** Кто назначен на оценку этого проекта и чем это кончилось. */
+  @Roles('admin', 'organizer')
+  @Get('projects/:id/assignments')
+  async projectAssignments(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const items = await this.experts.projectAssignments(ctx, id);
+    return { items: items.map((item) => ProjectReviewAssignmentSchema.parse(item)) };
+  }
+
+  /**
+   * Снять назначение на оценку. Поданную рецензию не трогает — и назначение с
+   * поданной рецензией снять нельзя вовсе.
+   */
+  @Roles('admin', 'organizer')
+  @Post('assignments/:id/withdraw')
+  async withdraw(@Param('id') rawId: string, @Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const input = parseOrThrow(WithdrawAssignmentRequestSchema, rawBody);
+    return ProjectReviewAssignmentSchema.parse(
+      await this.experts.withdrawAssignment(ctx, id, input.reason),
+    );
   }
 
   @Roles('expert')

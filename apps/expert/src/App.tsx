@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import {
   Button,
   Container,
@@ -19,11 +19,13 @@ import type {
 import {
   BugReportWidget,
   NotificationsCard,
+  SessionCheckFailed,
   SupportCard,
   decideAccess,
   hrefFor,
+  useSessionCheck,
 } from '@unicorn/cabinet';
-import { ApiError, api, setCsrf } from './api';
+import { api, setCsrf } from './api';
 import { AssignmentsPage } from './pages/AssignmentsPage';
 
 /**
@@ -85,37 +87,29 @@ const bugReportPort = {
 
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
-  const [checking, setChecking] = useState(true);
 
-  const load = useCallback(async () => {
-    try {
-      const profile = await api.auth.me();
+  // Подтверждённое отсутствие сессии (401) и неудача самой проверки (429,
+  // 5xx, обрыв) — разные вещи: на вход уводит только первое.
+  const { checking, failure, retry } = useSessionCheck(() => api.auth.me(), {
+    onReady: (profile) => {
       // Кабинет открывается только своей роли: до этого войти здесь мог кто
       // угодно и остаться в чужом разделе, где сервер отвечает отказом.
       const decision = decideAccess(profile.roles, 'expert');
       if (decision.kind !== 'allowed') {
         const target = decision.kind === 'elsewhere' ? decision.to : 'login';
         window.location.replace(hrefFor(target, __CABINET_PORTS__));
-        return;
+        return false;
       }
       setMe(profile);
-    } catch (error) {
-      // 401 — не ошибка, а отсутствие сессии: человека ждёт единый вход.
-      // Своей формы у кабинета больше нет, оставлять его здесь незачем.
-      if (error instanceof ApiError && error.status === 401) {
-        window.location.replace(hrefFor('login', __CABINET_PORTS__));
-        return;
-      }
-      console.warn('профиль не получен', error);
-      setMe(null);
-    } finally {
-      setChecking(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    void load();
-  }, [load]);
+      return true;
+    },
+    onAbsent: () => {
+      window.location.replace(hrefFor('login', __CABINET_PORTS__));
+      // `false` — «уводим отсюда»: состояние проверки не снимаем, иначе на
+      // месте уходящей страницы мелькнёт пустой каркас кабинета.
+      return false;
+    },
+  });
 
   return (
     <>
@@ -167,6 +161,9 @@ export default function App() {
       <main id="content">
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
+          {!checking && failure ? (
+            <SessionCheckFailed failure={failure} onRetry={retry} busy={checking} />
+          ) : null}
           {!checking && me ? (
             <Stack gap="var(--u-space-6)">
               <AssignmentsPage />

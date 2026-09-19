@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@unicorn/api-client": "*",
+    "@unicorn/cabinet": "*",
     "@unicorn/contracts": "*",
     "@unicorn/ui": "*",
     "react": "^18.3.1",

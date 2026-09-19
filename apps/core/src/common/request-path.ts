@@ -56,7 +56,32 @@ export function normalizedPath(rawUrl: string): string {
  */
 export type RateLimitClass = 'auth' | 'money' | 'provider' | 'admin' | 'default';
 
+/**
+ * Чтения собственной сессии. Секрета не принимают и подбору не подлежат:
+ * без действующей cookie отвечают 401 сразу, с ней — рассказывают о себе же.
+ *
+ * Держатся списком, а не правилом «любой GET под /v1/auth/»: под тем же
+ * префиксом есть GET с одноразовым токеном в запросе (`email/verify/status`),
+ * и он обязан оставаться в жёстком классе.
+ */
+const SESSION_READS = new Set(['/v1/auth/me', '/v1/auth/authz/console']);
+
 export function rateLimitClass(normalized: string, method: string): RateLimitClass {
+  const isMutation = method !== 'GET' && method !== 'HEAD';
+
+  // Проверка сессии — не попытка входа.
+  //
+  // Порог auth (30/мин) считается ПО АДРЕСУ, одним ведром на всю машину. Пока
+  // сюда попадал `GET /v1/auth/me`, обычная работа человека упиралась в него
+  // сама: каждый кабинет спрашивает профиль при загрузке страницы, вкладок
+  // несколько, перезагрузок за минуту тоже. Итог — 429 на проверке сессии,
+  // который интерфейс показывал как выход из аккаунта (проход 7.4).
+  //
+  // Это не ослабление защиты от перебора: перебирать здесь нечего. Все
+  // маршруты, где проверяется секрет (вход, регистрация, сброс и смена
+  // пароля, выдача сервисного токена), — POST, и они остаются в auth.
+  if (!isMutation && SESSION_READS.has(normalized)) return 'default';
+
   // Выдача сервисного токена — тот же класс, что и вход человека: это проверка
   // секрета, и перебор по ней ограничивается так же жёстко.
   if (normalized.startsWith('/v1/auth/') || normalized.startsWith('/v1/integration/token')) {
@@ -70,7 +95,6 @@ export function rateLimitClass(normalized: string, method: string): RateLimitCla
   // Поэтому класс отдельный — ограничивает шторм, но не теряет подтверждения.
   if (normalized === '/v1/billing/payments/notify') return 'provider';
 
-  const isMutation = method !== 'GET' && method !== 'HEAD';
   // Денежный класс — только МУТАЦИИ: чтение своих счетов ограничивать так же
   // жёстко смысла нет, а вреда больше — пользователь упирается в 429 на
   // обычном просмотре.

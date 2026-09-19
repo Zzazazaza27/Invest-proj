@@ -32,3 +32,9 @@ export {
   type CabinetKey,
   type AccessDecision,
 } from './access';
+export {
+  classifySessionFailure,
+  SessionCheckFailed,
+  useSessionCheck,
+  type SessionFailure,
+} from './session';

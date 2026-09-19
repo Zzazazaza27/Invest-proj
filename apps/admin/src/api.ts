@@ -19,6 +19,10 @@ import {
   type LinkPlanCapabilityRequest,
   type PlanCapability,
   type SetCapabilityBaselineRequest,
+  DealSupportAssignmentRowSchema,
+  DealSupportAssignmentSchema,
+  ProjectReviewAssignmentSchema,
+  StaffCapabilityGrantSchema,
   StaffCapabilitySchema,
   TrancheReturnSchema,
   type CommissionAdjustment,
@@ -26,7 +30,11 @@ import {
   type DealSummary,
   type RecordCommissionAdjustmentRequest,
   type RecordTrancheReturnRequest,
+  type DealSupportAssignment,
+  type DealSupportAssignmentRow,
+  type ProjectReviewAssignment,
   type StaffCapability,
+  type StaffCapabilityGrant,
   type TrancheReturn,
   FeeTermsSchema,
   type ActivateFeeOffsetRuleRequest,
@@ -871,13 +879,102 @@ export const api = {
       }),
   },
 
-  /** Каталог функциональных полномочий и их выдача (M097). */
+  /**
+   * Функциональные полномочия сотрудников и области их работы (M097, M099).
+   *
+   * Три РАЗНЫХ условия доступа, и экран обязан их различать: роль (выдаётся
+   * отдельно, выше на этой же странице), полномочие «что вправе делать» и
+   * назначение «с какими объектами».
+   */
   capabilities: {
     catalog: (): Promise<{ items: StaffCapability[] }> =>
       client.request({
         method: 'GET',
         path: '/v1/admin/capabilities',
         schema: listOf(StaffCapabilitySchema),
+      }),
+    grantsOf: (userId: string): Promise<{ items: StaffCapabilityGrant[] }> =>
+      client.request({
+        method: 'GET',
+        path: `/v1/admin/capabilities/users/${encodeURIComponent(userId)}`,
+        schema: listOf(StaffCapabilityGrantSchema),
+      }),
+    grant: (userId: string, capability: string, reason: string): Promise<StaffCapabilityGrant> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/capabilities/grant',
+        body: { userId, capability, reason },
+        schema: StaffCapabilityGrantSchema,
+      }),
+    revoke: (userId: string, capability: string, reason: string): Promise<{ revoked: boolean }> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/capabilities/revoke',
+        body: { userId, capability, reason },
+        schema: z.object({ revoked: z.boolean() }),
+      }),
+    dealSupport: (filter: {
+      projectId?: string;
+      userId?: string;
+    }): Promise<{ items: DealSupportAssignmentRow[] }> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/capabilities/deal-support',
+        query: {
+          ...(filter.projectId ? { projectId: filter.projectId } : {}),
+          ...(filter.userId ? { userId: filter.userId } : {}),
+        },
+        schema: listOf(DealSupportAssignmentRowSchema),
+      }),
+    assignDealSupport: (
+      projectId: string,
+      userId: string,
+      reason: string,
+    ): Promise<DealSupportAssignment> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/capabilities/deal-support',
+        body: { projectId, userId, reason },
+        schema: DealSupportAssignmentSchema,
+      }),
+    revokeDealSupport: (
+      projectId: string,
+      userId: string,
+      reason: string,
+    ): Promise<{ revoked: boolean }> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/admin/capabilities/deal-support/revoke',
+        body: { projectId, userId, reason },
+        schema: z.object({ revoked: z.boolean() }),
+      }),
+  },
+
+  /** Назначения на ОЦЕНКУ проекта — другое условие доступа, чем сопровождение. */
+  expertAssignments: {
+    ofProject: (projectId: string): Promise<{ items: ProjectReviewAssignment[] }> =>
+      client.request({
+        method: 'GET',
+        path: `/v1/experts/projects/${encodeURIComponent(projectId)}/assignments`,
+        schema: listOf(ProjectReviewAssignmentSchema),
+      }),
+    assign: (
+      projectId: string,
+      expertIds: string[],
+      dueAt: string,
+    ): Promise<{ items: unknown[] }> =>
+      client.request({
+        method: 'POST',
+        path: '/v1/experts/assignments',
+        body: { projectId, expertIds, dueAt, reason: 'manual' },
+        schema: z.object({ items: z.array(z.unknown()) }),
+      }),
+    withdraw: (assignmentId: string, reason: string): Promise<ProjectReviewAssignment> =>
+      client.request({
+        method: 'POST',
+        path: `/v1/experts/assignments/${encodeURIComponent(assignmentId)}/withdraw`,
+        body: { reason },
+        schema: ProjectReviewAssignmentSchema,
       }),
   },
 

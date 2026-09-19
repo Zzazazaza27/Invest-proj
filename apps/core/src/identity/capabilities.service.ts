@@ -3,6 +3,7 @@ import {
   uuidv7,
   type AssignDealSupportRequest,
   type DealSupportAssignment,
+  type DealSupportAssignmentRow,
   type GrantCapabilityRequest,
   type RevokeDealSupportRequest,
   type RevokeCapabilityRequest,
@@ -58,6 +59,41 @@ export class CapabilitiesService {
         [userId],
       );
       return rows.map(mapGrant);
+    });
+  }
+
+  /**
+   * Действующие назначения на сопровождение сделок.
+   *
+   * Без фильтра — все: назначений на платформе единицы, а администратору
+   * нужна картина целиком, чтобы снять лишнее. Фильтры сужают до одного
+   * проекта или одного человека.
+   */
+  async listDealSupport(
+    ctx: RequestContext,
+    filter: { projectId?: string; userId?: string } = {},
+  ): Promise<DealSupportAssignmentRow[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<DealSupportRow>(
+        `SELECT a.id, a.project_id, a.expert_id, a.status, a.created_at,
+                p.title AS project_title,
+                COALESCE(u.display_name, '—') AS user_name
+           FROM experts.expert_assignments a
+           JOIN lab.projects p ON p.id = a.project_id
+           LEFT JOIN identity.users u ON u.id = a.expert_id
+          WHERE a.purpose = 'deal_support'
+            AND a.status IN ('assigned', 'accepted')
+            AND ($1::uuid IS NULL OR a.project_id = $1)
+            AND ($2::uuid IS NULL OR a.expert_id = $2)
+          ORDER BY a.created_at DESC
+          LIMIT 200`,
+        [filter.projectId ?? null, filter.userId ?? null],
+      );
+      return rows.map((row) => ({
+        ...mapAssignment(row),
+        projectTitle: row.project_title,
+        userName: row.user_name,
+      }));
     });
   }
 
@@ -293,6 +329,11 @@ interface AssignmentRow {
   expert_id: string;
   status: string;
   created_at: Date;
+}
+
+interface DealSupportRow extends AssignmentRow {
+  project_title: string;
+  user_name: string;
 }
 
 interface GrantRow {
