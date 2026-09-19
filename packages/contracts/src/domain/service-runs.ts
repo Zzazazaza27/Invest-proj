@@ -33,6 +33,9 @@ export type ServiceRunStatus = z.infer<typeof ServiceRunStatusSchema>;
  * исполнение, результат которого анализом не является.
  */
 export const ServiceRunEngineSchema = z.enum(['llm', 'heuristic', 'test']);
+/** Род разбора, который обещала услуга. Разные роды — разные услуги. */
+export const ServiceRunKindSchema = z.enum(['rules_analysis', 'llm_analysis']);
+export type ServiceRunKind = z.infer<typeof ServiceRunKindSchema>;
 export type ServiceRunEngine = z.infer<typeof ServiceRunEngineSchema>;
 
 export const ServiceRunViewSchema = z.object({
@@ -42,7 +45,16 @@ export const ServiceRunViewSchema = z.object({
   kind: z.literal('ai_analysis'),
   status: ServiceRunStatusSchema,
   engine: ServiceRunEngineSchema.nullable(),
+  /** Что обещала услуга на момент запуска. */
+  requiredKind: ServiceRunKindSchema.nullable(),
   isTest: z.boolean(),
+  /**
+   * Участвовали ли ответы поданной анкеты.
+   *
+   * false — разобрана только карточка проекта, и отчёт нельзя называть
+   * анализом версии заявки.
+   */
+  includesAnswers: z.boolean(),
 
   /** Версия заявки, по которой сделан разбор. */
   inputVersionId: z.uuid().nullable(),

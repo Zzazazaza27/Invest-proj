@@ -42,11 +42,16 @@ export const RoundServiceSchema = z.object({
    * Кто выполняет услугу.
    *
    * `manual` — сотрудник платформы, и отметку «выполнено» ставит он, с
-   * основанием. `ai_analysis` — платформа, и тогда отметка появляется ТОЛЬКО
-   * после успешного разбора с сохранённым результатом: продавать разбор и
-   * закрывать его галочкой нельзя.
+   * основанием. Остальные роды выполняет платформа, и тогда отметка появляется
+   * ТОЛЬКО после успешного разбора с сохранённым результатом: продавать разбор
+   * и закрывать его галочкой нельзя.
+   *
+   * `rules_analysis` и `llm_analysis` — РАЗНЫЕ услуги. Разбор по правилам не
+   * закрывает услугу, обещавшую анализ языковой моделью: это другой результат
+   * и другая цена. Пока модель не подключена, услугу с обещанием ИИ-анализа
+   * нельзя даже пометить реализованной.
    */
-  executionKind: z.enum(['manual', 'ai_analysis']),
+  executionKind: z.enum(['manual', 'rules_analysis', 'llm_analysis']),
   createdAt: IsoDateTimeSchema,
 });
 export type RoundService = z.infer<typeof RoundServiceSchema>;
@@ -55,7 +60,7 @@ export const CreateRoundServiceRequestSchema = z.object({
   code: OfferCodeSchema,
   name: z.string().trim().min(2).max(160),
   description: z.string().trim().max(1000).optional(),
-  executionKind: z.enum(['manual', 'ai_analysis']).optional(),
+  executionKind: z.enum(['manual', 'rules_analysis', 'llm_analysis']).optional(),
 });
 export type CreateRoundServiceRequest = z.infer<typeof CreateRoundServiceRequestSchema>;
 
@@ -64,7 +69,7 @@ export const UpdateRoundServiceRequestSchema = z
     name: z.string().trim().min(2).max(160).optional(),
     description: z.string().trim().max(1000).nullable().optional(),
     isImplemented: z.boolean().optional(),
-    executionKind: z.enum(['manual', 'ai_analysis']).optional(),
+    executionKind: z.enum(['manual', 'rules_analysis', 'llm_analysis']).optional(),
     reason: z.string().trim().min(3).max(500),
   })
   .refine(

@@ -151,7 +151,7 @@ try {
   await admin.json(`/v1/admin/round-services/${svc.id}`, {
     method: 'PATCH',
     body: {
-      executionKind: 'ai_analysis',
+      executionKind: 'rules_analysis',
       reason: 'прогон 6.1: услугу выполняет платформа',
     },
   });
@@ -159,9 +159,35 @@ try {
     const services = await admin.json('/v1/admin/round-services');
     const found = services.items.find((s) => s.code === codes.svcBase);
     check(
-      'услуга помечена исполняемой платформой',
-      found?.executionKind === 'ai_analysis',
+      'услуга помечена разбором по правилам',
+      found?.executionKind === 'rules_analysis',
       `${found?.executionKind}`,
+    );
+  }
+
+  // ------ услуга с обещанием ИИ-анализа не продаётся, пока её нечем выполнить
+  {
+    const created = await admin.json('/v1/admin/round-services', {
+      method: 'POST',
+      body: { code: `${codes.svcOther}_llm`, name: 'ИИ-анализ заявки (прогон)' },
+    });
+    const { response, json } = await admin.call(`/v1/admin/round-services/${created.id}`, {
+      method: 'PATCH',
+      body: {
+        executionKind: 'llm_analysis',
+        isImplemented: true,
+        reason: 'прогон: попытка продать ИИ-анализ без модели',
+      },
+    });
+    check(
+      'услугу с обещанием ИИ-анализа нельзя пометить реализованной',
+      response.status >= 400,
+      `${response.status}`,
+    );
+    check(
+      'отказ называет, чего не хватает',
+      JSON.stringify(json).includes('ключ провайдера'),
+      JSON.stringify(json?.errors ?? json?.detail ?? json).slice(0, 140),
     );
   }
 
@@ -250,6 +276,21 @@ try {
     check('результат сохранён', typeof run.resultRef === 'string', `${run.resultRef}`);
     check('отпечаток входа зафиксирован', /^[0-9a-f]{64}$/.test(run.inputSha256 ?? ''));
     check('версия заявки зафиксирована', run.inputVersionNo !== null, `№${run.inputVersionNo}`);
+    check(
+      'ответы анкеты участвовали в разборе',
+      run.includesAnswers === true,
+      `${run.includesAnswers}`,
+    );
+    check(
+      'род заказанного разбора записан',
+      run.requiredKind === 'rules_analysis',
+      `${run.requiredKind}`,
+    );
+    check(
+      'отчёт назван анализом ответов поданной версии',
+      run.explanation.some((line) => line.includes('по ответам поданной версии')),
+      run.explanation.join(' | ').slice(0, 140),
+    );
     check(
       'объяснение говорит, что отчёт не даёт одобрения',
       run.explanation.some((line) => line.includes('не означает одобрения')),

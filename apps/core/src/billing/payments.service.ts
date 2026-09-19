@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import {
   uuidv7,
+  type PaymentDiscrepancy,
   type PaymentProviderStatus,
   type PaymentView,
   type ProviderNotification,
@@ -220,14 +221,38 @@ export class PaymentsService {
       // Сумма из уведомления обязана совпасть с нашей. Расхождение — повод
       // разбираться руками, а не считать покупку оплаченной.
       if (notification.amount !== null && notification.amount !== payment.amount) {
-        await markEvent(tx, eventId, 'rejected');
+        // Расхождение суммы — тоже не шум: оператор сообщил о движении денег,
+        // не совпадающем с нашей записью. Оплатой это не считается.
+        await recordDiscrepancy(tx, {
+          kind: 'amount_mismatch',
+          payment,
+          eventId,
+          amount: notification.amount,
+          detail:
+            `оператор сообщил сумму ${notification.amount}, в платеже ${payment.amount}. ` +
+            'Оплатой не считается; нужна сверка.',
+        });
+        await markEvent(tx, eventId, 'needs_review');
         return { result: 'amount_mismatch' };
       }
 
-      // Платёж уже завершён — значит решение по нему принято. Второе событие
-      // о том же успехе (у операторов их бывает несколько: «оплачен», затем
-      // «списан») и опоздавшее событие по отменённой попытке сюда и приходят.
+      // Платёж уже завершён — решение по нему принято, и переигрывать его
+      // уведомлением нельзя. Но «нельзя переиграть» не значит «можно
+      // выбросить»: проверенное сообщение о ПОСТУПЛЕНИИ денег по попытке,
+      // которую мы считали неуспешной, — это расхождение, а не шум.
       if (isFinal(payment.status)) {
+        if (notification.outcome === 'succeeded' && payment.status !== 'succeeded') {
+          await recordDiscrepancy(tx, {
+            kind: 'late_success_after_failure',
+            payment,
+            eventId,
+            detail:
+              `оператор подтвердил поступление денег по платежу, завершённому как ` +
+              `«${payment.status}». Платёж не переигран; нужна сверка с выпиской.`,
+          });
+          await markEvent(tx, eventId, 'needs_review');
+          return { result: 'needs_review' };
+        }
         await markEvent(tx, eventId, 'ignored');
         return { result: 'already_final' };
       }
@@ -242,14 +267,24 @@ export class PaymentsService {
           [payment.purchase_id],
         );
         if (rows[0]?.status === 'paid') {
-          await tx.query(
-            `UPDATE billing.payments
-                SET status = 'canceled',
-                    failure_reason = 'покупка уже оплачена: это подтверждение опоздало',
-                    updated_at = now()
-              WHERE id = $1`,
-            [payment.id],
-          );
+          // Покупка уже оплачена — активировать её второй раз нечем. Но если
+          // оператор подтвердил ПОСТУПЛЕНИЕ, деньги, скорее всего, пришли
+          // дважды. Отменять такой платёж нельзя: отмена в нашей записи не
+          // возвращает денег и прячет факт. Фиксируем расхождение — решение за
+          // человеком, автоматических возвратов нет.
+          if (notification.outcome === 'succeeded') {
+            await recordDiscrepancy(tx, {
+              kind: 'possible_double_payment',
+              payment,
+              eventId,
+              detail:
+                'покупка уже оплачена, а оператор подтвердил ещё одно поступление. ' +
+                'Возможна двойная оплата: нужна сверка и решение о возврате.',
+            });
+            await markEvent(tx, eventId, 'needs_review');
+            return { result: 'needs_review' };
+          }
+
           await markEvent(tx, eventId, 'ignored');
           return { result: 'purchase_already_paid' };
         }
@@ -296,6 +331,37 @@ export class PaymentsService {
       );
       await markEvent(tx, eventId, 'applied');
       return { result: outcome };
+    });
+  }
+
+  /**
+   * Открытые расхождения по деньгам — для администратора.
+   *
+   * Отдельный список, а не часть платежей: это то, что платформа НЕ решила
+   * сама и по чему ждёт человека.
+   */
+  async discrepancies(ctx: RequestContext): Promise<PaymentDiscrepancy[]> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<DiscrepancyRow>(
+        `SELECT id, kind, payment_id, purchase_id, amount::text AS amount, currency, detail,
+                status, resolution, created_at, resolved_at
+           FROM billing.payment_discrepancies
+          ORDER BY (status = 'open') DESC, created_at DESC
+          LIMIT 100`,
+      );
+      return rows.map((row) => ({
+        id: row.id,
+        kind: row.kind,
+        paymentId: row.payment_id,
+        purchaseId: row.purchase_id,
+        amount: row.amount,
+        currency: row.currency,
+        detail: row.detail,
+        status: row.status,
+        resolution: row.resolution,
+        createdAt: row.created_at.toISOString(),
+        resolvedAt: row.resolved_at?.toISOString() ?? null,
+      }));
     });
   }
 
@@ -457,6 +523,40 @@ async function insertEventOnce(
   }
 }
 
+/**
+ * Записать расхождение между сообщением оператора и нашей записью.
+ *
+ * Возвратов и списаний отсюда не происходит и не будет: это материал для
+ * сверки человеком. Механизм сверки уточняется при подключении настоящего
+ * оператора — до тех пор запись существует, чтобы факт не потерялся.
+ */
+async function recordDiscrepancy(
+  tx: Tx,
+  input: {
+    kind: 'late_success_after_failure' | 'possible_double_payment' | 'amount_mismatch';
+    payment: { id: string; purchase_id: string | null; amount: string; currency: string };
+    eventId: string;
+    detail: string;
+    amount?: string | null;
+  },
+): Promise<void> {
+  await tx.query(
+    `INSERT INTO billing.payment_discrepancies
+       (id, kind, payment_id, purchase_id, event_id, amount, currency, detail)
+     VALUES ($1, $2, $3, $4, $5, $6::numeric, $7, $8)`,
+    [
+      uuidv7(),
+      input.kind,
+      input.payment.id,
+      input.payment.purchase_id,
+      input.eventId,
+      input.amount ?? input.payment.amount,
+      input.payment.currency,
+      input.detail,
+    ],
+  );
+}
+
 async function markEvent(tx: Tx, eventId: string, result: string): Promise<void> {
   await tx.query(
     `UPDATE billing.payment_events SET result = $2, applied_at = now() WHERE id = $1`,
@@ -496,4 +596,18 @@ interface PaymentRow {
   failure_reason: string | null;
   created_at: Date;
   confirmed_at: Date | null;
+}
+
+interface DiscrepancyRow {
+  id: string;
+  kind: PaymentDiscrepancy['kind'];
+  payment_id: string | null;
+  purchase_id: string | null;
+  amount: string | null;
+  currency: string | null;
+  detail: string;
+  status: PaymentDiscrepancy['status'];
+  resolution: string | null;
+  created_at: Date;
+  resolved_at: Date | null;
 }

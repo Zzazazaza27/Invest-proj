@@ -135,3 +135,26 @@ export const PaymentProviderStatusSchema = z.object({
   explanation: z.array(z.string()),
 });
 export type PaymentProviderStatus = z.infer<typeof PaymentProviderStatusSchema>;
+
+/**
+ * Расхождение между сообщением оператора и записью платформы.
+ *
+ * Появляется там, где проверенное сообщение нельзя ни применить как обычное
+ * подтверждение, ни выбросить: поздний успех по завершённой попытке,
+ * подтверждение по уже оплаченной покупке, несовпадение суммы. Возвратов и
+ * списаний отсюда НЕ происходит — это материал для сверки человеком.
+ */
+export const PaymentDiscrepancySchema = z.object({
+  id: z.uuid(),
+  kind: z.enum(['late_success_after_failure', 'possible_double_payment', 'amount_mismatch']),
+  paymentId: z.uuid().nullable(),
+  purchaseId: z.uuid().nullable(),
+  amount: z.string().nullable(),
+  currency: z.string().nullable(),
+  detail: z.string(),
+  status: z.enum(['open', 'resolved']),
+  resolution: z.string().nullable(),
+  createdAt: IsoDateTimeSchema,
+  resolvedAt: IsoDateTimeSchema.nullable(),
+});
+export type PaymentDiscrepancy = z.infer<typeof PaymentDiscrepancySchema>;

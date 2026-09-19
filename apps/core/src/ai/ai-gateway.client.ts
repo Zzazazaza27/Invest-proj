@@ -36,6 +36,13 @@ export interface AnalysisInput {
   title: string;
   summary: string | null;
   stage: string;
+  /**
+   * Ответы ПОДАННОЙ версии заявки с формулировками вопросов.
+   *
+   * Уходят в наш шлюз. Внешней модели они достаются только при согласованных
+   * условиях обработки — за этим следит вызывающий, а не клиент.
+   */
+  answers: { key: string; question: string; text: string }[];
   materials: { type: string; text?: string | null; url?: string | null }[];
   /**
    * Одноразовый nonce прогона (128 бит, hex). Маркеры слота данных

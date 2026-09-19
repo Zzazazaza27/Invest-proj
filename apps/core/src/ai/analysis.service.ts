@@ -163,6 +163,14 @@ export class AnalysisService {
         [projectId],
       );
 
+      // ОТВЕТЫ АНКЕТЫ — из ПОДАННОЙ версии, а не из редактируемого черновика.
+      //
+      // Черновик меняется в любую секунду, и отчёт по нему нельзя привязать ни
+      // к какой версии: назавтра «та же заявка» означала бы другой текст.
+      // Снимок поданной версии неизменяем (M004) и самодостаточен — в нём
+      // лежат и ответы, и формулировки вопросов на языке подачи, и стадия.
+      const submitted = await loadSubmittedAnswers(tx, projectId);
+
       // Маркеры слота данных вырезаются ДО снимка: снимок хранит ровно то, что
       // анализировалось, а nonce входит в отпечаток — воспроизводимость прогона
       // включает и границу слота (ADR-008 §3, Э4). Nonce детерминирован по
@@ -189,6 +197,11 @@ export class AnalysisService {
         },
         projectUpdatedAt: row.updated_at.toISOString(),
         materials: materials.rows.map((m) => ({ id: m.id, type: m.type, version: m.version })),
+        // Версия и ответы входят в снимок и, следовательно, в отпечаток:
+        // отпечаток обязан описывать ФАКТИЧЕСКИ проанализированные данные.
+        versionId: submitted?.versionId ?? null,
+        versionNo: submitted?.versionNo ?? null,
+        answers: submitted?.answers ?? [],
       };
       const inputSha256 = createHash('sha256').update(JSON.stringify(snapshot)).digest('hex');
 
@@ -207,7 +220,7 @@ export class AnalysisService {
         [uuidv7(), runId, JSON.stringify({ inputSha256, snapshot })],
       );
 
-      return { row, materials: materials.rows, snapshot, inputSha256 };
+      return { row, materials: materials.rows, snapshot, inputSha256, submitted };
     });
 
     // Ключ провайдера достаётся ПОСЛЕ фиксации входа и только при включённом
@@ -221,6 +234,15 @@ export class AnalysisService {
       throw errors.featureDisabled('ai.scoring.llm.enabled');
     }
 
+    // Ответы анкеты и содержимое закрытых материалов НЕ уходят внешней модели,
+    // пока не согласованы условия обработки. Разбор по правилам считает наш
+    // собственный шлюз, и для него ограничение не действует; включённая
+    // языковая модель — другое дело, и без явного разрешения путь закрыт.
+    if (flags.llm && !flags.answersToModel) {
+      await this.failRun(ctx, runId);
+      throw errors.featureDisabled('ai.answers_to_model.allowed');
+    }
+
     let result: AnalysisResult;
     try {
       result = await this.gateway.analyze(
@@ -230,6 +252,10 @@ export class AnalysisService {
           stage: input.row.stage,
           nonce: input.snapshot.nonce,
           metadata: input.snapshot.metadata,
+          // Ответы анкеты с формулировками вопросов — то, ради чего анализ и
+          // существует. Идут они в НАШ шлюз; внешней модели они не достаются,
+          // пока не согласованы условия обработки (проверка ниже по флагу).
+          answers: input.snapshot.answers,
           // Содержимое материалов не передаётся: парсера дек нет, а ходить по
           // пользовательской ссылке сервером — это SSRF. В анализ попадает
           // только факт наличия материала и его тип.
@@ -519,6 +545,9 @@ export class AnalysisService {
         projectId,
         status: 'succeeded' as const,
         inputSha256: input.inputSha256,
+        inputVersionId: input.submitted?.versionId ?? null,
+        inputVersionNo: input.submitted?.versionNo ?? null,
+        includesAnswers: (input.submitted?.answers.length ?? 0) > 0,
         provider: result.provider,
         isLlm: result.isLlm,
         modelVersion: result.modelVersion,
@@ -961,16 +990,22 @@ export class AnalysisService {
    * Два флага — два состояния продукта: скоринг эвристикой и скоринг моделью.
    * Второй без первого смысла не имеет; первый без второго — штатный режим.
    */
-  private async assertScoringEnabled(ctx: RequestContext): Promise<{ llm: boolean }> {
+  private async assertScoringEnabled(
+    ctx: RequestContext,
+  ): Promise<{ llm: boolean; answersToModel: boolean }> {
     const flags = await this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<{ key: string; enabled: boolean }>(
         `SELECT key, enabled FROM audit.feature_flags
-          WHERE key IN ('ai.scoring.enabled', 'ai.scoring.llm.enabled')`,
+          WHERE key IN ('ai.scoring.enabled', 'ai.scoring.llm.enabled',
+                        'ai.answers_to_model.allowed')`,
       );
       return Object.fromEntries(rows.map((r) => [r.key, r.enabled]));
     });
     if (!flags['ai.scoring.enabled']) throw errors.featureDisabled('ai.scoring.enabled');
-    return { llm: Boolean(flags['ai.scoring.llm.enabled']) };
+    return {
+      llm: Boolean(flags['ai.scoring.llm.enabled']),
+      answersToModel: Boolean(flags['ai.answers_to_model.allowed']),
+    };
   }
 
   private async activeModelId(tx: Tx, name: string): Promise<string> {
@@ -1046,8 +1081,12 @@ interface AnalysisInputSnapshot {
     };
     projectUpdatedAt: string;
     materials: { id: string; type: string; version: number }[];
+    versionId: string | null;
+    versionNo: number | null;
+    answers: { key: string; question: string; text: string }[];
   };
   inputSha256: string;
+  submitted: SubmittedAnswers | null;
 }
 
 interface PassportRow {
@@ -1074,6 +1113,99 @@ interface ScoreRow {
   model_version: string | null;
 }
 
+/**
+ * Ответы ПОДАННОЙ версии заявки вместе с формулировками вопросов.
+ *
+ * Берётся последняя поданная версия: её снимок неизменяем (M004) и
+ * самодостаточен — вопрос могли потом переписать или архивировать, а разбор
+ * обязан описывать то, что человек видел и на что отвечал.
+ *
+ * Черновик заявки сюда не попадает намеренно. Он меняется в любую секунду, и
+ * отчёт по нему нельзя привязать ни к какой версии: «тот же отчёт о той же
+ * заявке» назавтра означал бы другой текст.
+ *
+ * Пусто (null) — заявка ещё не подана. Тогда разбор идёт по карточке проекта,
+ * и называть его анализом версии заявки нельзя: это разные вещи, и вызывающий
+ * об этом узнаёт по `includesAnswers`.
+ */
+async function loadSubmittedAnswers(tx: Tx, projectId: string): Promise<SubmittedAnswers | null> {
+  const { rows } = await tx.query<{ id: string; version_no: number; snapshot_jsonb: unknown }>(
+    `SELECT id, version_no, snapshot_jsonb FROM lab.project_versions
+      WHERE project_id = $1 ORDER BY version_no DESC LIMIT 1`,
+    [projectId],
+  );
+  const row = rows[0];
+  if (!row) return null;
+
+  const snapshot = (row.snapshot_jsonb ?? {}) as SnapshotShape;
+  const answers = snapshot.answers ?? {};
+  const applicable = snapshot.applicableKeys ?? {};
+  const wording = questionWording(snapshot);
+
+  const collected: { key: string; question: string; text: string }[] = [];
+  for (const [key, level] of Object.entries(applicable)) {
+    const raw = answers[key];
+    const text = answerText(raw);
+    if (text.length === 0) continue;
+    collected.push({ key, question: wording[key] ?? key, text });
+    void level;
+  }
+  // Ответы вне списка показанных вопросов игнорируются: они относятся к другой
+  // стадии или к вопросу, который этой заявке не задавали.
+  return { versionId: row.id, versionNo: row.version_no, answers: collected };
+}
+
+/** Формулировки вопросов из снимка формы, по ключу. */
+function questionWording(snapshot: SnapshotShape): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const section of snapshot.form?.sections ?? []) {
+    for (const question of section.questions ?? []) {
+      if (typeof question?.key === 'string' && typeof question?.title === 'string') {
+        out[question.key] = question.title;
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Ответ в текст.
+ *
+ * Анкета хранит и строки, и числа, и списки, и объекты со свободным
+ * комментарием. Разбору нужен текст, поэтому всё сводится к нему — но без
+ * выдумывания: пустое остаётся пустым.
+ */
+function answerText(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value.trim();
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => answerText(item))
+      .filter((item) => item.length > 0)
+      .join('; ');
+  }
+  if (typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>)
+      .map((item) => answerText(item))
+      .filter((item) => item.length > 0)
+      .join(' ');
+  }
+  return '';
+}
+
+interface SubmittedAnswers {
+  versionId: string;
+  versionNo: number;
+  answers: { key: string; question: string; text: string }[];
+}
+
+interface SnapshotShape {
+  answers?: Record<string, unknown>;
+  applicableKeys?: Record<string, string>;
+  form?: { sections?: { questions?: { key?: string; title?: string }[] }[] };
+}
+
 export interface AnalysisRunView {
   runId: string;
   projectId: string;
@@ -1087,6 +1219,11 @@ export interface AnalysisRunView {
    * заявки, отпечаток нужен здесь и сейчас.
    */
   inputSha256: string;
+  /** Версия заявки, ответы которой участвовали; null — ответов в разборе нет. */
+  inputVersionId: string | null;
+  inputVersionNo: number | null;
+  /** Участвовали ли ответы анкеты. false — отчёт описывает карточку проекта. */
+  includesAnswers: boolean;
   provider: string;
   isLlm: boolean;
   modelVersion: string;

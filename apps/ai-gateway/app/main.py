@@ -155,6 +155,11 @@ INJECTION_MARKERS: Final[tuple[re.Pattern[str], ...]] = tuple(
 )
 
 
+# Верхняя граница числа ответов: анкета конечна, а неограниченный список —
+# это способ раздуть запрос.
+MAX_ANSWERS = 200
+
+
 class Material(BaseModel):
     type: str = Field(max_length=64)
     text: str | None = Field(default=None, max_length=MAX_TEXT_CHARS)
@@ -171,10 +176,24 @@ class ProjectMetadata(BaseModel):
     launchCountry: str | None = Field(default=None, max_length=2)
 
 
+class Answer(BaseModel):
+    """Ответ анкеты из ПОДАННОЙ версии заявки вместе с формулировкой вопроса.
+
+    Формулировка приходит из того же неизменяемого снимка, что и ответ: вопрос
+    могли потом изменить или убрать, а разбор обязан описывать то, что человек
+    видел и на что отвечал.
+    """
+
+    key: str = Field(max_length=120)
+    question: str = Field(default="", max_length=1000)
+    text: str = Field(default="", max_length=MAX_TEXT_CHARS)
+
+
 class ProjectPayload(BaseModel):
     title: str = Field(max_length=500)
     summary: str | None = Field(default=None, max_length=MAX_TEXT_CHARS)
     stage: str = Field(max_length=32)
+    answers: list[Answer] = Field(default_factory=list)
     materials: list[Material] = Field(default_factory=list)
     # Одноразовый nonce прогона: только он закрывает слот данных в промпте.
     nonce: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
@@ -185,6 +204,13 @@ class ProjectPayload(BaseModel):
     def _limit_materials(cls, value: list[Material]) -> list[Material]:
         if len(value) > MAX_MATERIALS:
             raise ValueError(f"материалов больше {MAX_MATERIALS}")
+        return value
+
+    @field_validator("answers")
+    @classmethod
+    def _limit_answers(cls, value: list[Answer]) -> list[Answer]:
+        if len(value) > MAX_ANSWERS:
+            raise ValueError(f"ответов больше {MAX_ANSWERS}")
         return value
 
 

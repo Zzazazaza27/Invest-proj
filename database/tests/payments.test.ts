@@ -359,7 +359,7 @@ describe('M111: исполнение услуги платформой', () => {
     c: Client,
     owner: string,
     projectId: string,
-    executionKind: 'manual' | 'ai_analysis',
+    executionKind: 'manual' | 'rules_analysis' | 'llm_analysis',
   ): Promise<{ purchaseId: string; itemId: string; code: string }> {
     const purchaseId = await purchase(c, owner, projectId);
     const code = `svc_${purchaseId.slice(24)}`;
@@ -394,7 +394,7 @@ describe('M111: исполнение услуги платформой', () => {
       ).resolves.toBeDefined();
 
       const other = await createProject(c, owner.id);
-      const auto = await itemWithService(c, owner.id, other, 'ai_analysis');
+      const auto = await itemWithService(c, owner.id, other, 'rules_analysis');
       await expect(
         c.query(
           `UPDATE billing.round_purchase_items
@@ -410,7 +410,12 @@ describe('M111: исполнение услуги платформой', () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id);
-      const { purchaseId, itemId } = await itemWithService(c, owner.id, projectId, 'ai_analysis');
+      const { purchaseId, itemId } = await itemWithService(
+        c,
+        owner.id,
+        projectId,
+        'rules_analysis',
+      );
 
       await expect(
         c.query(
@@ -427,7 +432,12 @@ describe('M111: исполнение услуги платформой', () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id);
-      const { purchaseId, itemId } = await itemWithService(c, owner.id, projectId, 'ai_analysis');
+      const { purchaseId, itemId } = await itemWithService(
+        c,
+        owner.id,
+        projectId,
+        'rules_analysis',
+      );
 
       const runId = uuidv7();
       await c.query(
@@ -472,7 +482,12 @@ describe('M111: исполнение услуги платформой', () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id);
-      const { purchaseId, itemId } = await itemWithService(c, owner.id, projectId, 'ai_analysis');
+      const { purchaseId, itemId } = await itemWithService(
+        c,
+        owner.id,
+        projectId,
+        'rules_analysis',
+      );
 
       const insert = (id: string) =>
         c.query(
@@ -483,6 +498,74 @@ describe('M111: исполнение услуги платформой', () => {
         );
       await insert(uuidv7());
       await expect(insert(uuidv7())).rejects.toThrow(/purchase_item_runs_active/);
+    });
+  });
+});
+
+/**
+ * M114: разбор по правилам и ИИ-анализ — разные услуги.
+ *
+ * Проверяется то, из-за чего это вообще важно: услугу, за которую заплатили
+ * как за анализ языковой моделью, нельзя закрыть расчётом по правилам, а
+ * продавать её, пока модели нет, нельзя вовсе.
+ */
+describe('M114: род разбора', () => {
+  it('услугу с обещанием ИИ-анализа нельзя пометить реализованной без модели и ключа', async () => {
+    await inRollbackTx(async (c) => {
+      const admin = await createUser(c, { role: 'admin' });
+      await c.query(
+        `UPDATE audit.feature_flags SET enabled = false WHERE key = 'ai.scoring.llm.enabled'`,
+      );
+      await expect(
+        c.query(
+          `INSERT INTO billing.round_services
+             (id, code, name, is_implemented, execution_kind, created_by)
+           VALUES ($1, $2, 'ИИ-анализ', true, 'llm_analysis', $3)`,
+          [uuidv7(), `svc_llm_${Date.now() % 1e9}`, admin.id],
+        ),
+      ).rejects.toThrow(/выполнить его нечем/);
+    });
+  });
+
+  it('разбор по правилам не закрывает услугу, обещавшую ИИ-анализ', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      const purchaseId = await purchase(c, owner.id, projectId);
+
+      // Услуга заводится нереализованной — это единственный способ создать её
+      // без модели, и он же показывает, что продать её нельзя.
+      const code = `svc_llm2_${purchaseId.slice(24)}`;
+      await c.query(
+        `INSERT INTO billing.round_services
+           (id, code, name, is_implemented, execution_kind, created_by)
+         VALUES ($1, $2, 'ИИ-анализ', false, 'llm_analysis', $3)`,
+        [uuidv7(), code, owner.id],
+      );
+      const itemId = uuidv7();
+      await c.query(
+        `INSERT INTO billing.round_purchase_items
+           (id, purchase_id, kind, service_code, title, amount, currency)
+         VALUES ($1, $2, 'service', $3, 'ИИ-анализ', 0, 'RUB')`,
+        [itemId, purchaseId, code],
+      );
+      await c.query(
+        `INSERT INTO billing.purchase_item_runs
+           (id, item_id, purchase_id, project_id, kind, status, input_sha256, result_ref,
+            result_kind, engine, required_kind)
+         VALUES ($1, $2, $3, $4, 'ai_analysis', 'succeeded', repeat('c', 64), $5,
+                 'passport', 'heuristic', 'llm_analysis')`,
+        [uuidv7(), itemId, purchaseId, projectId, uuidv7()],
+      );
+
+      await expect(
+        c.query(
+          `UPDATE billing.round_purchase_items
+              SET fulfillment_status = 'fulfilled', fulfillment_note = 'закрыть правилами'
+            WHERE id = $1`,
+          [itemId],
+        ),
+      ).rejects.toThrow(/это разные услуги/);
     });
   });
 });

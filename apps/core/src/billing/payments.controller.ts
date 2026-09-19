@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
 import {
+  PaymentDiscrepancySchema,
   PaymentProviderStatusSchema,
   PaymentViewSchema,
   ServiceRunAvailabilitySchema,
@@ -107,6 +108,13 @@ export class AdminPaymentsController {
   @Get('provider')
   async provider(@Ctx() ctx: RequestContext) {
     return PaymentProviderStatusSchema.parse(await this.payments.providerStatus(ctx));
+  }
+
+  /** Расхождения по деньгам, ожидающие сверки человеком. */
+  @Get('discrepancies')
+  async discrepancies(@Ctx() ctx: RequestContext) {
+    const items = await this.payments.discrepancies(ctx);
+    return { items: items.map((item) => PaymentDiscrepancySchema.parse(item)) };
   }
 }
 

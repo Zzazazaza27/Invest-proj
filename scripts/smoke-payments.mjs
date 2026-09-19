@@ -478,8 +478,8 @@ try {
     };
     const lateResult = await notify(lateOnFailed);
     check(
-      'опоздавший успех по неуспешной попытке не принимается',
-      lateResult.json?.result === 'already_final',
+      'опоздавший успех по неуспешной попытке НЕ теряется, а уходит на сверку',
+      lateResult.json?.result === 'needs_review',
       `${lateResult.json?.result}`,
     );
     const [stillFailed] = await sql(`SELECT status FROM billing.payments WHERE id = $1`, [
@@ -489,6 +489,28 @@ try {
       'первая попытка осталась неуспешной',
       stillFailed.status === 'failed',
       stillFailed.status,
+    );
+    const [late] = await sql(
+      `SELECT kind, status, detail FROM billing.payment_discrepancies WHERE payment_id = $1`,
+      [first.id],
+    );
+    check(
+      'расхождение записано как поздний успех',
+      late?.kind === 'late_success_after_failure' && late?.status === 'open',
+      `${late?.kind}`,
+    );
+    check(
+      'в расхождении сказано, что нужна сверка',
+      typeof late?.detail === 'string' && late.detail.includes('сверка'),
+      `${late?.detail}`.slice(0, 90),
+    );
+    const [lateEvent] = await sql(`SELECT result FROM billing.payment_events WHERE event_id = $1`, [
+      lateOnFailed.eventId,
+    ]);
+    check(
+      'само событие помечено требующим сверки',
+      lateEvent?.result === 'needs_review',
+      `${lateEvent?.result}`,
     );
 
     // Теперь вторая попытка проходит, а следом опаздывает успех по ней же от
@@ -552,18 +574,32 @@ try {
     });
     check(
       'подтверждение по уже оплаченной покупке не активирует её второй раз',
-      result.json?.result === 'purchase_already_paid',
+      result.json?.result === 'needs_review',
       `${result.json?.result}`,
     );
-    const [pay] = await sql(`SELECT status, failure_reason FROM billing.payments WHERE id = $1`, [
-      hanging.id,
-    ]);
-    check('опоздавший платёж снят, а не подтверждён', pay.status === 'canceled', pay.status);
+    const [pay] = await sql(`SELECT status FROM billing.payments WHERE id = $1`, [hanging.id]);
     check(
-      'причина опоздания названа',
-      typeof pay.failure_reason === 'string' && pay.failure_reason.includes('опоздало'),
-      `${pay.failure_reason}`,
+      'платёж НЕ объявлен отменённым: деньги могли поступить',
+      pay.status !== 'canceled',
+      pay.status,
     );
+    const [double] = await sql(
+      `SELECT kind, status, amount::text AS amount FROM billing.payment_discrepancies
+        WHERE payment_id = $1`,
+      [hanging.id],
+    );
+    check(
+      'записано расхождение «возможна двойная оплата»',
+      double?.kind === 'possible_double_payment' && double?.status === 'open',
+      `${double?.kind}`,
+    );
+    check('сумма расхождения сохранена', double?.amount === hanging.amount, `${double?.amount}`);
+    const [{ n: refunded }] = await sql(
+      `SELECT count(*)::int AS n FROM billing.payments
+        WHERE purchase_id = $1 AND status IN ('refunded', 'partially_refunded')`,
+      [latePurchase.id],
+    );
+    check('автоматического возврата не произошло', refunded === 0, `${refunded}`);
     const [after] = await sql(`SELECT paid_at FROM billing.round_purchases WHERE id = $1`, [
       latePurchase.id,
     ]);
@@ -625,6 +661,26 @@ try {
     await sql(
       `UPDATE audit.feature_flags SET enabled = false
         WHERE key = 'billing.test_payment_confirmation'`,
+    );
+  }
+
+  // ------------------------ расхождения видны администратору списком
+  {
+    const list = await admin.json('/v1/admin/payments/discrepancies');
+    check(
+      'расхождения доступны администратору',
+      Array.isArray(list.items) && list.items.length > 0,
+      `${list.items?.length}`,
+    );
+    check(
+      'открытые расхождения идут первыми',
+      list.items[0]?.status === 'open',
+      `${list.items[0]?.status}`,
+    );
+    check(
+      'расхождение объясняет себя словами',
+      typeof list.items[0]?.detail === 'string' && list.items[0].detail.length > 10,
+      `${list.items[0]?.detail}`.slice(0, 80),
     );
   }
 

@@ -110,14 +110,15 @@ export class ServiceExecutionService {
       const runId = uuidv7();
       await tx.query(
         `INSERT INTO billing.purchase_item_runs
-           (id, item_id, purchase_id, project_id, kind, status, input_version_id,
-            input_snapshot, requested_by)
-         VALUES ($1, $2, $3, $4, 'ai_analysis', 'running', $5, $6::jsonb, $7)`,
+           (id, item_id, purchase_id, project_id, kind, status, required_kind,
+            input_version_id, input_snapshot, requested_by)
+         VALUES ($1, $2, $3, $4, 'ai_analysis', 'running', $5, $6, $7::jsonb, $8)`,
         [
           runId,
           itemId,
           item.purchase_id,
           item.project_id,
+          item.execution_kind,
           version?.id ?? null,
           JSON.stringify({
             versionNo: version?.version_no ?? null,
@@ -176,7 +177,7 @@ export class ServiceExecutionService {
     item: ItemRow,
     run: ServiceRunView | null,
   ): Promise<string | null> {
-    if (item.execution_kind !== 'ai_analysis') {
+    if (item.execution_kind === 'manual') {
       return 'эту услугу выполняет сотрудник платформы, запускать нечего';
     }
     if (item.purchase_status !== 'paid') {
@@ -189,8 +190,18 @@ export class ServiceExecutionService {
       return 'разбор уже идёт';
     }
 
-    const missing = await this.aiContourBlocker(tx);
+    const missing = await this.aiContourBlocker(tx, item.execution_kind);
     if (missing !== null) return missing;
+
+    // Услуга обещает анализ ЗАЯВКИ — значит заявка должна быть подана.
+    // Разбор одной карточки проекта такой услугой не является.
+    const { rows: version } = await tx.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM lab.project_versions WHERE project_id = $1`,
+      [item.project_id],
+    );
+    if ((version[0]?.n ?? 0) === 0) {
+      return 'заявка ещё не подана: разбирать нечего — ответы берутся из поданной версии';
+    }
     return null;
   }
 
@@ -201,10 +212,11 @@ export class ServiceExecutionService {
    * Общее «сервис недоступен» здесь бесполезно: не хватать может флага,
    * шлюза или ключа провайдера, и это три разных действия трёх разных людей.
    */
-  private async aiContourBlocker(tx: Tx): Promise<string | null> {
+  private async aiContourBlocker(tx: Tx, required: string): Promise<string | null> {
     const { rows } = await tx.query<{ key: string; enabled: boolean }>(
       `SELECT key, enabled FROM audit.feature_flags
-        WHERE key IN ('ai.scoring.enabled', 'ai.scoring.llm.enabled')`,
+        WHERE key IN ('ai.scoring.enabled', 'ai.scoring.llm.enabled',
+                      'ai.answers_to_model.allowed')`,
     );
     const flags = Object.fromEntries(rows.map((r) => [r.key, r.enabled]));
     if (!flags['ai.scoring.enabled']) {
@@ -213,13 +225,31 @@ export class ServiceExecutionService {
     if (!this.analysis.gatewayConfigured()) {
       return 'AI-шлюз не настроен: разбор выполнять нечем';
     }
-    if (flags['ai.scoring.llm.enabled']) {
-      const { rows: credential } = await tx.query<{ n: number }>(
-        `SELECT count(*)::int AS n FROM scoring.ai_provider_credentials WHERE is_active`,
-      );
-      if ((credential[0]?.n ?? 0) === 0) {
-        return 'разбор с языковой моделью включён, но ключ провайдера не задан';
+
+    const { rows: credential } = await tx.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM scoring.ai_provider_credentials WHERE is_active`,
+    );
+    const hasKey = (credential[0]?.n ?? 0) > 0;
+
+    if (required === 'llm_analysis') {
+      // Услуга обещает ИИ-анализ. Подменять его разбором по правилам нельзя:
+      // это разные услуги и разные результаты.
+      if (!flags['ai.scoring.llm.enabled']) {
+        return 'ИИ-анализ не подключён: языковая модель выключена настройкой платформы';
       }
+      if (!hasKey) {
+        return 'ИИ-анализ не подключён: ключ провайдера модели не задан';
+      }
+      if (!flags['ai.answers_to_model.allowed']) {
+        return 'условия обработки ответов внешней моделью не согласованы: ИИ-анализ закрыт';
+      }
+      return null;
+    }
+
+    // Разбор по правилам. Включённая языковая модель без ключа ломает и его:
+    // общий путь анализа уходит в LLM-ветку.
+    if (flags['ai.scoring.llm.enabled'] && !hasKey) {
+      return 'языковая модель включена, но ключ провайдера не задан: разбор не выполнить';
     }
     return null;
   }
@@ -227,7 +257,15 @@ export class ServiceExecutionService {
   private async finishSucceeded(
     ctx: RequestContext,
     runId: string,
-    result: { runId: string; passportId: string; isLlm: boolean; inputSha256: string },
+    result: {
+      runId: string;
+      passportId: string;
+      isLlm: boolean;
+      inputSha256: string;
+      inputVersionId: string | null;
+      inputVersionNo: number | null;
+      includesAnswers: boolean;
+    },
   ): Promise<ServiceRunView> {
     const view = await this.db.transaction(ctx, async (tx) => {
       // Отпечаток входа приходит вместе с результатом разбора. Читать его из
@@ -236,13 +274,28 @@ export class ServiceExecutionService {
       // успешный разбор выглядел бы неудавшимся.
       const inputSha256 = result.inputSha256;
 
+      // Версия и признак «ответы участвовали» берутся из САМОГО разбора, а не
+      // из того, что мы записали при запуске: заявку могли подать заново, пока
+      // шлюз считал, и отчёт обязан описывать разобранные данные.
       await tx.query(
         `UPDATE billing.purchase_item_runs
             SET status = 'succeeded', finished_at = now(), engine = $2,
                 agent_run_id = $3, result_ref = $4, result_kind = 'passport',
-                input_sha256 = $5
+                input_sha256 = $5,
+                input_version_id = COALESCE($6, input_version_id),
+                includes_answers = $7,
+                input_snapshot = input_snapshot || $8::jsonb
           WHERE id = $1`,
-        [runId, result.isLlm ? 'llm' : 'heuristic', result.runId, result.passportId, inputSha256],
+        [
+          runId,
+          result.isLlm ? 'llm' : 'heuristic',
+          result.runId,
+          result.passportId,
+          inputSha256,
+          result.inputVersionId,
+          result.includesAnswers,
+          JSON.stringify({ versionNo: result.inputVersionNo }),
+        ],
       );
 
       await this.audit.emit(tx, {
@@ -346,7 +399,8 @@ export class ServiceExecutionService {
 
   private async executableItems(tx: Tx, purchaseId: string): Promise<ItemRow[]> {
     const { rows } = await tx.query<ItemRow>(
-      `${ITEM_SELECT} WHERE i.purchase_id = $1 AND s.execution_kind = 'ai_analysis'
+      `${ITEM_SELECT} WHERE i.purchase_id = $1
+         AND s.execution_kind IN ('rules_analysis', 'llm_analysis')
         ORDER BY i.title`,
       [purchaseId],
     );
@@ -383,6 +437,7 @@ export class ServiceExecutionService {
   private async view(tx: Tx, runId: string): Promise<ServiceRunView | null> {
     const { rows } = await tx.query<RunRow>(
       `SELECT r.id, r.item_id, r.purchase_id, r.kind, r.status, r.engine, r.is_test,
+              r.required_kind, r.includes_answers,
               r.input_version_id, r.input_sha256, r.input_snapshot, r.result_ref,
               r.error_message, r.started_at, r.finished_at,
               p.updated_at::text AS project_updated_at
@@ -419,8 +474,16 @@ export class ServiceExecutionService {
               ? 'Разбор выполнен по правилам, без языковой модели.'
               : 'Тестовое исполнение: это не анализ.',
         );
-        if (versionNo !== null) {
-          explanation.push(`Отчёт относится к версии заявки №${versionNo}.`);
+        // «Анализ версии заявки» говорится только тогда, когда ответы анкеты
+        // действительно участвовали. Иначе это отчёт по карточке проекта, и
+        // называть его иначе значило бы обещать несделанное.
+        if (row.includes_answers && versionNo !== null) {
+          explanation.push(`Отчёт сделан по ответам поданной версии заявки №${versionNo}.`);
+        } else {
+          explanation.push(
+            'Ответы анкеты в этот отчёт не вошли: он описывает карточку проекта. ' +
+              'Анализом версии заявки его называть нельзя.',
+          );
         }
         if (inputChangedSince) {
           explanation.push(
@@ -442,7 +505,9 @@ export class ServiceExecutionService {
       kind: 'ai_analysis',
       status: row.status,
       engine: row.engine,
+      requiredKind: row.required_kind,
       isTest: row.is_test,
+      includesAnswers: row.includes_answers,
       inputVersionId: row.input_version_id,
       inputVersionNo: versionNo,
       inputSha256: row.input_sha256,
@@ -511,7 +576,9 @@ interface RunRow {
   kind: 'ai_analysis';
   status: ServiceRunView['status'];
   engine: ServiceRunView['engine'];
+  required_kind: ServiceRunView['requiredKind'];
   is_test: boolean;
+  includes_answers: boolean;
   input_version_id: string | null;
   input_sha256: string | null;
   input_snapshot: { versionNo?: number | null; projectUpdatedAt?: string | null } | null;

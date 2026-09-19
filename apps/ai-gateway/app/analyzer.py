@@ -296,7 +296,17 @@ def analyze(project: dict) -> dict:
     materials = project.get("materials") or []
 
     material_texts = [str(m.get("text") or "") for m in materials]
-    corpus = _normalize("\n".join([title, summary, *material_texts]))
+
+    # Ответы анкеты — основное содержание заявки, и в разбор они входят вместе
+    # с формулировками вопросов: «5 лет» без вопроса «сколько лет работает
+    # команда?» не значит ничего.
+    answers = project.get("answers") or []
+    answer_texts = [
+        f"{str(a.get('question') or '')} {str(a.get('text') or '')}".strip() for a in answers
+    ]
+    answered = sum(1 for a in answers if str(a.get("text") or "").strip())
+
+    corpus = _normalize("\n".join([title, summary, *answer_texts, *material_texts]))
     length = len(corpus)
     volume = _volume_factor(length)
     quantified = _has_numbers(corpus)
@@ -481,7 +491,7 @@ def analyze(project: dict) -> dict:
             value={"count": market_hits},
             confidence=0.9 if market_hits else 0.4,
             source_type="application_text",
-            source_ref="title+summary+materials",
+            source_ref="title+summary+answers+materials",
         ),
         Fact(
             category="traction",
@@ -497,7 +507,15 @@ def analyze(project: dict) -> dict:
             value={"count": signal("team")},
             confidence=0.8 if signal("team") else 0.4,
             source_type="application_text",
-            source_ref="title+summary+materials",
+            source_ref="title+summary+answers+materials",
+        ),
+        Fact(
+            category="tech",
+            key="answers",
+            value={"count": len(answers), "answered": answered},
+            confidence=1.0,
+            source_type="application_text",
+            source_ref="application_answers",
         ),
         Fact(
             category="tech",

@@ -102,8 +102,12 @@ export class RoundPackagesService {
     input: UpdateRoundServiceRequest,
   ): Promise<RoundService> {
     return this.db.transaction(ctx, async (tx) => {
-      const { rows } = await tx.query<{ id: string }>(
-        `UPDATE billing.round_services
+      // Правила из триггеров (нельзя пометить реализованной услугу, которую
+      // нечем выполнить) — это ответ «так нельзя», а не сбой сервера.
+      const { rows } = await asRuleError(
+        'executionKind',
+        tx.query<{ id: string }>(
+          `UPDATE billing.round_services
             SET name           = COALESCE($2, name),
                 description    = CASE WHEN $3::boolean THEN $4 ELSE description END,
                 is_implemented = COALESCE($5, is_implemented),
@@ -111,14 +115,15 @@ export class RoundPackagesService {
                 updated_at     = now()
           WHERE id = $1
           RETURNING id`,
-        [
-          serviceId,
-          input.name ?? null,
-          input.description !== undefined,
-          input.description ?? null,
-          input.isImplemented ?? null,
-          input.executionKind ?? null,
-        ],
+          [
+            serviceId,
+            input.name ?? null,
+            input.description !== undefined,
+            input.description ?? null,
+            input.isImplemented ?? null,
+            input.executionKind ?? null,
+          ],
+        ),
       );
       if (!rows[0]) throw errors.notFound({ subject: 'round_service' });
       await this.audit.emit(tx, {
@@ -534,6 +539,26 @@ export class RoundPackagesService {
   }
 }
 
+/**
+ * Отказ правила целостности — ответ «так нельзя», а не сбой.
+ *
+ * Триггеры формулируют причину по-русски и для человека (например: услугу с
+ * обещанием ИИ-анализа нечем выполнить). Их текст и должен дойти до
+ * администратора, а не «обратитесь в поддержку».
+ */
+async function asRuleError<T>(path: string, work: Promise<T>): Promise<T> {
+  try {
+    return await work;
+  } catch (error) {
+    const code = (error as { code?: string }).code;
+    if (code === '42501' || code === '23514') {
+      const message = (error as { message?: string }).message ?? 'действие недопустимо';
+      throw errors.validation([{ path, message }]);
+    }
+    throw error;
+  }
+}
+
 const PACKAGE_SELECT = `
   SELECT p.id, p.code, p.version, p.country_code, p.name, p.description,
          p.price::text AS price, p.currency,
@@ -576,7 +601,7 @@ interface ServiceRow {
   name: string;
   description: string | null;
   is_implemented: boolean;
-  execution_kind: 'manual' | 'ai_analysis';
+  execution_kind: 'manual' | 'rules_analysis' | 'llm_analysis';
   created_at: Date;
 }
 
