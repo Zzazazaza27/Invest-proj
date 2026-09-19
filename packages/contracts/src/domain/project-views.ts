@@ -71,6 +71,13 @@ export type PublicView = z.infer<typeof PublicViewSchema>;
  */
 export const InvestorViewSchema = PublicViewSchema.extend({
   access: ViewAccessSchema,
+  /**
+   * Доступ открыт лично владельцем проекта (разрешение выбранному
+   * получателю, 5.8): дата выдачи. `null` — доступ следует из режима
+   * проекта. Причина выдачи — внутренняя пометка владельца и получателю не
+   * показывается, поэтому её здесь нет.
+   */
+  grant: z.object({ grantedAt: IsoDateTimeSchema }).nullable(),
   description: z.string().nullable(),
   geoRegion: z.string().nullable(),
   round: RoundProjectionSchema,

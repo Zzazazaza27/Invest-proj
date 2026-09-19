@@ -222,6 +222,47 @@ check(
   `статус ${submitted.response.status}`,
 );
 
+// ------------------------------------------------------------------ материал
+// Файл нужен настоящий: «доступ к материалам» проверяется выдачей БАЙТОВ, а не
+// наличием строки в списке.
+let materialId;
+{
+  const ticket = await owner.client.call(`/v1/projects/${projectId}/materials/upload`, {
+    method: 'POST',
+    body: {
+      type: 'deck',
+      fileName: 'deck.pdf',
+      contentType: 'application/pdf',
+      sizeBytes: 1024,
+    },
+  });
+  const form = new FormData();
+  for (const [key, value] of Object.entries(ticket.json?.formFields ?? {})) {
+    form.append(key, value);
+  }
+  form.append('file', new Blob([Buffer.from('%PDF-1.4 материал прогона доступа')]), 'deck.pdf');
+  const upload = await fetch(ticket.json?.uploadUrl, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(20_000),
+  });
+  const finalized = await owner.client.call(
+    `/v1/projects/${projectId}/materials/${ticket.json?.materialId}/finalize`,
+    { method: 'POST' },
+  );
+  materialId = finalized.json?.id ?? ticket.json?.materialId;
+  await owner.client.call(`/v1/projects/${projectId}/materials/${materialId}/visibility`, {
+    method: 'PUT',
+    body: { visibility: 'investors' },
+  });
+  check(
+    'материал загружен и отмечен для инвесторов',
+    (upload.status === 204 || upload.status === 200) &&
+      (finalized.response.status === 200 || finalized.response.status === 201),
+    `хранилище ${upload.status}, подтверждение ${finalized.response.status}`,
+  );
+}
+
 // ------------------------------------------------- режим «выбранные инвесторы»
 {
   const { response, json } = await owner.client.call(`/v1/projects/${projectId}/visibility`, {
@@ -314,6 +355,51 @@ let grantId;
     'ответы анкеты действительно пришли',
     (view.json?.sections ?? []).some((s) => s.questions.length > 0),
   );
+  const file = await investor.client.call(
+    `/v1/projects/${projectId}/materials/${materialId}/content`,
+  );
+  check(
+    'с разрешением materials байты материала отдаются',
+    file.response.status === 200,
+    `статус ${file.response.status}`,
+  );
+  check(
+    'получатель видит, что доступ открыл владелец',
+    Boolean(view.json?.grant?.grantedAt),
+    JSON.stringify(view.json?.grant ?? null),
+  );
+  check(
+    'причина выдачи получателю не показывается',
+    !JSON.stringify(view.json ?? {}).includes('переговоры по раунду'),
+  );
+}
+
+// ------------------------------- сужение набора убирает прежние разрешения
+{
+  await owner.client.call(`/v1/projects/${projectId}/access/grants`, {
+    method: 'POST',
+    body: { email: investor.email, permissions: ['profile'] },
+  });
+  const view = await investor.client.call(`/v1/projects/${projectId}/investor-view`);
+  check(
+    'выдача меньшего набора закрывает материалы',
+    view.json?.access?.profile === 'investors' && view.json?.access?.materials === null,
+    JSON.stringify(view.json?.access ?? {}),
+  );
+  check('материалы больше не перечисляются', view.json?.materials === null);
+  const file = await investor.client.call(
+    `/v1/projects/${projectId}/materials/${materialId}/content`,
+  );
+  check(
+    'прямой доступ к байтам материала закрыт вместе с разрешением',
+    file.response.status === 404 || file.response.status === 403,
+    `статус ${file.response.status}`,
+  );
+  // Возвращаем материалы: дальше проверяется исключение поверх разрешения.
+  await owner.client.call(`/v1/projects/${projectId}/access/grants`, {
+    method: 'POST',
+    body: { email: investor.email, permissions: ['profile', 'materials'] },
+  });
 }
 
 // ------------------------------------------------------------------ исключение
@@ -369,6 +455,14 @@ let exclusionId;
 
   const view = await investor.client.call(`/v1/projects/${projectId}/investor-view`);
   check('после отзыва проект снова не виден', view.response.status === 404);
+  const file = await investor.client.call(
+    `/v1/projects/${projectId}/materials/${materialId}/content`,
+  );
+  check(
+    'после отзыва закрыт и прямой доступ к материалу',
+    file.response.status === 404 || file.response.status === 403,
+    `статус ${file.response.status}`,
+  );
 
   const again = await owner.client.call(`/v1/projects/${projectId}/access/grants/${grantId}`, {
     method: 'DELETE',
@@ -453,6 +547,48 @@ let exclusionId;
     body: { email: investor.email, permissions: [] },
   });
   check('пустой набор отклоняется', empty.response.status === 400);
+}
+
+// ------------------------------------------ организационная выдача отложена
+{
+  // Через API её нет вовсе: тело запроса принимает только адрес человека.
+  const byEntity = await owner.client.call(`/v1/projects/${projectId}/access/grants`, {
+    method: 'POST',
+    body: { entityId: '00000000-0000-7000-8000-000000000000', permissions: ['profile'] },
+  });
+  check(
+    'выдать разрешение организации через API нельзя',
+    byEntity.response.status === 400,
+    `статус ${byEntity.response.status}`,
+  );
+
+  // И главное: путь записи закрыт в БД, поэтому запрет не обходится ни новым
+  // маршрутом, ни служебной консолью.
+  const [entity] = await sql(
+    `SELECT id FROM kyc.business_entities WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+  );
+  if (entity) {
+    let denied = false;
+    try {
+      await sql(
+        `INSERT INTO lab.project_access_grants
+           (id, project_id, grantee_entity_id, permissions, granted_by)
+         VALUES (public.uuid_generate_v7(), $1, $2, ARRAY['profile'], $3)`,
+        [projectId, entity.id, owner.userId],
+      );
+    } catch {
+      denied = true;
+    }
+    check('организационная выдача отклоняется на уровне БД', denied);
+  } else {
+    check('организационная выдача: организаций в базе нет, проверка пропущена', true, 'честно');
+  }
+
+  const [active] = await sql(
+    `SELECT count(*)::int AS n FROM lab.project_access_grants
+      WHERE grantee_entity_id IS NOT NULL AND revoked_at IS NULL`,
+  );
+  check('действующих организационных выдач в базе нет', active.n === 0, `записей: ${active.n}`);
 }
 
 await pool.end();

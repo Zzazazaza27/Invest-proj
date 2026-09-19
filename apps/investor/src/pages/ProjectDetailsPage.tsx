@@ -200,7 +200,22 @@ ${new Date().toLocaleDateString('ru-RU')} · Пятый элемент`;
               {view.round.fundingScopeNote ? ` — ${view.round.fundingScopeNote}` : ''}
             </span>
           ) : null}
-          {/* Кто что видит — решил сервер; страница только показывает ответ. */}
+          {/*
+            Кто что видит — решил сервер; страница только показывает ответ.
+            Для выбранного получателя отдельно сказано, что доступ открыл
+            владелец проекта: иначе непонятно, почему закрытый проект виден.
+            Причину выдачи владелец пишет для себя — здесь её нет.
+          */}
+          {view.grant ? (
+            <span
+              data-investor-grant
+              style={{ fontSize: 'var(--u-text-sm)', color: 'var(--u-success)' }}
+            >
+              Доступ открыл владелец проекта{' '}
+              {new Date(view.grant.grantedAt).toLocaleDateString('ru-RU')} — ниже перечислено, что
+              именно он открыл.
+            </span>
+          ) : null}
           <span
             role="status"
             style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}

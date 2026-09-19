@@ -89,7 +89,11 @@ export interface ProjectViewer {
   investorGate?: boolean;
   /** Действующее исключение для пользователя или его организации. */
   excluded?: boolean;
-  /** Действующие разрешения grant (объединение по пользователю и организациям); нет grant — undefined. */
+  /**
+   * Действующие разрешения grant. Организационная выдача отложена (M092):
+   * пока `access.entity_grants.enabled` выключен, разрешения организации в
+   * этот набор не входят — БД их не учитывает и не даёт создавать.
+   */
   grant?: readonly GrantPermission[];
   /** Действующая проверка личности (для `extended`). */
   kyc?: boolean;

@@ -190,7 +190,11 @@ export class ProjectViewsService {
           ? await this.materials(tx, projectId, null)
           : null;
         const passport = base.passport_audience ? await this.passport(tx, projectId) : null;
-        return this.toInvestor(base, profile, materials, passport);
+        // Получателю важно понимать, ПОЧЕМУ проект ему открыт: доступ выдан
+        // лично владельцем или следует из режима проекта. Функция отвечает
+        // только про текущего пользователя и только датой (M093).
+        const grantedAt = await this.ownGrantAt(tx, projectId);
+        return this.toInvestor(base, profile, materials, passport, grantedAt);
       },
       viewer,
     );
@@ -240,6 +244,10 @@ export class ProjectViewsService {
               ...this.toPublic(base, profile),
               profileAudience: profile ? audience : null,
               access,
+              // Предпросмотр владельца показывает вид аудитории вообще, а не
+              // конкретного получателя: пометки «доступ открыт лично вам»
+              // здесь быть не может.
+              grant: null,
               description: base.description,
               geoRegion: base.geo_region,
               round,
@@ -572,14 +580,25 @@ export class ProjectViewsService {
     };
   }
 
+  /** Дата действующей выдачи текущему пользователю; null — доступ по режиму. */
+  private async ownGrantAt(tx: Tx, projectId: string): Promise<Date | null> {
+    const { rows } = await tx.query<{ granted_at: Date | null }>(
+      'SELECT lab.own_grant_at($1) AS granted_at',
+      [projectId],
+    );
+    return rows[0]?.granted_at ?? null;
+  }
+
   private toInvestor(
     base: BaseRow,
     profile: (ApplicationPreview & { consentVersion: number; disclosedAt: Date | null }) | null,
     materials: ViewMaterial[] | null,
     passport: ViewPassport | null,
+    grantedAt: Date | null = null,
   ): InvestorView {
     return {
       ...this.toPublic(base, profile),
+      grant: grantedAt === null ? null : { grantedAt: grantedAt.toISOString() },
       access: {
         profile: base.profile_audience,
         round: base.round_audience,

@@ -69,6 +69,20 @@ async function setBarrier(c: Client, enabled: boolean): Promise<void> {
   await actAs(c, { roles: [] });
 }
 
+/**
+ * Флаг организационных выдач (M092). По умолчанию выключен: пока нет
+ * управления составом организации, разрешение организации не создаётся и не
+ * действует. Тесты включают его там, где проверяют сохранённую возможность.
+ */
+async function setEntityGrants(c: Client, enabled: boolean): Promise<void> {
+  await actAs(c, { roles: ['admin'] });
+  await c.query(`UPDATE audit.feature_flags SET enabled = $1 WHERE key = $2`, [
+    enabled,
+    'access.entity_grants.enabled',
+  ]);
+  await actAs(c, { roles: [] });
+}
+
 async function grant(
   c: Client,
   projectId: string,
@@ -228,19 +242,67 @@ describe('M087: предикат аудитории — матрица режи�
     });
   });
 
-  it('grant и исключение по организации действуют на её участников; исключение сильнее grant', async () => {
+  it('организационная выдача отложена (M092): не создаётся и не даёт доступа, пока флаг выключен', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id, { listed: true });
       await setMode(c, projectId, 'selected_investors');
       const rep = await createUser(c, { role: 'investor' });
       const entityId = await createEntity(c, rep.id); // rep — signatory организации
-      await grant(c, projectId, owner.id, { entityId }, ['profile', 'round']);
       const v = asUser(rep.id, 'investor');
-      expect(await audience(c, v, projectId, 'round')).toBe('investors');
-      expect(await audience(c, v, projectId, 'materials')).toBeNull();
 
+      // Путь записи закрыт в БД, а не в интерфейсе: обойти новым маршрутом
+      // или служебной консолью нельзя.
+      await c.query('SAVEPOINT entity_grant');
+      await expect(grant(c, projectId, owner.id, { entityId }, ['profile'])).rejects.toThrow();
+      await c.query('ROLLBACK TO SAVEPOINT entity_grant');
+      await c.query('SAVEPOINT entity_exclusion');
+      await expect(exclude(c, projectId, owner.id, { entityId })).rejects.toThrow();
+      await c.query('ROLLBACK TO SAVEPOINT entity_exclusion');
+
+      // Запись, заведённая при включённом флаге, перестаёт давать доступ,
+      // как только направление отложено обратно.
+      await setEntityGrants(c, true);
+      await grant(c, projectId, owner.id, { entityId }, ['profile', 'round']);
+      expect(await audience(c, v, projectId, 'round')).toBe('investors');
+      await setEntityGrants(c, false);
+      for (const perm of PERMS) expect(await audience(c, v, projectId, perm)).toBeNull();
+
+      // Отзыв унаследованной записи разрешён и при выключенном флаге: иначе
+      // закрыть её было бы нечем.
+      await c.query(
+        `UPDATE lab.project_access_grants SET revoked_at = now()
+          WHERE project_id = $1 AND grantee_entity_id = $2`,
+        [projectId, entityId],
+      );
+      const [row] = (
+        await c.query<{ revoked: boolean }>(
+          `SELECT revoked_at IS NOT NULL AS revoked FROM lab.project_access_grants
+            WHERE project_id = $1 AND grantee_entity_id = $2`,
+          [projectId, entityId],
+        )
+      ).rows;
+      expect(row?.revoked).toBe(true);
+    });
+  });
+
+  it('организационное исключение продолжает запрещать; исключение сильнее grant', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id, { listed: true });
+      await setMode(c, projectId, 'selected_investors');
+      const rep = await createUser(c, { role: 'investor' });
+      const entityId = await createEntity(c, rep.id);
+      const v = asUser(rep.id, 'investor');
+
+      // Личное разрешение действует, организационное исключение его снимает:
+      // запрет — сторона, которую откладывать небезопасно, поэтому ветка
+      // исключений по организации осталась рабочей (M092).
+      await grant(c, projectId, owner.id, { userId: rep.id }, ['profile', 'round']);
+      expect(await audience(c, v, projectId, 'round')).toBe('investors');
+      await setEntityGrants(c, true);
       await exclude(c, projectId, owner.id, { entityId });
+      await setEntityGrants(c, false);
       for (const perm of PERMS) expect(await audience(c, v, projectId, perm)).toBeNull();
 
       // Исключение пользователя перекрывает и режим public.
