@@ -32,6 +32,11 @@ import { useAsync } from './useAsync';
  * тоже ответ, и его надо показать словами.
  */
 export default function App() {
+  // Адрес вида `/p/<id>` открывает страницу проекта. Маршрутизатора здесь нет
+  // намеренно: витрина — две страницы, и библиотека ради одной ветки означала
+  // бы лишнюю зависимость на самой посещаемой странице продукта.
+  const projectId = projectIdFromPath(window.location.pathname);
+
   return (
     <>
       <style>{UI_KEYFRAMES}</style>
@@ -41,14 +46,28 @@ export default function App() {
       <OfflineBanner />
       <Header />
       <main id="content">
-        <Hero />
-        <SeasonStrip />
-        <CatalogSection />
-        <PricingSection />
+        {projectId ? (
+          <ProjectPage id={projectId} />
+        ) : (
+          <>
+            <Hero />
+            <SeasonStrip />
+            <CatalogSection />
+            <PricingSection />
+          </>
+        )}
       </main>
       <Footer />
     </>
   );
+}
+
+/** `/p/<uuid>` → идентификатор; всё остальное → главная. */
+export function projectIdFromPath(pathname: string): string | null {
+  const match = /^\/p\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/?$/i.exec(
+    pathname,
+  );
+  return match?.[1] ?? null;
 }
 
 function Header() {
@@ -374,6 +393,9 @@ function TeaserCard({ teaser }: { teaser: ProjectTeaser }) {
         </span>
       ) : null}
       <span style={{ fontWeight: 600 }}>{describeRaising(teaser)}</span>
+      <a href={`/p/${teaser.id}`} data-teaser-link={teaser.id} style={{ fontWeight: 600 }}>
+        Открыть проект
+      </a>
     </Card>
   );
 }
@@ -555,4 +577,121 @@ function formatDate(iso: string): string {
     month: 'long',
     year: 'numeric',
   });
+}
+
+/**
+ * Страница проекта на витрине.
+ *
+ * Показывает ровно ту проекцию, которую отдал сервер (`GET /catalog/:id`,
+ * Public View). Второй модели раскрытия здесь нет и быть не должно: что
+ * увидит зритель, решает предикат аудитории в базе — режим проекта, согласие
+ * владельца на снимок, адресные разрешения и исключения. Витрина эти правила
+ * НЕ повторяет и не угадывает.
+ *
+ * Отсюда следствие, которое важнее вёрстки: страница обязана честно
+ * показывать и то, чего НЕ видно. Скрытые ответы не исчезают молча — их
+ * количество названо, иначе неполная заявка выглядит как полная.
+ */
+function ProjectPage({ id }: { id: string }) {
+  const { state, reload } = useAsync(() => api.catalogItem(id), [id]);
+
+  if (state.status === 'loading') {
+    return (
+      <Container>
+        <LoadingState label="Загружаем проект" />
+      </Container>
+    );
+  }
+  if (state.status === 'error') {
+    // 404 у публичной страницы означает не только «нет такого проекта», но и
+    // «этому зрителю он не показывается». Разницу сервер намеренно не
+    // раскрывает, и витрина её не додумывает.
+    return (
+      <Container>
+        <ErrorState
+          title="Проект недоступен"
+          description="Возможно, он снят с публикации или открыт не для всех."
+          traceId={state.traceId}
+          onRetry={reload}
+        />
+      </Container>
+    );
+  }
+
+  const view = state.data;
+  const sections = view.sections.filter((section) => section.questions.length > 0);
+
+  return (
+    <Container>
+      <article data-project-page={view.id} style={{ display: 'grid', gap: 'var(--u-space-5)' }}>
+        <header style={{ display: 'grid', gap: 'var(--u-space-3)' }}>
+          <a href="/" style={{ fontSize: 'var(--u-text-sm)' }}>
+            ← Ко всем проектам
+          </a>
+          <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
+            <Badge tone="accent">{STAGE_LABEL[view.stage] ?? view.stage}</Badge>
+            {view.geoCountry ? <Badge>{view.geoCountry}</Badge> : null}
+          </div>
+          <h1 style={{ margin: 0 }}>{view.title}</h1>
+          {view.tagline ? (
+            <p style={{ color: 'var(--u-text-muted)', margin: 0 }}>{view.tagline}</p>
+          ) : null}
+          <strong data-project-raising>{describeRaising(view)}</strong>
+        </header>
+
+        {sections.length === 0 ? (
+          <EmptyState
+            title="Заявка пока не раскрыта"
+            description={
+              view.profileAudience === null
+                ? 'Владелец не открывал ответы для показа.'
+                : 'В этой заявке ещё нет заполненных ответов, доступных для показа.'
+            }
+          />
+        ) : (
+          <Stack gap="var(--u-space-5)">
+            {sections.map((section) => (
+              <Card key={section.key} data-project-section={section.key}>
+                <Stack gap="var(--u-space-3)">
+                  <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>{section.title}</h2>
+                  {section.questions.map((question) => (
+                    <div key={question.key} data-project-answer={question.key}>
+                      <div
+                        style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}
+                      >
+                        {question.label}
+                      </div>
+                      <div style={{ whiteSpace: 'pre-wrap' }}>{question.display}</div>
+                    </div>
+                  ))}
+                </Stack>
+              </Card>
+            ))}
+          </Stack>
+        )}
+
+        {/* Скрытое названо числом: «показано не всё» — часть правды о заявке. */}
+        <p data-project-withheld={view.withheld} style={{ color: 'var(--u-text-muted)' }}>
+          {view.withheld > 0
+            ? `Ещё ${view.withheld} ${pluralAnswers(view.withheld)} автор открыл не для всех.`
+            : 'Автор открыл все заполненные ответы.'}
+        </p>
+      </article>
+    </Container>
+  );
+}
+
+function pluralAnswers(count: number): string {
+  const tail = count % 100;
+  if (tail >= 11 && tail <= 14) return 'ответов';
+  switch (count % 10) {
+    case 1:
+      return 'ответ';
+    case 2:
+    case 3:
+    case 4:
+      return 'ответа';
+    default:
+      return 'ответов';
+  }
 }
