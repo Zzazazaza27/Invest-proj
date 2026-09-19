@@ -209,9 +209,25 @@ try {
   );
   check('повторная отправка одного события не дублируется', again[0]?.n === 1, `${again[0]?.n}`);
 
-  // Порог не трогает деньги: начислений по раунду нет, расчёт остался бесплатным.
+  // Расчётов в этапе два, и порог не входит ни в один. Здесь проверяется
+  // ПЕРВЫЙ — стоимость запуска раунда (разовая плата основателя за пакет).
   const quote = await founder.client.json(`/v1/rounds/${roundId}/quote`);
-  check('порог не изменил расчёт стоимости', quote.mode === 'free', `режим ${quote.mode}`);
+  check(
+    'порог не изменил расчёт стоимости ЗАПУСКА раунда',
+    quote.mode === 'free',
+    `режим ${quote.mode}`,
+  );
+  // ВТОРОЙ расчёт — вознаграждение с подтверждённых траншей. Он к порогу
+  // отношения не имеет: начислений по раунду нет, потому что нет траншей.
+  const accruals = await sql(
+    `SELECT count(*)::int AS n
+       FROM billing.commission_accruals a
+       JOIN investments.investment_agreements ag ON ag.id = a.agreement_id
+       JOIN investments.investment_offers o ON o.id = ag.offer_id
+      WHERE o.project_id = $1`,
+    [project.id],
+  );
+  check('порог не создал начислений вознаграждения', accruals[0]?.n === 0, `${accruals[0]?.n}`);
 
   // Порог не трогает доступ: посторонний инвестор видит проект ровно так же.
   const outsider = await register('investor', 'o');
