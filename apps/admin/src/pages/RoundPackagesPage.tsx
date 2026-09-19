@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import type {
+  PaymentProviderStatus,
   RoundPackage,
   RoundPurchaseView,
   RoundService,
@@ -839,79 +840,153 @@ function PurchasesBlock({ onError }: { onError: (text: string) => void }) {
   if (items === null) return null;
 
   return (
-    <section className="card" data-round-purchases>
+    <>
+      <ProviderBlock />
+      <section className="card" data-round-purchases>
+        <div className="page-head" style={{ marginBottom: 10 }}>
+          <div>
+            <h2 style={{ marginBottom: 2 }}>Покупки запуска</h2>
+            <div className="small muted">
+              Настоящих платежей платформа не принимает. Тестовое подтверждение помечает покупку
+              навсегда и доступно только вне рабочего окружения.
+            </div>
+          </div>
+        </div>
+
+        {items.length === 0 ? <div className="muted">Покупок пока нет.</div> : null}
+
+        <table className="table">
+          <thead>
+            <tr>
+              <th>Покупка</th>
+              <th>Состояние</th>
+              <th>Сумма</th>
+              <th>Услуги</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {items.map((purchase) => (
+              <tr
+                key={purchase.id}
+                data-purchase-row={purchase.id}
+                data-purchase-status={purchase.status}
+              >
+                <td className="small">
+                  {purchase.packageCode ?? '—'}
+                  {purchase.isTestPayment ? <div className="muted">оплата тестовая</div> : null}
+                </td>
+                <td>{purchase.status}</td>
+                <td>
+                  {purchase.totalAmount} {purchase.currency}
+                </td>
+                <td className="small">
+                  {purchase.items.map((item) => (
+                    <div key={item.id} data-purchase-item={item.fulfillmentStatus}>
+                      {item.title} — {item.fulfillmentStatus}
+                      {item.fulfillmentStatus === 'fulfilled' ? null : (
+                        <button
+                          type="button"
+                          className="btn--ghost btn--sm"
+                          disabled={busy}
+                          onClick={() => void fulfil(item.id)}
+                        >
+                          Отметить выполненной
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </td>
+                <td className="row-actions">
+                  {purchase.status === 'pending_payment' ? (
+                    <button
+                      type="button"
+                      className="btn--sm"
+                      disabled={busy}
+                      onClick={() => void confirm(purchase)}
+                    >
+                      Подтвердить тестовую оплату
+                    </button>
+                  ) : (
+                    <span className="muted small">
+                      {purchase.openBlocker ?? 'условия выполнены'}
+                    </span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+    </>
+  );
+}
+
+/**
+ * Подключение оператора онлайн-платежей (5.9.9).
+ *
+ * Экран ничего не настраивает: провайдер и ключ проверки подписи живут в
+ * окружении, а не в продуктовых настройках. Здесь администратор видит, что
+ * именно произойдёт при попытке оплатить, — и почему настоящие деньги пока не
+ * принимаются.
+ */
+function ProviderBlock() {
+  const [status, setStatus] = useState<PaymentProviderStatus | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void api.payments
+      .provider()
+      .then((result) => {
+        if (!cancelled) setStatus(result);
+      })
+      .catch(() => {
+        if (!cancelled) setStatus(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (status === null) return null;
+
+  return (
+    <section className="card" data-payment-provider={status.provider}>
       <div className="page-head" style={{ marginBottom: 10 }}>
         <div>
-          <h2 style={{ marginBottom: 2 }}>Покупки запуска</h2>
+          <h2 style={{ marginBottom: 2 }}>Оператор платежей</h2>
           <div className="small muted">
-            Настоящих платежей платформа не принимает. Тестовое подтверждение помечает покупку
-            навсегда и доступно только вне рабочего окружения.
+            Настраивается в окружении, не здесь: секреты в продуктовых настройках не хранятся.
           </div>
         </div>
       </div>
-
-      {items.length === 0 ? <div className="muted">Покупок пока нет.</div> : null}
-
       <table className="table">
-        <thead>
-          <tr>
-            <th>Покупка</th>
-            <th>Состояние</th>
-            <th>Сумма</th>
-            <th>Услуги</th>
-            <th></th>
-          </tr>
-        </thead>
         <tbody>
-          {items.map((purchase) => (
-            <tr
-              key={purchase.id}
-              data-purchase-row={purchase.id}
-              data-purchase-status={purchase.status}
-            >
-              <td className="small">
-                {purchase.packageCode ?? '—'}
-                {purchase.isTestPayment ? <div className="muted">оплата тестовая</div> : null}
-              </td>
-              <td>{purchase.status}</td>
-              <td>
-                {purchase.totalAmount} {purchase.currency}
-              </td>
-              <td className="small">
-                {purchase.items.map((item) => (
-                  <div key={item.id} data-purchase-item={item.fulfillmentStatus}>
-                    {item.title} — {item.fulfillmentStatus}
-                    {item.fulfillmentStatus === 'fulfilled' ? null : (
-                      <button
-                        type="button"
-                        className="btn--ghost btn--sm"
-                        disabled={busy}
-                        onClick={() => void fulfil(item.id)}
-                      >
-                        Отметить выполненной
-                      </button>
-                    )}
-                  </div>
-                ))}
-              </td>
-              <td className="row-actions">
-                {purchase.status === 'pending_payment' ? (
-                  <button
-                    type="button"
-                    className="btn--sm"
-                    disabled={busy}
-                    onClick={() => void confirm(purchase)}
-                  >
-                    Подтвердить тестовую оплату
-                  </button>
-                ) : (
-                  <span className="muted small">{purchase.openBlocker ?? 'условия выполнены'}</span>
-                )}
-              </td>
-            </tr>
-          ))}
+          <tr>
+            <th>Адаптер</th>
+            <td data-provider-code>{status.provider}</td>
+          </tr>
+          <tr>
+            <th>Режим</th>
+            <td data-provider-mode>{status.mode}</td>
+          </tr>
+          <tr>
+            <th>Настоящие платежи</th>
+            <td data-provider-accepting={String(status.acceptingRealPayments)}>
+              {status.acceptingRealPayments ? 'принимаются' : 'не принимаются'}
+            </td>
+          </tr>
+          <tr>
+            <th>Проверка уведомлений</th>
+            <td>{status.notificationsVerifiable ? 'подпись проверяется' : 'проверить нечем'}</td>
+          </tr>
         </tbody>
       </table>
+      <ul className="small muted" style={{ marginTop: 8 }}>
+        {status.explanation.map((line) => (
+          <li key={line}>{line}</li>
+        ))}
+      </ul>
     </section>
   );
 }

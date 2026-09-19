@@ -54,7 +54,7 @@ export function normalizedPath(rawUrl: string): string {
  * Теперь класс входит в ключ, и у каждого класса свой счётчик — ровно то, что
  * и описывалось в комментариях с самого начала.
  */
-export type RateLimitClass = 'auth' | 'money' | 'admin' | 'default';
+export type RateLimitClass = 'auth' | 'money' | 'provider' | 'admin' | 'default';
 
 export function rateLimitClass(normalized: string, method: string): RateLimitClass {
   // Выдача сервисного токена — тот же класс, что и вход человека: это проверка
@@ -62,6 +62,13 @@ export function rateLimitClass(normalized: string, method: string): RateLimitCla
   if (normalized.startsWith('/v1/auth/') || normalized.startsWith('/v1/integration/token')) {
     return 'auth';
   }
+
+  // Уведомление оператора платежей — не действие пользователя, а входящее
+  // сообщение внешней системы, и защищено оно подписью, а не сессией. Денежный
+  // порог (10/мин) здесь вреден: отброшенное уведомление означает неучтённую
+  // оплату, а оператор шлёт и повторы, и события по разным платежам сразу.
+  // Поэтому класс отдельный — ограничивает шторм, но не теряет подтверждения.
+  if (normalized === '/v1/billing/payments/notify') return 'provider';
 
   const isMutation = method !== 'GET' && method !== 'HEAD';
   // Денежный класс — только МУТАЦИИ: чтение своих счетов ограничивать так же
@@ -71,6 +78,9 @@ export function rateLimitClass(normalized: string, method: string): RateLimitCla
     isMutation &&
     (normalized.startsWith('/v1/billing/payments') ||
       normalized.startsWith('/v1/billing/subscriptions') ||
+      // Начало оплаты покупки запуска раунда — такая же денежная мутация, как
+      // оформление подписки: создаётся платёж на серверную сумму.
+      normalized.startsWith('/v1/billing/purchases') ||
       normalized.startsWith('/v1/investments/agreements') ||
       // Подтверждение транша создаёт начисление вознаграждения — это денежная
       // мутация, даже если её инициирует оператор, а не клиент.

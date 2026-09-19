@@ -208,7 +208,7 @@ export class RoundPurchaseService {
         'Тестовое подтверждение оплаты недоступно в рабочем окружении',
       );
     }
-    return this.db.transaction(ctx, async (tx) => {
+    const view = await this.db.transaction(ctx, async (tx) => {
       const { rows: flag } = await tx.query<{ enabled: boolean }>(
         `SELECT enabled FROM audit.feature_flags WHERE key = 'billing.test_payment_confirmation'`,
       );
@@ -237,6 +237,33 @@ export class RoundPurchaseService {
         traceId: ctx.traceId,
       });
       return this.view(tx, purchaseId);
+    });
+
+    // Только ПОСЛЕ успешного подтверждения: отменять чужой платёж из-за
+    // запроса, который сам был отвергнут флагом или состоянием, нельзя.
+    await this.cancelPendingPayments(ctx.traceId, purchaseId);
+    return view;
+  }
+
+  /**
+   * Снять незавершённый платёж у покупки, оплаченной другим путём.
+   *
+   * Ручное подтверждение оператора и оплата через провайдера — два разных
+   * пути к одной покупке, и они могут пересечься: основатель нажал «оплатить»,
+   * а платформа тем временем отметила поступление сама. Без этого у оплаченной
+   * покупки навсегда оставался бы платёж «в ожидании» — состояние, которое
+   * никто уже не закроет и которое мешает понять, чем именно заплачено.
+   */
+  private async cancelPendingPayments(traceId: string, purchaseId: string): Promise<void> {
+    await this.db.asServiceRole('app_billing', { traceId }, async (tx) => {
+      await tx.query(
+        `UPDATE billing.payments
+            SET status = 'canceled',
+                failure_reason = 'покупка оплачена другим путём: платёж не понадобился',
+                updated_at = now()
+          WHERE purchase_id = $1 AND status IN ('pending', 'authorized')`,
+        [purchaseId],
+      );
     });
   }
 

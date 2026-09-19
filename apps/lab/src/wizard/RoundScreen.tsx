@@ -22,6 +22,7 @@ import type {
   ProjectMaterial,
   RoundCloseReason,
   RoundOpenPreview,
+  PaymentView,
   RoundPurchaseView,
   RoundQuote,
   ServiceCountryPolicyVersion,
@@ -722,6 +723,7 @@ function PurchaseBlock({
   onQuote: (quote: RoundQuote) => void;
 }) {
   const [purchase, setPurchase] = useState<RoundPurchaseView | null>(null);
+  const [payment, setPayment] = useState<PaymentView | null>(null);
   const [packageCode, setPackageCode] = useState<string>('');
   const [extras, setExtras] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
@@ -731,9 +733,15 @@ function PurchaseBlock({
     let cancelled = false;
     void api.rounds
       .purchase(roundId)
-      .then((result) => {
+      .then(async (result) => {
         if (cancelled) return;
-        setPurchase('id' in result ? result : null);
+        const found = 'id' in result ? result : null;
+        setPurchase(found);
+        if (found === null) return;
+        // Состояние платежа читается отдельно и ничего не меняет: возврат со
+        // страницы оплаты не должен ничего подтверждать.
+        const view = await api.rounds.payment(found.id).catch(() => null);
+        if (!cancelled) setPayment(view?.payment ?? null);
       })
       .catch(() => {
         if (!cancelled) setPurchase(null);
@@ -766,6 +774,26 @@ function PurchaseBlock({
       setError(null);
     } catch (e) {
       setError(e instanceof ApiError ? (e.problem?.detail ?? null) : 'Покупка не оформлена');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * Начать оплату у оператора.
+   *
+   * Суммы здесь нет: её назначает сервер по покупке. Ответ приносит адрес
+   * страницы оплаты — и состояние «ждём подтверждения», которое сам по себе
+   * переход по адресу не меняет.
+   */
+  async function pay() {
+    if (purchase === null) return;
+    setBusy(true);
+    try {
+      setPayment(await api.rounds.startPayment(purchase.id, window.location.href));
+      setError(null);
+    } catch (e) {
+      setError(e instanceof ApiError ? (e.problem?.detail ?? null) : 'Оплата не начата');
     } finally {
       setBusy(false);
     }
@@ -831,6 +859,33 @@ function PurchaseBlock({
               {item.title} — {FULFILLMENT_TITLES[item.fulfillmentStatus]}
             </span>
           ))}
+          {purchase.status === 'pending_payment' ? (
+            <div data-round-payment={payment ? payment.status : 'none'}>
+              {payment === null ? (
+                <Button variant="brand" loading={busy} onClick={() => void pay()}>
+                  {S.round.cost.pay}
+                </Button>
+              ) : (
+                <>
+                  <span>{S.round.cost.paymentPending}</span>
+                  {payment.mode === 'test' ? (
+                    <span style={{ color: 'var(--u-warning)' }}>{S.round.cost.paymentTest}</span>
+                  ) : null}
+                  {payment.redirectUrl ? (
+                    <a href={payment.redirectUrl} data-payment-link>
+                      {S.round.cost.paymentLink}
+                    </a>
+                  ) : null}
+                  {payment.failureReason ? (
+                    <span style={{ color: 'var(--u-danger)' }}>
+                      {S.round.cost.paymentFailed(payment.failureReason)}
+                    </span>
+                  ) : null}
+                </>
+              )}
+            </div>
+          ) : null}
+
           <span
             data-purchase-blocker={purchase.openBlocker === null ? 'none' : 'blocked'}
             style={{ color: purchase.openBlocker ? 'var(--u-warning)' : 'var(--u-text-muted)' }}

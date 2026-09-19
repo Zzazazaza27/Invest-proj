@@ -36,6 +36,12 @@ import {
 import { RoundPackagesService } from './billing/round-packages.service';
 import { RoundPricingService } from './billing/round-pricing.service';
 import {
+  AdminPaymentsController,
+  PaymentNotificationsController,
+  PurchasePaymentsController,
+} from './billing/payments.controller';
+import { PaymentsService } from './billing/payments.service';
+import {
   AdminRoundPurchasesController,
   RoundPurchaseController,
 } from './billing/round-purchase.controller';
@@ -168,6 +174,9 @@ import { S3Service } from './storage/s3.service';
     AdminRoundServiceOffersController,
     RoundPurchaseController,
     AdminRoundPurchasesController,
+    AdminPaymentsController,
+    PaymentNotificationsController,
+    PurchasePaymentsController,
     AdminFeeTermsController,
     AdminFeeOffsetRulesController,
     AdminPlanCapabilitiesController,
@@ -221,6 +230,7 @@ import { S3Service } from './storage/s3.service';
     RoundPackagesService,
     RoundPricingService,
     RoundPurchaseService,
+    PaymentsService,
     CommissionService,
     PlanCapabilitiesService,
     CapabilitiesService,

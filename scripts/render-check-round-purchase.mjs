@@ -287,34 +287,49 @@ try {
   });
 
   console.warn('\n[3] Администратор подтверждает тестовую оплату и услуги');
-  await page.reload({ waitUntil: 'networkidle' });
-  await page.waitForSelector('[data-round-purchases]', { timeout: 20_000 });
-  await page.getByRole('button', { name: 'Подтвердить тестовую оплату' }).first().click();
-  await page.waitForFunction(
-    /* eslint-disable no-undef */
-    () => document.querySelector('[data-purchase-status="paid"]') !== null,
-    /* eslint-enable no-undef */
-    undefined,
-    { timeout: 20_000 },
+  // Адресно по СВОЕЙ покупке, а не «первая кнопка в списке». Список общий, в
+  // нём лежат покупки прошлых прогонов: при `.first()` проверка подтверждала
+  // чужую оплату и засчитывала себе чужой же признак «оплачено», а
+  // собственная покупка оставалась неоплаченной.
+  const [ownPurchase] = await sql(
+    `SELECT id FROM billing.round_purchases WHERE round_id = $1
+      AND status IN ('pending_payment','paid') ORDER BY created_at DESC LIMIT 1`,
+    [roundId],
   );
+  if (!ownPurchase) throw new Error('покупка прогона не найдена в базе');
+  const row = `[data-purchase-row="${ownPurchase.id}"]`;
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector(row, { timeout: 20_000 });
+  await page.locator(`${row} button:has-text("Подтвердить тестовую оплату")`).click();
+  await page.waitForSelector(`${row}[data-purchase-status="paid"]`, { timeout: 20_000 });
   check('оплата подтверждена тестовым действием', true);
   check(
     'покупка помечена тестовой',
-    (await page.locator('[data-round-purchases]').innerText()).includes('оплата тестовая'),
+    (await page.locator(row).innerText()).includes('оплата тестовая'),
   );
 
   await founderPage.reload({ waitUntil: 'networkidle' });
+  await founderPage.screenshot({ path: join(OUT, '03-founder-paid.png'), fullPage: true });
   await founderPage.waitForSelector('[data-round-purchase="paid"]', { timeout: 20_000 });
   const afterPay = await founderPage.locator('[data-purchase-blocker]').innerText();
   check('теперь не хватает выполнения услуг', afterPay.includes('не выполнены'), afterPay);
 
+  // Отмечаются услуги ТОЛЬКО своей покупки — по той же причине, что и оплата.
   let guard = 0;
-  while ((await page.locator('button:has-text("Отметить выполненной")').count()) > 0) {
-    await page.locator('button:has-text("Отметить выполненной")').first().click();
+  const markButton = page.locator(`${row} button:has-text("Отметить выполненной")`);
+  while ((await markButton.count()) > 0) {
+    await markButton.first().click();
     await page.waitForTimeout(700);
     if ((guard += 1) > 10) break;
   }
-  check('все услуги отмечены выполненными', true);
+  // Проверяется фактом в базе, а не тем, что кнопки кончились.
+  const [pending] = await sql(
+    `SELECT count(*)::int AS n FROM billing.round_purchase_items
+      WHERE purchase_id = $1 AND fulfillment_status <> 'fulfilled'`,
+    [ownPurchase.id],
+  );
+  check('все услуги отмечены выполненными', pending.n === 0, `осталось ${pending.n}`);
   await screenshot('admin-purchases');
 
   console.warn('\n[4] Основатель открывает раунд');

@@ -34,7 +34,9 @@ import {
   type FeeTerms,
   type PublishFeeTermsRequest,
   RoundPackageSchema,
+  PaymentProviderStatusSchema,
   RoundPurchaseViewSchema,
+  type PaymentProviderStatus,
   type RoundPurchaseView,
   RoundServiceOfferSchema,
   RoundServiceSchema,
@@ -918,6 +920,19 @@ export const api = {
    * Покупки запуска раунда (5.9.7): подтверждение тестовой оплаты и отметка
    * выполнения услуг. Настоящих платежей здесь нет.
    */
+  /**
+   * Подключение оператора онлайн-платежей (5.9.9). Только чтение: провайдер и
+   * ключ проверки подписи живут в окружении, а не в настройках продукта.
+   */
+  payments: {
+    provider: (): Promise<PaymentProviderStatus> =>
+      client.request({
+        method: 'GET',
+        path: '/v1/admin/payments/provider',
+        schema: PaymentProviderStatusSchema,
+      }),
+  },
+
   roundPurchases: {
     list: (): Promise<{ items: RoundPurchaseView[] }> =>
       client.request({

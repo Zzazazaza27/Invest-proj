@@ -202,6 +202,7 @@ async function bootstrap(): Promise<void> {
       const cls = rateLimitClass(normalizedPath(request.url), request.method);
       if (cls === 'auth') return env.RATE_LIMIT_AUTH_PER_MIN;
       if (cls === 'money') return env.RATE_LIMIT_MONEY_PER_MIN;
+      if (cls === 'provider') return env.RATE_LIMIT_PROVIDER_PER_MIN;
       if (cls === 'admin') return env.RATE_LIMIT_ADMIN_PER_MIN;
       return env.RATE_LIMIT_DEFAULT_PER_MIN;
     },

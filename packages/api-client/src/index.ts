@@ -8,6 +8,7 @@ import {
   FundingRoundBasisHistoryEntrySchema,
   FundingRoundDetailSchema,
   FundingRoundSchema,
+  PaymentViewSchema,
   RoundPurchaseViewSchema,
   RoundQuoteSchema,
   ServiceCountryPolicyVersionSchema,
@@ -889,6 +890,28 @@ export class UnicornApi {
       this.http.request({
         path: `/rounds/${id}/purchase`,
         schema: z.union([RoundPurchaseViewSchema, z.object({ purchase: z.null() })]),
+      }),
+
+    /**
+     * Начать оплату покупки у оператора платежей.
+     *
+     * Суммы в запросе нет: её назначает сервер по покупке. Ответ содержит
+     * адрес страницы оплаты — переход по нему оплату НЕ подтверждает.
+     */
+    startPayment: (purchaseId: string, returnUrl?: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/billing/purchases/${purchaseId}/payment`,
+        body: returnUrl ? { returnUrl } : {},
+        schema: PaymentViewSchema,
+        idempotencyKey: uuidv7(),
+      }),
+
+    /** Состояние платежа. Чтение: возврат со страницы оплаты ничего не меняет. */
+    payment: (purchaseId: string) =>
+      this.http.request({
+        path: `/billing/purchases/${purchaseId}/payment`,
+        schema: z.object({ payment: PaymentViewSchema.nullable() }),
       }),
 
     quote: (id: string, selection: { packageCode?: string; serviceCodes?: string[] } = {}) => {
