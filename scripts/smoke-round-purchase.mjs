@@ -10,8 +10,9 @@
  *     администратора — ни цена, ни совпадение состава её не дают;
  *   • открыть платный раунд нельзя, пока покупка не оплачена и услуги по ней
  *     не выполнены; причина отказа называется словами;
- *   • тестовое подтверждение оплаты закрыто флагом и помечает покупку —
- *     обойти оплату им нельзя;
+ *   • тестовое подтверждение оплаты закрыто флагом и помечает покупку, а сама
+ *     метка учитывается ПРИ ДОПУСКЕ: покупка, оплаченная тестом, не открывает
+ *     раунд там, где тестовое подтверждение не разрешено явно;
  *   • повторные запросы не создают вторую покупку;
  *   • сумма после покупки не выходит за условия оплаченного пакета.
  *
@@ -406,6 +407,24 @@ try {
       body: { status: 'fulfilled', note: `выполнено сотрудником: ${item.title}` },
     });
   }
+  // Услуги в составе пакета заведены нулевыми позициями — это способ показать
+  // СОСТАВ покупки, а не денежная база. Сумма позиций обязана совпадать с
+  // итогом: иначе пакет и входящие в него услуги считались бы дважды.
+  {
+    const sum = purchase.items.reduce((acc, i) => acc + Math.round(Number(i.amount) * 100), 0);
+    check(
+      'сумма позиций равна итогу покупки: пакет и его услуги не считаются дважды',
+      sum === Math.round(Number(purchase.totalAmount) * 100),
+      `${(sum / 100).toFixed(2)} против ${purchase.totalAmount}`,
+    );
+    check(
+      'услуги в составе пакета несут нулевую сумму',
+      purchase.items
+        .filter((i) => i.title.includes('в составе пакета'))
+        .every((i) => i.amount === '0.00'),
+    );
+  }
+
   check(
     'все позиции выполнены',
     purchase.items.every((i) => i.fulfillmentStatus === 'fulfilled'),
@@ -415,6 +434,43 @@ try {
     purchase.openBlocker === null,
     `${purchase.openBlocker}`,
   );
+
+  // --------------------- тестовая оплата не открывает раунд сама по себе
+  //
+  // Главная проверка M107. Запрета маршрута тестового подтверждения мало:
+  // запись с меткой могла попасть в базу и не через маршрут. Поэтому метку
+  // обязан учитывать САМ ДОПУСК. Здесь флаг выключается при уже оплаченной
+  // тестом покупке — ровно та ситуация, в которой оказалась бы рабочая база,
+  // куда такая запись попала переносом или ручной правкой.
+  {
+    await sql(
+      `UPDATE audit.feature_flags SET enabled = false
+        WHERE key = 'billing.test_payment_confirmation'`,
+    );
+    const view = await admin.json(`/v1/admin/round-purchases`);
+    const mine = view.items.find((p) => p.roundId === roundId);
+    check(
+      'при выключенном флаге тестовая покупка к открытию не допускает',
+      typeof mine?.openBlocker === 'string' && mine.openBlocker.includes('тестовым подтверждением'),
+      `${mine?.openBlocker}`,
+    );
+    const { response, json } = await founder.client.call(`/v1/rounds/${roundId}/open`, {
+      method: 'POST',
+      body: openBody,
+    });
+    check('открытие по тестовой оплате отклонено', response.status === 400, `${response.status}`);
+    check(
+      'отказ называет тестовую оплату, а не «услуги не выполнены»',
+      JSON.stringify(json?.errors ?? {}).includes('тестовым подтверждением'),
+      JSON.stringify(json?.errors ?? {}).slice(0, 180),
+    );
+    const [still] = await sql(`SELECT status FROM lab.funding_rounds WHERE id = $1`, [roundId]);
+    check('раунд остался черновиком', still?.status === 'draft', `${still?.status}`);
+    await sql(
+      `UPDATE audit.feature_flags SET enabled = true
+        WHERE key = 'billing.test_payment_confirmation'`,
+    );
+  }
 
   // ------------------------------------------------ открытие
   await founder.client.json(`/v1/rounds/${roundId}/open`, { method: 'POST', body: openBody });

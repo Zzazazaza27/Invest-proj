@@ -24,7 +24,11 @@ import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { ServiceCountriesService } from '../billing/service-countries.service';
-import { RoundPricingService, assertCommercialConditions } from '../billing/round-pricing.service';
+import {
+  RoundPricingService,
+  assertCommercialConditions,
+  roundPurchaseBlocker,
+} from '../billing/round-pricing.service';
 import { OperatorNotificationsService } from '../comms/operator-notifications.service';
 import { loadFormConfig } from './application-forms.service';
 import { roundDigest } from './disclosure-digest';
@@ -256,7 +260,7 @@ export class FundingRoundsService {
             currency: current.currency,
             selection: { serviceCodes: [] },
           });
-          assertCommercialConditions(quote, 'increase', await purchaseBlocker(tx, roundId));
+          assertCommercialConditions(quote, 'increase', await roundPurchaseBlocker(tx, roundId));
         }
         set('target', input.target, '::numeric');
       }
@@ -415,7 +419,7 @@ export class FundingRoundsService {
         currency: round.currency,
         selection: { serviceCodes: [] },
       });
-      assertCommercialConditions(quote, 'open', await purchaseBlocker(tx, roundId));
+      assertCommercialConditions(quote, 'open', await roundPurchaseBlocker(tx, roundId));
 
       await tx.query(
         `UPDATE lab.funding_rounds
@@ -474,7 +478,7 @@ export class FundingRoundsService {
         currency: round.currency,
         selection: { serviceCodes: [] },
       });
-      assertCommercialConditions(quote, 'resume', await purchaseBlocker(tx, roundId));
+      assertCommercialConditions(quote, 'resume', await roundPurchaseBlocker(tx, roundId));
       await tx.query(
         `UPDATE lab.funding_rounds SET status = 'open', paused_at = NULL WHERE id = $1`,
         [roundId],
@@ -756,14 +760,6 @@ async function assertWithinPurchasedPackage(
       },
     ]);
   }
-}
-
-async function purchaseBlocker(tx: Tx, roundId: string): Promise<string | null> {
-  const { rows } = await tx.query<{ blocker: string | null }>(
-    `SELECT billing.round_purchase_blocker($1) AS blocker`,
-    [roundId],
-  );
-  return rows[0]?.blocker ?? null;
 }
 
 async function lockProject(tx: Tx, projectId: string): Promise<void> {

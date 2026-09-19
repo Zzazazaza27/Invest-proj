@@ -374,3 +374,112 @@ describe('M095: доступ', () => {
     });
   });
 });
+
+/**
+ * M107: тестовая оплата не открывает раунд.
+ *
+ * Проверяется не маршрут подтверждения (он закрыт ролью, флагом и
+ * окружением), а сам ДОПУСК. Запись с меткой тестовой оплаты могла попасть в
+ * базу не через маршрут — переносом дампа, восстановлением копии, ручной
+ * правкой. Если бы допуск смотрел только на статус «оплачено», такой раунд
+ * открылся бы без единого рубля.
+ */
+describe('M107: допуск учитывает метку тестовой оплаты', () => {
+  async function paidPurchase(
+    c: Client,
+    owner: string,
+    projectId: string,
+    isTest: boolean,
+  ): Promise<{ roundId: string; purchaseId: string }> {
+    const versionId = uuidv7();
+    const [application] = (
+      await c.query<{ id: string }>(
+        `SELECT id FROM lab.investment_applications WHERE project_id = $1 LIMIT 1`,
+        [projectId],
+      )
+    ).rows;
+    await c.query(
+      `INSERT INTO lab.project_versions
+         (id, project_id, application_id, version_no, snapshot_jsonb, schema_version)
+       VALUES ($1, $2, $3, 1, '{}', 1)`,
+      [versionId, projectId, application!.id],
+    );
+    const roundId = uuidv7();
+    await c.query(
+      `INSERT INTO lab.funding_rounds
+         (id, project_id, application_version_id, schema_version, status, target, currency,
+          service_country, policy_version, created_by)
+       VALUES ($1, $2, $3, 1, 'draft', 3000000, 'RUB', 'ru', 1, $4)`,
+      [roundId, projectId, versionId, owner],
+    );
+    const purchaseId = uuidv7();
+    await c.query(
+      `INSERT INTO billing.round_purchases
+         (id, round_id, project_id, buyer_user_id, package_snapshot, country_code,
+          policy_version, total_amount, currency, status, paid_at, is_test_payment)
+       VALUES ($1, $2, $3, $4, '{"code":"pkg_base"}'::jsonb, 'ru', 1, 10000, 'RUB',
+               'paid', now(), $5)`,
+      [purchaseId, roundId, projectId, owner, isTest],
+    );
+    const itemId = uuidv7();
+    await c.query(
+      `INSERT INTO billing.round_purchase_items
+         (id, purchase_id, kind, title, amount, currency, fulfillment_status, fulfillment_note)
+       VALUES ($1, $2, 'package', 'Пакет запуска', 10000, 'RUB', 'fulfilled', 'проверка')`,
+      [itemId, purchaseId],
+    );
+    return { roundId, purchaseId };
+  }
+
+  async function blocker(c: Client, roundId: string): Promise<string | null> {
+    const { rows } = await c.query<{ blocker: string | null }>(
+      `SELECT billing.round_purchase_blocker($1) AS blocker`,
+      [roundId],
+    );
+    return rows[0]!.blocker;
+  }
+
+  it('настоящая оплата открывает, тестовая — нет, пока флаг выключен', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      await c.query(
+        `UPDATE audit.feature_flags SET enabled = false
+          WHERE key = 'billing.test_payment_confirmation'`,
+      );
+
+      // Два проекта: на проект допускается один черновик раунда.
+      const real = await paidPurchase(c, owner.id, projectId, false);
+      expect(await blocker(c, real.roundId)).toBeNull();
+
+      const other = await createProject(c, owner.id);
+      const test = await paidPurchase(c, owner.id, other, true);
+      expect(await blocker(c, test.roundId)).toMatch(/тестовым подтверждением/);
+    });
+  });
+
+  it('при явно включённом флаге тестовая покупка допускается — это и есть локальный прогон', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      await c.query(
+        `UPDATE audit.feature_flags SET enabled = true
+          WHERE key = 'billing.test_payment_confirmation'`,
+      );
+      const test = await paidPurchase(c, owner.id, projectId, true);
+      expect(await blocker(c, test.roundId)).toBeNull();
+    });
+  });
+
+  it('отсутствие записи флага означает отказ, а не разрешение (fail-closed)', async () => {
+    await inRollbackTx(async (c) => {
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      await c.query(
+        `DELETE FROM audit.feature_flags WHERE key = 'billing.test_payment_confirmation'`,
+      );
+      const test = await paidPurchase(c, owner.id, projectId, true);
+      expect(await blocker(c, test.roundId)).toMatch(/тестовым подтверждением/);
+    });
+  });
+});

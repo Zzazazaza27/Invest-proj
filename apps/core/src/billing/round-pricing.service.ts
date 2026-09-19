@@ -8,6 +8,7 @@ import {
   type ServiceCountryPolicy,
 } from '@unicorn/contracts';
 import { errors } from '../common/errors';
+import { getEnv } from '../config/env';
 import type { Tx } from '../db/unit-of-work';
 
 /**
@@ -164,4 +165,34 @@ export function assertCommercialConditions(
         `. Действие «${action}» недоступно`,
     },
   ]);
+}
+
+/**
+ * Что мешает открыть платный раунд по этому раунду — единственное место, куда
+ * смотрят все маршруты (открытие, возобновление, увеличение суммы) и экраны.
+ *
+ * Основной ответ даёт база (`billing.round_purchase_blocker`): нет покупки, не
+ * оплачена, оплачена тестом при выключенном флаге, услуги не выполнены.
+ *
+ * Поверх этого — отказ, который база дать не может. В рабочем окружении
+ * покупка с меткой тестовой оплаты не открывает раунд НИКОГДА, даже если флаг
+ * тестового подтверждения там кто-то включил. Причина простая: запись с такой
+ * меткой могла попасть в рабочую базу не через маршрут — переносом дампа,
+ * восстановлением копии, ручной правкой. Запрет маршрута такую запись не
+ * ловит, а проверка метки при допуске — ловит.
+ */
+export async function roundPurchaseBlocker(tx: Tx, roundId: string): Promise<string | null> {
+  const { rows } = await tx.query<{ blocker: string | null; is_test: boolean | null }>(
+    `SELECT billing.round_purchase_blocker($1) AS blocker,
+            (SELECT p.is_test_payment
+               FROM billing.round_purchases p
+              WHERE p.round_id = $1 AND p.status IN ('pending_payment', 'paid')
+              ORDER BY p.created_at DESC
+              LIMIT 1) AS is_test`,
+    [roundId],
+  );
+  if (getEnv().NODE_ENV === 'production' && rows[0]?.is_test === true) {
+    return 'покупка оплачена тестовым подтверждением: в рабочем окружении она раунд не открывает';
+  }
+  return rows[0]?.blocker ?? null;
 }

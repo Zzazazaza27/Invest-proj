@@ -10,7 +10,7 @@ import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { getEnv } from '../config/env';
 import { ServiceCountriesService } from './service-countries.service';
-import { RoundPricingService } from './round-pricing.service';
+import { RoundPricingService, roundPurchaseBlocker } from './round-pricing.service';
 
 /**
  * Покупка запуска раунда (5.9.7; структуры M095, поток M103).
@@ -368,10 +368,9 @@ export class RoundPurchaseService {
          FROM billing.round_purchase_items WHERE purchase_id = $1 ORDER BY kind DESC, title`,
       [purchaseId],
     );
-    const { rows: blocker } = await tx.query<{ blocker: string | null }>(
-      `SELECT billing.round_purchase_blocker($1) AS blocker`,
-      [rows[0].round_id],
-    );
+    // Тот же ответ, что увидит гейт: экран не должен обещать открытие там,
+    // где допуск откажет.
+    const blocker = await roundPurchaseBlocker(tx, rows[0].round_id);
     return {
       id: rows[0].id,
       roundId: rows[0].round_id,
@@ -397,7 +396,7 @@ export class RoundPurchaseService {
         fulfillmentNote: item.fulfillment_note,
         fulfilledAt: item.fulfilled_at?.toISOString() ?? null,
       })),
-      openBlocker: blocker[0]?.blocker ?? null,
+      openBlocker: blocker,
     };
   }
 }
