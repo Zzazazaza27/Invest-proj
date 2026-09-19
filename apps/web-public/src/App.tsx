@@ -15,6 +15,7 @@ import {
   UI_KEYFRAMES,
   describeRaising,
 } from '@unicorn/ui';
+import { ProjectCard } from '@unicorn/cabinet';
 import type { LandingBlock, Pricing, ProjectTeaser, Season } from '@unicorn/contracts';
 import { api, mediaUrl } from './api';
 import { useAsync } from './useAsync';
@@ -639,107 +640,34 @@ function ProjectPage({ id }: { id: string }) {
   }
 
   const view = state.data;
-  const sections = view.sections.filter((section) => section.questions.length > 0);
   const items = media.state.status === 'ready' ? media.state.data.items : [];
   const cover = items.find((item) => item.kind === 'cover');
   const logo = items.find((item) => item.kind === 'logo');
 
   return (
     <Container>
-      <article data-project-page={view.id} style={{ display: 'grid', gap: 'var(--u-space-5)' }}>
-        <header style={{ display: 'grid', gap: 'var(--u-space-3)' }}>
-          <a href="/" style={{ fontSize: 'var(--u-text-sm)' }}>
-            ← Ко всем проектам
-          </a>
-          {cover?.urls.page ? (
-            <img
-              data-project-cover
-              src={mediaUrl(cover.urls.page)}
-              alt=""
-              width={1600}
-              height={900}
-              style={{
-                width: '100%',
-                height: 'auto',
-                borderRadius: 'var(--u-radius-lg)',
-                display: 'block',
-              }}
-            />
-          ) : null}
-          {logo?.urls.page ? (
-            <img
-              data-project-logo
-              src={mediaUrl(logo.urls.page)}
-              alt=""
-              width={96}
-              height={96}
-              style={{ width: 96, height: 96, borderRadius: 'var(--u-radius-md)' }}
-            />
-          ) : null}
-          <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
-            <Badge tone="accent">{STAGE_LABEL[view.stage] ?? view.stage}</Badge>
-            {view.geoCountry ? <Badge>{view.geoCountry}</Badge> : null}
-          </div>
-          <h1 style={{ margin: 0 }}>{view.title}</h1>
-          {view.tagline ? (
-            <p style={{ color: 'var(--u-text-muted)', margin: 0 }}>{view.tagline}</p>
-          ) : null}
-          <strong data-project-raising>{describeRaising(view)}</strong>
-        </header>
-
-        {sections.length === 0 ? (
-          <EmptyState
-            title="Заявка пока не раскрыта"
-            description={
-              view.profileAudience === null
-                ? 'Владелец не открывал ответы для показа.'
-                : 'В этой заявке ещё нет заполненных ответов, доступных для показа.'
-            }
-          />
-        ) : (
-          <Stack gap="var(--u-space-5)">
-            {sections.map((section) => (
-              <Card key={section.key} data-project-section={section.key}>
-                <Stack gap="var(--u-space-3)">
-                  <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>{section.title}</h2>
-                  {section.questions.map((question) => (
-                    <div key={question.key} data-project-answer={question.key}>
-                      <div
-                        style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}
-                      >
-                        {question.label}
-                      </div>
-                      <div style={{ whiteSpace: 'pre-wrap' }}>{question.display}</div>
-                    </div>
-                  ))}
-                </Stack>
-              </Card>
-            ))}
-          </Stack>
-        )}
-
-        {/* Скрытое названо числом: «показано не всё» — часть правды о заявке. */}
-        <p data-project-withheld={view.withheld} style={{ color: 'var(--u-text-muted)' }}>
-          {view.withheld > 0
-            ? `Ещё ${view.withheld} ${pluralAnswers(view.withheld)} автор открыл не для всех.`
-            : 'Автор открыл все заполненные ответы.'}
-        </p>
-      </article>
+      {/*
+        Та же карточка, что в кабинете инвестора и в предпросмотре владельца
+        (7.3). Состав решает сервер: витрина спрашивает публичную проекцию, и
+        описания, материалов и оценки платформы в ней просто нет — их не
+        прячет разметка, их не присылает сервер.
+      */}
+      <div data-project-page={view.id}>
+        <ProjectCard
+          surface="public"
+          source={{ kind: 'public', view }}
+          media={{
+            coverUrl: cover?.urls.page ? mediaUrl(cover.urls.page) : null,
+            logoUrl: logo?.urls.page ? mediaUrl(logo.urls.page) : null,
+          }}
+          back={
+            <a href="/" style={{ fontSize: 'var(--u-text-sm)' }}>
+              ← Ко всем проектам
+            </a>
+          }
+        />
+      </div>
     </Container>
   );
 }
 
-function pluralAnswers(count: number): string {
-  const tail = count % 100;
-  if (tail >= 11 && tail <= 14) return 'ответов';
-  switch (count % 10) {
-    case 1:
-      return 'ответ';
-    case 2:
-    case 3:
-    case 4:
-      return 'ответа';
-    default:
-      return 'ответов';
-  }
-}

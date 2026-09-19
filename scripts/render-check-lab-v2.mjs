@@ -503,9 +503,24 @@ try {
   const before = await page.locator('[data-readiness]').innerText();
   check('до заполнения подача закрыта, но это не ошибка', before.includes('До подачи осталось'));
 
-  const form = await fetch(`${CORE_URL}/v1/applications/${wizardUrl.split('/').pop()}/form`, {
-    headers: { cookie: (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ') },
-  }).then((r) => r.json());
+  // Статус проверяется явно: без этого отказ сервера (чаще всего 429 после
+  // нескольких прогонов подряд) превращался в `TypeError: sections undefined`
+  // на десять строк ниже — и выглядел как поломка проверки, а не как «стенд
+  // упёрся в ограничитель частоты».
+  const formResponse = await fetch(
+    `${CORE_URL}/v1/applications/${wizardUrl.split('/').pop()}/form`,
+    {
+      headers: { cookie: (await context.cookies()).map((c) => `${c.name}=${c.value}`).join('; ') },
+    },
+  );
+  if (!formResponse.ok) {
+    const retryAfter = formResponse.headers.get('retry-after');
+    throw new Error(
+      `форма заявки не получена: HTTP ${formResponse.status}` +
+        (retryAfter ? ` — ограничитель частоты, повторить через ${retryAfter} с` : ''),
+    );
+  }
+  const form = await formResponse.json();
   const scopeOf = (section) => section.scope ?? (section.key === 'funding' ? 'round' : 'profile');
   const mandatory = form.sections
     .filter((section) => scopeOf(section) === 'profile')

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Badge, Button, Card, ErrorState, LoadingState, Select, Stack } from '@unicorn/ui';
+import { ProjectCard } from '@unicorn/cabinet';
 import type { PreviewAudience, ProjectFull, ViewPreview } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { S } from '../strings';
@@ -213,6 +214,21 @@ export function VisibilityCard({
                     ready.view.withheld,
                   )}
             </p>
+            {/*
+              Сама карточка, а не только счётчик (7.3). Это тот же компонент,
+              которым показывают проект витрина и кабинет инвестора, и данные
+              те же — серверная проекция для ВЫБРАННОЙ аудитории. Иначе
+              «предпросмотр» обещал проверить глазами то, чего не показывал.
+
+              Читалка документов здесь не открывается: предпросмотр отвечает на
+              вопрос «что увидит аудитория», а не заменяет владельцу его
+              собственный список материалов.
+            */}
+            {ready.view !== null ? (
+              <div data-visibility-preview-card={audience}>
+                <ProjectCard surface="preview" source={{ kind: 'investor', view: ready.view }} />
+              </div>
+            ) : null}
           </Stack>
         ) : null}
         {preview.status === 'loading' ? <LoadingState label="Считаем, кто что увидит" /> : null}

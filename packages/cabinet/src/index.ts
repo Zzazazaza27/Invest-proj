@@ -1,5 +1,5 @@
 /**
- * @unicorn/cabinet — общие продуктовые блоки кабинетов.
+ * @unicorn/cabinet — общие продуктовые блоки кабинетов и витрины.
  *
  * Чем отличается от `@unicorn/ui`: тот про форму и состояния и намеренно не
  * знает ни доменных типов, ни текстов экранов. Здесь — наоборот: блоки, у
@@ -38,3 +38,9 @@ export {
   useSessionCheck,
   type SessionFailure,
 } from './session';
+export {
+  ProjectCard,
+  type ProjectCardMedia,
+  type ProjectCardProps,
+  type ProjectCardSource,
+} from './ProjectCard';

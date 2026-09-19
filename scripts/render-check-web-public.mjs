@@ -15,7 +15,16 @@ import { chromium } from 'playwright';
 
 import { frontendUrl } from './lib/ports.mjs';
 
-const URL = process.env.WEB_PUBLIC_URL ?? frontendUrl('webPublic');
+/**
+ * Адрес приводится к `localhost`: у сырого IP нет регистрируемого домена, и
+ * браузер не может установить «тот же сайт» — изображения проектов на витрине
+ * блокируются политикой встраивания (разобрано в 7.2). Свойство адресации
+ * стенда, не продукта; остальные браузерные проверки ходят так же.
+ */
+const URL = (process.env.WEB_PUBLIC_URL ?? frontendUrl('webPublic')).replace(
+  '127.0.0.1',
+  'localhost',
+);
 
 let passed = 0;
 let failed = 0;

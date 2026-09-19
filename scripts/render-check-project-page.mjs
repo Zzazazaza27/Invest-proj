@@ -9,10 +9,15 @@
  *   • инвестор      — кабинет инвестора, проекция Investor View;
  *   • владелец      — кабинет основателя, предпросмотр своей заявки.
  *
- * Проверяется не «страница нарисовалась», а главное свойство раскрытия:
- * зрители видят РАЗНОЕ, и разницу определяет сервер, а не клиент. Витрина
- * никаких правил видимости не повторяет — она показывает то, что ей отдали, и
- * честно называет число скрытых ответов.
+ * Проверяется не «страница нарисовалась», а два свойства сразу:
+ *
+ *   1. зрители видят РАЗНОЕ, и разницу определяет сервер, а не клиент;
+ *   2. показывает это разное ОДИН компонент (7.3) — витрина, кабинет
+ *      инвестора и предпросмотр владельца перестали быть тремя разметками
+ *      на одних данных.
+ *
+ * Витрина никаких правил видимости не повторяет — она показывает то, что ей
+ * отдали, и честно называет число скрытых ответов.
  *
  * Требуется поднятое: ядро, витрина (5173), кабинет инвестора (5176),
  * кабинет основателя (5175), приложение входа (5179).
@@ -226,6 +231,20 @@ try {
   const withheld = await anonPage.locator('[data-project-withheld]').innerText();
   check('скрытые ответы названы числом, а не спрятаны', withheld.length > 0, withheld.slice(0, 80));
   check(
+    'витрина показывает общую карточку проекта',
+    (await anonPage.locator('[data-project-card="public"]').count()) === 1,
+  );
+  // Блоки инвесторской проекции анониму не приходят с сервера — и потому их
+  // нет на странице. Проверяем именно отсутствие, а не «скрытость».
+  const anonBody = await anonPage.locator('[data-project-card]').innerText();
+  check(
+    'анониму не показаны блоки инвесторской проекции',
+    !anonBody.includes('Оценка платформы') &&
+      !anonBody.includes('Материалы') &&
+      !anonBody.includes('О проекте'),
+    'описание, оценка и материалы отсутствуют',
+  );
+  check(
     'на публичной странице нет сессии',
     (await anon.cookies()).every((c) => c.name !== SESSION_COOKIE),
   );
@@ -250,6 +269,22 @@ try {
   await investorPage.waitForSelector('[data-investor-view]', { timeout: 20_000 });
   const investorText = await investorPage.locator('[data-investor-view]').innerText();
   check('инвестору открылась карточка проекта', investorText.length > 0);
+  check(
+    'кабинет инвестора показывает ту же общую карточку',
+    (await investorPage.locator('[data-project-card="investor"]').count()) === 1,
+  );
+  check(
+    'инвестору показаны блоки его проекции',
+    investorText.includes('Оценка платформы') &&
+      investorText.includes('Материалы') &&
+      investorText.includes('О проекте'),
+    'описание, оценка и материалы на месте',
+  );
+  check(
+    'состав ответов у инвестора не беднее, чем у анонима',
+    (await investorPage.locator('[data-project-answer]').count()) >=
+      (await anonPage.locator('[data-project-answer]').count()),
+  );
   await investorPage.screenshot({ path: join(OUT, '02-investor.png'), fullPage: true });
 
   // ---------------------------------------------------------- владелец
@@ -266,6 +301,48 @@ try {
   check(
     'владельцу сервер отдаёт предпросмотр своей заявки',
     ownerPreview !== null && typeof ownerPreview === 'object',
+  );
+
+  // Главное в 7.3: предпросмотр показывает КАРТОЧКУ, а не строку «показано N,
+  // скрыто M». Раньше проверить глазами, что увидит инвестор, было нечем.
+  await ownerPage.goto(`${LAB_URL.replace(/\/$/, '')}/projects/${project.id}`, {
+    waitUntil: 'networkidle',
+    timeout: 30_000,
+  });
+  await ownerPage.waitForSelector('[data-visibility-audience="investors"]', { timeout: 20_000 });
+  await ownerPage.locator('[data-visibility-audience="investors"]').click();
+  await ownerPage.waitForTimeout(2000);
+  const previewCard = ownerPage.locator('[data-project-card="preview"]');
+  check(
+    'предпросмотр владельца показывает ту же общую карточку',
+    (await previewCard.count()) === 1,
+  );
+  const previewText = (await previewCard.count()) > 0 ? await previewCard.innerText() : '';
+  check(
+    'в предпросмотре видно название проекта',
+    previewText.includes(project.title.slice(0, 12)),
+    project.title.slice(0, 20),
+  );
+  const investorAnswers = await ownerPage.locator('[data-project-answer]').count();
+
+  // Переключение аудитории меняет состав — потому что сервер отдаёт другую
+  // проекцию, а не потому что карточка что-то прячет.
+  await ownerPage.locator('[data-visibility-audience="public"]').click();
+  await ownerPage.waitForTimeout(2000);
+  const publicAnswers = await ownerPage.locator('[data-project-answer]').count();
+  check(
+    'смена аудитории в предпросмотре меняет состав карточки',
+    publicAnswers <= investorAnswers,
+    `инвестору ${investorAnswers} ответов, анониму ${publicAnswers}`,
+  );
+  // Предпросмотр отвечает на вопрос «что увидит аудитория», а не заменяет
+  // владельцу его список материалов: читалка документов здесь не открывается.
+  check(
+    'в предпросмотре нет читалки документов',
+    (await ownerPage
+      .locator('[data-project-card="preview"]')
+      .getByRole('button', { name: 'Смотреть' })
+      .count()) === 0,
   );
   await ownerPage.screenshot({ path: join(OUT, '03-owner.png'), fullPage: true });
 
