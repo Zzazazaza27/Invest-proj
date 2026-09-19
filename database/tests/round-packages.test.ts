@@ -168,7 +168,12 @@ describe('M095: услуги и пакеты', () => {
 });
 
 describe('M095: покупка — исторический факт', () => {
-  async function purchase(c: Client, owner: string, projectId: string): Promise<string> {
+  async function purchase(
+    c: Client,
+    owner: string,
+    projectId: string,
+    packageId: string | null = null,
+  ): Promise<string> {
     const versionId = uuidv7();
     const [application] = (
       await c.query<{ id: string }>(
@@ -192,11 +197,11 @@ describe('M095: покупка — исторический факт', () => {
     const id = uuidv7();
     await c.query(
       `INSERT INTO billing.round_purchases
-         (id, round_id, project_id, buyer_user_id, package_snapshot, country_code, policy_version,
-          total_amount, currency)
-       VALUES ($1, $2, $3, $4, '{"code":"pkg_base","version":1,"price":"10000.00"}'::jsonb,
+         (id, round_id, project_id, buyer_user_id, package_id, package_snapshot, country_code,
+          policy_version, total_amount, currency)
+       VALUES ($1, $2, $3, $4, $5, '{"code":"pkg_base","version":1,"price":"10000.00"}'::jsonb,
                'ru', 1, 10000, 'RUB')`,
-      [id, roundId, projectId, owner],
+      [id, roundId, projectId, owner, packageId],
     );
     await c.query(
       `INSERT INTO billing.round_purchase_items
@@ -233,6 +238,46 @@ describe('M095: покупка — исторический факт', () => {
           [purchaseId],
         ),
       ).resolves.toBeDefined();
+    });
+  });
+
+  /**
+   * Согласованный сценарий 5.9.2: диапазон суммы определяет ТРЕБУЕМЫЙ пакет,
+   * но не запрещает выбрать более полный и докупить услугу. Проверяется, что
+   * ограничения M095 этому не мешают: покупка ссылается на пакет, диапазон
+   * которого выше суммы раунда, а позиции несут докупленную услугу сверх
+   * состава. Правило «что считать более полным» держит расчёт (5.9.2), а не
+   * схема: в БД такого ограничения нет намеренно.
+   */
+  it('покупка допускает более полный пакет и докупленную услугу', async () => {
+    await inRollbackTx(async (c) => {
+      const admin = await createUser(c, { role: 'admin' });
+      const owner = await createUser(c, { role: 'founder' });
+      const projectId = await createProject(c, owner.id);
+      // Пакет верхнего диапазона: сумма раунда (3 млн) в него не попадает.
+      const fuller = await pkg(c, admin.id, { code: 'pkg_fuller', min: 5_000_000, max: null });
+      const purchaseId = await purchase(c, owner.id, projectId, fuller);
+
+      await expect(
+        c.query(
+          `INSERT INTO billing.round_purchase_items
+             (id, purchase_id, kind, service_code, title, amount, currency)
+           VALUES ($1, $2, 'service', 'expert_call', 'Разбор с экспертом', 7000, 'RUB')`,
+          [uuidv7(), purchaseId],
+        ),
+      ).resolves.toBeDefined();
+
+      const [row] = (
+        await c.query<{ package_id: string; items: string }>(
+          `SELECT p.package_id, count(i.id)::text AS items
+             FROM billing.round_purchases p
+             LEFT JOIN billing.round_purchase_items i ON i.purchase_id = p.id
+            WHERE p.id = $1 GROUP BY p.package_id`,
+          [purchaseId],
+        )
+      ).rows;
+      expect(row?.package_id).toBe(fuller);
+      expect(row?.items).toBe('2');
     });
   });
 

@@ -22,6 +22,8 @@ import type {
   ProjectMaterial,
   RoundCloseReason,
   RoundOpenPreview,
+  RoundQuote,
+  ServiceCountryPolicyVersion,
   UpdateFundingRoundRequest,
 } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
@@ -612,6 +614,95 @@ function SideRound({ round, side }: { round: RoundHook; side: { id: string; stat
   );
 }
 
+/**
+ * Стоимость запуска раунда (5.9.2).
+ *
+ * Показывается только тогда, когда деньги действительно появляются: условия
+ * страны включили платные пакеты или бесплатную границу. При бесплатном
+ * запуске блок не рисуется — иначе в кабинете постоянно висел бы раздел про
+ * оплату, которой нет.
+ *
+ * Ничего не покупает: расчёт читается, кнопки оплаты здесь нет.
+ */
+function CostBlock({ round, policy }: { round: RoundHook; policy: ServiceCountryPolicyVersion }) {
+  const roundId = round.data?.current?.round.id ?? null;
+  const priced = policy.config.paidPackages.enabled || policy.config.freeAttraction.enabled;
+  const [quote, setQuote] = useState<RoundQuote | null>(null);
+
+  useEffect(() => {
+    if (!roundId || !priced) {
+      setQuote(null);
+      return;
+    }
+    let cancelled = false;
+    void api.rounds
+      .quote(roundId)
+      .then((result) => {
+        if (!cancelled) setQuote(result);
+      })
+      .catch(() => {
+        // Молча: расчёт — справка. Отказ на самом действии объяснит причину.
+        if (!cancelled) setQuote(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [roundId, priced]);
+
+  if (!quote || quote.mode === 'free') return null;
+
+  return (
+    <div
+      data-round-cost={quote.mode}
+      style={{
+        display: 'grid',
+        gap: 'var(--u-space-1)',
+        marginTop: 'var(--u-space-2)',
+        paddingTop: 'var(--u-space-2)',
+        borderTop: '1px solid var(--u-border)',
+      }}
+    >
+      <strong>{S.round.cost.title}</strong>
+      {quote.mode === 'blocked' ? (
+        <>
+          <span style={{ color: 'var(--u-warning)' }}>{S.round.cost.blocked}</span>
+          {quote.blockers.map((blocker) => (
+            <span key={`${blocker.path}:${blocker.message}`} style={{ color: 'var(--u-warning)' }}>
+              {blocker.message}
+            </span>
+          ))}
+        </>
+      ) : (
+        <>
+          {quote.requiredPackage ? (
+            <span>
+              {S.round.cost.required(
+                quote.requiredPackage.name,
+                formatMoney(quote.requiredPackage.price, quote.requiredPackage.currency),
+              )}
+            </span>
+          ) : null}
+          {quote.chosenPackage ? (
+            <span>
+              {S.round.cost.chosen(
+                quote.chosenPackage.name,
+                formatMoney(quote.chosenPackage.price, quote.chosenPackage.currency),
+              )}
+            </span>
+          ) : null}
+          {quote.extraServices.map((service) => (
+            <span key={service.code}>
+              {S.round.cost.extra(service.name, formatMoney(service.price, service.currency))}
+            </span>
+          ))}
+          <strong>{S.round.cost.total(formatMoney(quote.total, quote.currency))}</strong>
+          <span style={{ color: 'var(--u-text-muted)' }}>{S.round.cost.notSold}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
 // ------------------------------------------------------------------- страна
 
 function CountryCard({ round, busy, run }: { round: RoundHook; busy: string | null; run: Run }) {
@@ -655,6 +746,7 @@ function CountryCard({ round, busy, run }: { round: RoundHook; busy: string | nu
                     {S.round.country.manualReview}
                   </span>
                 ) : null}
+                <CostBlock round={round} policy={policy} />
               </>
             ) : null}
           </div>

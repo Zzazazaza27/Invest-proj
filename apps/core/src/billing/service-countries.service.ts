@@ -204,6 +204,24 @@ export class ServiceCountriesService {
     return rows[0]?.service_country ?? null;
   }
 
+  /**
+   * Конкретная версия условий — та, что зафиксирована снимком у открытого
+   * раунда. Считать по действующей версии значило бы задним числом менять
+   * условия уже начатого привлечения.
+   */
+  async policyVersion(
+    tx: Tx,
+    code: string,
+    version: number,
+  ): Promise<ServiceCountryPolicyVersion | null> {
+    const { rows } = await tx.query<PolicyRow>(
+      `SELECT ${POLICY_COLUMNS} FROM billing.service_country_policies
+        WHERE country_code = $1 AND version = $2`,
+      [code, version],
+    );
+    return rows[0] ? mapPolicy(rows[0]) : null;
+  }
+
   async activePolicy(tx: Tx, code: string): Promise<ServiceCountryPolicyVersion | null> {
     const { rows } = await tx.query<PolicyRow>(
       `SELECT ${POLICY_COLUMNS} FROM billing.service_country_policies

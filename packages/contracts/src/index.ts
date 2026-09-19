@@ -31,6 +31,7 @@ export * from './domain/service-country';
 export * from './domain/content';
 export * from './domain/billing';
 export * from './domain/round-packages';
+export * from './domain/round-pricing';
 export * from './domain/investments';
 export * from './domain/integration';
 export * from './domain/support';

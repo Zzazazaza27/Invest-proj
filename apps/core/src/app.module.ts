@@ -34,6 +34,7 @@ import {
   AdminRoundServicesController,
 } from './billing/round-packages.controller';
 import { RoundPackagesService } from './billing/round-packages.service';
+import { RoundPricingService } from './billing/round-pricing.service';
 import { FundingRoundsController } from './lab/funding-rounds.controller';
 import { FundingRoundsService } from './lab/funding-rounds.service';
 import { NotificationsController } from './comms/notifications.controller';
@@ -189,6 +190,7 @@ import { S3Service } from './storage/s3.service';
     BillingService,
     ServiceCountriesService,
     RoundPackagesService,
+    RoundPricingService,
     FundingRoundsService,
     AdminService,
     DirectoryService,

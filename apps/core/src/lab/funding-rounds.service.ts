@@ -15,6 +15,8 @@ import {
   type FundingRoundStatus,
   type OpenFundingRoundRequest,
   type ProjectStage,
+  type RoundQuote,
+  type RoundQuoteSelection,
   type ServiceCountryPolicy,
   type UpdateFundingRoundRequest,
 } from '@unicorn/contracts';
@@ -22,6 +24,7 @@ import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { ServiceCountriesService } from '../billing/service-countries.service';
+import { RoundPricingService, assertCommercialConditions } from '../billing/round-pricing.service';
 import { loadFormConfig } from './application-forms.service';
 import { roundDigest } from './disclosure-digest';
 import {
@@ -62,6 +65,7 @@ export class FundingRoundsService {
     private readonly db: Database,
     private readonly audit: AuditRepository,
     private readonly countries: ServiceCountriesService,
+    private readonly pricing: RoundPricingService,
   ) {}
 
   async listForProject(ctx: RequestContext, projectId: string): Promise<FundingRound[]> {
@@ -153,6 +157,46 @@ export class FundingRoundsService {
     return this.db.readOnly(ctx, async (tx) => this.detail(tx, await this.load(tx, roundId)));
   }
 
+  /**
+   * Во что обойдётся запуск этого раунда (5.9.2).
+   *
+   * Только чтение: покупка не создаётся, счёт не выставляется. Отвечает на
+   * вопросы «какой пакет требуется», «что выбрано сверх», «сколько итого и в
+   * какой валюте» — и объясняет, почему посчитать нельзя, если нельзя.
+   */
+  async quote(
+    ctx: RequestContext,
+    roundId: string,
+    selection: RoundQuoteSelection,
+  ): Promise<RoundQuote> {
+    return this.db.readOnly(ctx, async (tx) => {
+      const round = await this.load(tx, roundId);
+      // Страна раунда фиксируется при открытии; у черновика берётся страна
+      // аккаунта — иначе показать стоимость до открытия было бы нечем.
+      const country = round.serviceCountry ?? (await this.countries.userCountry(tx, ctx.userId!));
+      if (!country) {
+        throw errors.validation([
+          { path: 'serviceCountry', message: 'у аккаунта не выбрана страна обслуживания' },
+        ]);
+      }
+      const policy = round.policyVersion
+        ? await this.countries.policyVersion(tx, country, round.policyVersion)
+        : await this.countries.activePolicy(tx, country);
+      if (!policy) {
+        throw errors.validation([
+          { path: 'serviceCountry', message: 'для страны нет действующих условий' },
+        ]);
+      }
+      return this.pricing.quote(tx, {
+        countryCode: country,
+        policy,
+        target: round.target,
+        currency: round.currency,
+        selection,
+      });
+    });
+  }
+
   /** Частичное сохранение, как у заявки: `null` очищает, отсутствие не трогает. */
   async update(
     ctx: RequestContext,
@@ -196,7 +240,16 @@ export class FundingRoundsService {
           if (!policy) {
             throw errors.stateTransition('Для страны раунда нет действующих условий');
           }
-          assertCommercialConditions(policy, 'increase');
+          // Считается НОВАЯ сумма: пакет подбирается по тому запросу, который
+          // основатель хочет объявить, а не по прежнему.
+          const quote = await this.pricing.quote(tx, {
+            countryCode: current.serviceCountry!,
+            policy,
+            target: input.target,
+            currency: current.currency,
+            selection: { serviceCodes: [] },
+          });
+          assertCommercialConditions(quote, 'increase');
         }
         set('target', input.target, '::numeric');
       }
@@ -348,7 +401,14 @@ export class FundingRoundsService {
       const readiness = await this.readiness(tx, round);
       missing.push(...readiness.missing);
       if (missing.length > 0) throw errors.validation(missing);
-      assertCommercialConditions(policy!, 'open');
+      const quote = await this.pricing.quote(tx, {
+        countryCode: country!,
+        policy: policy!,
+        target: round.target,
+        currency: round.currency,
+        selection: { serviceCodes: [] },
+      });
+      assertCommercialConditions(quote, 'open');
 
       await tx.query(
         `UPDATE lab.funding_rounds
@@ -360,6 +420,7 @@ export class FundingRoundsService {
           WHERE id = $1`,
         [roundId, country, policy!.version],
       );
+      return quote;
     });
   }
 
@@ -386,11 +447,19 @@ export class FundingRoundsService {
           'Для страны раунда нет действующих условий: возобновление недоступно',
         );
       }
-      assertCommercialConditions(policy, 'resume');
+      const quote = await this.pricing.quote(tx, {
+        countryCode: round.serviceCountry!,
+        policy,
+        target: round.target,
+        currency: round.currency,
+        selection: { serviceCodes: [] },
+      });
+      assertCommercialConditions(quote, 'resume');
       await tx.query(
         `UPDATE lab.funding_rounds SET status = 'open', paused_at = NULL WHERE id = $1`,
         [roundId],
       );
+      return quote;
     });
   }
 
@@ -510,7 +579,9 @@ export class FundingRoundsService {
     ctx: RequestContext,
     roundId: string,
     to: FundingRoundStatus,
-    apply: (tx: Tx, round: FundingRound) => Promise<void>,
+    // Переход может вернуть расчёт: он попадает в журнал, чтобы потом было
+    // видно, на каких коммерческих условиях раунд открылся.
+    apply: (tx: Tx, round: FundingRound) => Promise<RoundQuote | void>,
   ): Promise<FundingRoundDetail> {
     return this.db.transaction(ctx, async (tx) => {
       const probe = await this.load(tx, roundId);
@@ -520,8 +591,9 @@ export class FundingRoundsService {
       if (!FUNDING_ROUND_TRANSITIONS[round.status].includes(to)) {
         throw errors.stateTransition(`Переход ${round.status} → ${to} невозможен`);
       }
+      let quote: RoundQuote | void;
       try {
-        await apply(tx, round);
+        quote = await apply(tx, round);
       } catch (e) {
         if (isUnfinishedConflict(e)) {
           throw errors.conflict(
@@ -548,7 +620,15 @@ export class FundingRoundsService {
           projectId: round.projectId,
           from: round.status,
           to,
-          commercial: COMMERCIAL_MODE,
+          commercial: quote
+            ? {
+                mode: quote.mode,
+                policyVersion: quote.policyVersion,
+                requiredPackage: quote.requiredPackage?.code ?? null,
+                total: quote.total,
+                currency: quote.currency,
+              }
+            : null,
         },
         traceId: ctx.traceId,
       });
@@ -599,39 +679,6 @@ export class FundingRoundsService {
       [uuidv7(), roundId, from, to, ctx.userId, reason],
     );
   }
-}
-
-/**
- * Временный режим коммерческих условий до пакетов раунда (этап 5.9, план 0.2
- * §0г.2 п.2–3): открытие, возобновление и увеличение суммы бесплатны, пока в
- * условиях страны выключены и платные пакеты, и бесплатная граница. Это ОДНО
- * место проверки: в 5.9 сюда встанет расчёт пакета и оплаты, и ни один из
- * трёх маршрутов не станет обходом. Включённая, но не реализованная
- * настройка — отказ (fail-closed), а не молчаливое «бесплатно».
- */
-export const COMMERCIAL_MODE = 'free_until_packages' as const;
-
-export function assertCommercialConditions(
-  policy: { version: number; config: ServiceCountryPolicy },
-  action: 'open' | 'resume' | 'increase',
-): typeof COMMERCIAL_MODE {
-  if (policy.config.paidPackages.enabled) {
-    throw errors.validation([
-      {
-        path: 'serviceCountry',
-        message: `платные пакеты раунда включены в условиях страны (версия ${policy.version}), но ещё не реализованы: действие «${action}» недоступно`,
-      },
-    ]);
-  }
-  if (policy.config.freeAttraction.enabled) {
-    throw errors.validation([
-      {
-        path: 'serviceCountry',
-        message: `бесплатная граница включена в условиях страны (версия ${policy.version}), но учёт ещё не реализован: действие «${action}» недоступно`,
-      },
-    ]);
-  }
-  return COMMERCIAL_MODE;
 }
 
 const VERB_BY_TRANSITION: Record<string, string> = {

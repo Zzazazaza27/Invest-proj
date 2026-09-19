@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Put, Query } from '@nestjs/common';
 import {
   ChangeFundingRoundBasisRequestSchema,
   CloseFundingRoundRequestSchema,
@@ -7,6 +7,8 @@ import {
   FundingRoundDetailSchema,
   FundingRoundSchema,
   OpenFundingRoundRequestSchema,
+  RoundQuoteSchema,
+  RoundQuoteSelectionSchema,
   UpdateFundingRoundRequestSchema,
   UuidSchema,
 } from '@unicorn/contracts';
@@ -45,6 +47,31 @@ export class FundingRoundsController {
     return FundingRoundDetailSchema.parse(
       await this.rounds.get(ctx, parseOrThrow(UuidSchema, rawId)),
     );
+  }
+
+  /**
+   * Во что обойдётся запуск раунда (5.9.2). Только чтение: ничего не
+   * покупается и не списывается. Выбор основателя передаётся параметрами —
+   * `packageCode` (более полный пакет) и `serviceCodes` через запятую
+   * (докупка), — потому что хранить незавершённый выбор пока негде.
+   */
+  @Roles('founder', 'admin')
+  @Get('rounds/:id/quote')
+  async quote(
+    @Param('id') rawId: string,
+    @Query('packageCode') packageCode: string | undefined,
+    @Query('serviceCodes') serviceCodes: string | undefined,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const selection = parseOrThrow(RoundQuoteSelectionSchema, {
+      packageCode: packageCode || undefined,
+      serviceCodes: (serviceCodes ?? '')
+        .split(',')
+        .map((code) => code.trim())
+        .filter((code) => code.length > 0),
+    });
+    return RoundQuoteSchema.parse(await this.rounds.quote(ctx, id, selection));
   }
 
   @Roles('founder', 'admin')

@@ -8,6 +8,7 @@ import {
   FundingRoundBasisHistoryEntrySchema,
   FundingRoundDetailSchema,
   FundingRoundSchema,
+  RoundQuoteSchema,
   ServiceCountryPolicyVersionSchema,
   ServiceCountrySchema,
   type UpdateFundingRoundRequestSchema,
@@ -856,6 +857,23 @@ export class UnicornApi {
     /** Предпросмотр перед открытием: что увидят аноним и инвестор по активной версии условий. */
     openPreview: (id: string) =>
       this.http.request({ path: `/rounds/${id}/open-preview`, schema: RoundOpenPreviewSchema }),
+
+    /**
+     * Во что обойдётся запуск (5.9.2). Только чтение: ничего не покупается.
+     * Выбор основателя — более полный пакет и докупаемые услуги — передаётся
+     * параметрами, потому что хранить незавершённый выбор пока негде.
+     */
+    quote: (id: string, selection: { packageCode?: string; serviceCodes?: string[] } = {}) => {
+      const query = new URLSearchParams();
+      if (selection.packageCode) query.set('packageCode', selection.packageCode);
+      if (selection.serviceCodes?.length)
+        query.set('serviceCodes', selection.serviceCodes.join(','));
+      const suffix = query.toString();
+      return this.http.request({
+        path: `/rounds/${id}/quote${suffix ? `?${suffix}` : ''}`,
+        schema: RoundQuoteSchema,
+      });
+    },
   };
 
   /** Страны обслуживания: список публичен, условия — вошедшему; выбор — за аккаунтом. */
