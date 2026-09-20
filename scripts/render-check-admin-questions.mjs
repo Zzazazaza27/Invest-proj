@@ -267,8 +267,30 @@ try {
     );
   }
 
+  /**
+   * История версий свёрнута по умолчанию (версий за сорок). Открываем, когда
+   * она нужна: состояние живёт на экране и после перехода сбрасывается.
+   */
+  const openHistory = async () => {
+    const toggle = adminPage.locator('[data-history-toggle]');
+    await toggle.waitFor({ timeout: 20_000 });
+    if ((await toggle.getAttribute('aria-expanded')) !== 'true') await toggle.click();
+    await adminPage.waitForTimeout(300);
+  };
+
   await adminPage.getByRole('link', { name: 'Вопросы заявки', exact: true }).click();
   await adminPage.waitForSelector('[data-form-status]', { timeout: 20_000 });
+
+  // Разделы свёрнуты по умолчанию: их больше десятка, и развёрнутыми страница
+  // растягивалась на несколько экранов. Свёрнутый вид отвечает на вопрос «какие
+  // есть разделы и сколько в них вопросов» — проверяем и его тоже.
+  const collapsedSections = await adminPage.locator('[data-section-toggle]').count();
+  check('разделы показаны свёрнутыми списком', collapsedSections >= 10, `${collapsedSections}`);
+  check(
+    'в свёрнутом виде таблиц вопросов нет',
+    (await adminPage.locator('[data-section] table').count()) === 0,
+  );
+  await adminPage.getByRole('button', { name: 'Развернуть все' }).click();
   await adminPage.waitForSelector(`[data-question="${QUESTION}"]`, { timeout: 20_000 });
   check('активная версия показана', (await statusText()).includes(`Активная версия: ${N}`));
   const sectionCount = await adminPage.locator('[data-section]').count();
@@ -408,6 +430,10 @@ try {
   // ------------------------------------------- админка: правка и публикация
   console.warn('\n[5] Админка: обязательность для стадии → публикация N+1');
   await adminPage.getByRole('link', { name: 'Вопросы заявки', exact: true }).click();
+  await adminPage.waitForSelector('[data-section-toggle]', { timeout: 20_000 });
+  // Возврат на страницу — снова свёрнутые разделы: состояние живёт на экране,
+  // а не в адресе. Разворачиваем, как это сделал бы администратор.
+  await adminPage.getByRole('button', { name: 'Развернуть все' }).click();
   await adminPage.waitForSelector(`[data-question="${QUESTION}"] select`, { timeout: 20_000 });
   // Черновик мог остаться от прежних прогонов (после отката он «от версии
   // N+1») — начинаем от активной версии, как сделал бы администратор.
@@ -442,7 +468,9 @@ try {
   check(`опубликована и активна версия ${NEXT}`, true);
   check(
     'в истории новая версия помечена активной',
-    (await adminPage.locator(`[data-version="${NEXT}"]`).innerText()).includes('активна'),
+    (await openHistory(), await adminPage.locator(`[data-version="${NEXT}"]`).innerText()).includes(
+      'активна',
+    ),
   );
   await screenshot(adminPage, 'admin-published-next');
 
@@ -525,6 +553,7 @@ try {
   // ------------------------------------------------ откат: вернуть версию N
   console.warn('\n[8] Откат: вернуть версию N');
   await cooldown('8');
+  await openHistory();
   await adminPage
     .locator(`[data-version="${N}"]`)
     .getByRole('button', { name: `Вернуть версию ${N}` })
@@ -534,7 +563,7 @@ try {
   check(`версия ${N} снова активна`, true);
   check(
     `версия ${NEXT} осталась в истории`,
-    (await adminPage.locator(`[data-version="${NEXT}"]`).count()) === 1,
+    (await openHistory(), await adminPage.locator(`[data-version="${NEXT}"]`).count()) === 1,
   );
   await screenshot(adminPage, 'admin-rolled-back');
 

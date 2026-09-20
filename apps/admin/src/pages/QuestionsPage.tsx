@@ -92,6 +92,22 @@ export function QuestionsPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [openCard, setOpenCard] = useState<string | null>(null);
   const [openSection, setOpenSection] = useState<string | null>(null);
+  /**
+   * Развёрнутые разделы.
+   *
+   * По умолчанию свёрнуты все: разделов больше десятка, в каждом таблица на
+   * пять стадий, и страница растягивалась на несколько экранов — найти нужный
+   * раздел можно было только прокруткой. Свёрнутый вид отвечает на вопрос
+   * «какие вообще есть разделы и сколько в них вопросов», а развёрнутый — на
+   * «что внутри этого».
+   */
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  /**
+   * История версий — та же беда, что и у разделов: версий уже за сорок, и
+   * таблица целиком занимала больше экрана. Нужна она редко, поэтому свёрнута
+   * по умолчанию, а число версий видно и свёрнутой.
+   */
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [dialog, setDialog] = useState<
     | { kind: 'publish' }
     | { kind: 'activate'; version: number }
@@ -249,6 +265,17 @@ export function QuestionsPage() {
           <button
             type="button"
             className="btn--ghost"
+            onClick={() =>
+              setExpanded((prev) =>
+                prev.size === 0 ? new Set(config.sections.map((x) => x.key)) : new Set(),
+              )
+            }
+          >
+            {expanded.size === 0 ? 'Развернуть все' : 'Свернуть все'}
+          </button>
+          <button
+            type="button"
+            className="btn--ghost"
             onClick={() => setDialog({ kind: 'new-section' })}
           >
             Добавить раздел
@@ -386,168 +413,239 @@ export function QuestionsPage() {
         />
       )}
 
-      {sections.map((section, index) => (
-        <section className="card" key={section.key} data-section={section.key}>
-          <div className="page-head" style={{ marginBottom: 10 }}>
-            <div>
-              <h2 style={{ marginBottom: 2 }}>
-                {index + 1}. {section.texts[config.defaultLocale]?.title ?? section.key}
-              </h2>
-              <div className="small muted">раздел {section.key}</div>
+      {sections.map((section, index) => {
+        const open = expanded.has(section.key);
+        const count = questionsOf(section.key).length;
+        return (
+          <section className="card" key={section.key} data-section={section.key}>
+            <div className="page-head" style={{ marginBottom: open ? 10 : 0 }}>
+              {/*
+              Заголовок раздела — кнопка: сворачивает и разворачивает. Стрелка
+              и счётчик вопросов рядом, чтобы в свёрнутом виде было видно не
+              только название, но и объём.
+            */}
+              <button
+                type="button"
+                className="btn--ghost"
+                data-section-toggle={section.key}
+                aria-expanded={open}
+                onClick={() =>
+                  setExpanded((prev) => {
+                    const next = new Set(prev);
+                    if (next.has(section.key)) next.delete(section.key);
+                    else next.add(section.key);
+                    return next;
+                  })
+                }
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  textAlign: 'left',
+                  padding: '4px 6px',
+                  flex: 1,
+                  minWidth: 0,
+                }}
+              >
+                <span aria-hidden="true" style={{ opacity: 0.6, width: 12 }}>
+                  {open ? '▾' : '▸'}
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <span style={{ display: 'block', fontWeight: 600 }}>
+                    {index + 1}. {section.texts[config.defaultLocale]?.title ?? section.key}
+                  </span>
+                  <span className="small muted">
+                    раздел {section.key} · вопросов: {count}
+                  </span>
+                </span>
+              </button>
+              <div className="row-actions">
+                <button
+                  type="button"
+                  className="btn--ghost btn--sm"
+                  disabled={index === 0}
+                  onClick={() => update((c) => moveSection(c, section.key, -1))}
+                  aria-label="Раздел выше"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  className="btn--ghost btn--sm"
+                  disabled={index === sections.length - 1}
+                  onClick={() => update((c) => moveSection(c, section.key, 1))}
+                  aria-label="Раздел ниже"
+                >
+                  ↓
+                </button>
+                <button
+                  type="button"
+                  className="btn--ghost btn--sm"
+                  onClick={() => setOpenSection(openSection === section.key ? null : section.key)}
+                >
+                  {openSection === section.key ? 'Скрыть тексты раздела' : 'Тексты раздела'}
+                </button>
+              </div>
             </div>
-            <div className="row-actions">
-              <button
-                type="button"
-                className="btn--ghost btn--sm"
-                disabled={index === 0}
-                onClick={() => update((c) => moveSection(c, section.key, -1))}
-                aria-label="Раздел выше"
-              >
-                ↑
-              </button>
-              <button
-                type="button"
-                className="btn--ghost btn--sm"
-                disabled={index === sections.length - 1}
-                onClick={() => update((c) => moveSection(c, section.key, 1))}
-                aria-label="Раздел ниже"
-              >
-                ↓
-              </button>
-              <button
-                type="button"
-                className="btn--ghost btn--sm"
-                onClick={() => setOpenSection(openSection === section.key ? null : section.key)}
-              >
-                {openSection === section.key ? 'Скрыть тексты раздела' : 'Тексты раздела'}
-              </button>
-            </div>
-          </div>
 
-          {openSection === section.key && (
-            <SectionEditor
-              section={section}
-              locales={locales}
-              defaultLocale={config.defaultLocale}
-              onChange={(locale, field, value) =>
-                update((c) => {
-                  const s = c.sections.find((x) => x.key === section.key)!;
-                  s.texts[locale] = { ...(s.texts[locale] ?? {}) };
-                  if (value === '') delete s.texts[locale]![field];
-                  else s.texts[locale]![field] = value;
-                })
-              }
-            />
-          )}
+            {open && openSection === section.key && (
+              <SectionEditor
+                section={section}
+                locales={locales}
+                defaultLocale={config.defaultLocale}
+                onChange={(locale, field, value) =>
+                  update((c) => {
+                    const s = c.sections.find((x) => x.key === section.key)!;
+                    s.texts[locale] = { ...(s.texts[locale] ?? {}) };
+                    if (value === '') delete s.texts[locale]![field];
+                    else s.texts[locale]![field] = value;
+                  })
+                }
+              />
+            )}
 
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Вопрос</th>
-                  {STAGES.map((s) => (
-                    <th key={s.key}>{s.label}</th>
-                  ))}
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {questionsOf(section.key).map((question, qIndex, list) => {
-                  const core = question.coreField ? FORM_CORE_QUESTIONS[question.coreField] : null;
-                  const fixed = core?.fixedState;
-                  const archived = Boolean(question.archivedAt);
-                  return (
-                    <QuestionRows
-                      key={question.key}
-                      question={question}
-                      defaultLocale={config.defaultLocale}
-                      locales={locales}
-                      sections={sections}
-                      fixedState={fixed ?? null}
-                      archived={archived}
-                      isFirst={qIndex === 0}
-                      isLast={qIndex === list.length - 1}
-                      open={openCard === question.key}
-                      activeLabel={
-                        active?.questions.find((q) => q.key === question.key)?.texts[
-                          config.defaultLocale
-                        ]?.label ?? null
-                      }
-                      onToggleCard={() =>
-                        setOpenCard(openCard === question.key ? null : question.key)
-                      }
-                      onState={(stage, state) =>
-                        update((c) => {
-                          c.questions.find((q) => q.key === question.key)!.stages[stage] = state;
-                        })
-                      }
-                      onMove={(delta) => update((c) => moveQuestion(c, question.key, delta))}
-                      onArchive={(value) =>
-                        update((c) => {
-                          c.questions.find((q) => q.key === question.key)!.archivedAt = value
-                            ? new Date().toISOString()
-                            : null;
-                        })
-                      }
-                      onEdit={(mutate) =>
-                        update((c) => mutate(c.questions.find((q) => q.key === question.key)!))
-                      }
-                    />
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      ))}
+            {open ? (
+              <div className="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Вопрос</th>
+                      {STAGES.map((s) => (
+                        <th key={s.key}>{s.label}</th>
+                      ))}
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {questionsOf(section.key).map((question, qIndex, list) => {
+                      const core = question.coreField
+                        ? FORM_CORE_QUESTIONS[question.coreField]
+                        : null;
+                      const fixed = core?.fixedState;
+                      const archived = Boolean(question.archivedAt);
+                      return (
+                        <QuestionRows
+                          key={question.key}
+                          question={question}
+                          defaultLocale={config.defaultLocale}
+                          locales={locales}
+                          sections={sections}
+                          fixedState={fixed ?? null}
+                          archived={archived}
+                          isFirst={qIndex === 0}
+                          isLast={qIndex === list.length - 1}
+                          open={openCard === question.key}
+                          activeLabel={
+                            active?.questions.find((q) => q.key === question.key)?.texts[
+                              config.defaultLocale
+                            ]?.label ?? null
+                          }
+                          onToggleCard={() =>
+                            setOpenCard(openCard === question.key ? null : question.key)
+                          }
+                          onState={(stage, state) =>
+                            update((c) => {
+                              c.questions.find((q) => q.key === question.key)!.stages[stage] =
+                                state;
+                            })
+                          }
+                          onMove={(delta) => update((c) => moveQuestion(c, question.key, delta))}
+                          onArchive={(value) =>
+                            update((c) => {
+                              c.questions.find((q) => q.key === question.key)!.archivedAt = value
+                                ? new Date().toISOString()
+                                : null;
+                            })
+                          }
+                          onEdit={(mutate) =>
+                            update((c) => mutate(c.questions.find((q) => q.key === question.key)!))
+                          }
+                        />
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            ) : null}
+          </section>
+        );
+      })}
 
       <section className="card">
-        <h2>История версий</h2>
-        <p className="page-hint">
-          Ни одна версия не удаляется. «Вернуть версию» делает её активной для новых заявок;
-          поданные и начатые заявки не пересчитываются.
-        </p>
-        <table>
-          <thead>
-            <tr>
-              <th>Версия</th>
-              <th>Состояние</th>
-              <th>Опубликована</th>
-              <th>Основание</th>
-              <th>Разделов / вопросов</th>
-              <th />
-            </tr>
-          </thead>
-          <tbody>
-            {versions.items.map((v) => (
-              <tr key={v.id} data-version={v.version ?? ''}>
-                <td>{v.version}</td>
-                <td>
-                  <span className={`badge ${v.isActive ? 'badge--ok' : 'badge--muted'}`}>
-                    {v.isActive ? 'активна' : 'в истории'}
-                  </span>
-                </td>
-                <td className="small">{v.publishedAt ? formatDate(v.publishedAt) : '—'}</td>
-                <td className="small">{v.reason ?? '—'}</td>
-                <td className="small">
-                  {v.sections} / {v.questions}
-                </td>
-                <td>
-                  {!v.isActive && v.version !== null ? (
-                    <button
-                      type="button"
-                      className="btn--ghost btn--sm"
-                      disabled={busy !== null}
-                      onClick={() => setDialog({ kind: 'activate', version: v.version! })}
-                    >
-                      Вернуть версию {v.version}
-                    </button>
-                  ) : null}
-                </td>
+        <button
+          type="button"
+          className="btn--ghost"
+          data-history-toggle
+          aria-expanded={historyOpen}
+          onClick={() => setHistoryOpen((prev) => !prev)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10,
+            textAlign: 'left',
+            padding: '4px 6px',
+            width: '100%',
+            border: 'none',
+            background: 'transparent',
+          }}
+        >
+          <span aria-hidden="true" style={{ opacity: 0.6, width: 12 }}>
+            {historyOpen ? '▾' : '▸'}
+          </span>
+          <span>
+            <span style={{ display: 'block', fontWeight: 600 }}>История версий</span>
+            <span className="small muted">версий: {versions.items.length}</span>
+          </span>
+        </button>
+        {historyOpen ? (
+          <p className="page-hint">
+            Ни одна версия не удаляется. «Вернуть версию» делает её активной для новых заявок;
+            поданные и начатые заявки не пересчитываются.
+          </p>
+        ) : null}
+        {historyOpen ? (
+          <table>
+            <thead>
+              <tr>
+                <th>Версия</th>
+                <th>Состояние</th>
+                <th>Опубликована</th>
+                <th>Основание</th>
+                <th>Разделов / вопросов</th>
+                <th />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {versions.items.map((v) => (
+                <tr key={v.id} data-version={v.version ?? ''}>
+                  <td>{v.version}</td>
+                  <td>
+                    <span className={`badge ${v.isActive ? 'badge--ok' : 'badge--muted'}`}>
+                      {v.isActive ? 'активна' : 'в истории'}
+                    </span>
+                  </td>
+                  <td className="small">{v.publishedAt ? formatDate(v.publishedAt) : '—'}</td>
+                  <td className="small">{v.reason ?? '—'}</td>
+                  <td className="small">
+                    {v.sections} / {v.questions}
+                  </td>
+                  <td>
+                    {!v.isActive && v.version !== null ? (
+                      <button
+                        type="button"
+                        className="btn--ghost btn--sm"
+                        disabled={busy !== null}
+                        onClick={() => setDialog({ kind: 'activate', version: v.version! })}
+                      >
+                        Вернуть версию {v.version}
+                      </button>
+                    ) : null}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
       </section>
 
       <PromptDialog

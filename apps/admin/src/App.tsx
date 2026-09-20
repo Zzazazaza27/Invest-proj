@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Button, Icon, IconTile, NovaTopBar, UI_KEYFRAMES } from '@unicorn/ui';
 import { SessionCheckFailed, useSessionCheck } from '@unicorn/cabinet';
 import { api } from './api';
 import { LoginPage } from './pages/LoginPage';
@@ -87,93 +88,124 @@ export function App() {
   const isAdmin = me.roles.includes('admin');
 
   return (
-    <div className="layout">
-      <nav className="sidebar">
-        <div className="sidebar__brand">
-          Пятый элемент
-          <span>административный кабинет</span>
-        </div>
-        <NavItem to="/plans" label="Тарифы" />
-        <NavItem to="/subscriptions" label="Подписки" />
-        <NavItem to="/compliance" label="Комплаенс" />
-        {seasonsEnabled ? (
-          <>
-            <NavItem to="/season" label="Сезон" />
-            <NavItem to="/funnel" label="Воронка сезона" />
-          </>
-        ) : null}
-        <NavItem to="/templates" label="Уведомления" />
-        <NavItem to="/support" label="Поддержка" />
-        <NavItem to="/integrations" label="Интеграции" />
-        <NavItem to="/questions" label="Вопросы заявки" />
-        <NavItem to="/application-settings" label="Настройки заявки" />
-        <NavItem to="/texts" label="Словарь и ЧАВО" />
-        <NavItem to="/service-countries" label="Страны обслуживания" />
-        <NavItem to="/round-packages" label="Пакеты раунда" />
-        <NavItem to="/commission" label="Комиссии" />
-        <NavItem to="/deals" label="Сделки" />
-        <NavItem to="/flags" label="Функции платформы" />
-        <NavItem to="/access" label="Доступ" />
-        {/*
+    <>
+      <style>{UI_KEYFRAMES}</style>
+      {/*
+        Шапка — такая же, как в остальных кабинетах, и по той же причине, по
+        какой карточка проекта стала одной на три поверхности: одинаковые вещи
+        должны выглядеть одинаково. Раньше админка отличалась целиком, а выход
+        прятался в левом нижнем углу боковой колонки — там его ищут в
+        последнюю очередь.
+
+        Обёртка `admin-topbar` снимает ограничение ширины: у кабинетов
+        содержимое в колонке по центру, здесь — сетка с боковым меню во всю
+        ширину, и центрированная шапка над ней выглядела бы съехавшей.
+      */}
+      <div className="admin-topbar">
+        <NovaTopBar
+          title="Пятый элемент"
+          subtitle="Административный кабинет"
+          icon="shield"
+          actions={
+            <>
+              <span
+                className="u-hide-narrow"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 'var(--u-space-2)',
+                  color: 'var(--u-text-muted)',
+                  fontSize: 'var(--u-text-sm)',
+                }}
+              >
+                <IconTile name="user" size={32} />
+                {me.displayName}
+                <span style={{ opacity: 0.7 }}>
+                  · {isAdmin ? 'администратор' : me.roles.join(', ')}
+                </span>
+              </span>
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  void api.logout().then(() => setMe(null));
+                }}
+              >
+                <Icon name="logout" size={16} />
+                Выйти
+              </Button>
+            </>
+          }
+        />
+      </div>
+      <div className="layout">
+        <nav className="sidebar">
+          <NavItem to="/plans" label="Тарифы" />
+          <NavItem to="/subscriptions" label="Подписки" />
+          <NavItem to="/compliance" label="Комплаенс" />
+          {seasonsEnabled ? (
+            <>
+              <NavItem to="/season" label="Сезон" />
+              <NavItem to="/funnel" label="Воронка сезона" />
+            </>
+          ) : null}
+          <NavItem to="/templates" label="Уведомления" />
+          <NavItem to="/support" label="Поддержка" />
+          <NavItem to="/integrations" label="Интеграции" />
+          <NavItem to="/questions" label="Вопросы заявки" />
+          <NavItem to="/application-settings" label="Настройки заявки" />
+          <NavItem to="/texts" label="Словарь и ЧАВО" />
+          <NavItem to="/service-countries" label="Страны обслуживания" />
+          <NavItem to="/round-packages" label="Пакеты раунда" />
+          <NavItem to="/commission" label="Комиссии" />
+          <NavItem to="/deals" label="Сделки" />
+          <NavItem to="/flags" label="Функции платформы" />
+          <NavItem to="/access" label="Доступ" />
+          {/*
           Консоль — отдельное приложение, не маршрут этого кабинета, поэтому
           обычная ссылка, а не NavLink. Пункт виден только администратору:
           остальным сервер всё равно ответит 404 (привратник auth_request в
           infra/nginx/local/console.conf), и пустая ссылка в меню выглядела бы
           поломкой.
         */}
-        {isAdmin ? (
-          <a className="navlink" href={consoleHref()} target="_blank" rel="noreferrer">
-            Консоль API
-          </a>
-        ) : null}
-        <div className="sidebar__footer">
-          <div>{me.displayName}</div>
-          <div className="small muted" style={{ marginBottom: 8 }}>
-            {isAdmin ? 'администратор' : me.roles.join(', ')}
-          </div>
-          <button
-            type="button"
-            className="btn--ghost btn--sm"
-            onClick={() => {
-              void api.logout().then(() => setMe(null));
-            }}
-          >
-            Выйти
-          </button>
-        </div>
-      </nav>
+          {isAdmin ? (
+            <a className="navlink" href={consoleHref()} target="_blank" rel="noreferrer">
+              Консоль API
+            </a>
+          ) : null}
+        </nav>
 
-      <main className="content">
-        {!isAdmin && (
-          <div className="alert alert--error">
-            У этой учётной записи нет роли администратора. Экраны доступны только на чтение, а
-            операции сервер отклонит.
-          </div>
-        )}
-        <Routes>
-          <Route path="/" element={<Navigate to="/plans" replace />} />
-          <Route path="/plans" element={<PlansPage />} />
-          <Route path="/subscriptions" element={<SubscriptionsPage />} />
-          <Route path="/compliance" element={<CompliancePage />} />
-          <Route path="/season" element={<SeasonPage />} />
-          <Route path="/funnel" element={<FunnelPage />} />
-          <Route path="/templates" element={<TemplatesPage />} />
-          <Route path="/support" element={<SupportPage />} />
-          <Route path="/support/:id" element={<SupportPage />} />
-          <Route path="/integrations" element={<IntegrationsPage />} />
-          <Route path="/questions" element={<QuestionsPage />} />
-          <Route path="/application-settings" element={<ApplicationSettingsPage />} />
-          <Route path="/texts" element={<TextsPage />} />
-          <Route path="/service-countries" element={<ServiceCountriesPage />} />
-          <Route path="/round-packages" element={<RoundPackagesPage />} />
-          <Route path="/commission" element={<CommissionPage />} />
-          <Route path="/deals" element={<DealsPage />} />
-          <Route path="/flags" element={<FlagsPage />} />
-          <Route path="/access" element={<AccessPage />} />
-          <Route path="*" element={<Navigate to="/plans" replace />} />
-        </Routes>
-      </main>
-    </div>
+        <main className="content">
+          {!isAdmin && (
+            <div className="alert alert--error">
+              У этой учётной записи нет роли администратора. Экраны доступны только на чтение, а
+              операции сервер отклонит.
+            </div>
+          )}
+          <Routes>
+            <Route path="/" element={<Navigate to="/plans" replace />} />
+            <Route path="/plans" element={<PlansPage />} />
+            <Route path="/subscriptions" element={<SubscriptionsPage />} />
+            <Route path="/compliance" element={<CompliancePage />} />
+            <Route path="/season" element={<SeasonPage />} />
+            <Route path="/funnel" element={<FunnelPage />} />
+            <Route path="/templates" element={<TemplatesPage />} />
+            <Route path="/support" element={<SupportPage />} />
+            <Route path="/support/:id" element={<SupportPage />} />
+            <Route path="/integrations" element={<IntegrationsPage />} />
+            <Route path="/questions" element={<QuestionsPage />} />
+            <Route path="/application-settings" element={<ApplicationSettingsPage />} />
+            <Route path="/texts" element={<TextsPage />} />
+            <Route path="/service-countries" element={<ServiceCountriesPage />} />
+            <Route path="/round-packages" element={<RoundPackagesPage />} />
+            <Route path="/commission" element={<CommissionPage />} />
+            <Route path="/deals" element={<DealsPage />} />
+            <Route path="/flags" element={<FlagsPage />} />
+            <Route path="/access" element={<AccessPage />} />
+            <Route path="*" element={<Navigate to="/plans" replace />} />
+          </Routes>
+        </main>
+      </div>
+    </>
   );
 }
 
