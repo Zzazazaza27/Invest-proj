@@ -287,7 +287,7 @@ function UserRow({ user }: { user: AdminUserRow }) {
           data-user-link
           style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}
         >
-          <Avatar user={user} size={28} />
+          <Avatar user={user} size={24} />
           {user.displayName}
         </Link>
       </td>

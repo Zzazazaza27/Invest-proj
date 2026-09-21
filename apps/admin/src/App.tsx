@@ -140,41 +140,70 @@ export function App() {
         />
       </div>
       <div className="layout">
-        <nav className="sidebar">
-          <NavItem to="/users" label="Пользователи" />
-          <NavItem to="/plans" label="Тарифы" />
-          <NavItem to="/subscriptions" label="Подписки" />
-          <NavItem to="/compliance" label="Комплаенс" />
+        <nav className="sidebar" aria-label="Разделы кабинета">
+          {/*
+            Меню разбито на группы по ответственности, а не по алфавиту и не по
+            порядку появления. Плоский список из шестнадцати пунктов заставлял
+            читать его целиком каждый раз: «Комиссии» между «Пакетами раунда» и
+            «Сделками» ищутся глазами, а не узнаются.
+
+            Группа — это ответ на вопрос «чем я сейчас занят»: разбираю людей,
+            считаю деньги, веду заявки, пишу тексты, настраиваю платформу.
+          */}
+          <NavGroup title="Пользователи и контроль">
+            <NavItem to="/users" label="Пользователи" />
+            <NavItem to="/compliance" label="Комплаенс" />
+            <NavItem to="/access" label="Доступ" />
+          </NavGroup>
+
+          <NavGroup title="Коммерция">
+            <NavItem to="/plans" label="Тарифы" />
+            <NavItem to="/subscriptions" label="Подписки" />
+            <NavItem to="/commission" label="Комиссии" />
+          </NavGroup>
+
+          <NavGroup title="Заявки и сделки">
+            <NavItem to="/deals" label="Сделки" />
+            <NavItem to="/questions" label="Вопросы заявки" />
+            <NavItem to="/application-settings" label="Настройки заявки" />
+            <NavItem to="/round-packages" label="Пакеты раунда" />
+          </NavGroup>
+
+          <NavGroup title="Коммуникации">
+            <NavItem to="/templates" label="Уведомления" />
+            <NavItem to="/support" label="Поддержка" />
+          </NavGroup>
+
+          {/*
+            Сезоны отложены (M088). Группа появляется целиком вместе с флагом —
+            и исчезает целиком: пункт сезона среди настроек платформы выглядел
+            бы настройкой, а это отдельное направление работы.
+          */}
           {seasonsEnabled ? (
-            <>
+            <NavGroup title="Сезон">
               <NavItem to="/season" label="Сезон" />
               <NavItem to="/funnel" label="Воронка сезона" />
-            </>
+            </NavGroup>
           ) : null}
-          <NavItem to="/templates" label="Уведомления" />
-          <NavItem to="/support" label="Поддержка" />
-          <NavItem to="/integrations" label="Интеграции" />
-          <NavItem to="/questions" label="Вопросы заявки" />
-          <NavItem to="/application-settings" label="Настройки заявки" />
-          <NavItem to="/texts" label="Словарь и ЧАВО" />
-          <NavItem to="/service-countries" label="Страны обслуживания" />
-          <NavItem to="/round-packages" label="Пакеты раунда" />
-          <NavItem to="/commission" label="Комиссии" />
-          <NavItem to="/deals" label="Сделки" />
-          <NavItem to="/flags" label="Функции платформы" />
-          <NavItem to="/access" label="Доступ" />
-          {/*
-          Консоль — отдельное приложение, не маршрут этого кабинета, поэтому
-          обычная ссылка, а не NavLink. Пункт виден только администратору:
-          остальным сервер всё равно ответит 404 (привратник auth_request в
-          infra/nginx/local/console.conf), и пустая ссылка в меню выглядела бы
-          поломкой.
-        */}
-          {isAdmin ? (
-            <a className="navlink" href={consoleHref()} target="_blank" rel="noreferrer">
-              Консоль API
-            </a>
-          ) : null}
+
+          <NavGroup title="Настройки платформы">
+            <NavItem to="/integrations" label="Интеграции" />
+            <NavItem to="/texts" label="Словарь и ЧАВО" />
+            <NavItem to="/service-countries" label="Страны обслуживания" />
+            <NavItem to="/flags" label="Функции платформы" />
+            {/*
+              Консоль — отдельное приложение, не маршрут этого кабинета, поэтому
+              обычная ссылка, а не NavLink. Пункт виден только администратору:
+              остальным сервер всё равно ответит 404 (привратник auth_request в
+              infra/nginx/local/console.conf), и пустая ссылка в меню выглядела
+              бы поломкой.
+            */}
+            {isAdmin ? (
+              <a className="navlink" href={consoleHref()} target="_blank" rel="noreferrer">
+                Консоль API
+              </a>
+            ) : null}
+          </NavGroup>
         </nav>
 
         <main className="content">
@@ -253,6 +282,23 @@ declare const __CONSOLE_PORT__: number;
 function consoleHref(): string {
   const { protocol, hostname, port } = window.location;
   return port === '' ? '/console/' : `${protocol}//${hostname}:${__CONSOLE_PORT__}/console/`;
+}
+
+/**
+ * Группа пунктов меню.
+ *
+ * Заголовок — не декорация: без него группировка читается как случайные
+ * пробелы между ссылками. Разметка списком, а не набором ссылок подряд:
+ * чтение с клавиатуры и экранным диктором должно сообщать, сколько пунктов в
+ * разделе и где он кончается.
+ */
+function NavGroup({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="nav-group" role="group" aria-label={title}>
+      <div className="nav-group__title">{title}</div>
+      {children}
+    </div>
+  );
 }
 
 function NavItem({ to, label }: { to: string; label: string }) {

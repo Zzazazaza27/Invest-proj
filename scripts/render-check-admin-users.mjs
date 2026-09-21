@@ -34,6 +34,7 @@ const toSite = (url) => url.replace('127.0.0.1', 'localhost');
 // для маршрутизатора — другой путь (и он честно отвечает «такой страницы нет»).
 const ADMIN_URL = toSite(process.env.ADMIN_URL ?? frontendUrl('admin')).replace(/\/+$/, '');
 const CORE_URL = toSite(process.env.CORE_URL ?? DEFAULT_CORE_URL);
+const LAB_URL = toSite(process.env.LAB_URL ?? frontendUrl('lab')).replace(/\/+$/, '');
 
 const OUT = join(ROOT, 'out', 'render-admin-users');
 rmSync(OUT, { recursive: true, force: true });
@@ -359,6 +360,113 @@ try {
     page.url(),
   );
   await screenshot(page, 'not-found');
+
+  // ------------------------------------------------ [10] структура меню
+  console.warn('\n[10] Меню разбито на группы, и ни один раздел не потерян');
+  await page.goto(`${ADMIN_URL}/users`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1200);
+  const groups = await page.locator('.nav-group__title').allInnerTexts();
+  expect(
+    'Группы названы',
+    [
+      'ПОЛЬЗОВАТЕЛИ И КОНТРОЛЬ',
+      'КОММЕРЦИЯ',
+      'ЗАЯВКИ И СДЕЛКИ',
+      'КОММУНИКАЦИИ',
+      'НАСТРОЙКИ ПЛАТФОРМЫ',
+    ].every((title) => groups.some((item) => item.toUpperCase().includes(title))),
+    groups.join(' · '),
+  );
+  const links = await page.locator('.sidebar a').allInnerTexts();
+  const required = [
+    'Пользователи',
+    'Комплаенс',
+    'Доступ',
+    'Тарифы',
+    'Подписки',
+    'Комиссии',
+    'Сделки',
+    'Вопросы заявки',
+    'Настройки заявки',
+    'Пакеты раунда',
+    'Уведомления',
+    'Поддержка',
+    'Интеграции',
+    'Словарь и ЧАВО',
+    'Страны обслуживания',
+    'Функции платформы',
+    'Консоль API',
+  ];
+  const missing = required.filter((label) => !links.some((link) => link.trim() === label));
+  expect(
+    'Ни один прежний раздел не пропал',
+    missing.length === 0,
+    missing.join(', ') || 'все на месте',
+  );
+  expect(
+    'Текущий раздел выделен',
+    (await page.locator('.navlink--active').innerText()).trim() === 'Пользователи',
+    'подсветка активного пункта',
+  );
+
+  // --------------------------------------------------- [11] плотность
+  console.warn('\n[11] Плотность рабочая, но не в ущерб чтению');
+  const metrics = await page.evaluate(() => {
+    /* eslint-disable no-undef -- код исполняется в браузере, а не в node */
+    const row = document.querySelector('[data-user-row]');
+    const button = document.querySelector('button.btn--sm');
+    const input = document.querySelector('[data-search-input]');
+    return {
+      body: parseFloat(getComputedStyle(document.body).fontSize),
+      row: row ? row.getBoundingClientRect().height : 0,
+      button: button ? button.getBoundingClientRect().height : 0,
+      input: input ? input.getBoundingClientRect().height : 0,
+    };
+    /* eslint-enable no-undef */
+  });
+  expect(
+    'Строка таблицы компактна',
+    metrics.row > 0 && metrics.row <= 40,
+    `${metrics.row.toFixed(1)}px`,
+  );
+  expect('Шрифт не мельче 13.5px', metrics.body >= 13.5, `${metrics.body}px`);
+  expect(
+    'Кнопки и поля остаются попадаемыми (>= 28px)',
+    metrics.button >= 28 && metrics.input >= 28,
+    `кнопка ${metrics.button.toFixed(1)}px, поле ${metrics.input.toFixed(1)}px`,
+  );
+
+  // Контекст намеренно ЧИСТЫЙ: в основном открыта сессия администратора, а
+  // кабинет основателя администратора уводит к себе — замер пришёлся бы на ту
+  // же самую админку (поймано этим же прогоном: 14px против ожидаемых 16px).
+  const guestContext = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const labPage = await guestContext.newPage();
+  await labPage.goto(LAB_URL, { waitUntil: 'networkidle', timeout: 30_000 });
+  await labPage.waitForTimeout(1500);
+  const labFont = await labPage.evaluate(() => {
+    // eslint-disable-next-line no-undef -- исполняется в браузере
+    return parseFloat(getComputedStyle(document.body).fontSize);
+  });
+  expect(
+    'Остальные кабинеты не уплотнились заодно',
+    labFont >= 16,
+    `кабинет основателя: ${labFont}px против ${metrics.body}px в админке`,
+  );
+  await labPage.close();
+  await guestContext.close();
+
+  // ------------------------------------------------- [12] узкий экран
+  console.warn('\n[12] Узкий экран');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${ADMIN_URL}/users`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1500);
+  const overflow = await page.evaluate(
+    // eslint-disable-next-line no-undef
+    () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+  );
+  expect('Страница не уезжает вбок на телефоне', overflow <= 1, `переполнение ${overflow}px`);
+  await screenshot(page, 'users-narrow');
+  await page.setViewportSize({ width: 1440, height: 1000 });
 
   expect(
     'Ошибок в консоли нет',

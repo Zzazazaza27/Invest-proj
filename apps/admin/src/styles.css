@@ -4,6 +4,24 @@
  * Принципы: плотная сетка, читаемые числа (табличные цифры), явные статусы
  * цветом И текстом (цвет один не должен нести смысл — это требование
  * доступности), опасные действия визуально отделены от обычных.
+ *
+ * ПЛОТНОСТЬ (этап 6.6). У кабинета своя плотность, отдельная от остальных
+ * приложений платформы. Причина не в экономии места: витрина и кабинеты
+ * рассчитаны на человека, который видит экран впервые, и просторные формы
+ * там уместны. Администратор смотрит на эти же экраны десятки раз в день, и
+ * ему нужно другое — больше строк таблицы в поле зрения и меньше движений
+ * мышью между полями.
+ *
+ * Границы уплотнения, за которые заходить нельзя:
+ *
+ *  * шрифт не мельче 13.5px в основном тексте (компактность не достигается
+ *    нечитаемым кеглем);
+ *  * зона нажатия кнопок и полей не меньше 30px по высоте;
+ *  * рамка фокуса не трогается — клавиатурная навигация должна остаться
+ *    видимой;
+ *  * правки живут ТОЛЬКО в этом файле. Токены `@unicorn/ui` общие с
+ *    остальными кабинетами, и уплотнять их значило бы уплотнить всю
+ *    платформу заодно.
  */
 
 /*
@@ -43,8 +61,9 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--u-font);
-  font-size: 15px;
-  line-height: 1.5;
+  /* 14px — рабочая плотность инструмента; мельче уже мешает читать. */
+  font-size: 14px;
+  line-height: 1.45;
 }
 
 a {
@@ -65,7 +84,7 @@ a {
 
 .layout {
   display: grid;
-  grid-template-columns: 232px 1fr;
+  grid-template-columns: 210px 1fr;
   /* 64px — высота шапки: без вычитания страница всегда на неё длиннее. */
   min-height: calc(100vh - 64px);
 }
@@ -73,19 +92,34 @@ a {
 .sidebar {
   background: var(--surface);
   border-right: 1px solid var(--border);
-  padding: 20px 14px;
+  padding: 14px 10px 24px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+
+/* Группы разделены расстоянием и подписью, а не линиями: линий в кабинете и
+   так достаточно, а лишняя рамка делает меню похожим на таблицу. */
+.nav-group + .nav-group {
+  margin-top: 14px;
+}
+
+.nav-group__title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 700;
+  padding: 0 10px 4px;
 }
 
 .navlink {
   display: block;
-  padding: 9px 10px;
-  border-radius: 8px;
+  padding: 6px 10px;
+  border-radius: 7px;
   color: var(--text);
   text-decoration: none;
-  font-size: 14px;
+  font-size: 13.5px;
 }
 
 .navlink:hover {
@@ -98,9 +132,14 @@ a {
   font-weight: 600;
 }
 
+/*
+ * Ширина. Прежние 1180px оставляли на широком мониторе пустую треть справа,
+ * а таблицы при этом прокручивались внутри карточки. Предел остаётся (строка
+ * длиной во весь монитор нечитаема), но он шире и считается от ширины окна.
+ */
 .content {
-  padding: 28px 32px 64px;
-  max-width: 1180px;
+  padding: 18px 24px 48px;
+  max-width: min(1560px, 100%);
   /*
    * Без min-width: 0 колонка grid не сжимается ниже размера содержимого
    * (по умолчанию min-width: auto), и широкая таблица распирает всю страницу
@@ -113,25 +152,25 @@ a {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
-  gap: 24px;
-  margin-bottom: 6px;
+  gap: 18px;
+  margin-bottom: 4px;
 }
 
 h1 {
-  font-size: 22px;
-  margin: 0 0 4px;
+  font-size: 19px;
+  margin: 0 0 3px;
 }
 
 h2 {
-  font-size: 16px;
-  margin: 0 0 12px;
+  font-size: 15px;
+  margin: 0 0 10px;
 }
 
 .page-hint {
   color: var(--muted);
-  font-size: 13.5px;
-  margin: 0 0 22px;
-  max-width: 76ch;
+  font-size: 13px;
+  margin: 0 0 14px;
+  max-width: 88ch;
 }
 
 /* ------------------------------------------------------------------ блоки */
@@ -141,8 +180,8 @@ h2 {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   box-shadow: var(--shadow);
-  padding: 18px 20px;
-  margin-bottom: 18px;
+  padding: 14px 16px;
+  margin-bottom: 12px;
 }
 
 .card--flat {
@@ -168,13 +207,13 @@ table {
 th,
 td {
   text-align: left;
-  padding: 10px 12px;
+  padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
 
 th {
-  font-size: 12px;
+  font-size: 11.5px;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: var(--muted);
@@ -234,9 +273,11 @@ input,
 select,
 textarea {
   width: 100%;
-  padding: 9px 11px;
+  /* 7px по вертикали + 14px строка = 30px высоты: нижняя граница удобного
+     попадания мышью, ниже уже промахиваешься. */
+  padding: 7px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: 7px;
   font: inherit;
   background: var(--surface);
   color: var(--text);
@@ -251,7 +292,7 @@ textarea:focus {
 }
 
 .field {
-  margin-bottom: 14px;
+  margin-bottom: 10px;
 }
 
 .field__hint {
@@ -276,9 +317,9 @@ textarea:focus {
 button {
   font: inherit;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 7px;
   border: 1px solid transparent;
-  padding: 9px 16px;
+  padding: 7px 14px;
   font-weight: 600;
   background: var(--brand);
   color: var(--u-on-accent);
@@ -316,8 +357,8 @@ button:disabled {
 }
 
 .btn--sm {
-  padding: 5px 11px;
-  font-size: 13px;
+  padding: 4px 10px;
+  font-size: 12.5px;
 }
 
 .row-actions {
@@ -330,10 +371,10 @@ button:disabled {
 /* ------------------------------------------------------------------ прочее */
 
 .alert {
-  border-radius: 8px;
-  padding: 11px 14px;
-  font-size: 14px;
-  margin-bottom: 16px;
+  border-radius: 7px;
+  padding: 8px 12px;
+  font-size: 13.5px;
+  margin-bottom: 12px;
 }
 
 .alert--error {
@@ -356,7 +397,7 @@ button:disabled {
 }
 
 .small {
-  font-size: 13px;
+  font-size: 12.5px;
 }
 
 .login {
@@ -381,16 +422,16 @@ button:disabled {
 }
 
 .empty {
-  padding: 26px 0;
+  padding: 18px 0;
   color: var(--muted);
   text-align: center;
 }
 
 .toolbar {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
-  margin-bottom: 14px;
+  margin-bottom: 10px;
   flex-wrap: wrap;
 }
 
