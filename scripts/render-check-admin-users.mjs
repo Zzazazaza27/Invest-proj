@@ -299,10 +299,14 @@ try {
   const statusText = await page.locator('[data-user-status]').innerText();
   expect('Состояние сменилось на «заблокирован»', /заблокирован/i.test(statusText), statusText);
   const reasonText = await page.locator('[data-status-reason]').innerText();
+  // Автор сверяется с ТЕКУЩИМ именем администратора, а не с зашитой строкой:
+  // имя — обычное профильное поле, и владелец вправе его сменить. Зашитая
+  // «Ирина» превратила бы переименование в красный прогон.
+  const adminName = (await page.locator('[data-testid="profile-link"]').innerText()).trim();
   expect(
     'Причина и автор блокировки показаны',
-    reasonText.includes('Проход проверки') && reasonText.includes('Ирина'),
-    reasonText.slice(0, 90),
+    reasonText.includes('Проход проверки') && reasonText.includes(adminName),
+    `${reasonText.slice(0, 70)} (автор: ${adminName})`,
   );
   await screenshot(page, 'user-suspended');
 
