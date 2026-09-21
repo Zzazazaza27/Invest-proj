@@ -65,12 +65,35 @@ export function classifySessionFailure(error: unknown): SessionFailure {
 /**
  * Экран «проверку сессии выполнить не удалось».
  *
- * Обязанности ровно две: сказать правду о состоянии и дать повторить. Чего
- * здесь нет и быть не должно — автоматического цикла повторов. Отказ по
- * частоте лечится паузой, а клиент, который в ответ на 429 повторяет запрос
- * сам, эту паузу и съедает: счётчик не опустеет, пока в него стучатся. Ждём
- * столько, сколько назвал сервер, и повторяем по нажатию человека.
+ * Обязанностей три: сказать правду о состоянии, показать, что проверки идут,
+ * и дать повторить руками.
+ *
+ * Про автоматический повтор причина отказа решает по-разному, и путать их
+ * нельзя. Отказ по частоте (429) лечится паузой, а клиент, который в ответ
+ * стучится сам, эту паузу и съедает: счётчик не опустеет, пока в него
+ * стучатся, — значит повтор только по нажатию и не раньше названного
+ * сервером срока. Поломка (5xx, обрыв связи) паузой не лечится и проходит
+ * сама, а экран обещает человеку, что страница откроется как прежде. Без
+ * собственной перепроверки обещание было ложным: страница висела до
+ * перезагрузки, а нажатие при лежащем сервере выглядело как «ничего не
+ * происходит». Перепроверяем сами — с растущей паузой (15 с, 30 с, … до
+ * минуты) и видимым отсчётом.
  */
+const AUTO_RECHECK_START = 15;
+const AUTO_RECHECK_MAX = 60;
+
+/** Сколько ждать перед попыткой номер `n`. */
+function pauseFor(failure: Extract<SessionFailure, { kind: 'unavailable' }>, n: number): number {
+  // Своя пауза есть только там, где перепроверяем сами. Срок сервера сильнее:
+  // назвал больше — ждём столько, сколько назвал.
+  const own = failure.rateLimited ? 0 : Math.min(AUTO_RECHECK_MAX, AUTO_RECHECK_START * n);
+  return Math.max(failure.retryAfterSeconds ?? 0, own);
+}
+
+function clockOf(at: Date): string {
+  return at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
 export function SessionCheckFailed({
   failure,
   onRetry,
@@ -80,40 +103,83 @@ export function SessionCheckFailed({
   onRetry: () => void;
   busy?: boolean;
 }): React.ReactElement {
-  const [waitLeft, setWaitLeft] = useState(failure.retryAfterSeconds ?? 0);
-  // Значение из ответа может обновиться при повторной неудаче — начинаем отсчёт
-  // заново, а не продолжаем прежний.
-  const startedFrom = useRef(failure.retryAfterSeconds);
-  if (startedFrom.current !== failure.retryAfterSeconds) {
-    startedFrom.current = failure.retryAfterSeconds;
-  }
+  const auto = !failure.rateLimited;
+
+  // Каждая неудачная проверка приходит новым объектом — по смене объекта и
+  // считаем попытки. Счётчик, время и отсчёт живут одним состоянием: иначе
+  // пауза успевала посчитаться по старому номеру попытки.
+  const [tick, setTick] = useState(() => ({ n: 1, at: new Date(), left: pauseFor(failure, 1) }));
+  const seen = useRef(failure);
+  useEffect(() => {
+    if (seen.current === failure) return;
+    seen.current = failure;
+    setTick((prev) => {
+      const n = prev.n + 1;
+      return { n, at: new Date(), left: pauseFor(failure, n) };
+    });
+  }, [failure]);
 
   useEffect(() => {
-    setWaitLeft(failure.retryAfterSeconds ?? 0);
-  }, [failure.retryAfterSeconds]);
-
-  useEffect(() => {
-    if (waitLeft <= 0) return;
-    const timer = window.setTimeout(() => setWaitLeft((left) => Math.max(0, left - 1)), 1000);
+    if (tick.left <= 0) return;
+    const timer = window.setTimeout(
+      () => setTick((prev) => (prev.left <= 0 ? prev : { ...prev, left: prev.left - 1 })),
+      1000,
+    );
     return () => window.clearTimeout(timer);
-  }, [waitLeft]);
+  }, [tick]);
 
-  const canRetry = !busy && waitLeft <= 0;
+  // Обработчик держим в ref: приложения передают его новой функцией на каждый
+  // рендер, и зависимость от него превратила бы перепроверку в цикл.
+  const retryRef = useRef(onRetry);
+  retryRef.current = onRetry;
+  const firedFor = useRef<unknown>(null);
+  useEffect(() => {
+    if (!auto || busy || tick.left > 0) return;
+    // Одна перепроверка на один отказ: пока не придёт новый, повтора не будет.
+    if (firedFor.current === failure) return;
+    firedFor.current = failure;
+    retryRef.current();
+  }, [auto, busy, tick.left, failure]);
+
+  // Кнопка при поломке доступна всегда: отсчёт здесь — обещание перепроверки,
+  // а не запрет. Запрещает только срок, названный сервером при 429.
+  const canRetry = !busy && (auto || tick.left <= 0);
+
+  const title = failure.rateLimited
+    ? 'Слишком много запросов'
+    : failure.status !== null
+      ? 'Сервер временно недоступен'
+      : 'Нет связи с сервером';
+
+  const explanation = failure.rateLimited
+    ? 'Сервер временно ограничил частоту обращений с этого адреса. Из аккаунта вы не вышли — ничего вводить заново не нужно.'
+    : failure.status !== null
+      ? `Сервер не смог ответить на проверку сессии (код ${failure.status}). Из аккаунта вы не вышли: как только он заработает, страница откроется как прежде — входить заново не придётся.`
+      : 'Связаться с сервером не получилось. Из аккаунта вы не вышли: как только связь восстановится, страница откроется как прежде — входить заново не придётся.';
+
+  const next = busy
+    ? 'Проверяем…'
+    : tick.left > 0
+      ? auto
+        ? `Следующая проверка через ${tick.left} с.`
+        : `Повторить можно через ${tick.left} с.`
+      : null;
 
   return (
     <Card>
       <Stack gap="var(--u-space-3)">
         <strong style={{ fontSize: 'var(--u-text-lg)' }} role="alert">
-          {failure.rateLimited ? 'Слишком много запросов' : 'Не удалось проверить сессию'}
+          {title}
         </strong>
-        <span>
-          {failure.rateLimited
-            ? 'Сервер временно ограничил частоту обращений с этого адреса. Из аккаунта вы не вышли — ничего вводить заново не нужно.'
-            : 'Связаться с сервером не получилось. Из аккаунта вы не вышли: как только связь восстановится, страница откроется как прежде.'}
+        <span>{explanation}</span>
+        <span
+          style={{ color: 'var(--u-muted)' }}
+          aria-live="polite"
+          data-testid="session-retry-log"
+        >
+          {`Последняя проверка — в ${clockOf(tick.at)}${tick.n > 1 ? `, попыток: ${tick.n}` : ''}.`}
+          {next ? ` ${next}` : ''}
         </span>
-        {waitLeft > 0 ? (
-          <span style={{ color: 'var(--u-muted)' }}>Повторить можно через {waitLeft} с.</span>
-        ) : null}
         <div>
           <Button variant="primary" onClick={onRetry} disabled={!canRetry}>
             {busy ? 'Проверяем…' : 'Проверить ещё раз'}

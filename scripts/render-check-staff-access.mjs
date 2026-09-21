@@ -13,8 +13,9 @@
  *      закрыто, но уже по ДРУГОЙ причине;
  *   6. проверить независимость `review` и `deal_support` друг от друга.
  *
- * Отдельно — замечание пользовательского прохода: ответ 429 на проверке
- * сессии не должен выглядеть как выход из аккаунта.
+ * Отдельно — два замечания пользовательского прохода про проверку сессии:
+ * ответ 429 не должен выглядеть как выход из аккаунта, а лежащий сервер —
+ * как тупик, из которого человека спасёт только повторный вход.
  *
  * Денег не двигается: возврат транша — это ЗАПИСЬ о состоявшемся событии,
  * платформа ничего не перечисляет. Данные только тестовые.
@@ -379,7 +380,7 @@ const page = await context.newPage();
 const consoleErrors = [];
 page.on('console', (message) => {
   if (message.type() !== 'error') return;
-  if (/\b(400|401|403|404|409|429) \(/.test(message.text())) return;
+  if (/\b(400|401|403|404|409|429|502) \(/.test(message.text())) return;
   consoleErrors.push(message.text());
 });
 page.on('pageerror', (error) => consoleErrors.push(String(error)));
@@ -800,9 +801,27 @@ try {
   // Ограничитель подделывается адресно: поднимать настоящий лимит ради
   // зелёной проверки нельзя, а поведение интерфейса нужно увидеть глазами.
   let limited = true;
+  let broken = false;
   let meCalls = 0;
   await labPage.route('**/v1/auth/me', async (route) => {
     meCalls += 1;
+    if (broken) {
+      // Поломка сервера, а не отказ по частоте. Заголовки берутся у
+      // настоящего ответа: иначе по dev-портам ответ срежет политика
+      // источников и проверка пойдёт по ветке «связи нет вовсе».
+      const real = await route.fetch();
+      await route.fulfill({
+        status: 502,
+        headers: { ...real.headers(), 'content-type': 'application/json' },
+        body: JSON.stringify({
+          type: 'https://unicorn.vc/problems/upstream_unavailable',
+          title: 'Сервер недоступен',
+          status: 502,
+          code: 'upstream_unavailable',
+        }),
+      });
+      return;
+    }
     if (!limited) {
       await route.continue();
       return;
@@ -876,6 +895,51 @@ try {
     'кабинет открылся на той же сессии',
   );
 
+  // --------------------------- поломка сервера: страница чинится сама
+  console.warn('\n[12] Сервер не отвечает — страница ждёт его сама, без повторного входа');
+  // Это другая причина отказа, чем 429, и потому другое поведение. Отказ по
+  // частоте лечится паузой и повтором по нажатию; лежащий сервер паузой не
+  // лечится — экран обещает, что откроется как прежде, и обязан это обещание
+  // выполнить сам. Поймано владельцем 21.09.2026: ядро упало ночью, утром
+  // экран висел, а нажатие на кнопку выглядело как «ничего не происходит».
+  broken = true;
+  await labPage.reload({ waitUntil: 'networkidle', timeout: 30_000 });
+  await labPage.waitForTimeout(2500);
+  await screenshot(labPage, 'session-server-down');
+  const downText = await labPage.locator('body').innerText();
+  expect(
+    'Названа настоящая причина — сервер, а не выход из аккаунта',
+    /Сервер временно недоступен/.test(downText) && !labPage.url().includes('/login'),
+    'заголовок состояния',
+  );
+  expect(
+    'Сказано, что входить заново не придётся',
+    /входить заново не придётся/i.test(downText),
+    'текст состояния',
+  );
+  expect(
+    'Видно, что проверки идут: время и срок следующей',
+    /Последняя проверка — в \d{2}:\d{2}:\d{2}/.test(downText) &&
+      /Следующая проверка через \d+ с/.test(downText),
+    'строка хода проверок',
+  );
+
+  // Сервер «поднимается» — дальше человек не делает ничего.
+  const callsWhenDown = meCalls;
+  broken = false;
+  await labPage.waitForTimeout(22_000);
+  expect(
+    'Перепроверка происходит сама, без нажатия',
+    meCalls > callsWhenDown,
+    `запросов «кто я» за 22 с ожидания: ${meCalls - callsWhenDown}`,
+  );
+  await screenshot(labPage, 'session-self-healed');
+  expect(
+    'Кабинет открылся сам, повторный вход не понадобился',
+    !labPage.url().includes('/login') &&
+      !(await labPage.locator('body').innerText()).includes('Сервер временно недоступен'),
+    'кабинет на той же сессии',
+  );
   expect(
     'Ошибок в консоли нет',
     consoleErrors.length === 0,
