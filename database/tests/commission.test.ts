@@ -211,11 +211,18 @@ describe('M100: возможности тарифов инвестора', () =>
         [investor.id],
       );
       const card = rows.find((r) => r.capability === 'project.investor_view');
-      const [{ barrier }] = (
+      const [flag] = (
         await c.query<{ barrier: boolean }>(
           `SELECT lab.investor_access_requires_subscription() AS barrier`,
         )
       ).rows;
+      // Разбор первой строки прямо в объявлении не проходит проверку типов:
+      // при `noUncheckedIndexedAccess` элемент массива — «значение или
+      // undefined». Скалярный SELECT строку возвращает всегда, и пустой
+      // результат означал бы отсутствие самой функции — пусть тест скажет об
+      // этом словами, а не упадёт на разборе undefined.
+      expect(flag, 'lab.investor_access_requires_subscription() не вернула строку').toBeDefined();
+      const barrier = flag!.barrier;
       if (barrier) {
         // Барьер включён, членства нет: «доступна» отвечать нельзя.
         expect(card?.available).toBe(false);

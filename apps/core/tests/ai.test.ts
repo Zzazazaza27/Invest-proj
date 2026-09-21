@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { ReadinessDimensionSchema, ScoreAxisSchema } from '@unicorn/contracts';
 import { AnalysisResultSchema, AiGatewayClient } from '../src/ai/ai-gateway.client';
 import { PROMPT_VERSION, llmModelVersion } from '../src/ai/provider-credentials.service';
@@ -189,10 +188,17 @@ describe('потоковый предел ответа шлюза (CODE-HIGH-08)
  */
 describe('Версия промпта ядра и шлюза', () => {
   it('совпадает с PROMPT_VERSION шлюза', () => {
-    const llmPy = readFileSync(
-      join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'ai-gateway', 'app', 'llm.py'),
-      'utf8',
-    );
+    /*
+     * Путь считается от рабочего каталога пакета, а не от `import.meta.url`.
+     *
+     * Причина в расхождении двух режимов. `apps/core` собирается в CommonJS
+     * (`type` в package.json нет), и для проверки типов `import.meta` в нём
+     * запрещён — `npm run typecheck` падал на этой строке с TS1470, а с ним
+     * падало и задание CI «Линт, типы, формат». Обратная замена на
+     * `__dirname` не годится: тесты исполняет vitest, и там модуль уже ESM,
+     * где `__dirname` не существует. Рабочий каталог верен в обоих режимах.
+     */
+    const llmPy = readFileSync(join(process.cwd(), '..', 'ai-gateway', 'app', 'llm.py'), 'utf8');
     const match = llmPy.match(/PROMPT_VERSION\s*:\s*Final\[str\]\s*=\s*"([^"]+)"/);
     expect(match, 'PROMPT_VERSION не найден в apps/ai-gateway/app/llm.py').not.toBeNull();
     expect(PROMPT_VERSION).toBe(match![1]);
