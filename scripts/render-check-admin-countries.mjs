@@ -259,10 +259,12 @@ try {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ email: founder.email, password: founder.password }),
+    signal: AbortSignal.timeout(30_000),
   });
   const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];
   const policy = await fetch(`${CORE_URL}/v1/service-countries/ru/policy`, {
     headers: { cookie },
+    signal: AbortSignal.timeout(30_000),
   }).then((r) => r.json());
   check(
     'основатель читает новую версию как действующие условия',

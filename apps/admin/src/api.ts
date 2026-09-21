@@ -609,7 +609,13 @@ export const api = {
     const form = new FormData();
     for (const [key, value] of Object.entries(ticket.formFields)) form.append(key, value);
     form.append('file', file);
-    const uploaded = await fetch(ticket.uploadUrl, { method: 'POST', body: form });
+    // Предел ожидания обязателен: отправка идёт напрямую в хранилище, мимо
+    // ядра и его таймаутов.
+    const uploaded = await fetch(ticket.uploadUrl, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(60_000),
+    });
     if (!uploaded.ok) throw new Error(`Хранилище не приняло файл: HTTP ${uploaded.status}`);
     return client.request({
       method: 'POST',

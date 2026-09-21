@@ -224,7 +224,11 @@ try {
   const form = new FormData();
   for (const [key, value] of Object.entries(ticket.json.formFields)) form.append(key, value);
   form.append('file', new Blob([png], { type: 'image/png' }), 'avatar.png');
-  const uploaded = await fetch(ticket.json.uploadUrl, { method: 'POST', body: form });
+  const uploaded = await fetch(ticket.json.uploadUrl, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(60_000),
+  });
   check('Файл принят хранилищем', uploaded.status < 400, `HTTP ${uploaded.status}`);
 
   const finalized = await client.call('/v1/me/avatar/finalize', { method: 'POST' });
@@ -268,7 +272,11 @@ try {
     new Blob([Buffer.from('это не картинка, а текст')], { type: 'image/png' }),
     'x.png',
   );
-  await fetch(fakeTicket.json.uploadUrl, { method: 'POST', body: fakeForm });
+  await fetch(fakeTicket.json.uploadUrl, {
+    method: 'POST',
+    body: fakeForm,
+    signal: AbortSignal.timeout(60_000),
+  });
   const fakeFinalize = await client.call('/v1/me/avatar/finalize', { method: 'POST' });
   check(
     'Подделка типа не проходит: формат определяется разбором',
