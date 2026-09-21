@@ -1,5 +1,6 @@
 import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import pg from 'pg';
+import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
 
 /**
@@ -18,6 +19,26 @@ export interface RequestContext {
   userId: string | null;
   roles: readonly string[];
   traceId: string;
+  /**
+   * Запрос выполняется в режиме просмотра чужого кабинета: доменные изменения
+   * запрещены (M129).
+   *
+   * Проверка стоит ЗДЕСЬ, а не только в страже доступа, потому что запрет по
+   * методу HTTP неполон: изменения бывают неявные — отметка уведомления
+   * прочитанным происходит на чтении страницы. Любая пишущая транзакция
+   * проходит через `transaction()`, поэтому запрет в одной точке закрывает и
+   * те пути, о которых никто не вспомнил.
+   *
+   * Обязательный аудит от этого не страдает: в режиме просмотра доменных
+   * операций нет вовсе, а записи о начале и завершении просмотра делает
+   * администратор в СВОЁМ контексте.
+   */
+  viewOnly?: boolean;
+  /**
+   * Кто открыл просмотр. Нужен журналу: запись обязана различать инициатора и
+   * того, от чьего лица выполнен запрос.
+   */
+  initiatorUserId?: string | null;
 }
 
 export type Tx = pg.PoolClient;
@@ -110,6 +131,15 @@ export class Database implements OnModuleDestroy {
    * при `SET SESSION` чужой пользовательский контекст пережил бы запрос.
    */
   async transaction<T>(ctx: RequestContext, work: (tx: Tx) => Promise<T>): Promise<T> {
+    if (ctx.viewOnly) {
+      // Отказ, а не молчаливое чтение: «изменение не состоялось» обязано быть
+      // видно и вызывающему, и в разборе. Тихий пропуск записи создал бы
+      // худшее из состояний — интерфейс показывает успех, данных нет.
+      throw errors.forbidden({
+        stage: 'view-only',
+        detail: 'просмотр кабинета: изменения запрещены сервером',
+      });
+    }
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');

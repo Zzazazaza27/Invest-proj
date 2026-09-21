@@ -19,6 +19,9 @@ import { LoginThrottleService } from './auth/login-throttle.service';
 import { TemplatesController } from './admin/templates.controller';
 import { TemplatesService } from './admin/templates.service';
 import { AuthGuard } from './auth/guards';
+import { AccessContextService } from './auth/access-context.service';
+import { TestingController } from './testing/testing.controller';
+import { TestingSessionsService } from './testing/testing-sessions.service';
 import { TokenVerifier } from './auth/token.verifier';
 import { AiGatewayClient } from './ai/ai-gateway.client';
 import { AnalysisController } from './ai/analysis.controller';
@@ -154,6 +157,7 @@ import { S3Service } from './storage/s3.service';
   imports: [DiscoveryModule],
   controllers: [
     HealthController,
+    TestingController,
     PricingController,
     ContentController,
     AdminContentController,
@@ -220,6 +224,8 @@ import { S3Service } from './storage/s3.service';
     TokenVerifier,
     SessionEpochService,
     TokenRevocationService,
+    AccessContextService,
+    TestingSessionsService,
     LoginThrottleService,
     S3Service,
     IdentityService,

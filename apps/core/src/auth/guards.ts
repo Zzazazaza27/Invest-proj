@@ -17,6 +17,7 @@ import { TokenVerifier } from './token.verifier';
 import { SessionEpochService } from './session-epoch.service';
 import { TokenRevocationService } from './token-revocation.service';
 import { isCsrfTokenValid } from './csrf';
+import { AccessContextService, type ResolvedContext } from './access-context.service';
 
 /**
  * Авторизация: deny by default.
@@ -25,6 +26,9 @@ import { isCsrfTokenValid } from './csrf';
  * декоратора означает «требуется аутентификация», а не «забыли поставить»
  * (RULES.md §4: маршрут без объявленного требования аутентификации запрещён).
  */
+
+/** Методы, которые сами по себе ничего не меняют. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
 export const IS_PUBLIC = 'auth:public';
 export const REQUIRED_ROLES = 'auth:roles';
@@ -71,6 +75,13 @@ export const CsrfOriginFallback = () => SetMetadata(CSRF_ORIGIN_FALLBACK, true);
 
 export interface AuthenticatedRequest extends FastifyRequest {
   ctx?: RequestContext;
+  /**
+   * Контекст доступа: запрос выполняется от лица другого пользователя
+   * (M129). `auth` при этом продолжает описывать ИНИЦИАТОРА — того, чей
+   * токен предъявлен. Их нельзя путать: журнал обязан различать, кто
+   * смотрел и от чьего лица.
+   */
+  accessContext?: ResolvedContext;
   auth?: {
     subject: string;
     roles: string[];
@@ -81,6 +92,28 @@ export interface AuthenticatedRequest extends FastifyRequest {
     expiresAt: number;
   };
 }
+
+/**
+ * Сведения о предъявленном токене — об ИНИЦИАТОРЕ запроса.
+ *
+ * Отдельно от `Ctx`: в режиме контекста `Ctx` описывает того, от чьего лица
+ * идёт запрос, а `AuthInfo` — того, кто его на самом деле делает. Их
+ * смешение и есть та ошибка, из-за которой журнал перестаёт отвечать на
+ * вопрос «кто смотрел».
+ */
+export const AuthInfo = createParamDecorator(
+  (_data: unknown, host: ExecutionContext): NonNullable<AuthenticatedRequest['auth']> => {
+    const request = host.switchToHttp().getRequest<AuthenticatedRequest>();
+    if (!request.auth) throw errors.unauthenticated({ stage: 'auth-missing' });
+    return request.auth;
+  },
+);
+
+/** Контекст доступа запроса, если он есть. Панель тестовой вкладки читает его. */
+export const AccessCtx = createParamDecorator(
+  (_data: unknown, host: ExecutionContext): ResolvedContext | undefined =>
+    host.switchToHttp().getRequest<AuthenticatedRequest>().accessContext,
+);
 
 export const Ctx = createParamDecorator(
   (_data: unknown, host: ExecutionContext): RequestContext => {
@@ -98,6 +131,7 @@ export class AuthGuard implements CanActivate {
     private readonly epochs: SessionEpochService,
     private readonly revocations: TokenRevocationService,
     private readonly db: Database,
+    private readonly contexts: AccessContextService,
   ) {}
 
   /**
@@ -188,6 +222,58 @@ export class AuthGuard implements CanActivate {
       ]) === true;
     this.assertCsrf(request, originFallback);
 
+    // --------------------------------------------- контекст доступа (M129)
+    // Ставится ПОСЛЕ проверки токена инициатора и CSRF: подстановка личности
+    // не должна ослаблять ни то, ни другое. Дальнейшие проверки ролей идут
+    // уже по действующему пользователю — правà инициатора и участника не
+    // объединяются.
+    const contextId = this.extractContextId(request);
+    if (contextId) {
+      const resolved = await this.contexts.resolve(
+        contextId,
+        { userId: verified.subject, roles, tokenId: verified.tokenId },
+        traceId,
+      );
+      request.accessContext = resolved;
+
+      if (resolved.kind === 'guest') {
+        // Гость — это НЕ администратор с пустыми правами. Запрос
+        // обрабатывается как неавторизованный, хотя административная cookie
+        // предъявлена: иначе «гостевая» страница показывала бы то, что
+        // видно администратору.
+        if (!isPublic) throw errors.unauthenticated({ stage: 'guest-context' });
+        request.ctx = { userId: null, roles: [], traceId };
+        void this.contexts.touch(resolved.id, { userId: verified.subject, roles }, traceId);
+        return true;
+      }
+
+      if (resolved.kind === 'readonly' && !SAFE_METHODS.has(request.method.toUpperCase())) {
+        // Первый рубеж — метод запроса. Второй, на неявные изменения внутри
+        // чтения, стоит в `Database.transaction()`: запрет по методу неполон.
+        throw errors.forbidden({ stage: 'view-only-method' });
+      }
+
+      request.ctx = {
+        userId: resolved.subjectUserId,
+        roles: resolved.subjectRoles,
+        traceId,
+        viewOnly: resolved.kind === 'readonly',
+        initiatorUserId: resolved.initiatorUserId,
+      };
+      void this.contexts.touch(resolved.id, { userId: verified.subject, roles }, traceId);
+
+      const requiredInContext = this.reflector.getAllAndOverride<Role[]>(REQUIRED_ROLES, [
+        context.getHandler(),
+        context.getClass(),
+      ]);
+      if (requiredInContext && requiredInContext.length > 0) {
+        const has = requiredInContext.some((role) => resolved.subjectRoles.includes(role));
+        if (!has)
+          throw errors.forbidden({ required: requiredInContext, actual: resolved.subjectRoles });
+      }
+      return true;
+    }
+
     const required = this.reflector.getAllAndOverride<Role[]>(REQUIRED_ROLES, [
       context.getHandler(),
       context.getClass(),
@@ -206,6 +292,20 @@ export class AuthGuard implements CanActivate {
     }
 
     return true;
+  }
+
+  /**
+   * Идентификатор контекста приходит ЗАГОЛОВКОМ, а не cookie.
+   *
+   * Это и даёт разделение вкладок: административная вкладка заголовка не
+   * шлёт и остаётся административной. Cookie так не умеет — она общая на
+   * весь origin, и переключение в одной вкладке меняло бы личность во всех.
+   */
+  private extractContextId(request: AuthenticatedRequest): string | null {
+    const raw = request.headers['x-unicorn-context'];
+    if (typeof raw !== 'string') return null;
+    const value = raw.trim();
+    return value.length > 0 ? value : null;
   }
 
   private extractToken(request: AuthenticatedRequest): string | null {
