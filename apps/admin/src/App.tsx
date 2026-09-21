@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { NavLink, Navigate, Route, Routes } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
 import { Button, Icon, IconTile, NovaTopBar, UI_KEYFRAMES } from '@unicorn/ui';
 import { SessionCheckFailed, useSessionCheck } from '@unicorn/cabinet';
 import { api } from './api';
@@ -21,6 +21,8 @@ import { ServiceCountriesPage } from './pages/ServiceCountriesPage';
 import { RoundPackagesPage } from './pages/RoundPackagesPage';
 import { CommissionPage } from './pages/CommissionPage';
 import { DealsPage } from './pages/DealsPage';
+import { UsersPage } from './pages/UsersPage';
+import { UserCardPage } from './pages/UserCardPage';
 
 /**
  * Корень админки.
@@ -139,6 +141,7 @@ export function App() {
       </div>
       <div className="layout">
         <nav className="sidebar">
+          <NavItem to="/users" label="Пользователи" />
           <NavItem to="/plans" label="Тарифы" />
           <NavItem to="/subscriptions" label="Подписки" />
           <NavItem to="/compliance" label="Комплаенс" />
@@ -183,6 +186,8 @@ export function App() {
           )}
           <Routes>
             <Route path="/" element={<Navigate to="/plans" replace />} />
+            <Route path="/users" element={<UsersPage />} />
+            <Route path="/users/:id" element={<UserCardPage />} />
             <Route path="/plans" element={<PlansPage />} />
             <Route path="/subscriptions" element={<SubscriptionsPage />} />
             <Route path="/compliance" element={<CompliancePage />} />
@@ -201,11 +206,36 @@ export function App() {
             <Route path="/deals" element={<DealsPage />} />
             <Route path="/flags" element={<FlagsPage />} />
             <Route path="/access" element={<AccessPage />} />
-            <Route path="*" element={<Navigate to="/plans" replace />} />
+            <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </main>
       </div>
     </>
+  );
+}
+
+/**
+ * Неизвестный адрес.
+ *
+ * Раньше любой неверный путь молча вёл на «Тарифы». Это выглядело как
+ * «экран сломался и подсунул другой»: человек, пришедший по ссылке из письма
+ * на карточку пользователя, оказывался в прейскуранте и не понимал, почему.
+ * Теперь адрес назван, и из тупика есть выход.
+ */
+function NotFoundPage() {
+  return (
+    <div data-page="not-found">
+      <div className="page-head">
+        <h1>Такой страницы нет</h1>
+      </div>
+      <p className="page-hint">
+        Адрес <code>{window.location.pathname}</code> административному кабинету неизвестен.
+        Проверьте ссылку — возможно, раздел переименован или адрес скопирован не целиком.
+      </p>
+      <Link to="/users" className="btn--ghost btn--sm" style={{ textDecoration: 'none' }}>
+        К списку пользователей
+      </Link>
+    </div>
   );
 }
 

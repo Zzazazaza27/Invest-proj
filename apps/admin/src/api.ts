@@ -86,6 +86,9 @@ import {
   type UpsertNotificationTemplate,
   AdminProjectSummarySchema,
   AdminUserSummarySchema,
+  AdminUserCardSchema,
+  AdminUserContactsSchema,
+  AdminUserPageSchema,
   uuidv7,
   ApplicationFormVersionSchema,
   ApplicationFormVersionsSchema,
@@ -121,6 +124,9 @@ import {
   type UpsertAiProviderCredentialRequest,
   type AdminProjectSummary,
   type AdminUserSummary,
+  type AdminUserCard,
+  type AdminUserContacts,
+  type AdminUserPage,
   ServiceCountrySchema,
   ServiceCountryPolicyVersionSchema,
   type ServiceCountry,
@@ -500,6 +506,59 @@ export const api = {
       path: '/v1/admin/users',
       query: { q: query },
       schema: z.object({ items: z.array(AdminUserSummarySchema) }),
+    });
+  },
+
+  /**
+   * Страница списка людей для раздела «Пользователи».
+   *
+   * Тот же маршрут, что у поиска на экране «Доступ», но читается целиком:
+   * там нужен только список найденных, здесь — ещё и общее число, без
+   * которого постраничная навигация слепая.
+   */
+  adminUsers(query: Record<string, string>): Promise<AdminUserPage> {
+    return client.request({
+      method: 'GET',
+      path: '/v1/admin/users',
+      query,
+      schema: AdminUserPageSchema,
+    });
+  },
+
+  adminUserCard(userId: string): Promise<AdminUserCard> {
+    return client.request({
+      method: 'GET',
+      path: `/v1/admin/users/${encodeURIComponent(userId)}`,
+      schema: AdminUserCardSchema,
+    });
+  },
+
+  revealUserContacts(userId: string): Promise<AdminUserContacts> {
+    return client.request({
+      method: 'POST',
+      path: `/v1/admin/users/${encodeURIComponent(userId)}/contacts/reveal`,
+      schema: AdminUserContactsSchema,
+    });
+  },
+
+  changeUserStatus(
+    userId: string,
+    input: { action: 'suspend' | 'restore'; reason: string },
+  ): Promise<AdminUserCard> {
+    return client.request({
+      method: 'PATCH',
+      path: `/v1/admin/users/${encodeURIComponent(userId)}/status`,
+      body: input,
+      schema: AdminUserCardSchema,
+    });
+  },
+
+  updateUserProfile(userId: string, input: { displayName: string }): Promise<AdminUserCard> {
+    return client.request({
+      method: 'PATCH',
+      path: `/v1/admin/users/${encodeURIComponent(userId)}/profile`,
+      body: input,
+      schema: AdminUserCardSchema,
     });
   },
 
