@@ -413,6 +413,27 @@ try {
     'подсветка активного пункта',
   );
 
+  // Прокрутка при переходе: новый раздел обязан открыться с начала, а не с
+  // того места, где человек бросил предыдущий.
+  await page.evaluate(() => {
+    // eslint-disable-next-line no-undef -- исполняется в браузере
+    window.scrollTo(0, 900);
+  });
+  await page.waitForTimeout(400);
+  await page.getByRole('link', { name: 'Тарифы' }).click();
+  await page.waitForTimeout(1500);
+  const scrollAfter = await page.evaluate(() => {
+    // eslint-disable-next-line no-undef -- исполняется в браузере
+    return window.scrollY;
+  });
+  expect(
+    'Новый раздел открывается с начала страницы',
+    scrollAfter === 0 && page.url().includes('/plans'),
+    `прокрутка ${scrollAfter}px на ${page.url().split('/admin')[1]}`,
+  );
+  await page.goto(`${ADMIN_URL}/users`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1000);
+
   // --------------------------------------------------- [11] плотность
   console.warn('\n[11] Плотность рабочая, но не в ущерб чтению');
   const metrics = await page.evaluate(() => {

@@ -27,6 +27,7 @@ import {
   NotificationsCard,
   ProfileLink,
   ProfilePage,
+  useScrollToTopOnChange,
   type ProfilePort,
   SessionCheckFailed,
   SupportCard,
@@ -146,6 +147,9 @@ export default function App() {
    * приводить в тот же список, а переход на другую вкладку — закрывать карточку.
    */
   const [openProject, setOpenProject] = useState<string | null>(null);
+  // Разделы здесь переключаются состоянием, а не маршрутом — но для человека
+  // это тот же переход, и прокрутку он ждёт с начала.
+  useScrollToTopOnChange(`${tab}:${openProject ?? ''}`);
 
   // 401 и временная неудача проверки — разные вещи. Пока они сходились в одну
   // ветку, ответ 429 на `GET /v1/auth/me` показывался как выход из аккаунта.

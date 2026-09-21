@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { Link, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Icon, NovaTopBar, UI_KEYFRAMES } from '@unicorn/ui';
 import {
   ProfileLink,
   ProfilePage,
   SessionCheckFailed,
+  useScrollToTopOnChange,
   useSessionCheck,
   type ProfilePort,
 } from '@unicorn/cabinet';
@@ -61,6 +62,9 @@ const profilePort: ProfilePort = {
 
 export function App() {
   const navigate = useNavigate();
+  // Смена раздела возвращает к началу страницы: иначе новый экран открывается
+  // с той прокрутки, на которой человек бросил предыдущий.
+  useScrollToTopOnChange(useLocation().pathname);
   const [me, setMe] = useState<Me | null>(null);
   /**
    * Сезоны отложены (M088): пункты сезона показываются только при включённом

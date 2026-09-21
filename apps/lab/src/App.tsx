@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
+import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Badge,
   Button,
@@ -27,6 +27,7 @@ import {
   NotificationsCard,
   SessionCheckFailed,
   SupportCard,
+  useScrollToTopOnChange,
   ProfileLink,
   ProfilePage,
   type ProfilePort,
@@ -163,6 +164,7 @@ export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [applicationV2, setApplicationV2] = useState(false);
   const navigate = useNavigate();
+  useScrollToTopOnChange(useLocation().pathname);
 
   // Проверка сессии различает подтверждённое «сессии нет» (401) и временную
   // неудачу проверки (429, 5xx, обрыв связи). Раньше второе показывалось как

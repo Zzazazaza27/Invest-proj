@@ -45,3 +45,6 @@ export {
   type ProjectCardProps,
   type ProjectCardSource,
 } from './ProjectCard';
+
+/** Возврат прокрутки к началу при смене экрана — у всех кабинетов одинаково. */
+export { useScrollToTopOnChange } from './scroll';

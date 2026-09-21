@@ -20,6 +20,7 @@ import {
   NotificationsCard,
   ProfileLink,
   ProfilePage,
+  useScrollToTopOnChange,
   type ProfilePort,
   SessionCheckFailed,
   SupportCard,
@@ -107,6 +108,7 @@ export default function App() {
   // эксперта нет, а заводить его ради одного экрана — менять устройство
   // приложения ради ссылки.
   const [showProfile, setShowProfile] = useState(false);
+  useScrollToTopOnChange(showProfile);
 
   // Подтверждённое отсутствие сессии (401) и неудача самой проверки (429,
   // 5xx, обрыв) — разные вещи: на вход уводит только первое.
