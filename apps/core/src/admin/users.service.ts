@@ -7,7 +7,7 @@ import type {
   AdminUserPage,
   AdminUserRow,
 } from '@unicorn/contracts';
-import { AdminUserListQuerySchema } from '@unicorn/contracts';
+import { AdminUserListQuerySchema, PROBE_ORIGINS } from '@unicorn/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { CryptoService } from '../crypto/crypto.service';
 import { errors } from '../common/errors';
@@ -79,6 +79,7 @@ export class AdminUsersService {
                 (SELECT v.status FROM kyc.kyc_verifications v
                   WHERE v.user_id = u.id AND v.kind = 'identity'
                   ORDER BY v.created_at DESC LIMIT 1) AS kyc_status,
+                u.origin,
                 count(*) OVER () AS total
            FROM identity.users u
           WHERE u.deleted_at IS NULL
@@ -91,6 +92,11 @@ export class AdminUsersService {
                   SELECT v2.status FROM kyc.kyc_verifications v2
                    WHERE v2.user_id = u.id AND v2.kind = 'identity'
                    ORDER BY v2.created_at DESC LIMIT 1), 'none') = $4)
+            -- Происхождение (M127): по умолчанию следы прогонов скрыты, иначе
+            -- список рассказывает не о людях, а о проверках.
+            AND ($7::text IS NULL
+                 OR ($7 = 'probes' AND u.origin = ANY($8::text[]))
+                 OR ($7 = 'real' AND NOT (u.origin = ANY($8::text[]))))
           ORDER BY ${order} ${direction}, u.id ${direction}
           LIMIT $5 OFFSET $6`,
         [
@@ -100,6 +106,8 @@ export class AdminUsersService {
           query.kyc ?? null,
           query.perPage,
           offset,
+          query.origin === 'all' ? null : query.origin,
+          [...PROBE_ORIGINS],
         ],
       );
 
@@ -117,7 +125,7 @@ export class AdminUsersService {
       const { rows } = await tx.query<CardRow>(
         `SELECT u.id, u.display_name, u.primary_role, u.status, u.locale, u.service_country,
                 u.currency_pref, u.home_contour, u.mfa_enabled, u.created_at, u.updated_at,
-                u.sessions_valid_from, u.email_ciphertext, u.phone_ciphertext,
+                u.sessions_valid_from, u.origin, u.email_ciphertext, u.phone_ciphertext,
                 u.contact_wrapped_dek, u.status_reason, u.status_changed_at,
                 u.status_changed_by, c.display_name AS status_changed_by_name
            FROM identity.users u
@@ -241,6 +249,7 @@ export class AdminUsersService {
         emailMasked: this.mask(user, 'email'),
         phoneMasked: this.mask(user, 'phone'),
         primaryRole: user.primary_role,
+        origin: user.origin as AdminUserCard['origin'],
         roles: roles.rows.map((row) => ({
           role: row.role,
           grantedAt: row.granted_at.toISOString(),
@@ -510,6 +519,7 @@ export class AdminUsersService {
       roles: row.roles ?? [],
       status: row.status as AdminUserRow['status'],
       kycStatus: (row.kyc_status ?? 'none') as AdminUserKycStatus,
+      origin: row.origin as AdminUserRow['origin'],
       createdAt: row.created_at.toISOString(),
     };
   }
@@ -646,6 +656,7 @@ interface ListRow extends ContactRow {
   created_at: Date;
   roles: string[] | null;
   kyc_status: string | null;
+  origin: string;
   total: string;
 }
 
@@ -653,6 +664,7 @@ interface CardRow extends ContactRow {
   id: string;
   display_name: string;
   primary_role: string;
+  origin: string;
   status: string;
   locale: string;
   service_country: string | null;

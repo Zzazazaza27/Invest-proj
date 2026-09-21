@@ -127,9 +127,18 @@ export class IdentityService {
     }
   }
 
+  /**
+   * Регистрация.
+   *
+   * `origin` — откуда взялась запись (M127). Обычная регистрация из формы
+   * ничего не передаёт и получает умолчание; значение приходит только от
+   * прогонов и скриптов, и только там, где это вообще разрешено (см.
+   * контроллер). На права оно не влияет — это признак для отбора и уборки.
+   */
   async register(
     input: RegisterRequest,
     ctx: RequestContext,
+    origin?: string,
   ): Promise<{ userId: string; roles: Role[] }> {
     const userId = uuidv7();
     const passwordHash = await argon2.hash(input.password, ARGON2_OPTIONS);
@@ -170,8 +179,9 @@ export class IdentityService {
         await tx.query(
           `INSERT INTO identity.users
              (id, email_ciphertext, phone_ciphertext, contact_wrapped_dek, email_hmac, phone_hmac,
-              password_hash, display_name, primary_role, status, locale, service_country)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_consents', $10, $11)`,
+              password_hash, display_name, primary_role, status, locale, service_country, origin)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_consents', $10, $11,
+                   coalesce($12, 'self_registration'))`,
           [
             userId,
             contact.ciphertexts.email,
@@ -184,6 +194,7 @@ export class IdentityService {
             input.role,
             input.locale,
             input.serviceCountry ?? null,
+            origin ?? null,
           ],
         );
       } catch (error) {

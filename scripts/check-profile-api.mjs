@@ -73,6 +73,9 @@ function makeClient() {
   async function call(path, { method = 'GET', body, csrf = true, raw = false } = {}) {
     const headers = { Cookie: [state.session, state.csrf].filter(Boolean).join('; ') };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
+    // Всё, что заводит прогон, помечается происхождением: сервер не отличит
+    // проверку от человека, а уборке нужно знать, чьи это следы (M127).
+    headers['X-Unicorn-Origin'] = 'render_check';
     if (method !== 'GET' && csrf && state.csrf) {
       headers['X-CSRF-Token'] = state.csrf.split('=').slice(1).join('=');
     }

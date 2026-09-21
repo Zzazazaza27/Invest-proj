@@ -90,7 +90,12 @@ async function createVictim() {
   const email = `render-users-${suffix}@test.local`;
   const response = await fetch(`${CORE_URL}/v1/auth/register`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      // Прогон называет себя сам: сервер не отличит его от человека, а уборке
+      // нужно знать, чьи это следы (M127).
+      'X-Unicorn-Origin': 'render_check',
+    },
     body: JSON.stringify({
       email,
       password: `Pw-${randomUUID()}`,
@@ -169,6 +174,10 @@ try {
 
   // ------------------------------------------------------------- [2] поиск
   console.warn('\n[2] Поиск по выбранному полю');
+  // Человек прогона — сам след прогона, и по умолчанию список его прячет
+  // (M127). Чтобы проверять поиск, а не отбор, показываем все записи.
+  await page.selectOption('[data-filter-origin]', 'all');
+  await page.waitForTimeout(1200);
   await page.fill('[data-search-input]', victim.displayName);
   await page.getByRole('button', { name: /^Искать$/ }).click();
   await page.waitForTimeout(1500);
@@ -223,16 +232,30 @@ try {
     `экспертов ${expertTotal} из ${allTotal}`,
   );
 
-  const firstBefore = await page.locator('[data-user-row]').first().getAttribute('data-user-row');
-  await page.locator('[data-page-next]').click();
-  await page.waitForTimeout(1500);
-  const firstAfter = await page.locator('[data-user-row]').first().getAttribute('data-user-row');
-  expect('Вторая страница показывает других людей', firstBefore !== firstAfter, 'списки разные');
-  expect(
-    'Отбор сохраняется в адресе страницы',
-    page.url().includes('role=expert') && page.url().includes('page=2'),
-    page.url().split('?')[1] ?? '',
-  );
+  // Постраничная навигация проверяется, только если страниц действительно
+  // больше одной. Прежняя версия ждала кнопку «Вперёд» всегда — и падала на
+  // чистой базе, где все помещаются на первой странице. Проверка не должна
+  // зависеть от того, сколько мусора накопили прогоны; сам расчёт страниц
+  // проверяется на сервере (check-admin-users-api, perPage=5).
+  const pagerVisible = (await page.locator('[data-page-next]').count()) > 0;
+  if (pagerVisible) {
+    const firstBefore = await page.locator('[data-user-row]').first().getAttribute('data-user-row');
+    await page.locator('[data-page-next]').click();
+    await page.waitForTimeout(1500);
+    const firstAfter = await page.locator('[data-user-row]').first().getAttribute('data-user-row');
+    expect('Вторая страница показывает других людей', firstBefore !== firstAfter, 'списки разные');
+    expect(
+      'Отбор сохраняется в адресе страницы',
+      page.url().includes('role=expert') && page.url().includes('page=2'),
+      page.url().split('?')[1] ?? '',
+    );
+  } else {
+    expect(
+      'Отбор сохраняется в адресе страницы',
+      page.url().includes('role=expert'),
+      'страниц одна — навигации нет, отбор в адресе есть',
+    );
+  }
   await screenshot(page, 'users-filtered-page-2');
 
   // ---------------------------------------------------------- [4] карточка
@@ -302,7 +325,13 @@ try {
   // Автор сверяется с ТЕКУЩИМ именем администратора, а не с зашитой строкой:
   // имя — обычное профильное поле, и владелец вправе его сменить. Зашитая
   // «Ирина» превратила бы переименование в красный прогон.
-  const adminName = (await page.locator('[data-testid="profile-link"]').innerText()).trim();
+  // В ссылке профиля первой строкой стоит буква аватара-заглушки — берём
+  // последнюю непустую строку, то есть само имя.
+  const adminName = (await page.locator('[data-testid="profile-link"]').innerText())
+    .split(String.fromCharCode(10))
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .pop();
   expect(
     'Причина и автор блокировки показаны',
     reasonText.includes('Проход проверки') && reasonText.includes(adminName),
@@ -364,6 +393,26 @@ try {
     page.url(),
   );
   await screenshot(page, 'not-found');
+
+  // Происхождение (M127): временный человек прогона по умолчанию скрыт, и
+  // это главное свойство отбора — список показывает платформу, а не наши
+  // проверки.
+  await page.goto(`${ADMIN_URL}/users?field=id&q=${victim.id}`, { waitUntil: 'networkidle' });
+  await page.waitForTimeout(1200);
+  expect(
+    'След прогона по умолчанию скрыт из списка',
+    (await page.locator(`[data-user-row="${victim.id}"]`).count()) === 0,
+    'умолчание — «без следов прогонов»',
+  );
+  await page.selectOption('[data-filter-origin]', 'probes');
+  await page.waitForTimeout(1500);
+  expect(
+    'По явному выбору след прогона показывается и назван',
+    (await page.locator(`[data-user-row="${victim.id}"]`).innerText()).includes(
+      'браузерный прогон',
+    ),
+    'столбец «Откуда»',
+  );
 
   // ------------------------------------------------ [10] структура меню
   console.warn('\n[10] Меню разбито на группы, и ни один раздел не потерян');
@@ -437,6 +486,11 @@ try {
   // Каркас: при прокрутке шапка и меню остаются на месте, уезжает только
   // содержимое. Заодно сверяется стык — меню начинается ровно под шапкой, а
   // не заезжает под неё на несколько пикселей.
+  // Окно намеренно низкое: каркас проверяется прокруткой, а на чистой базе
+  // страница в полный экран не прокручивается вовсе — прежняя версия мерила
+  // «шапку на месте» при нулевой прокрутке и была зелёной ни о чём.
+  await page.setViewportSize({ width: 1440, height: 420 });
+  await page.waitForTimeout(400);
   await page.evaluate(() => {
     // eslint-disable-next-line no-undef -- исполняется в браузере
     window.scrollTo(0, 1200);
@@ -465,6 +519,7 @@ try {
     // eslint-disable-next-line no-undef -- исполняется в браузере
     window.scrollTo(0, 0);
   });
+  await page.setViewportSize({ width: 1440, height: 1000 });
 
   // --------------------------------------------------- [11] плотность
   console.warn('\n[11] Плотность рабочая, но не в ущерб чтению');

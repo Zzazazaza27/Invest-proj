@@ -2,7 +2,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import type { AdminUserCard } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
-import { Avatar, KYC_LABEL, ROLE_LABEL, STATUS_LABEL, statusTone } from './users-shared';
+import {
+  Avatar,
+  KYC_LABEL,
+  ORIGIN_LABEL,
+  ROLE_LABEL,
+  STATUS_LABEL,
+  statusTone,
+} from './users-shared';
 
 /**
  * Карточка человека — рабочий экран администратора.
@@ -137,6 +144,14 @@ export function UserCardPage() {
             </Row>
             <Row label="Телефон">
               {contacts?.phone ?? card.phoneMasked ?? <span className="muted">не указан</span>}
+            </Row>
+            <Row label="Откуда запись">
+              {ORIGIN_LABEL[card.origin] ?? card.origin}
+              {card.origin !== 'self_registration' ? (
+                <div className="small muted">
+                  Проставлено при создании и не меняется: это факт, а не настройка.
+                </div>
+              ) : null}
             </Row>
             <Row label="Локаль">{card.locale}</Row>
             <Row label="Страна обслуживания">

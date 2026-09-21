@@ -118,8 +118,9 @@ async function upsertUser({ login, displayName, roles, primaryRole }) {
     const [created] = await sql(
       `INSERT INTO identity.users
          (id, email_ciphertext, contact_wrapped_dek, email_hmac, password_hash,
-          display_name, primary_role, status, locale)
-       VALUES (public.uuid_generate_v7(), $1, $2, $3, $4, $5, $6, 'pending_consents', 'ru-RU')
+          display_name, primary_role, status, locale, origin)
+       VALUES (public.uuid_generate_v7(), $1, $2, $3, $4, $5, $6, 'pending_consents', 'ru-RU',
+               'seed_acceptance')
        RETURNING id`,
       [contact.ciphertext, contact.wrappedDek, blindIndex(email), hash, displayName, primaryRole],
     );
@@ -155,8 +156,9 @@ async function upsertProject(title, ownerId) {
   if (found) return found.id;
   const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
   const [project] = await sql(
-    `INSERT INTO lab.projects (id, taxonomy_id, title, stage, status, investment_ask)
-     VALUES (public.uuid_generate_v7(), $1, $2, 'growth', 'expert_review', 5000000)
+    `INSERT INTO lab.projects (id, taxonomy_id, title, stage, status, investment_ask, origin)
+     VALUES (public.uuid_generate_v7(), $1, $2, 'growth', 'expert_review', 5000000,
+             'seed_acceptance')
      RETURNING id`,
     [taxonomy?.id ?? null, title],
   );

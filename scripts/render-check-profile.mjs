@@ -85,7 +85,12 @@ async function registerFounder() {
   const password = `Pw-${randomUUID()}`;
   const response = await fetch(`${CORE_URL}/v1/auth/register`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      // Прогон называет себя сам: сервер не отличит его от человека, а уборке
+      // нужно знать, чьи это следы (M127).
+      'X-Unicorn-Origin': 'render_check',
+    },
     body: JSON.stringify({
       email,
       password,

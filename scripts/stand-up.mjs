@@ -56,12 +56,13 @@ const fail = (text) => console.error(`  СБОЙ  ${text}`);
 
 /** Выполнить и вернуть stdout; при ошибке — null, чтобы шаг решал сам. */
 let lastError = '';
-function run(cmd, { quiet = true } = {}) {
+function run(cmd, { quiet = true, env } = {}) {
   try {
     lastError = '';
     return execSync(cmd, {
       cwd: ROOT,
       encoding: 'utf8',
+      env: env ? { ...process.env, ...env } : process.env,
       stdio: quiet ? ['ignore', 'pipe', 'pipe'] : 'inherit',
     });
   } catch (error) {
@@ -246,6 +247,51 @@ function migrate() {
   return true;
 }
 
+/**
+ * Учётные роли БД.
+ *
+ * Шаг появился после того, как `infra:reset` унёс тома вместе с ролями: схему
+ * миграции восстановили, а `app_backend_user` — нет, и ядро молча падало с
+ * «password authentication failed». Снаружи это выглядело как «стенд не
+ * поднялся», и причина находилась только в core.log.
+ *
+ * Операция идемпотентная: роли уже есть — пароли переустанавливаются из
+ * окружения, и это же чинит расхождение паролей после смены `.env`.
+ */
+function roles() {
+  step('Учётные роли БД');
+  const out = run('npm run bootstrap:roles -w database');
+  if (out === null) {
+    fail('роли не заведены — запустите `npm run bootstrap:roles -w database` и прочтите вывод');
+    return false;
+  }
+  ok('созданы и пароли на месте');
+  return true;
+}
+
+/**
+ * Схема тестовой базы.
+ *
+ * Тесты схемы работают против отдельной базы `unicorn_test` — RLS и триггеры
+ * моком не проверить. Базу заводит init-скрипт контейнера при создании тома,
+ * но заводит ПУСТОЙ: миграции туда никто не носил. После `infra:reset` это
+ * означало 271 падение подряд с «relation identity.users does not exist» —
+ * выглядит как сломанная схема, хотя сломан был только порядок подготовки.
+ *
+ * Шаг идемпотентный: миграции уже применены — раннер скажет «актуальны».
+ */
+function migrateTestDb() {
+  step('Схема тестовой базы');
+  const out = run('npm run migrate -w database', { env: { NODE_ENV: 'test' } });
+  if (out === null) {
+    warn('тестовая база не обновлена — прогоны схемы (`npm run test -w database`) упадут');
+    return true;
+  }
+  const said = (out.match(/^(Миграции актуальны.*|Готово\..*|Применено.*)$/m) || [])[0];
+  ok(said || 'применены');
+  return true;
+}
+
 function nats() {
   step('Поток событий NATS');
   if (run('node scripts/nats-init-stream.mjs') === null) {
@@ -355,6 +401,8 @@ const steps = [
   ensureDocker,
   infra,
   migrate,
+  roles,
+  migrateTestDb,
   nats,
   core,
   gateway,

@@ -2,7 +2,15 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import type { AdminUserPage, AdminUserRow } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
-import { Avatar, KYC_LABEL, ROLE_LABEL, STATUS_LABEL, statusTone } from './users-shared';
+import {
+  Avatar,
+  KYC_LABEL,
+  ORIGIN_LABEL,
+  PROBE_ORIGIN,
+  ROLE_LABEL,
+  STATUS_LABEL,
+  statusTone,
+} from './users-shared';
 
 /**
  * Раздел «Пользователи»: рабочий список людей.
@@ -38,6 +46,9 @@ export function UsersPage() {
   const role = params.get('role') ?? '';
   const status = params.get('status') ?? '';
   const kyc = params.get('kyc') ?? '';
+  // Умолчание — «настоящие»: следы прогонов прячутся, пока их не попросят.
+  // Иначе список рассказывает не о людях платформы, а о наших проверках.
+  const origin = params.get('origin') ?? 'real';
   const sort = params.get('sort') ?? 'created_at';
   const dir = params.get('dir') ?? 'desc';
   const current = Number(params.get('page') ?? '1');
@@ -57,6 +68,7 @@ export function UsersPage() {
       if (role) query.role = role;
       if (status) query.status = status;
       if (kyc) query.kyc = kyc;
+      query.origin = origin;
       setPage(await api.adminUsers(query));
     } catch (cause) {
       setError(
@@ -67,7 +79,7 @@ export function UsersPage() {
     } finally {
       setBusy(false);
     }
-  }, [field, q, role, status, kyc, sort, dir, current]);
+  }, [field, q, role, status, kyc, origin, sort, dir, current]);
 
   useEffect(() => {
     void load();
@@ -195,6 +207,17 @@ export function UsersPage() {
               </option>
             ))}
           </select>
+          <select
+            aria-label="Происхождение записи"
+            data-filter-origin
+            value={origin}
+            onChange={(event) => apply({ origin: event.target.value })}
+            style={{ width: 'auto' }}
+          >
+            <option value="real">без следов прогонов</option>
+            <option value="probes">только следы прогонов</option>
+            <option value="all">все записи</option>
+          </select>
           <span className="small muted" data-users-total>
             {busy ? 'Считаем…' : `Найдено: ${total}`}
           </span>
@@ -232,6 +255,7 @@ export function UsersPage() {
                   label="Состояние"
                 />
                 <th>Личность</th>
+                <th>Откуда</th>
                 <SortableHead
                   column="created_at"
                   sort={sort}
@@ -306,6 +330,13 @@ function UserRow({ user }: { user: AdminUserRow }) {
         </span>
       </td>
       <td className="small">{KYC_LABEL[user.kycStatus] ?? user.kycStatus}</td>
+      <td className="small">
+        {PROBE_ORIGIN.has(user.origin) ? (
+          <span className="badge badge--muted">{ORIGIN_LABEL[user.origin] ?? user.origin}</span>
+        ) : (
+          <span className="muted">{ORIGIN_LABEL[user.origin] ?? user.origin}</span>
+        )}
+      </td>
       <td className="small num">{new Date(user.createdAt).toLocaleDateString('ru-RU')}</td>
     </tr>
   );

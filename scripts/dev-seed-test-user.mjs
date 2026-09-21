@@ -121,9 +121,10 @@ if (userId) {
   const created = await pool.query(
     `INSERT INTO identity.users
        (id, email_ciphertext, contact_wrapped_dek, email_hmac, password_hash,
-        display_name, primary_role, status, locale)
+        display_name, primary_role, status, locale, origin)
      VALUES (public.uuid_generate_v7(), $1, $2, $3, $4,
-             'Тестовый пользователь (ssurgut)', 'founder', 'pending_consents', 'ru-RU')
+             'Тестовый пользователь (ssurgut)', 'founder', 'pending_consents', 'ru-RU',
+             'staff_check')
      RETURNING id`,
     [
       contact.ciphertext,

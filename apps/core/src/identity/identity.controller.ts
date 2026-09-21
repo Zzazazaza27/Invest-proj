@@ -40,6 +40,33 @@ import { VerificationService } from './verification.service';
  * в этом режиме не используется вовсе (та же анти-оракульная линия, что у
  * описания API в production).
  */
+/**
+ * Происхождение записи из заголовка запроса.
+ *
+ * Сервер не может САМ отличить браузерный проход от человека: и тот и другой
+ * приходят обычной регистрацией. Поэтому прогоны называются сами — заголовком
+ * `X-Unicorn-Origin`.
+ *
+ * Доверять ему можно только там, где нет настоящих людей: в боевом контуре
+ * заголовок игнорируется целиком, иначе любой желающий помечал бы свою запись
+ * как «след прогона» и попадал под уборку (или, наоборот, прятался из списка).
+ * Неизвестное значение тоже игнорируется — умолчание безопаснее догадки.
+ */
+function originFromRequest(request: AuthenticatedRequest): string | undefined {
+  if (getEnv().isProduction) return undefined;
+  const raw = request.headers['x-unicorn-origin'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== 'string') return undefined;
+  const allowed = new Set([
+    'seed_demo',
+    'seed_acceptance',
+    'staff_check',
+    'render_check',
+    'load_test',
+  ]);
+  return allowed.has(value) ? value : undefined;
+}
+
 function assertLocalAuthAvailable(): void {
   if (getEnv().AUTH_MODE !== 'local')
     throw errors.notFound({ subject: 'route', reason: 'oidc-mode' });
@@ -60,11 +87,12 @@ export class IdentityController {
   async register(
     @Body() rawBody: unknown,
     @Ctx() ctx: RequestContext,
+    @Req() request: AuthenticatedRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
     assertLocalAuthAvailable();
     const input = parseOrThrow(RegisterRequestSchema, rawBody);
-    const { userId, roles } = await this.identity.register(input, ctx);
+    const { userId, roles } = await this.identity.register(input, ctx, originFromRequest(request));
     const missing = await this.identity.missingConsents({ ...ctx, userId, roles }, input.locale);
 
     const { session, csrfToken } = this.identity.buildSession({

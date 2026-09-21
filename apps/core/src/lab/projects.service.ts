@@ -106,10 +106,16 @@ export class ProjectsService {
       // которой в этот момент ещё нет. INSERT ... RETURNING упал бы на RLS —
       // причём с сообщением про нарушение политики вставки, уводящим в сторону.
       await tx.query(
+        // Происхождение проекта НЕ спрашивается отдельно: оно наследуется у
+        // создателя (M127). Проход, заведённый как `render_check`, создаёт
+        // проекты того же происхождения — и вычищаются они вместе. Второй
+        // вопрос об одном и том же завёл бы второе место правды.
         `INSERT INTO lab.projects
            (id, taxonomy_id, title, tagline, description, stage, geo_country, geo_region,
-            investment_ask, ask_currency)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10)`,
+            investment_ask, ask_currency, origin)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::numeric, $10,
+                 coalesce((SELECT origin FROM identity.users WHERE id = app.current_user_id()),
+                          'self_registration'))`,
         [
           id,
           input.taxonomyId,

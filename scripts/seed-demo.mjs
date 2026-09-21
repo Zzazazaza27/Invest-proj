@@ -346,8 +346,8 @@ async function upsertPerson(person) {
   await sql(
     `INSERT INTO identity.users
        (id, email_ciphertext, contact_wrapped_dek, email_hmac, password_hash,
-        display_name, primary_role, status, locale)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending_consents', 'ru-RU')
+        display_name, primary_role, status, locale, origin)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending_consents', 'ru-RU', 'seed_demo')
      ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash,
                                     display_name  = EXCLUDED.display_name`,
     [
@@ -513,12 +513,16 @@ async function load() {
     await sql(
       `INSERT INTO lab.projects
          (id, taxonomy_id, season_id, title, tagline, description, stage,
-          geo_country, geo_region, investment_ask, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+          geo_country, geo_region, investment_ask, status, origin)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'seed_demo')
        ON CONFLICT (id) DO UPDATE SET title       = EXCLUDED.title,
                                       tagline     = EXCLUDED.tagline,
                                       description = EXCLUDED.description,
-                                      status      = EXCLUDED.status`,
+                                      status      = EXCLUDED.status,
+                                      -- Повторная загрузка чинит и происхождение:
+                                      -- иначе проекты, заведённые до M127, навсегда
+                                      -- остались бы «обычной регистрацией».
+                                      origin      = EXCLUDED.origin`,
       [
         id,
         taxonomy.id,

@@ -22,6 +22,38 @@ import { RoleSchema, UserStatusSchema } from './identity';
  *     блокировки не заводится: он стал бы вторым местом правды.
  */
 
+/**
+ * Откуда взялась запись.
+ *
+ * Не «тип аккаунта», который ставят руками и перестают ставить на второй
+ * неделе, а факт создания: его указывает тот, кто создаёт запись. На права не
+ * влияет — это признак для отбора и уборки.
+ */
+export const AccountOriginSchema = z.enum([
+  'self_registration',
+  'invite',
+  'seed_demo',
+  'seed_acceptance',
+  'staff_check',
+  'render_check',
+  'load_test',
+  'unknown',
+]);
+export type AccountOrigin = z.infer<typeof AccountOriginSchema>;
+
+/**
+ * Что показывать в списке.
+ *
+ * `real` — люди и служебные записи, то есть всё, кроме следов прогонов;
+ * `probes` — ровно следы прогонов (их и убирает уборка);
+ * `all` — без отбора.
+ */
+export const AdminUserOriginFilterSchema = z.enum(['all', 'real', 'probes']);
+export type AdminUserOriginFilter = z.infer<typeof AdminUserOriginFilterSchema>;
+
+/** Происхождения, которые уборка вправе удалять. Список один на всю платформу. */
+export const PROBE_ORIGINS = ['render_check', 'load_test'] as const;
+
 /** По какому полю ищем. Поле выбирается явно — «умный» поиск угадывает неверно. */
 export const AdminUserSearchFieldSchema = z.enum(['name', 'email', 'phone', 'id']);
 export type AdminUserSearchField = z.infer<typeof AdminUserSearchFieldSchema>;
@@ -57,6 +89,8 @@ export const AdminUserListQuerySchema = z.object({
   role: RoleSchema.optional(),
   status: UserStatusSchema.optional(),
   kyc: AdminUserKycStatusSchema.optional(),
+  /** Отбор по происхождению; по умолчанию скрываются следы прогонов. */
+  origin: AdminUserOriginFilterSchema.default('real'),
   sort: AdminUserSortSchema.default('created_at'),
   dir: z.enum(['asc', 'desc']).default('desc'),
   page: z.coerce.number().int().min(1).max(10000).default(1),
@@ -79,6 +113,7 @@ export const AdminUserRowSchema = z.object({
   roles: z.array(z.string()),
   status: UserStatusSchema,
   kycStatus: AdminUserKycStatusSchema,
+  origin: AccountOriginSchema,
   createdAt: IsoDateTimeSchema,
 });
 export type AdminUserRow = z.infer<typeof AdminUserRowSchema>;
@@ -163,6 +198,7 @@ export const AdminUserCardSchema = z.object({
   emailMasked: z.string().nullable(),
   phoneMasked: z.string().nullable(),
   primaryRole: z.string(),
+  origin: AccountOriginSchema,
   roles: z.array(AdminUserRoleGrantSchema),
   status: UserStatusSchema,
   /** Причина последней смены состояния администратором; у блокировки обязательна. */

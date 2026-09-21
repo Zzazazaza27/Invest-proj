@@ -35,6 +35,28 @@ export const KYC_LABEL: Record<string, string> = {
   rejected: 'отклонена',
 };
 
+/**
+ * Откуда взялась запись (M127).
+ *
+ * Подписи короткие намеренно: это столбец в плотной таблице, а не пояснение.
+ * «Сам» вместо «самостоятельная регистрация» читается с одного взгляда, а
+ * подробности человеку тут не нужны — ему нужно отличить живого от следа
+ * прогона.
+ */
+export const ORIGIN_LABEL: Record<string, string> = {
+  self_registration: 'сам',
+  invite: 'приглашение',
+  seed_demo: 'демо-комплект',
+  seed_acceptance: 'приёмка',
+  staff_check: 'проверка сотрудника',
+  render_check: 'браузерный прогон',
+  load_test: 'нагрузочный прогон',
+  unknown: 'неизвестно',
+};
+
+/** Следы прогонов — единственное, что вправе удалять уборка. */
+export const PROBE_ORIGIN = new Set(['render_check', 'load_test']);
+
 /** Цвет несёт подсказку, но не смысл: рядом всегда есть слово. */
 export function statusTone(status: string): 'ok' | 'warn' | 'danger' | 'muted' {
   if (status === 'active') return 'ok';

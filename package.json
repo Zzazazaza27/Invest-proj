@@ -30,6 +30,7 @@
     "stand:up": "node scripts/stand-up.mjs",
     "stand:down": "node scripts/stand-down.mjs",
     "stand:status": "node scripts/stand-check.mjs",
+    "stand:clean-probes": "node scripts/clean-probe-data.mjs",
     "stand:check": "node scripts/stand-check.mjs",
     "docker:fix": "node scripts/fix-docker-socket.mjs",
     "docker:check": "node scripts/fix-docker-socket.mjs --check",
