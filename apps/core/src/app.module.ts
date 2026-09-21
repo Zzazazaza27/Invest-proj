@@ -5,6 +5,8 @@ import { AdminService } from './admin/admin.service';
 import { DiscoveryModule } from '@nestjs/core';
 import { DirectoryController } from './admin/directory.controller';
 import { DirectoryService } from './admin/directory.service';
+import { AdminUsersController } from './admin/users.controller';
+import { AdminUsersService } from './admin/users.service';
 import { ProviderCredentialsService } from './ai/provider-credentials.service';
 import { LocalizationService } from './ai/localization.service';
 import { RolesController } from './admin/roles.controller';
@@ -202,6 +204,7 @@ import { S3Service } from './storage/s3.service';
     IntegrationTokenController,
     ServiceAccountsController,
     DirectoryController,
+    AdminUsersController,
     RolesController,
     TemplatesController,
     OpenApiController,
@@ -246,6 +249,7 @@ import { S3Service } from './storage/s3.service';
     FundingRoundsService,
     AdminService,
     DirectoryService,
+    AdminUsersService,
     ProviderCredentialsService,
     LocalizationService,
     RolesService,

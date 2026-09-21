@@ -670,13 +670,13 @@ export class IdentityService {
   }
 }
 
-function maskEmail(email: string): string {
+export function maskEmail(email: string): string {
   const [name = '', domain = ''] = email.split('@');
   const visible = name.slice(0, Math.min(2, name.length));
   return `${visible}${'*'.repeat(Math.max(1, name.length - visible.length))}@${domain}`;
 }
 
-function maskPhone(phone: string): string {
+export function maskPhone(phone: string): string {
   return phone.length <= 4
     ? '*'.repeat(phone.length)
     : `${'*'.repeat(phone.length - 4)}${phone.slice(-4)}`;

@@ -1,0 +1,215 @@
+import { z } from 'zod';
+import { IsoDateTimeSchema, UuidSchema, boundedString } from '../common/primitives';
+import { RoleSchema, UserStatusSchema } from './identity';
+
+/**
+ * Раздел «Пользователи» административного кабинета (этап 6).
+ *
+ * Отделён от «Доступа» по смыслу: здесь работают с КОНКРЕТНЫМ человеком —
+ * найти, открыть карточку, посмотреть его состояние и распорядиться учётной
+ * записью. «Доступ» отвечает на другой вопрос: как устроены права платформы
+ * вообще.
+ *
+ * Три ограничения модели, которые видны прямо в этих схемах и которые нельзя
+ * обойти красивым интерфейсом:
+ *
+ *  1. **Контакты приходят масками.** Полное значение — отдельным запросом, под
+ *     полномочием `identity.user_contacts.view` и с записью в журнал (M122).
+ *  2. **Поиск по контакту — только точный.** Адрес и телефон зашифрованы;
+ *     совпадение ищется по слепому индексу, а он знает лишь целое значение.
+ *     Поиск «по части адреса» означал бы расшифровку всей таблицы.
+ *  3. **Состояние аккаунта — одно поле `status`.** Второго признака
+ *     блокировки не заводится: он стал бы вторым местом правды.
+ */
+
+/** По какому полю ищем. Поле выбирается явно — «умный» поиск угадывает неверно. */
+export const AdminUserSearchFieldSchema = z.enum(['name', 'email', 'phone', 'id']);
+export type AdminUserSearchField = z.infer<typeof AdminUserSearchFieldSchema>;
+
+/** Столбцы, по которым разрешена сортировка. Белый список, а не строка из запроса. */
+export const AdminUserSortSchema = z.enum(['created_at', 'display_name', 'status']);
+export type AdminUserSort = z.infer<typeof AdminUserSortSchema>;
+
+export const AdminUserKycStatusSchema = z.enum([
+  'none',
+  'pending',
+  'in_review',
+  'approved',
+  'rejected',
+  'verification_pending',
+]);
+export type AdminUserKycStatus = z.infer<typeof AdminUserKycStatusSchema>;
+
+export const ADMIN_USERS_PER_PAGE_DEFAULT = 25;
+export const ADMIN_USERS_PER_PAGE_MAX = 100;
+
+/**
+ * Запрос страницы списка.
+ *
+ * Поиск, фильтры и сортировка выполняются в БД по всей выборке, а не по
+ * загруженной странице: страничная фильтрация врёт человеку, показывая «ничего
+ * не найдено» там, где найденное просто на другой странице.
+ */
+export const AdminUserListQuerySchema = z.object({
+  field: AdminUserSearchFieldSchema.default('name'),
+  /** Пустая строка — не поиск, а «покажи начало списка». */
+  q: z.string().trim().max(254).default(''),
+  role: RoleSchema.optional(),
+  status: UserStatusSchema.optional(),
+  kyc: AdminUserKycStatusSchema.optional(),
+  sort: AdminUserSortSchema.default('created_at'),
+  dir: z.enum(['asc', 'desc']).default('desc'),
+  page: z.coerce.number().int().min(1).max(10000).default(1),
+  perPage: z.coerce
+    .number()
+    .int()
+    .min(5)
+    .max(ADMIN_USERS_PER_PAGE_MAX)
+    .default(ADMIN_USERS_PER_PAGE_DEFAULT),
+});
+export type AdminUserListQuery = z.input<typeof AdminUserListQuerySchema>;
+
+/** Строка таблицы. Ровно то, что нужно, чтобы узнать человека и открыть карточку. */
+export const AdminUserRowSchema = z.object({
+  id: UuidSchema,
+  displayName: z.string(),
+  avatarUrl: z.string().nullable(),
+  emailMasked: z.string().nullable(),
+  phoneMasked: z.string().nullable(),
+  roles: z.array(z.string()),
+  status: UserStatusSchema,
+  kycStatus: AdminUserKycStatusSchema,
+  createdAt: IsoDateTimeSchema,
+});
+export type AdminUserRow = z.infer<typeof AdminUserRowSchema>;
+
+export const AdminUserPageSchema = z.object({
+  items: z.array(AdminUserRowSchema),
+  /** Всего подходящих записей — без него постраничная навигация слепая. */
+  total: z.number().int().min(0),
+  page: z.number().int().min(1),
+  perPage: z.number().int().min(1),
+});
+export type AdminUserPage = z.infer<typeof AdminUserPageSchema>;
+
+// ------------------------------------------------------------------ карточка
+
+export const AdminUserRoleGrantSchema = z.object({
+  role: z.string(),
+  grantedAt: IsoDateTimeSchema,
+  revokedAt: IsoDateTimeSchema.nullable(),
+});
+
+export const AdminUserKycRecordSchema = z.object({
+  id: UuidSchema,
+  kind: z.string(),
+  status: z.string(),
+  provider: z.string().nullable(),
+  rejectionReason: z.string().nullable(),
+  decidedAt: IsoDateTimeSchema.nullable(),
+  createdAt: IsoDateTimeSchema,
+});
+
+export const AdminUserProjectSchema = z.object({
+  id: UuidSchema,
+  title: z.string(),
+  role: z.string(),
+  listingStatus: z.string(),
+});
+
+export const AdminUserEntitySchema = z.object({
+  id: UuidSchema,
+  legalName: z.string(),
+  jurisdiction: z.string(),
+  registryStatus: z.string(),
+});
+
+export const AdminUserCapabilitySchema = z.object({
+  capability: z.string(),
+  title: z.string(),
+  reason: z.string(),
+  grantedAt: IsoDateTimeSchema,
+});
+
+export const AdminUserAssignmentSchema = z.object({
+  id: UuidSchema,
+  projectId: UuidSchema,
+  projectTitle: z.string(),
+  purpose: z.string(),
+  status: z.string(),
+  accessRevokedAt: IsoDateTimeSchema.nullable(),
+});
+
+/**
+ * Строка истории административных действий.
+ *
+ * `context` отдаётся только для событий, которые платформа пишет сама и чей
+ * состав известен (причина блокировки, изменённое поле). Произвольный
+ * `context_jsonb` наружу не уходит: в нём может оказаться что угодно, включая
+ * персональные данные, и карточка стала бы обходным путём к ним.
+ */
+export const AdminUserHistoryEntrySchema = z.object({
+  ts: IsoDateTimeSchema,
+  verb: z.string(),
+  actorId: UuidSchema.nullable(),
+  actorName: z.string().nullable(),
+  context: z.record(z.string(), z.unknown()).nullable(),
+});
+
+export const AdminUserCardSchema = z.object({
+  id: UuidSchema,
+  displayName: z.string(),
+  avatarUrl: z.string().nullable(),
+  emailMasked: z.string().nullable(),
+  phoneMasked: z.string().nullable(),
+  primaryRole: z.string(),
+  roles: z.array(AdminUserRoleGrantSchema),
+  status: UserStatusSchema,
+  locale: z.string(),
+  serviceCountry: z.string().nullable(),
+  currencyPref: z.string(),
+  homeContour: z.string(),
+  mfaEnabled: z.boolean(),
+  createdAt: IsoDateTimeSchema,
+  updatedAt: IsoDateTimeSchema,
+  /** Рубеж сессий: всё, что выдано раньше, недействительно (M035). */
+  sessionsValidFrom: IsoDateTimeSchema,
+  kyc: z.array(AdminUserKycRecordSchema),
+  projects: z.array(AdminUserProjectSchema),
+  entities: z.array(AdminUserEntitySchema),
+  capabilities: z.array(AdminUserCapabilitySchema),
+  assignments: z.array(AdminUserAssignmentSchema),
+  supportTickets: z.number().int().min(0),
+  history: z.array(AdminUserHistoryEntrySchema),
+  /** Может ли смотрящий раскрыть контакты (полномочие M122). */
+  canRevealContacts: z.boolean(),
+});
+export type AdminUserCard = z.infer<typeof AdminUserCardSchema>;
+
+/** Раскрытые контакты. Отдельный ответ — чтобы их нельзя было получить случайно. */
+export const AdminUserContactsSchema = z.object({
+  email: z.string().nullable(),
+  phone: z.string().nullable(),
+});
+export type AdminUserContacts = z.infer<typeof AdminUserContactsSchema>;
+
+// -------------------------------------------------------------------- действия
+
+/**
+ * Смена состояния учётной записи.
+ *
+ * Разрешены ровно два перехода: active в suspended и обратно. Статус `deleted`
+ * сюда не входит — удаление это другой процесс с другими последствиями, и
+ * притворяться, что это «ещё один пункт выпадающего списка», нельзя.
+ */
+export const AdminUserStatusChangeSchema = z.object({
+  status: z.enum(['active', 'suspended']),
+  reason: boundedString(3, 500),
+});
+export type AdminUserStatusChange = z.infer<typeof AdminUserStatusChangeSchema>;
+
+/** Изменение обычных профильных полей администратором. Проверенных данных не касается. */
+export const AdminUserProfileUpdateSchema = z.object({
+  displayName: boundedString(2, 120),
+});
+export type AdminUserProfileUpdate = z.infer<typeof AdminUserProfileUpdateSchema>;
