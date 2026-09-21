@@ -1,0 +1,21 @@
+{
+  "table": "billing.round_service_offers",
+  "naturalKey": ["service_id", "country_code", "version"],
+  "columns": [
+    "service_id",
+    "country_code",
+    "version",
+    "price",
+    "currency",
+    "valid_from",
+    "valid_to",
+    "reason"
+  ],
+  "refs": {
+    "service_id": {
+      "table": "billing.round_services",
+      "key": ["code"]
+    }
+  },
+  "rows": []
+}

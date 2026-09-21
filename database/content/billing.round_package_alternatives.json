@@ -1,0 +1,16 @@
+{
+  "table": "billing.round_package_alternatives",
+  "naturalKey": ["package_id", "alternative_id"],
+  "columns": ["package_id", "alternative_id", "reason"],
+  "refs": {
+    "alternative_id": {
+      "table": "billing.round_packages",
+      "key": ["code", "version"]
+    },
+    "package_id": {
+      "table": "billing.round_packages",
+      "key": ["code", "version"]
+    }
+  },
+  "rows": []
+}

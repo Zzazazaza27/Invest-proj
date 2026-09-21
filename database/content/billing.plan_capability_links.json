@@ -1,0 +1,12 @@
+{
+  "table": "billing.plan_capability_links",
+  "naturalKey": ["plan_id", "capability"],
+  "columns": ["plan_id", "capability", "reason"],
+  "refs": {
+    "plan_id": {
+      "table": "billing.subscription_plans",
+      "key": ["code", "version"]
+    }
+  },
+  "rows": []
+}

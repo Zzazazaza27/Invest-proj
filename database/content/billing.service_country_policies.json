@@ -1,0 +1,41 @@
+{
+  "table": "billing.service_country_policies",
+  "naturalKey": ["country_code", "version"],
+  "columns": ["country_code", "version", "config_jsonb", "is_active", "valid_from", "reason"],
+  "refs": {},
+  "rows": [
+    {
+      "country_code": "ru",
+      "version": 1,
+      "config_jsonb": {
+        "fx": {
+          "mode": "none"
+        },
+        "limits": {
+          "maxTargetPerRound": null
+        },
+        "operator": {
+          "notify": {
+            "enabled": false,
+            "minTarget": null,
+            "recipients": []
+          },
+          "manualReviewRequired": false
+        },
+        "baseCurrency": "RUB",
+        "paidPackages": {
+          "enabled": false
+        },
+        "freeAttraction": {
+          "basis": null,
+          "amount": null,
+          "enabled": false
+        },
+        "allowedRoundCurrencies": ["RUB"]
+      },
+      "is_active": true,
+      "valid_from": "2026-09-21T13:24:46.585Z",
+      "reason": "Стартовые условия: только RUB; бесплатная граница и пакеты выключены до решений реестра 2026-09-18"
+    }
+  ]
+}

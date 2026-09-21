@@ -1,0 +1,41 @@
+{
+  "table": "seasons.seasons",
+  "naturalKey": ["number"],
+  "columns": [
+    "number",
+    "title",
+    "starts_at",
+    "ends_at",
+    "status",
+    "investor_cap",
+    "new_member_cap_per_year",
+    "funnel_config_jsonb"
+  ],
+  "refs": {},
+  "rows": [
+    {
+      "number": 1,
+      "title": "Сезон 1",
+      "starts_at": "2026-09-01T00:00:00.000Z",
+      "ends_at": "2026-12-31T23:59:59.000Z",
+      "status": "draft",
+      "investor_cap": null,
+      "new_member_cap_per_year": null,
+      "funnel_config_jsonb": {
+        "expert_sla_days": 7,
+        "reviewers_per_project": 2,
+        "third_reviewer_threshold": 25
+      }
+    },
+    {
+      "number": 2,
+      "title": "Демонстрационный сезон",
+      "starts_at": "2026-09-01T13:27:00.089Z",
+      "ends_at": "2026-11-30T13:27:00.089Z",
+      "status": "review",
+      "investor_cap": null,
+      "new_member_cap_per_year": null,
+      "funnel_config_jsonb": {}
+    }
+  ]
+}

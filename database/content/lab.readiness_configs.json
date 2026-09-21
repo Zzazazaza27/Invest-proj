@@ -1,0 +1,64 @@
+{
+  "table": "lab.readiness_configs",
+  "naturalKey": ["version"],
+  "columns": ["version", "schema_version", "config_jsonb", "is_active", "reason"],
+  "refs": {},
+  "rows": [
+    {
+      "version": 1,
+      "schema_version": 1,
+      "config_jsonb": {
+        "sections": {
+          "team": {
+            "weight": 1
+          },
+          "legal": {
+            "weight": 1
+          },
+          "risks": {
+            "weight": 1
+          },
+          "market": {
+            "weight": 1
+          },
+          "funding": {
+            "weight": 1
+          },
+          "problem": {
+            "weight": 1
+          },
+          "project": {
+            "weight": 1
+          },
+          "solution": {
+            "weight": 1
+          },
+          "traction": {
+            "weight": 1
+          },
+          "economics": {
+            "weight": 1
+          },
+          "execution": {
+            "weight": 1
+          },
+          "materials": {
+            "weight": 1
+          },
+          "competition": {
+            "weight": 1
+          },
+          "business_model": {
+            "weight": 1
+          }
+        },
+        "levelPoints": {
+          "mandatory": 2,
+          "recommended": 1
+        }
+      },
+      "is_active": true,
+      "reason": "Стартовые веса версии 1: разделы равны, обязательный вопрос — 2 балла, рекомендуемый — 1 (план 0.2 §2.7)"
+    }
+  ]
+}

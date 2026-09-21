@@ -1,0 +1,21 @@
+{
+  "table": "billing.round_packages",
+  "naturalKey": ["code", "version"],
+  "columns": [
+    "code",
+    "version",
+    "country_code",
+    "name",
+    "description",
+    "price",
+    "currency",
+    "min_target",
+    "max_target",
+    "valid_from",
+    "valid_to",
+    "reason",
+    "validity_days"
+  ],
+  "refs": {},
+  "rows": []
+}

@@ -1,0 +1,12 @@
+{
+  "table": "content.text_versions",
+  "naturalKey": ["entry_id", "locale", "field", "version"],
+  "columns": ["entry_id", "locale", "field", "body", "version", "valid_from", "valid_to", "reason"],
+  "refs": {
+    "entry_id": {
+      "table": "content.text_entries",
+      "key": ["namespace", "key"]
+    }
+  },
+  "rows": []
+}

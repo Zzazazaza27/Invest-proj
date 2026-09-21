@@ -1,0 +1,7 @@
+{
+  "table": "content.text_entries",
+  "naturalKey": ["namespace", "key"],
+  "columns": ["namespace", "key", "sort_order", "is_active"],
+  "refs": {},
+  "rows": []
+}

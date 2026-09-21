@@ -1,0 +1,282 @@
+{
+  "table": "comms.notification_templates",
+  "naturalKey": ["code", "channel", "locale", "version"],
+  "columns": [
+    "code",
+    "channel",
+    "locale",
+    "version",
+    "title_template",
+    "body_template",
+    "fallback_chain",
+    "is_critical",
+    "is_active"
+  ],
+  "refs": {},
+  "rows": [
+    {
+      "code": "billing.commission.accrued",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Счёт на вознаграждение оператора",
+      "body_template": "Начислено вознаграждение оператора: {{amount}} ₽ ({{fee_pct}}% от суммы договора {{contract_amount}} ₽). Счёт {{invoice_number}}, оплата до {{due_at}}.",
+      "fallback_chain": ["push", "sms"],
+      "is_critical": true,
+      "is_active": true
+    },
+    {
+      "code": "billing.commission.accrued",
+      "channel": "sms",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": null,
+      "body_template": "Счёт {{invoice_number}} на {{amount}} ₽. Оплата до {{due_at}}.",
+      "fallback_chain": [],
+      "is_critical": true,
+      "is_active": true
+    },
+    {
+      "code": "billing.payment_failed",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Платёж не прошёл",
+      "body_template": "Платёж по счёту {{invoice_number}} не прошёл. Листинг будет снят с публикации после {{grace_until}}, данные проекта сохранятся.",
+      "fallback_chain": ["push", "sms"],
+      "is_critical": true,
+      "is_active": true
+    },
+    {
+      "code": "consent.reaccept_required",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Обновлены тарифы и условия вознаграждения",
+      "body_template": "Опубликована версия {{version}} документа «{{document}}». Ре-акцепт обязателен до следующей платёжной операции. Grace-период — 14 дней.",
+      "fallback_chain": ["push"],
+      "is_critical": true,
+      "is_active": true
+    },
+    {
+      "code": "expert.assignment",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Новое назначение на экспертизу",
+      "body_template": "Вам назначен проект на рецензию. Срок — до {{due_at}}.",
+      "fallback_chain": ["telegram"],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "expert.assignment.created",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Новая заявка на рецензию",
+      "body_template": "Проект «{{project_title}}» назначен вам на рецензию. Срок — {{due_at}}. Если есть конфликт интересов, заявите его до начала работы.",
+      "fallback_chain": [],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "expert.assignment.created",
+      "channel": "push",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Новая заявка на рецензию",
+      "body_template": "Проект «{{project_title}}» ждёт вашей оценки до {{due_at}}.",
+      "fallback_chain": ["telegram", "email"],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "expert.consensus.decided",
+      "channel": "push",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Решение по проекту",
+      "body_template": "По проекту «{{project_title}}» принято решение: {{decision}}.",
+      "fallback_chain": ["telegram", "email"],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "investment.agreement.signed",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Договор инвестирования подписан",
+      "body_template": "Договор по проекту «{{project_title}}» подписан обеими сторонами. Он вступит в силу после подтверждения первого транша.",
+      "fallback_chain": [],
+      "is_critical": true,
+      "is_active": true
+    },
+    {
+      "code": "investment.first_tranche.confirmed",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Первый транш подтверждён",
+      "body_template": "Первый транш по договору {{agreement_number}} подтверждён. Договор вступил в силу.",
+      "fallback_chain": [],
+      "is_critical": true,
+      "is_active": true
+    },
+    {
+      "code": "listing.published",
+      "channel": "push",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Листинг опубликован",
+      "body_template": "Проект «{{project_title}}» виден инвесторам.",
+      "fallback_chain": ["telegram", "email"],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "project.scored",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Оценка проекта готова",
+      "body_template": "Проект «{{project_title}}» получил IRS {{irs}}. Подробности — в кабинете.",
+      "fallback_chain": [],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "project.scored",
+      "channel": "push",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Оценка готова",
+      "body_template": "Проект «{{project_title}}» получил IRS {{irs}}.",
+      "fallback_chain": ["telegram", "email"],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "season.golden_ticket.granted",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Золотой билет сезона",
+      "body_template": "Проект «{{project_title}}» получил золотой билет и проходит в следующий этап сезона.",
+      "fallback_chain": [],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "season.golden_ticket.granted",
+      "channel": "push",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Золотой билет",
+      "body_template": "Проект «{{project_title}}» получил золотой билет сезона.",
+      "fallback_chain": ["telegram", "email"],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "season.rating.published",
+      "channel": "push",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Рейтинг сезона обновлён",
+      "body_template": "Рейтинг сезона {{season_number}} пересчитан.",
+      "fallback_chain": ["telegram"],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "season.stage.advanced",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Новый этап сезона",
+      "body_template": "Проект «{{project_title}}» переведён на этап «{{stage_title}}» сезона {{season_number}}. Подробности и следующие шаги — в кабинете основателя.",
+      "fallback_chain": [],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "season.stage.advanced",
+      "channel": "push",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Проект прошёл дальше",
+      "body_template": "Проект «{{project_title}}» переведён на этап «{{stage_title}}» сезона {{season_number}}.",
+      "fallback_chain": ["telegram", "email"],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "season.stage.rejected",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Решение по заявке сезона",
+      "body_template": "Заявка проекта «{{project_title}}» не проходит дальше в сезоне {{season_number}}. Заявку можно доработать и подать в следующем сезоне.",
+      "fallback_chain": [],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "season.stage.rejected",
+      "channel": "push",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Решение по заявке",
+      "body_template": "Заявка проекта «{{project_title}}» не проходит дальше в сезоне {{season_number}}.",
+      "fallback_chain": ["telegram", "email"],
+      "is_critical": false,
+      "is_active": true
+    },
+    {
+      "code": "security.mfa_changed",
+      "channel": "sms",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": null,
+      "body_template": "Изменены настройки двухфакторной аутентификации. Если это не вы — свяжитесь с поддержкой.",
+      "fallback_chain": ["email"],
+      "is_critical": true,
+      "is_active": true
+    },
+    {
+      "code": "security.new_login",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Вход с нового устройства",
+      "body_template": "Зафиксирован вход с устройства {{device}} ({{ip_region}}). Если это не вы — немедленно смените пароль и проверьте факторы MFA.",
+      "fallback_chain": [],
+      "is_critical": true,
+      "is_active": true
+    },
+    {
+      "code": "security.new_login",
+      "channel": "sms",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": null,
+      "body_template": "Вход в аккаунт с нового устройства {{device}}. Если это не вы — смените пароль.",
+      "fallback_chain": ["email"],
+      "is_critical": true,
+      "is_active": true
+    },
+    {
+      "code": "subscription.past_due",
+      "channel": "email",
+      "locale": "ru-RU",
+      "version": 1,
+      "title_template": "Подписка просрочена",
+      "body_template": "Подписка по проекту «{{project_title}}» просрочена. Листинг снят с публикации до возобновления оплаты. Данные сохранены.",
+      "fallback_chain": ["push"],
+      "is_critical": true,
+      "is_active": true
+    }
+  ]
+}

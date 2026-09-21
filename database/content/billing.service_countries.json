@@ -1,0 +1,13 @@
+{
+  "table": "billing.service_countries",
+  "naturalKey": ["code"],
+  "columns": ["code", "is_active", "sort_order"],
+  "refs": {},
+  "rows": [
+    {
+      "code": "ru",
+      "is_active": true,
+      "sort_order": 10
+    }
+  ]
+}

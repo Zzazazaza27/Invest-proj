@@ -1,0 +1,7 @@
+{
+  "table": "billing.round_services",
+  "naturalKey": ["code"],
+  "columns": ["code", "name", "description", "is_implemented", "execution_kind"],
+  "refs": {},
+  "rows": []
+}

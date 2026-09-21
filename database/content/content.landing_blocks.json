@@ -1,0 +1,7 @@
+{
+  "table": "content.landing_blocks",
+  "naturalKey": ["key", "locale", "valid_from"],
+  "columns": ["key", "locale", "title", "body", "link_url", "valid_from", "valid_to"],
+  "refs": {},
+  "rows": []
+}

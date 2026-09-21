@@ -1,0 +1,31 @@
+{
+  "table": "billing.fee_schedules",
+  "naturalKey": ["code", "version"],
+  "columns": [
+    "code",
+    "version",
+    "investor_fee_pct",
+    "issuer_fee_pct",
+    "rules_version",
+    "valid_from",
+    "valid_to",
+    "published_at",
+    "total_pct",
+    "reason"
+  ],
+  "refs": {},
+  "rows": [
+    {
+      "code": "operator_success_fee",
+      "version": 1,
+      "investor_fee_pct": "10.00",
+      "issuer_fee_pct": "5.00",
+      "rules_version": "platform_rules_v1",
+      "valid_from": "2026-08-09T00:00:00.000Z",
+      "valid_to": null,
+      "published_at": "2026-09-21T13:24:45.714Z",
+      "total_pct": "15.00",
+      "reason": "Перенос M096: условия из стартового сида, значения владельцем не утверждены"
+    }
+  ]
+}

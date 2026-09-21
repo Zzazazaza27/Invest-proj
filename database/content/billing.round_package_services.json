@@ -1,0 +1,16 @@
+{
+  "table": "billing.round_package_services",
+  "naturalKey": ["package_id", "service_id"],
+  "columns": ["package_id", "service_id"],
+  "refs": {
+    "package_id": {
+      "table": "billing.round_packages",
+      "key": ["code", "version"]
+    },
+    "service_id": {
+      "table": "billing.round_services",
+      "key": ["code"]
+    }
+  },
+  "rows": []
+}

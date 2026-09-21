@@ -1,0 +1,82 @@
+{
+  "table": "identity.consent_templates",
+  "naturalKey": ["kind", "version", "locale"],
+  "columns": [
+    "kind",
+    "version",
+    "locale",
+    "body_sha256",
+    "s3_key",
+    "published_at",
+    "superseded_at"
+  ],
+  "refs": {},
+  "rows": [
+    {
+      "kind": "commission_terms",
+      "version": "v1",
+      "locale": "ru-RU",
+      "body_sha256": {
+        "__bytea__": "9IFUZv+L4LIvlV0kXbZT7KPrTRYnj6J2WTmUmBWzHMI="
+      },
+      "s3_key": "legal/commission_terms_v1.md",
+      "published_at": "2026-08-09T00:00:00.000Z",
+      "superseded_at": null
+    },
+    {
+      "kind": "marketing_communications",
+      "version": "v1",
+      "locale": "ru-RU",
+      "body_sha256": {
+        "__bytea__": "s6XWT1Pul154woHp3rWo3CjM88lFHBskLV1VqP6hDQs="
+      },
+      "s3_key": "legal/marketing_v1.md",
+      "published_at": "2026-08-09T00:00:00.000Z",
+      "superseded_at": null
+    },
+    {
+      "kind": "pdn",
+      "version": "v1",
+      "locale": "ru-RU",
+      "body_sha256": {
+        "__bytea__": "bbKlEU2cXIqkd5nF4VPLOAwYVU9Mn40P3k2fRO8I8jE="
+      },
+      "s3_key": "legal/pdn_v1.md",
+      "published_at": "2026-08-09T00:00:00.000Z",
+      "superseded_at": null
+    },
+    {
+      "kind": "pdn_biometric",
+      "version": "v1",
+      "locale": "ru-RU",
+      "body_sha256": {
+        "__bytea__": "CztBapA0J7V77QxorZgc4DS6/Ni6Xm9s6jaZNrgqnBk="
+      },
+      "s3_key": "legal/pdn_biometric_v1.md",
+      "published_at": "2026-08-09T00:00:00.000Z",
+      "superseded_at": null
+    },
+    {
+      "kind": "platform_rules",
+      "version": "v1",
+      "locale": "ru-RU",
+      "body_sha256": {
+        "__bytea__": "YwSUjxCEdR/ToHJLpWgW0ixsRyeTjrjdWafojAMUDsA="
+      },
+      "s3_key": "legal/platform_rules_v1.md",
+      "published_at": "2026-08-09T00:00:00.000Z",
+      "superseded_at": null
+    },
+    {
+      "kind": "tos",
+      "version": "v1",
+      "locale": "ru-RU",
+      "body_sha256": {
+        "__bytea__": "QuBl1sWxOcZJpn0GiYsaVrJqWRp38wsHRj7uByQvIb8="
+      },
+      "s3_key": "legal/tos_v1.md",
+      "published_at": "2026-08-09T00:00:00.000Z",
+      "superseded_at": null
+    }
+  ]
+}

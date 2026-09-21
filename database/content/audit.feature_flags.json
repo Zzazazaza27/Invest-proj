@@ -1,0 +1,133 @@
+{
+  "table": "audit.feature_flags",
+  "naturalKey": ["key"],
+  "columns": ["key", "enabled", "rules_jsonb"],
+  "refs": {},
+  "rows": [
+    {
+      "key": "access.entity_grants.enabled",
+      "enabled": false,
+      "rules_jsonb": {
+        "note": "Выдача разрешений организации отложена (2026-09-19): нет управления составом организации (приглашения, выход, исключение участника, роли). Выключен: организационные выдачи не создаются и не дают доступа. Включение — только вместе с реализацией членства (TODO, направление «Организации и участники»)."
+      }
+    },
+    {
+      "key": "ai.answers_to_model.allowed",
+      "enabled": false,
+      "rules_jsonb": {
+        "note": "Разрешение отправлять ответы анкеты внешней языковой модели (6.1). Выключено: условия обработки не согласованы. Влияет только на LLM-путь; разбор по правилам считает собственный шлюз."
+      }
+    },
+    {
+      "key": "ai.mentor.enabled",
+      "enabled": false,
+      "rules_jsonb": {
+        "note": "включается после eval-гейта Langfuse"
+      }
+    },
+    {
+      "key": "ai.scoring.enabled",
+      "enabled": true,
+      "rules_jsonb": {}
+    },
+    {
+      "key": "ai.scoring.llm.enabled",
+      "enabled": false,
+      "rules_jsonb": {
+        "requires": ["active_provider_credential", "eval_gate_passed"]
+      }
+    },
+    {
+      "key": "billing.investor_access_requires_subscription",
+      "enabled": true,
+      "rules_jsonb": {
+        "note": "Коммерческий допуск инвестора к Investor View: включён — нужно действующее членство investor_membership (поведение до 5.7); выключен — достаточно роли investor. Права на данные (режим проекта, согласие владельца, grant, отметки материалов) проверяются до флага и им не обходятся."
+      }
+    },
+    {
+      "key": "billing.payments.enabled",
+      "enabled": false,
+      "rules_jsonb": {
+        "note": "счёт оплачивается по реквизитам, поступление сверяет оператор",
+        "requires": "платёжный провайдер: договор, ключи, вебхук подтверждения"
+      }
+    },
+    {
+      "key": "billing.subscriptions.enabled",
+      "enabled": true,
+      "rules_jsonb": {}
+    },
+    {
+      "key": "billing.test_payment_confirmation",
+      "enabled": false,
+      "rules_jsonb": {
+        "note": "Тестовое подтверждение оплаты покупки запуска раунда (5.9.7). Денег не двигает; покупка навсегда помечается is_test_payment. Только для локальных и проверочных окружений: в production действие отвергается независимо от флага."
+      }
+    },
+    {
+      "key": "capital.integration.enabled",
+      "enabled": false,
+      "rules_jsonb": {
+        "gate": "B"
+      }
+    },
+    {
+      "key": "investments.enabled",
+      "enabled": false,
+      "rules_jsonb": {
+        "gate": "A",
+        "requires": "ОИП registry + approved platform rules"
+      }
+    },
+    {
+      "key": "investments.instrument.dfa",
+      "enabled": false,
+      "rules_jsonb": {
+        "gate": "A"
+      }
+    },
+    {
+      "key": "investments.instrument.loan",
+      "enabled": false,
+      "rules_jsonb": {
+        "gate": "A",
+        "note": "allowlist утверждается до подачи Правил"
+      }
+    },
+    {
+      "key": "investments.instrument.security",
+      "enabled": false,
+      "rules_jsonb": {
+        "gate": "A"
+      }
+    },
+    {
+      "key": "investments.instrument.utility_digital_right",
+      "enabled": false,
+      "rules_jsonb": {
+        "gate": "A"
+      }
+    },
+    {
+      "key": "lab.ui.application_v2",
+      "enabled": false,
+      "rules_jsonb": {
+        "note": "Мастер инвестиционной заявки v2 в кабинете основателя (этап 4). Выключен: кабинет v1 по умолчанию; включается администратором для проверки прототипа."
+      }
+    },
+    {
+      "key": "seasons.enabled",
+      "enabled": false,
+      "rules_jsonb": {
+        "note": "Сезонный контур отложен (2026-09-18). Выключен: роль organizer бездействует, публичные сезонные выдачи и подача в сезон закрыты; административные операции сезона доступны администратору. Включение — только вместе с возвратом направления «Сезоны» (TODO)."
+      }
+    },
+    {
+      "key": "show.publication.enabled",
+      "enabled": false,
+      "rules_jsonb": {
+        "note": "медиаконтур — фаза 3 по Architect.md"
+      }
+    }
+  ]
+}

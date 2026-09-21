@@ -1,0 +1,15 @@
+{
+  "table": "billing.fee_offset_rules",
+  "naturalKey": ["version"],
+  "columns": ["version", "is_enabled", "config_jsonb", "reason", "is_active"],
+  "refs": {},
+  "rows": [
+    {
+      "version": 1,
+      "is_enabled": false,
+      "config_jsonb": {},
+      "reason": "Стартовое состояние: зачёт выключен до утверждения правила владельцем",
+      "is_active": true
+    }
+  ]
+}

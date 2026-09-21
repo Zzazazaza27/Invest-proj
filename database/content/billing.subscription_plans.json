@@ -1,0 +1,31 @@
+{
+  "table": "billing.subscription_plans",
+  "naturalKey": ["code", "version"],
+  "columns": [
+    "code",
+    "version",
+    "name",
+    "price",
+    "currency",
+    "billing_period",
+    "features_jsonb",
+    "valid_from",
+    "valid_to",
+    "published_at"
+  ],
+  "refs": {},
+  "rows": [
+    {
+      "code": "investor_membership",
+      "version": 1,
+      "name": "Подписка инвестора",
+      "price": "100000.00",
+      "currency": "RUB",
+      "billing_period": "monthly",
+      "features_jsonb": {},
+      "valid_from": "2026-08-09T00:00:00.000Z",
+      "valid_to": null,
+      "published_at": "2026-09-21T13:24:45.714Z"
+    }
+  ]
+}

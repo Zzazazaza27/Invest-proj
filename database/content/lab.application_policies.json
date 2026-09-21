@@ -1,0 +1,24 @@
+{
+  "table": "lab.application_policies",
+  "naturalKey": ["version"],
+  "columns": ["version", "config_jsonb", "is_active", "reason"],
+  "refs": {},
+  "rows": [
+    {
+      "version": 1,
+      "config_jsonb": {
+        "count": {
+          "draft": true,
+          "archived": false,
+          "submitted": true
+        },
+        "maxAskPerApplication": "5000000.00",
+        "maxApplicationsPerAccount": null,
+        "maxApplicationsPerProject": 3,
+        "maxOpenAskTotalPerProject": null
+      },
+      "is_active": true,
+      "reason": "Стартовые значения первой очереди (план 0.2 §2.8)"
+    }
+  ]
+}
