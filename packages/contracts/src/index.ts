@@ -40,6 +40,7 @@ export * from './domain/commission';
 export * from './domain/staff-capabilities';
 export * from './domain/admin-users';
 export * from './domain/profile';
+export * from './domain/testing-sessions';
 export * from './domain/investments';
 export * from './domain/integration';
 export * from './domain/support';

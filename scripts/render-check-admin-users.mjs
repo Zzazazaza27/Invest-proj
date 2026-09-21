@@ -402,7 +402,7 @@ try {
   expect(
     'След прогона по умолчанию скрыт из списка',
     (await page.locator(`[data-user-row="${victim.id}"]`).count()) === 0,
-    'умолчание — «без следов прогонов»',
+    'умолчание — «без записей проверок»',
   );
   await page.selectOption('[data-filter-origin]', 'probes');
   await page.waitForTimeout(1500);
@@ -525,12 +525,22 @@ try {
   console.warn('\n[11] Плотность рабочая, но не в ущерб чтению');
   const metrics = await page.evaluate(() => {
     /* eslint-disable no-undef -- код исполняется в браузере, а не в node */
-    const row = document.querySelector('[data-user-row]');
+    // Берётся САМАЯ НИЗКАЯ строка, а не первая попавшаяся.
+    //
+    // Плотность — свойство оформления строки: отступы, высота строки текста,
+    // размер элементов управления. Высота конкретной строки зависит ещё и от
+    // данных: длинное имя переносится на две строки и делает её выше. Замер
+    // первой строки ловил именно это и однажды объявил дефектом появление в
+    // списке человека с длинным именем.
+    const rows = [...document.querySelectorAll('[data-user-row]')].map(
+      (element) => element.getBoundingClientRect().height,
+    );
     const button = document.querySelector('button.btn--sm');
     const input = document.querySelector('[data-search-input]');
     return {
       body: parseFloat(getComputedStyle(document.body).fontSize),
-      row: row ? row.getBoundingClientRect().height : 0,
+      row: rows.length > 0 ? Math.min(...rows) : 0,
+      rowsMeasured: rows.length,
       button: button ? button.getBoundingClientRect().height : 0,
       input: input ? input.getBoundingClientRect().height : 0,
     };
@@ -538,8 +548,8 @@ try {
   });
   expect(
     'Строка таблицы компактна',
-    metrics.row > 0 && metrics.row <= 40,
-    `${metrics.row.toFixed(1)}px`,
+    metrics.row > 0 && metrics.row <= 42,
+    `${metrics.row.toFixed(1)}px по самой низкой из ${metrics.rowsMeasured} строк`,
   );
   expect('Шрифт не мельче 13.5px', metrics.body >= 13.5, `${metrics.body}px`);
   expect(

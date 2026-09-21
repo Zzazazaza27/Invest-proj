@@ -29,6 +29,7 @@ import { RoundPackagesPage } from './pages/RoundPackagesPage';
 import { CommissionPage } from './pages/CommissionPage';
 import { DealsPage } from './pages/DealsPage';
 import { UsersPage } from './pages/UsersPage';
+import { TestingSessionsPage } from './pages/TestingSessionsPage';
 import { UserCardPage } from './pages/UserCardPage';
 
 /**
@@ -245,6 +246,15 @@ export function App() {
             </NavGroup>
           ) : null}
 
+          {/*
+            Проверка — не настройка и не работа с людьми: это инструмент,
+            которым платформу проходят насквозь. Поэтому своя группа, а не
+            пункт среди справочников.
+          */}
+          <NavGroup title="Проверка">
+            <NavItem to="/testing" label="Тестовые сессии" />
+          </NavGroup>
+
           <NavGroup title="Настройки платформы">
             <NavItem to="/integrations" label="Интеграции" />
             <NavItem to="/texts" label="Словарь и ЧАВО" />
@@ -320,6 +330,7 @@ export function App() {
             <Route path="/commission" element={<CommissionPage />} />
             <Route path="/deals" element={<DealsPage />} />
             <Route path="/flags" element={<FlagsPage />} />
+            <Route path="/testing" element={<TestingSessionsPage />} />
             <Route path="/access" element={<AccessPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>

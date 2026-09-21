@@ -1,6 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { uuidv7 } from '@unicorn/contracts';
-import type { Tx } from '../db/unit-of-work';
+import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { errors } from '../common/errors';
 
 /**
@@ -16,6 +16,61 @@ import { errors } from '../common/errors';
  */
 @Injectable()
 export class AuditRepository {
+  constructor(private readonly db: Database) {}
+
+  /**
+   * Обязательная запись в журнал во время просмотра чужого кабинета (M129).
+   *
+   * ЗАЧЕМ ОТДЕЛЬНЫЙ ПУТЬ. В режиме просмотра `Database.transaction()`
+   * отказывает — так закрыты неявные изменения. Но часть чтений обязана
+   * оставлять след: раскрытие чувствительных данных без записи в журнал
+   * недопустимо ни в каком режиме. Если бы запрет не имел исключения,
+   * пришлось бы выбирать между «не записали» и «разрешили писать».
+   *
+   * ПОЧЕМУ ЭТО НЕ ДЫРА. У метода НЕТ параметра-обработчика: вызывающий не
+   * может выполнить здесь произвольный запрос. Единственное, что делает этот
+   * путь, — добавляет строку в журнал через ту же функцию с hash-chain.
+   * Записать пользовательские данные через него нельзя не по договорённости,
+   * а потому что интерфейс такого не принимает.
+   *
+   * В поток событий запись не публикуется: просмотр — не доменное событие, и
+   * внешним подписчикам знать о нём нечего.
+   */
+  async recordDuringView(
+    ctx: RequestContext,
+    input: {
+      verb: string;
+      actorId: string | null;
+      actorRole: string;
+      subjectType: string | null;
+      subjectId: string | null;
+      context?: Record<string, unknown>;
+    },
+  ): Promise<string> {
+    // Признак просмотра снимается ТОЛЬКО здесь и только для этой операции:
+    // сам контекст запроса не меняется, и следующая доменная транзакция
+    // по-прежнему получит отказ.
+    const auditCtx: RequestContext = { ...ctx, viewOnly: false };
+    return this.db.transaction(auditCtx, (tx) =>
+      this.emit(tx, {
+        verb: input.verb,
+        actorId: input.actorId,
+        actorRole: input.actorRole,
+        subjectType: input.subjectType,
+        subjectId: input.subjectId,
+        context: {
+          ...(input.context ?? {}),
+          // Запись обязана различать инициатора и того, от чьего лица шёл
+          // запрос: без этого журнал отвечает «смотрел пользователь X»,
+          // хотя смотрел администратор.
+          viewedBy: ctx.initiatorUserId ?? null,
+          viewMode: true,
+        },
+        traceId: ctx.traceId,
+      }),
+    );
+  }
+
   /** Записать событие в append-only журнал с hash-chain. */
   async emit(
     tx: Tx,

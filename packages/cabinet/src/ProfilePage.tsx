@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { ContextualImage } from './test-context';
 import { Badge, Button, Card, ErrorState, Field, Input, LoadingState, Stack } from '@unicorn/ui';
 import type { MyProfile } from '@unicorn/contracts';
 import { AVATAR_LIMITS } from '@unicorn/contracts';
@@ -415,7 +416,9 @@ export function ProfileAvatar({
     flexShrink: 0,
     objectFit: 'cover',
   };
-  if (url) return <img src={url} alt="" style={base} data-testid="profile-avatar" />;
+  // Через ContextualImage: в тестовой вкладке картинка обязана прийти в том
+  // же контексте, что и данные, иначе её заберёт административная сессия.
+  if (url) return <ContextualImage src={url} alt="" style={base} data-testid="profile-avatar" />;
   return (
     <span
       aria-hidden="true"

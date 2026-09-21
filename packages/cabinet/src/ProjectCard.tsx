@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { ContextualImage } from './test-context';
 import {
   Badge,
   Button,
@@ -180,7 +181,7 @@ export function ProjectCard({
       <Card>
         <Stack>
           {media?.coverUrl ? (
-            <img
+            <ContextualImage
               data-project-cover
               src={media.coverUrl}
               alt=""
@@ -195,7 +196,7 @@ export function ProjectCard({
             />
           ) : null}
           {media?.logoUrl ? (
-            <img
+            <ContextualImage
               data-project-logo
               src={media.logoUrl}
               alt=""

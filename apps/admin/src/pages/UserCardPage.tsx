@@ -8,6 +8,7 @@ import {
   ORIGIN_LABEL,
   ROLE_LABEL,
   STATUS_LABEL,
+  ViewCabinetAction,
   statusTone,
 } from './users-shared';
 
@@ -121,9 +122,19 @@ export function UserCardPage() {
             </div>
           </div>
         </div>
-        <Link to="/users" className="btn--ghost btn--sm" style={{ textDecoration: 'none' }}>
-          ← К списку
-        </Link>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {/*
+            То же действие, что и в строке списка: человек, открывший
+            карточку, не должен возвращаться к списку ради просмотра.
+          */}
+          <ViewCabinetAction
+            userId={card.id}
+            roles={card.roles.filter((item) => item.revokedAt === null).map((item) => item.role)}
+          />
+          <Link to="/users" className="btn--ghost btn--sm" style={{ textDecoration: 'none' }}>
+            ← К списку
+          </Link>
+        </div>
       </div>
 
       {notice ? (

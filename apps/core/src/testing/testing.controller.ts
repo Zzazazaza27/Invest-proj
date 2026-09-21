@@ -28,6 +28,15 @@ const FinishSchema = z.object({
   result: z.enum(['unknown', 'passed', 'failed']).optional(),
 });
 
+const StepSchema = z.object({
+  ordinal: z.number().int().positive(),
+  name: z.string().trim().min(1).max(200),
+  status: z.enum(['passed', 'failed', 'skipped']),
+  actor: z.string().trim().min(1).max(80).nullish(),
+  expected: z.string().max(2000).nullish(),
+  actual: z.string().max(2000).nullish(),
+});
+
 const OpenContextSchema = z.union([
   z.object({ kind: z.literal('participant'), userId: z.string().uuid() }),
   z.object({ kind: z.literal('guest') }),
@@ -58,6 +67,15 @@ export class TestingController {
   @Roles('admin')
   async card(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     return this.sessions.card(ctx, id);
+  }
+
+  @Post('admin/testing/sessions/:id/steps')
+  @Roles('admin')
+  @HttpCode(200)
+  async addStep(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body() body: unknown) {
+    const input = StepSchema.parse(body);
+    await this.sessions.addStep(ctx, id, input);
+    return { ok: true };
   }
 
   @Post('admin/testing/sessions/:id/finish')

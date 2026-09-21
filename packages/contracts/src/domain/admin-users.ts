@@ -37,6 +37,11 @@ export const AccountOriginSchema = z.enum([
   'staff_check',
   'render_check',
   'load_test',
+  // Участник тестовой сессии (M129). Отличается от `render_check`
+  // намеренно: следы прогонов убирает `stand:clean-probes` по возрасту, а
+  // участников — уборка ИХ сессии. Смешать значит однажды снести участников
+  // чужого разбора вместе со случайным мусором.
+  'test_session',
   'unknown',
 ]);
 export type AccountOrigin = z.infer<typeof AccountOriginSchema>;
@@ -44,15 +49,27 @@ export type AccountOrigin = z.infer<typeof AccountOriginSchema>;
 /**
  * Что показывать в списке.
  *
- * `real` — люди и служебные записи, то есть всё, кроме следов прогонов;
- * `probes` — ровно следы прогонов (их и убирает уборка);
+ * `real` — люди и служебные записи, то есть всё, кроме записей проверок;
+ * `probes` — ровно записи проверок: следы прогонов и участники сессий;
  * `all` — без отбора.
  */
 export const AdminUserOriginFilterSchema = z.enum(['all', 'real', 'probes']);
 export type AdminUserOriginFilter = z.infer<typeof AdminUserOriginFilterSchema>;
 
 /** Происхождения, которые уборка вправе удалять. Список один на всю платформу. */
-export const PROBE_ORIGINS = ['render_check', 'load_test'] as const;
+/**
+ * Происхождения, которые список пользователей прячет по умолчанию.
+ *
+ * Это записи ПРОВЕРОК: следы браузерных и нагрузочных прогонов и участники
+ * тестовых сессий. Живыми людьми они не являются, и в списке, где ищут
+ * конкретного человека, они шум.
+ *
+ * ВАЖНО: перечень отвечает только за ОТБОР В СПИСКЕ. Кто и чем убирается —
+ * решают разные механизмы: следы прогонов убирает `stand:clean-probes` по
+ * своему перечню, участников сессии — уборка их сессии. Добавление сюда
+ * ничего не удаляет.
+ */
+export const PROBE_ORIGINS = ['render_check', 'load_test', 'test_session'] as const;
 
 /** По какому полю ищем. Поле выбирается явно — «умный» поиск угадывает неверно. */
 export const AdminUserSearchFieldSchema = z.enum(['name', 'email', 'phone', 'id']);

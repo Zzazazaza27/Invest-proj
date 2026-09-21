@@ -1,3 +1,10 @@
+import {
+  TestingSessionListSchema,
+  TestingSessionCardSchema,
+  CleanupPlanSchema,
+  CleanupResultSchema,
+  OpenedContextSchema,
+} from '@unicorn/contracts';
 import { ApiClient, ApiError } from '@unicorn/api-client';
 import {
   AdminPlanSchema,
@@ -176,11 +183,25 @@ function toOrigin(value: string): string {
  * уже начинаются с `/v1/…`. Порт есть — прямой запуск dev-сервером, и ядро
  * слушает свой порт.
  */
+/**
+ * ЕДИНАЯ ТОЧКА ВХОДА ПОБЕЖДАЕТ ПЕРЕМЕННУЮ СБОРКИ.
+ *
+ * `VITE_API_BASE_URL` в `.env` задан абсолютным (`http://localhost:4300/v1`)
+ * ради прямого запуска dev-серверами. Для собранной статики, которую nginx
+ * раздаёт с `127.0.0.1`, этот адрес — ДРУГОЙ origin: вход проходит (201), а
+ * следующий запрос получает 401, потому что cookie межсайтово не уходит.
+ * Снаружи это выглядит как «кабинет не пускает», и причину ищут в
+ * авторизации.
+ *
+ * Поэтому решает не переменная, а то, как открыта страница: порта в адресе
+ * нет — значит единая точка входа, и API живёт на том же origin. Переменная
+ * нужна только там, где порт есть, то есть при прямом запуске dev-сервером.
+ */
 const BASE_URL = toOrigin(
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-    (window.location.port === ''
-      ? ''
-      : `${window.location.protocol}//${window.location.hostname}:4300`),
+  window.location.port === ''
+    ? ''
+    : ((import.meta.env.VITE_API_BASE_URL as string | undefined) ??
+        `${window.location.protocol}//${window.location.hostname}:4300`),
 );
 
 /**
@@ -256,6 +277,77 @@ function listOf<T>(schema: z.ZodType<T>) {
 export { ApiError };
 
 export const api = {
+  /**
+   * Тестовые сессии (M129).
+   *
+   * Все вызовы идут под обычной административной сессией и БЕЗ заголовка
+   * контекста: админка остаётся админкой. Заголовок ставит только та
+   * вкладка, которую открыли кабинетом участника.
+   */
+  testing: {
+    list: () =>
+      client.request({ path: '/v1/admin/testing/sessions', schema: TestingSessionListSchema }),
+    card: (id: string) =>
+      client.request({
+        path: `/v1/admin/testing/sessions/${id}`,
+        schema: TestingSessionCardSchema,
+      }),
+    create: (body: { title: string }) =>
+      client.request({
+        path: '/v1/admin/testing/sessions',
+        method: 'POST',
+        body,
+        schema: z.object({ id: z.string().uuid() }),
+      }),
+    finish: (id: string, result: 'unknown' | 'passed' | 'failed' = 'unknown') =>
+      client.request({
+        path: `/v1/admin/testing/sessions/${id}/finish`,
+        method: 'POST',
+        body: { result },
+        schema: z.object({ ok: z.boolean() }),
+      }),
+    resume: (id: string) =>
+      client.request({
+        path: `/v1/admin/testing/sessions/${id}/resume`,
+        method: 'POST',
+        body: {},
+        schema: z.object({ ok: z.boolean() }),
+      }),
+    cleanupPlan: (id: string) =>
+      client.request({
+        path: `/v1/admin/testing/sessions/${id}/cleanup`,
+        schema: CleanupPlanSchema,
+      }),
+    cleanup: (id: string) =>
+      client.request({
+        path: `/v1/admin/testing/sessions/${id}/cleanup`,
+        method: 'POST',
+        body: {},
+        schema: CleanupResultSchema,
+      }),
+    openParticipant: (sessionId: string, userId: string) =>
+      client.request({
+        path: `/v1/admin/testing/sessions/${sessionId}/contexts`,
+        method: 'POST',
+        body: { kind: 'participant', userId },
+        schema: OpenedContextSchema,
+      }),
+    openGuest: (sessionId: string) =>
+      client.request({
+        path: `/v1/admin/testing/sessions/${sessionId}/contexts`,
+        method: 'POST',
+        body: { kind: 'guest' },
+        schema: OpenedContextSchema,
+      }),
+    openUserView: (userId: string) =>
+      client.request({
+        path: '/v1/admin/testing/user-views',
+        method: 'POST',
+        body: { userId },
+        schema: OpenedContextSchema,
+      }),
+  },
+
   async login(email: string, password: string): Promise<AuthSession> {
     const session = await client.request({
       method: 'POST',

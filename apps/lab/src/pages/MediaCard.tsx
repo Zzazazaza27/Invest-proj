@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { ContextualImage } from '@unicorn/cabinet';
 import { Button, Card, Stack } from '@unicorn/ui';
 import { MEDIA_LIMITS, type ProjectMedia, type ProjectMediaKind } from '@unicorn/contracts';
 import { ApiError, api, mediaUrl } from '../api';
@@ -160,7 +161,7 @@ function MediaSlot({
       </span>
 
       {media ? (
-        <img
+        <ContextualImage
           data-media-preview={kind}
           src={`${mediaUrl(media.urls.card ?? '')}?v=${encodeURIComponent(media.updatedAt)}`}
           // Изображение непубличного проекта отдаётся только по сессии. При

@@ -7,6 +7,7 @@ import {
   KYC_LABEL,
   ORIGIN_LABEL,
   PROBE_ORIGIN,
+  ViewCabinetAction,
   ROLE_LABEL,
   STATUS_LABEL,
   statusTone,
@@ -214,8 +215,8 @@ export function UsersPage() {
             onChange={(event) => apply({ origin: event.target.value })}
             style={{ width: 'auto' }}
           >
-            <option value="real">без следов прогонов</option>
-            <option value="probes">только следы прогонов</option>
+            <option value="real">без записей проверок</option>
+            <option value="probes">только записи проверок</option>
             <option value="all">все записи</option>
           </select>
           <span className="small muted" data-users-total>
@@ -263,6 +264,7 @@ export function UsersPage() {
                   onSort={sortBy}
                   label="Регистрация"
                 />
+                <th />
               </tr>
             </thead>
             <tbody>
@@ -338,6 +340,9 @@ function UserRow({ user }: { user: AdminUserRow }) {
         )}
       </td>
       <td className="small num">{new Date(user.createdAt).toLocaleDateString('ru-RU')}</td>
+      <td className="small">
+        <ViewCabinetAction userId={user.id} roles={user.roles} compact />
+      </td>
     </tr>
   );
 }

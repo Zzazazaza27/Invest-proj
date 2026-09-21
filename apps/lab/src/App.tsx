@@ -20,7 +20,7 @@ import type {
   ProjectFull,
   SupportTicketStatus,
 } from '@unicorn/contracts';
-import { api, setCsrf } from './api';
+import { api, setCsrf, testContextId, testContextPort } from './api';
 import {
   BugReportWidget,
   BusinessEntitiesCard,
@@ -35,6 +35,7 @@ import {
   decideAccess,
   hrefFor,
   useSessionCheck,
+  TestContextBanner,
 } from '@unicorn/cabinet';
 import type {
   AddEntityMemberRequest,
@@ -208,6 +209,11 @@ export default function App() {
       <a className="u-skip-link" href="#content">
         Перейти к содержимому
       </a>
+      <TestContextBanner
+        port={testContextPort}
+        contextId={testContextId}
+        subjectName={me?.displayName ?? null}
+      />
       <OfflineBanner />
       <Header
         me={me}

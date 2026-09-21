@@ -48,3 +48,12 @@ export {
 
 /** Возврат прокрутки к началу при смене экрана — у всех кабинетов одинаково. */
 export { useScrollToTopOnChange } from './scroll';
+export {
+  TestContextBanner,
+  ContextualImage,
+  adoptTestContextFromUrl,
+  forgetTestContext,
+  readTestContext,
+  setContextFileResolver,
+  type TestContextPort,
+} from './test-context';

@@ -102,6 +102,15 @@ export class ApiClient {
   readonly #fetch: typeof fetch;
   readonly #onResponse: ClientOptions['onResponse'];
   #auth: AuthMode;
+  /**
+   * Контекст доступа вкладки (M129): запрос выполняется от лица участника
+   * тестовой сессии или просматриваемого пользователя.
+   *
+   * Живёт в КЛИЕНТЕ, а не в cookie, — в этом весь смысл. Cookie общая на
+   * origin: переключение в одной вкладке меняло бы личность во всех, включая
+   * админскую. Заголовок ставит та вкладка, которая о контексте знает.
+   */
+  #contextId: string | null = null;
 
   constructor(options: ClientOptions) {
     // Нормализация: без неё '//v1//pricing' проскакивает в продакшен.
@@ -114,6 +123,43 @@ export class ApiClient {
 
   setAuth(auth: AuthMode): void {
     this.#auth = auth;
+  }
+
+  /** Контекст доступа вкладки. `null` — обычная работа от своего имени. */
+  setAccessContext(contextId: string | null): void {
+    this.#contextId = contextId;
+  }
+
+  get accessContext(): string | null {
+    return this.#contextId;
+  }
+
+  /**
+   * Адрес файла, который обязан читаться в текущем контексте.
+   *
+   * Зачем метод, а не строка в `src`. Картинку и файл браузер запрашивает
+   * САМ, и заголовка контекста в таком запросе нет — значит он выполнится от
+   * имени администратора, и во вкладке участника окажется то, что видно
+   * администратору. Поэтому в контексте файл забирается обычным запросом с
+   * заголовком, а в разметку идёт ссылка на полученные байты.
+   *
+   * Вне контекста возвращается обычный адрес: заводить лишние запросы там,
+   * где личность и так верна, незачем.
+   */
+  async resolveFileUrl(path: string): Promise<string> {
+    const url = this.#buildUrl(path);
+    if (!this.#contextId) return url;
+    const headers = new Headers({ 'X-Unicorn-Context': this.#contextId });
+    const response = await this.#fetch(url, {
+      method: 'GET',
+      headers,
+      credentials: 'include',
+      cache: 'no-store',
+      redirect: 'error',
+      signal: AbortSignal.timeout(this.#timeoutMs),
+    });
+    if (!response.ok) throw new Error(`файл недоступен: HTTP ${response.status}`);
+    return URL.createObjectURL(await response.blob());
   }
 
   /** Обновление CSRF-токена после логина или ротации сессии. */
@@ -206,6 +252,10 @@ export class ApiClient {
     const headers = new Headers({ Accept: 'application/json' });
     if (options.body !== undefined) headers.set('Content-Type', 'application/json');
     if (options.idempotencyKey) headers.set('Idempotency-Key', options.idempotencyKey);
+
+    // Контекст ставится ДО выбора способа аутентификации и независимо от
+    // него: он не заменяет вход, а уточняет, от чьего лица выполнить запрос.
+    if (this.#contextId) headers.set('X-Unicorn-Context', this.#contextId);
 
     let credentials: RequestCredentials = 'omit';
     if (this.#auth.kind === 'cookie') {

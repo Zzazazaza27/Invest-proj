@@ -14,7 +14,7 @@ import type {
   CurrentUser,
   SupportTicketStatus,
 } from '@unicorn/contracts';
-import { api, setCsrf } from './api';
+import { api, setCsrf, testContextId, testContextPort } from './api';
 import { CatalogPage } from './pages/CatalogPage';
 import { ProjectDetailsPage } from './pages/ProjectDetailsPage';
 import { FavoritesPage } from './pages/FavoritesPage';
@@ -34,6 +34,7 @@ import {
   decideAccess,
   hrefFor,
   useSessionCheck,
+  TestContextBanner,
 } from '@unicorn/cabinet';
 import type {
   AddEntityMemberRequest,
@@ -180,6 +181,11 @@ export default function App() {
       <a className="u-skip-link" href="#content">
         Перейти к содержимому
       </a>
+      <TestContextBanner
+        port={testContextPort}
+        contextId={testContextId}
+        subjectName={me?.displayName ?? null}
+      />
       <OfflineBanner />
       <NovaTopBar
         title="Пятый элемент"

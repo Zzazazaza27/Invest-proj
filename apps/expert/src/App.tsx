@@ -27,8 +27,9 @@ import {
   decideAccess,
   hrefFor,
   useSessionCheck,
+  TestContextBanner,
 } from '@unicorn/cabinet';
-import { api, setCsrf } from './api';
+import { api, setCsrf, testContextId, testContextPort } from './api';
 import { AssignmentsPage } from './pages/AssignmentsPage';
 
 /**
@@ -139,6 +140,11 @@ export default function App() {
       <a className="u-skip-link" href="#content">
         Перейти к содержимому
       </a>
+      <TestContextBanner
+        port={testContextPort}
+        contextId={testContextId}
+        subjectName={me?.displayName ?? null}
+      />
       <OfflineBanner />
       <NovaTopBar
         title="Пятый элемент"

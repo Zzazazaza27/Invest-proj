@@ -259,6 +259,7 @@ export class AuthGuard implements CanActivate {
         traceId,
         viewOnly: resolved.kind === 'readonly',
         initiatorUserId: resolved.initiatorUserId,
+        testSessionId: resolved.sessionId,
       };
       void this.contexts.touch(resolved.id, { userId: verified.subject, roles }, traceId);
 

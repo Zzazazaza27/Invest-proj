@@ -11,6 +11,12 @@ import {
   PaymentViewSchema,
   MediaUploadTicketSchema,
   MyProfileSchema,
+  TestingSessionListSchema,
+  TestingSessionCardSchema,
+  CleanupPlanSchema,
+  CleanupResultSchema,
+  OpenedContextSchema,
+  CurrentContextSchema,
   ChangePasswordResultSchema,
   type MyProfile,
   ProjectMediaSchema,
@@ -1443,6 +1449,91 @@ export class UnicornApi {
    * здесь нельзя. Экран живёт в `@unicorn/cabinet` и получает эти методы
    * портом — сам он в сеть не ходит.
    */
+  /**
+   * Тестовые сессии (M129).
+   *
+   * Управление — административные маршруты; `currentContext` читается из
+   * тестовой вкладки под её контекстом. Разделение намеренное: завершение
+   * просмотра остаётся действием администратора, а не участника.
+   */
+  readonly testing = {
+    list: () =>
+      this.http.request({ path: '/admin/testing/sessions', schema: TestingSessionListSchema }),
+    card: (id: string) =>
+      this.http.request({
+        path: `/admin/testing/sessions/${id}`,
+        schema: TestingSessionCardSchema,
+      }),
+    create: (body: {
+      title: string;
+      source?: 'manual' | 'automated';
+      scenarioId?: string | null;
+      codeVersion?: string | null;
+      withStandardCast?: boolean;
+    }) =>
+      this.http.request({
+        path: '/admin/testing/sessions',
+        method: 'POST',
+        body,
+        schema: z.object({ id: z.string().uuid() }),
+      }),
+    finish: (id: string, result: 'unknown' | 'passed' | 'failed' = 'unknown') =>
+      this.http.request({
+        path: `/admin/testing/sessions/${id}/finish`,
+        method: 'POST',
+        body: { result },
+        schema: z.object({ ok: z.boolean() }),
+      }),
+    resume: (id: string) =>
+      this.http.request({
+        path: `/admin/testing/sessions/${id}/resume`,
+        method: 'POST',
+        body: {},
+        schema: z.object({ ok: z.boolean() }),
+      }),
+    cleanupPlan: (id: string) =>
+      this.http.request({
+        path: `/admin/testing/sessions/${id}/cleanup`,
+        schema: CleanupPlanSchema,
+      }),
+    cleanup: (id: string) =>
+      this.http.request({
+        path: `/admin/testing/sessions/${id}/cleanup`,
+        method: 'POST',
+        body: {},
+        schema: CleanupResultSchema,
+      }),
+    openParticipant: (sessionId: string, userId: string) =>
+      this.http.request({
+        path: `/admin/testing/sessions/${sessionId}/contexts`,
+        method: 'POST',
+        body: { kind: 'participant', userId },
+        schema: OpenedContextSchema,
+      }),
+    openGuest: (sessionId: string) =>
+      this.http.request({
+        path: `/admin/testing/sessions/${sessionId}/contexts`,
+        method: 'POST',
+        body: { kind: 'guest' },
+        schema: OpenedContextSchema,
+      }),
+    openUserView: (userId: string) =>
+      this.http.request({
+        path: '/admin/testing/user-views',
+        method: 'POST',
+        body: { userId },
+        schema: OpenedContextSchema,
+      }),
+    closeContext: (contextId: string) =>
+      this.http.request({
+        path: `/admin/testing/contexts/${contextId}`,
+        method: 'DELETE',
+        schema: z.object({ ok: z.boolean() }),
+      }),
+    currentContext: () =>
+      this.http.request({ path: '/testing/context/current', schema: CurrentContextSchema }),
+  };
+
   readonly profile = {
     me: () => this.http.request({ path: '/me/profile', schema: MyProfileSchema }),
 

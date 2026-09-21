@@ -149,7 +149,7 @@ try {
   const origins = await sql(
     `SELECT DISTINCT origin FROM identity.users
       WHERE id = ANY($1::uuid[])`,
-    [participants.map((p) => p.user_id)],
+    [participants.map((p) => p.userId)],
   );
   check(
     'участники помечены как записи сессии',
@@ -177,7 +177,7 @@ try {
   console.warn('\n[3] Запрос от лица участника');
   const opened = await admin.call(`/v1/admin/testing/sessions/${sessionId}/contexts`, {
     method: 'POST',
-    body: { kind: 'participant', userId: founder.user_id },
+    body: { kind: 'participant', userId: founder.userId },
   });
   check(
     'контекст открыт',
@@ -189,7 +189,7 @@ try {
   const asFounder = await admin.call('/v1/auth/me', { context: contextId });
   check(
     'под контекстом отвечает УЧАСТНИК, а не администратор',
-    asFounder.status === 200 && asFounder.json?.id === founder.user_id,
+    asFounder.status === 200 && asFounder.json?.id === founder.userId,
     `id=${asFounder.json?.id}`,
   );
   check(
@@ -401,7 +401,7 @@ try {
   const alive = await sql(
     `SELECT count(*)::int AS n FROM identity.users
       WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL`,
-    [participants.map((p) => p.user_id)],
+    [participants.map((p) => p.userId)],
   );
   check('участники убраны из выдач', alive[0].n === 0);
 
@@ -431,11 +431,11 @@ try {
   const freshCtx = (
     await admin.call(`/v1/admin/testing/sessions/${freshId}/contexts`, {
       method: 'POST',
-      body: { kind: 'participant', userId: freshFounder.user_id },
+      body: { kind: 'participant', userId: freshFounder.userId },
     })
   ).json?.contextId;
   const beforeLogout = await admin.call('/v1/auth/me', { context: freshCtx });
-  check('до выхода контекст работает', beforeLogout.json?.id === freshFounder.user_id);
+  check('до выхода контекст работает', beforeLogout.json?.id === freshFounder.userId);
 
   await admin.call('/v1/auth/logout', { method: 'POST' });
   const adminAgain = makeClient();

@@ -7,6 +7,31 @@ import { AuditRepository } from '../audit/audit.repository';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { AccessContextService } from '../auth/access-context.service';
+import type { TestingSession } from '@unicorn/contracts';
+
+/**
+ * Строка базы в вид договора. Отдельной функцией, потому что список и
+ * карточка обязаны отдавать одно и то же: разошедшиеся представления одной
+ * сущности — способ получить два разных экрана про один объект.
+ */
+function toSession(row: SessionRow): TestingSession {
+  return {
+    id: row.id,
+    title: row.title,
+    source: row.source,
+    status: row.status as TestingSession['status'],
+    result: row.result as TestingSession['result'],
+    environment: row.environment,
+    scenarioId: row.scenario_id,
+    codeVersion: row.code_version,
+    cleanupError: row.cleanup_error,
+    createdBy: row.created_by,
+    createdAt: row.created_at.toISOString(),
+    lastActiveAt: row.last_active_at.toISOString(),
+    finishedAt: row.finished_at?.toISOString() ?? null,
+    cleanedAt: row.cleaned_at?.toISOString() ?? null,
+  };
+}
 
 /**
  * Тестовые сессии: ручной проход и автоматический прогон одним механизмом.
@@ -237,13 +262,13 @@ export class TestingSessionsService {
 
   // --------------------------------------------------------------- чтение
 
-  async list(ctx: RequestContext): Promise<SessionRow[]> {
+  async list(ctx: RequestContext): Promise<TestingSession[]> {
     this.assertEnabled();
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<SessionRow>(
         `SELECT * FROM testing.sessions ORDER BY last_active_at DESC LIMIT 200`,
       );
-      return rows;
+      return rows.map(toSession);
     });
   }
 
@@ -256,7 +281,13 @@ export class TestingSessionsService {
       const session = rows[0];
       if (!session) throw errors.notFound({ what: 'testing_session' });
 
-      const participants = await tx.query(
+      const participants = await tx.query<{
+        user_id: string;
+        role: string;
+        label: string;
+        display_name: string;
+        status: string;
+      }>(
         `SELECT p.user_id, p.role, p.label, u.display_name, u.status
            FROM testing.session_participants p
            JOIN identity.users u ON u.id = p.user_id
@@ -264,23 +295,90 @@ export class TestingSessionsService {
           ORDER BY p.created_at`,
         [sessionId],
       );
-      const steps = await tx.query(
-        `SELECT ordinal, name, status, actor, expected, actual, detail_jsonb, created_at
+      const steps = await tx.query<{
+        ordinal: number;
+        name: string;
+        status: 'passed' | 'failed' | 'skipped';
+        actor: string | null;
+        expected: string | null;
+        actual: string | null;
+        created_at: Date;
+      }>(
+        `SELECT ordinal, name, status, actor, expected, actual, created_at
            FROM testing.session_steps WHERE session_id = $1 ORDER BY ordinal`,
         [sessionId],
       );
-      const objects = await tx.query(
+      const objects = await tx.query<{ table_name: string; n: number }>(
         `SELECT table_name, count(*)::int AS n
            FROM testing.session_objects WHERE session_id = $1
           GROUP BY table_name ORDER BY 1`,
         [sessionId],
       );
       return {
-        session,
-        participants: participants.rows,
-        steps: steps.rows,
-        objects: objects.rows,
+        session: toSession(session),
+        participants: participants.rows.map((row) => ({
+          userId: row.user_id,
+          role: row.role,
+          label: row.label,
+          displayName: row.display_name,
+          status: row.status,
+        })),
+        steps: steps.rows.map((row) => ({
+          ordinal: row.ordinal,
+          name: row.name,
+          status: row.status,
+          actor: row.actor,
+          expected: row.expected,
+          actual: row.actual,
+          createdAt: row.created_at.toISOString(),
+        })),
+        objects: objects.rows.map((row) => ({ table: row.table_name, count: row.n })),
       };
+    });
+  }
+
+  /**
+   * Записать шаг прогона.
+   *
+   * Шаги — материал разбора, а не отчёт: в них ожидаемое и фактическое, но
+   * НЕ секреты и не персональные данные. Ограничение длины стоит в схеме —
+   * сюда не должен уехать дамп ответа целиком.
+   */
+  async addStep(
+    ctx: RequestContext,
+    sessionId: string,
+    input: {
+      ordinal: number;
+      name: string;
+      status: 'passed' | 'failed' | 'skipped';
+      actor?: string | null;
+      expected?: string | null;
+      actual?: string | null;
+    },
+  ): Promise<void> {
+    this.assertEnabled();
+    await this.db.transaction(ctx, async (tx) => {
+      const { rowCount } = await tx.query(
+        `INSERT INTO testing.session_steps
+           (id, session_id, ordinal, name, status, actor, expected, actual)
+         VALUES (public.uuid_generate_v7(), $1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (session_id, ordinal) DO UPDATE
+            SET name = EXCLUDED.name, status = EXCLUDED.status, actor = EXCLUDED.actor,
+                expected = EXCLUDED.expected, actual = EXCLUDED.actual`,
+        [
+          sessionId,
+          input.ordinal,
+          input.name.slice(0, 200),
+          input.status,
+          input.actor?.slice(0, 80) ?? null,
+          input.expected?.slice(0, 2000) ?? null,
+          input.actual?.slice(0, 2000) ?? null,
+        ],
+      );
+      if ((rowCount ?? 0) === 0) throw errors.notFound({ what: 'testing_session' });
+      await tx.query('UPDATE testing.sessions SET last_active_at = now() WHERE id = $1', [
+        sessionId,
+      ]);
     });
   }
 
@@ -514,10 +612,11 @@ export class TestingSessionsService {
           GROUP BY table_name ORDER BY 1`,
         [sessionId],
       );
+      const marked = new Set(['identity.users', 'lab.projects']);
       return rows.map((row) => ({
         table: row.table_name,
         count: row.n,
-        mode: row.table_name === 'identity.users' ? ('mark' as const) : ('delete' as const),
+        mode: marked.has(row.table_name) ? ('mark' as const) : ('delete' as const),
       }));
     });
   }
@@ -591,7 +690,16 @@ export class TestingSessionsService {
           if (rows.length === 0) continue;
           const ids = rows.map((r) => r.row_id);
 
-          if (table === 'identity.users') {
+          if (table === 'lab.projects') {
+            // Тем же приёмом, что и люди: пометка вместо удаления. У проекта
+            // висят версии, участники, раунды и материалы — удаление упрётся
+            // в первый внешний ключ (M131).
+            const res = await tx.query<{ marked: number }>(
+              'SELECT testing.cleanup_mark_projects($1) AS marked',
+              [sessionId],
+            );
+            marked += Number(res.rows[0]?.marked ?? 0);
+          } else if (table === 'identity.users') {
             // Через функцию, а не прямым UPDATE: право на пометку выдано ей,
             // а не роли приложения, и внутри она ещё раз сверяет перечень
             // сессии и происхождение записи (M130).

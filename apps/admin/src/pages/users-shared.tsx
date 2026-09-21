@@ -1,4 +1,6 @@
+import { useState } from 'react';
 import type { AdminUserCard, AdminUserRow } from '@unicorn/contracts';
+import { api } from '../api';
 
 /**
  * Общие подписи и мелочи раздела «Пользователи».
@@ -51,11 +53,17 @@ export const ORIGIN_LABEL: Record<string, string> = {
   staff_check: 'проверка сотрудника',
   render_check: 'браузерный прогон',
   load_test: 'нагрузочный прогон',
+  test_session: 'тестовая сессия',
   unknown: 'неизвестно',
 };
 
-/** Следы прогонов — единственное, что вправе удалять уборка. */
-export const PROBE_ORIGIN = new Set(['render_check', 'load_test']);
+/**
+ * Записи проверок: их список прячет по умолчанию и помечает в столбце.
+ *
+ * Уборку это НЕ задаёт: следы прогонов убирает `stand:clean-probes`,
+ * участников тестовой сессии — уборка их сессии.
+ */
+export const PROBE_ORIGIN = new Set(['render_check', 'load_test', 'test_session']);
 
 /** Цвет несёт подсказку, но не смысл: рядом всегда есть слово. */
 export function statusTone(status: string): 'ok' | 'warn' | 'danger' | 'muted' {
@@ -105,6 +113,149 @@ export function Avatar({
       }}
     >
       {letter}
+    </span>
+  );
+}
+
+/**
+ * Кабинеты, доступные человеку по его ролям.
+ *
+ * Выбор нужен потому, что ролей бывает несколько: у одного и того же человека
+ * есть и кабинет основателя, и кабинет инвестора. «Посмотреть кабинет» без
+ * выбора открывал бы первый попавшийся — и человек решил бы, что второго нет.
+ */
+export const CABINET_BY_ROLE: Record<string, { href: string; title: string }> = {
+  founder: { href: '/lab/', title: 'кабинет основателя' },
+  investor: { href: '/investor/', title: 'кабинет инвестора' },
+  expert: { href: '/expert/', title: 'кабинет эксперта' },
+};
+
+export function cabinetsOf(
+  roles: readonly string[],
+): { role: string; href: string; title: string }[] {
+  const seen = new Set<string>();
+  const result: { role: string; href: string; title: string }[] = [];
+  for (const role of roles) {
+    const cabinet = CABINET_BY_ROLE[role];
+    if (!cabinet || seen.has(cabinet.href)) continue;
+    seen.add(cabinet.href);
+    result.push({ role, ...cabinet });
+  }
+  return result;
+}
+
+/**
+ * «Посмотреть кабинет» — режим ДИАГНОСТИКИ рабочего аккаунта.
+ *
+ * Это не тестовая сессия: данные человека не помечаются тестовыми и под
+ * уборку не попадают. Режим только для чтения, и запрет изменений держит
+ * сервер, а не эта кнопка.
+ *
+ * Идентификатор контекста уезжает в ЯКОРЕ адреса: на сервер он не уходит и в
+ * журналы доступа не попадает, а вкладка сразу переложит его в своё
+ * состояние и вычистит адрес.
+ */
+export function ViewCabinetAction({
+  userId,
+  roles,
+  compact = false,
+}: {
+  userId: string;
+  roles: readonly string[];
+  compact?: boolean;
+}) {
+  const cabinets = cabinetsOf(roles);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const open = async (href: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const { contextId } = await api.testing.openUserView(userId);
+      window.open(`${href}#ctx=${contextId}`, '_blank', 'noopener');
+    } catch (problem) {
+      setError(problem instanceof Error ? problem.message : 'не удалось открыть');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (cabinets.length === 0) {
+    return compact ? null : <span className="muted small">кабинетов нет</span>;
+  }
+
+  /**
+   * В СТРОКЕ СПИСКА действие обязано быть одной короткой кнопкой.
+   *
+   * Первая версия рисовала по кнопке на кабинет с полными подписями — и
+   * строка таблицы выросла с 40 до 59 пикселей, то есть откатила плотность
+   * админки, ради которой её и уплотняли. Когда кабинетов несколько, выбор
+   * даёт обычный список: он занимает ту же строку.
+   */
+  const only = cabinets.length === 1 ? cabinets[0] : null;
+  if (compact) {
+    if (only) {
+      return (
+        <button
+          type="button"
+          className="btn--ghost btn--sm"
+          data-view-cabinet={only.role}
+          disabled={busy}
+          onClick={() => void open(only.href)}
+          title={`Открыть ${only.title} только для чтения`}
+        >
+          Кабинет
+        </button>
+      );
+    }
+    return (
+      <select
+        aria-label="Посмотреть кабинет"
+        data-view-cabinet="choose"
+        disabled={busy}
+        value=""
+        onChange={(event) => {
+          const href = event.target.value;
+          event.target.value = '';
+          if (href) void open(href);
+        }}
+        style={{ width: 'auto' }}
+      >
+        <option value="">Кабинет…</option>
+        {cabinets.map((cabinet) => (
+          <option key={cabinet.href} value={cabinet.href}>
+            {cabinet.title.replace('кабинет ', '')}
+          </option>
+        ))}
+      </select>
+    );
+  }
+
+  return (
+    <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+      {cabinets.map((cabinet) => (
+        <button
+          key={cabinet.href}
+          type="button"
+          className="btn--ghost btn--sm"
+          data-view-cabinet={cabinet.role}
+          disabled={busy}
+          onClick={() => void open(cabinet.href)}
+          title={`Открыть ${cabinet.title} только для чтения`}
+        >
+          {`Посмотреть ${cabinet.title}`}
+        </button>
+      ))}
+      {error ? (
+        <span
+          className="small"
+          data-view-cabinet-error
+          style={{ color: 'var(--u-danger, #b42318)' }}
+        >
+          {error}
+        </span>
+      ) : null}
     </span>
   );
 }

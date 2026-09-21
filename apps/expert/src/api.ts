@@ -1,4 +1,9 @@
 import { ApiError, UnicornApi } from '@unicorn/api-client';
+import {
+  adoptTestContextFromUrl,
+  setContextFileResolver,
+  type TestContextPort,
+} from '@unicorn/cabinet';
 
 /**
  * Единственное место кабинета, которое знает про HTTP.
@@ -19,11 +24,25 @@ import { ApiError, UnicornApi } from '@unicorn/api-client';
  *
  * Порт есть — это прямой запуск dev-сервером, и ядро слушает отдельный порт.
  */
+/**
+ * ЕДИНАЯ ТОЧКА ВХОДА ПОБЕЖДАЕТ ПЕРЕМЕННУЮ СБОРКИ.
+ *
+ * `VITE_API_BASE_URL` в `.env` задан абсолютным (`http://localhost:4300/v1`)
+ * ради прямого запуска dev-серверами. Для собранной статики, которую nginx
+ * раздаёт с `127.0.0.1`, этот адрес — ДРУГОЙ origin: вход проходит (201), а
+ * следующий запрос получает 401, потому что cookie межсайтово не уходит.
+ * Снаружи это выглядит как «кабинет не пускает», и причину ищут в
+ * авторизации.
+ *
+ * Поэтому решает не переменная, а то, как открыта страница: порта в адресе
+ * нет — значит единая точка входа, и API живёт на том же origin. Переменная
+ * нужна только там, где порт есть, то есть при прямом запуске dev-сервером.
+ */
 const BASE_URL =
-  (import.meta.env.VITE_API_BASE_URL as string | undefined) ??
-  (window.location.port === ''
+  window.location.port === ''
     ? '/v1'
-    : `${window.location.protocol}//${window.location.hostname}:4300/v1`);
+    : ((import.meta.env.VITE_API_BASE_URL as string | undefined) ??
+      `${window.location.protocol}//${window.location.hostname}:4300/v1`);
 
 /**
  * Адрес API обязателен всюду, кроме локальной машины.
@@ -91,5 +110,43 @@ export function setCsrf(token: string | null): void {
   }
   api.http.setCsrfToken(token || readCsrfCookie());
 }
+
+/**
+ * Контекст тестовой вкладки (M129).
+ *
+ * Читается ОДИН раз при загрузке модуля — до первого запроса: иначе первые
+ * обращения кабинета ушли бы от имени администратора, и экран показал бы
+ * чужие данные ещё до того, как контекст применился.
+ */
+export const testContextId = adoptTestContextFromUrl();
+if (testContextId) api.http.setAccessContext(testContextId);
+
+/**
+ * Порт панели. Завершение просмотра — действие АДМИНИСТРАТОРА: запрос уходит
+ * без заголовка контекста, под обычной административной сессией.
+ */
+// Картинки в тестовой вкладке забираются тем же клиентом, что и данные:
+// иначе браузер запросит их сам, без заголовка контекста.
+setContextFileResolver((path) => api.http.resolveFileUrl(path));
+
+export const testContextPort: TestContextPort = {
+  current: async () => {
+    try {
+      return await api.testing.currentContext();
+    } catch {
+      return null;
+    }
+  },
+  close: async (contextId: string) => {
+    const previous = api.http.accessContext;
+    api.http.setAccessContext(null);
+    try {
+      await api.testing.closeContext(contextId);
+    } finally {
+      api.http.setAccessContext(previous);
+    }
+  },
+  adminUrl: '/admin/',
+};
 
 export { ApiError };
