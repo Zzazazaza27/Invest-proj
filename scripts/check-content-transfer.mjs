@@ -9,16 +9,25 @@
  *
  * Как устроен прогон:
  *   1. снимок со стенда во временный каталог;
- *   2. загрузка снимка в ТЕСТОВУЮ базу (`unicorn_test`), с переписыванием;
- *   3. обратный снимок уже с тестовой базы;
- *   4. пофайловое сравнение: расхождений быть не должно;
- *   5. отдельно — что в комплект не попало то, чему там не место.
+ *   2. СВЕЖАЯ база, накат всех миграций — это и есть боевая процедура:
+ *      пустая база, миграции, загрузка содержимого;
+ *   3. загрузка снимка в неё;
+ *   4. обратный снимок уже с неё;
+ *   5. пофайловое сравнение: расхождений быть не должно;
+ *   6. отдельно — что в комплект не попало то, чему там не место.
  *
- * Рабочая база не меняется: в неё только читают. Меняется тестовая — она для
- * этого и существует.
+ * Почему своя база, а не `unicorn_test`. Первая версия грузила комплект в
+ * тестовую базу и оставляла его там: после прогона три теста схемы падали на
+ * «уже есть черновик анкеты» — комплект принёс свой. Проверка, которая
+ * ломает соседние проверки, чинится не уборкой за собой, а собственной
+ * базой. Свежая база заодно проверяет то, чего не проверяла прежняя: что
+ * содержимое встаёт на схему, поднятую с нуля.
+ *
+ * Рабочая и тестовая базы не меняются: из рабочей только читают.
  *
  *   node scripts/check-content-transfer.mjs
  */
+import pg from 'pg';
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, readdirSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -27,6 +36,47 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SNAPSHOT = join(ROOT, 'scripts', 'content-snapshot.mjs');
+
+loadDotEnv();
+
+function loadDotEnv() {
+  const envFile = join(ROOT, '.env');
+  if (!existsSync(envFile)) return;
+  for (const line of readFileSync(envFile, 'utf8').split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    const key = trimmed.slice(0, eq).trim();
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] ??= value;
+  }
+}
+
+/** Своя база на один прогон: имя с pid, чтобы два прогона не мешали друг другу. */
+const SCRATCH_DB = `unicorn_content_check_${process.pid}`;
+const ownerUrl = new URL(process.env.DATABASE_URL_OWNER ?? '');
+const scratchUrl = new URL(ownerUrl.toString());
+scratchUrl.pathname = `/${SCRATCH_DB}`;
+/** Подключение к служебной базе: из неё создаём и удаляем свою. */
+const adminUrl = new URL(ownerUrl.toString());
+adminUrl.pathname = '/postgres';
+
+async function withAdmin(fn) {
+  const client = new pg.Client({ connectionString: adminUrl.toString() });
+  await client.connect();
+  try {
+    return await fn(client);
+  } finally {
+    await client.end();
+  }
+}
 
 let passed = 0;
 const defects = [];
@@ -63,6 +113,11 @@ const fromStand = join(workdir, 'stand');
 const fromTest = join(workdir, 'test');
 
 console.warn('\n=== ПЕРЕНОС СОДЕРЖИМОГО ===\n');
+
+await withAdmin(async (client) => {
+  await client.query(`DROP DATABASE IF EXISTS ${SCRATCH_DB}`);
+  await client.query(`CREATE DATABASE ${SCRATCH_DB} OWNER ${ownerUrl.username}`);
+});
 
 try {
   // ------------------------------------------------------------- 1. снимок
@@ -106,37 +161,52 @@ try {
     'записи, заведённые проверками, отбираются по происхождению автора',
   );
 
-  // -------------------------------------------------- 3. загрузка в тестовую базу
+  // ------------------------------------------- 3. свежая база и накат миграций
+  const intoScratch = { DATABASE_URL_OWNER: scratchUrl.toString(), NODE_ENV: 'development' };
+  const migrated = spawnSync(
+    'node',
+    ['--experimental-strip-types', join(ROOT, 'database', 'src', 'migrate.ts')],
+    { cwd: ROOT, encoding: 'utf8', env: { ...process.env, ...intoScratch } },
+  );
+  check(
+    'схема поднята на пустой базе',
+    migrated.status === 0,
+    migrated.status === 0
+      ? SCRATCH_DB
+      : `${migrated.stdout ?? ''}${migrated.stderr ?? ''}`.trim().slice(-200),
+  );
+
+  // ------------------------------------------------------- 4. загрузка комплекта
   let loaded = '';
   try {
-    loaded = run(['load', '--dir', fromStand, '--yes', '--overwrite'], { NODE_ENV: 'test' });
+    loaded = run(['load', '--dir', fromStand, '--yes', '--overwrite'], intoScratch);
     check(
-      'комплект загружен в тестовую базу',
-      /добавлено: \d+/.test(loaded) || /делать нечего/.test(loaded),
-      (loaded.match(/добавлено: \d+, переписано: \d+/) ?? ['без изменений'])[0],
+      'комплект загружен в свежую базу',
+      /добавлено: \d+/.test(loaded),
+      (loaded.match(/добавлено: \d+, переписано: \d+/) ?? ['ничего не добавлено'])[0],
     );
   } catch (error) {
-    check('комплект загружен в тестовую базу', false, String(error.message).slice(0, 200));
+    check('комплект загружен в свежую базу', false, String(error.message).slice(0, 200));
   }
 
   // Повторная загрузка ничего не меняет — иначе перенос не идемпотентен и
   // второй запуск на проде наделает дублей.
   try {
-    const again = run(['load', '--dir', fromStand, '--yes', '--overwrite'], { NODE_ENV: 'test' });
+    const again = run(['load', '--dir', fromStand, '--yes', '--overwrite'], intoScratch);
     check('повторная загрузка ничего не меняет', /делать нечего/.test(again));
   } catch (error) {
     check('повторная загрузка ничего не меняет', false, String(error.message).slice(0, 160));
   }
 
-  // ---------------------------------------------------------- 4. обратный снимок
+  // ---------------------------------------------------------- 5. обратный снимок
   try {
-    run(['export', '--dir', fromTest], { NODE_ENV: 'test' });
-    check('обратный снимок с тестовой базы снят', existsSync(join(fromTest, 'manifest.json')));
+    run(['export', '--dir', fromTest], intoScratch);
+    check('обратный снимок снят', existsSync(join(fromTest, 'manifest.json')));
   } catch (error) {
-    check('обратный снимок с тестовой базы снят', false, String(error.message).slice(0, 160));
+    check('обратный снимок снят', false, String(error.message).slice(0, 160));
   }
 
-  // -------------------------------------------------------------- 5. сравнение
+  // -------------------------------------------------------------- 6. сравнение
   const different = [];
   for (const file of files) {
     const a = readFileSync(join(fromStand, file), 'utf8');
@@ -150,6 +220,11 @@ try {
   );
 } finally {
   rmSync(workdir, { recursive: true, force: true });
+  // База одноразовая: оставлять её значит копить мусор в кластере и однажды
+  // подключиться к ней вместо рабочей.
+  await withAdmin(async (client) => {
+    await client.query(`DROP DATABASE IF EXISTS ${SCRATCH_DB} WITH (FORCE)`);
+  });
 }
 
 console.warn(`\nпройдено: ${passed}, дефектов: ${defects.length}\n`);

@@ -1167,7 +1167,8 @@ describe('RLS: покрытие манифеста', () => {
          FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname IN ('identity','kyc','lab','investments','scoring','experts',
-                            'seasons','comms','billing','audit','integration','content')
+                            'seasons','comms','billing','audit','integration','content',
+                            'testing')
           AND c.relkind IN ('r','p')
           AND c.relispartition = false
           AND (NOT c.relrowsecurity
@@ -1179,19 +1180,21 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 12 схем и 101 таблица', async () => {
+  it('схема соответствует спецификации: 13 схем и 111 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
-                              'seasons','comms','billing','audit','integration','content')`,
+                              'seasons','comms','billing','audit','integration','content',
+                              'testing')`,
     );
-    expect(Number(schemas.rows[0]!.count)).toBe(12);
+    expect(Number(schemas.rows[0]!.count)).toBe(13);
 
     const tables = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname IN ('identity','kyc','lab','investments','scoring','experts',
-                            'seasons','comms','billing','audit','integration','content')
+                            'seasons','comms','billing','audit','integration','content',
+                            'testing')
           AND c.relkind IN ('r','p') AND c.relispartition = false`,
     );
     // 60 таблиц по docs/architecture/Database_Launch.md.
@@ -1287,7 +1290,12 @@ describe('RLS: покрытие манифеста', () => {
     // изображениями проекта: другой владелец (человек, а не проект), другая
     // политика доступа и другой жизненный цикл. Читает запись любой вошедший
     // — аватар видно там же, где видно человека; меняет только владелец.
-    expect(Number(tables.rows[0]!.count)).toBe(106);
+    // + 5 таблиц тестовых сессий (M129, 6.5): сессия, её участники, шаги,
+    // перечень созданных объектов и контексты доступа. Схема `testing`
+    // добавлена и в запрос покрытия выше — иначе новые таблицы оказались бы
+    // вне манифеста RLS, то есть вне той самой гарантии, ради которой он
+    // существует.
+    expect(Number(tables.rows[0]!.count)).toBe(111);
   });
 });
 

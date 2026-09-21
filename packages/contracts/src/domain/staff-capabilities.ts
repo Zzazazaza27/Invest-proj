@@ -20,7 +20,13 @@ export const CapabilityCodeSchema = z
   .string()
   .regex(/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*){1,3}$/, 'код полномочия: разделы через точку');
 
-/** Вид действия: просмотр и денежная корректировка — разные полномочия. */
+/**
+ * Вид действия: просмотр и денежная корректировка — разные полномочия.
+ *
+ * `manage` — распоряжение объектом целиком, включая удаление (M129). До него
+ * действия с удалением в словаре не было: всё разрушительное пришлось бы
+ * выдавать как «изменение», то есть под видом мягкого права.
+ */
 export const CapabilityActionSchema = z.enum([
   'view',
   'create',
@@ -28,6 +34,7 @@ export const CapabilityActionSchema = z.enum([
   'confirm',
   'financial_adjust',
   'discuss',
+  'manage',
 ]);
 
 export const StaffCapabilitySchema = z.object({

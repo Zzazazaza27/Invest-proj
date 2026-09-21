@@ -544,6 +544,7 @@ const ACTION_TITLES: Record<string, string> = {
   confirm: 'подтверждение',
   financial_adjust: 'денежная корректировка',
   discuss: 'обсуждение',
+  manage: 'распоряжение',
 };
 
 function Field({

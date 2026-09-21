@@ -32,7 +32,14 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
 const ALLOWED_DBS = { unicorn_launch: 'DATABASE_URL_OWNER', unicorn_test: 'DATABASE_URL_TEST' };
-/** Схемы, которые создают миграции проекта (M000, M048). Всё остальное — не наше. */
+/**
+ * Схемы, которые создают миграции проекта (M000, M048, M129).
+ *
+ * Список обязан расти вместе со схемой. Забытая схема переживает сброс, а
+ * реестр миграций — нет: следующий накат падает на «relation already
+ * exists», и выглядит это как поломка миграции, а не как недочёт уборки.
+ * Проверка `data-classes.test.ts` заметит новую ТАБЛИЦУ, но не новую СХЕМУ.
+ */
 const APP_SCHEMAS = [
   'identity',
   'kyc',
@@ -46,6 +53,7 @@ const APP_SCHEMAS = [
   'audit',
   'integration',
   'content',
+  'testing',
   'app',
 ];
 

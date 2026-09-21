@@ -283,6 +283,16 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   'scoring.score_models': { kind: 'system', note: 'версии модели скоринга' },
   'scoring.scores': { kind: 'operational' },
 
+  // ---------------------------------------------------------------- testing
+  // Класс `run` — единственный, который уборка сессии удаляет целиком. Но
+  // удаляет она ПО ПЕРЕЧНЮ созданных объектов, а не по классу таблицы: сами
+  // записи прогона лежат здесь, а созданное им — в обычных рабочих таблицах.
+  'testing.sessions': { kind: 'run' },
+  'testing.session_participants': { kind: 'run' },
+  'testing.session_steps': { kind: 'run' },
+  'testing.session_objects': { kind: 'run' },
+  'testing.access_contexts': { kind: 'run', note: 'разрешения действовать от чужого лица' },
+
   // ---------------------------------------------------------------- seasons
   'seasons.golden_tickets': { kind: 'operational' },
   'seasons.seasons': {

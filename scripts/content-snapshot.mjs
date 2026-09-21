@@ -388,12 +388,20 @@ async function doExport() {
   let skippedTotal = 0;
   for (const table of order) {
     const { info, rows, skipped } = await readFromDatabase(table, probes);
+    // Ключи ссылок сортируются: порядок внешних ключей в системном каталоге
+    // от базы к базе свой, и файл различался бы при одинаковом содержимом —
+    // сверка переноса объявляла бы расхождение там, где его нет.
+    const refs = Object.fromEntries(
+      Object.keys(info.refs)
+        .sort()
+        .map((name) => [name, info.refs[name]]),
+    );
     const body = JSON.stringify(
       {
         table,
         naturalKey: info.naturalKey,
         columns: info.exported,
-        refs: info.refs,
+        refs,
         rows,
       },
       null,
