@@ -38,6 +38,7 @@ export {
   useSessionCheck,
   type SessionFailure,
 } from './session';
+export { ProfilePage, ProfileAvatar, ProfileLink, type ProfilePort } from './ProfilePage';
 export {
   ProjectCard,
   type ProjectCardMedia,

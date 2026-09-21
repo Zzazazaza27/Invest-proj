@@ -1,7 +1,13 @@
 import { useState } from 'react';
-import { Link, NavLink, Navigate, Route, Routes } from 'react-router-dom';
-import { Button, Icon, IconTile, NovaTopBar, UI_KEYFRAMES } from '@unicorn/ui';
-import { SessionCheckFailed, useSessionCheck } from '@unicorn/cabinet';
+import { Link, NavLink, Navigate, Route, Routes, useNavigate } from 'react-router-dom';
+import { Button, Icon, NovaTopBar, UI_KEYFRAMES } from '@unicorn/ui';
+import {
+  ProfileLink,
+  ProfilePage,
+  SessionCheckFailed,
+  useSessionCheck,
+  type ProfilePort,
+} from '@unicorn/cabinet';
 import { api } from './api';
 import { LoginPage } from './pages/LoginPage';
 import { PlansPage } from './pages/PlansPage';
@@ -36,9 +42,25 @@ interface Me {
   id: string;
   displayName: string;
   roles: string[];
+  /** Аватар для шапки; `null` — рисуется первая буква имени. */
+  avatarUrl?: string | null;
 }
 
+/**
+ * «Мой профиль»: имя, аватар и пароль. Экран общий со всеми кабинетами.
+ */
+const profilePort: ProfilePort = {
+  load: () => api.myProfile(),
+  updateName: (displayName) => api.updateMyName(displayName),
+  uploadAvatar: (file) => api.uploadMyAvatar(file),
+  removeAvatar: () => api.removeMyAvatar(),
+  changePassword: async (input) => {
+    await api.changeMyPassword(input);
+  },
+};
+
 export function App() {
+  const navigate = useNavigate();
   const [me, setMe] = useState<Me | null>(null);
   /**
    * Сезоны отложены (M088): пункты сезона показываются только при включённом
@@ -110,21 +132,18 @@ export function App() {
           icon="shield"
           actions={
             <>
-              <span
-                className="u-hide-narrow"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 'var(--u-space-2)',
-                  color: 'var(--u-text-muted)',
-                  fontSize: 'var(--u-text-sm)',
-                }}
-              >
-                <IconTile name="user" size={32} />
-                {me.displayName}
-                <span style={{ opacity: 0.7 }}>
-                  · {isAdmin ? 'администратор' : me.roles.join(', ')}
-                </span>
+              {/*
+                Имя и аватар — вход в профиль. Роль остаётся подписью рядом:
+                это не ссылка, а признак, и нажимать на него незачем.
+              */}
+              <ProfileLink
+                name={me.displayName}
+                avatar={me.avatarUrl ? { urls: { sm: me.avatarUrl } } : null}
+                href={`${import.meta.env.BASE_URL.replace(/\/$/, '')}/profile`}
+                onNavigate={() => navigate('/profile')}
+              />
+              <span className="u-hide-narrow small muted">
+                · {isAdmin ? 'администратор' : me.roles.join(', ')}
               </span>
               <Button
                 variant="secondary"
@@ -215,6 +234,33 @@ export function App() {
           )}
           <Routes>
             <Route path="/" element={<Navigate to="/plans" replace />} />
+            <Route
+              path="/profile"
+              element={
+                <ProfilePage
+                  port={profilePort}
+                  onProfileChanged={(next) =>
+                    setMe((prev) =>
+                      prev
+                        ? {
+                            ...prev,
+                            displayName: next.displayName,
+                            avatarUrl: next.avatar?.urls.sm ?? null,
+                          }
+                        : prev,
+                    )
+                  }
+                  // Проверка личности администратору через кабинет не подаётся:
+                  // его допуск — роль, а не KYC. Блока нет намеренно.
+                  onPasswordChanged={() => {
+                    // Сессии закрыты все, включая эту: остаёмся на форме входа
+                    // самой админки.
+                    setMe(null);
+                    window.location.reload();
+                  }}
+                />
+              }
+            />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/users/:id" element={<UserCardPage />} />
             <Route path="/plans" element={<PlansPage />} />

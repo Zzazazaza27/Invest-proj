@@ -10,6 +10,9 @@ import {
   FundingRoundSchema,
   PaymentViewSchema,
   MediaUploadTicketSchema,
+  MyProfileSchema,
+  ChangePasswordResultSchema,
+  type MyProfile,
   ProjectMediaSchema,
   ServiceRunAvailabilitySchema,
   ServiceRunViewSchema,
@@ -1431,6 +1434,70 @@ export class UnicornApi {
         path: `/publication-consents/${encodeURIComponent(id)}`,
         schema: PublicationConsentSchema,
       }),
+  };
+
+  /**
+   * «Мой профиль» — то, чем человек распоряжается сам.
+   *
+   * Группа общая для всех кабинетов: профиль один, и расходиться клиентам
+   * здесь нельзя. Экран живёт в `@unicorn/cabinet` и получает эти методы
+   * портом — сам он в сеть не ходит.
+   */
+  readonly profile = {
+    me: () => this.http.request({ path: '/me/profile', schema: MyProfileSchema }),
+
+    updateName: (displayName: string) =>
+      this.http.request({
+        method: 'PATCH',
+        path: '/me/profile',
+        body: { displayName },
+        schema: MyProfileSchema,
+      }),
+
+    /**
+     * Смена пароля. Ответ подтверждает то, что произойдёт с сессиями: они
+     * закрыты все, включая текущую, и клиент обязан увести человека на вход.
+     */
+    changePassword: (body: { currentPassword: string; newPassword: string }) =>
+      this.http.request({
+        method: 'POST',
+        path: '/me/password',
+        body,
+        schema: ChangePasswordResultSchema,
+      }),
+
+    removeAvatar: () =>
+      this.http.request({ method: 'DELETE', path: '/me/avatar', schema: MyProfileSchema }),
+
+    /**
+     * Загрузка аватара целиком: билет → прямая отправка в хранилище →
+     * подтверждение.
+     *
+     * Средний шаг идёт МИМО ядра: тело запроса к API ограничено мегабайтом, и
+     * поднимать предел ради картинок значило бы открыть его для всего
+     * остального. Поэтому байты уходят в хранилище по подписанной форме, а
+     * ядро потом разбирает загруженное и собирает размеры.
+     */
+    uploadAvatar: async (file: File): Promise<MyProfile> => {
+      const ticket = await this.http.request({
+        method: 'POST',
+        path: '/me/avatar/upload',
+        body: { contentType: file.type, sizeBytes: file.size },
+        schema: MediaUploadTicketSchema,
+      });
+      const form = new FormData();
+      for (const [key, value] of Object.entries(ticket.formFields)) form.append(key, value);
+      form.append('file', file);
+      const uploaded = await fetch(ticket.uploadUrl, { method: 'POST', body: form });
+      if (!uploaded.ok) {
+        throw new Error(`Хранилище не приняло файл: HTTP ${uploaded.status}`);
+      }
+      return this.http.request({
+        method: 'POST',
+        path: '/me/avatar/finalize',
+        schema: MyProfileSchema,
+      });
+    },
   };
 }
 

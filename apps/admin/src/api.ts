@@ -89,6 +89,9 @@ import {
   AdminUserCardSchema,
   AdminUserContactsSchema,
   AdminUserPageSchema,
+  MyProfileSchema,
+  ChangePasswordResultSchema,
+  MediaUploadTicketSchema,
   uuidv7,
   ApplicationFormVersionSchema,
   ApplicationFormVersionsSchema,
@@ -127,6 +130,7 @@ import {
   type AdminUserCard,
   type AdminUserContacts,
   type AdminUserPage,
+  type MyProfile,
   ServiceCountrySchema,
   ServiceCountryPolicyVersionSchema,
   type ServiceCountry,
@@ -265,7 +269,12 @@ export const api = {
     return session;
   },
 
-  async me(): Promise<{ id: string; displayName: string; roles: string[] }> {
+  async me(): Promise<{
+    id: string;
+    displayName: string;
+    roles: string[];
+    avatarUrl?: string | null;
+  }> {
     return client.request({
       method: 'GET',
       path: '/v1/auth/me',
@@ -274,6 +283,9 @@ export const api = {
           id: z.string(),
           displayName: z.string(),
           roles: z.array(z.string()),
+          // Аватар для шапки приходит вместе с «кто я»: отдельный запрос ради
+          // одной картинки означал бы второй запрос на каждой странице.
+          avatarUrl: z.string().nullable().optional(),
         })
         .loose(),
     });
@@ -550,6 +562,59 @@ export const api = {
       path: `/v1/admin/users/${encodeURIComponent(userId)}/status`,
       body: input,
       schema: AdminUserCardSchema,
+    });
+  },
+
+  /**
+   * «Мой профиль» администратора.
+   *
+   * Те же маршруты, что и у остальных кабинетов: профиль один на человека, и
+   * администратор здесь ничем не особенный. Экран тоже общий —
+   * `@unicorn/cabinet`, а это только транспорт.
+   */
+  myProfile(): Promise<MyProfile> {
+    return client.request({ method: 'GET', path: '/v1/me/profile', schema: MyProfileSchema });
+  },
+
+  updateMyName(displayName: string): Promise<MyProfile> {
+    return client.request({
+      method: 'PATCH',
+      path: '/v1/me/profile',
+      body: { displayName },
+      schema: MyProfileSchema,
+    });
+  },
+
+  changeMyPassword(input: { currentPassword: string; newPassword: string }) {
+    return client.request({
+      method: 'POST',
+      path: '/v1/me/password',
+      body: input,
+      schema: ChangePasswordResultSchema,
+    });
+  },
+
+  removeMyAvatar(): Promise<MyProfile> {
+    return client.request({ method: 'DELETE', path: '/v1/me/avatar', schema: MyProfileSchema });
+  },
+
+  /** Билет → прямая отправка в хранилище → подтверждение. Байты мимо ядра. */
+  async uploadMyAvatar(file: File): Promise<MyProfile> {
+    const ticket = await client.request({
+      method: 'POST',
+      path: '/v1/me/avatar/upload',
+      body: { contentType: file.type, sizeBytes: file.size },
+      schema: MediaUploadTicketSchema,
+    });
+    const form = new FormData();
+    for (const [key, value] of Object.entries(ticket.formFields)) form.append(key, value);
+    form.append('file', file);
+    const uploaded = await fetch(ticket.uploadUrl, { method: 'POST', body: form });
+    if (!uploaded.ok) throw new Error(`Хранилище не приняло файл: HTTP ${uploaded.status}`);
+    return client.request({
+      method: 'POST',
+      path: '/v1/me/avatar/finalize',
+      schema: MyProfileSchema,
     });
   },
 

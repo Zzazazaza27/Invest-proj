@@ -195,6 +195,15 @@ export const CurrentUserSchema = z.object({
   /** Маскированные контакты: полные значения наружу не отдаются. */
   emailMasked: z.string().nullable(),
   phoneMasked: z.string().nullable(),
+  /**
+   * Маленький аватар для шапки — маршрут ядра, а не ключ хранилища. `null`,
+   * если человек его не загружал: кабинет рисует первую букву имени.
+   *
+   * Поле живёт в «кто я», а не запрашивается отдельно: шапка рисуется на
+   * каждой странице, и второй запрос ради одной картинки — это второй запрос
+   * на каждой странице.
+   */
+  avatarUrl: z.string().nullable().optional(),
   createdAt: IsoDateTimeSchema,
 });
 export type CurrentUser = z.infer<typeof CurrentUserSchema>;

@@ -381,10 +381,14 @@ export class IdentityService {
         email_ciphertext: Buffer | null;
         phone_ciphertext: Buffer | null;
         contact_wrapped_dek: Buffer | null;
+        has_avatar: boolean;
       }>(
-        `SELECT id, display_name, primary_role, status, locale, mfa_enabled, service_country, created_at,
-                email_ciphertext, phone_ciphertext, contact_wrapped_dek
-           FROM identity.users WHERE id = $1 AND deleted_at IS NULL`,
+        `SELECT u.id, u.display_name, u.primary_role, u.status, u.locale, u.mfa_enabled,
+                u.service_country, u.created_at, u.email_ciphertext, u.phone_ciphertext,
+                u.contact_wrapped_dek, (a.user_id IS NOT NULL) AS has_avatar
+           FROM identity.users u
+           LEFT JOIN identity.user_avatars a ON a.user_id = u.id
+          WHERE u.id = $1 AND u.deleted_at IS NULL`,
         [ctx.userId],
       );
       const user = rows[0];
@@ -427,6 +431,10 @@ export class IdentityService {
         serviceCountry: user.service_country,
         emailMasked,
         phoneMasked,
+        // Адрес картинки, а не признак наличия: шапке нужен src, и собирать
+        // его из идентификатора в каждом кабинете значило бы четыре места,
+        // где этот путь можно написать по-разному.
+        avatarUrl: user.has_avatar ? `/v1/users/${user.id}/avatar/sm` : null,
         createdAt: user.created_at.toISOString(),
       };
     });

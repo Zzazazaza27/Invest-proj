@@ -3,7 +3,6 @@ import {
   Button,
   Container,
   Icon,
-  IconTile,
   LoadingState,
   NovaTopBar,
   OfflineBanner,
@@ -19,6 +18,9 @@ import type {
 import {
   BugReportWidget,
   NotificationsCard,
+  ProfileLink,
+  ProfilePage,
+  type ProfilePort,
   SessionCheckFailed,
   SupportCard,
   decideAccess,
@@ -85,8 +87,26 @@ const bugReportPort = {
   open: (input: CreateSupportTicketRequest) => api.support.open(input),
 };
 
+/**
+ * «Мой профиль»: имя, аватар и пароль. Экран общий для всех кабинетов
+ * (`@unicorn/cabinet`), сюда приходит только транспорт.
+ */
+const profilePort: ProfilePort = {
+  load: () => api.profile.me(),
+  updateName: (displayName) => api.profile.updateName(displayName),
+  uploadAvatar: (file) => api.profile.uploadAvatar(file),
+  removeAvatar: () => api.profile.removeAvatar(),
+  changePassword: async (input) => {
+    await api.profile.changePassword(input);
+  },
+};
+
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
+  // Профиль показывается вместо рабочего списка: маршрутизатора у кабинета
+  // эксперта нет, а заводить его ради одного экрана — менять устройство
+  // приложения ради ссылки.
+  const [showProfile, setShowProfile] = useState(false);
 
   // Подтверждённое отсутствие сессии (401) и неудача самой проверки (429,
   // 5xx, обрыв) — разные вещи: на вход уводит только первое.
@@ -126,19 +146,16 @@ export default function App() {
           me ? (
             <>
               {/* Имя — справка, оно уступает место действию на узком экране. */}
-              <span
-                className="u-hide-narrow"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 'var(--u-space-2)',
-                  color: 'var(--u-text-muted)',
-                  fontSize: 'var(--u-text-sm)',
-                }}
-              >
-                <IconTile name="user" size={32} />
-                {me.displayName}
-              </span>
+              {/*
+                Имя и аватар — вход в профиль, а не подпись. Имя прячется на
+                узком экране, аватар остаётся: он и есть цель нажатия.
+              */}
+              <ProfileLink
+                name={me.displayName}
+                avatar={me.avatarUrl ? { urls: { sm: me.avatarUrl } } : null}
+                href="#profile"
+                onNavigate={() => setShowProfile(true)}
+              />
               <Button
                 variant="secondary"
                 onClick={async () => {
@@ -164,7 +181,37 @@ export default function App() {
           {!checking && failure ? (
             <SessionCheckFailed failure={failure} onRetry={retry} busy={checking} />
           ) : null}
-          {!checking && me ? (
+          {!checking && me && showProfile ? (
+            <Stack gap="var(--u-space-4)">
+              <div>
+                <Button variant="secondary" onClick={() => setShowProfile(false)}>
+                  ← К назначениям
+                </Button>
+              </div>
+              <ProfilePage
+                port={profilePort}
+                onProfileChanged={(next) =>
+                  setMe((prev) =>
+                    prev
+                      ? {
+                          ...prev,
+                          displayName: next.displayName,
+                          avatarUrl: next.avatar?.urls.sm ?? null,
+                        }
+                      : prev,
+                  )
+                }
+                // Эксперт проверку личности через кабинет не подаёт: его
+                // допуск — это роль и назначения, а не KYC. Блока нет, и
+                // выдумывать его здесь нельзя.
+                onPasswordChanged={() => {
+                  setCsrf(null);
+                  window.location.replace(hrefFor('login', __CABINET_PORTS__));
+                }}
+              />
+            </Stack>
+          ) : null}
+          {!checking && me && !showProfile ? (
             <Stack gap="var(--u-space-6)">
               <AssignmentsPage />
               {/*

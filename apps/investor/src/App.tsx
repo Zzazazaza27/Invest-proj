@@ -3,7 +3,6 @@ import {
   Button,
   Container,
   Icon,
-  IconTile,
   LoadingState,
   NovaTopBar,
   OfflineBanner,
@@ -26,6 +25,9 @@ import {
   BugReportWidget,
   BusinessEntitiesCard,
   NotificationsCard,
+  ProfileLink,
+  ProfilePage,
+  type ProfilePort,
   SessionCheckFailed,
   SupportCard,
   decideAccess,
@@ -48,6 +50,20 @@ import { VerificationPage } from './pages/VerificationPage';
  * реестр ОИП — и кабинет говорит об этом прямо, а не показывает пустой список,
  * из которого можно заключить «предложений нет».
  */
+/**
+ * «Мой профиль»: имя, аватар и пароль. Экран общий для всех кабинетов
+ * (`@unicorn/cabinet`), сюда приходит только транспорт.
+ */
+const profilePort: ProfilePort = {
+  load: () => api.profile.me(),
+  updateName: (displayName) => api.profile.updateName(displayName),
+  uploadAvatar: (file) => api.profile.uploadAvatar(file),
+  removeAvatar: () => api.profile.removeAvatar(),
+  changePassword: async (input) => {
+    await api.profile.changePassword(input);
+  },
+};
+
 type Tab =
   | 'catalog'
   | 'subscription'
@@ -56,7 +72,10 @@ type Tab =
   | 'offers'
   | 'notifications'
   | 'favorites'
-  | 'support';
+  | 'support'
+  // Профиль — раздел, а не отдельная страница: у кабинета инвестора нет
+  // маршрутизатора, разделы переключаются состоянием.
+  | 'profile';
 
 /**
  * Транспорт для общих блоков кабинета.
@@ -165,20 +184,19 @@ export default function App() {
         actions={
           me ? (
             <>
-              {/* Имя — справка, оно уступает место действию на узком экране. */}
-              <span
-                className="u-hide-narrow"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: 'var(--u-space-2)',
-                  color: 'var(--u-text-muted)',
-                  fontSize: 'var(--u-text-sm)',
+              {/*
+                Имя и аватар — вход в профиль, а не подпись. Имя прячется на
+                узком экране, аватар остаётся: он и есть цель нажатия.
+              */}
+              <ProfileLink
+                name={me.displayName}
+                avatar={me.avatarUrl ? { urls: { sm: me.avatarUrl } } : null}
+                href="#profile"
+                onNavigate={() => {
+                  setTab('profile');
+                  setOpenProject(null);
                 }}
-              >
-                <IconTile name="user" size={32} />
-                {me.displayName}
-              </span>
+              />
               <Button
                 variant="secondary"
                 onClick={async () => {
@@ -322,6 +340,30 @@ export default function App() {
           ) : null}
           {!checking && me && tab === 'favorites' ? <FavoritesPage /> : null}
           {!checking && me && tab === 'support' ? <SupportCard port={supportPort} /> : null}
+          {!checking && me && tab === 'profile' ? (
+            <ProfilePage
+              port={profilePort}
+              onProfileChanged={(next) =>
+                setMe((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        displayName: next.displayName,
+                        avatarUrl: next.avatar?.urls.sm ?? null,
+                      }
+                    : prev,
+                )
+              }
+              // Проверка личности у инвестора своя: кроме личности есть статус
+              // инвестора и квалификация. Поэтому блок приходит из кабинета, а
+              // не зашит в общий экран.
+              kycSlot={<VerificationPage />}
+              onPasswordChanged={() => {
+                setCsrf(null);
+                window.location.replace(hrefFor('login', __CABINET_PORTS__));
+              }}
+            />
+          ) : null}
         </Container>
       </main>
       {/*

@@ -7,7 +7,6 @@ import {
   EmptyState,
   ErrorState,
   Icon,
-  IconTile,
   LoadingState,
   NovaTopBar,
   OfflineBanner,
@@ -28,6 +27,9 @@ import {
   NotificationsCard,
   SessionCheckFailed,
   SupportCard,
+  ProfileLink,
+  ProfilePage,
+  type ProfilePort,
   VerificationCard,
   decideAccess,
   hrefFor,
@@ -131,6 +133,32 @@ const bugReportPort = {
   open: (input: CreateSupportTicketRequest) => api.support.open(input),
 };
 
+/**
+ * Адрес профиля внутри этого кабинета.
+ *
+ * Базовый путь приходит из сборки: за единой точкой входа кабинет живёт под
+ * своим префиксом, при запуске dev-сервером — в корне. Зашитая строка сломала
+ * бы один из двух режимов.
+ */
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, '');
+function profileHref(): string {
+  return `${BASE_PATH}/profile`;
+}
+
+/**
+ * «Мой профиль»: имя, аватар и пароль. Экран общий для всех кабинетов
+ * (`@unicorn/cabinet`), сюда приходит только транспорт.
+ */
+const profilePort: ProfilePort = {
+  load: () => api.profile.me(),
+  updateName: (displayName) => api.profile.updateName(displayName),
+  uploadAvatar: (file) => api.profile.uploadAvatar(file),
+  removeAvatar: () => api.profile.removeAvatar(),
+  changePassword: async (input) => {
+    await api.profile.changePassword(input);
+  },
+};
+
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
   const [applicationV2, setApplicationV2] = useState(false);
@@ -181,6 +209,7 @@ export default function App() {
       <OfflineBanner />
       <Header
         me={me}
+        onOpenProfile={(href) => navigate(href.replace(BASE_PATH, '') || '/')}
         onLogout={async () => {
           await api.auth.logout().catch(() => undefined);
           setCsrf(null);
@@ -225,6 +254,32 @@ export default function App() {
                 element={<ProjectRoute applicationV2={applicationV2} />}
               />
               <Route path="/applications/:id/*" element={<WizardPage />} />
+              <Route
+                path="/profile"
+                element={
+                  <ProfilePage
+                    port={profilePort}
+                    kycSlot={<VerificationCard port={verificationPort} />}
+                    onProfileChanged={(next) =>
+                      setMe((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              displayName: next.displayName,
+                              avatarUrl: next.avatar?.urls.sm ?? null,
+                            }
+                          : prev,
+                      )
+                    }
+                    onPasswordChanged={() => {
+                      // Сессии закрыты все, включая эту: держать человека на
+                      // экране, который через секунду ответит 401, нечестно.
+                      setCsrf(null);
+                      window.location.replace(hrefFor('login', __CABINET_PORTS__));
+                    }}
+                  />
+                }
+              />
               <Route path="/glossary" element={<GlossaryPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
@@ -265,7 +320,15 @@ function ProjectRoute({ applicationV2 }: { applicationV2: boolean }) {
   );
 }
 
-function Header({ me, onLogout }: { me: CurrentUser | null; onLogout: () => void }) {
+function Header({
+  me,
+  onLogout,
+  onOpenProfile,
+}: {
+  me: CurrentUser | null;
+  onLogout: () => void;
+  onOpenProfile: (href: string) => void;
+}) {
   return (
     <NovaTopBar
       title="Пятый элемент"
@@ -275,22 +338,17 @@ function Header({ me, onLogout }: { me: CurrentUser | null; onLogout: () => void
         me ? (
           <>
             {/*
-              Имя прячется на узком экране, кнопка выхода — нет: подпись это
-              справка, а выход — действие, и терять его на телефоне нельзя.
+              Имя и аватар — вход в профиль, а не подпись: раньше нажатие на
+              собственное имя не делало ничего. Имя прячется на узком экране,
+              аватар и кнопка выхода — нет: подпись это справка, а цель
+              нажатия и выход терять на телефоне нельзя.
             */}
-            <span
-              className="u-hide-narrow"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 'var(--u-space-2)',
-                color: 'var(--u-text-muted)',
-                fontSize: 'var(--u-text-sm)',
-              }}
-            >
-              <IconTile name="user" size={32} />
-              {me.displayName}
-            </span>
+            <ProfileLink
+              name={me.displayName}
+              avatar={me.avatarUrl ? { urls: { sm: me.avatarUrl } } : null}
+              href={profileHref()}
+              onNavigate={onOpenProfile}
+            />
             <Button variant="secondary" onClick={onLogout}>
               <Icon name="logout" size={16} />
               Выйти
