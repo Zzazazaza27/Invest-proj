@@ -342,7 +342,12 @@ function NavGroup({ title, children }: { title: string; children: React.ReactNod
   return (
     <div className="nav-group" role="group" aria-label={title}>
       <div className="nav-group__title">{title}</div>
-      {children}
+      {/*
+        Пункты в своей обёртке не ради вёрстки: на ней держится направляющая —
+        вертикальная линия слева, которая показывает, докуда группа
+        простирается. Заголовок называет группу, линия обозначает её границы.
+      */}
+      <div className="nav-group__items">{children}</div>
     </div>
   );
 }
