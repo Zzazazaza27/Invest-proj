@@ -795,6 +795,10 @@ graphify, отказавшись перезаписывать граф мень�
 | `GET /admin/users`                              | `admin`, `organizer` | Список людей: поиск по полю, фильтры, сортировка, страницы |
 | `GET /admin/users/:id`                          | `admin`              | Карточка человека: состояние, права, связанные объекты     |
 | `POST …/users/:id/contacts/reveal`              | полномочие           | Показать контакт целиком; каждое раскрытие — в журнал      |
+| `GET/PATCH /me/profile`                         | любой вошедший       | Свой профиль: имя и аватар меняет владелец                 |
+| `POST /me/password`                             | любой вошедший       | Смена пароля по текущему; прекращает все сессии            |
+| `POST/DELETE /me/avatar…`                       | любой вошедший       | Загрузка и удаление аватара; формат определяется разбором  |
+| `GET /users/:id/avatar/:size`                   | любой вошедший       | Байты аватара; анониму закрыто                             |
 | `GET/POST/DELETE /integration/webhooks`         | `webhook:manage`     | Подписки на события; адрес проверяется на SSRF             |
 | `POST /integration/token`                       | client_credentials   | Токен сервисного клиента (TTL 15 мин)                      |
 | `GET /integration/graduates`                    | `graduates:read`     | Выпускники, keyset-курсор                                  |

@@ -7,6 +7,8 @@ import { DirectoryController } from './admin/directory.controller';
 import { DirectoryService } from './admin/directory.service';
 import { AdminUsersController } from './admin/users.controller';
 import { AdminUsersService } from './admin/users.service';
+import { ProfileController, UserAvatarController } from './identity/profile.controller';
+import { ProfileService } from './identity/profile.service';
 import { ProviderCredentialsService } from './ai/provider-credentials.service';
 import { LocalizationService } from './ai/localization.service';
 import { RolesController } from './admin/roles.controller';
@@ -205,6 +207,8 @@ import { S3Service } from './storage/s3.service';
     ServiceAccountsController,
     DirectoryController,
     AdminUsersController,
+    ProfileController,
+    UserAvatarController,
     RolesController,
     TemplatesController,
     OpenApiController,
@@ -250,6 +254,7 @@ import { S3Service } from './storage/s3.service';
     AdminService,
     DirectoryService,
     AdminUsersService,
+    ProfileService,
     ProviderCredentialsService,
     LocalizationService,
     RolesService,
