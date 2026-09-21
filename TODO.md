@@ -1060,17 +1060,6 @@ taxonomy_id, geo_country, listed_at, created_at, updated_at`), запись —
 второй роли. Остальные проходы (`lab`, `investor`, `admin`,
 `staff-access`, `admin-users`, `profile`) за единой точкой входа зелёные.
 
-### 🟡 Два красных гейта, найденных 2026-09-21 (существовали раньше)
-
-- **`npm run typecheck` падает** на `apps/core/tests/ai.test.ts`:
-  `import.meta` в файле, который `tsconfig.json` собирает в CommonJS
-  (TS1470). Сборка `tsconfig.build.json` тесты не включает и зелёная, поэтому
-  дефект не виден при обычной работе — но общий гейт красный.
-- **`npm run lint:migrations` даёт 2 ERROR** на `M094`: `DROP TABLE` и
-  `DROP COLUMN` без пометки `-- migrate:contract`. Миграция применена, а
-  применённые не правятся — значит нужно либо исключение в линтере по имени
-  файла, либо реестр уже принятых отступлений.
-
 ### 🟢 Возможное усиление: ограничитель на раскрытие контактов (2026-09-21)
 
 Раскрытие контакта в карточке (`POST /v1/admin/users/:id/contacts/reveal`,
