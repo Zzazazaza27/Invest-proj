@@ -48,10 +48,30 @@ const { rows } = await client.query(`
      AND n.nspname NOT IN ('pg_catalog', 'information_schema')
    ORDER BY 1`);
 
-const open = rows.filter((row) => row.public_exec);
+/**
+ * Функции SECURITY DEFINER, исполнимые PUBLIC ОСОЗНАННО.
+ *
+ * Обе читают булев флаг возможности и ничего больше не возвращают: ни строки
+ * данных, ни решения о доступе к ним. Вызываются они из `app.has_role`
+ * (M088) и из предикатов выдачи доступа (M092), а `app.has_role` исполняет
+ * КАЖДАЯ роль в каждой политике RLS — включая обслуживание и архив. Список
+ * ролей в GRANT здесь пришлось бы поддерживать вручную, и первая же забытая
+ * роль означала бы не отказ в доступе, а падение политики целиком.
+ *
+ * Поэтому исключение названо поимённо, как и `PUBLIC_ALLOWED` ниже: гейт
+ * продолжает ловить всё остальное, а сознательное решение M088/M092 не
+ * приходится каждый раз объяснять заново.
+ */
+const PUBLIC_EXEC_ALLOWED = new Set(['lab.seasons_enabled', 'lab.entity_grants_enabled']);
+
+const open = rows.filter((row) => row.public_exec && !PUBLIC_EXEC_ALLOWED.has(row.fn));
+const allowed = rows.filter((row) => row.public_exec && PUBLIC_EXEC_ALLOWED.has(row.fn));
 console.warn(`  функций SECURITY DEFINER: ${rows.length}`);
 console.warn(`  из них исполнимы PUBLIC:  ${open.length}`);
 for (const row of open) console.warn(`    FAIL ${row.fn}(${row.args})`);
+for (const row of allowed) {
+  console.warn(`    OK   ${row.fn}(${row.args}) — исключение объявлено (флаг возможности)`);
+}
 
 // Отдельно — фактическая проверка запрета для конкретных ролей: наличие или
 // отсутствие GRANT в каталоге и невозможность вызова — разные утверждения.
