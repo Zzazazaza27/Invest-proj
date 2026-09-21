@@ -1,9 +1,11 @@
-import { Controller, Get, HttpCode, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   AdminUserCardSchema,
   AdminUserContactsSchema,
   AdminUserListQuerySchema,
   AdminUserPageSchema,
+  AdminUserProfileUpdateSchema,
+  AdminUserStatusChangeSchema,
   UuidSchema,
 } from '@unicorn/contracts';
 import { Ctx, Roles } from '../auth/guards';
@@ -54,5 +56,36 @@ export class AdminUsersController {
   async revealContacts(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
     return AdminUserContactsSchema.parse(await this.users.revealContacts(ctx, id));
+  }
+
+  /**
+   * Блокировка и снятие блокировки.
+   *
+   * Обе — одно действие с двумя значениями, а не две разные кнопки в API:
+   * у них общие проверки (не себе, не последнему администратору), общий
+   * обязательный повод и общее последствие для живых сессий.
+   */
+  @Roles('admin')
+  @Patch(':id/status')
+  async changeStatus(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const input = parseOrThrow(AdminUserStatusChangeSchema, rawBody);
+    return AdminUserCardSchema.parse(await this.users.changeStatus(ctx, id, input));
+  }
+
+  @Roles('admin')
+  @Patch(':id/profile')
+  async updateProfile(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const input = parseOrThrow(AdminUserProfileUpdateSchema, rawBody);
+    return AdminUserCardSchema.parse(await this.users.updateProfile(ctx, id, input));
   }
 }

@@ -165,6 +165,11 @@ export const AdminUserCardSchema = z.object({
   primaryRole: z.string(),
   roles: z.array(AdminUserRoleGrantSchema),
   status: UserStatusSchema,
+  /** Причина последней смены состояния администратором; у блокировки обязательна. */
+  statusReason: z.string().nullable(),
+  statusChangedAt: IsoDateTimeSchema.nullable(),
+  statusChangedBy: UuidSchema.nullable(),
+  statusChangedByName: z.string().nullable(),
   locale: z.string(),
   serviceCountry: z.string().nullable(),
   currencyPref: z.string(),
@@ -198,12 +203,17 @@ export type AdminUserContacts = z.infer<typeof AdminUserContactsSchema>;
 /**
  * Смена состояния учётной записи.
  *
- * Разрешены ровно два перехода: active в suspended и обратно. Статус `deleted`
- * сюда не входит — удаление это другой процесс с другими последствиями, и
- * притворяться, что это «ещё один пункт выпадающего списка», нельзя.
+ * Передаётся ДЕЙСТВИЕ, а не желаемый статус. Разница не косметическая: снятие
+ * блокировки не всегда означает `active` — человек без акцептов актуальных
+ * версий документов возвращается в `pending_consents`, и решает это сервер по
+ * тому же инварианту, что и активация. Клиент, присылающий статус, неизбежно
+ * ошибся бы в этом месте.
+ *
+ * Удаления здесь нет: это другой процесс с другими последствиями, и делать
+ * вид, что это «ещё один пункт выпадающего списка», нельзя.
  */
 export const AdminUserStatusChangeSchema = z.object({
-  status: z.enum(['active', 'suspended']),
+  action: z.enum(['suspend', 'restore']),
   reason: boundedString(3, 500),
 });
 export type AdminUserStatusChange = z.infer<typeof AdminUserStatusChangeSchema>;

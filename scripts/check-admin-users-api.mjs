@@ -350,6 +350,154 @@ try {
     organizerList.status === 403,
     `HTTP ${organizerList.status}`,
   );
+
+  // ------------------------------------------------- [8] блокировка аккаунта
+  console.warn('\n[8] Блокировка и снятие блокировки');
+  const victimEmail = 'demo-investor-trial@unicorn.local';
+  const victim = makeClient();
+  await victim.login(victimEmail, DEMO_PASSWORD);
+  const meBefore = await victim.call('/v1/auth/me');
+  check('До блокировки живая сессия работает', meBefore.status === 200, `HTTP ${meBefore.status}`);
+
+  const found = await admin.call(q({ field: 'email', q: victimEmail }));
+  const victimId = found.json.items[0].id;
+
+  const noReason = await admin.call(`/v1/admin/users/${victimId}/status`, {
+    method: 'PATCH',
+    body: { action: 'suspend', reason: '' },
+  });
+  check('Блокировка без причины отвергается', noReason.status === 400, `HTTP ${noReason.status}`);
+
+  const suspended = await admin.call(`/v1/admin/users/${victimId}/status`, {
+    method: 'PATCH',
+    body: { action: 'suspend', reason: 'Проверка прогоном: временная блокировка' },
+  });
+  check(
+    'Блокировка проходит и возвращает карточку',
+    suspended.status === 200 && suspended.json?.status === 'suspended',
+    `HTTP ${suspended.status}, статус ${suspended.json?.status}`,
+  );
+  check(
+    'Причина и автор блокировки видны в карточке',
+    suspended.json?.statusReason?.includes('Проверка прогоном') &&
+      suspended.json?.statusChangedBy === adminId,
+    `${suspended.json?.statusReason} · ${suspended.json?.statusChangedByName}`,
+  );
+
+  const meAfter = await victim.call('/v1/auth/me');
+  check(
+    'Уже выданная сессия заблокированного перестала работать',
+    meAfter.status === 401,
+    `HTTP ${meAfter.status}`,
+  );
+
+  const reLogin = makeClient();
+  const reLoginResult = await reLogin.call('/v1/auth/login', {
+    method: 'POST',
+    body: { email: victimEmail, password: DEMO_PASSWORD },
+  });
+  check(
+    'Заблокированный не может войти заново',
+    reLoginResult.status === 401 || reLoginResult.status === 403,
+    `HTTP ${reLoginResult.status}`,
+  );
+
+  const twice = await admin.call(`/v1/admin/users/${victimId}/status`, {
+    method: 'PATCH',
+    body: { action: 'suspend', reason: 'Повторная блокировка' },
+  });
+  check(
+    'Повторная блокировка отвергается, а не переписывает',
+    twice.status === 409,
+    `HTTP ${twice.status}`,
+  );
+
+  const self = await admin.call(`/v1/admin/users/${adminId}/status`, {
+    method: 'PATCH',
+    body: { action: 'suspend', reason: 'Попытка запереть себя' },
+  });
+  check('Себя заблокировать нельзя', self.status === 403, `HTTP ${self.status}`);
+
+  const restored = await admin.call(`/v1/admin/users/${victimId}/status`, {
+    method: 'PATCH',
+    body: { action: 'restore', reason: 'Проверка прогоном: снятие блокировки' },
+  });
+  check(
+    'Снятие блокировки возвращает в положенное состояние',
+    restored.status === 200 && restored.json?.status === 'active',
+    `HTTP ${restored.status}, статус ${restored.json?.status}`,
+  );
+
+  const backIn = makeClient();
+  const backInResult = await backIn.call('/v1/auth/login', {
+    method: 'POST',
+    body: { email: victimEmail, password: DEMO_PASSWORD },
+  });
+  check(
+    'После снятия блокировки вход снова работает',
+    backInResult.status === 200 || backInResult.status === 201,
+    `HTTP ${backInResult.status}`,
+  );
+
+  const journal = await sql(
+    `SELECT verb, context_jsonb->>'reason' AS reason FROM audit.events
+      WHERE subject_id = $1 AND verb IN ('identity.user.suspended','identity.user.restored')
+      ORDER BY ts DESC LIMIT 2`,
+    [victimId],
+  );
+  check(
+    'Обе операции записаны в журнал вместе с причиной',
+    journal.length === 2 &&
+      journal.every((row) => typeof row.reason === 'string' && row.reason.length > 3),
+    journal.map((r) => `${r.verb}: ${r.reason}`).join(' | '),
+  );
+
+  // --------------------------------------------- [9] правка обычного поля
+  console.warn('\n[9] Изменение обычного профильного поля');
+  // Имя берётся из карточки ДО правки, а не из ответа предыдущей проверки:
+  // если та упала, прогон не должен записать в базу `undefined` вместо имени.
+  const beforeRename = await admin.call(`/v1/admin/users/${victimId}`);
+  const originalName = beforeRename.json.displayName;
+  const renamed = await admin.call(`/v1/admin/users/${victimId}/profile`, {
+    method: 'PATCH',
+    body: { displayName: 'Роман Ковалёв (проверка)' },
+  });
+  check(
+    'Имя меняется администратором',
+    renamed.status === 200 && renamed.json?.displayName === 'Роман Ковалёв (проверка)',
+    `HTTP ${renamed.status}`,
+  );
+  const tooShort = await admin.call(`/v1/admin/users/${victimId}/profile`, {
+    method: 'PATCH',
+    body: { displayName: 'я' },
+  });
+  check('Слишком короткое имя отвергается', tooShort.status === 400, `HTTP ${tooShort.status}`);
+  const extraField = await admin.call(`/v1/admin/users/${victimId}/profile`, {
+    method: 'PATCH',
+    body: { displayName: 'Роман Ковалёв', status: 'active' },
+  });
+  check(
+    'Через правку профиля нельзя протащить чужое поле',
+    extraField.status === 400,
+    `HTTP ${extraField.status}`,
+  );
+  const back = await admin.call(`/v1/admin/users/${victimId}/profile`, {
+    method: 'PATCH',
+    body: { displayName: originalName },
+  });
+  check('Имя возвращено на место', back.json?.displayName === originalName, originalName);
+
+  const profileJournal = await sql(
+    `SELECT context_jsonb::text AS ctx FROM audit.events
+      WHERE subject_id = $1 AND verb = 'identity.user.profile_updated'
+      ORDER BY ts DESC LIMIT 1`,
+    [victimId],
+  );
+  check(
+    'В журнале — что изменено, но не само значение',
+    profileJournal[0]?.ctx === '{"field": "displayName"}',
+    profileJournal[0]?.ctx,
+  );
 } catch (error) {
   failed += 1;
   console.error(`\nПрогон прерван: ${error instanceof Error ? error.message : String(error)}`);
