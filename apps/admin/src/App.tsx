@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Button, Icon, NovaTopBar, UI_KEYFRAMES } from '@unicorn/ui';
 import {
@@ -60,8 +60,44 @@ const profilePort: ProfilePort = {
   },
 };
 
+/**
+ * Высота шапки — измеренная, а не записанная числом.
+ *
+ * От неё зависят две вещи: отметка, на которой останавливается боковое меню,
+ * и высота рабочей области. Зашитые 64px были неправдой уже сейчас —
+ * фактически шапка 69px, — и меню на пять пикселей заезжало под неё. А при
+ * любой правке шапки (второй строкой подписи, другим размером аватара) число
+ * разошлось бы снова и снова молча.
+ *
+ * Возвращается ref-ФУНКЦИЯ, а не объект: шапки нет в первом рендере (идёт
+ * проверка сессии), и обычный эффект отработал бы по пустой ссылке ровно один
+ * раз и больше не повторился — что и случилось при первой попытке. Функция
+ * вызывается в момент появления узла и в момент его исчезновения.
+ */
+function useTopbarHeight(): (node: HTMLDivElement | null) => void {
+  const observer = useRef<ResizeObserver | null>(null);
+
+  return useCallback((node: HTMLDivElement | null) => {
+    observer.current?.disconnect();
+    observer.current = null;
+    if (!node) return;
+
+    const apply = () => {
+      const height = Math.round(node.getBoundingClientRect().height);
+      if (height > 0) {
+        document.documentElement.style.setProperty('--admin-topbar-h', `${height}px`);
+      }
+    };
+    apply();
+    // Шапка меняет высоту при смене ширины окна: подпись переносится.
+    observer.current = new ResizeObserver(apply);
+    observer.current.observe(node);
+  }, []);
+}
+
 export function App() {
   const navigate = useNavigate();
+  const topbarRef = useTopbarHeight();
   // Смена раздела возвращает к началу страницы: иначе новый экран открывается
   // с той прокрутки, на которой человек бросил предыдущий.
   useScrollToTopOnChange(useLocation().pathname);
@@ -129,7 +165,7 @@ export function App() {
         содержимое в колонке по центру, здесь — сетка с боковым меню во всю
         ширину, и центрированная шапка над ней выглядела бы съехавшей.
       */}
-      <div className="admin-topbar">
+      <div className="admin-topbar" ref={topbarRef}>
         <NovaTopBar
           title="Пятый элемент"
           subtitle="Административный кабинет"

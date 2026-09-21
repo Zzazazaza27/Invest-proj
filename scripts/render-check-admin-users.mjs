@@ -434,6 +434,38 @@ try {
   await page.goto(`${ADMIN_URL}/users`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(1000);
 
+  // Каркас: при прокрутке шапка и меню остаются на месте, уезжает только
+  // содержимое. Заодно сверяется стык — меню начинается ровно под шапкой, а
+  // не заезжает под неё на несколько пикселей.
+  await page.evaluate(() => {
+    // eslint-disable-next-line no-undef -- исполняется в браузере
+    window.scrollTo(0, 1200);
+  });
+  await page.waitForTimeout(500);
+  const shell = await page.evaluate(() => {
+    /* eslint-disable no-undef -- исполняется в браузере */
+    const bar = document.querySelector('.admin-topbar').getBoundingClientRect();
+    const side = document.querySelector('.sidebar').getBoundingClientRect();
+    return {
+      scrolled: window.scrollY,
+      barTop: Math.round(bar.top),
+      gap: Math.round(side.top - bar.bottom),
+      sideBottom: Math.round(side.bottom),
+      viewport: window.innerHeight,
+    };
+    /* eslint-enable no-undef */
+  });
+  expect(
+    'Шапка и меню остаются на месте при прокрутке',
+    shell.scrolled > 0 && shell.barTop === 0 && shell.sideBottom <= shell.viewport + 1,
+    `прокручено ${shell.scrolled}px, шапка на ${shell.barTop}px`,
+  );
+  expect('Меню начинается ровно под шапкой', Math.abs(shell.gap) <= 1, `зазор ${shell.gap}px`);
+  await page.evaluate(() => {
+    // eslint-disable-next-line no-undef -- исполняется в браузере
+    window.scrollTo(0, 0);
+  });
+
   // --------------------------------------------------- [11] плотность
   console.warn('\n[11] Плотность рабочая, но не в ущерб чтению');
   const metrics = await page.evaluate(() => {
