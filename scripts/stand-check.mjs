@@ -209,6 +209,15 @@ if (existsSync(envFile)) {
   else bad(`PAYMENTS_MODE=${payments} — это НЕ тестовый режим`);
   if (nodeEnv !== 'production') ok(`NODE_ENV=${nodeEnv} — локальный контур`);
   else info('NODE_ENV=production — тестовое подтверждение оплаты будет отклонено');
+  // Доставка вебхуков — единственный живой канал наружу: почта локальная,
+  // платежи тестовые. «В базе нет рабочих данных» от внешнего вызова не
+  // защищает, поэтому режим показывается рядом с остальными границами.
+  const webhooks = value('WEBHOOK_DELIVERY_MODE') || 'capture';
+  if (webhooks === 'capture') ok('вебхуки наружу не уходят (WEBHOOK_DELIVERY_MODE=capture)');
+  else bad(`WEBHOOK_DELIVERY_MODE=${webhooks} — события уходят подписчикам по-настоящему`);
+  const mail = value('MAIL_TRANSPORT') || 'none';
+  if (mail !== 'smtp') ok(`почта наружу не уходит (MAIL_TRANSPORT=${mail})`);
+  else info('MAIL_TRANSPORT=smtp — письма уходят через релей');
 } else {
   bad('.env не найден');
 }

@@ -36,6 +36,7 @@
     "content:status": "node --experimental-strip-types scripts/content-snapshot.mjs status",
     "content:load": "node --experimental-strip-types scripts/content-snapshot.mjs load",
     "check:content-transfer": "node scripts/check-content-transfer.mjs",
+    "check:outbound": "node scripts/check-outbound-boundaries.mjs",
     "stand:check": "node scripts/stand-check.mjs",
     "docker:fix": "node scripts/fix-docker-socket.mjs",
     "docker:check": "node scripts/fix-docker-socket.mjs --check",

@@ -176,6 +176,17 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async deliverOne(traceId: string, item: DeliveryRow): Promise<boolean> {
+    // Граница контура проверяется ДО подготовки запроса и до расшифровки
+    // секрета подписи: «не отправляем» должно означать, что наружу не ушло
+    // ничего и что секрет ради этого даже не доставали.
+    if (getEnv().WEBHOOK_DELIVERY_MODE === 'capture') {
+      await this.markWithheld(
+        traceId,
+        item,
+        'контур не выпускает наружу (WEBHOOK_DELIVERY_MODE=capture)',
+      );
+      return false;
+    }
     const envelope = buildEnvelope(toOutboxRow(item));
     const body = JSON.stringify(envelope);
     const timestamp = Math.floor(Date.now() / 1000);
@@ -222,6 +233,35 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
       );
       return false;
     }
+  }
+
+  /**
+   * Перехвачено: наружу не ушло, и повторять не нужно.
+   *
+   * Состояние конечное и отдельное от `failed`. Смешать их нельзя: `failed`
+   * стоит в очереди на повтор, и перехваченная доставка ходила бы по кругу,
+   * а в отчёте о проблемах интеграции появился бы шум из событий, которые
+   * никто и не собирался отправлять.
+   *
+   * Попытка не засчитывается: её не было.
+   */
+  private async markWithheld(traceId: string, item: DeliveryRow, reason: string): Promise<void> {
+    await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
+      const { rowCount } = await tx.query(
+        `UPDATE integration.webhook_deliveries
+            SET status = 'withheld', withheld_reason = $2, next_retry_at = NULL
+          WHERE id = $1 AND locked_by = $3`,
+        [item.id, reason, this.instanceId],
+      );
+      if ((rowCount ?? 0) === 0) {
+        this.logger.warn({ msg: 'перехват не записан: аренда уже не наша', deliveryId: item.id });
+      }
+    });
+    this.logger.log({
+      msg: 'доставка наружу перехвачена контуром',
+      deliveryId: item.id,
+      eventType: item.event_type,
+    });
   }
 
   private async markDelivered(traceId: string, id: string, code: number): Promise<void> {

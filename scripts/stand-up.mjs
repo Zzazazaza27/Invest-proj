@@ -28,6 +28,8 @@ import { commandLine, portOwner, stopTree } from './lib/stand-processes.mjs';
 const ROOT = resolve(import.meta.dirname, '..');
 const CHECK_ONLY = process.argv.includes('--check');
 const NO_BUILD = process.argv.includes('--no-build');
+/** Перезапустить ядро, даже если оно уже отвечает: подхватить новую сборку. */
+const RESTART_CORE = process.argv.includes('--restart-core');
 
 /**
  * Маршруты и ожидаемый ответ БЕЗ входа.
@@ -304,8 +306,18 @@ function nats() {
 
 function core() {
   step('Ядро');
-  if (probe('http://127.0.0.1:4300/v1/health').code === 200) {
-    ok('уже работает на :4300');
+  const alive = probe('http://127.0.0.1:4300/v1/health').code === 200;
+  if (alive && RESTART_CORE) {
+    // Пересобранное ядро не подхватывается само: работающий процесс держит
+    // прежний код, а `stand:up` видит здоровый :4300 и идёт дальше. Со
+    // стороны это выглядит как «правка не работает», и ищут её в коде.
+    const pid = portOwner(4300);
+    if (pid) {
+      stopTree(pid);
+      ok(`прежнее ядро остановлено, pid ${pid}`);
+    }
+  } else if (alive) {
+    ok('уже работает на :4300 (перезапуск — `--restart-core`)');
     return true;
   }
   const out = run('node scripts/dev-core.mjs --detached');
