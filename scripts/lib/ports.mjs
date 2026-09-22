@@ -98,6 +98,8 @@ export const PORTS = {
   console: port('CONSOLE_PORT', 5178),
   /** Вход и регистрация — общий экран для всех ролей. */
   auth: port('AUTH_PORT', 5179),
+  /** Кабинет сотрудника: личное пространство администратора, не админка. */
+  staff: port('STAFF_PORT', 5180),
 
   /** PostgreSQL — порт НА ХОСТЕ (внутри сети контейнеров всегда 5432). */
   postgres: port('POSTGRES_PORT', 5433),
@@ -132,6 +134,7 @@ export const FRONTENDS = {
   expert: { name: 'кабинет эксперта', port: PORTS.expert, basePath: '/expert/' },
   console: { name: 'консоль разработки', port: PORTS.console, basePath: '/console/' },
   auth: { name: 'вход и регистрация', port: PORTS.auth, basePath: '/login/' },
+  staff: { name: 'кабинет сотрудника', port: PORTS.staff, basePath: '/staff/' },
 };
 
 /**

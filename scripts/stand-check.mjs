@@ -128,7 +128,7 @@ if (strays.length > 0) {
 
 // ---------------------------------------------------------- собранная статика
 step('Собранная статика');
-const APPS = ['web-public', 'lab', 'investor', 'expert', 'admin', 'auth', 'console'];
+const APPS = ['web-public', 'lab', 'investor', 'expert', 'admin', 'staff', 'auth', 'console'];
 for (const app of APPS) {
   const dir = resolve(ROOT, 'apps', app, 'dist');
   if (!existsSync(dir)) {
@@ -158,6 +158,7 @@ const ROUTES = [
   ['/investor/', 200, 'кабинет инвестора'],
   ['/expert/', 200, 'кабинет эксперта'],
   ['/admin/', 200, 'админка'],
+  ['/staff/', 200, 'кабинет сотрудника'],
   ['/console/', 404, 'консоль (анониму 404 — так и надо)'],
   ['/v1/health', 200, 'API ядра'],
 ];

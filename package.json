@@ -16,7 +16,7 @@
     "prepare": "git config core.hooksPath .githooks",
     "hooks:install": "git config core.hooksPath .githooks",
     "session": "node scripts/fix-docker-socket.mjs && node scripts/check-upstream-owner.mjs && node scripts/stand-status.mjs",
-    "build": "npm run build:packages && npm run build -w apps/core --if-present && npm run build -w apps/web-public --if-present && npm run build -w apps/admin --if-present && npm run build -w apps/lab --if-present && npm run build -w apps/investor --if-present && npm run build -w apps/expert --if-present && npm run build -w apps/auth --if-present && npm run build -w apps/console --if-present",
+    "build": "npm run build:packages && npm run build -w apps/core --if-present && npm run build -w apps/web-public --if-present && npm run build -w apps/admin --if-present && npm run build -w apps/lab --if-present && npm run build -w apps/investor --if-present && npm run build -w apps/expert --if-present && npm run build -w apps/staff --if-present && npm run build -w apps/auth --if-present && npm run build -w apps/console --if-present",
     "build:console": "npm run build -w apps/console",
     "check:front-builds": "node scripts/check-front-builds.mjs",
     "typecheck": "npm run typecheck --workspaces --if-present",

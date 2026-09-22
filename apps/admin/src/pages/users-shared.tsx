@@ -128,6 +128,10 @@ export const CABINET_BY_ROLE: Record<string, { href: string; title: string }> = 
   founder: { href: '/lab/', title: 'кабинет основателя' },
   investor: { href: '/investor/', title: 'кабинет инвестора' },
   expert: { href: '/expert/', title: 'кабинет эксперта' },
+  // Кабинет администратора — это НЕ админка, а его личное пространство как
+  // обычного человека. Раньше действие вело в админку, то есть показывало
+  // инструмент вместо человека; теперь у него свой адрес (пока с заглушкой).
+  admin: { href: '/staff/', title: 'кабинет сотрудника' },
 };
 
 export function cabinetsOf(
@@ -193,15 +197,18 @@ export function ViewCabinetAction({
     const roleNames = roles.map((role) => ROLE_LABEL[role] ?? role).join(', ');
     return (
       <span
-        className="muted"
+        className="muted small"
         data-view-cabinet="none"
         title={
           roles.length === 0
             ? 'У человека нет ролей — смотреть нечего'
-            : `Своего кабинета нет: ${roleNames || 'роль'} работает в админке`
+            : // Не «работает в админке»: организатору там ничего не доступно,
+              // пока сезоны отложены и роль вырезается из сессии. Честная
+              // формулировка — просто «служебная роль, кабинета нет».
+              `Своего кабинета нет: ${roleNames || 'роль'} — служебная роль`
         }
       >
-        —
+        N/A
       </span>
     );
   }

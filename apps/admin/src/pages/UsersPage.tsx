@@ -264,7 +264,13 @@ export function UsersPage() {
                   onSort={sortBy}
                   label="Регистрация"
                 />
-                <th />
+                {/*
+                  Столбец действия центрируется ЦЕЛИКОМ, а не поэлементно.
+                  Иначе кнопка прижата влево, а заглушка «N/A» центрирована по
+                  ячейке — и они стоят на разных линиях, что и бросается в
+                  глаза в списке из двадцати строк.
+                */}
+                <th style={{ textAlign: 'center' }} />
               </tr>
             </thead>
             <tbody>
@@ -340,7 +346,7 @@ function UserRow({ user }: { user: AdminUserRow }) {
         )}
       </td>
       <td className="small num">{new Date(user.createdAt).toLocaleDateString('ru-RU')}</td>
-      <td className="small">
+      <td className="small" style={{ textAlign: 'center' }}>
         <ViewCabinetAction userId={user.id} roles={user.roles} compact />
       </td>
     </tr>
