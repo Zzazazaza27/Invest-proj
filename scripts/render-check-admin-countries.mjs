@@ -354,7 +354,17 @@ try {
   check('непредвиденных ошибок в консоли нет', unexpected.length === 0, unexpected[0] ?? '');
 } finally {
   await browser.close();
-  await sql(`UPDATE billing.service_countries SET is_active = false WHERE code = $1`, [TEST_CODE]);
+  /*
+   * Страна прогона УДАЛЯЕТСЯ, а не просто прячется.
+   *
+   * Скрытая строка всё равно остаётся в базе, и проверка переноса содержимого
+   * честно показывала расхождение с комплектом: «+2 страны». Справочник — это
+   * подготовленное содержимое, и лишних записей в нём быть не должно.
+   * Политики этой страны уходят вместе с ней по внешнему ключу; политики
+   * настоящих стран не трогаются — отбор строго по коду прогона.
+   */
+  await sql(`DELETE FROM billing.service_country_policies WHERE country_code = $1`, [TEST_CODE]);
+  await sql(`DELETE FROM billing.service_countries WHERE code = $1`, [TEST_CODE]);
   // Возврат — новой версией: переписывать версии нельзя. Ничего не делает,
   // если сценарий уже вернул прежнее значение своим шагом.
   await restoreCountryPolicy(
