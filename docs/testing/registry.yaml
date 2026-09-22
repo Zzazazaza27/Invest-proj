@@ -154,6 +154,36 @@ checks:
     purpose: 'Гейт «служебная консоль закрыта постороннему». История. Консоль прятали от боевого контура тремя рубежами: её не собирал `npm run build`, маршрут жил в отдельном каталоге конфигов, каталог монтировал отдельный compose-фа'
     confirmation: reviewed-in-code
 
+  - id: CHK-CONTENT-FRESHNESS
+    file: scripts/check-content-freshness.mjs
+    command: npm run check:content-freshness
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 2
+    studied: code
+    studiedOn: 2026-09-23
+    needs: [db]
+    effects: ['только читает базу и файлы комплекта']
+    purpose: 'Актуален ли комплект содержимого в Git относительно базы. ОТДЕЛЬНО от проверки переноса: красный цвет здесь означает «комплект устарел», а не дефект. Владелец правит содержимое через админку — это нормальная работа, и снимок пора пересобрать.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-23
+
+  - id: TOOL-PROBE-RESIDUE
+    file: scripts/probe-residue.mjs
+    command: node scripts/probe-residue.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    studied: code
+    studiedOn: 2026-09-23
+    needs: [db]
+    effects: ['ТОЛЬКО ЧИТАЕТ: ничего не удаляет и не помечает']
+    purpose: 'Перечень доказуемо созданного прогонами и его связей. Основания только фактические: происхождение записи, авторство человека со следом прогона, принадлежность запуску. Таблицы без колонки авторства названы отдельно как «доказательств нет» — их не трогают.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-23
+
   - id: CHK-CONTENT-TRANSFER
     file: scripts/check-content-transfer.mjs
     command: npm run check:content-transfer
@@ -4134,6 +4164,7 @@ blocks:
     title: Подготовленное содержимое, витрина, поддержка
     members:
       [
+        CHK-CONTENT-FRESHNESS,
         DBT-FUNDING-ROUNDS,
         DBT-RLS,
         CHK-CONTENT-TRANSFER,
@@ -4263,6 +4294,7 @@ suites:
       - CHK-TESTING-SESSIONS
       - CHK-PROFILE-API
       - CHK-CONTENT-TRANSFER
+      - CHK-CONTENT-FRESHNESS
       - CHK-OUTBOUND-BOUNDARIES
       - CHK-FILE-ACCESS
       - SCN-ROUND-REVIEW

@@ -35,6 +35,7 @@
     "content:export": "node --experimental-strip-types scripts/content-snapshot.mjs export",
     "content:status": "node --experimental-strip-types scripts/content-snapshot.mjs status",
     "content:load": "node --experimental-strip-types scripts/content-snapshot.mjs load",
+    "check:content-freshness": "node scripts/check-content-freshness.mjs",
     "check:content-transfer": "node scripts/check-content-transfer.mjs",
     "check:outbound": "node scripts/check-outbound-boundaries.mjs",
     "check:testing-sessions": "node scripts/check-testing-sessions.mjs",

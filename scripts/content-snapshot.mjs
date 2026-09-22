@@ -300,13 +300,26 @@ const sha256 = (text) => createHash('sha256').update(text, 'utf8').digest('hex')
 /** Соответствие «идентификатор родителя → его естественный ключ». */
 const parentKeyCache = new Map();
 
-async function parentKeys(table) {
+/*
+ * Карта родителей строится по ТОМУ ЖЕ отбору, что и сам комплект.
+ *
+ * Раньше она читала таблицу целиком, не глядя на происхождение. Из-за этого
+ * комплект выходил несогласованным: пакет раунда, заведённый прогоном,
+ * отбрасывался как след проверки, а его услуги — у которых своего автора
+ * нет — оставались и ссылались в пустоту. Загрузка на чистой базе падала:
+ * «нет строки с ключом …, сначала должен загрузиться родитель».
+ *
+ * Правило одно: если родителя в комплекте нет, то и ребёнку там не место.
+ */
+async function parentKeys(table, probes) {
   if (parentKeyCache.has(table)) return parentKeyCache.get(table);
   const info = await describe(table);
   const pk = info.pk[0];
   const { rows } = await client.query(`SELECT * FROM ${table}`);
   const map = new Map();
   for (const row of rows) {
+    const authors = [...info.userRefs].map((c) => row[c]).filter(Boolean);
+    if (probes && authors.some((id) => probes.has(id))) continue;
     map.set(
       row[pk],
       info.naturalKey.map((c) => encode(row[c], info.byName.get(c))),
@@ -330,21 +343,34 @@ async function readFromDatabase(table, probes) {
       continue;
     }
     const out = {};
+    let orphan = false;
     for (const name of info.exported) {
       const ref = info.refs[name];
       if (ref) {
-        const map = await parentKeys(ref.table);
+        const map = await parentKeys(ref.table, probes);
         const parentKey = row[name] === null ? null : map.get(row[name]);
         if (row[name] !== null && !parentKey) {
-          throw new Error(
-            `${table}.${name}: строка ссылается на ${ref.table}, которого нет в выдаче — ` +
-              'перенос такой ссылки невозможен',
-          );
+          /*
+           * Родителя в комплекте нет — значит он сам отброшен как след
+           * прогона. Ребёнок уходит следом: иначе комплект ссылается в
+           * пустоту, и загрузка на чистой базе падает.
+           *
+           * Прежде здесь была ошибка, обрывавшая экспорт. Это неверно по
+           * существу: несогласованность вносит не экспорт, а отбор, и
+           * правильный ответ — не выгружать строку, а не отказываться
+           * выгружать всё.
+           */
+          orphan = true;
+          break;
         }
         out[name] = parentKey ? { __ref__: parentKey } : null;
       } else {
         out[name] = encode(row[name], info.byName.get(name));
       }
+    }
+    if (orphan) {
+      skipped += 1;
+      continue;
     }
     kept.push(out);
   }
