@@ -12,8 +12,19 @@
  * обязано его пережить. Одного `try/catch` в коде мало: проверять надо
  * поведение процесса, а не наличие перехвата.
  *
- * Как устроено: прогон обрывает ВСЕ соединения приложения к базе командой
- * администратора и смотрит, что ядро отвечает дальше и обслуживает запросы.
+ * ДВЕ ЧАСТИ, И ОБЕ НУЖНЫ.
+ *
+ * 1. ПОВЕДЕНИЕ. Прогон рвёт все соединения приложения командой
+ *    администратора и смотрит, что ядро отвечает дальше и снова ходит в
+ *    базу. Со снятой починкой эта часть краснеет — проверено: ядро умирает
+ *    посреди серии. Но ловит она дефект НЕ ВСЕГДА: падение случается,
+ *    только если обрыв пришёлся на открытую транзакцию фонового прохода, а
+ *    это гонка по времени. Одиночный обрыв её не воспроизводил вовсе.
+ *
+ * 2. УСТРОЙСТВО. Поэтому рядом стоит проверка кода: фоновый таймер не
+ *    должен запускать обещание без перехвата. Именно это и стоило процесса
+ *    — `void this.runFanOutOnce()` без `.catch()`. Она детерминированна и
+ *    ловит возврат дефекта, а не его следствие.
  *
  * Запуск: node scripts/check-db-reconnect.mjs (нужны БД и ядро)
  */
@@ -81,15 +92,30 @@ try {
   check('до обрыва ядро отвечает', before === 200, `HTTP ${before}`);
   if (before !== 200) throw new Error('проверять нечего: ядро не работает и до обрыва');
 
-  const { rowCount } = await client.query(
-    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-      WHERE datname = $1 AND pid <> pg_backend_pid()`,
-    [database],
-  );
-  check('соединения оборваны', (rowCount ?? 0) > 0, `оборвано: ${rowCount}`);
+  /**
+   * Рвём СЕРИЕЙ, а не один раз.
+   *
+   * Падение случается, когда соединение умирает внутри уже открытой
+   * транзакции фонового прохода. Одиночный обрыв в это окно попадает не
+   * всегда: проход занимает миллисекунды, а идёт раз в секунду. Первая
+   * версия проверки была зелёной и со снятой починкой — то есть не
+   * проверяла ничего. Серия обрывов делает попадание неизбежным и заодно
+   * повторяет то, что делает гибернация: рвёт всё и надолго.
+   */
+  let terminated = 0;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const { rowCount } = await client.query(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+        WHERE datname = $1 AND pid <> pg_backend_pid()`,
+      [database],
+    );
+    terminated += rowCount ?? 0;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  check('соединения оборваны', terminated > 0, `оборвано за серию: ${terminated}`);
 
-  // Фоновые проходы идут раз в секунду-две: дать им наткнуться на обрыв.
-  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  // Дать фоновым проходам отработать уже после серии.
+  await new Promise((resolve) => setTimeout(resolve, 5_000));
 
   const after = await health();
   check('ядро пережило обрыв', after === 200, `HTTP ${after}`);
@@ -104,15 +130,44 @@ try {
     `HTTP ${catalog?.status ?? 'нет ответа'}`,
   );
 
-  // И ещё раз, чтобы поймать случай «первый запрос поднял соединение и умер».
-  const { rowCount: second } = await client.query(
-    `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-      WHERE datname = $1 AND pid <> pg_backend_pid()`,
-    [database],
-  );
-  await new Promise((resolve) => setTimeout(resolve, 6_000));
+  // И ещё серия, чтобы поймать случай «первый запрос поднял соединение и умер».
+  let second = 0;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const { rowCount } = await client.query(
+      `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
+        WHERE datname = $1 AND pid <> pg_backend_pid()`,
+      [database],
+    );
+    second += rowCount ?? 0;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 5_000));
   const third = await health();
   check('повторный обрыв тоже пережит', third === 200, `оборвано ${second}, HTTP ${third}`);
+  // ---------------------------------------------------- устройство фоновых задач
+  //
+  // Ищем в теле каждого `setInterval` вызовы вида `void this.чтоНибудь(` без
+  // `.catch(` — то есть обещание, чей отказ уронит процесс.
+  const timerFiles = [
+    'apps/core/src/events/publisher.service.ts',
+    'apps/core/src/events/webhook-delivery.service.ts',
+    'apps/core/src/maintenance/partitions.service.ts',
+  ];
+  const unguarded = [];
+  for (const file of timerFiles) {
+    const source = readFileSync(join(ROOT, file), 'utf8');
+    const timers = source.match(/setInterval\(\(\) => \{[\s\S]*?\}, /g) ?? [];
+    for (const body of timers) {
+      for (const call of body.match(/void this\.[a-zA-Z]+\([^)]*\)[^;]*;/g) ?? []) {
+        if (!call.includes('.catch(')) unguarded.push(`${file}: ${call.trim().slice(0, 60)}`);
+      }
+    }
+  }
+  check(
+    'фоновые таймеры не запускают обещаний без перехвата',
+    unguarded.length === 0,
+    unguarded.length === 0 ? `${timerFiles.length} службы` : unguarded.join(' | '),
+  );
 } catch (error) {
   check('прогон выполнен', false, error instanceof Error ? error.message : String(error));
 } finally {
