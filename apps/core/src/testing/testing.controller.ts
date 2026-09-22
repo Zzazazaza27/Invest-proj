@@ -37,6 +37,12 @@ const StepSchema = z.object({
   actual: z.string().max(2000).nullish(),
 });
 
+/** Что именно прогон просит записать за своей сессией. */
+const TrackObjectSchema = z.object({
+  table: z.enum(['identity.users', 'lab.projects']),
+  id: z.string().uuid(),
+});
+
 const OpenContextSchema = z.union([
   z.object({ kind: z.literal('participant'), userId: z.string().uuid() }),
   z.object({ kind: z.literal('guest') }),
@@ -76,6 +82,20 @@ export class TestingController {
     const input = StepSchema.parse(body);
     await this.sessions.addStep(ctx, id, input);
     return { ok: true };
+  }
+
+  /**
+   * Записать за сессией объект, который прогон создал сам.
+   *
+   * Нужен прогонам, работающим под администратором: участников сессии у них
+   * нет, а убирать за собой надо. Все проверки — на сервере.
+   */
+  @Post('admin/testing/sessions/:id/objects')
+  @Roles('admin')
+  @HttpCode(200)
+  async trackObject(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body() body: unknown) {
+    const input = TrackObjectSchema.parse(body);
+    return this.sessions.trackCreated(ctx, id, input);
   }
 
   @Post('admin/testing/sessions/:id/finish')

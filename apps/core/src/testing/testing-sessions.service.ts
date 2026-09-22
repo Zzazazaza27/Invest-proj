@@ -9,6 +9,9 @@ import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { AccessContextService } from '../auth/access-context.service';
 import type { TestingSession } from '@unicorn/contracts';
 
+/** Происхождения, которые считаются следом прогона (M127). */
+const PROBE_ORIGINS = new Set(['render_check', 'load_test', 'test_session']);
+
 /**
  * Строка базы в вид договора. Отдельной функцией, потому что список и
  * карточка обязаны отдавать одно и то же: разошедшиеся представления одной
@@ -258,6 +261,77 @@ export class TestingSessionsService {
        VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`,
       [sessionId, table, rowId],
     );
+  }
+
+  /**
+   * Принять объект, созданный прогоном, в перечень своей сессии.
+   *
+   * ЗАЧЕМ ОТДЕЛЬНЫЙ МАРШРУТ. Происхождение (`origin`) говорит «это завёл
+   * прогон», но не «вот ЭТОТ запуск». Без принадлежности уборка возможна
+   * только оптом — по классу записей, — а значит один прогон убирает следы
+   * другого, ещё работающего. Перечень сессии эту разницу и хранит.
+   *
+   * ПОЧЕМУ РОЛЬ УЧАСТНИКА ЗДЕСЬ НИ ПРИ ЧЁМ. Прогон, работающий под
+   * администратором, ничего не знает про участников сессии — ему нужен
+   * только учёт. Требовать ради этого админа среди участников значило бы
+   * выдавать административные права там, где нужна одна строка в журнале.
+   *
+   * ЧЕТЫРЕ РУБЕЖА, и каждый закрывает свой способ ошибиться:
+   *   1. полномочие `testing.sessions.manage` — как у остальных маршрутов;
+   *   2. сессия принадлежит ТОМУ, кто её открыл: чужую пополнить нельзя;
+   *   3. завершённую и убранную пополнить нельзя — иначе запись появилась бы
+   *      в перечне уже после уборки и осталась бы навсегда;
+   *   4. таблица из закрытого списка, а строка обязана БЫТЬ ЗАПИСЬЮ ПРОВЕРКИ.
+   *      Без этого администратор мог бы внести в перечень настоящего
+   *      человека и удалить его следующей же уборкой.
+   */
+  async trackCreated(
+    ctx: RequestContext,
+    sessionId: string,
+    input: { table: string; id: string },
+  ): Promise<{ tracked: true }> {
+    this.assertEnabled();
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows } = await tx.query<{ created_by: string; status: string }>(
+        // Состояние берётся из `status`, а не из `result`: у результата есть
+        // умолчание 'unknown', то есть он заполнен с самого начала и о ходе
+        // сессии не говорит ничего.
+        `SELECT created_by, status FROM testing.sessions WHERE id = $1`,
+        [sessionId],
+      );
+      const session = rows[0];
+      if (!session) throw errors.notFound({ subject: 'testing session', id: sessionId });
+      if (session.created_by !== ctx.userId) {
+        throw errors.forbidden({
+          reason: 'чужая сессия: пополнять перечень вправе только тот, кто её открыл',
+        });
+      }
+      if (session.status !== 'active') {
+        throw errors.conflict('Сессия не активна', {
+          reason: 'запись, добавленная после итога, уборкой уже не убирается',
+          status: session.status,
+        });
+      }
+
+      const found = await tx.query<{ origin: string }>(
+        input.table === 'identity.users'
+          ? `SELECT origin FROM identity.users WHERE id = $1`
+          : `SELECT origin FROM lab.projects WHERE id = $1`,
+        [input.id],
+      );
+      const row = found.rows[0];
+      if (!row) throw errors.notFound({ subject: input.table, id: input.id });
+      if (!PROBE_ORIGINS.has(row.origin)) {
+        throw errors.forbidden({
+          reason:
+            'это не запись проверки: в перечень сессии попадает только созданное прогоном, ' +
+            'иначе уборка удалила бы настоящие данные',
+        });
+      }
+
+      await this.trackObject(tx, sessionId, input.table, input.id);
+      return { tracked: true as const };
+    });
   }
 
   // --------------------------------------------------------------- чтение

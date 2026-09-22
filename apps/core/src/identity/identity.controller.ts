@@ -51,8 +51,13 @@ import { VerificationService } from './verification.service';
  * заголовок игнорируется целиком, иначе любой желающий помечал бы свою запись
  * как «след прогона» и попадал под уборку (или, наоборот, прятался из списка).
  * Неизвестное значение тоже игнорируется — умолчание безопаснее догадки.
+ *
+ * Экспортируется ради проверки: оба свойства — «в production заголовок не
+ * действует» и «неизвестное значение не принимается» — до сих пор держались
+ * на чтении кода. Утверждение о безопасности, которое никто не проверяет,
+ * стоит ровно столько же, сколько намерение.
  */
-function originFromRequest(request: AuthenticatedRequest): string | undefined {
+export function originFromRequest(request: AuthenticatedRequest): string | undefined {
   if (getEnv().isProduction) return undefined;
   const raw = request.headers['x-unicorn-origin'];
   const value = Array.isArray(raw) ? raw[0] : raw;

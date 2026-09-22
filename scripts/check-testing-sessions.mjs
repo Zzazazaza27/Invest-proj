@@ -341,6 +341,82 @@ try {
   );
   check('просматриваемый не стал участником сессии', realStillClean[0].n === 0);
 
+  /*
+   * ПРИНАДЛЕЖНОСТЬ К ЗАПУСКУ ДЛЯ ТЕХ, КТО РАБОТАЕТ ПОД АДМИНИСТРАТОРОМ.
+   *
+   * Браузерные проходы заводят себе людей обычной регистрацией и участников
+   * сессии не имеют. Происхождение говорит «это завёл прогон», но не «вот
+   * ЭТОТ запуск» — а без этого уборка возможна только оптом, по классу
+   * записей, и один прогон убирал бы следы другого, ещё работающего.
+   *
+   * Проверяется не «маршрут отвечает 200», а каждый рубеж по отдельности.
+   */
+  const [probeRow] = await sql(
+    `SELECT id FROM identity.users
+      WHERE origin = 'render_check' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
+  );
+  check('в базе есть запись проверки для опыта', Boolean(probeRow), probeRow?.id ?? 'нет');
+
+  const tracked = await admin.call(`/v1/admin/testing/sessions/${sessionId}/objects`, {
+    method: 'POST',
+    body: { table: 'identity.users', id: probeRow.id },
+  });
+  check(
+    'созданное прогоном записывается за его сессией',
+    tracked.status === 200,
+    `HTTP ${tracked.status}`,
+  );
+
+  /*
+   * Чужая сессия — это сессия ДРУГОГО администратора, а не другая вкладка
+   * того же. Второго админа с известным паролем у прогона нет (пароль
+   * приёмки лежит вне Git), поэтому чужая сессия заводится прямо в базе: она
+   * нужна только как объект, а проверяется поведение API.
+   */
+  const [otherAdmin] = await sql(
+    `SELECT u.id FROM identity.users u
+       JOIN identity.user_roles r ON r.user_id = u.id
+      WHERE r.role = 'admin' AND u.deleted_at IS NULL AND u.id <> $1
+      ORDER BY u.created_at LIMIT 1`,
+    [adminId],
+  );
+  let foreignSessionId = null;
+  if (otherAdmin) {
+    const [row] = await sql(
+      `INSERT INTO testing.sessions (id, title, source, created_by, environment, status)
+       VALUES (public.uuid_generate_v7(), 'Чужая сессия для проверки', 'manual', $1, 'local', 'active')
+       RETURNING id`,
+      [otherAdmin.id],
+    );
+    foreignSessionId = row.id;
+    const foreign = await admin.call(`/v1/admin/testing/sessions/${foreignSessionId}/objects`, {
+      method: 'POST',
+      body: { table: 'identity.users', id: probeRow.id },
+    });
+    check(
+      'чужую сессию пополнить нельзя, даже будучи администратором',
+      foreign.status === 403,
+      `HTTP ${foreign.status}`,
+    );
+    await sql('DELETE FROM testing.sessions WHERE id = $1', [foreignSessionId]);
+  }
+
+  const [realUser] = await sql(
+    `SELECT id FROM identity.users
+      WHERE origin = 'self_registration' AND deleted_at IS NULL ORDER BY created_at LIMIT 1`,
+  );
+  if (realUser) {
+    const adoption = await admin.call(`/v1/admin/testing/sessions/${sessionId}/objects`, {
+      method: 'POST',
+      body: { table: 'identity.users', id: realUser.id },
+    });
+    check(
+      'настоящего человека в перечень сессии не внести',
+      adoption.status === 403,
+      `HTTP ${adoption.status}`,
+    );
+  }
+
   // --------------------------------------------------------- [8] завершение
   console.warn('\n[8] Завершение и отзыв');
   const closed = await admin.call(`/v1/admin/testing/contexts/${viewContext}`, {

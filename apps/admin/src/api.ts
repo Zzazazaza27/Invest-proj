@@ -604,11 +604,24 @@ export const api = {
     });
   },
 
-  searchUsers(query: string): Promise<{ items: AdminUserSummary[] }> {
+  /**
+   * Поиск человека по имени.
+   *
+   * `includeProbes` — ЯВНОЕ решение того, кто ищет. По умолчанию выдача
+   * такая же, как в списке пользователей: записи проверок скрыты, иначе
+   * список рассказывал бы не о платформе, а о наших прогонах. Но иногда
+   * искать нужно именно их — например, выдать полномочие учётной записи,
+   * которую завёл прогон. Само собой это не включается: фильтр происхождения
+   * не должен отменяться молча от того, что человек начал печатать.
+   */
+  searchUsers(
+    query: string,
+    options: { includeProbes?: boolean } = {},
+  ): Promise<{ items: AdminUserSummary[] }> {
     return client.request({
       method: 'GET',
       path: '/v1/admin/users',
-      query: { q: query },
+      query: options.includeProbes ? { q: query, origin: 'all' } : { q: query },
       schema: z.object({ items: z.array(AdminUserSummarySchema) }),
     });
   },

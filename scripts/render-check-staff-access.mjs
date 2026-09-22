@@ -33,6 +33,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
+import { PROBE_ORIGIN } from './lib/probe-run.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -127,21 +128,10 @@ function makeClient() {
   async function call(path, { method = 'GET', body } = {}) {
     const headers = { Cookie: [state.session, state.csrf].filter(Boolean).join('; ') };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
-    /*
-     * ЗДЕСЬ ПОМЕТКИ НЕТ, и это не забывчивость.
-     *
-     * Прогон заводит сотрудников и дальше ИЩЕТ ИХ В ИНТЕРФЕЙСЕ — в поле
-     * выдачи полномочия. Поиск админки (`searchUsers`) ходит в
-     * `/v1/admin/users?q=…` без параметра `origin`, а сервер по умолчанию
-     * прячет записи проверок. С пометкой прогон переставал находить
-     * собственных людей и падал по таймауту на шаге [2].
-     *
-     * Убрать это можно двумя способами, и оба — решение владельца, а не моё:
-     * либо поиск по явной строке показывает всех (изменение продукта), либо
-     * прогон работает на заранее заведённых учётных записях стенда. Пока
-     * решения нет, происхождение здесь не проставляется, а записи убирает
-     * `clean-probe-data` по прежнему признаку — имени.
-     */
+    // Регистрация называет серверу своё происхождение: иначе заведённый
+    // прогоном человек неотличим от настоящего (M127). Найти таких людей в
+    // интерфейсе можно — переключателем «Включая тестовых пользователей».
+    if (path === '/v1/auth/register') headers['X-Unicorn-Origin'] = PROBE_ORIGIN;
     if (method !== 'GET' && state.csrf) {
       headers['X-CSRF-Token'] = state.csrf.split('=').slice(1).join('=');
     }
@@ -414,6 +404,19 @@ function section(key) {
 async function pick(searchId, query, optionText) {
   const input = page.locator(`#${searchId}`);
   await input.fill(query);
+  /*
+   * Люди этого прогона помечены как записи проверок, а поиск по умолчанию их
+   * прячет — так же, как список пользователей. Это осознанное поведение
+   * продукта, и отменять его молча при вводе строки нельзя. Поэтому прогон
+   * поступает как оператор, которому нужны именно такие записи: ставит
+   * галочку «Включая тестовых пользователей».
+   */
+  const includeProbes = input.locator(
+    'xpath=ancestor::*[self::div][2]//input[@data-include-probes]',
+  );
+  if ((await includeProbes.count()) > 0 && !(await includeProbes.first().isChecked())) {
+    await includeProbes.first().check();
+  }
   await input.locator('xpath=following-sibling::button[1]').click();
   const list = input.locator('xpath=ancestor::*[self::div][1]/following::ul[1]');
   const option = list.locator('button', { hasText: optionText }).first();

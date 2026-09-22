@@ -6,6 +6,7 @@ import { TokenRevocationService } from '../src/auth/token-revocation.service';
 import { createHmac } from 'node:crypto';
 import { OpenApiController } from '../src/health/openapi.controller';
 import { normalizedPath, rateLimitClass } from '../src/common/request-path';
+import { originFromRequest } from '../src/identity/identity.controller';
 
 /**
  * Юнит-тесты периметра безопасности. Проверяют то, что нельзя увидеть в
@@ -793,5 +794,79 @@ describe('Классы ограничения частоты (Ф52)', () => {
     expect(rateLimitClass('/v1/billing/subscriptions', 'GET')).not.toBe(
       rateLimitClass('/v1/billing/subscriptions', 'POST'),
     );
+  });
+});
+
+describe('Происхождение записи из заголовка (M127)', () => {
+  /*
+   * Заголовок «X-Unicorn-Origin» — единственный способ назвать запись следом
+   * прогона, и он приходит ОТ КЛИЕНТА. Значит вопрос не «удобно ли это», а
+   * «что будет, если так назовётся посторонний».
+   *
+   * Ответ держится на двух рубежах, и оба проверяются здесь, а не читаются
+   * в коде: в боевом контуре заголовок не действует вовсе, а вне его
+   * принимается только закрытый список значений. Своё «я тестовый» клиент
+   * объявить не может — ни чтобы попасть под уборку, ни чтобы спрятаться из
+   * списка.
+   */
+  const withHeader = (value: string) =>
+    ({ headers: { 'x-unicorn-origin': value } }) as unknown as Parameters<
+      typeof originFromRequest
+    >[0];
+
+  function inEnv<T>(env: NodeJS.ProcessEnv, fn: () => T): T {
+    const saved = { ...process.env };
+    resetEnvCache();
+    process.env = { NODE_ENV: 'test', ...BASE_ENV, ...env } as NodeJS.ProcessEnv;
+    try {
+      return fn();
+    } finally {
+      process.env = saved;
+      resetEnvCache();
+    }
+  }
+
+  const PROD = {
+    NODE_ENV: 'production',
+    AUTH_MODE: 'oidc',
+    OIDC_ISSUER: 'https://idp.example.org',
+    OIDC_AUDIENCE: 'unicorn',
+    KMS_MODE: 'kms',
+    KMS_KEY_ID: 'arn:aws:kms:ru-central1:1:key/abc',
+    CORS_ALLOWED_ORIGINS: 'https://app.unicorn.vc',
+    CORE_PUBLIC_URL: 'https://api.unicorn.vc',
+    PUBLIC_BASE_URL: 'https://app.unicorn.vc',
+    SESSION_COOKIE_NAME: '__Host-ul_session',
+    CSRF_COOKIE_NAME: '__Host-ul_csrf',
+    DATABASE_SSL: 'true',
+    REDIS_URL: 'rediss://cache.internal:6379',
+    REDIS_PASSWORD: 'p'.repeat(24),
+    WEBHOOK_DELIVERY_MODE: 'live',
+  };
+
+  it('в production заголовок не действует даже с допустимым значением', () => {
+    inEnv(PROD, () => {
+      expect(originFromRequest(withHeader('render_check'))).toBeUndefined();
+    });
+  });
+
+  it('в production нельзя назваться и нагрузочным прогоном', () => {
+    inEnv(PROD, () => {
+      expect(originFromRequest(withHeader('load_test'))).toBeUndefined();
+    });
+  });
+
+  it('вне production принимается только значение из закрытого списка', () => {
+    inEnv({}, () => {
+      expect(originFromRequest(withHeader('render_check'))).toBe('render_check');
+      expect(originFromRequest(withHeader('самозванец'))).toBeUndefined();
+      expect(originFromRequest(withHeader('real_user'))).toBeUndefined();
+    });
+  });
+
+  it('заголовка нет — происхождение не выдумывается', () => {
+    inEnv({}, () => {
+      expect(originFromRequest({ headers: {} } as never)).toBeUndefined();
+    });
   });
 });

@@ -75,6 +75,8 @@ function UserPicker({
 }) {
   const [query, setQuery] = useState('');
   const [found, setFound] = useState<AdminUserSummary[] | null>(null);
+  // Выключено по умолчанию: записи проверок в обычной работе только мешают.
+  const [includeProbes, setIncludeProbes] = useState(false);
 
   return (
     <Stack gap="var(--u-space-2)">
@@ -92,7 +94,7 @@ function UserPicker({
             onClick={() => {
               setFound(null);
               void api
-                .searchUsers(query.trim())
+                .searchUsers(query.trim(), { includeProbes })
                 .then((page) => setFound(page.items))
                 .catch(() => setFound([]));
             }}
@@ -100,6 +102,23 @@ function UserPicker({
             Искать
           </button>
         </div>
+        <label
+          className="small muted"
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 6 }}
+        >
+          <input
+            type="checkbox"
+            data-include-probes
+            checked={includeProbes}
+            onChange={(event) => {
+              setIncludeProbes(event.target.checked);
+              // Прежняя выдача относится к прежнему условию: оставить её на
+              // экране значило бы показывать ответ на другой вопрос.
+              setFound(null);
+            }}
+          />
+          Включая тестовых пользователей
+        </label>
       </Field>
       {found !== null && found.length === 0 ? (
         <div className="small muted">Никого не нашлось — попробуйте другую часть имени.</div>
