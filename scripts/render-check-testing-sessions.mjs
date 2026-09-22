@@ -322,8 +322,70 @@ try {
   );
   expect('Контекст отозван в базе', closed[0].n > 0, `отозвано: ${closed[0].n}`);
 
-  // ------------------------------------------------------------ [7] уборка
-  console.warn('\n[7] Уборка сессии из интерфейса');
+  // -------------------------------------------- [7] плашка не оставляет двусмысленности
+  //
+  // Все три свойства найдены владельцем вручную и потому закрепляются здесь.
+  console.warn('\n[7] Плашка: один выход, честное состояние, чистая история');
+  const [secondView] = await Promise.all([
+    context.waitForEvent('page'),
+    page.locator(`[data-user-row="${realFounder.id}"] [data-view-cabinet]`).first().click(),
+  ]);
+  await secondView.waitForLoadState('networkidle');
+  await secondView.waitForTimeout(2000);
+
+  expect(
+    'В плашке ровно один выход',
+    (await secondView.locator('[data-test-context] button').count()) === 1 &&
+      (await secondView.locator('[data-test-context-back]').count()) === 0,
+    'ссылка «вернуться», уходившая БЕЗ завершения просмотра, убрана',
+  );
+
+  // Недействительный контекст обязан быть виден. Прежде плашка в этом случае
+  // просто не рисовалась — вкладка оставалась в режиме просмотра молча.
+  await secondView.evaluate(() => {
+    // eslint-disable-next-line no-undef -- исполняется в браузере
+    window.sessionStorage.setItem('unicorn.test-context', '00000000-0000-4000-8000-000000000000');
+  });
+  await secondView.reload({ waitUntil: 'networkidle' });
+  await secondView.waitForTimeout(2500);
+  expect(
+    'Недействительный просмотр назван, а не скрыт',
+    (await secondView.locator('[data-test-context="stale"]').count()) > 0,
+    await secondView
+      .locator('[data-test-context="stale"]')
+      .innerText()
+      .catch(() => 'плашки нет'),
+  );
+  await secondView.locator('[data-test-context-drop]').click();
+  await secondView.waitForTimeout(2500);
+  const dropped = await secondView.evaluate(() =>
+    // eslint-disable-next-line no-undef -- исполняется в браузере
+    window.sessionStorage.getItem('unicorn.test-context'),
+  );
+  expect('Выход из просмотра забывает контекст', dropped === null, String(dropped));
+
+  // История: после завершения «назад» не должно возвращать в кабинет, где
+  // режима уже нет, — именно это читается как «плашка пропала».
+  const [thirdView] = await Promise.all([
+    context.waitForEvent('page'),
+    page.locator(`[data-user-row="${realFounder.id}"] [data-view-cabinet]`).first().click(),
+  ]);
+  await thirdView.waitForLoadState('networkidle');
+  await thirdView.waitForTimeout(2000);
+  await thirdView.locator('[data-test-context-finish]').click();
+  await thirdView.waitForTimeout(3000);
+  await thirdView.goBack();
+  await thirdView.waitForTimeout(2500);
+  expect(
+    'После завершения «назад» не возвращает в кабинет',
+    !thirdView.url().includes('/lab/'),
+    thirdView.url(),
+  );
+  await thirdView.close();
+  await secondView.close();
+
+  // ------------------------------------------------------------ [8] уборка
+  console.warn('\n[8] Уборка сессии из интерфейса');
   await page.goto(`${ADMIN_URL}/testing`, { waitUntil: 'networkidle' });
   await page.waitForTimeout(2000);
   await page.locator(`[data-session-row="${sessionId}"] [data-session-open]`).click();

@@ -168,22 +168,32 @@ export function TestContextBanner({
   const [context, setContext] = useState<CurrentContext | null>(null);
   const [closing, setClosing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Сервер не признал контекст, а вкладка его помнит.
+   *
+   * Прежде в этом случае плашка просто не рисовалась — и получалось худшее
+   * из состояний: клиент по-прежнему шлёт заголовок контекста, то есть
+   * вкладка в режиме просмотра, а предупреждения об этом нет. Теперь режим
+   * либо виден, либо выключен; молчаливой середины не бывает.
+   */
+  const [stale, setStale] = useState(false);
 
   useEffect(() => {
     if (!contextId) {
       setContext(null);
+      setStale(false);
       return;
     }
     let alive = true;
     void port
       .current()
       .then((value) => {
-        if (alive) setContext(value);
+        if (!alive) return;
+        setContext(value);
+        setStale(value === null);
       })
       .catch(() => {
-        // Контекст мог истечь или быть отозван: плашку не показываем, но и
-        // экран не ломаем — запросы всё равно получат честный отказ.
-        if (alive) setContext(null);
+        if (alive) setStale(true);
       });
     return () => {
       alive = false;
@@ -197,12 +207,71 @@ export function TestContextBanner({
     try {
       await port.close(context.id);
       forgetTestContext();
-      window.location.assign(port.adminUrl);
+      /*
+       * `replace`, а не `assign`: адрес просмотренного кабинета не остаётся
+       * в истории вкладки. Иначе кнопка «назад» возвращает на ту же
+       * страницу — уже без режима и без плашки, — и это читается как «плашка
+       * пропала», хотя просмотр честно завершён.
+       */
+      window.location.replace(port.adminUrl);
     } catch (problem) {
       setClosing(false);
       setError(problem instanceof Error ? problem.message : 'не удалось завершить');
     }
   }, [context, port]);
+
+  /** Выйти из недействительного просмотра: забыть контекст и уйти в админку. */
+  const drop = useCallback(() => {
+    forgetTestContext();
+    window.location.replace(port.adminUrl);
+  }, [port]);
+
+  /*
+   * Контекст вкладки есть, а сервер его не признал: истёк, отозван, либо
+   * административная сессия инициатора закрыта. Показываем предупреждение
+   * вместо тишины — человек должен понимать, почему кабинет пуст или
+   * отвечает отказами.
+   */
+  if (!context && stale) {
+    return (
+      <div
+        data-test-context="stale"
+        role="alert"
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 1000,
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 12,
+          padding: '8px 16px',
+          background: '#8a1c1c',
+          color: '#fff',
+          fontSize: 13,
+        }}
+      >
+        <strong>Просмотр больше не действует</strong>
+        <span>Срок истёк или его завершили. Данные на экране могут не обновляться.</span>
+        <span style={{ flex: 1 }} />
+        <button
+          type="button"
+          data-test-context-drop
+          onClick={drop}
+          style={{
+            background: 'rgba(255,255,255,0.16)',
+            color: '#fff',
+            border: '1px solid rgba(255,255,255,0.4)',
+            borderRadius: 6,
+            padding: '3px 10px',
+            cursor: 'pointer',
+          }}
+        >
+          Выйти из просмотра
+        </button>
+      </div>
+    );
+  }
 
   if (!context) return null;
 
@@ -246,13 +315,17 @@ export function TestContextBanner({
       ) : null}
       <span style={{ flex: 1 }} />
       {error ? <span data-test-context-error>{error}</span> : null}
-      <a
-        href={port.adminUrl}
-        data-test-context-back
-        style={{ color: '#fff', textDecoration: 'underline' }}
-      >
-        Вернуться в админку
-      </a>
+      {/*
+        ОДНА кнопка, а не две.
+
+        Рядом стояла ссылка «Вернуться в админку». Внешне обе вели в одно и
+        то же место, поэтому выбирали любую — а разница была существенной:
+        ссылка УХОДИЛА, НЕ ЗАВЕРШАЯ просмотр. Контекст оставался жить в
+        вкладке до двух часов, и возврат в кабинет — кнопкой «назад», по
+        закладке, по ссылке — снова открывал чужой кабинет без всякого
+        нового действия. Выбор, в котором один вариант тихо оставляет
+        открытым чужой кабинет, — это не выбор, а ловушка.
+      */}
       <button
         type="button"
         data-test-context-finish
@@ -265,9 +338,10 @@ export function TestContextBanner({
           borderRadius: 6,
           padding: '3px 10px',
           cursor: closing ? 'progress' : 'pointer',
+          opacity: closing ? 0.7 : 1,
         }}
       >
-        {closing ? 'Завершаю…' : 'Завершить просмотр'}
+        Завершить просмотр
       </button>
     </div>
   );
