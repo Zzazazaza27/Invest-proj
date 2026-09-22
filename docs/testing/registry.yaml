@@ -523,7 +523,10 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['помечает удалённым']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      уборка следов прогонов ПОМЕТКОЙ deleted_at, а не удалением: на identity.users висят внешние ключи без ON DELETE, а акцепты согласий неизменяемы (M002) — физически удалить человека нельзя
     purpose: 'Уборка следов прогонов: людей и проекты, заведённые проверками. Зачем. Браузерные проходы и нагрузочные прогоны заводят себе учётные записи при каждом запуске. За неделю их набирается столько, что список пользователей ра'
     confirmation: reviewed-in-code
 
@@ -547,7 +550,10 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      копия базы перед опасной работой; 2026-09-21 дамп спас разбор ЧАВО
     purpose: 'Копия базы перед опасной работой. Зачем отдельной командой. Копию снимали руками и вспоминали о ней после сноса: 2026-09-21 дамп перед уборкой спас разбор — без него нельзя было доказать, что в словаре и ЧАВО не было нич'
     confirmation: reviewed-in-code
 
@@ -607,7 +613,10 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['удаляет данные', 'помечает удалённым']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      удаление одной учётной записи; в шапке прямо назван корень проблемы уборки — 46 внешних ключей на identity.users, и НИ ОДИН не объявляет ON DELETE
     purpose: 'Удаление тестовой учётной записи из базы — по решению владельца 2026-08-28 (учётка `ssurgut`, все пять ролей сразу). Почему скрипт, а не `DELETE FROM identity.users`: на `identity.users` ссылаются 46 внешних ключей, и **'
     confirmation: reviewed-in-code
 
@@ -632,7 +641,10 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      учётная запись ssurgut со всеми ролями — чтобы пройти платформу целиком
     purpose: 'Тестовый пользователь для разработки. Заводит учётную запись `ssurgut` со всеми ролями, нужными, чтобы пройти платформу целиком: основатель, инвестор, эксперт, организатор, администратор. Пароль берётся из `DEV_TEST_USER'
     confirmation: reviewed-in-code
 
@@ -645,7 +657,10 @@ checks:
     asserts: 0
     needs: [db, core]
     effects: ['пишет в БД']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      по учётной записи на роль: на совмещённой учётке не видно, что роли видят разное
     purpose: 'Локальный стенд: учётные записи по ролям и данные, на которых видно работу. Зачем отдельно от `dev-seed-test-user.mjs`: та учётка совмещает ВСЕ роли, и на ней невозможно увидеть главное свойство платформы — что роли видя'
     confirmation: reviewed-in-code
 
@@ -665,13 +680,19 @@ checks:
   - id: TOOL-E2E-FULL-CYCLE
     file: scripts/e2e-full-cycle.mjs
     command: node scripts/e2e-full-cycle.mjs
-    kind: tool
-    level: инструмент
+    kind: scenario
+    level: сквозной
     runner: manual-tool
     asserts: 33
     needs: [db, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    effects: ['создаёт данные всех ролей', 'за собой не убирает']
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      ОШИБКА КЛАССИФИКАЦИИ, исправлена 2026-09-22: числился инструментом, а
+      это сквозной сценарий на 33 утверждения — путь проекта через все роли и
+      проверка, что данные ОДНОЙ роли доходят до другой. Вне блоков его никто
+      не запускал.
     purpose: 'Сквозной сценарий платформы: путь проекта через все роли. Каждая фаза проверяла свой кусок; здесь проверяется, что куски складываются в одну работающую цепочку и что данные ОДНОЙ роли доходят до другой ровно так, как зад'
     confirmation: reviewed-in-code
 
@@ -790,19 +811,29 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [nats]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      создание стрима JetStream; ядро только публикует — право управлять стримами позволило бы его и удалить
     purpose: 'Инициализация стрима событий в NATS JetStream. Ядро только ПУБЛИКУЕТ: создание и настройка стрима — операционная задача, а не право приложения. Приложение, которое само создаёт стримы, обязано иметь права на управление и'
     confirmation: reviewed-in-code
 
   - id: TOOL-NETWORK-AUDIT
     file: scripts/network-audit.mjs
     command: npm run gate:net
-    kind: tool
-    level: инструмент
+    kind: gate
+    level: статический
     runner: ci
-    asserts: 0
+    asserts: 15
     needs: [core]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['читает привязки портов, заголовки ответов и поведение CORS — ничего не меняет']
+    note: >-
+      ОШИБКА КЛАССИФИКАЦИИ, исправлена 2026-09-22: это гейт сетевой
+      безопасности, а не инструмент. Проверяет ФАКТ — реальные привязки
+      портов, реальные заголовки ответа, реальное поведение CORS с чужим
+      Origin, — а не намерение в конфиге.
     purpose: 'Гейт сетевой безопасности (RULES.md §3.2). Прогоняется по завершении КАЖДОЙ фазы. Проверяет фактическое состояние, а не намерение в конфиге: реальные привязки портов контейнеров, реальные заголовки ответа API, реальное п'
     confirmation: reviewed-in-code
 
@@ -1634,7 +1665,10 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['удаляет данные', 'рвёт соединения']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      сброс тестовой базы до пустой; схемы приложения удаляются, роли и расширения — нет
     purpose: 'Сброс ТЕСТОВОЙ базы проекта до пустой: схемы приложения удаляются, роли, расширения и посторонние базы не трогаются. После сброса — миграции и сиды. Разрешение владельца 2026-09-18 (план 0.2 §0г.6): данные локальных и ст'
     confirmation: reviewed-in-code
 
@@ -1689,12 +1723,18 @@ checks:
   - id: TOOL-SECURITY-AUDIT-FULL
     file: scripts/security-audit-full.mjs
     command: node scripts/security-audit-full.mjs
-    kind: tool
-    level: инструмент
+    kind: gate
+    level: статический
     runner: manual-tool
     asserts: 0
-    needs: [nats]
-    studied: header
+    needs: [db, core]
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['запускает другие гейты подряд — своих данных не создаёт']
+    note: >-
+      Собирательный прогон: «всё проверено» и «все проверки прогнаны подряд на
+      одной сборке» — разные утверждения. По сути ещё один набор, но собранный
+      до появления реестра.
     purpose: 'Глобальный аудит: все гейты качества и безопасности одним прогоном. Существует потому, что «всё проверено» и «все проверки прогнаны подряд на одной сборке» — разные утверждения. Каждая фаза закрывала свой гейт, но состоя'
     confirmation: reviewed-in-code
 
@@ -1707,7 +1747,10 @@ checks:
     asserts: 0
     needs: [db, core]
     effects: ['пишет в БД']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      обстановка приёмки и маршрут к ней; пересоздаётся после каждого сброса стенда
     purpose: 'Обстановка для приёмки владельцем и маршрут к ней. Зачем скрипт, а не «создал руками и записал». Стенд пересоздаётся: базы сбрасываются, демо-данные перезаливаются. Маршрут приёмки, который живёт только в голове, после п'
     confirmation: reviewed-in-code
 
@@ -1720,7 +1763,10 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['пишет в БД']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      стартовая версия анкеты заявки
     purpose: 'Стартовая конфигурация вопросов заявки — публикация версии 1. Документ версии 1 живёт в коде контрактов (`application-form.v1.ts`, сгенерирован из банка вопросов). Миграция M073 создаёт таблицу версий, но не вписывает в '
     confirmation: reviewed-in-code
 
@@ -1745,7 +1791,10 @@ checks:
     asserts: 0
     needs: [db, storage]
     effects: ['пишет в БД', 'удаляет данные']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      комплект демонстрационных данных; восстановим из ФАЙЛОВ, а не разово налит — от него зависит SMK-DEMO
     purpose: 'Восстановимый комплект демонстрационных данных UNICORN LAUNCH. Задача не в том, чтобы «налить данных один раз». Комплект должен полностью восстанавливать наполнение после переустановки приложения, очистки БД или развёрты'
     confirmation: reviewed-in-code
 
@@ -1758,7 +1807,10 @@ checks:
     asserts: 0
     needs: [db, core]
     effects: ['создаёт пользователей']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      несколько понятных состояний вместо витрины «платформа живёт год»
     purpose: 'Минимальный набор сценариев локального стенда. Заменяет прежний демонстрационный комплект (`seed-demo`) там, где нужна не витрина «как будто платформа живёт год», а несколько понятных состояний, по которым видно поведени'
     confirmation: reviewed-in-code
 
@@ -2309,7 +2361,10 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [core, storage, nats]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      состояние стенда с разбивкой по частям, а не «не работает»
     purpose: 'Состояние локального стенда: что работает, где и насколько свежее. Отличается от `stand:up --check` тем, что не только стучится по маршрутам, но и объясняет КАЖДУЮ часть: контейнеры, процессы на хосте, собранная статика,'
     confirmation: reviewed-in-code
 
@@ -2332,7 +2387,10 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      что работает, что нет и почему
     purpose: 'Что сейчас развёрнуто на стенде — в файл, а не в голову. До этого состояние сервера узнавалось только заходом по SSH: сервер недоступен — узнать нечем, а история развёртываний не сохранялась вовсе. Теперь снимок кладётся'
     confirmation: reviewed-in-code
 
@@ -2344,7 +2402,10 @@ checks:
     runner: manual-tool
     asserts: 2
     needs: [core, nats]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      семь шагов подъёма стенда; от него зависят все живые и браузерные прогоны
     purpose: 'Поднять локальный стенд одной командой. Последовательность одна и та же каждый раз: починить сокет Docker, дождаться демона, поднять контейнеры, накатить миграции, создать стрим NATS, запустить ядро, поднять единую точку'
     confirmation: reviewed-in-code
 
@@ -2355,7 +2416,10 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      сборка фронтендов всегда в production-режиме: Vite читает корневой .env с NODE_ENV=development и иначе собирает отладочный React со StrictMode — двойные запросы и ранний потолок частоты
     purpose: '`vite build` всегда в production-режиме. Корневой `.env` держит `NODE_ENV=development` для ядра, а Vite читает этот файл и при `vite build` честно собирает РАЗРАБОТЧЕСКИЙ бандл: React в development-сборке, `<React.Strict'
     confirmation: reviewed-in-code
   - id: DBT-ACCESS-PATHS
@@ -2689,7 +2753,8 @@ checks:
     level: статический
     runner: ci
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Линтер: правила кода и запреты проекта'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2701,7 +2766,8 @@ checks:
     level: статический
     runner: ci
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Единый формат исходников'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2713,7 +2779,8 @@ checks:
     level: статический
     runner: ci
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Типы во всех пакетах и приложениях'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2725,7 +2792,11 @@ checks:
     level: статический
     runner: ci
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      Собираются ВСЕ приложения. Прежде команда включала только ядро, витрину
+      и админку, и поломка трёх кабинетов проходила зелёный CI (CODE-03).
     purpose: 'Сборка всех приложений и пакетов'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2737,7 +2808,8 @@ checks:
     level: статический
     runner: ci
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Миграции применяются на чистую базу'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2749,7 +2821,8 @@ checks:
     level: статический
     runner: ci
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Правила миграций: expand-contract, метки'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2761,7 +2834,12 @@ checks:
     level: статический
     runner: ci
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      Запускается с --severity ERROR --error: подавленные находки (nosemgrep с
+      причиной) не валят задание, активные валят. 2026-09-22 задание было
+      красным из-за четырёх активных находок.
     purpose: 'Статический анализ безопасности'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2773,7 +2851,8 @@ checks:
     level: статический
     runner: ci
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Секреты в истории репозитория'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -3915,6 +3994,7 @@ blocks:
     title: Права, роли, видимость и границы доступа
     members:
       [
+        TOOL-E2E-FULL-CYCLE,
         PRB-ROLE-REVOCATION,
         DBT-INVARIANTS,
         DBT-RLS,
@@ -4108,6 +4188,8 @@ blocks:
     title: Секреты, роли БД, шифрование, выкат
     members:
       [
+        TOOL-SECURITY-AUDIT-FULL,
+        TOOL-NETWORK-AUDIT,
         PRB-SHARED-RATE-LIMIT,
         PRB-SECRET-LEAK,
         PRB-RATE-LIMIT,
