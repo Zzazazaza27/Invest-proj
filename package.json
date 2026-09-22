@@ -39,6 +39,7 @@
     "check:outbound": "node scripts/check-outbound-boundaries.mjs",
     "check:testing-sessions": "node scripts/check-testing-sessions.mjs",
     "check:db-reconnect": "node scripts/check-db-reconnect.mjs",
+    "check:db-resilience": "node scripts/check-db-resilience.mjs",
     "stand:check": "node scripts/stand-check.mjs",
     "docker:fix": "node scripts/fix-docker-socket.mjs",
     "docker:check": "node scripts/fix-docker-socket.mjs --check",

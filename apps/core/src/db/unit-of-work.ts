@@ -75,6 +75,39 @@ export class Database implements OnModuleDestroy {
     this.pool = this.createPool(env.DATABASE_URL, 'unicorn-launch-core', env.DATABASE_POOL_MAX);
   }
 
+  /**
+   * Взять соединение из пула ТАК, чтобы его обрыв не уронил процесс.
+   *
+   * `pool.on('error')` закрывает только ПРОСТАИВАЮЩИЕ соединения. У клиента,
+   * который уже выдан и работает, событие `error` эмитится на нём самом — и
+   * без слушателя Node бросает его как необработанное, то есть убивает ядро.
+   *
+   * Так и случилось 22.09: гибернация оборвала соединение, занятое фоновым
+   * проходом. Перехват в задаче от этого НЕ спасает: до отклонения промиса
+   * дело не доходит, процесс умирает раньше. Поэтому слушатель вешается на
+   * каждое выданное соединение и снимается при возврате — иначе они
+   * накапливались бы на переиспользуемых клиентах пула.
+   *
+   * Сам запрос всё равно завершится отказом; его разбирает вызывающий.
+   */
+  private async acquire(
+    pool: pg.Pool,
+    label: string,
+  ): Promise<{ client: pg.PoolClient; release: () => void }> {
+    const client = await pool.connect();
+    const onError = (error: Error): void => {
+      this.logger.error({ msg: 'обрыв выданного соединения', pool: label, error: error.message });
+    };
+    client.on('error', onError);
+    return {
+      client,
+      release: () => {
+        client.removeListener('error', onError);
+        client.release();
+      },
+    };
+  }
+
   private createPool(connectionString: string, applicationName: string, max: number): pg.Pool {
     const env = getEnv();
     const pool = new pg.Pool({
@@ -148,7 +181,7 @@ export class Database implements OnModuleDestroy {
         detail: 'просмотр кабинета: изменения запрещены сервером',
       });
     }
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquire(this.pool, 'core');
     try {
       await client.query('BEGIN');
       await this.applyContext(client, ctx);
@@ -159,13 +192,13 @@ export class Database implements OnModuleDestroy {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
   /** Транзакция только для чтения: планировщику и репликам это явный сигнал. */
   async readOnly<T>(ctx: RequestContext, work: (tx: Tx) => Promise<T>): Promise<T> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquire(this.pool, 'core');
     try {
       await client.query('BEGIN READ ONLY');
       await this.applyContext(client, ctx);
@@ -176,7 +209,7 @@ export class Database implements OnModuleDestroy {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
@@ -192,7 +225,7 @@ export class Database implements OnModuleDestroy {
     if (!SERVICE_ROLES.has(role)) {
       throw new Error(`Недопустимая сервисная роль: ${role}`);
     }
-    const client = await this.serviceRolePool(role).connect();
+    const { client, release } = await this.acquire(this.serviceRolePool(role), role);
     try {
       await client.query('BEGIN');
       await client.query(`SET LOCAL statement_timeout = ${this.statementTimeoutMs}`);
@@ -210,7 +243,7 @@ export class Database implements OnModuleDestroy {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
@@ -233,7 +266,7 @@ export class Database implements OnModuleDestroy {
     work: (tx: Tx) => Promise<T>,
     viewer: { userId: string | null; roles: readonly string[] } | null = null,
   ): Promise<T> {
-    const client = await this.pool.connect();
+    const { client, release } = await this.acquire(this.pool, 'public');
     try {
       await client.query('BEGIN READ ONLY');
       await client.query('SET LOCAL ROLE app_public_read');
@@ -254,7 +287,7 @@ export class Database implements OnModuleDestroy {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
-      client.release();
+      release();
     }
   }
 
