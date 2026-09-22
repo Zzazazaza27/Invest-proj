@@ -40,6 +40,11 @@
     "check:testing-sessions": "node scripts/check-testing-sessions.mjs",
     "check:db-reconnect": "node scripts/check-db-reconnect.mjs",
     "check:db-resilience": "node scripts/check-db-resilience.mjs",
+    "check:registry": "node scripts/check-test-registry.mjs",
+    "docs:registry": "node scripts/build-test-registry-doc.mjs",
+    "suite:handoff": "node scripts/run-suite.mjs handoff",
+    "suite:regression": "node scripts/run-suite.mjs regression",
+    "suite:isolated": "node scripts/run-suite.mjs isolated",
     "stand:check": "node scripts/stand-check.mjs",
     "docker:fix": "node scripts/fix-docker-socket.mjs",
     "docker:check": "node scripts/fix-docker-socket.mjs --check",
@@ -88,6 +93,7 @@
     "prettier": "^3.9.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.66.0",
-    "vitest": "^4.1.10"
+    "vitest": "^4.1.10",
+    "yaml": "^2.9.1"
   }
 }
