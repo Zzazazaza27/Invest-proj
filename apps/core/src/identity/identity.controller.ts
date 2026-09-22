@@ -19,6 +19,7 @@ import { TokenVerifier } from '../auth/token.verifier';
 import type { RequestContext } from '../db/unit-of-work';
 import { IdentityService } from './identity.service';
 import { VerificationService } from './verification.service';
+import { TestingSessionsService } from '../testing/testing-sessions.service';
 
 /**
  * Аутентификация и профиль.
@@ -41,35 +42,54 @@ import { VerificationService } from './verification.service';
  * описания API в production).
  */
 /**
- * Происхождение записи из заголовка запроса.
+ * Происхождение записи — и доказательство права его назначить.
  *
  * Сервер не может САМ отличить браузерный проход от человека: и тот и другой
- * приходят обычной регистрацией. Поэтому прогоны называются сами — заголовком
- * `X-Unicorn-Origin`.
+ * приходят обычной регистрацией. Поэтому прогоны называются сами. Вопрос в
+ * том, чего стоит такое имя.
  *
- * Доверять ему можно только там, где нет настоящих людей: в боевом контуре
- * заголовок игнорируется целиком, иначе любой желающий помечал бы свою запись
- * как «след прогона» и попадал под уборку (или, наоборот, прятался из списка).
- * Неизвестное значение тоже игнорируется — умолчание безопаснее догадки.
+ * ПЕРВАЯ ВЕРСИЯ ВЕРИЛА ЗАГОЛОВКУ. Проверялись окружение и список значений —
+ * и этого казалось достаточно. Опыт показал обратное: обычный клиент без
+ * всякой авторизации регистрировался с `X-Unicorn-Origin: render_check`, и
+ * его запись становилась следом прогона. То есть посторонний мог подвести
+ * СВОЮ учётную запись под уборку — или, наоборот, спрятать её из списка.
+ * Разрешённое значение заголовка не полномочие.
  *
- * Экспортируется ради проверки: оба свойства — «в production заголовок не
- * действует» и «неизвестное значение не принимается» — до сих пор держались
- * на чтении кода. Утверждение о безопасности, которое никто не проверяет,
- * стоит ровно столько же, сколько намерение.
+ * ТЕПЕРЬ ОПАСНОЕ ПРОИСХОЖДЕНИЕ ТРЕБУЕТ ДОКАЗАТЕЛЬСТВА. `render_check` и
+ * `load_test` — единственные значения, которые уборка вправе удалять, и
+ * назначаются они только вместе с `X-Unicorn-Run`: идентификатором ДЕЙСТВУЮЩЕЙ
+ * тестовой сессии. Завести её может лишь администратор с полномочием
+ * `testing.sessions.manage`, и она же становится владельцем записи. Остальные
+ * значения (`seed_*`, `staff_check`) уборке не подлежат и остаются как были.
  */
+const CLEANABLE_ORIGINS = new Set(['render_check', 'load_test']);
+const SAFE_ORIGINS = new Set(['seed_demo', 'seed_acceptance', 'staff_check']);
+
 export function originFromRequest(request: AuthenticatedRequest): string | undefined {
   if (getEnv().isProduction) return undefined;
   const raw = request.headers['x-unicorn-origin'];
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (typeof value !== 'string') return undefined;
-  const allowed = new Set([
-    'seed_demo',
-    'seed_acceptance',
-    'staff_check',
-    'render_check',
-    'load_test',
-  ]);
-  return allowed.has(value) ? value : undefined;
+  if (SAFE_ORIGINS.has(value)) return value;
+  // Опасное значение без доказательства не принимается: право его назначить
+  // проверяется отдельно, по действующей сессии.
+  return undefined;
+}
+
+/** Идентификатор запуска из заголовка. Проверяет его сервер, не клиент. */
+export function runIdFromRequest(request: AuthenticatedRequest): string | undefined {
+  if (getEnv().isProduction) return undefined;
+  const raw = request.headers['x-unicorn-run'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  if (typeof value !== 'string') return undefined;
+  return /^[0-9a-f-]{36}$/i.test(value) ? value : undefined;
+}
+
+/** Происхождение, которое просит клиент, если оно вообще подлежит уборке. */
+export function cleanableOriginRequested(request: AuthenticatedRequest): string | undefined {
+  const raw = request.headers['x-unicorn-origin'];
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return typeof value === 'string' && CLEANABLE_ORIGINS.has(value) ? value : undefined;
 }
 
 function assertLocalAuthAvailable(): void {
@@ -85,6 +105,7 @@ export class IdentityController {
     private readonly identity: IdentityService,
     private readonly verifier: TokenVerifier,
     private readonly verification: VerificationService,
+    private readonly sessions: TestingSessionsService,
   ) {}
 
   @Public()
@@ -97,7 +118,29 @@ export class IdentityController {
   ) {
     assertLocalAuthAvailable();
     const input = parseOrThrow(RegisterRequestSchema, rawBody);
-    const { userId, roles } = await this.identity.register(input, ctx, originFromRequest(request));
+
+    /*
+     * Право назвать запись следом прогона проверяется СЕРВЕРОМ.
+     *
+     * Клиент просит происхождение заголовком, но если оно из тех, что уборка
+     * вправе удалять, одной просьбы мало: нужен идентификатор действующей
+     * тестовой сессии. Сессию заводит администратор с полномочием, она же
+     * становится владельцем записи — и записывается это в той же
+     * транзакции, что и сам человек.
+     */
+    let origin = originFromRequest(request);
+    let runSessionId: string | undefined;
+    const wanted = cleanableOriginRequested(request);
+    if (wanted && !getEnv().isProduction) {
+      const runId = runIdFromRequest(request);
+      const owned = runId ? await this.sessions.isActiveRun(runId) : false;
+      if (owned) {
+        origin = wanted;
+        runSessionId = runId;
+      }
+    }
+
+    const { userId, roles } = await this.identity.register(input, ctx, origin, runSessionId);
     const missing = await this.identity.missingConsents({ ...ctx, userId, roles }, input.locale);
 
     const { session, csrfToken } = this.identity.buildSession({

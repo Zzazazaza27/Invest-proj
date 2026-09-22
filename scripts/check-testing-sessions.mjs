@@ -342,36 +342,88 @@ try {
   check('просматриваемый не стал участником сессии', realStillClean[0].n === 0);
 
   /*
-   * ПРИНАДЛЕЖНОСТЬ К ЗАПУСКУ ДЛЯ ТЕХ, КТО РАБОТАЕТ ПОД АДМИНИСТРАТОРОМ.
+   * ПРИНАДЛЕЖНОСТЬ К ЗАПУСКУ И ПРАВО НАЗВАТЬСЯ ТЕСТОВЫМ.
    *
-   * Браузерные проходы заводят себе людей обычной регистрацией и участников
-   * сессии не имеют. Происхождение говорит «это завёл прогон», но не «вот
-   * ЭТОТ запуск» — а без этого уборка возможна только оптом, по классу
-   * записей, и один прогон убирал бы следы другого, ещё работающего.
+   * Первая версия доверяла заголовку: разрешённое значение — значит
+   * происхождение назначено. Опыт показал, чего это стоит: обычный клиент
+   * БЕЗ всякой авторизации регистрировался с X-Unicorn-Origin: render_check
+   * и становился следом прогона — то есть мог подвести свою запись под
+   * уборку или спрятать её из списка.
    *
-   * Проверяется не «маршрут отвечает 200», а каждый рубеж по отдельности.
+   * Теперь происхождение, которое уборка вправе удалять, назначается только
+   * вместе с идентификатором ДЕЙСТВУЮЩЕГО запуска, а принадлежность
+   * записывается в той же транзакции, что и сам человек: упав между
+   * созданием и регистрацией, прогон не оставит записи без владельца,
+   * потому что этих двух шагов больше нет.
    */
-  const [probeRow] = await sql(
-    `SELECT id FROM identity.users
-      WHERE origin = 'render_check' AND deleted_at IS NULL ORDER BY created_at DESC LIMIT 1`,
-  );
-  check('в базе есть запись проверки для опыта', Boolean(probeRow), probeRow?.id ?? 'нет');
+  const CONSENT_SET = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind) => ({
+    kind,
+    version: 'v1',
+    locale: 'ru-RU',
+  }));
 
-  const tracked = await admin.call(`/v1/admin/testing/sessions/${sessionId}/objects`, {
-    method: 'POST',
-    body: { table: 'identity.users', id: probeRow.id },
+  async function registerProbe(name, headers) {
+    const email = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@test.local`;
+    const response = await fetch(`${CORE_URL}/v1/auth/register`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({
+        email,
+        password: `Pw-${Math.random().toString(36).slice(2)}A1!`,
+        displayName: name,
+        role: 'founder',
+        locale: 'ru-RU',
+        consents: CONSENT_SET,
+      }),
+      signal: AbortSignal.timeout(30_000),
+    });
+    const [row] = await sql(
+      `SELECT id, origin FROM identity.users WHERE display_name = $1
+        ORDER BY created_at DESC LIMIT 1`,
+      [name],
+    );
+    return { status: response.status, ...row };
+  }
+
+  const owned = await registerProbe(`Учёт запуска ${Date.now()}`, {
+    'X-Unicorn-Origin': 'render_check',
+    'X-Unicorn-Run': sessionId,
   });
   check(
-    'созданное прогоном записывается за его сессией',
-    tracked.status === 200,
-    `HTTP ${tracked.status}`,
+    'с действующим запуском происхождение назначается',
+    owned.origin === 'render_check',
+    owned.origin,
+  );
+  const ownedTracked = await sql(
+    `SELECT session_id FROM testing.session_objects
+      WHERE table_name = 'identity.users' AND row_id = $1`,
+    [owned.id],
+  );
+  check(
+    'принадлежность записана ТОЙ ЖЕ транзакцией, что и человек',
+    ownedTracked[0]?.session_id === sessionId,
+    ownedTracked[0]?.session_id ?? 'нет записи',
   );
 
+  const stranger2 = await registerProbe(`Посторонний ${Date.now()}`, {
+    'X-Unicorn-Origin': 'render_check',
+  });
+  check(
+    'без идентификатора запуска пометка НЕ назначается',
+    stranger2.origin === 'self_registration',
+    stranger2.origin,
+  );
+
+  const fake = await registerProbe(`Выдуманный запуск ${Date.now()}`, {
+    'X-Unicorn-Origin': 'render_check',
+    'X-Unicorn-Run': '00000000-0000-4000-8000-000000000000',
+  });
+  check('несуществующий запуск пометки не даёт', fake.origin === 'self_registration', fake.origin);
+
   /*
-   * Чужая сессия — это сессия ДРУГОГО администратора, а не другая вкладка
-   * того же. Второго админа с известным паролем у прогона нет (пароль
-   * приёмки лежит вне Git), поэтому чужая сессия заводится прямо в базе: она
-   * нужна только как объект, а проверяется поведение API.
+   * Маршрут регистрации объекта остаётся для восстановления: если прогон
+   * создал что-то способом, где привязки при создании нет. Забрать чужое им
+   * нельзя — проверяется тремя отказами.
    */
   const [otherAdmin] = await sql(
     `SELECT u.id FROM identity.users u
@@ -380,25 +432,40 @@ try {
       ORDER BY u.created_at LIMIT 1`,
     [adminId],
   );
-  let foreignSessionId = null;
   if (otherAdmin) {
-    const [row] = await sql(
+    const [foreignSession] = await sql(
       `INSERT INTO testing.sessions (id, title, source, created_by, environment, status)
        VALUES (public.uuid_generate_v7(), 'Чужая сессия для проверки', 'manual', $1, 'local', 'active')
        RETURNING id`,
       [otherAdmin.id],
     );
-    foreignSessionId = row.id;
-    const foreign = await admin.call(`/v1/admin/testing/sessions/${foreignSessionId}/objects`, {
+    const foreign = await admin.call(`/v1/admin/testing/sessions/${foreignSession.id}/objects`, {
       method: 'POST',
-      body: { table: 'identity.users', id: probeRow.id },
+      body: { table: 'identity.users', id: owned.id },
     });
     check(
       'чужую сессию пополнить нельзя, даже будучи администратором',
       foreign.status === 403,
       `HTTP ${foreign.status}`,
     );
-    await sql('DELETE FROM testing.sessions WHERE id = $1', [foreignSessionId]);
+
+    // Объект уже числится за нашей сессией — чужая забрать его не может.
+    await sql(
+      `INSERT INTO testing.session_objects (session_id, table_name, row_id)
+       VALUES ($1, 'identity.users', $2) ON CONFLICT DO NOTHING`,
+      [foreignSession.id, otherAdmin.id],
+    );
+    const steal = await admin.call(`/v1/admin/testing/sessions/${sessionId}/objects`, {
+      method: 'POST',
+      body: { table: 'identity.users', id: otherAdmin.id },
+    });
+    check(
+      'объект другого запуска не отбирается',
+      steal.status === 409 || steal.status === 403,
+      `HTTP ${steal.status}`,
+    );
+    await sql('DELETE FROM testing.session_objects WHERE session_id = $1', [foreignSession.id]);
+    await sql('DELETE FROM testing.sessions WHERE id = $1', [foreignSession.id]);
   }
 
   const [realUser] = await sql(
@@ -415,6 +482,21 @@ try {
       adoption.status === 403,
       `HTTP ${adoption.status}`,
     );
+  }
+
+  const [oldProbe] = await sql(
+    `SELECT id FROM identity.users
+      WHERE origin = 'render_check' AND deleted_at IS NULL AND created_at < (
+        SELECT created_at FROM testing.sessions WHERE id = $1
+      ) ORDER BY created_at LIMIT 1`,
+    [sessionId],
+  );
+  if (oldProbe) {
+    const older = await admin.call(`/v1/admin/testing/sessions/${sessionId}/objects`, {
+      method: 'POST',
+      body: { table: 'identity.users', id: oldProbe.id },
+    });
+    check('запись старше запуска ему не принадлежит', older.status === 403, `HTTP ${older.status}`);
   }
 
   // --------------------------------------------------------- [8] завершение

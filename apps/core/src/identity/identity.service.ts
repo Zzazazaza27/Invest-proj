@@ -139,6 +139,7 @@ export class IdentityService {
     input: RegisterRequest,
     ctx: RequestContext,
     origin?: string,
+    runSessionId?: string,
   ): Promise<{ userId: string; roles: Role[] }> {
     const userId = uuidv7();
     const passwordHash = await argon2.hash(input.password, ARGON2_OPTIONS);
@@ -197,6 +198,24 @@ export class IdentityService {
             origin ?? null,
           ],
         );
+        /*
+         * ПРИНАДЛЕЖНОСТЬ ЗАПИСЫВАЕТСЯ ЗДЕСЬ ЖЕ, в одной транзакции со
+         * вставкой человека.
+         *
+         * Два шага — «создать, потом зарегистрировать за прогоном» — дают
+         * окно: упав между ними, прогон оставляет запись, по которой уже
+         * нельзя установить, чей это след. Одна транзакция такого окна не
+         * оставляет: либо есть и человек, и принадлежность, либо нет ничего.
+         */
+        if (runSessionId) {
+          // Через функцию-владельца (M134): у публичной регистрации нет
+          // пользователя в контексте, а политики session_objects построены на
+          // нём — прямая вставка отвергается RLS.
+          await tx.query(`SELECT testing.track_run_object($1, 'identity.users', $2)`, [
+            runSessionId,
+            userId,
+          ]);
+        }
       } catch (error) {
         // Проверка занятости выше и сама вставка — разные моменты времени:
         // между ними другая транзакция успевает зарегистрировать тот же

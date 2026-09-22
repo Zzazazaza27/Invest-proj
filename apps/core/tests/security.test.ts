@@ -856,11 +856,26 @@ describe('Происхождение записи из заголовка (M127)
     });
   });
 
-  it('вне production принимается только значение из закрытого списка', () => {
+  it('вне production заголовком назначается только безопасное происхождение', () => {
     inEnv({}, () => {
-      expect(originFromRequest(withHeader('render_check'))).toBe('render_check');
+      // Эти значения уборке не подлежат: назвавшись ими, посторонний ничего
+      // себе не устроит и ни от кого не спрячется.
+      expect(originFromRequest(withHeader('seed_demo'))).toBe('seed_demo');
+      expect(originFromRequest(withHeader('staff_check'))).toBe('staff_check');
       expect(originFromRequest(withHeader('самозванец'))).toBeUndefined();
-      expect(originFromRequest(withHeader('real_user'))).toBeUndefined();
+    });
+  });
+
+  it('происхождение, подлежащее уборке, одним заголовком НЕ назначается', () => {
+    /*
+     * Главная находка: раньше обычный клиент без всякой авторизации
+     * регистрировался с render_check и становился следом прогона. Разрешённое
+     * значение заголовка — не полномочие. Право подтверждается отдельно,
+     * действующим запуском, и проверяется на сервере.
+     */
+    inEnv({}, () => {
+      expect(originFromRequest(withHeader('render_check'))).toBeUndefined();
+      expect(originFromRequest(withHeader('load_test'))).toBeUndefined();
     });
   });
 

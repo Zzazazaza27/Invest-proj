@@ -264,6 +264,33 @@ export class TestingSessionsService {
   }
 
   /**
+   * Действует ли сейчас такой запуск.
+   *
+   * Вызывается на ПУБЛИЧНОМ маршруте регистрации, поэтому отвечает только
+   * «да/нет» и ничего не рассказывает о сессии: существование чужого
+   * идентификатора — тоже сведения.
+   */
+  async isActiveRun(sessionId: string): Promise<boolean> {
+    if (!this.contexts.isEnabled()) return false;
+    /*
+     * Чтением от имени приложения, а не сервисной роли: доступ к схеме
+     * testing выдан `app_backend` (M129), а сервисные роли туда не ходят.
+     * Пользователя в запросе ещё нет — это публичная регистрация, — поэтому
+     * контекст пустой: запрос не читает ничего, кроме факта «такой запуск
+     * идёт».
+     */
+    return this.db.readOnly({ userId: null, roles: [], traceId: 'run-check' }, async (tx) => {
+      // Через функцию-владельца (M133): политики testing.sessions построены на
+      // пользователе, которого у публичной регистрации ещё нет, и прямой
+      // запрос всегда отвечал бы «нет».
+      const { rows } = await tx.query<{ ok: boolean }>(`SELECT testing.is_active_run($1) AS ok`, [
+        sessionId,
+      ]);
+      return rows[0]?.ok === true;
+    });
+  }
+
+  /**
    * Принять объект, созданный прогоном, в перечень своей сессии.
    *
    * ЗАЧЕМ ОТДЕЛЬНЫЙ МАРШРУТ. Происхождение (`origin`) говорит «это завёл
@@ -292,11 +319,11 @@ export class TestingSessionsService {
   ): Promise<{ tracked: true }> {
     this.assertEnabled();
     return this.db.transaction(ctx, async (tx) => {
-      const { rows } = await tx.query<{ created_by: string; status: string }>(
+      const { rows } = await tx.query<{ created_by: string; status: string; created_at: Date }>(
         // Состояние берётся из `status`, а не из `result`: у результата есть
         // умолчание 'unknown', то есть он заполнен с самого начала и о ходе
         // сессии не говорит ничего.
-        `SELECT created_by, status FROM testing.sessions WHERE id = $1`,
+        `SELECT created_by, status, created_at FROM testing.sessions WHERE id = $1`,
         [sessionId],
       );
       const session = rows[0];
@@ -306,6 +333,7 @@ export class TestingSessionsService {
           reason: 'чужая сессия: пополнять перечень вправе только тот, кто её открыл',
         });
       }
+      const startedAt = session.created_at;
       if (session.status !== 'active') {
         throw errors.conflict('Сессия не активна', {
           reason: 'запись, добавленная после итога, уборкой уже не убирается',
@@ -313,10 +341,10 @@ export class TestingSessionsService {
         });
       }
 
-      const found = await tx.query<{ origin: string }>(
+      const found = await tx.query<{ origin: string; created_at: Date }>(
         input.table === 'identity.users'
-          ? `SELECT origin FROM identity.users WHERE id = $1`
-          : `SELECT origin FROM lab.projects WHERE id = $1`,
+          ? `SELECT origin, created_at FROM identity.users WHERE id = $1`
+          : `SELECT origin, created_at FROM lab.projects WHERE id = $1`,
         [input.id],
       );
       const row = found.rows[0];
@@ -326,6 +354,36 @@ export class TestingSessionsService {
           reason:
             'это не запись проверки: в перечень сессии попадает только созданное прогоном, ' +
             'иначе уборка удалила бы настоящие данные',
+        });
+      }
+
+      /*
+       * ПРИЗНАК «ТЕСТОВЫЙ» НЕ ДОКАЗЫВАЕТ ПРИНАДЛЕЖНОСТЬ.
+       *
+       * Без следующих двух проверок любой прогон мог бы записать за собой
+       * чужие тестовые записи — и снести их своей уборкой, пока другой
+       * прогон ими ещё пользуется.
+       *
+       * Первое: объект, уже числящийся за другой сессией, не отбирается.
+       * Второе: объект, появившийся ДО начала этой сессии, ей принадлежать
+       * не может — запуск не создаёт того, что было раньше него.
+       */
+      const owner = await tx.query<{ session_id: string }>(
+        `SELECT session_id FROM testing.session_objects
+          WHERE table_name = $1 AND row_id = $2 LIMIT 1`,
+        [input.table, input.id],
+      );
+      const currentOwner = owner.rows[0]?.session_id;
+      if (currentOwner && currentOwner !== sessionId) {
+        throw errors.conflict('Объект принадлежит другому запуску', {
+          reason: 'забрать чужое созданное нельзя: его уберёт та сессия, которая его завела',
+        });
+      }
+      if (row.created_at < startedAt) {
+        throw errors.forbidden({
+          reason:
+            'объект появился раньше этого запуска: принадлежность запуску — это факт создания, ' +
+            'а не совпадение признака «тестовый»',
         });
       }
 
