@@ -389,7 +389,15 @@ checks:
     asserts: 40
     needs: [db, core]
     effects: ['пишет в БД']
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      Сорок утверждений. Кроме подстановки личности проверяет: отказ при
+      чужом и негодном контексте без отката к правам администратора, CSRF на
+      создании сессии и завершении контекста, запрет изменений под
+      просмотром на СЕРВЕРЕ, запись начала и завершения просмотра в журнал,
+      смерть контекстов после выхода инициатора и безопасность повторной
+      уборки. Убирает за собой сам, через собственный маршрут уборки.
     purpose: 'Тестовые сессии и контексты доступа — проверка границ доверия. Здесь проверяется не «работает ли переключение», а то, чего с экрана не видно и что дороже всего стоит при ошибке: подстановка личности внутри стража доступа'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1823,7 +1831,9 @@ checks:
     runner: ci
     asserts: 4
     needs: [db]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
     purpose: 'M090 (5.7.5): старые пути закрыты — RLS и вью на предикате доступа. - инвестор (даже с членством) не читает строки проектов, паспортов, оценок и IRS напрямую; данные — только через проекции по предика'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1953,7 +1963,9 @@ checks:
     runner: ci
     asserts: 4
     needs: [db]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
     purpose: 'M091 (5.8.1): справочные функции выдачи разрешений. Проверяется не «функция существует», а то, ради чего она заведена: - адрес превращается в получателя только при ТОЧНОМ совпадении слепого индекса и '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1966,7 +1978,9 @@ checks:
     runner: ci
     asserts: 14
     needs: [db]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
     purpose: 'M087 (5.7.1): режим видимости проекта, предикат аудитории, согласие владельца, барьер подписки как настройка. - матрица предикат × режим × зритель совпадает с `projectAudience()` в @unicorn/contracts '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1979,7 +1993,9 @@ checks:
     runner: ci
     asserts: 4
     needs: [db]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
     purpose: 'M089 (5.7.2): проекции для Public View и Investor View. - `lab.disclosed_profile`: без согласия владельца — пусто; с согласием — снимок и эффективная видимость = строже(активная, версия согласия); дос'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1992,7 +2008,14 @@ checks:
     runner: ci
     asserts: 77
     needs: [db]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
+    note: >-
+      Покрывает шире своего названия: кроме проектов и договоров — обращения
+      поддержки, уведомления и устройства, согласия на публичность,
+      интеграционную роль и отсутствие BYPASSRLS у ролей приложения. Поэтому
+      входит и в блоки «содержимое» и «события».
     purpose: 'Негативные тесты RLS — обязательный гейт CI (docs/architecture/Database_Launch.md §15). Каждый тест отвечает на вопрос «может ли роль X добраться до данных, к которым не должна?». Зелёный тест здесь о'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2005,7 +2028,9 @@ checks:
     runner: ci
     asserts: 6
     needs: [db]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
     purpose: 'M086: статус привлечения — отдельная настройка; версия условий у раунда. - `disclosure.raising_status` показывает статус, скрывая сумму; - расширение публичности (investors → public) не касается раунд'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2031,7 +2056,9 @@ checks:
     runner: ci
     asserts: 5
     needs: [db]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
     purpose: 'M085: раскрытие полей раунда по настройке видимости и аудитории зрителя. - `lab.visible_to` — то же правило, что `visibleTo()` в контрактах (паритет по всем 16 сочетаниям); - настройка поля не расширя'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2044,7 +2071,14 @@ checks:
     runner: ci
     asserts: 19
     needs: [db]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
+    note: >-
+      Больше половины утверждений — про ДЕНЬГИ: частичные возвраты в пределах
+      транша, неизменяемость записи о возврате, идемпотентность по ключу,
+      разделение уменьшения начисления и возврата уплаченного. Поэтому входит
+      и в блок «деньги», а не только в права.
     purpose: 'M097 (полномочия и ручные денежные записи). Проверяется то, ради чего слои разделены: - роль `expert` сама по себе не даёт ни полномочия, ни области работы; - полномочие без назначения не открывает чу'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -2282,7 +2316,14 @@ checks:
     level: модульный
     runner: ci
     asserts: 61
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      Двенадцать групп, шире названия: fail-closed конфигурации, envelope
+      encryption, blind index, разбор и точечный отзыв токена, ключ CSRF,
+      закрытость описания API и КЛАССИФИКАЦИЯ ограничения частоты по
+      нормализованному пути (percent-encoding, двойное кодирование, регистр).
+      Поэтому входит и в блок «вход».
     purpose: 'Юнит-тесты периметра безопасности. Проверяют то, что нельзя увидеть в дымовом прогоне: комбинации конфигурации, которые обязаны ронять старт, и криптографические инварианты.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -3190,6 +3231,7 @@ blocks:
     title: Тарифы, подписки, комиссии, оплата, раунды
     members:
       [
+        DBT-STAFF-CAPABILITIES,
         DBT-PAYMENTS,
         DBT-COMMISSION,
         DBT-FUNDING-ROUNDS,
@@ -3227,6 +3269,7 @@ blocks:
     title: Подготовленное содержимое, витрина, поддержка
     members:
       [
+        DBT-RLS,
         CHK-CONTENT-TRANSFER,
         DBT-DATA-CLASSES,
         SMK-CONTENT,
@@ -3243,6 +3286,7 @@ blocks:
     title: Outbox, брокер, вебхуки, интеграции, почта
     members:
       [
+        DBT-RLS,
         DBT-OPERATOR-NOTIFICATIONS,
         UNIT-CORE-EVENTS,
         UNIT-CORE-INTEGRATION,
