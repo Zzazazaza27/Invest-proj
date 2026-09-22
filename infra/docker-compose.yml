@@ -159,6 +159,42 @@ services:
       timeout: 5s
       retries: 20
 
+  # Брокер ДЛЯ РАЗРУШИТЕЛЬНЫХ ПРОВЕРОК.
+  #
+  # Отдельный экземпляр появился после того, как проверка живучести
+  # остановила общий брокер стенда ради испытания отдельного ядра
+  # (2026-09-22). Своя база у такой проверки уже была, но брокер оставался
+  # общим — а отдельная база не делает среду отдельной.
+  #
+  # Всё своё: порты, том, имя контейнера. Профиль `testing` означает, что
+  # обычный `stand:up` его не поднимает — он нужен только прогонам
+  # устойчивости и поднимается ими же.
+  nats-test:
+    image: nats:2.10-alpine
+    container_name: unicorn-nats-test
+    profiles: ['testing']
+    restart: 'no'
+    command:
+      - '-js'
+      - '-sd'
+      - '/data'
+      - '-m'
+      - '8222'
+      - '--user'
+      - 'unicorn'
+      - '--pass'
+      - '${NATS_PASSWORD:-local_dev_only_nats_change_me}'
+    ports:
+      - '127.0.0.1:${NATS_TEST_PORT:-4223}:4222'
+      - '127.0.0.1:${NATS_TEST_MONITOR_PORT:-8223}:8222'
+    volumes:
+      - natstestdata:/data
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:8222/healthz || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   minio:
     image: minio/minio:RELEASE.2024-12-18T13-15-44Z
     container_name: unicorn-minio
@@ -344,4 +380,7 @@ volumes:
   pgdata:
   redisdata:
   natsdata:
+  # Том брокера разрушительных проверок: отдельный, чтобы их стримы и
+  # сообщения не смешивались с рабочими.
+  natstestdata:
   miniodata:

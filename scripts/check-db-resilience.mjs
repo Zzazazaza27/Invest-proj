@@ -17,9 +17,11 @@
  *   * недоступность — `ALTER DATABASE … CONNECTION LIMIT 0`: новые
  *     подключения отклоняются, рабочая база не затронута.
  *
- * ЕДИНСТВЕННОЕ ОБЩЕЕ — БРОКЕР. NATS один на стенд, и сценарий 4 его
- * останавливает на несколько секунд. Рабочее ядро это переживает (ровно
- * это и чинилось утром), брокер возвращается в `finally`.
+ * БРОКЕР ТОЖЕ СВОЙ. Сначала сценарий 4 останавливал общий NATS стенда —
+ * отдельная база не делает среду отдельной. Теперь прогон поднимает
+ * выделенный экземпляр `unicorn-nats-test` (профиль `testing`, свои порты
+ * и том) и останавливает только его. Общий брокер не трогается вовсе, и
+ * это проверяется машинно перед остановкой.
  *
  * ВОССТАНОВЛЕНИЕ ОБЯЗАТЕЛЬНО. Предел подключений снимается, брокер
  * поднимается, своё ядро гасится — даже если прогон упал посередине.
@@ -40,7 +42,12 @@ loadDotEnv();
 const TEST_DB = 'unicorn_test';
 const TEST_PORT = 4301;
 const BASE = `http://127.0.0.1:${TEST_PORT}`;
-const NATS_CONTAINER = process.env.NATS_CONTAINER ?? 'unicorn-nats';
+/**
+ * Брокер прогона. Имя жёсткое и НЕ берётся из окружения намеренно: переменная
+ * позволила бы прогону остановить общий брокер стенда по чужой настройке.
+ */
+const NATS_CONTAINER = 'unicorn-nats-test';
+const NATS_TEST_URL = `nats://127.0.0.1:${process.env.NATS_TEST_PORT ?? 4223}`;
 
 function loadDotEnv() {
   const envFile = join(ROOT, '.env');
@@ -110,6 +117,9 @@ function testCoreEnv() {
     }
   }
   env.CORE_PORT = String(TEST_PORT);
+  // Свой брокер: иначе прогон публиковал бы в общий стрим стенда и
+  // останавливал бы брокер, от которого зависит рабочее ядро.
+  env.NATS_URL = NATS_TEST_URL;
   return env;
 }
 
@@ -242,9 +252,56 @@ let natsStopped = false;
 console.warn('\n=== ЖИВУЧЕСТЬ ЯДРА ПРИ СБОЯХ БАЗЫ И БРОКЕРА ===\n');
 console.warn(`  своё ядро: ${BASE}, база ${TEST_DB} — рабочий стенд не затрагивается\n`);
 
+/**
+ * Убедиться, что останавливаем именно свой брокер.
+ *
+ * Машинная проверка перед разрушительным действием, а не доверие имени в
+ * переменной: контейнер обязан быть поднят с профилем `testing` и слушать
+ * отдельный порт.
+ */
+function assertOwnBroker() {
+  const info = spawnSync(
+    'docker',
+    [
+      'inspect',
+      NATS_CONTAINER,
+      '--format',
+      '{{index .Config.Labels "com.docker.compose.service"}}',
+    ],
+    { encoding: 'utf8' },
+  );
+  const service = String(info.stdout ?? '').trim();
+  if (service !== 'nats-test') {
+    throw new Error(
+      `останавливать можно только выделенный брокер: у ${NATS_CONTAINER} служба «${service}»`,
+    );
+  }
+}
+
 try {
   await admin.connect();
   await db.connect();
+
+  // Брокер прогона поднимается прогоном же: обычный `stand:up` его не
+  // запускает (профиль `testing`).
+  spawnSync(
+    'docker',
+    [
+      'compose',
+      '-f',
+      join(ROOT, 'infra', 'docker-compose.yml'),
+      '--env-file',
+      join(ROOT, '.env'),
+      '--profile',
+      'testing',
+      'up',
+      '-d',
+      'nats-test',
+    ],
+    { encoding: 'utf8' },
+  );
+  await sleep(3_000);
+  assertOwnBroker();
 
   check('своё ядро поднялось', await waitHealthy(40_000), tailLog(2));
   if ((await health()) !== 200) throw new Error('ядро не поднялось, проверять нечего');
@@ -376,6 +433,7 @@ try {
 
   // ------------------------------------------------------------- [4] NATS
   console.warn('\n[4] Брокер уходит и возвращается');
+  assertOwnBroker();
   spawnSync('docker', ['stop', NATS_CONTAINER], { encoding: 'utf8' });
   natsStopped = true;
   await sleep(8_000);
