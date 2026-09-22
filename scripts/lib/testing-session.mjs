@@ -68,7 +68,32 @@ function loadDotEnv() {
  */
 function makeClient() {
   const state = { session: null, csrf: null };
-  async function call(path, { method = 'GET', body, context = null, headers = {} } = {}) {
+
+  /**
+   * Ограничение частоты — часть реальности, а не помеха прогону.
+   *
+   * Административные действия ограничены по частоте, а в наборе прогоны идут
+   * подряд, быстрее человека. Раньше ждала повторения только выдача сессии —
+   * и сценарий падал на открытии гостевого контекста с 429: набор краснел не
+   * на продукте, а на самом себе. Ждёт названное сервером время и повторяет
+   * КАЖДЫЙ запрос клиента: ровно так обязан вести себя всякий, кто упёрся в
+   * ограничение.
+   *
+   * Прогону, который сам проверяет поведение при 429, этот клиент не
+   * подходит — такую проверку пишут на своём клиенте.
+   */
+  async function call(path, options = {}) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const result = await once(path, options);
+      if (result.status !== 429) return result;
+      const wait = Number(String(result.json?.detail ?? '').match(/(\d+)/)?.[1] ?? 30) + 2;
+      console.warn(`  (ограничение частоты: жду ${wait} с и повторяю)`);
+      await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+    }
+    return once(path, options);
+  }
+
+  async function once(path, { method = 'GET', body, context = null, headers = {} } = {}) {
     const all = { Cookie: [state.session, state.csrf].filter(Boolean).join('; '), ...headers };
     if (body !== undefined) all['Content-Type'] = 'application/json';
     if (method !== 'GET' && state.csrf) {
@@ -124,6 +149,7 @@ export async function startSession(title, options = {}) {
     throw new Error(`вход администратора не удался: HTTP ${login.status}`);
   }
 
+  // Ожидание при 429 — в самом клиенте, здесь оно не повторяется.
   const created = await admin.call('/v1/admin/testing/sessions', {
     method: 'POST',
     body: {

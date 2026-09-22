@@ -70,7 +70,26 @@ const sql = async (text, params = []) => (await pool.query(text, params)).rows;
 
 function makeClient() {
   const state = { session: null, csrf: null };
-  async function call(path, { method = 'GET', body, csrf = true } = {}) {
+  /**
+   * Ограничение частоты — часть поведения платформы, а не помеха.
+   *
+   * Административные действия ограничены по частоте. Когда прогон идёт в
+   * наборе следом за другими, он упирается в лимит и краснеет не на
+   * продукте, а на соседях. Клиент ждёт названное сервером время и
+   * повторяет — ровно так должен вести себя любой, кто упёрся в ограничение.
+   */
+  async function call(path, options = {}) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const result = await callOnce(path, options);
+      if (result.status !== 429) return result;
+      const wait = Number(String(result.json?.detail ?? '').match(/(\d+)/)?.[1] ?? 20) + 2;
+      console.warn(`  (ограничение частоты: жду ${wait} с)`);
+      await new Promise((resolve) => setTimeout(resolve, wait * 1000));
+    }
+    return callOnce(path, options);
+  }
+
+  async function callOnce(path, { method = 'GET', body, csrf = true } = {}) {
     const headers = { Cookie: [state.session, state.csrf].filter(Boolean).join('; ') };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (method !== 'GET' && csrf && state.csrf) {
@@ -199,11 +218,19 @@ try {
   // Сверяемся не со второй страницей, а с самой базой: сортировка «по всей
   // выборке» означает, что на первой странице стоит глобально первый, а не
   // первый из загруженных.
+  //
+  // Отбор ТОТ ЖЕ, что у списка по умолчанию: он прячет записи проверок
+  // (следы прогонов и участников тестовых сессий). Без этого условия
+  // сравнение шло с другой выборкой, и проверка краснела не на сортировке,
+  // а на появлении участника сессии с подходящим именем.
   const edges = await sql(
-    `SELECT (SELECT display_name FROM identity.users WHERE deleted_at IS NULL
+    `SELECT (SELECT display_name FROM identity.users
+               WHERE deleted_at IS NULL AND origin <> ALL($1::text[])
                ORDER BY lower(display_name) ASC, id ASC LIMIT 1) AS lowest,
-            (SELECT display_name FROM identity.users WHERE deleted_at IS NULL
+            (SELECT display_name FROM identity.users
+               WHERE deleted_at IS NULL AND origin <> ALL($1::text[])
                ORDER BY lower(display_name) DESC, id DESC LIMIT 1) AS highest`,
+    [['render_check', 'load_test', 'test_session']],
   );
   check(
     'Сортировка по имени идёт по всей выборке, а не по странице',
@@ -502,6 +529,29 @@ try {
   failed += 1;
   console.error(`\nПрогон прерван: ${error instanceof Error ? error.message : String(error)}`);
 } finally {
+  /*
+   * Восстановление демонстрационной записи обязательно.
+   *
+   * Прогон блокирует `demo-investor-trial`, чтобы проверить блокировку. Если
+   * он прерывается между блокировкой и снятием — а однажды так и вышло,
+   * прогон упёрся в ограничение частоты, — учётная запись остаётся
+   * заблокированной. Дальше под ней не входит ни этот прогон, ни человек на
+   * приёмке, и выглядит это как дефект платформы.
+   *
+   * Поэтому снятие блокировки стоит здесь, а не только в успешном пути.
+   */
+  try {
+    const restored = await pool.query(
+      `UPDATE identity.users SET status = 'active', status_reason = NULL,
+              status_changed_at = now()
+        WHERE origin = 'seed_demo' AND status = 'suspended'`,
+    );
+    if ((restored.rowCount ?? 0) > 0) {
+      console.warn(`  (восстановлено демонстрационных записей: ${restored.rowCount})`);
+    }
+  } catch {
+    console.warn('  (восстановить демонстрационные записи не удалось — проверьте вручную)');
+  }
   await pool.end();
 }
 
