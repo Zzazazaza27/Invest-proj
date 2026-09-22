@@ -172,6 +172,10 @@ try {
   const whoAmI = await cabinetPage.evaluate(async () => {
     const response = await fetch('/v1/auth/me', {
       credentials: 'include',
+      // Предел ожидания обязателен у любого внешнего вызова — правило проекта
+      // (`unicorn-external-call-requires-timeout`). Без него зависший ответ
+      // держит прогон до общего таймаута шага, и причина остаётся неясной.
+      signal: AbortSignal.timeout(15_000),
       // eslint-disable-next-line no-undef -- исполняется в браузере
       headers: { 'X-Unicorn-Context': window.sessionStorage.getItem('unicorn.test-context') },
     });
@@ -197,7 +201,10 @@ try {
     'админская сессия цела',
   );
   const adminSees = await page.evaluate(async () => {
-    const response = await fetch('/v1/auth/me', { credentials: 'include' });
+    const response = await fetch('/v1/auth/me', {
+      credentials: 'include',
+      signal: AbortSignal.timeout(15_000),
+    });
     return response.json();
   });
   expect(
@@ -251,6 +258,7 @@ try {
     const response = await fetch('/v1/me/profile', {
       method: 'PATCH',
       credentials: 'include',
+      signal: AbortSignal.timeout(15_000),
       headers: {
         'Content-Type': 'application/json',
         'X-CSRF-Token': csrf,

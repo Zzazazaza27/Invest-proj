@@ -85,6 +85,10 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function health() {
   try {
+    // Адрес намеренно по http: это СВОЁ ядро прогона на 127.0.0.1, поднятое
+    // здесь же и живущее минуту. TLS на петлевом интерфейсе к собственному
+    // процессу ничего не защищает, а правило смотрит на схему, не на адрес.
+    // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
     const response = await fetch(`${BASE}/v1/health`, { signal: AbortSignal.timeout(4_000) });
     return response.status;
   } catch {
