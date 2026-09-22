@@ -27,6 +27,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL } from './lib/ports.mjs';
+import { randomUUID } from 'node:crypto';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -363,13 +364,17 @@ try {
   }));
 
   async function registerProbe(name, headers) {
-    const email = `run-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@test.local`;
+    // randomUUID, а не Math.random: правило проекта запрещает слабый источник
+    // случайности там, где значение идёт в пароль или в адрес — даже у
+    // проверки. Своё исключение здесь не заводится: писать «это же тест»
+    // ради одной строки значит учить обходить правило.
+    const email = `run-${Date.now()}-${randomUUID().slice(0, 8)}@test.local`;
     const response = await fetch(`${CORE_URL}/v1/auth/register`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers },
       body: JSON.stringify({
         email,
-        password: `Pw-${Math.random().toString(36).slice(2)}A1!`,
+        password: `Pw-${randomUUID()}A1!`,
         displayName: name,
         role: 'founder',
         locale: 'ru-RU',
