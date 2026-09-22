@@ -51,10 +51,19 @@ const S3_ENV: NodeJS.ProcessEnv = {
   S3_FORCE_PATH_STYLE: 'true',
 };
 
+/*
+ * Обстановка теста задаётся ЦЕЛИКОМ, а не поверх машины.
+ *
+ * Прежде переменные подмешивались к настоящему process.env: результат
+ * зависел от того, что лежит в окружении у запускающего, и проверка
+ * конфигурации могла пройти или упасть по причине, к продукту отношения не
+ * имеющей. Теперь окружение на время вызова ЗАМЕНЯЕТСЯ целиком и
+ * восстанавливается в finally — даже если проверка упала.
+ */
 function withEnv<T>(env: NodeJS.ProcessEnv, fn: () => T): T {
   const saved = { ...process.env };
   resetEnvCache();
-  Object.assign(process.env, env);
+  process.env = { NODE_ENV: 'test', ...env } as NodeJS.ProcessEnv;
   try {
     return fn();
   } finally {

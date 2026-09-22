@@ -378,6 +378,11 @@ describe('Транспорт до внутренних систем в productio
     PUBLIC_BASE_URL: 'https://unicorn.example.org',
     CORS_ALLOWED_ORIGINS: 'https://unicorn.example.org',
     DATABASE_SSL: 'true',
+    // Задаётся явно: по умолчанию режим доставки — capture, а в production
+    // он запрещён (M128). Правило пришло позже этой фикстуры, и позитивный
+    // контроль «корректная конфигурация принимается» стал падать на
+    // постороннем условии.
+    WEBHOOK_DELIVERY_MODE: 'live',
   };
 
   it('открытое соединение с БД не проходит', () => {

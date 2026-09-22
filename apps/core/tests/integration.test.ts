@@ -43,10 +43,19 @@ const BASE_ENV: NodeJS.ProcessEnv = {
   KEK_AI_PROVIDER_SECRETS: Buffer.alloc(32, 12).toString('base64'),
 };
 
+/*
+ * Обстановка теста задаётся ЦЕЛИКОМ, а не поверх машины.
+ *
+ * Прежде переменные подмешивались к настоящему process.env: результат
+ * зависел от того, что лежит в окружении у запускающего, и проверка
+ * конфигурации могла пройти или упасть по причине, к продукту отношения не
+ * имеющей. Теперь окружение на время вызова ЗАМЕНЯЕТСЯ целиком и
+ * восстанавливается в finally — даже если проверка упала.
+ */
 function withEnv<T>(fn: () => T, extra: NodeJS.ProcessEnv = {}): T {
   const saved = { ...process.env };
   resetEnvCache();
-  Object.assign(process.env, BASE_ENV, extra);
+  process.env = { NODE_ENV: 'test', ...BASE_ENV, ...extra } as NodeJS.ProcessEnv;
   try {
     return fn();
   } finally {

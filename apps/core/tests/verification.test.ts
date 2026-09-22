@@ -46,6 +46,16 @@ const PROD_ENV: NodeJS.ProcessEnv = {
   DATABASE_SSL: 'true',
   REDIS_URL: 'rediss://127.0.0.1:6379',
   REDIS_PASSWORD: 'r'.repeat(32),
+  // Production-обстановка задаётся ЦЕЛИКОМ и явно.
+  //
+  // У WEBHOOK_DELIVERY_MODE значение по умолчанию — capture, а в production
+  // оно запрещено (M128): подписчики не получают событий, а очередь выглядит
+  // обработанной. Правило появилось позже этих проверок, фикстуру не
+  // обновили — и три позитивных контроля начали падать на постороннем
+  // условии, ничего не говоря о том, что проверяли. Отсюда правило: набор
+  // «production» перечисляет всё, от чего зависит, и не опирается ни на
+  // умолчания схемы, ни на окружение машины.
+  WEBHOOK_DELIVERY_MODE: 'live',
   SESSION_COOKIE_NAME: '__Host-ul_session',
   CSRF_COOKIE_NAME: '__Host-ul_csrf',
   PUBLIC_BASE_URL: 'https://app.unicorn.vc',
