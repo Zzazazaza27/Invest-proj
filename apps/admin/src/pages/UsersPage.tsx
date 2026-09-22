@@ -313,14 +313,25 @@ export function UsersPage() {
 function UserRow({ user }: { user: AdminUserRow }) {
   return (
     <tr data-user-row={user.id}>
-      <td>
+      {/*
+        Имя держится В ОДНУ СТРОКУ, а длинное — обрезается многоточием.
+        Иначе высота строки зависит от длины имени: после появления столбца
+        с кабинетом столбец имени сузился, имена вроде «Сотрудник admin
+        72184153» стали переноситься, и весь список вырос с 40 до 53
+        пикселей — то есть потерял плотность, ради которой его и делали.
+        Полное имя остаётся в подсказке и в карточке.
+      */}
+      <td style={{ maxWidth: 260 }}>
         <Link
           to={`/users/${user.id}`}
           data-user-link
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 10 }}
+          title={user.displayName}
+          style={{ display: 'inline-flex', alignItems: 'center', gap: 10, maxWidth: '100%' }}
         >
           <Avatar user={user} size={24} />
-          {user.displayName}
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {user.displayName}
+          </span>
         </Link>
       </td>
       <td className="small">{user.emailMasked ?? <span className="muted">—</span>}</td>

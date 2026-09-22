@@ -450,6 +450,14 @@ button:disabled {
   font-size: 12.5px;
 }
 
+/* Выпадающий список в строке таблицы: по высоте вровень с мелкой кнопкой,
+   иначе строка растёт от одного лишь наличия выбора. */
+.select--sm {
+  padding: 3px 24px 3px 8px;
+  font-size: 12.5px;
+  border-radius: 6px;
+}
+
 .row-actions {
   display: flex;
   gap: 6px;

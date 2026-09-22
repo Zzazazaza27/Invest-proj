@@ -237,6 +237,9 @@ export function ViewCabinetAction({
         </button>
       );
     }
+    // Размер выпадающего списка — как у мелкой кнопки рядом: обычный select
+    // на 35px поднимал строку списка выше кнопочного варианта, и плотность
+    // зависела от того, сколько у человека ролей.
     return (
       <select
         aria-label="Посмотреть кабинет"
@@ -248,6 +251,7 @@ export function ViewCabinetAction({
           event.target.value = '';
           if (href) void open(href);
         }}
+        className="select--sm"
         style={{ width: 'auto' }}
       >
         <option value="">Кабинет…</option>
