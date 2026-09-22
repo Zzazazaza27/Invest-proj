@@ -13,7 +13,11 @@
  *   * идентификаторы уникальны;
  *   * каждый указанный файл существует;
  *   * каждая команда `npm run …` объявлена в package.json;
- *   * нет «сирот»: каждый скрипт из `scripts/` и каждый тест схемы внесён;
+ *   * нет «сирот» — но с ИЗВЕСТНЫМИ границами: осматриваются только
+ *     `scripts/*.mjs` (верхний уровень) и `database/tests/*.test.ts`.
+ *     Вложенные каталоги, другие форматы, тесты внутри `apps/` и
+ *     `packages/` и проверки, написанные прямо в шагах CI, этим осмотром
+ *     НЕ охвачены — «сирот нет» значит «в осмотренном не найдено»;
  *   * ссылки требований и наборов ведут на существующие записи;
  *   * требование без покрытия помечено явно (`coverage: none`), а не молча;
  *   * у подтверждения запуском есть дата, у чувствительности — метод;
@@ -96,7 +100,7 @@ const orphanScripts = readdirSync(join(ROOT, 'scripts'))
   .map((f) => `scripts/${f}`)
   .filter((f) => !known.has(f));
 check(
-  'нет скриптов вне реестра',
+  'в осмотренном скриптов вне реестра нет',
   orphanScripts.length === 0,
   orphanScripts.join(', ') || `учтено ${checks.filter((c) => c.kind !== 'ci-step').length}`,
 );
@@ -105,7 +109,11 @@ const orphanTests = readdirSync(join(ROOT, 'database', 'tests'))
   .filter((f) => f.endsWith('.test.ts'))
   .map((f) => `database/tests/${f}`)
   .filter((f) => !known.has(f));
-check('нет тестов схемы вне реестра', orphanTests.length === 0, orphanTests.join(', '));
+check(
+  'в осмотренном тестов схемы вне реестра нет',
+  orphanTests.length === 0,
+  orphanTests.join(', '),
+);
 
 // ------------------------------------------------------------------ ссылки
 const checkIds = new Set(ids);
