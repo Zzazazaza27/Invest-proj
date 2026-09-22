@@ -138,6 +138,18 @@ try {
     `HTTP ${created.status} ${created.text.slice(0, 160)}`,
   );
   const sessionId = created.json?.id ?? null;
+  /*
+   * Секрет запуска: ИМЕННО он даёт право называть записи следом прогона.
+   * Идентификатор сессии не секрет — он печатается, попадает в отчёты и в
+   * админку, и раньше его знания хватало, чтобы создавать записи от имени
+   * чужого запуска (проверено опытом 2026-09-23).
+   */
+  const runToken = created.json?.runToken ?? null;
+  check(
+    'секрет запуска выдан один раз, при создании',
+    Boolean(runToken),
+    runToken ? 'есть' : 'нет',
+  );
 
   const card = await admin.call(`/v1/admin/testing/sessions/${sessionId}`);
   const participants = card.json?.participants ?? [];
@@ -392,7 +404,7 @@ try {
 
   const owned = await registerProbe(`Учёт запуска ${Date.now()}`, {
     'X-Unicorn-Origin': 'render_check',
-    'X-Unicorn-Run': sessionId,
+    'X-Unicorn-Run': runToken,
   });
   check(
     'с действующим запуском происхождение назначается',
@@ -417,6 +429,36 @@ try {
     'без идентификатора запуска пометка НЕ назначается',
     stranger2.origin === 'self_registration',
     stranger2.origin,
+  );
+
+  /*
+   * ГЛАВНЫЙ РУБЕЖ: идентификатор запуска — не полномочие.
+   *
+   * Он виден всем: прогоны печатают его в консоль, он стоит в отчётах и в
+   * админке. Пока подтверждением служил он, посторонний, узнавший
+   * идентификатор, регистрировался от имени чужого запуска — получал и
+   * происхождение, и место в чужом перечне, то есть мог подвести свои
+   * записи под чужую уборку. Проверено опытом 2026-09-23, закрыто секретом
+   * запуска (M136).
+   */
+  const byId = await registerProbe(`Самозванец по идентификатору ${Date.now()}`, {
+    'X-Unicorn-Origin': 'render_check',
+    'X-Unicorn-Run': sessionId,
+  });
+  check(
+    'знание идентификатора запуска права не даёт',
+    byId.origin === 'self_registration',
+    byId.origin,
+  );
+  const byIdTracked = await sql(
+    `SELECT count(*)::int AS n FROM testing.session_objects
+      WHERE session_id = $1 AND row_id = $2`,
+    [sessionId, byId.id],
+  );
+  check(
+    'запись постороннего в перечень запуска не попала',
+    byIdTracked[0]?.n === 0,
+    String(byIdTracked[0]?.n ?? '?'),
   );
 
   const fake = await registerProbe(`Выдуманный запуск ${Date.now()}`, {

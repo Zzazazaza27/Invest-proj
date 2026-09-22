@@ -124,12 +124,22 @@ export async function startProbeRun(probeId) {
   }
 
   const runId = created.json.id;
+  /*
+   * Секрет запуска приходит ОДИН раз — здесь. Дальше он живёт только в
+   * памяти прогона: в отчёты, журналы и вывод не попадает, потому что по
+   * нему можно создавать записи от имени этого запуска.
+   */
+  const runToken = created.json.runToken;
+  if (!runToken) {
+    console.warn('  (учёт запуска выключен: сервер не выдал секрет запуска)');
+    return fallback;
+  }
   return {
     id: runId,
 
     /** Заголовки регистрации: происхождение и доказательство права на него. */
     headers() {
-      return { 'X-Unicorn-Origin': PROBE_ORIGIN, 'X-Unicorn-Run': runId };
+      return { 'X-Unicorn-Origin': PROBE_ORIGIN, 'X-Unicorn-Run': runToken };
     },
 
     /**

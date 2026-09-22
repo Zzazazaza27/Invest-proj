@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import argon2 from 'argon2';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
@@ -114,18 +114,31 @@ export class TestingSessionsService {
       codeVersion?: string | null;
       withStandardCast?: boolean;
     },
-  ): Promise<{ id: string }> {
+  ): Promise<{ id: string; runToken: string }> {
     this.assertEnabled();
     if (!ctx.userId) throw errors.unauthenticated({ stage: 'no-user' });
 
     const sessionId = randomUUID();
+    /*
+     * СЕКРЕТ ЗАПУСКА.
+     *
+     * Идентификатор сессии не секрет: он печатается прогонами, виден в
+     * админке, попадает в отчёты. Пока право создавать записи от имени
+     * запуска подтверждалось идентификатором, посторонний, узнавший его, мог
+     * подвести свои записи под чужую уборку — это было проверено опытом, а не
+     * предположено. Поэтому у запуска есть секрет: он отдаётся ОДИН раз тому,
+     * кто сессию создал, а в базе остаётся только его SHA-256.
+     */
+    const runToken = randomBytes(32).toString('base64url');
+    const runTokenHash = createHash('sha256').update(runToken, 'utf8').digest();
     const env = getEnv();
 
     await this.db.transaction(ctx, async (tx) => {
       await tx.query(
         `INSERT INTO testing.sessions
-           (id, title, source, created_by, environment, scenario_id, code_version)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           (id, title, source, created_by, environment, scenario_id, code_version,
+            run_token_hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           sessionId,
           input.title.trim(),
@@ -134,6 +147,7 @@ export class TestingSessionsService {
           env.NODE_ENV,
           input.scenarioId ?? null,
           input.codeVersion ?? null,
+          runTokenHash,
         ],
       );
 
@@ -159,7 +173,7 @@ export class TestingSessionsService {
       });
     });
 
-    return { id: sessionId };
+    return { id: sessionId, runToken };
   }
 
   /**
@@ -264,29 +278,23 @@ export class TestingSessionsService {
   }
 
   /**
-   * Действует ли сейчас такой запуск.
+   * Найти действующий запуск по СЕКРЕТУ.
    *
-   * Вызывается на ПУБЛИЧНОМ маршруте регистрации, поэтому отвечает только
-   * «да/нет» и ничего не рассказывает о сессии: существование чужого
-   * идентификатора — тоже сведения.
+   * Принимает не идентификатор сессии, а выданный при её создании секрет:
+   * знание того, что «запуск с таким-то id идёт», права создавать записи от
+   * его имени не даёт. Возвращает идентификатор либо null и ничего не
+   * рассказывает о самой сессии — существование чужого запуска тоже
+   * сведения.
    */
-  async isActiveRun(sessionId: string): Promise<boolean> {
-    if (!this.contexts.isEnabled()) return false;
-    /*
-     * Чтением от имени приложения, а не сервисной роли: доступ к схеме
-     * testing выдан `app_backend` (M129), а сервисные роли туда не ходят.
-     * Пользователя в запросе ещё нет — это публичная регистрация, — поэтому
-     * контекст пустой: запрос не читает ничего, кроме факта «такой запуск
-     * идёт».
-     */
+  async runByToken(token: string): Promise<string | null> {
+    if (!this.contexts.isEnabled()) return null;
+    const hash = createHash('sha256').update(token, 'utf8').digest();
     return this.db.readOnly({ userId: null, roles: [], traceId: 'run-check' }, async (tx) => {
-      // Через функцию-владельца (M133): политики testing.sessions построены на
-      // пользователе, которого у публичной регистрации ещё нет, и прямой
-      // запрос всегда отвечал бы «нет».
-      const { rows } = await tx.query<{ ok: boolean }>(`SELECT testing.is_active_run($1) AS ok`, [
-        sessionId,
-      ]);
-      return rows[0]?.ok === true;
+      const { rows } = await tx.query<{ id: string | null }>(
+        `SELECT testing.run_by_token($1) AS id`,
+        [hash],
+      );
+      return rows[0]?.id ?? null;
     });
   }
 

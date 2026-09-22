@@ -76,13 +76,21 @@ export function originFromRequest(request: AuthenticatedRequest): string | undef
   return undefined;
 }
 
-/** Идентификатор запуска из заголовка. Проверяет его сервер, не клиент. */
-export function runIdFromRequest(request: AuthenticatedRequest): string | undefined {
+/**
+ * СЕКРЕТ запуска из заголовка — не идентификатор.
+ *
+ * Идентификатор сессии виден всем: он печатается прогонами, стоит в отчётах
+ * и в админке. Пока подтверждением служил он, посторонний, узнавший его, мог
+ * создавать записи от имени чужого запуска — проверено опытом. Поэтому здесь
+ * принимается секрет, выданный создателю сессии один раз.
+ */
+export function runTokenFromRequest(request: AuthenticatedRequest): string | undefined {
   if (getEnv().isProduction) return undefined;
   const raw = request.headers['x-unicorn-run'];
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (typeof value !== 'string') return undefined;
-  return /^[0-9a-f-]{36}$/i.test(value) ? value : undefined;
+  // Длина и алфавит — как у выдаваемого секрета: мусор до базы не доходит.
+  return /^[A-Za-z0-9_-]{32,64}$/.test(value) ? value : undefined;
 }
 
 /** Происхождение, которое просит клиент, если оно вообще подлежит уборке. */
@@ -132,11 +140,11 @@ export class IdentityController {
     let runSessionId: string | undefined;
     const wanted = cleanableOriginRequested(request);
     if (wanted && !getEnv().isProduction) {
-      const runId = runIdFromRequest(request);
-      const owned = runId ? await this.sessions.isActiveRun(runId) : false;
+      const token = runTokenFromRequest(request);
+      const owned = token ? await this.sessions.runByToken(token) : null;
       if (owned) {
         origin = wanted;
-        runSessionId = runId;
+        runSessionId = owned;
       }
     }
 
