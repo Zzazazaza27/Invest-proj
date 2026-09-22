@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
 import { CORE_URL as DEFAULT_CORE_URL, PORTS } from './lib/ports.mjs';
-import { PROBE_ORIGIN } from './lib/probe-run.mjs';
+import { startProbeRun } from './lib/probe-run.mjs';
 import {
   CONSENTS,
   blindIndex,
@@ -38,6 +38,14 @@ import {
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
+
+/*
+ * Запуск открывается до первой регистрации: он даёт право назвать
+ * заведённых людей следом прогона и записывает их за собой. Без него
+ * сервер пометку не назначит — разрешённое значение заголовка не
+ * полномочие.
+ */
+const run = await startProbeRun('RND-MEDIA-EMBEDDING');
 
 // Адреса — по `localhost`, а не по сырому IP: у IP нет регистрируемого домена,
 // и «тот же сайт» для него не определяется. Это свойство адресации, а не
@@ -74,7 +82,7 @@ function makeClient() {
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     // Регистрация называет серверу своё происхождение: иначе заведённый
     // прогоном человек неотличим от настоящего (M127).
-    if (path === '/v1/auth/register') headers['X-Unicorn-Origin'] = PROBE_ORIGIN;
+    if (path === '/v1/auth/register') Object.assign(headers, run.headers());
     if (method !== 'GET' && state.csrf) {
       headers['X-CSRF-Token'] = state.csrf.split('=').slice(1).join('=');
     }
@@ -357,4 +365,5 @@ console.warn(`  Итог: ${passed} OK, ${failed} FAIL\n`);
 console.warn(
   `  (порты страниц: своя ${OWN_PAGE_PORT}, чужая ${FOREIGN_PAGE_PORT}; ядро ${PORTS.core})\n`,
 );
+await run.finish(failed === 0);
 process.exit(failed === 0 ? 0 : 1);

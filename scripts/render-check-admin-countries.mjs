@@ -24,11 +24,19 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
-import { PROBE_ORIGIN } from './lib/probe-run.mjs';
+import { startProbeRun } from './lib/probe-run.mjs';
 import { activePolicyConfig, restoreCountryPolicy } from './lib/country-policy.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
+
+/*
+ * Запуск открывается до первой регистрации: он даёт право назвать
+ * заведённых людей следом прогона и записывает их за собой. Без него
+ * сервер пометку не назначит — разрешённое значение заголовка не
+ * полномочие.
+ */
+const run = await startProbeRun('RND-ADMIN-COUNTRIES');
 
 const ADMIN_URL = process.env.ADMIN_URL ?? frontendUrl('admin');
 const LOGIN_URL = process.env.LOGIN_URL ?? frontendUrl('auth');
@@ -90,7 +98,7 @@ async function register(tag) {
   const password = `Pw-${randomUUID()}`;
   const response = await fetch(`${CORE_URL}/v1/auth/register`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Unicorn-Origin': PROBE_ORIGIN },
+    headers: { 'Content-Type': 'application/json', ...run.headers() },
     signal: AbortSignal.timeout(15_000),
     body: JSON.stringify({
       email,
@@ -258,7 +266,7 @@ try {
   const founder = await register('founder');
   const login = await fetch(`${CORE_URL}/v1/auth/login`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Unicorn-Origin': PROBE_ORIGIN },
+    headers: { 'Content-Type': 'application/json', ...run.headers() },
     body: JSON.stringify({ email: founder.email, password: founder.password }),
     signal: AbortSignal.timeout(30_000),
   });
@@ -359,4 +367,5 @@ try {
 }
 
 console.warn(`\nИтог: ${passed} проверок пройдено, ${failed} провалено. Снимки: ${OUT}`);
+await run.finish(failed === 0);
 process.exit(failed > 0 ? 1 : 0);

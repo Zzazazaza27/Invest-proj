@@ -18,10 +18,18 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
-import { PROBE_ORIGIN } from './lib/probe-run.mjs';
+import { startProbeRun } from './lib/probe-run.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
+
+/*
+ * Запуск открывается до первой регистрации: он даёт право назвать
+ * заведённых людей следом прогона и записывает их за собой. Без него
+ * сервер пометку не назначит — разрешённое значение заголовка не
+ * полномочие.
+ */
+const run = await startProbeRun('RND-EXPERT');
 
 const APP_URL = process.env.EXPERT_URL ?? frontendUrl('expert');
 const CORE_URL = process.env.CORE_URL ?? DEFAULT_CORE_URL;
@@ -80,7 +88,7 @@ async function register(tag) {
   const password = `Pw-${randomUUID()}`;
   const response = await fetch(`${CORE_URL}/v1/auth/register`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'X-Unicorn-Origin': PROBE_ORIGIN },
+    headers: { 'Content-Type': 'application/json', ...run.headers() },
     signal: AbortSignal.timeout(15_000),
     body: JSON.stringify({
       email,
@@ -164,6 +172,20 @@ check(
 await page.fill('#email', expert.email);
 await page.fill('#password', expert.password);
 await page.getByRole('button', { name: 'Войти' }).click();
+
+/*
+ * У рецензента ДВЕ роли: основатель (с которой он зарегистрирован) и эксперт
+ * (которую добавляет предусловие). Платформа таким людям показывает ВЫБОР
+ * КАБИНЕТА, а не бросает сразу в один — и это правильное поведение, которое
+ * прогон обязан пройти так же, как человек. Раньше он ждал сразу «Мои
+ * назначения» и падал по таймауту на экране выбора.
+ */
+await page.waitForTimeout(3000);
+const chooser = page.locator('.auth-cabinet', { hasText: 'Кабинет эксперта' });
+if ((await chooser.count()) > 0) {
+  await chooser.first().click();
+  await page.waitForLoadState('networkidle');
+}
 await page.waitForSelector('text=Мои назначения', { timeout: 15_000 });
 await page.waitForTimeout(1500);
 
@@ -362,4 +384,5 @@ await browser.close();
 await pool.end();
 
 console.warn(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===\n`);
+await run.finish(failed === 0);
 process.exit(failed > 0 ? 1 : 0);

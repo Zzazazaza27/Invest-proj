@@ -27,7 +27,7 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
-import { PROBE_ORIGIN } from './lib/probe-run.mjs';
+import { startProbeRun } from './lib/probe-run.mjs';
 import { activePolicyConfig, restoreCountryPolicy } from './lib/country-policy.mjs';
 import {
   CONSENTS,
@@ -43,6 +43,14 @@ import {
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
+
+/*
+ * Запуск открывается до первой регистрации: он даёт право назвать
+ * заведённых людей следом прогона и записывает их за собой. Без него
+ * сервер пометку не назначит — разрешённое значение заголовка не
+ * полномочие.
+ */
+const run = await startProbeRun('RND-FIRST-TIER');
 
 /** По сырому IP браузер не определяет «тот же сайт» — изображения блокируются. */
 const toSite = (url) => url.replace('127.0.0.1', 'localhost');
@@ -76,7 +84,7 @@ function makeClient() {
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     // Регистрация называет серверу своё происхождение: иначе заведённый
     // прогоном человек неотличим от настоящего (M127).
-    if (path === '/v1/auth/register') headers['X-Unicorn-Origin'] = PROBE_ORIGIN;
+    if (path === '/v1/auth/register') Object.assign(headers, run.headers());
     if (method !== 'GET' && state.csrf) {
       headers['X-CSRF-Token'] = state.csrf.split('=').slice(1).join('=');
     }
@@ -534,4 +542,5 @@ if (defects.length > 0) {
   for (const d of defects) console.warn(`    • ${d.scenario} — ${d.note}`);
   console.warn('');
 }
+await run.finish(defects.length === 0);
 process.exit(defects.length === 0 ? 0 : 1);

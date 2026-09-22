@@ -28,9 +28,18 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
+import { startProbeRun } from './lib/probe-run.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
+
+/*
+ * Запуск открывается до первой регистрации: он даёт право назвать
+ * заведённых людей следом прогона и записывает их за собой. Без него
+ * сервер пометку не назначит — разрешённое значение заголовка не
+ * полномочие.
+ */
+const run = await startProbeRun('RND-PROFILE');
 
 const toSite = (url) => url.replace('127.0.0.1', 'localhost');
 const strip = (url) => url.replace(/\/+$/, '');
@@ -89,7 +98,7 @@ async function registerFounder() {
       'Content-Type': 'application/json',
       // Прогон называет себя сам: сервер не отличит его от человека, а уборке
       // нужно знать, чьи это следы (M127).
-      'X-Unicorn-Origin': 'render_check',
+      ...run.headers(),
     },
     body: JSON.stringify({
       email,
@@ -317,4 +326,5 @@ const passed = verdicts.filter((v) => v.state === 'ПРОЙДЕН').length;
 const defects = verdicts.filter((v) => v.state === 'ДЕФЕКТ').length;
 console.warn(`  пройдено: ${passed}, дефектов: ${defects}`);
 console.warn(`  снимки: ${OUT}\n`);
+await run.finish(defects === 0);
 process.exit(defects === 0 ? 0 : 1);

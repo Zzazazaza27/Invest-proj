@@ -33,10 +33,18 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
-import { PROBE_ORIGIN } from './lib/probe-run.mjs';
+import { startProbeRun } from './lib/probe-run.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
+
+/*
+ * Запуск открывается до первой регистрации: он даёт право назвать
+ * заведённых людей следом прогона и записывает их за собой. Без него
+ * сервер пометку не назначит — разрешённое значение заголовка не
+ * полномочие.
+ */
+const run = await startProbeRun('RND-STAFF-ACCESS');
 
 /**
  * Хост один и тот же для страницы и API.
@@ -131,7 +139,7 @@ function makeClient() {
     // Регистрация называет серверу своё происхождение: иначе заведённый
     // прогоном человек неотличим от настоящего (M127). Найти таких людей в
     // интерфейсе можно — переключателем «Включая тестовых пользователей».
-    if (path === '/v1/auth/register') headers['X-Unicorn-Origin'] = PROBE_ORIGIN;
+    if (path === '/v1/auth/register') Object.assign(headers, run.headers());
     if (method !== 'GET' && state.csrf) {
       headers['X-CSRF-Token'] = state.csrf.split('=').slice(1).join('=');
     }
@@ -974,4 +982,5 @@ const defects = verdicts.filter((v) => v.state === 'ДЕФЕКТ').length;
 const skipped = verdicts.filter((v) => v.state === 'НЕ ПРОВЕРЕН').length;
 console.warn(`  пройдено: ${passed}, дефектов: ${defects}, не проверено: ${skipped}`);
 console.warn(`  снимки: ${OUT}\n`);
+await run.finish(defects === 0);
 process.exit(defects > 0 ? 1 : 0);
