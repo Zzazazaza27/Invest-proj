@@ -709,7 +709,16 @@ checks:
     level: статический
     runner: manual
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    needs: [python]
+    effects: ['запускает pytest шлюза и аудит зависимостей — данных не трогает']
+    note: >-
+      Вынесен в скрипт, а не в строку package.json, намеренно: путь к
+      интерпретатору различается на Windows и Linux, а захардкоженный путь
+      означал бы, что в одной из сред гейт молча не запускается — то есть
+      зелёный без проверки. Пять файлов pytest: анализатор, предел тела,
+      граница HTTP, работа с моделью, политика.
     purpose: 'Гейт AI-шлюза: тесты политики и анализатора + аудит зависимостей. Вынесен в скрипт, а не в строку package.json, по одной причине: путь к интерпретатору различается на Windows и Linux, а гейт обязан выполняться одинаково '
     confirmation: reviewed-in-code
 
@@ -820,9 +829,16 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 18
-    needs: [db, core, storage]
-    effects: ['создаёт пользователей', 'удаляет данные']
-    studied: header
+    needs: [db, core]
+    effects:
+      [
+        'создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'часть созданного убирает, учётные записи оставляет',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      SEC-14: уборка брошенных загрузок. Проверяется фактом, а не чтением кода.
     purpose: 'Проверка уборки брошенных загрузок (остаток SEC-14). Билет на загрузку выдаётся вместе со строкой материала, но загрузка может не состояться. С M037 такой материал наружу не выдаётся — но и не исчезает: строка остаётся н'
     confirmation: reviewed-in-code
 
@@ -833,8 +849,12 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 0
-    needs: [db, core]
-    studied: header
+    needs: [core]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      откуда разброс IRS между прогонами. Проверяется фактом, а не чтением кода.
+    effects: ['наблюдает поведение запущенного контура — своих записей не создаёт']
     purpose: 'Зонд детерминизма LLM-скоринга: откуда разброс IRS между прогонами. Один и тот же вход гоняется через шлюз двумя сериями: с фиксированным nonce (промпт побайтно одинаков) и со случайным (как в бою). Если разброс есть тол'
     confirmation: reviewed-in-code
 
@@ -845,9 +865,16 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 6
-    needs: [core]
-    effects: ['создаёт пользователей']
-    studied: header
+    needs: [db, core]
+    effects:
+      [
+        'создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'часть созданного убирает, учётные записи оставляет',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      SEC-12: CSRF-токен привязан к сессии, а не просто совпадает. Проверяется фактом, а не чтением кода.
     purpose: 'Проверка привязки CSRF-токена к сессии. Находка внешнего аудита (SEC-12): проверка сравнивала значение из cookie со значением из заголовка и больше ничего. Обе части подконтрольны тому, кто смог поставить жертве свою coo'
     confirmation: reviewed-in-code
 
@@ -858,7 +885,12 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 6
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      вебхук: имя разрешается во внешний адрес при проверке и во внутренний при запросе. Проверяется фактом, а не чтением кода.
+    needs: [core]
+    effects: ['наблюдает поведение запущенного контура — своих записей не создаёт']
     purpose: 'Проверка защиты доставки вебхуков от DNS rebinding. Приём: имя при ПРОВЕРКЕ разрешается во внешний адрес, а при самом запросе — уже во внутренний. Пока проверка и запрос разрешают имя раздельно, второй ответ DNS никем не'
     confirmation: reviewed-in-code
 
@@ -869,9 +901,12 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 11
-    needs: [db, storage]
-    effects: ['удаляет данные']
-    studied: header
+    needs: [db, core]
+    effects: ['пишет служебные строки напрямую в БД', 'убирает созданное']
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      M041: выгрузка журнала копирует, а не удаляет. Проверяется фактом, а не чтением кода.
     purpose: 'Проверка выгрузки журнала событий в холодное хранилище (M041). Проверяется фактом, а не чтением кода: 1. выгрузка НЕ удаляет события из журнала — только копирует; 2. объект в хранилище совпадает с прочитанным: размер и s'
     confirmation: reviewed-in-code
 
@@ -882,9 +917,12 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 7
-    needs: [db, nats]
-    effects: ['пишет в БД', 'удаляет данные']
-    studied: header
+    needs: [db, core]
+    effects: ['пишет служебные строки напрямую в БД', 'убирает созданное']
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      CODE-06: ON CONFLICT DO NOTHING отбрасывал событие, возвращая новый идентификатор. Проверяется фактом, а не чтением кода.
     purpose: 'Проверка нумерации версий событий агрегата. Находка внешнего аудита (CODE-06): `ON CONFLICT DO NOTHING` отбрасывал событие, а вызывающему возвращался новый идентификатор — то есть событие считалось поставленным, не сущес'
     confirmation: reviewed-in-code
 
@@ -895,7 +933,12 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 9
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      SEC-11: потолок частоты по адресу не залипает навсегда. Проверяется фактом, а не чтением кода.
+    needs: [core]
+    effects: ['наблюдает поведение запущенного контура — своих записей не создаёт']
     purpose: 'Проверка того, что потолок частоты по адресу не может «залипнуть» навсегда. Находка внешнего аудита SEC-11. Счёт делался двумя обращениями — `INCR`, затем `EXPIRE`. Между ними есть окно: обрыв соединения или перезапуск п'
     confirmation: reviewed-in-code
 
@@ -906,7 +949,13 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      настоящая доставка письма через реальный релей. Проверяется фактом, а не чтением кода.
+    needs: [внешний релей]
+    effects:
+      ['ОТПРАВЛЯЕТ НАСТОЯЩЕЕ ПИСЬМО через реальный релей — единственный прогон, выходящий наружу']
     purpose: 'Настоящая доставка одного письма через реальный релей. Это последний шаг, который нельзя проверить локальным приёмником: у mailpit нет ни TLS, ни аутентификации, поэтому успешные ветки STARTTLS и AUTH в прогоне `smoke-ma'
     confirmation: reviewed-in-code
 
@@ -917,7 +966,12 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      готовность домена: MX, SPF, DKIM, DMARC, PTR. Проверяется фактом, а не чтением кода.
+    needs: [внешний DNS]
+    effects: ['читает записи DNS домена — ничего не меняет']
     purpose: 'Зонд готовности домена к почте: MX, SPF, DKIM, DMARC, PTR и сам релей. Зачем отдельный зонд. Отправку письма проверяет `smoke-mail-smtp.mjs`, но доставку определяет не она: письмо, ушедшее с корректного релея, всё равно '
     confirmation: reviewed-in-code
 
@@ -928,8 +982,12 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 10
-    needs: [storage]
-    studied: header
+    needs: [core]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      SEC-04: повторная отправка подписанной формы не перезаписывает объект. Проверяется фактом, а не чтением кода.
+    effects: ['наблюдает поведение запущенного контура — своих записей не создаёт']
     purpose: 'Зонд версионирования хранилища (Ф29, остаток SEC-04). Угроза: подписанная форма загрузки действует до истечения срока и указывает на постоянный ключ — повторная отправка перезаписывает объект ПОСЛЕ подтверждения. Отпечат'
     confirmation: reviewed-in-code
 
@@ -940,9 +998,12 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 10
-    needs: [db, nats]
-    effects: ['пишет в БД', 'удаляет данные']
-    studied: header
+    needs: [db, core]
+    effects: ['пишет служебные строки напрямую в БД', 'убирает созданное']
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      CODE-05: аренда между экземплярами и повтор рассылки. Проверяется фактом, а не чтением кода.
     purpose: 'Проверка очереди outbox: аренда между экземплярами и повтор рассылки. Две находки внешнего аудита проверяются здесь фактом, а не чтением кода: 1. Аренда (CODE-05). `FOR UPDATE SKIP LOCKED` держит строку только до конца т'
     confirmation: reviewed-in-code
 
@@ -954,7 +1015,11 @@ checks:
     runner: manual
     asserts: 0
     needs: [core]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      обходится ли лимит подделкой cookie сессии. Проверяется фактом, а не чтением кода.
+    effects: ['наблюдает поведение запущенного контура — своих записей не создаёт']
     purpose: 'Проверка: обходится ли ограничение частоты подделкой cookie сессии. Ведро лимита строится как «адрес + идентификатор сессии», причём идентификатор берётся из cookie ДО проверки подписи. Вопрос, на который отвечает прогон'
     confirmation: reviewed-in-code
 
@@ -966,8 +1031,15 @@ checks:
     runner: manual
     asserts: 5
     needs: [db, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    effects:
+      [
+        'создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'часть созданного убирает, учётные записи оставляет',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      SEC-08: снятая роль перестаёт действовать сразу, а не по истечении токена. Проверяется фактом, а не чтением кода.
     purpose: 'Проверка немедленности отзыва прав. Находка внешнего аудита (SEC-08): роли берутся из токена, а токен живёт до своего `exp`. Снятая в БД роль администратора продолжала действовать до истечения сессии — то есть отзыв прав'
     confirmation: reviewed-in-code
 
@@ -978,7 +1050,12 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 0
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      утечка секретов. Проверяется фактом, а не чтением кода.
+    needs: [core]
+    effects: ['наблюдает поведение запущенного контура — своих записей не создаёт']
     purpose: ''
     confirmation: reviewed-in-code
 
@@ -990,8 +1067,11 @@ checks:
     runner: manual
     asserts: 10
     needs: [db, core]
-    effects: ['пишет в БД', 'удаляет данные']
-    studied: header
+    effects: ['пишет служебные строки напрямую в БД', 'убирает созданное']
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      M042/SEC-08: выданный сервисный токен отзывается немедленно. Проверяется фактом, а не чтением кода.
     purpose: 'Проверка немедленного отзыва токенов сервисного аккаунта (M042). Находка внешнего аудита SEC-08. Приостановка аккаунта и ротация секрета закрывали только ВЫДАЧУ новых токенов. Уже выданный токен самодостаточен и действов'
     confirmation: reviewed-in-code
 
@@ -1003,7 +1083,11 @@ checks:
     runner: manual
     asserts: 10
     needs: [core]
-    studied: header
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      SEC-11: счётчик общий для экземпляров, а не в памяти процесса. Проверяется фактом, а не чтением кода.
+    effects: ['наблюдает поведение запущенного контура — своих записей не создаёт']
     purpose: 'Проверка ОБЩЕГО счётчика ограничения частоты (SEC-11). Находка: счётчики жили в памяти процесса. Это не ограничение частоты, а его видимость — два экземпляра ядра считают свои запросы независимо, поэтому фактически разре'
     confirmation: reviewed-in-code
 
@@ -1015,8 +1099,15 @@ checks:
     runner: manual
     asserts: 23
     needs: [db, core]
-    effects: ['создаёт пользователей', 'пишет в БД', 'удаляет данные']
-    studied: header
+    effects:
+      [
+        'создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'часть созданного убирает, учётные записи оставляет',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      M038/SEC-07: точечный отзыв токена, а не только удаление cookie. Проверяется фактом, а не чтением кода.
     purpose: 'Проверка точечного отзыва токена (M038). Остаток находки внешнего аудита (SEC-07/08). Рубеж сессий обесценивает ВСЕ токены пользователя разом; выход при этом лишь удалял cookie у клиента — сам токен оставался действитель'
     confirmation: reviewed-in-code
 
@@ -1028,8 +1119,15 @@ checks:
     runner: manual
     asserts: 9
     needs: [db, core]
-    effects: ['создаёт пользователей', 'пишет в БД', 'удаляет данные']
-    studied: header
+    effects:
+      [
+        'создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'часть созданного убирает, учётные записи оставляет',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      SEC-14/CODE-10: запись материала создаётся после появления файла. Проверяется фактом, а не чтением кода.
     purpose: 'Проверка квот и подтверждения загрузки материалов. Находка внешнего аудита (SEC-14/CODE-10): запись материала создавалась вместе с выдачей билета — до того, как файл появился в хранилище. Отменённая загрузка навсегда ост'
     confirmation: reviewed-in-code
 
@@ -1052,9 +1150,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 16
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Рендер-проверка экрана «Комиссии» в админке (этап 5.9.3). Что проверяется: раздел в меню; версии условий показаны с общей ставкой и долями; несходящиеся доли названы ДО отправки, а не ошибкой после неё; публикация даёт н'
     confirmation: reviewed-in-code
 
@@ -1065,9 +1168,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 26
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Рендер-проверка экрана «Страны обслуживания» в админке (этап 5.6.5). Что проверяется: раздел в меню; справочник стран строками; новая страна заводится выключенной и включается кнопкой; условия страны показаны с активной '
     confirmation: reviewed-in-code
 
@@ -1078,9 +1186,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 12
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Рендер-проверка экрана «Сделки» в админке (M097). Что проверяется: раздел в меню; сделка открывается и показывает транши, возвраты и начисления; «Зафиксировать возврат» записывает событие и пересчитывает возвращённую сум'
     confirmation: reviewed-in-code
 
@@ -1091,9 +1204,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 51
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Рендер-проверка этапа 5: управление вопросами заявки из админки. Сценарий владельца (2026-09-15): изменить обязательность вопроса для стадии → опубликовать новую версию → создать новую заявку → убедиться, что старый черн'
     confirmation: reviewed-in-code
 
@@ -1104,9 +1222,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 25
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Рендер-проверка экрана «Пакеты раунда» в админке (этап 5.9.1). Что проверяется: раздел в меню; экран честно говорит, что продажи выключены; услуга заводится нереализованной и не предлагается ни в состав пакета, ни для до'
     confirmation: reviewed-in-code
 
@@ -1121,9 +1244,18 @@ checks:
     level: сквозной
     runner: manual
     asserts: 40
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей']
-    studied: partial
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей с X-Unicorn-Origin: render_check — уборка следов их видит',
+        'сами записи не удаляет',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      Один из двух браузерных проходов, помечающих свои записи
+      (X-Unicorn-Origin: render_check). Остальные этого не делают, и их
+      пользователи неотличимы от настоящих.
     purpose: 'Браузерный проход: раздел «Пользователи» и карточка человека (этап 6.5). Проверяется то, ради чего раздел и делался, — что администратор может сделать работу целиком, не открывая ни базу, ни служебную консоль: 1. найти ч'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1135,9 +1267,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 24
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Проверка административного кабинета в РЕАЛЬНОМ рендере (`RULES.md` §2). Админка существует с Ф5, но рендер-проверки у неё не было: работоспособность подтверждалась ручным открытием браузера, то есть никак. Здесь проверяе'
     confirmation: reviewed-in-code
 
@@ -1148,8 +1285,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 26
-    needs: [browser, core]
-    studied: header
+    needs: [db, core, web]
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает под существующими учётными записями стенда — своих не заводит']
+    note: >-
+      Единственная дверь в платформу: её поломка закрывает вход всем,
+      независимо от исправности остального. Своих учётных записей не
+      заводит — ходит под учётками стенда.
     purpose: 'Проверка входа и регистрации в РЕАЛЬНОМ рендере (`RULES.md` §2). Это единственная дверь в платформу: её поломка означает, что внутрь не может попасть никто, независимо от исправности остального. Поэтому проверяется не «с'
     confirmation: reviewed-in-code
 
@@ -1160,8 +1303,10 @@ checks:
     level: сквозной
     runner: manual
     asserts: 14
-    needs: [browser, core]
-    studied: header
+    needs: [db, core, web]
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает под существующими учётными записями стенда — своих не заводит']
     purpose: 'Проверка консоли API в РЕАЛЬНОМ рендере (`RULES.md` §2). Консоль служебная, но именно ею тестировщики проходят сквозные сценарии — значит её поломка останавливает проверку всей платформы, а не только себя. Здесь проверяе'
     confirmation: reviewed-in-code
 
@@ -1172,8 +1317,10 @@ checks:
     level: сквозной
     runner: manual
     asserts: 14
-    needs: [browser, core]
-    studied: header
+    needs: [db, core, web]
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает под существующими учётными записями стенда — своих не заводит']
     purpose: 'Комплект демонстрационных данных в РЕАЛЬНОМ рендере (`RULES.md` §2). Живой прогон `smoke-demo.mjs` доказывает, что данные загружены, связаны и отдаются API. Этот прогон отвечает на другой вопрос: ВИДНО ли их человеку — т'
     confirmation: reviewed-in-code
 
@@ -1184,9 +1331,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 33
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Проверка кабинета эксперта в РЕАЛЬНОМ рендере (`RULES.md` §2). Проверяется путь рецензента целиком на настоящих данных: назначение, принятие, подача рецензии и невозможность подать её повторно. Отдельно — что рецензию не'
     confirmation: reviewed-in-code
 
@@ -1197,8 +1349,10 @@ checks:
     level: сквозной
     runner: manual
     asserts: 17
-    needs: [browser, core]
-    studied: header
+    needs: [db, core, web]
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает под существующими учётными записями стенда — своих не заводит']
     purpose: 'Избранное инвестора в РЕАЛЬНОМ рендере (`RULES.md` §2). ТЗ требовало проверить сценарий end-to-end. Проверяется путь человека: 1. в каталоге у карточки есть отметка, и её состояние объявлено не только цветом (`aria-press'
     confirmation: reviewed-in-code
 
@@ -1209,9 +1363,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 0
-    needs: [browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Проход 7.4: первая очередь целиком, в браузере. Это не проверка одной функции, а связный путь продукта: основатель доводит проект до открытого раунда, платформа принимает оплату и выполняет услугу, а затем на тот же прое'
     confirmation: reviewed-in-code
 
@@ -1222,9 +1381,18 @@ checks:
     level: сквозной
     runner: manual
     asserts: 27
-    needs: [browser, core]
-    effects: ['создаёт пользователей']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      Главное здесь — честность двух состояний: выключенный регулируемый
+      контур должен быть НАЗВАН выключенным, а не показан пустым списком.
+      Из пустого списка читается «предложений нет», то есть неправда.
     purpose: 'Проверка кабинета инвестора в РЕАЛЬНОМ рендере (`RULES.md` §2). Главное здесь — не «страница открылась», а честность двух состояний: выключенный регулируемый контур должен быть НАЗВАН выключенным, а не показан пустым спи'
     confirmation: reviewed-in-code
 
@@ -1235,9 +1403,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 12
-    needs: [browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Рендер-проверка «стоимость запуска раунда» в кабинете основателя (5.9.2). Что проверяется: пока запуск бесплатен, раздела про деньги в кабинете нет (иначе висел бы разговор об оплате, которой не существует); при включённ'
     confirmation: reviewed-in-code
 
@@ -1248,9 +1421,19 @@ checks:
     level: сквозной
     runner: manual
     asserts: 71
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      Самый крупный браузерный проход — 71 утверждение. Проверяет мастер
+      заявки по списку владельца при приёмке: понятность навигации, возврат
+      к черновику, статус разделов, неизменность версии анкеты после
+      публикации новой.
     purpose: 'Проверка мастера заявки v2 в РЕАЛЬНОМ рендере (этап 4, план 0.2 §0в). Что проверяется — список владельца при приёмке этапа: понятность пошаговой навигации, сохранение и возврат к черновику, статус каждого раздела, неизме'
     confirmation: reviewed-in-code
 
@@ -1261,9 +1444,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 43
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Проверка кабинета основателя в РЕАЛЬНОМ рендере (`RULES.md` §2). Проверяется не «страница открылась», а рабочий путь целиком: вход настоящей учётной записью, создание заявки, отображение своих проектов и отказ сервера та'
     confirmation: reviewed-in-code
 
@@ -1274,9 +1462,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 13
-    needs: [browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: partial
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Проверка встраивания изображений проекта (7.2, уточнение). Отвечает на вопрос, который нельзя закрыть рассуждением: что произойдёт, если изображение закрытого проекта встроить на ЧУЖУЮ страницу в браузере, где пользовате'
     confirmation: reviewed-in-code
 
@@ -1287,9 +1480,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 18
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей с X-Unicorn-Origin: render_check — уборка следов их видит',
+        'сами записи не удаляет',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Браузерный проход: «Мой профиль» во всех кабинетах (этап 6.7). Проверяется то, ради чего экран общий: человек попадает в него одинаково отовсюду и видит одно и то же. И то, чего на нём быть не должно: полей для подтвержд'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1301,9 +1499,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 17
-    needs: [browser, core, storage]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Рендер-проверка логотипа и обложки НА ТЕЛЕФОНЕ (7.2). Размер экрана выбран не для красоты: загрузка файла, ползунки кадрирования и кнопки замены — это ровно то, что ломается на узком экране и что человек будет делать с т'
     confirmation: reviewed-in-code
 
@@ -1314,9 +1517,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 22
-    needs: [browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Рендер-проверка страницы проекта для ТРЁХ зрителей (этап 7.3). Один проект, один серверный предикат аудитории — и три поверхности, каждая из которых уже существует: • аноним — витрина, `/p/<id>`, проекция Public View; • '
     confirmation: reviewed-in-code
 
@@ -1327,9 +1535,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 13
-    needs: [browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: header
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
     purpose: 'Рендер-проверка сквозного сценария покупки (5.9.7). Проходит путь в браузере под ДВУМЯ ролями: основатель выбирает пакет и оформляет покупку, администратор подтверждает тестовую оплату и отмечает выполнение услуг, основа'
     confirmation: reviewed-in-code
 
@@ -1340,9 +1553,19 @@ checks:
     level: сквозной
     runner: manual
     asserts: 45
-    needs: [db, browser, core]
-    effects: ['создаёт пользователей', 'пишет в БД']
-    studied: partial
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'записей за собой не убирает: rmSync чистит только каталог снимков',
+      ]
+    studied: code
+    studiedOn: 2026-09-22
+    note: >-
+      ИСТОЧНИК МУСОРА НА СТЕНДЕ. Создаёт учётные записи вида «Сотрудник
+      conflict 73671257» без пометки происхождения и не удаляет их. Именно
+      они наполнили список пользователей и однажды уронили проверку
+      плотности: длинные имена стали переноситься на две строки.
     purpose: 'Браузерный проход: управление сотрудниками через интерфейс. Проверяется завершённый сценарий администратора и эксперта — тот, ради которого экраны и делались: 1. выдать функциональное полномочие галочкой; 2. назначить эк'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1354,8 +1577,14 @@ checks:
     level: сквозной
     runner: manual
     asserts: 26
-    needs: [browser, core]
-    studied: header
+    needs: [db, core, web]
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает под существующими учётными записями стенда — своих не заводит']
+    note: >-
+      Проверяет, что форма сообщения об ошибке показывает, ЧТО именно будет
+      отправлено, и что в этом нет ни пароля, ни иных секретов. Это граница
+      утечки, а не удобство.
     purpose: 'Поддержка и сообщение об ошибке в РЕАЛЬНОМ рендере (`RULES.md` §2). Проверяется не «компонент отрисовался», а путь человека целиком: 1. служебная комбинация Ctrl+Alt+B открывает форму сообщения об ошибке; 2. форма показы'
     confirmation: reviewed-in-code
 
@@ -1366,8 +1595,13 @@ checks:
     level: сквозной
     runner: manual
     asserts: 29
-    needs: [db, browser, core]
-    studied: header
+    needs: [db, core, web]
+    studied: code
+    studiedOn: 2026-09-22
+    effects:
+      [
+        'работает через механизм тестовых сессий: участники числятся за сессией и убираются её уборкой',
+      ]
     purpose: 'Браузерный проход: тестовые сессии и просмотр кабинета (этап 6.5). Проверяется то, чего не видно из API-прогона, — поведение ВКЛАДКИ: 1. администратор заводит сессию и открывает кабинет участника; 2. идентификатор контек'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1379,8 +1613,10 @@ checks:
     level: сквозной
     runner: manual
     asserts: 14
-    needs: [browser, core]
-    studied: header
+    needs: [db, core, web]
+    studied: code
+    studiedOn: 2026-09-22
+    effects: ['работает под существующими учётными записями стенда — своих не заводит']
     purpose: 'Проверка витрины в РЕАЛЬНОМ рендере (`RULES.md` §2). Вычитка кода не показывает ни того, что страница вообще отрисовалась, ни того, что она показала пользователю вместо данных при недоступном API. Поэтому здесь настоящий'
     confirmation: reviewed-in-code
 
@@ -3676,6 +3912,7 @@ blocks:
     title: Права, роли, видимость и границы доступа
     members:
       [
+        PRB-ROLE-REVOCATION,
         DBT-INVARIANTS,
         DBT-RLS,
         DBT-ACCESS-PATHS,
@@ -3701,6 +3938,9 @@ blocks:
     title: Вход, сессии, восстановление доступа
     members:
       [
+        PRB-TOKEN-REVOCATION,
+        PRB-SERVICE-TOKEN-EPOCH,
+        PRB-CSRF-BINDING,
         UNIT-PKG-API-CLIENT-CLIENT,
         DBT-INVARIANTS,
         UNIT-CORE-VERIFICATION,
@@ -3715,6 +3955,9 @@ blocks:
     title: Заявка, проект и материалы (кабинет основателя)
     members:
       [
+        PRB-UPLOAD-QUOTA,
+        PRB-OBJECT-VERSIONING,
+        PRB-ABANDONED-UPLOADS,
         UNIT-PKG-CONTRACTS-APPLICATION-VIEWS-EFFECTIVE,
         DBT-APPLICATIONS,
         DBT-APPLICATION-FORMS,
@@ -3815,6 +4058,11 @@ blocks:
     title: Outbox, брокер, вебхуки, интеграции, почта
     members:
       [
+        PRB-MAIL-READINESS,
+        PRB-MAIL-DELIVERY,
+        PRB-EVENT-VERSIONS,
+        PRB-EVENT-ARCHIVE,
+        PRB-DNS-REBINDING,
         UNIT-CORE-EXPERTS,
         DBT-INVARIANTS,
         DBT-RLS,
@@ -3832,6 +4080,7 @@ blocks:
     title: База, соединения, живучесть под сбоями
     members:
       [
+        PRB-OUTBOX-LEASE,
         UNIT-CORE-EVENTS,
         CHK-DB-RECONNECT,
         CHK-DB-RESILIENCE,
@@ -3857,6 +4106,10 @@ blocks:
     title: Секреты, роли БД, шифрование, выкат
     members:
       [
+        PRB-SHARED-RATE-LIMIT,
+        PRB-SECRET-LEAK,
+        PRB-RATE-LIMIT,
+        PRB-IP-CEILING-TTL,
         UNIT-PKG-UI-MARKDOWN,
         UNIT-CORE-EXPERTS,
         UNIT-CORE-LAB,
@@ -3890,6 +4143,7 @@ blocks:
     title: Шлюз языковой модели
     members:
       [
+        PRB-AI-DETERMINISM,
         SMK-SERVICE-EXECUTION,
         UNIT-CORE-SCORING-RULES,
         DBT-PAYMENTS,

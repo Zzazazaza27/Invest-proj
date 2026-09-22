@@ -180,7 +180,9 @@ for (const [name, block] of Object.entries(blocks)) {
 }
 check('блоки ссылаются на существующие проверки', blockErrors.length === 0, blockErrors.join(', '));
 
-const RUNNABLE = ['check', 'render', 'scenario', 'smoke', 'gate', 'unit-test', 'db-test'];
+// Пробы тоже запускаемые: каждая закрывает находку внешнего аудита, и
+// оставлять их вне блоков значит не запускать никогда.
+const RUNNABLE = ['check', 'render', 'scenario', 'smoke', 'gate', 'unit-test', 'db-test', 'probe'];
 const inBlocks = new Set(Object.values(blocks).flatMap((b) => b.members ?? []));
 const outsideBlocks = checks.filter((x) => RUNNABLE.includes(x.kind) && !inBlocks.has(x.id));
 check(
