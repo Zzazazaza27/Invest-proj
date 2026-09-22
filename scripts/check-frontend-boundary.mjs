@@ -3,15 +3,23 @@
  * Проверка, что граница «фронтенд не импортирует бэкенд» действительно
  * работает, а не просто описана в ADR-002.
  *
- * Метод — позитивный контроль: во фронтенд временно кладётся файл с
- * запрещённым импортом. Если линтер его НЕ поймал — значит правило перестало
- * действовать (переименовали каталог, поменяли конфиг, отключили плагин), и
- * заменяемость фронтенда держится на честном слове.
+ * Метод — позитивный контроль: линтеру показывают файл с запрещённым
+ * импортом. Если он его НЕ поймал — значит правило перестало действовать
+ * (переименовали каталог, поменяли конфиг, отключили плагин), и заменяемость
+ * фронтенда держится на честном слове.
+ *
+ * РАБОЧИЕ ИСХОДНИКИ НЕ ТРОГАЮТСЯ. Прежняя версия писала пробный файл прямо в
+ * `apps/<приложение>/src/__boundary_probe__` и удаляла его в finally. Работало,
+ * но означало, что обычная проверка изменяет дерево проекта: прерванный на
+ * середине запуск оставлял мусор в исходниках, а параллельный запуск мешал
+ * сборке. Теперь код проверяется через ESLint API методом `lintText` с
+ * ВИРТУАЛЬНЫМ путём: правила применяются так, будто файл лежит в
+ * `apps/<приложение>/src/`, но на диске он не появляется вовсе.
  *
  * Запуск: node scripts/check-frontend-boundary.mjs
  */
-import { execFileSync } from 'node:child_process';
-import { rmSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { ESLint } from 'eslint';
+import { existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -49,79 +57,62 @@ if (FRONTEND_APPS.length === 0) {
   process.exitCode = 1;
 }
 
-// eslint запускается напрямую через node, а не через npx: npx на Windows —
-// это .cmd, execFileSync без shell на нём падает с ENOENT, и такой сбой
-// раньше принимался за «линтер поймал нарушение».
-const ESLINT_BIN = join(ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js');
+/*
+ * Один экземпляр линтера на весь прогон.
+ *
+ * Прежде на каждый случай запускался отдельный процесс eslint — семь
+ * приложений на пять случаев давали 35 запусков и больше минуты ожидания.
+ * Здесь конфигурация читается один раз.
+ */
+const eslint = new ESLint({ cwd: ROOT, warnIgnored: false });
 
 /**
- * @returns true, если eslint СООБЩИЛ О НАРУШЕНИИ (код выхода 1).
- * Любой другой сбой запуска — исключение, а не молчаливое «нарушение найдено»:
- * иначе сломанный запуск выглядел бы как работающая защита.
+ * Показать линтеру код по виртуальному пути.
+ *
+ * @returns true, если линтер СООБЩИЛ О НАРУШЕНИИ. Отсутствие результатов —
+ * это не «чисто», а «файл не проверялся» (попал под ignores или не подошёл
+ * ни под один блок конфигурации): такой исход считается сбоем прогона, иначе
+ * неработающая проверка выглядела бы как работающая защита.
  */
-function lintFails(file) {
-  try {
-    execFileSync(process.execPath, [ESLINT_BIN, '--no-warn-ignored', file], {
-      cwd: ROOT,
-      stdio: 'pipe',
-      encoding: 'utf8',
-    });
-    return false;
-  } catch (error) {
-    if (error && typeof error === 'object' && 'status' in error && error.status === 1) {
-      return true;
-    }
-    const detail =
-      error && typeof error === 'object' && 'stderr' in error
-        ? String(error.stderr)
-        : String(error);
-    throw new Error(`Не удалось запустить eslint для ${file}: ${detail}`, { cause: error });
+async function lintFails(virtualPath, code) {
+  const results = await eslint.lintText(code, { filePath: virtualPath });
+  if (results.length === 0) {
+    throw new Error(`ESLint не проверил ${virtualPath}: файл исключён из проверки`);
   }
-}
-
-if (!existsSync(ESLINT_BIN)) {
-  console.error(`eslint не найден по пути ${ESLINT_BIN}. Выполни npm install.`);
-  process.exit(1);
+  return results.some((r) => r.errorCount > 0);
 }
 
 let failures = 0;
 let checks = 0;
 
 for (const app of FRONTEND_APPS) {
-  const dir = join(ROOT, 'apps', app, 'src', '__boundary_probe__');
-  mkdirSync(dir, { recursive: true });
+  // Путь ВИРТУАЛЬНЫЙ: файла с таким именем на диске нет и не будет. Он нужен
+  // лишь для того, чтобы конфигурация применила к коду те же правила, что и к
+  // настоящему исходнику этого приложения.
+  const probePath = join(ROOT, 'apps', app, 'src', '__boundary_probe__', 'probe.ts');
 
-  try {
-    for (const testCase of FORBIDDEN_CASES) {
-      const file = join(dir, 'forbidden.ts');
-      writeFileSync(file, testCase.code, 'utf8');
-      checks += 1;
-      if (lintFails(file)) {
-        console.warn(`  OK    apps/${app}: импорт «${testCase.name}» отвергнут`);
-      } else {
-        failures += 1;
-        console.warn(
-          `  FAIL  apps/${app}: импорт «${testCase.name}» ПРОШЁЛ линтер. ` +
-            'Граница фронт↔бэк не работает (ADR-002).',
-        );
-      }
-      rmSync(file, { force: true });
-    }
-
-    const allowedFile = join(dir, 'allowed.ts');
-    writeFileSync(allowedFile, ALLOWED_CASE.code, 'utf8');
+  for (const testCase of FORBIDDEN_CASES) {
     checks += 1;
-    if (lintFails(allowedFile)) {
+    if (await lintFails(probePath, testCase.code)) {
+      console.warn(`  OK    apps/${app}: импорт «${testCase.name}» отвергнут`);
+    } else {
       failures += 1;
       console.warn(
-        `  FAIL  apps/${app}: разрешённый импорт «${ALLOWED_CASE.name}» отвергнут. ` +
-          'Правило слишком широкое — фронтенд не сможет пользоваться контрактами.',
+        `  FAIL  apps/${app}: импорт «${testCase.name}» ПРОШЁЛ линтер. ` +
+          'Граница фронт↔бэк не работает (ADR-002).',
       );
-    } else {
-      console.warn(`  OK    apps/${app}: импорт «${ALLOWED_CASE.name}» разрешён`);
     }
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
+  }
+
+  checks += 1;
+  if (await lintFails(probePath, ALLOWED_CASE.code)) {
+    failures += 1;
+    console.warn(
+      `  FAIL  apps/${app}: разрешённый импорт «${ALLOWED_CASE.name}» отвергнут. ` +
+        'Правило слишком широкое — фронтенд не сможет пользоваться контрактами.',
+    );
+  } else {
+    console.warn(`  OK    apps/${app}: импорт «${ALLOWED_CASE.name}» разрешён`);
   }
 }
 
@@ -135,10 +126,4 @@ if (failures > 0) {
   process.exitCode = 1;
 } else {
   console.warn('Гейт пройден.\n');
-}
-
-// Черновой каталог не должен пережить прогон ни при каком исходе — в том числе
-// после прерванного запуска.
-for (const app of FRONTEND_APPS) {
-  rmSync(join(ROOT, 'apps', app, 'src', '__boundary_probe__'), { recursive: true, force: true });
 }

@@ -33,6 +33,69 @@ export async function closePool(): Promise<void> {
   }
 }
 
+/**
+ * Одноразовая база под один тестовый файл.
+ *
+ * Нужна там, где проверка обязана КОММИТИТЬ: общая тестовая база копила бы
+ * её строки от прогона к прогону, и «что лежит в базе» переставало бы
+ * что-либо значить. Схема накатывается теми же миграциями, что и везде;
+ * база удаляется в afterAll вместе со всем, что в ней появилось.
+ */
+export async function createScratchDatabase(name: string): Promise<{
+  pool: pg.Pool;
+  drop: () => Promise<void>;
+}> {
+  const base = new URL(testConnectionString());
+  const admin = new pg.Client({
+    connectionString: new URL('/postgres', base).href,
+    ssl: sslConfig(),
+  });
+  await admin.connect();
+  await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+  await admin.query(`CREATE DATABASE ${name}`);
+  await admin.end();
+
+  const url = new URL(`/${name}`, base);
+  url.search = base.search;
+  const { spawnSync } = await import('node:child_process');
+  const { fileURLToPath } = await import('node:url');
+  const root = fileURLToPath(new URL('../..', import.meta.url));
+  const migrated = spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', `${root}/database/src/migrate.ts`],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, DATABASE_URL_OWNER: url.href, DATABASE_URL_TEST: url.href },
+    },
+  );
+  if (migrated.status !== 0) {
+    throw new Error(
+      `не удалось накатить миграции в ${name}: ${`${migrated.stdout ?? ''}${migrated.stderr ?? ''}`.slice(-400)}`,
+    );
+  }
+
+  const scratchPool = new pg.Pool({
+    connectionString: url.href,
+    ssl: sslConfig(),
+    max: 12,
+    application_name: `unicorn-db-tests-${name}`,
+  });
+  return {
+    pool: scratchPool,
+    async drop() {
+      await scratchPool.end();
+      const cleaner = new pg.Client({
+        connectionString: new URL('/postgres', base).href,
+        ssl: sslConfig(),
+      });
+      await cleaner.connect();
+      await cleaner.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+      await cleaner.end();
+    },
+  };
+}
+
 /** UUIDv7-совместимый идентификатор для фикстур (порядок по времени сохраняется). */
 export function uuidv7(): string {
   const bytes = Buffer.alloc(16);
@@ -60,9 +123,20 @@ export async function inRollbackTx<T>(fn: (c: Client) => Promise<T>): Promise<T>
   }
 }
 
-/** Транзакция с коммитом — для тестов конкурентности, где нужны реальные блокировки. */
-export async function inCommittedTx<T>(fn: (c: Client) => Promise<T>): Promise<T> {
-  const client = await getPool().connect();
+/**
+ * Транзакция С КОММИТОМ — для тестов конкурентности, где нужны настоящие
+ * блокировки: откат уничтожил бы то самое состояние, за которое борются
+ * параллельные транзакции.
+ *
+ * `pool` передают, когда работа идёт не в общей тестовой базе, а в
+ * одноразовой. Так устроен concurrency.test.ts: коммит ему необходим, а
+ * оставлять строки навсегда — нет, поэтому у него своя база на один прогон.
+ */
+export async function inCommittedTx<T>(
+  fn: (c: Client) => Promise<T>,
+  pool: pg.Pool = getPool(),
+): Promise<T> {
+  const client = await pool.connect();
   try {
     await client.query('BEGIN');
     const result = await fn(client);

@@ -80,6 +80,7 @@ console.warn('\n=== ПРОВЕРКА ОЧЕРЕДИ OUTBOX ===\n');
 const created = [];
 /** Подписчики, заведённые прогоном: убираются в finally вместе с событиями. */
 const createdEndpoints = [];
+const createdAccounts = [];
 
 try {
   // Пять неопубликованных событий с известным типом.
@@ -154,9 +155,25 @@ try {
   // HTTP-запроса, и два экземпляра слали одно событие получателю одновременно.
   // Подписчик заводится ПРОГОНОМ, а не ищется в базе: пропущенная проверка
   // ничего не доказывает, а зависеть от чужих данных — тот же ложный зелёный.
+  /*
+   * Сервисный аккаунт прогон заводит СЕБЕ САМ.
+   *
+   * Комментарий выше обещал независимость от чужих данных, а код брал первый
+   * попавшийся аккаунт из базы — и на чистом стенде проверка краснела с
+   * «в базе нет сервисного аккаунта», не сказав ничего об аренде очереди.
+   * Зависеть от того, запускали ли раньше smoke-integration, — то же самое,
+   * что зависеть от погоды.
+   */
   const [account] = await sql(
-    `SELECT id FROM integration.service_accounts ORDER BY created_at LIMIT 1`,
+    `INSERT INTO integration.service_accounts
+       (id, client_id, name, client_secret_hash, mtls_cert_fingerprint, scopes, created_by)
+     VALUES (public.uuid_generate_v7(), $1, 'Проба аренды очереди', 'x', 'x',
+             ARRAY['webhooks:manage'],
+             (SELECT id FROM identity.users WHERE deleted_at IS NULL ORDER BY created_at LIMIT 1))
+     RETURNING id`,
+    [`probe-outbox-${Date.now()}`],
   );
+  createdAccounts.push(account.id);
   let endpoint = null;
   if (account) {
     [endpoint] = await sql(
@@ -217,6 +234,11 @@ try {
     ]);
     await sql('DELETE FROM integration.webhook_endpoints WHERE id = ANY($1::uuid[])', [
       createdEndpoints,
+    ]);
+  }
+  if (createdAccounts.length > 0) {
+    await sql('DELETE FROM integration.service_accounts WHERE id = ANY($1::uuid[])', [
+      createdAccounts,
     ]);
   }
   if (created.length > 0) {

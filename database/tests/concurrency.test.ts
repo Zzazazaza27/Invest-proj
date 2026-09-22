@@ -6,27 +6,47 @@
  * КОММИТЯТСЯ — иначе гонки не воспроизводятся. Утверждения привязаны к
  * конкретным идентификаторам, поэтому остаточные данные ни на что не влияют.
  */
-import { afterAll, describe, expect, it } from 'vitest';
+import type pg from 'pg';
+import type { Client } from './helpers.ts';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   approveKyc,
-  closePool,
   createEntity,
   createOffer,
   createProject,
   createSignedAgreement,
   createUser,
-  getPool,
+  createScratchDatabase,
   inCommittedTx,
   uuidv7,
 } from './helpers.ts';
 
+/*
+ * СВОЯ БАЗА НА ПРОГОН.
+ *
+ * Этому файлу коммит необходим: параллельные доставки, гонка траншей и
+ * цепочка хешей проверяются настоящими блокировками, а откат уничтожил бы
+ * предмет проверки. Но «нужен коммит» не значит «пусть остаётся навсегда»:
+ * раньше строки копились в общей тестовой базе от прогона к прогону.
+ * Теперь база одноразовая и удаляется целиком — со всем, что появилось.
+ */
+const DB_NAME = `unicorn_test_concurrency_${process.pid}`;
+let scratch: { pool: pg.Pool; drop: () => Promise<void> };
+
+/** Короткая запись: вся работа файла идёт в одноразовой базе, а не в общей. */
+const tx = <T>(fn: (c: Client) => Promise<T>): Promise<T> => inCommittedTx(fn, scratch.pool);
+
+beforeAll(async () => {
+  scratch = await createScratchDatabase(DB_NAME);
+}, 180_000);
+
 afterAll(async () => {
-  await closePool();
-});
+  await scratch?.drop();
+}, 60_000);
 
 /** Готовит подписанный договор в закоммиченном виде. */
 async function prepareSignedAgreement(amount = 1_000_000): Promise<string> {
-  return inCommittedTx(async (c) => {
+  return tx(async (c) => {
     const founder = await createUser(c);
     const investor = await createUser(c, { role: 'investor' });
     await approveKyc(c, investor.id);
@@ -49,7 +69,7 @@ async function callConfirm(
   bankRef: string,
   amount: number,
 ): Promise<{ ok: true; alreadyProcessed: boolean } | { ok: false; error: string }> {
-  const client = await getPool().connect();
+  const client = await scratch.pool.connect();
   try {
     await client.query('BEGIN');
     await client.query('SET LOCAL ROLE app_investments');
@@ -80,7 +100,7 @@ describe('confirm_tranche под конкуренцией', () => {
     const succeeded = results.filter((r) => r.ok);
     expect(succeeded.length).toBeGreaterThan(0);
 
-    const pool = getPool();
+    const pool = scratch.pool;
     const tranches = await pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM investments.investment_tranches WHERE agreement_id = $1`,
       [agreementId],
@@ -135,7 +155,7 @@ describe('confirm_tranche под конкуренцией', () => {
       expect(second.alreadyProcessed).toBe(true);
     }
 
-    const { rows } = await getPool().query<{ count: string }>(
+    const { rows } = await scratch.pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM billing.commission_accruals WHERE agreement_id = $1`,
       [agreementId],
     );
@@ -157,7 +177,7 @@ describe('confirm_tranche под конкуренцией', () => {
     expect(first.ok).toBe(true);
     expect(second.ok).toBe(true);
 
-    const { rows } = await getPool().query<{
+    const { rows } = await scratch.pool.query<{
       count: string;
       base_sum: string;
       investor_sum: string;
@@ -174,7 +194,7 @@ describe('confirm_tranche под конкуренцией', () => {
     expect(Number(rows[0]!.base_sum)).toBe(amount);
     expect(Number(rows[0]!.investor_sum)).toBe(amount * 0.1);
 
-    const tranches = await getPool().query<{ count: string }>(
+    const tranches = await scratch.pool.query<{ count: string }>(
       `SELECT count(*)::text AS count FROM investments.investment_tranches WHERE agreement_id = $1`,
       [agreementId],
     );
@@ -194,7 +214,7 @@ describe('confirm_tranche под конкуренцией', () => {
   });
 
   it('неподписанный договор не принимает транш', async () => {
-    const agreementId = await inCommittedTx(async (c) => {
+    const agreementId = await tx(async (c) => {
       const founder = await createUser(c);
       const investor = await createUser(c, { role: 'investor' });
       await approveKyc(c, investor.id);
@@ -228,7 +248,7 @@ describe('confirm_tranche под конкуренцией', () => {
 
 describe('Конкурентные доменные лимиты', () => {
   it('параллельные договоры не пробивают цель предложения', async () => {
-    const { offerId, investors } = await inCommittedTx(async (c) => {
+    const { offerId, investors } = await tx(async (c) => {
       const founder = await createUser(c);
       const entity = await createEntity(c, founder.id);
       const project = await createProject(c, founder.id, { listed: true });
@@ -251,7 +271,7 @@ describe('Конкурентные доменные лимиты', () => {
     // Каждый пытается взять 400 000 при цели 1 000 000 — пройти должны максимум двое.
     const results = await Promise.all(
       investors.map(async (investorId) => {
-        const client = await getPool().connect();
+        const client = await scratch.pool.connect();
         try {
           await client.query('BEGIN');
           await createSignedAgreement(client, { offerId, investorId, amount: 400_000 });
@@ -266,7 +286,7 @@ describe('Конкурентные доменные лимиты', () => {
       }),
     );
 
-    const { rows } = await getPool().query<{ total: string }>(
+    const { rows } = await scratch.pool.query<{ total: string }>(
       `SELECT coalesce(sum(contract_amount), 0)::text AS total
          FROM investments.investment_agreements
         WHERE offer_id = $1 AND status <> 'cancelled'`,
@@ -279,7 +299,7 @@ describe('Конкурентные доменные лимиты', () => {
   it('параллельная эмиссия событий не рвёт hash-chain', async () => {
     await Promise.all(
       Array.from({ length: 12 }, (_, i) =>
-        inCommittedTx(async (c) => {
+        tx(async (c) => {
           await c.query(
             `SELECT audit.app_emit_event('lab.season.opened', NULL, 'admin', 'season', NULL,
                                          $1::jsonb, 'parallel')`,
@@ -289,12 +309,12 @@ describe('Конкурентные доменные лимиты', () => {
       ),
     );
 
-    const { rows } = await getPool().query(`SELECT * FROM audit.verify_event_chain()`);
+    const { rows } = await scratch.pool.query(`SELECT * FROM audit.verify_event_chain()`);
     expect(rows).toEqual([]);
   });
 
   it('параллельная выдача золотых билетов соблюдает лимит 2 за сезон', async () => {
-    const { adminId, seasonId, projects } = await inCommittedTx(async (c) => {
+    const { adminId, seasonId, projects } = await tx(async (c) => {
       const admin = await createUser(c, { role: 'admin' });
       const founder = await createUser(c);
       const { rows } = await c.query<{ id: string }>(`SELECT id FROM seasons.seasons LIMIT 1`);
@@ -305,7 +325,7 @@ describe('Конкурентные доменные лимиты', () => {
 
     const results = await Promise.all(
       projects.map(async (projectId) => {
-        const client = await getPool().connect();
+        const client = await scratch.pool.connect();
         try {
           await client.query('BEGIN');
           await client.query(

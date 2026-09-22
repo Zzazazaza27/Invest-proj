@@ -184,7 +184,12 @@ check('блоки ссылаются на существующие провер�
 // оставлять их вне блоков значит не запускать никогда.
 const RUNNABLE = ['check', 'render', 'scenario', 'smoke', 'gate', 'unit-test', 'db-test', 'probe'];
 const inBlocks = new Set(Object.values(blocks).flatMap((b) => b.members ?? []));
-const outsideBlocks = checks.filter((x) => RUNNABLE.includes(x.kind) && !inBlocks.has(x.id));
+// Намеренно ручной прогон в блок не входит — и не должен: блок запускается
+// целиком, а у такого прогона запуск бывает только отдельным решением.
+const manualOnly = new Set((manual ?? []).map((m) => m.id));
+const outsideBlocks = checks.filter(
+  (x) => RUNNABLE.includes(x.kind) && !inBlocks.has(x.id) && !manualOnly.has(x.id),
+);
 check(
   'каждый запускаемый прогон входит хотя бы в один блок',
   outsideBlocks.length === 0,
