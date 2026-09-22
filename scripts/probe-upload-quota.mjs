@@ -221,6 +221,8 @@ check('предел незавершённых загрузок сработал
   );
 
   await sql('DELETE FROM lab.project_materials WHERE project_id = $1', [raceProjectId]);
+  await sql('UPDATE lab.projects SET current_application_id = NULL WHERE id = $1', [raceProjectId]);
+  await sql('DELETE FROM lab.investment_applications WHERE project_id = $1', [raceProjectId]);
   await sql('DELETE FROM lab.founders_projects WHERE project_id = $1', [raceProjectId]);
   await sql('DELETE FROM lab.projects WHERE id = $1', [raceProjectId]);
 }
@@ -290,6 +292,15 @@ if (firstMaterialId) {
 
 // Уборка: прогон не оставляет за собой ни проект, ни материалы.
 await sql('DELETE FROM lab.project_materials WHERE project_id = $1', [projectId]);
+/*
+ * Заявка заводится ВМЕСТЕ с проектом, и ссылки идут в обе стороны:
+ * investment_applications.project_id → projects, projects.current_application_id
+ * → investment_applications. Удалить одно, не развязав другое, нельзя —
+ * отсюда падение уборки. Сначала снимается ссылка на текущую заявку, потом
+ * удаляются заявки, потом проект.
+ */
+await sql('UPDATE lab.projects SET current_application_id = NULL WHERE id = $1', [projectId]);
+await sql('DELETE FROM lab.investment_applications WHERE project_id = $1', [projectId]);
 await sql('DELETE FROM lab.founders_projects WHERE project_id = $1', [projectId]);
 await sql('DELETE FROM lab.projects WHERE id = $1', [projectId]);
 await sql('DELETE FROM identity.user_roles WHERE user_id = $1', [user.id]);

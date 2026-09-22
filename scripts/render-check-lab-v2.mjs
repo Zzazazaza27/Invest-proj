@@ -26,6 +26,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
+import { PROBE_ORIGIN } from './lib/probe-run.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -118,7 +119,7 @@ async function register(tag) {
     `${CORE_URL}/v1/auth/register`,
     {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Unicorn-Origin': PROBE_ORIGIN },
       signal: AbortSignal.timeout(15_000),
       body: JSON.stringify({
         email,

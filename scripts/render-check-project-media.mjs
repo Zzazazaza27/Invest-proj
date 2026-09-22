@@ -21,6 +21,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
+import { PROBE_ORIGIN } from './lib/probe-run.mjs';
 import {
   CONSENTS,
   blindIndex,
@@ -73,6 +74,9 @@ function makeClient() {
   async function call(path, { method = 'GET', body } = {}) {
     const headers = { Cookie: [state.session, state.csrf].filter(Boolean).join('; ') };
     if (body !== undefined) headers['Content-Type'] = 'application/json';
+    // Регистрация называет серверу своё происхождение: иначе заведённый
+    // прогоном человек неотличим от настоящего (M127).
+    if (path === '/v1/auth/register') headers['X-Unicorn-Origin'] = PROBE_ORIGIN;
     if (method !== 'GET' && state.csrf) {
       headers['X-CSRF-Token'] = state.csrf.split('=').slice(1).join('=');
     }

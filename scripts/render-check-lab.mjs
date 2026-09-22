@@ -19,6 +19,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
+import { PROBE_ORIGIN } from './lib/probe-run.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -81,7 +82,7 @@ async function register(tag) {
   const password = `Pw-${randomUUID()}`;
   const response = await fetch(`${CORE_URL}/v1/auth/register`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', 'X-Unicorn-Origin': PROBE_ORIGIN },
     // Таймаут обязателен и в прогоне: зависший запрос превращает проверку в
     // бесконечное ожидание вместо честного падения.
     signal: AbortSignal.timeout(15_000),
