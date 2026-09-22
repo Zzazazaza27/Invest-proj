@@ -39,13 +39,27 @@ export class PartitionMaintenanceService implements OnModuleInit, OnModuleDestro
     await this.purgeVerificationTokens();
 
     this.timer = setInterval(() => {
-      void this.runOnce();
-      void this.purgeRevocations();
-      void this.purgeAbandonedUploads();
-      void this.purgeVerificationTokens();
+      // Каждая задача перехватывает свои ошибки сама, но `void` без
+      // `.catch()` — это ставка на то, что так будет всегда. Ставка не
+      // оправдалась однажды в публикаторе и уронила ядро (2026-09-22).
+      this.safely('обслуживание разделов', () => this.runOnce());
+      this.safely('уборка отозванных токенов', () => this.purgeRevocations());
+      this.safely('уборка брошенных загрузок', () => this.purgeAbandonedUploads());
+      this.safely('уборка токенов подтверждения', () => this.purgeVerificationTokens());
     }, env.PARTITION_MAINTENANCE_INTERVAL_HOURS * 3_600_000);
     // Таймер не должен удерживать процесс при штатном завершении.
     this.timer.unref();
+  }
+
+  /** Фоновая задача не роняет процесс: её отказ — запись в журнал. */
+  private safely(what: string, run: () => Promise<unknown>): void {
+    void run().catch((error: unknown) => {
+      this.logger.error({
+        msg: 'фоновый проход не выполнен',
+        what,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   onModuleDestroy(): void {

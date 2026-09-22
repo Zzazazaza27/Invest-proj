@@ -65,10 +65,21 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     });
 
     this.timer = setInterval(() => {
-      void this.runOnce();
+      // Ограждение на каждом фоновом вызове.
+      //
+      // 2026-09-22: машина ушла в гибернацию, соединения с Postgres
+      // разорвались, и `runFanOutOnce` отклонился без перехвата — Node уронил
+      // ВЕСЬ процесс ядра. Утром это выглядело как «сервер недоступен, код
+      // 502», хотя контейнеры работали и база была цела.
+      //
+      // Перехват стоит и здесь, и внутри каждой задачи: внутренний отвечает
+      // за смысл («проход не удался, попробуем на следующем такте»), внешний
+      // — за то, что НИКАКОЙ фоновый вызов не роняет процесс, даже если
+      // завтра кто-то добавит задачу и забудет про try/catch.
+      this.safely('публикация outbox', () => this.runOnce());
       // Повторная постановка доставок идёт тем же тактом: событие, у которого
       // рассылка не удалась, иначе никем не подхватывается (M033).
-      void this.runFanOutOnce();
+      this.safely('повторная постановка доставок', () => this.runFanOutOnce());
     }, env.OUTBOX_POLL_INTERVAL_MS);
     this.timer.unref();
   }
@@ -76,6 +87,24 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
+  }
+
+  /**
+   * Запустить фоновую задачу так, чтобы её отказ остался её отказом.
+   *
+   * Обрыв соединения с базой — обычное событие: перезапуск СУБД, сетевой
+   * сбой, гибернация машины. Фоновый цикл обязан его пережить и повторить
+   * на следующем такте; падение процесса ядра из-за него — отказ всей
+   * платформы вместо пропущенного прохода.
+   */
+  private safely(what: string, run: () => Promise<unknown>): void {
+    void run().catch((error: unknown) => {
+      this.logger.error({
+        msg: 'фоновый проход не выполнен',
+        what,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
   }
 
   /**
@@ -176,6 +205,20 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     if (!getEnv().DATABASE_URL_APP_INTEGRATION) return 0;
     const traceId = `fanout-${randomUUID()}`;
 
+    try {
+      return await this.fanOutPass(traceId);
+    } catch (error) {
+      // Тот же разбор, что и у публикации: проход не удался, события
+      // остались в очереди, следующий такт попробует снова.
+      this.logger.error({
+        msg: 'проход повторной постановки доставок не выполнен',
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return 0;
+    }
+  }
+
+  private async fanOutPass(traceId: string): Promise<number> {
     const pending = await this.db.transaction(
       { userId: null, roles: ['system'], traceId },
       async (tx) => {

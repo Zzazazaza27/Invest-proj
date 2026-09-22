@@ -120,8 +120,19 @@ export class NatsClient implements OnModuleDestroy {
   }
 
   private async watchStatus(connection: NatsConnection): Promise<void> {
-    for await (const status of connection.status()) {
-      this.logger.warn({ msg: 'состояние подключения NATS', type: status.type });
+    // Наблюдение за состоянием — бесконечный цикл по потоку событий
+    // подключения. Когда брокер уходит (перезапуск, гибернация машины),
+    // поток обрывается ошибкой; без перехвата это необработанное отклонение,
+    // то есть падение всего ядра из-за наблюдателя за логом.
+    try {
+      for await (const status of connection.status()) {
+        this.logger.warn({ msg: 'состояние подключения NATS', type: status.type });
+      }
+    } catch (error) {
+      this.logger.warn({
+        msg: 'наблюдение за состоянием NATS прервано',
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 

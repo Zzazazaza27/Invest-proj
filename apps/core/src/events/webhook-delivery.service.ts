@@ -44,7 +44,15 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
       return;
     }
     this.timer = setInterval(() => {
-      void this.runOnce();
+      // Перехват внешний, хотя внутри прохода он тоже есть: фоновая задача
+      // не должна ронять процесс ни при каком повороте (см. 2026-09-22,
+      // падение ядра после гибернации).
+      void this.runOnce().catch((error: unknown) => {
+        this.logger.error({
+          msg: 'проход доставки вебхуков не выполнен',
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
     }, env.WEBHOOK_POLL_INTERVAL_MS);
     this.timer.unref();
   }
