@@ -185,6 +185,20 @@ checks:
     purpose: 'Гейт: ни одна функция SECURITY DEFINER не исполнима ролью PUBLIC. PostgreSQL выдаёт EXECUTE роли PUBLIC на каждую новую функцию по умолчанию, а адресный GRANT нужным ролям этот default не отменяет. Поэтому «мы выдали пра'
     confirmation: reviewed-in-code
 
+  - id: CHK-FILE-ACCESS
+    file: scripts/check-file-access.mjs
+    command: npm run check:file-access
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 19
+    needs: [db, core, s3]
+    effects: ['пишет в БД', 'кладёт объект в хранилище', 'убирает за собой через сессию']
+    cooldownSeconds: 20
+    purpose: 'Граница доступа к ФАЙЛАМ, а не к строкам в базе. RLS защищает строки, документ лежит в объектном хранилище — там нет ни политик, ни ролей приложения. Проверяется: хранилище не отдаёт объект мимо ядра, ядро не выдаёт ссылок на чтение, посторонние (другой основатель, эксперт без назначения, инвестор без разрешения, гость) байтов не получают, перекрёстные идентификаторы двери не открывают, закрытое неотличимо от несуществующего, изображения закрыты как документы, билет на загрузку в чужой проект не выдаётся.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
   - id: CHK-FRONT-BUILDS
     file: scripts/check-front-builds.mjs
     command: npm run check:front-builds
@@ -2479,23 +2493,31 @@ requirements:
     runPolicy: ci
 
   # ------------------------------------------------- пробелы без покрытия
-  - id: GAP-FILES-001
-    title: Файлы и выгрузки не отдаются тому, кому объект недоступен
+  - id: ACC-FILES-001
+    title: >-
+      Файлы проекта не отдаются тому, кому не виден сам проект, и не
+      достаются мимо ядра
     area: доступ
     severity: critical
     rationale: >-
-      Материалы проекта и документы лежат в приватном хранилище, но ссылка на
-      объект проверяется отдельно от прав на сам объект.
-    checks: []
-    coverage: none
-    confirmation: not-run
-    sensitivity: { status: not-verified }
-    runPolicy: gap
+      RLS защищает строки, а документ и изображение лежат в объектном
+      хранилище: там нет ни политик, ни ролей приложения. Между чужим файлом
+      и посторонним стоят только правило в коде ядра и закрытый бакет — то
+      есть правда записана дважды, и однажды эти две записи разойдутся.
+    checks: [CHK-FILE-ACCESS, SMK-PROJECT-ACCESS]
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+    sensitivity:
+      status: not-verified
+      note: >-
+        Негативный контроль требует снятия правила доступа в ядре и потому
+        выполняется только в изоляции, на отдельном ядре и базе. Запланирован
+        на второй этап.
+    runPolicy: handoff
     limits: >-
-      Прямой проверки «чужой файл по прямой ссылке» нет. Есть смежные
-      (SMK-PROJECT-MEDIA, PRB-UPLOAD-QUOTA), но они про загрузку, не про
-      границу доступа к чужому объекту.
-
+      Покрыты материалы и изображения проекта. Аватары пользователей,
+      выгрузки административных списков и вложения обращений в поддержку
+      этим прогоном НЕ покрыты.
   - id: GAP-SEARCH-001
     title: Поиск и выгрузки не показывают записи, недоступные по правам
     area: доступ
@@ -2573,6 +2595,7 @@ suites:
       - CHK-PROFILE-API
       - CHK-CONTENT-TRANSFER
       - CHK-OUTBOUND-BOUNDARIES
+      - CHK-FILE-ACCESS
       - SCN-ROUND-REVIEW
     note: >-
       Ядро набора фиксировано. Прогоны затронутого кабинета добавляются
@@ -2592,6 +2615,7 @@ suites:
       - CHK-CONTENT-TRANSFER
       - CHK-OUTBOUND-BOUNDARIES
       - CHK-DB-RECONNECT
+      - CHK-FILE-ACCESS
       - SCN-ROUND-REVIEW
       - RND-ADMIN-USERS
       - RND-TESTING-SESSIONS

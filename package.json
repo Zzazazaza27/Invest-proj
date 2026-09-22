@@ -40,6 +40,7 @@
     "check:testing-sessions": "node scripts/check-testing-sessions.mjs",
     "check:db-reconnect": "node scripts/check-db-reconnect.mjs",
     "check:db-resilience": "node scripts/check-db-resilience.mjs",
+    "check:file-access": "node scripts/check-file-access.mjs",
     "check:registry": "node scripts/check-test-registry.mjs",
     "docs:registry": "node scripts/build-test-registry-doc.mjs",
     "suite:handoff": "node scripts/run-suite.mjs handoff",
