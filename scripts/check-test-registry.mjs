@@ -105,14 +105,35 @@ check(
   orphanScripts.join(', ') || `учтено ${checks.filter((c) => c.kind !== 'ci-step').length}`,
 );
 
-const orphanTests = readdirSync(join(ROOT, 'database', 'tests'))
-  .filter((f) => f.endsWith('.test.ts'))
-  .map((f) => `database/tests/${f}`)
-  .filter((f) => !known.has(f));
+/*
+ * Осмотр ОБЯЗАН покрывать модульные тесты рабочих областей.
+ *
+ * Пока он смотрел только database/tests, 24 файла модульных проверок в
+ * apps/core и packages жили вне реестра — и карта пробелов утверждала, что
+ * «модульных тестов нет ни одного». Утверждение о покрытии, сделанное по
+ * неполному осмотру, хуже отсутствия утверждения: на него ссылаются.
+ */
+const TEST_ROOTS = [
+  join(ROOT, 'database', 'tests'),
+  ...readdirSync(join(ROOT, 'apps')).map((app) => join(ROOT, 'apps', app, 'tests')),
+  ...readdirSync(join(ROOT, 'packages')).map((pkg) => join(ROOT, 'packages', pkg, 'tests')),
+];
+const orphanTests = [];
+for (const dir of TEST_ROOTS) {
+  if (!existsSync(dir)) continue;
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.test.ts')) continue;
+    const relative = join(dir, file)
+      .slice(ROOT.length + 1)
+      .replace(/\\/g, '/');
+    if (!known.has(relative)) orphanTests.push(relative);
+  }
+}
 check(
-  'в осмотренном тестов схемы вне реестра нет',
+  'в осмотренном тестов вне реестра нет',
   orphanTests.length === 0,
-  orphanTests.join(', '),
+  orphanTests.join(', ') ||
+    `осмотрено каталогов: ${TEST_ROOTS.filter((d) => existsSync(d)).length}`,
 );
 
 // ------------------------------------------------------------------ ссылки
@@ -141,6 +162,34 @@ check(
   'наборы ссылаются на существующие проверки',
   suiteErrors.length === 0,
   suiteErrors.join(', '),
+);
+
+/*
+ * Блоки обязаны ссылаться на существующее и покрывать ВСЁ запускаемое.
+ *
+ * Прогон, не попавший ни в один блок, не будет запущен никогда: правило
+ * «после большого изменения гоняем затронутый блок» его просто не
+ * достигает. Молчаливая дыра в этом правиле — хуже отсутствия правила.
+ */
+const blocks = registry.blocks ?? {};
+const blockErrors = [];
+for (const [name, block] of Object.entries(blocks)) {
+  for (const member of block.members ?? []) {
+    if (!checkIds.has(member)) blockErrors.push(`${name} → ${member}`);
+  }
+}
+check('блоки ссылаются на существующие проверки', blockErrors.length === 0, blockErrors.join(', '));
+
+const RUNNABLE = ['check', 'render', 'scenario', 'smoke', 'gate', 'unit-test', 'db-test'];
+const inBlocks = new Set(Object.values(blocks).flatMap((b) => b.members ?? []));
+const outsideBlocks = checks.filter((x) => RUNNABLE.includes(x.kind) && !inBlocks.has(x.id));
+check(
+  'каждый запускаемый прогон входит хотя бы в один блок',
+  outsideBlocks.length === 0,
+  outsideBlocks
+    .slice(0, 10)
+    .map((x) => x.id)
+    .join(', '),
 );
 
 const manualErrors = (manual ?? []).filter((m) => !checkIds.has(m.id)).map((m) => m.id);
@@ -181,6 +230,29 @@ check(
   'у подтверждённой чувствительности назван метод, дата и версия кода',
   unmethodicalSensitivity.length === 0,
   unmethodicalSensitivity.map((r) => r.id).join(', '),
+);
+
+/*
+ * ИЗУЧЕНИЕ И ЗАПУСК — РАЗНЫЕ ОСИ.
+ *
+ * Прогон можно запустить и не читать; можно прочитать и не запускать. Пока
+ * это было одним полем, инвентаризация выдала за «изучено по коду» то, что
+ * на деле прочитано по шапке файла, — и четыре записи «покрытия нет»
+ * оказались неверными. Теперь уровень изучения назван прямо:
+ *
+ *   studied: code    — тело прочитано целиком или написано здесь;
+ *   studied: partial — прочитаны отдельные места, и вывод сделан только
+ *                      о них;
+ *   studied: header  — известны название и шапка, тело не читалось.
+ */
+const badStudied = checks.filter((c) => !['code', 'partial', 'header'].includes(c.studied));
+check(
+  'у каждой проверки назван уровень изучения',
+  badStudied.length === 0,
+  badStudied
+    .slice(0, 8)
+    .map((c) => c.id)
+    .join(', '),
 );
 
 const badConfirmation = checks

@@ -31,16 +31,39 @@ const REGISTRY = join(ROOT, 'docs', 'testing', 'registry.yaml');
 
 const suiteName = process.argv[2];
 if (!suiteName) {
-  console.error('нужно имя набора: handoff | regression | isolated');
+  console.error('нужно имя: handoff | regression | isolated | block:<имя блока>');
   process.exit(1);
 }
 
 const registry = YAML.parse(readFileSync(REGISTRY, 'utf8'));
-const suite = registry.suites?.[suiteName];
+
+/*
+ * Блок — это регрессия ОДНОЙ части продукта.
+ *
+ * Полный набор после каждой правки — плохая привычка: он долгий, и его
+ * начинают пропускать целиком. Правило владельца: мелкая правка не требует
+ * набора вовсе, после большого изменения гоняется затронутый блок, а полная
+ * регрессия — только по прямой команде Томаса.
+ */
+const blockName = suiteName.startsWith('block:') ? suiteName.slice('block:'.length) : null;
+const suite = blockName
+  ? (() => {
+      const block = registry.blocks?.[blockName];
+      if (!block) return null;
+      return {
+        title: `Блок «${blockName}»: ${block.title}`,
+        runBy: 'Маус вручную, после изменения в этой части',
+        members: block.members,
+        note: block.note,
+      };
+    })()
+  : registry.suites?.[suiteName];
 if (!suite) {
-  console.error(
-    `набора «${suiteName}» в реестре нет; есть: ${Object.keys(registry.suites ?? {}).join(', ')}`,
-  );
+  const suites = Object.keys(registry.suites ?? {}).join(', ');
+  const blocks = Object.keys(registry.blocks ?? {})
+    .map((b) => `block:${b}`)
+    .join(', ');
+  console.error(`«${suiteName}» в реестре нет.\n  наборы: ${suites}\n  блоки: ${blocks}`);
   process.exit(1);
 }
 const byId = new Map(registry.checks.map((c) => [c.id, c]));
@@ -84,9 +107,12 @@ console.warn(`  состав: ${suite.members.length} позиций\n`);
 const outDir = join(ROOT, 'out', 'suites');
 mkdirSync(outDir, { recursive: true });
 const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-const reportPath = join(outDir, `${suiteName}-${stamp}.md`);
+const fileBase = suiteName.replace(':', '-');
+const reportPath = join(outDir, `${fileBase}-${stamp}.md`);
 
 const results = [];
+/** Уже выполненные команды: ключ — команда, значение — чей запуск её выполнил. */
+const done = new Map();
 
 function runOne(id) {
   // Собирательная позиция: весь набор тестов схемы одной командой.
@@ -113,6 +139,28 @@ for (const id of suite.members) {
   const item = runOne(id);
   if (!item) {
     results.push({ id, state: 'пропущено', reason: 'нет в реестре', ms: 0 });
+    continue;
+  }
+
+  /*
+   * Одна команда — один запуск.
+   *
+   * Несколько записей реестра часто делит одну команду: тринадцать файлов
+   * модульных тестов ядра запускаются одним `npm run test -w apps/core`, а
+   * восемнадцать тестов схемы — одним `npm run test -w database`. Блок
+   * «доступ» гонял бы тесты схемы восемь раз подряд, тратя минуты на один и
+   * тот же результат. Повтор отмечается как выполненный вместе с первым:
+   * это не пропуск, факт запуска у них общий.
+   */
+  const already = done.get(item.command);
+  if (already) {
+    results.push({
+      id,
+      state: already.ok ? 'успех' : 'ОТКАЗ',
+      reason: `выполнено одной командой вместе с ${already.id}`,
+      ms: 0,
+    });
+    console.warn(`  ${already.ok ? 'ok    ' : 'ОТКАЗ '}${id} — вместе с ${already.id}`);
     continue;
   }
 
@@ -171,9 +219,10 @@ for (const id of suite.members) {
   }
   let log = null;
   if (!ok) {
-    log = `${suiteName}-${stamp}-${id}.log`;
+    log = `${fileBase}-${stamp}-${id}.log`;
     writeFileSync(join(outDir, log), output, 'utf8');
   }
+  done.set(item.command, { id, ok });
   results.push({ id, state: ok ? 'успех' : 'ОТКАЗ', reason: tail, ms, log });
   console.warn(
     `  ${ok ? 'ok    ' : 'ОТКАЗ '}${id} — ${Math.round(ms / 1000)} с${tail ? ` · ${tail}` : ''}`,

@@ -56,6 +56,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [db]
+    studied: header
     purpose: 'Выгрузка журнала событий в холодное хранилище. Закрывает эксплуатационный пункт: «архив событий старше 90 дней уезжает в холодное хранилище отдельной процедурой». Процедура — эта. Решения, каждое со своей причиной. 1. **'
     confirmation: reviewed-in-code
 
@@ -67,6 +68,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [db]
+    studied: header
     purpose: 'Дозаполнение `lab.project_materials.size_bytes` (Ф28). 25 исторических строк подтверждены до M044: размер объекта тогда не собирался, и ограничение `project_materials_confirmed_has_size` (M047, NOT VALID) нельзя провалид'
     confirmation: reviewed-in-code
 
@@ -77,6 +79,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: header
     purpose: 'Стартовая конфигурация вопросов заявки (версия 1) — из банка вопросов. Источник — `docs/product/каталог-вопросов-заявки.md` (версия 2): таблицы разделов дают ключ, тип, состояния по стадиям, видимость и подтверждение; ка'
     confirmation: reviewed-in-code
 
@@ -87,6 +90,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: code
     purpose: 'Сборка читаемого представления реестра (`docs/testing/реестр.md`) из этого файла. Реестр — YAML, потому что его читает машина; человеку нужен текст. Руками текст не правят: свежесть сверяет check:registry.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -98,6 +102,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: header
     purpose: ''
     confirmation: reviewed-in-code
 
@@ -109,6 +114,7 @@ checks:
     runner: manual
     asserts: 47
     needs: [db, core]
+    studied: code
     purpose: 'Раздел «Пользователи» административного кабинета — проверка API. Браузерный проход показывает, что экран работает. Здесь проверяется то, чего с экрана не видно и что дороже всего стоит при ошибке: границы доступа — кому '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -121,6 +127,7 @@ checks:
     runner: manual
     asserts: 0
     needs: [storage]
+    studied: header
     purpose: 'Имена, значения которых являются секретами. Адреса и идентификаторы — нет.'
     confirmation: reviewed-in-code
 
@@ -132,6 +139,7 @@ checks:
     runner: manual
     asserts: 0
     needs: [core]
+    studied: header
     purpose: 'Гейт «служебная консоль закрыта постороннему». История. Консоль прятали от боевого контура тремя рубежами: её не собирал `npm run build`, маршрут жил в отдельном каталоге конфигов, каталог монтировал отдельный compose-фа'
     confirmation: reviewed-in-code
 
@@ -144,6 +152,7 @@ checks:
     asserts: 16
     needs: [db]
     effects: ['удаляет данные']
+    studied: code
     purpose: 'Проверка переноса подготовленного содержимого целиком. Проверяется не команда, а СВОЙСТВО: содержимое, снятое с одной базы, приезжает в другую тем же самым. Без такой проверки «экспорт работает» означает «файлы создались'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -157,6 +166,7 @@ checks:
     asserts: 8
     needs: [db, core]
     effects: ['рвёт соединения']
+    studied: code
     purpose: 'Обрыв соединений с базой не роняет ядро. ОТКУДА ПРОВЕРКА. 2026-09-22 машина ушла в гибернацию; соединения с Postgres разорвались, фоновый проход публикатора отклонился без перехвата, и Node уронил ВЕСЬ процесс ядра. Утро'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -170,6 +180,7 @@ checks:
     asserts: 23
     needs: [db, nats, docker]
     effects: ['пишет в БД', 'рвёт соединения']
+    studied: code
     purpose: 'Живучесть ядра при сбоях базы и брокера — на ОТДЕЛЬНОМ ядре. ЧЕМ ОТЛИЧАЕТСЯ ОТ `check-db-reconnect`. Тот прогон рвёт соединения рабочего стенда и отвечает на вопрос «переживает ли ядро обрыв». Здесь проверяется то, что в'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -182,6 +193,7 @@ checks:
     runner: ci
     asserts: 0
     needs: [db]
+    studied: header
     purpose: 'Гейт: ни одна функция SECURITY DEFINER не исполнима ролью PUBLIC. PostgreSQL выдаёт EXECUTE роли PUBLIC на каждую новую функцию по умолчанию, а адресный GRANT нужным ролям этот default не отменяет. Поэтому «мы выдали пра'
     confirmation: reviewed-in-code
 
@@ -195,6 +207,7 @@ checks:
     needs: [db, core, s3]
     effects: ['пишет в БД', 'кладёт объект в хранилище', 'убирает за собой через сессию']
     cooldownSeconds: 20
+    studied: code
     purpose: 'Граница доступа к ФАЙЛАМ, а не к строкам в базе. RLS защищает строки, документ лежит в объектном хранилище — там нет ни политик, ни ролей приложения. Проверяется: хранилище не отдаёт объект мимо ядра, ядро не выдаёт ссылок на чтение, посторонние (другой основатель, эксперт без назначения, инвестор без разрешения, гость) байтов не получают, перекрёстные идентификаторы двери не открывают, закрытое неотличимо от несуществующего, изображения закрыты как документы, билет на загрузку в чужой проект не выдаётся.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -206,6 +219,7 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 0
+    studied: header
     purpose: 'Проверка перед выкатом: все фронты собраны в production-режиме. Корневой `.env` держит `NODE_ENV=development` для ядра, и `vite build` без обёртки `scripts/vite-build.mjs` собирал отладочный React со StrictMode — каждый '
     confirmation: reviewed-in-code
 
@@ -217,6 +231,7 @@ checks:
     runner: ci
     asserts: 0
     needs: [db, nats]
+    studied: header
     purpose: 'Проверка, что граница «фронтенд не импортирует бэкенд» действительно работает, а не просто описана в ADR-002. Метод — позитивный контроль: во фронтенд временно кладётся файл с запрещённым импортом. Если линтер его НЕ пой'
     confirmation: reviewed-in-code
 
@@ -227,6 +242,7 @@ checks:
     level: интеграционный
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Гейт согласованности KEK-доменов (Ф27). Карта «домен → таблица» в `rotate-kek.mjs` ведётся вручную, и до этого гейта ничто не мешало разъехаться четырём источникам правды: 1. тип `KekDomain` в `apps/core/src/crypto/crypt'
     confirmation: reviewed-in-code
 
@@ -239,6 +255,7 @@ checks:
     asserts: 11
     needs: [db, nats]
     effects: ['пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Границы контура наружу: проверяется поведение, а не настройка. Зачем именно так. «В базе нет рабочих данных» защитой от внешнего действия не является: подписчик с настоящим адресом получит настоящий POST от любого событи'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -251,6 +268,7 @@ checks:
     runner: manual
     asserts: 0
     needs: [core]
+    studied: header
     purpose: 'Гейт согласованности портов стенда. Порт живёт в `.env` дважды: как отдельная переменная (`POSTGRES_PORT`) и внутри строк подключения (`DATABASE_URL=postgres://…:5433/…`). Это не дублирование по недосмотру: строку подклю'
     confirmation: reviewed-in-code
 
@@ -263,6 +281,7 @@ checks:
     asserts: 30
     needs: [db, core, storage]
     effects: ['создаёт пользователей']
+    studied: header
     purpose: '«Мой профиль» — проверка API (этап 6.4). Проверяется то, что нельзя увидеть с экрана и что дороже всего стоит при ошибке: смена пароля требует знания текущего и прекращает ВСЕ сессии; подтверждённые данные через профиль '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -274,6 +293,7 @@ checks:
     level: интеграционный
     runner: ci
     asserts: 0
+    studied: header
     purpose: ''
     confirmation: reviewed-in-code
 
@@ -284,6 +304,7 @@ checks:
     level: интеграционный
     runner: ci
     asserts: 0
+    studied: header
     purpose: ''
     confirmation: reviewed-in-code
 
@@ -295,6 +316,7 @@ checks:
     runner: ci
     asserts: 0
     needs: [storage, nats]
+    studied: header
     purpose: 'Гейт переиспользования секретов (Ф26). Инцидент: одно 24-символьное значение обслуживало шесть служб (`POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `NATS_PASSWORD`, `MINIO_ROOT_PASSWORD`, `KEYCLOAK_ADMIN_PASSWORD`, `S3_SECRET_A'
     confirmation: reviewed-in-code
 
@@ -307,6 +329,7 @@ checks:
     asserts: 9
     needs: [db]
     effects: ['пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Проверка сервисных подключений БД. Настроенная переменная окружения и работающее подключение — разные утверждения. Здесь проверяется второе: под каждой сервисной ролью открывается соединение, подтверждается фактическое и'
     confirmation: reviewed-in-code
 
@@ -317,6 +340,7 @@ checks:
     level: интеграционный
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Ищет НАСТОЯЩИЕ блоки приватного ключа и возвращает их типы. Почему не поиск подстроки `BEGIN RSA PRIVATE KEY`: эта строка встречается в исходнике самого гейта (список выше) и, следовательно, в транскриптах сессий, где ге'
     confirmation: reviewed-in-code
 
@@ -328,6 +352,7 @@ checks:
     runner: manual
     asserts: 0
     needs: [core]
+    studied: header
     purpose: 'Проверка входа под всеми учётными записями стенда. Зачем: «пароль у всех один» — утверждение, которое проверяется только попыткой входа. Сиды заводят учётки тремя разными скриптами (`dev-seed-test-user`, `dev-stand`, `se'
     confirmation: reviewed-in-code
 
@@ -339,6 +364,7 @@ checks:
     runner: manual
     asserts: 22
     needs: [browser, core]
+    studied: header
     purpose: 'Проверка стенда глазами браузера. Развёрнутый стенд и работающий стенд — разные утверждения. Скрипт `dev-stand.mjs` заводит учётные записи и данные; здесь проверяется, что этими учётными записями действительно ВХОДЯТ, и '
     confirmation: reviewed-in-code
 
@@ -349,6 +375,7 @@ checks:
     level: статический
     runner: ci
     asserts: 12
+    studied: code
     purpose: 'Реестр проверок соответствует коду: файлы существуют, команды объявлены, сирот нет, ссылки целы, пробелы помечены явно.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -362,6 +389,7 @@ checks:
     asserts: 40
     needs: [db, core]
     effects: ['пишет в БД']
+    studied: header
     purpose: 'Тестовые сессии и контексты доступа — проверка границ доверия. Здесь проверяется не «работает ли переключение», а то, чего с экрана не видно и что дороже всего стоит при ошибке: подстановка личности внутри стража доступа'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -373,6 +401,7 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 0
+    studied: header
     purpose: 'Гейт «в репозиторий коммитит только владелец». Репозиторий принадлежит прежнему исполнителю, и доступ у него остался. Ничего плохого он, скорее всего, не сделает — но узнать о чужом коммите нужно ДО того, как поверх него'
     confirmation: reviewed-in-code
 
@@ -385,6 +414,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['помечает удалённым']
+    studied: header
     purpose: 'Уборка следов прогонов: людей и проекты, заведённые проверками. Зачем. Браузерные проходы и нагрузочные прогоны заводят себе учётные записи при каждом запуске. За неделю их набирается столько, что список пользователей ра'
     confirmation: reviewed-in-code
 
@@ -397,6 +427,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['пишет в БД']
+    studied: code
     purpose: 'Комплект подготовленного содержимого: выгрузка, расхождения, загрузка. ЗАЧЕМ. Словарь, ЧАВО, вопросы заявки, тарифы, страны и шаблоны владелец заполняет в админке, и живут они только в базе. Любой сброс — и работа пропал'
     confirmation: reviewed-in-code
 
@@ -407,6 +438,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: header
     purpose: 'Копия базы перед опасной работой. Зачем отдельной командой. Копию снимали руками и вспоминали о ней после сноса: 2026-09-21 дамп перед уборкой спас разбор — без него нельзя было доказать, что в словаре и ЧАВО не было нич'
     confirmation: reviewed-in-code
 
@@ -417,6 +449,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: header
     purpose: 'Выкатить текущий `main` на боевой стенд. До этого скрипта обновление сервера было набором команд по памяти: подтянуть, поставить зависимости, собрать, накатить миграции, перезапустить два сервиса, пересоздать прокси. Люб'
     confirmation: reviewed-in-code
 
@@ -428,6 +461,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [core]
+    studied: header
     purpose: 'Запуск AI-шлюза с переменными из .env. Как и `dev-core.mjs`: переменные читает скрипт, а не приложение. Сам шлюз в production получает окружение от платформы и `.env` читать не умеет — это принципиально, потому что именн'
     confirmation: reviewed-in-code
 
@@ -438,6 +472,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: header
     purpose: 'Запуск собранного core с переменными из .env. Отдельный скрипт вместо dotenv в самом приложении: production получает переменные из окружения (Vault/External Secrets), и код приложения не должен уметь читать .env вовсе. И'
     confirmation: reviewed-in-code
 
@@ -450,6 +485,7 @@ checks:
     asserts: 0
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Выдача роли администратора — ЛОКАЛЬНАЯ dev-утилита. Первый администратор не может появиться через API: роль `admin` не входит в список ролей самостоятельной регистрации, и это правильно. В production её выдаёт оператор ч'
     confirmation: reviewed-in-code
 
@@ -462,6 +498,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['удаляет данные', 'помечает удалённым']
+    studied: header
     purpose: 'Удаление тестовой учётной записи из базы — по решению владельца 2026-08-28 (учётка `ssurgut`, все пять ролей сразу). Почему скрипт, а не `DELETE FROM identity.users`: на `identity.users` ссылаются 46 внешних ключей, и **'
     confirmation: reviewed-in-code
 
@@ -473,6 +510,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [db]
+    studied: header
     purpose: 'Привести пароли тестовых учёток стенда к значению из `.env`. Зачем отдельный скрипт, а не перезапуск сидов: учётки заводят ТРИ разных скрипта (`dev-seed-test-user`, `dev-stand`, `seed-demo`), и ротация пароля в `.env` не'
     confirmation: reviewed-in-code
 
@@ -485,6 +523,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Тестовый пользователь для разработки. Заводит учётную запись `ssurgut` со всеми ролями, нужными, чтобы пройти платформу целиком: основатель, инвестор, эксперт, организатор, администратор. Пароль берётся из `DEV_TEST_USER'
     confirmation: reviewed-in-code
 
@@ -497,6 +536,7 @@ checks:
     asserts: 0
     needs: [db, core]
     effects: ['пишет в БД']
+    studied: header
     purpose: 'Локальный стенд: учётные записи по ролям и данные, на которых видно работу. Зачем отдельно от `dev-seed-test-user.mjs`: та учётка совмещает ВСЕ роли, и на ней невозможно увидеть главное свойство платформы — что роли видя'
     confirmation: reviewed-in-code
 
@@ -509,6 +549,7 @@ checks:
     asserts: 10
     needs: [db, docker]
     effects: ['удаляет данные']
+    studied: header
     purpose: 'Проверка восстановления из резервной копии (`docs/architecture/Architect_Launch.md` §7, гейт A). «Бэкапы настроены» — не доказательство. Доказательство — восстановленная база, в которой данные на месте, а инварианты живы'
     confirmation: reviewed-in-code
 
@@ -521,6 +562,7 @@ checks:
     asserts: 33
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Сквозной сценарий платформы: путь проекта через все роли. Каждая фаза проверяла свой кусок; здесь проверяется, что куски складываются в одну работающую цепочку и что данные ОДНОЙ роли доходят до другой ровно так, как зад'
     confirmation: reviewed-in-code
 
@@ -533,6 +575,7 @@ checks:
     asserts: 15
     needs: [db, core]
     effects: ['пишет в БД']
+    studied: header
     purpose: 'Eval-гейт LLM-скоринга (promt_aiscoring.md, раздел 9; ADR-008 §6). Гейт — условие включения провайдера, а не отчёт после. Пока он не зелёный, `ai.scoring.llm.enabled` сервер включить не даст: результат пишется в `scoring'
     confirmation: reviewed-in-code
 
@@ -543,6 +586,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: header
     purpose: 'Убрать залипший сокет секрет-движка Docker Desktop, иначе он не стартует. Симптом. Docker Desktop падает окном «An unexpected error occurred» с текстом: starting services: initializing Secrets Engine: listening on unix:/'
     confirmation: reviewed-in-code
 
@@ -553,6 +597,7 @@ checks:
     level: статический
     runner: manual
     asserts: 0
+    studied: header
     purpose: 'Гейт AI-шлюза: тесты политики и анализатора + аудит зависимостей. Вынесен в скрипт, а не в строку package.json, по одной причине: путь к интерпретатору различается на Windows и Linux, а гейт обязан выполняться одинаково '
     confirmation: reviewed-in-code
 
@@ -565,6 +610,7 @@ checks:
     asserts: 0
     needs: [core, storage, nats, docker]
     effects: ['трогает контейнеры']
+    studied: header
     purpose: 'Обёртка над `docker compose` для инфраструктуры стенда. Существует ради одной ловушки: compose читает файл `.env` РЯДОМ С СОБОЙ (то есть `infra/.env`), а не корневой `.env` проекта. Команда `docker compose -f infra/docke'
     confirmation: reviewed-in-code
 
@@ -575,6 +621,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: header
     purpose: 'Нагрузочный прогон под ПАРАЛЛЕЛЬНОЙ нагрузкой. Что он закрывает: замеры Ф-ТД снимались по одному запросу за раз (`perf-measure.mjs`) и говорили о стоимости запроса, но ничего — о поведении под конкуренцией. Здесь измеряе'
     confirmation: reviewed-in-code
 
@@ -587,6 +634,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['пишет в БД']
+    studied: header
     purpose: 'Блок `disclosure` в конфигурации формы: настройка статуса привлечения отдельно от суммы (владелец, 2026-09-18, после 5.6.4д; M086). Работает по ЖИВОЙ активной версии: если у неё нет `disclosure.raising_status`, публикует'
     confirmation: reviewed-in-code
 
@@ -599,6 +647,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['пишет в БД']
+    studied: header
     purpose: 'Перевод живой конфигурации вопросов на разделение «профиль / раунд» (план 0.2 §0г, заявка-03 §2.4, §2.7; этап 5.6.2). Работает с тем, что фактически опубликовано и правится администратором, а не с исходным seed: берёт ак'
     confirmation: reviewed-in-code
 
@@ -611,6 +660,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['пишет в БД']
+    studied: header
     purpose: 'Стартовая видимость группы «текущий запрос» и предмета финансирования — `investors` (владелец, 2026-09-18, уточнение к 5.6.4): сумма раунда по умолчанию скрыта от анонимного посетителя, публичность — явная настройка в ад'
     confirmation: reviewed-in-code
 
@@ -622,6 +672,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [nats]
+    studied: header
     purpose: 'Инициализация стрима событий в NATS JetStream. Ядро только ПУБЛИКУЕТ: создание и настройка стрима — операционная задача, а не право приложения. Приложение, которое само создаёт стримы, обязано иметь права на управление и'
     confirmation: reviewed-in-code
 
@@ -633,6 +684,7 @@ checks:
     runner: ci
     asserts: 0
     needs: [core]
+    studied: header
     purpose: 'Гейт сетевой безопасности (RULES.md §3.2). Прогоняется по завершении КАЖДОЙ фазы. Проверяет фактическое состояние, а не намерение в конфиге: реальные привязки портов контейнеров, реальные заголовки ответа API, реальное п'
     confirmation: reviewed-in-code
 
@@ -645,6 +697,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Замеры на синтетическом объёме сезона. Существует потому, что «индексы созданы по спецификации» и «запрос быстрый» — разные утверждения. На единичных данных планировщик выбирает последовательное чтение и укладывается в д'
     confirmation: reviewed-in-code
 
@@ -657,6 +710,7 @@ checks:
     asserts: 18
     needs: [db, core, storage]
     effects: ['создаёт пользователей', 'удаляет данные']
+    studied: header
     purpose: 'Проверка уборки брошенных загрузок (остаток SEC-14). Билет на загрузку выдаётся вместе со строкой материала, но загрузка может не состояться. С M037 такой материал наружу не выдаётся — но и не исчезает: строка остаётся н'
     confirmation: reviewed-in-code
 
@@ -668,6 +722,7 @@ checks:
     runner: manual
     asserts: 0
     needs: [db, core]
+    studied: header
     purpose: 'Зонд детерминизма LLM-скоринга: откуда разброс IRS между прогонами. Один и тот же вход гоняется через шлюз двумя сериями: с фиксированным nonce (промпт побайтно одинаков) и со случайным (как в бою). Если разброс есть тол'
     confirmation: reviewed-in-code
 
@@ -680,6 +735,7 @@ checks:
     asserts: 6
     needs: [core]
     effects: ['создаёт пользователей']
+    studied: header
     purpose: 'Проверка привязки CSRF-токена к сессии. Находка внешнего аудита (SEC-12): проверка сравнивала значение из cookie со значением из заголовка и больше ничего. Обе части подконтрольны тому, кто смог поставить жертве свою coo'
     confirmation: reviewed-in-code
 
@@ -690,6 +746,7 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 6
+    studied: header
     purpose: 'Проверка защиты доставки вебхуков от DNS rebinding. Приём: имя при ПРОВЕРКЕ разрешается во внешний адрес, а при самом запросе — уже во внутренний. Пока проверка и запрос разрешают имя раздельно, второй ответ DNS никем не'
     confirmation: reviewed-in-code
 
@@ -702,6 +759,7 @@ checks:
     asserts: 11
     needs: [db, storage]
     effects: ['удаляет данные']
+    studied: header
     purpose: 'Проверка выгрузки журнала событий в холодное хранилище (M041). Проверяется фактом, а не чтением кода: 1. выгрузка НЕ удаляет события из журнала — только копирует; 2. объект в хранилище совпадает с прочитанным: размер и s'
     confirmation: reviewed-in-code
 
@@ -714,6 +772,7 @@ checks:
     asserts: 7
     needs: [db, nats]
     effects: ['пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Проверка нумерации версий событий агрегата. Находка внешнего аудита (CODE-06): `ON CONFLICT DO NOTHING` отбрасывал событие, а вызывающему возвращался новый идентификатор — то есть событие считалось поставленным, не сущес'
     confirmation: reviewed-in-code
 
@@ -724,6 +783,7 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 9
+    studied: header
     purpose: 'Проверка того, что потолок частоты по адресу не может «залипнуть» навсегда. Находка внешнего аудита SEC-11. Счёт делался двумя обращениями — `INCR`, затем `EXPIRE`. Между ними есть окно: обрыв соединения или перезапуск п'
     confirmation: reviewed-in-code
 
@@ -734,6 +794,7 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 0
+    studied: header
     purpose: 'Настоящая доставка одного письма через реальный релей. Это последний шаг, который нельзя проверить локальным приёмником: у mailpit нет ни TLS, ни аутентификации, поэтому успешные ветки STARTTLS и AUTH в прогоне `smoke-ma'
     confirmation: reviewed-in-code
 
@@ -744,6 +805,7 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 0
+    studied: header
     purpose: 'Зонд готовности домена к почте: MX, SPF, DKIM, DMARC, PTR и сам релей. Зачем отдельный зонд. Отправку письма проверяет `smoke-mail-smtp.mjs`, но доставку определяет не она: письмо, ушедшее с корректного релея, всё равно '
     confirmation: reviewed-in-code
 
@@ -755,6 +817,7 @@ checks:
     runner: manual
     asserts: 10
     needs: [storage]
+    studied: header
     purpose: 'Зонд версионирования хранилища (Ф29, остаток SEC-04). Угроза: подписанная форма загрузки действует до истечения срока и указывает на постоянный ключ — повторная отправка перезаписывает объект ПОСЛЕ подтверждения. Отпечат'
     confirmation: reviewed-in-code
 
@@ -767,6 +830,7 @@ checks:
     asserts: 10
     needs: [db, nats]
     effects: ['пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Проверка очереди outbox: аренда между экземплярами и повтор рассылки. Две находки внешнего аудита проверяются здесь фактом, а не чтением кода: 1. Аренда (CODE-05). `FOR UPDATE SKIP LOCKED` держит строку только до конца т'
     confirmation: reviewed-in-code
 
@@ -778,6 +842,7 @@ checks:
     runner: manual
     asserts: 0
     needs: [core]
+    studied: header
     purpose: 'Проверка: обходится ли ограничение частоты подделкой cookie сессии. Ведро лимита строится как «адрес + идентификатор сессии», причём идентификатор берётся из cookie ДО проверки подписи. Вопрос, на который отвечает прогон'
     confirmation: reviewed-in-code
 
@@ -790,6 +855,7 @@ checks:
     asserts: 5
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Проверка немедленности отзыва прав. Находка внешнего аудита (SEC-08): роли берутся из токена, а токен живёт до своего `exp`. Снятая в БД роль администратора продолжала действовать до истечения сессии — то есть отзыв прав'
     confirmation: reviewed-in-code
 
@@ -800,6 +866,7 @@ checks:
     level: интеграционный
     runner: manual
     asserts: 0
+    studied: header
     purpose: ''
     confirmation: reviewed-in-code
 
@@ -812,6 +879,7 @@ checks:
     asserts: 10
     needs: [db, core]
     effects: ['пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Проверка немедленного отзыва токенов сервисного аккаунта (M042). Находка внешнего аудита SEC-08. Приостановка аккаунта и ротация секрета закрывали только ВЫДАЧУ новых токенов. Уже выданный токен самодостаточен и действов'
     confirmation: reviewed-in-code
 
@@ -823,6 +891,7 @@ checks:
     runner: manual
     asserts: 10
     needs: [core]
+    studied: header
     purpose: 'Проверка ОБЩЕГО счётчика ограничения частоты (SEC-11). Находка: счётчики жили в памяти процесса. Это не ограничение частоты, а его видимость — два экземпляра ядра считают свои запросы независимо, поэтому фактически разре'
     confirmation: reviewed-in-code
 
@@ -835,6 +904,7 @@ checks:
     asserts: 23
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Проверка точечного отзыва токена (M038). Остаток находки внешнего аудита (SEC-07/08). Рубеж сессий обесценивает ВСЕ токены пользователя разом; выход при этом лишь удалял cookie у клиента — сам токен оставался действитель'
     confirmation: reviewed-in-code
 
@@ -847,6 +917,7 @@ checks:
     asserts: 9
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Проверка квот и подтверждения загрузки материалов. Находка внешнего аудита (SEC-14/CODE-10): запись материала создавалась вместе с выдачей билета — до того, как файл появился в хранилище. Отменённая загрузка навсегда ост'
     confirmation: reviewed-in-code
 
@@ -858,6 +929,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [db, core]
+    studied: header
     purpose: 'Переанализ проектов действующей моделью скоринга. Зачем: после включения LLM-провайдера (или смены промпта) паспорта на платформе остаются от прежней модели. Здесь каждый проект прогоняется через обычный маршрут `POST /v'
     confirmation: reviewed-in-code
 
@@ -870,6 +942,7 @@ checks:
     asserts: 16
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Рендер-проверка экрана «Комиссии» в админке (этап 5.9.3). Что проверяется: раздел в меню; версии условий показаны с общей ставкой и долями; несходящиеся доли названы ДО отправки, а не ошибкой после неё; публикация даёт н'
     confirmation: reviewed-in-code
 
@@ -882,6 +955,7 @@ checks:
     asserts: 26
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Рендер-проверка экрана «Страны обслуживания» в админке (этап 5.6.5). Что проверяется: раздел в меню; справочник стран строками; новая страна заводится выключенной и включается кнопкой; условия страны показаны с активной '
     confirmation: reviewed-in-code
 
@@ -894,6 +968,7 @@ checks:
     asserts: 12
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Рендер-проверка экрана «Сделки» в админке (M097). Что проверяется: раздел в меню; сделка открывается и показывает транши, возвраты и начисления; «Зафиксировать возврат» записывает событие и пересчитывает возвращённую сум'
     confirmation: reviewed-in-code
 
@@ -906,6 +981,7 @@ checks:
     asserts: 51
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Рендер-проверка этапа 5: управление вопросами заявки из админки. Сценарий владельца (2026-09-15): изменить обязательность вопроса для стадии → опубликовать новую версию → создать новую заявку → убедиться, что старый черн'
     confirmation: reviewed-in-code
 
@@ -918,6 +994,7 @@ checks:
     asserts: 25
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Рендер-проверка экрана «Пакеты раунда» в админке (этап 5.9.1). Что проверяется: раздел в меню; экран честно говорит, что продажи выключены; услуга заводится нереализованной и не предлагается ни в состав пакета, ни для до'
     confirmation: reviewed-in-code
 
@@ -934,6 +1011,7 @@ checks:
     asserts: 40
     needs: [db, browser, core]
     effects: ['создаёт пользователей']
+    studied: partial
     purpose: 'Браузерный проход: раздел «Пользователи» и карточка человека (этап 6.5). Проверяется то, ради чего раздел и делался, — что администратор может сделать работу целиком, не открывая ни базу, ни служебную консоль: 1. найти ч'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -947,6 +1025,7 @@ checks:
     asserts: 24
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Проверка административного кабинета в РЕАЛЬНОМ рендере (`RULES.md` §2). Админка существует с Ф5, но рендер-проверки у неё не было: работоспособность подтверждалась ручным открытием браузера, то есть никак. Здесь проверяе'
     confirmation: reviewed-in-code
 
@@ -958,6 +1037,7 @@ checks:
     runner: manual
     asserts: 26
     needs: [browser, core]
+    studied: header
     purpose: 'Проверка входа и регистрации в РЕАЛЬНОМ рендере (`RULES.md` §2). Это единственная дверь в платформу: её поломка означает, что внутрь не может попасть никто, независимо от исправности остального. Поэтому проверяется не «с'
     confirmation: reviewed-in-code
 
@@ -969,6 +1049,7 @@ checks:
     runner: manual
     asserts: 14
     needs: [browser, core]
+    studied: header
     purpose: 'Проверка консоли API в РЕАЛЬНОМ рендере (`RULES.md` §2). Консоль служебная, но именно ею тестировщики проходят сквозные сценарии — значит её поломка останавливает проверку всей платформы, а не только себя. Здесь проверяе'
     confirmation: reviewed-in-code
 
@@ -980,6 +1061,7 @@ checks:
     runner: manual
     asserts: 14
     needs: [browser, core]
+    studied: header
     purpose: 'Комплект демонстрационных данных в РЕАЛЬНОМ рендере (`RULES.md` §2). Живой прогон `smoke-demo.mjs` доказывает, что данные загружены, связаны и отдаются API. Этот прогон отвечает на другой вопрос: ВИДНО ли их человеку — т'
     confirmation: reviewed-in-code
 
@@ -992,6 +1074,7 @@ checks:
     asserts: 33
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Проверка кабинета эксперта в РЕАЛЬНОМ рендере (`RULES.md` §2). Проверяется путь рецензента целиком на настоящих данных: назначение, принятие, подача рецензии и невозможность подать её повторно. Отдельно — что рецензию не'
     confirmation: reviewed-in-code
 
@@ -1003,6 +1086,7 @@ checks:
     runner: manual
     asserts: 17
     needs: [browser, core]
+    studied: header
     purpose: 'Избранное инвестора в РЕАЛЬНОМ рендере (`RULES.md` §2). ТЗ требовало проверить сценарий end-to-end. Проверяется путь человека: 1. в каталоге у карточки есть отметка, и её состояние объявлено не только цветом (`aria-press'
     confirmation: reviewed-in-code
 
@@ -1015,6 +1099,7 @@ checks:
     asserts: 0
     needs: [browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Проход 7.4: первая очередь целиком, в браузере. Это не проверка одной функции, а связный путь продукта: основатель доводит проект до открытого раунда, платформа принимает оплату и выполняет услугу, а затем на тот же прое'
     confirmation: reviewed-in-code
 
@@ -1027,6 +1112,7 @@ checks:
     asserts: 27
     needs: [browser, core]
     effects: ['создаёт пользователей']
+    studied: header
     purpose: 'Проверка кабинета инвестора в РЕАЛЬНОМ рендере (`RULES.md` §2). Главное здесь — не «страница открылась», а честность двух состояний: выключенный регулируемый контур должен быть НАЗВАН выключенным, а не показан пустым спи'
     confirmation: reviewed-in-code
 
@@ -1039,6 +1125,7 @@ checks:
     asserts: 12
     needs: [browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Рендер-проверка «стоимость запуска раунда» в кабинете основателя (5.9.2). Что проверяется: пока запуск бесплатен, раздела про деньги в кабинете нет (иначе висел бы разговор об оплате, которой не существует); при включённ'
     confirmation: reviewed-in-code
 
@@ -1051,6 +1138,7 @@ checks:
     asserts: 71
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Проверка мастера заявки v2 в РЕАЛЬНОМ рендере (этап 4, план 0.2 §0в). Что проверяется — список владельца при приёмке этапа: понятность пошаговой навигации, сохранение и возврат к черновику, статус каждого раздела, неизме'
     confirmation: reviewed-in-code
 
@@ -1063,6 +1151,7 @@ checks:
     asserts: 43
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Проверка кабинета основателя в РЕАЛЬНОМ рендере (`RULES.md` §2). Проверяется не «страница открылась», а рабочий путь целиком: вход настоящей учётной записью, создание заявки, отображение своих проектов и отказ сервера та'
     confirmation: reviewed-in-code
 
@@ -1075,6 +1164,7 @@ checks:
     asserts: 13
     needs: [browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: partial
     purpose: 'Проверка встраивания изображений проекта (7.2, уточнение). Отвечает на вопрос, который нельзя закрыть рассуждением: что произойдёт, если изображение закрытого проекта встроить на ЧУЖУЮ страницу в браузере, где пользовате'
     confirmation: reviewed-in-code
 
@@ -1087,6 +1177,7 @@ checks:
     asserts: 18
     needs: [db, browser, core]
     effects: ['создаёт пользователей']
+    studied: header
     purpose: 'Браузерный проход: «Мой профиль» во всех кабинетах (этап 6.7). Проверяется то, ради чего экран общий: человек попадает в него одинаково отовсюду и видит одно и то же. И то, чего на нём быть не должно: полей для подтвержд'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1100,6 +1191,7 @@ checks:
     asserts: 17
     needs: [browser, core, storage]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Рендер-проверка логотипа и обложки НА ТЕЛЕФОНЕ (7.2). Размер экрана выбран не для красоты: загрузка файла, ползунки кадрирования и кнопки замены — это ровно то, что ломается на узком экране и что человек будет делать с т'
     confirmation: reviewed-in-code
 
@@ -1112,6 +1204,7 @@ checks:
     asserts: 22
     needs: [browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Рендер-проверка страницы проекта для ТРЁХ зрителей (этап 7.3). Один проект, один серверный предикат аудитории — и три поверхности, каждая из которых уже существует: • аноним — витрина, `/p/<id>`, проекция Public View; • '
     confirmation: reviewed-in-code
 
@@ -1124,6 +1217,7 @@ checks:
     asserts: 13
     needs: [browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Рендер-проверка сквозного сценария покупки (5.9.7). Проходит путь в браузере под ДВУМЯ ролями: основатель выбирает пакет и оформляет покупку, администратор подтверждает тестовую оплату и отмечает выполнение услуг, основа'
     confirmation: reviewed-in-code
 
@@ -1136,6 +1230,7 @@ checks:
     asserts: 45
     needs: [db, browser, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: partial
     purpose: 'Браузерный проход: управление сотрудниками через интерфейс. Проверяется завершённый сценарий администратора и эксперта — тот, ради которого экраны и делались: 1. выдать функциональное полномочие галочкой; 2. назначить эк'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1148,6 +1243,7 @@ checks:
     runner: manual
     asserts: 26
     needs: [browser, core]
+    studied: header
     purpose: 'Поддержка и сообщение об ошибке в РЕАЛЬНОМ рендере (`RULES.md` §2). Проверяется не «компонент отрисовался», а путь человека целиком: 1. служебная комбинация Ctrl+Alt+B открывает форму сообщения об ошибке; 2. форма показы'
     confirmation: reviewed-in-code
 
@@ -1159,6 +1255,7 @@ checks:
     runner: manual
     asserts: 29
     needs: [db, browser, core]
+    studied: header
     purpose: 'Браузерный проход: тестовые сессии и просмотр кабинета (этап 6.5). Проверяется то, чего не видно из API-прогона, — поведение ВКЛАДКИ: 1. администратор заводит сессию и открывает кабинет участника; 2. идентификатор контек'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1171,6 +1268,7 @@ checks:
     runner: manual
     asserts: 14
     needs: [browser, core]
+    studied: header
     purpose: 'Проверка витрины в РЕАЛЬНОМ рендере (`RULES.md` §2). Вычитка кода не показывает ни того, что страница вообще отрисовалась, ни того, что она показала пользователю вместо данных при недоступном API. Поэтому здесь настоящий'
     confirmation: reviewed-in-code
 
@@ -1183,6 +1281,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['удаляет данные', 'рвёт соединения']
+    studied: header
     purpose: 'Сброс ТЕСТОВОЙ базы проекта до пустой: схемы приложения удаляются, роли, расширения и посторонние базы не трогаются. После сброса — миграции и сиды. Разрешение владельца 2026-09-18 (план 0.2 §0г.6): данные локальных и ст'
     confirmation: reviewed-in-code
 
@@ -1194,6 +1293,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [db]
+    studied: header
     purpose: 'Нормализация значения перед HMAC — копия crypto.service.ts::normalize. Разъезд с оригиналом ловится контролем «старый HMAC от расшифрованного значения равен хранимому»: при несовпадении ротация останавливается.'
     confirmation: reviewed-in-code
 
@@ -1205,6 +1305,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [storage, nats]
+    studied: header
     purpose: 'Ротация секретов локального стенда (Ф26). Разносит переиспользованные значения: каждой службе и каждому вебхуку — своё случайное значение. Новые значения НИКОГДА не печатаются: генерируются в памяти, пишутся напрямую в `'
     confirmation: reviewed-in-code
 
@@ -1216,6 +1317,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [storage]
+    studied: header
     purpose: 'Политика жизненного цикла бакета материалов. Вторая половина уборки за брошенными загрузками (остаток SEC-14). Фоновая уборка в ядре снимает объекты, у которых есть строка материала. Она НЕ видит двух видов мусора: 1. **'
     confirmation: reviewed-in-code
 
@@ -1226,6 +1328,7 @@ checks:
     level: сквозной
     runner: manual
     asserts: 0
+    studied: code
     purpose: 'Связанный сценарий на механизме тестовых сессий. Это ОБРАЗЕЦ того, как теперь пишется сценарная проверка: без своих учётных записей, без паролей и без уборки вручную. Всё, что прогон создал, числится за сессией; шаги и и'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1238,6 +1341,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [nats]
+    studied: header
     purpose: 'Глобальный аудит: все гейты качества и безопасности одним прогоном. Существует потому, что «всё проверено» и «все проверки прогнаны подряд на одной сборке» — разные утверждения. Каждая фаза закрывала свой гейт, но состоя'
     confirmation: reviewed-in-code
 
@@ -1250,6 +1354,7 @@ checks:
     asserts: 0
     needs: [db, core]
     effects: ['пишет в БД']
+    studied: header
     purpose: 'Обстановка для приёмки владельцем и маршрут к ней. Зачем скрипт, а не «создал руками и записал». Стенд пересоздаётся: базы сбрасываются, демо-данные перезаливаются. Маршрут приёмки, который живёт только в голове, после п'
     confirmation: reviewed-in-code
 
@@ -1262,6 +1367,7 @@ checks:
     asserts: 0
     needs: [db]
     effects: ['пишет в БД']
+    studied: header
     purpose: 'Стартовая конфигурация вопросов заявки — публикация версии 1. Документ версии 1 живёт в коде контрактов (`application-form.v1.ts`, сгенерирован из банка вопросов). Миграция M073 создаёт таблицу версий, но не вписывает в '
     confirmation: reviewed-in-code
 
@@ -1272,6 +1378,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: code
     purpose: 'Запуск набора по реестру с отчётом: версия кода, состав, результаты, пропуски и причины.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1285,6 +1392,7 @@ checks:
     asserts: 0
     needs: [db, storage]
     effects: ['пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Восстановимый комплект демонстрационных данных UNICORN LAUNCH. Задача не в том, чтобы «налить данных один раз». Комплект должен полностью восстанавливать наполнение после переустановки приложения, очистки БД или развёрты'
     confirmation: reviewed-in-code
 
@@ -1297,6 +1405,7 @@ checks:
     asserts: 0
     needs: [db, core]
     effects: ['создаёт пользователей']
+    studied: header
     purpose: 'Минимальный набор сценариев локального стенда. Заменяет прежний демонстрационный комплект (`seed-demo`) там, где нужна не витрина «как будто платформа живёт год», а несколько понятных состояний, по которым видно поведени'
     confirmation: reviewed-in-code
 
@@ -1309,6 +1418,7 @@ checks:
     asserts: 28
     needs: [db, core, nats]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон Ф9c: управление ролями и машиночитаемое описание API. Проверяется главное: роли раздаёт только администратор и только другим; последнего администратора нельзя разжаловать; каждая выдача и снятие попадают в ж'
     confirmation: reviewed-in-code
 
@@ -1321,6 +1431,7 @@ checks:
     asserts: 44
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон AI-контура. Проверяется то, ради чего контур устроен именно так: оценку считает помеченный не-LLM провайдер внутри РФ, результат воспроизводим, история паспортов не переписывается, а недоступность шлюза оста'
     confirmation: reviewed-in-code
 
@@ -1332,6 +1443,7 @@ checks:
     runner: manual
     asserts: 6
     needs: [core]
+    studied: header
     purpose: 'Проверка соответствия `@unicorn/api-client` живому серверу. Пакет существует ровно для одного: расхождение сервера с контрактом должно обнаруживаться сразу, а не превращаться в `undefined` в глубине интерфейса. Но сам па'
     confirmation: reviewed-in-code
 
@@ -1344,6 +1456,7 @@ checks:
     asserts: 35
     needs: [db, core]
     effects: ['создаёт пользователей']
+    studied: header
     purpose: 'Живой прогон восстановления пароля и подтверждения адреса (Ф51). Проверяется не «маршрут отвечает 200», а свойства, ради которых он написан: ответ одинаков для существующего и несуществующего адреса — иначе форма «забыли'
     confirmation: reviewed-in-code
 
@@ -1356,6 +1469,7 @@ checks:
     asserts: 39
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Живой прогон фазы «биллинг и админский кабинет». Проверяется фактическое поведение запущенного core: публикация новой версии тарифа с будущей датой, неизменяемость действующей версии, отмена объявления, оформление и акти'
     confirmation: reviewed-in-code
 
@@ -1368,6 +1482,7 @@ checks:
     asserts: 36
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон «условия вознаграждения и зачёт услуг» (этап 5.9.3). Проверяется фактическое поведение запущенного core: ставка одна и доли обязаны в неё складываться; изменение — новая версия, прежняя закрывается; витрина '
     confirmation: reviewed-in-code
 
@@ -1380,6 +1495,7 @@ checks:
     asserts: 19
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Живой прогон: управление контентом публичной витрины (M048/M049). Тексты лендинга были зашиты в исходники фронтенда — поменять формулировку можно было только выкладкой. Часть этих текстов является публичным утверждением '
     confirmation: reviewed-in-code
 
@@ -1392,6 +1508,7 @@ checks:
     asserts: 44
     needs: [core]
     effects: ['создаёт пользователей']
+    studied: header
     purpose: 'Дымовая проверка живого core. Проверяется ФАКТИЧЕСКОЕ поведение периметра и сквозной сценарий регистрации, а не наличие кода. Это доказательство фазы: без вывода этого скрипта «работает» говорить нельзя (RULES.md §2). За'
     confirmation: reviewed-in-code
 
@@ -1403,6 +1520,7 @@ checks:
     runner: manual
     asserts: 42
     needs: [db, core, storage]
+    studied: header
     purpose: 'Живой прогон: комплект демонстрационных данных. Проверяется не «скрипт отработал без ошибок», а те свойства, ради которых комплект вообще существует: 1. загрузка на чистую систему даёт полный набор и соблюдает связи; 2. '
     confirmation: reviewed-in-code
 
@@ -1415,6 +1533,7 @@ checks:
     asserts: 27
     needs: [db, core, nats]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон Ф9b: публикация событий и доставка вебхуков. Проверяется главное: событие уходит в NATS ровно один раз и помечается опубликованным только после подтверждения брокером; подписчик получает доставку с подписью,'
     confirmation: reviewed-in-code
 
@@ -1427,6 +1546,7 @@ checks:
     asserts: 84
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон Ф8: экспертный совет, сезонный рейтинг, уведомления. Проверяется главное: рецензию пишет только назначенный эксперт и только по принятому назначению; заявленный конфликт интересов физически блокирует назначе'
     confirmation: reviewed-in-code
 
@@ -1439,6 +1559,7 @@ checks:
     asserts: 28
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД', 'удаляет данные']
+    studied: header
     purpose: 'Живой прогон: избранные проекты инвестора (M063). Проверяется фактом: 1. инвестор добавляет проект из каталога и видит его в своём списке; 2. повторное добавление не плодит дубль и не является ошибкой; 3. удаление снимае'
     confirmation: reviewed-in-code
 
@@ -1451,6 +1572,7 @@ checks:
     asserts: 54
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон Ф9: Integration API. Проверяется главное: наружу не уходит ничего сверх заявленного скоупа; персональных данных нет ни в одном ответе; обезличенная проекция исчезает в тот же момент, когда отозвано согласие;'
     confirmation: reviewed-in-code
 
@@ -1463,6 +1585,7 @@ checks:
     asserts: 38
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон регулируемого контура. Проверяется главное: контур выключен по умолчанию; предложение размещает только владелец проекта от проверенного юрлица; приём предложения требует второго фактора; вознаграждение начис'
     confirmation: reviewed-in-code
 
@@ -1475,6 +1598,7 @@ checks:
     asserts: 225
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: partial
     purpose: 'Живой прогон фазы «KYC и проекты». Проверяет ФАКТИЧЕСКОЕ поведение запущенного core: изоляцию чужих проектов, условия публикации листинга, границу публичного каталога, подписанную загрузку в реальное хранилище и барьеры '
     confirmation: reviewed-in-code
 
@@ -1487,6 +1611,7 @@ checks:
     asserts: 13
     needs: [core]
     effects: ['создаёт пользователей']
+    studied: header
     purpose: 'Живой прогон SMTP-транспорта почты. До этой фазы всё, что касалось писем, проверялось файловым транспортом: сценарий проходил целиком, но ни одного SMTP-диалога не было. Здесь письмо действительно уходит по протоколу — в'
     confirmation: reviewed-in-code
 
@@ -1499,6 +1624,7 @@ checks:
     asserts: 13
     needs: [core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон «уведомления команде по порогу» (этап 5.9.5). Проверяется фактическое поведение запущенного core: • раунд выше порога создаёт ОДНУ запись уведомления с тестовым получателем; повторная обработка события второ'
     confirmation: reviewed-in-code
 
@@ -1511,6 +1637,7 @@ checks:
     asserts: 65
     needs: [core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон оплаты услуг платформы через оператора платежей (5.9.9). Проверяется то, из-за чего оплату вообще можно назвать безопасной: • сумму платежа назначает СЕРВЕР по покупке — клиент её не присылает; • повторное н'
     confirmation: reviewed-in-code
 
@@ -1523,6 +1650,7 @@ checks:
     asserts: 45
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: partial
     purpose: 'Живой прогон выдачи разрешений выбранным получателям (этап 5.8). Проверяется не «маршрут отвечает», а модель доступа целиком: 1. режим «выбранные инвесторы» сам по себе ничего не открывает — без разрешения проект не виде'
     confirmation: reviewed-in-code
 
@@ -1535,6 +1663,7 @@ checks:
     asserts: 33
     needs: [core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон логотипа и обложки проекта (7.2). Проверяется то, из-за чего загрузка пользовательских файлов вообще опасна: • формат определяется РАЗБОРОМ файла, а не заголовком клиента: «PNG» с произвольным содержимым отв'
     confirmation: reviewed-in-code
 
@@ -1547,6 +1676,7 @@ checks:
     asserts: 40
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон «пакеты запуска раунда» (этап 5.9.1). Проверяется фактическое поведение запущенного core: каталог услуг, отказ продавать нереализованную услугу, публикация версии пакета, запрет пересечения диапазонов и пере'
     confirmation: reviewed-in-code
 
@@ -1559,6 +1689,7 @@ checks:
     asserts: 27
     needs: [core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон «расчёт стоимости запуска раунда» (этап 5.9.2). Проверяется фактическое поведение запущенного core: расчёт объясняет, какой пакет требуется по сумме, что выбрано сверх, сколько итого и в какой валюте; более '
     confirmation: reviewed-in-code
 
@@ -1571,6 +1702,7 @@ checks:
     asserts: 36
     needs: [core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон сквозного сценария покупки запуска раунда (5.9.7). Проходит путь целиком: выбор пакета → оформление покупки → тестовое подтверждение оплаты → выполнение услуг → открытие раунда. И проверяет ровно те места, г'
     confirmation: reviewed-in-code
 
@@ -1583,6 +1715,7 @@ checks:
     asserts: 48
     needs: [core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон исполнения услуги ИИ-разбора по позиции покупки (6.1). Проверяется то, ради чего услуга вообще продаётся: что её действительно выполняют, а не закрывают галочкой. • услугу платформы НЕЛЬЗЯ отметить выполненн'
     confirmation: reviewed-in-code
 
@@ -1595,6 +1728,7 @@ checks:
     asserts: 40
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон «полномочия сотрудника и ручные денежные записи» (M097). Проверяется фактическое поведение запущенного core: • роль `expert` сама по себе не даёт ни полномочия, ни доступа к сделке; • полномочие без назначен'
     confirmation: reviewed-in-code
 
@@ -1607,6 +1741,7 @@ checks:
     asserts: 44
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон: поддержка пользователей и сообщения об ошибках (M062). Одна сущность закрывает две задачи — их различает `kind`. Проверяется фактом, а не чтением кода: 1. обращение создаётся и сразу видно автору с его перв'
     confirmation: reviewed-in-code
 
@@ -1619,6 +1754,7 @@ checks:
     asserts: 31
     needs: [db, core]
     effects: ['создаёт пользователей', 'пишет в БД']
+    studied: header
     purpose: 'Живой прогон закрытого техдолга. Проверяется ровно то, что было объявлено закрытым, и на границах, а не «в среднем»: рецензент видит материалы НАЗНАЧЕННОГО проекта и не видит чужие; этап проекта двигается на один шаг и н'
     confirmation: reviewed-in-code
 
@@ -1630,6 +1766,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [core, storage, nats]
+    studied: header
     purpose: 'Состояние локального стенда: что работает, где и насколько свежее. Отличается от `stand:up --check` тем, что не только стучится по маршрутам, но и объясняет КАЖДУЮ часть: контейнеры, процессы на хосте, собранная статика,'
     confirmation: reviewed-in-code
 
@@ -1641,6 +1778,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [core]
+    studied: header
     purpose: 'Остановить локальный стенд. Обратная сторона `stand:up`: то, что он поднял, должно выключаться одной командой и предсказуемо. Без этого «остановить» превращается в поиск PID по диспетчеру задач, а забытый процесс ядра на'
     confirmation: reviewed-in-code
 
@@ -1651,6 +1789,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: header
     purpose: 'Что сейчас развёрнуто на стенде — в файл, а не в голову. До этого состояние сервера узнавалось только заходом по SSH: сервер недоступен — узнать нечем, а история развёртываний не сохранялась вовсе. Теперь снимок кладётся'
     confirmation: reviewed-in-code
 
@@ -1662,6 +1801,7 @@ checks:
     runner: manual-tool
     asserts: 2
     needs: [core, nats]
+    studied: header
     purpose: 'Поднять локальный стенд одной командой. Последовательность одна и та же каждый раз: починить сокет Docker, дождаться демона, поднять контейнеры, накатить миграции, создать стрим NATS, запустить ядро, поднять единую точку'
     confirmation: reviewed-in-code
 
@@ -1672,6 +1812,7 @@ checks:
     level: инструмент
     runner: manual-tool
     asserts: 0
+    studied: header
     purpose: '`vite build` всегда в production-режиме. Корневой `.env` держит `NODE_ENV=development` для ядра, а Vite читает этот файл и при `vite build` честно собирает РАЗРАБОТЧЕСКИЙ бандл: React в development-сборке, `<React.Strict'
     confirmation: reviewed-in-code
   - id: DBT-ACCESS-PATHS
@@ -1682,6 +1823,7 @@ checks:
     runner: ci
     asserts: 4
     needs: [db]
+    studied: header
     purpose: 'M090 (5.7.5): старые пути закрыты — RLS и вью на предикате доступа. - инвестор (даже с членством) не читает строки проектов, паспортов, оценок и IRS напрямую; данные — только через проекции по предика'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1694,6 +1836,7 @@ checks:
     runner: ci
     asserts: 10
     needs: [db]
+    studied: header
     purpose: 'Версии конфигурации вопросов заявки (M073/M074, план 0.2 §0в). Проверяется то, что обещает решение владельца: черновик один и никогда не активен; активная опубликованная одна; опубликованный документ '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1706,6 +1849,7 @@ checks:
     runner: ci
     asserts: 15
     needs: [db]
+    studied: header
     purpose: 'Инвестиционная заявка как отдельная сущность (M071/M072). Проверяется ровно то, что обещает план 0.2: черновик свободен, обязательность — при подаче; заявку видят члены проекта и администратор, инвест'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1718,6 +1862,7 @@ checks:
     runner: ci
     asserts: 11
     needs: [db]
+    studied: header
     purpose: 'M096 (5.9.3): условия вознаграждения и зачёт услуг. Проверяется то, из-за чего модель менялась: - ставка одна, доли складываются в неё. Версия, где доли не сходятся с общей ставкой, не записывается — '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1730,6 +1875,7 @@ checks:
     runner: ci
     asserts: 8
     needs: [db]
+    studied: header
     purpose: 'Конкурентные инварианты. Обязательный гейт (docs/architecture/Database_Launch.md §16). Проверяется то, что нельзя проверить последовательным тестом: поведение под реальными параллельными транзакциями '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1742,6 +1888,7 @@ checks:
     runner: ci
     asserts: 7
     needs: [db]
+    studied: header
     purpose: 'Реестр классов данных обязан покрывать базу целиком. Смысл проверки — не в аккуратности, а в безопасности уборки. Любая команда, которая что-то удаляет, спрашивает у реестра «что это за таблица». Табл'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1754,6 +1901,7 @@ checks:
     runner: ci
     asserts: 12
     needs: [db]
+    studied: header
     purpose: 'Раунды привлечения и страны обслуживания (M081/M082, план 0.2 §0г). Проверяется то, что обещают решения владельца 2026-09-18: одна незавершённая кампания на проект (open ИЛИ paused занимают место); ос'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1766,6 +1914,7 @@ checks:
     runner: ci
     asserts: 50
     needs: [db]
+    studied: header
     purpose: 'Инварианты схемы: то, что БД обязана не дать сломать даже при ошибке в сервисном слое. Каждый тест — про конкретное правило из спецификации.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1778,6 +1927,7 @@ checks:
     runner: ci
     asserts: 4
     needs: [db]
+    studied: header
     purpose: 'M102 (5.9.5): уведомления команде по порогу суммы раунда. Проверяется то, из-за чего порог вообще отделён от остального: - повторная обработка одного события не создаёт второй записи; - запись — факт:'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1790,6 +1940,7 @@ checks:
     runner: ci
     asserts: 18
     needs: [db]
+    studied: header
     purpose: 'M108/M109: точка подключения оператора онлайн-платежей. Проверяются правила, без которых «подключим провайдера позже» означало бы дыру уже сейчас: - у платежа ровно один предмет оплаты: счёт ИЛИ покуп'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1802,6 +1953,7 @@ checks:
     runner: ci
     asserts: 4
     needs: [db]
+    studied: header
     purpose: 'M091 (5.8.1): справочные функции выдачи разрешений. Проверяется не «функция существует», а то, ради чего она заведена: - адрес превращается в получателя только при ТОЧНОМ совпадении слепого индекса и '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1814,6 +1966,7 @@ checks:
     runner: ci
     asserts: 14
     needs: [db]
+    studied: header
     purpose: 'M087 (5.7.1): режим видимости проекта, предикат аудитории, согласие владельца, барьер подписки как настройка. - матрица предикат × режим × зритель совпадает с `projectAudience()` в @unicorn/contracts '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1826,6 +1979,7 @@ checks:
     runner: ci
     asserts: 4
     needs: [db]
+    studied: header
     purpose: 'M089 (5.7.2): проекции для Public View и Investor View. - `lab.disclosed_profile`: без согласия владельца — пусто; с согласием — снимок и эффективная видимость = строже(активная, версия согласия); дос'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1838,6 +1992,7 @@ checks:
     runner: ci
     asserts: 77
     needs: [db]
+    studied: header
     purpose: 'Негативные тесты RLS — обязательный гейт CI (docs/architecture/Database_Launch.md §15). Каждый тест отвечает на вопрос «может ли роль X добраться до данных, к которым не должна?». Зелёный тест здесь о'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1850,6 +2005,7 @@ checks:
     runner: ci
     asserts: 6
     needs: [db]
+    studied: header
     purpose: 'M086: статус привлечения — отдельная настройка; версия условий у раунда. - `disclosure.raising_status` показывает статус, скрывая сумму; - расширение публичности (investors → public) не касается раунд'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1862,6 +2018,7 @@ checks:
     runner: ci
     asserts: 13
     needs: [db]
+    studied: header
     purpose: 'M095 (5.9.1): структуры разовой оплаты запуска раунда. Проверяется не «таблицы созданы», а правила, без которых расчёт был бы произволом: - в пакет и в докупку попадает только РЕАЛИЗОВАННАЯ услуга; - '
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1874,6 +2031,7 @@ checks:
     runner: ci
     asserts: 5
     needs: [db]
+    studied: header
     purpose: 'M085: раскрытие полей раунда по настройке видимости и аудитории зрителя. - `lab.visible_to` — то же правило, что `visibleTo()` в контрактах (паритет по всем 16 сочетаниям); - настройка поля не расширя'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1886,6 +2044,7 @@ checks:
     runner: ci
     asserts: 19
     needs: [db]
+    studied: header
     purpose: 'M097 (полномочия и ручные денежные записи). Проверяется то, ради чего слои разделены: - роль `expert` сама по себе не даёт ни полномочия, ни области работы; - полномочие без назначения не открывает чу'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1897,6 +2056,7 @@ checks:
     level: статический
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Линтер: правила кода и запреты проекта'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1908,6 +2068,7 @@ checks:
     level: статический
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Единый формат исходников'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1919,6 +2080,7 @@ checks:
     level: статический
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Типы во всех пакетах и приложениях'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1930,6 +2092,7 @@ checks:
     level: статический
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Сборка всех приложений и пакетов'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1941,6 +2104,7 @@ checks:
     level: статический
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Миграции применяются на чистую базу'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1952,6 +2116,7 @@ checks:
     level: статический
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Правила миграций: expand-contract, метки'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1963,6 +2128,7 @@ checks:
     level: статический
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Статический анализ безопасности'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -1974,19 +2140,308 @@ checks:
     level: статический
     runner: ci
     asserts: 0
+    studied: header
     purpose: 'Секреты в истории репозитория'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
 
-# ---------------------------------------------------------------------------
-# ТРЕБОВАНИЯ: свойства платформы, которые обязаны сохраняться.
-#
-# `severity` — цена ошибки, а не сложность проверки:
-#   critical — доступ к чужим данным, потеря данных, деньги;
-#   high     — неработающий основной путь роли;
-#   medium   — частный сценарий, неудобство;
-#   low      — оформление.
-# ---------------------------------------------------------------------------
+  # ---------------------------------------------------------------------------
+  # ТРЕБОВАНИЯ: свойства платформы, которые обязаны сохраняться.
+  #
+  # `severity` — цена ошибки, а не сложность проверки:
+  #   critical — доступ к чужим данным, потеря данных, деньги;
+  #   high     — неработающий основной путь роли;
+  #   medium   — частный сценарий, неудобство;
+  #   low      — оформление.
+  # ---------------------------------------------------------------------------
+
+  - id: UNIT-CORE-AI
+    file: apps/core/tests/ai.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 15
+    studied: header
+    purpose: 'Boundary-схема ответа AI-шлюза (Ф33, CODE-HIGH-06). Схема на границе доверия обязана быть НЕ слабее публичного контракта: пустые оценки, свободные оси, дубли и внутренне противоречивые интервалы раньше проходили разбор и публиковались как инвестиционный паспорт. Каждый негативный тест здесь — конкретный вариант отравленного ответа.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-APPLICATION-SUBMIT
+    file: apps/core/tests/application-submit.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 3
+    studied: header
+    purpose: 'Снимок версии заявки (план 0.2 §5.1): что в него входит и что — нет. Чистая функция; сама подача и проекция проверяются живьём (smoke-lab).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-APPLICATIONS
+    file: apps/core/tests/applications.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 17
+    studied: header
+    purpose: 'Заявка: правила подсчёта лимитов и условия подачи (план 0.2 §2.8, §2.2). Чистые функции — без БД; интеграция с RLS и CHECK — в database/tests.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-BILLING
+    file: apps/core/tests/billing.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 8
+    studied: header
+    purpose: 'Контракты административного управления тарифами ИНВЕСТОРА. Подписка основателя по сумме привлечения отменена (M094): тарифы остались только у инвестора, индивидуальной цены и лимита запроса больше нет. Проверяется то, что должно отсекаться ещё до обращения к базе: тариф без цены, кривой код, изменение условий без основания. Неизменяемость истории цен проверяется отдельно — против реального Postgre'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-EVENTS
+    file: apps/core/tests/events.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 24
+    studied: header
+    purpose: 'Юнит-тесты контура событий. Проверяется чистая логика, от которой зависит безопасность доставки: список адресов, куда сервер не пойдёт никогда, форма подписи и форма конверта. Живой прогон показывает, что цепочка работает целиком; здесь — что она работает на крайних случаях, которые в прогоне не воспроизвести.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-EXPERTS
+    file: apps/core/tests/experts.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 26
+    studied: header
+    purpose: 'Юнит-тесты фазы экспертизы, сезонного рейтинга и уведомлений. Проверяется то, что живой прогон показать не может или показывает недостоверно: арифметика расхождения оценок на крайних случаях, выбор канала доставки по конфигурации шаблонов и барьер против ПДн в полезной нагрузке уведомления. Поведение маршрутов проверяется отдельно, прогоном по запущенному серверу.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-INTEGRATION
+    file: apps/core/tests/integration.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 16
+    studied: header
+    purpose: 'Юнит-тесты Integration API. Здесь проверяется то, чего живой прогон не покажет: устойчивость токена к подделке отдельных частей, поведение курсора на испорченном входе и границы схем запроса. Поведение маршрутов и изоляция ролей БД проверяются прогоном по запущенному серверу и негативными тестами RLS.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-LAB
+    file: apps/core/tests/lab.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 23
+    studied: header
+    purpose: 'Юнит-тесты фазы проектов и каталога. Здесь проверяется то, что дымовой прогон показать не может: форма подписи загрузки, устойчивость курсора к подделке и границы схем запроса. Живое поведение API проверяется отдельно, прогоном по запущенному серверу.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-PUBLICATION-CONSENTS
+    file: apps/core/tests/publication-consents.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 2
+    studied: header
+    purpose: 'Срок удаления публичной проекции после отзыва согласия. Пятнадцать минут — обязательство перед субъектом ПДн, а не пожелание медиаконтуру. Значение приходит из контрактов, а не зашито здесь числом: тест, повторяющий константу своей копией, остаётся зелёным ровно тогда, когда константу поменяли, а код за ней не последовал.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-SCORING-RULES
+    file: apps/core/tests/scoring-rules.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 26
+    studied: header
+    purpose: 'Правила скоринга — то, что код считает вместо модели (ADR-008 §3). Проверяется не «функция возвращает число», а свойства, ради которых она вынесена из промпта: таблица без дыр, потолки из таблицы, а не из модели, фильтр выхода — отказом, маркеры вырезаются с любым nonce.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-SECURITY
+    file: apps/core/tests/security.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 61
+    studied: header
+    purpose: 'Юнит-тесты периметра безопасности. Проверяют то, что нельзя увидеть в дымовом прогоне: комбинации конфигурации, которые обязаны ронять старт, и криптографические инварианты.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-TECHDEBT
+    file: apps/core/tests/techdebt.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 14
+    studied: header
+    purpose: 'Модульные проверки: apps/core/tests/techdebt.test.ts'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-CORE-VERIFICATION
+    file: apps/core/tests/verification.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 14
+    studied: header
+    purpose: 'Восстановление пароля и подтверждение адреса: то, что дымовой прогон показать не может. Живой прогон (`scripts/smoke-auth-recovery.mjs`) проверяет сценарий целиком — здесь проверяются комбинации конфигурации, которые обязаны ронять старт, и поведение файлового транспорта на враждебном вводе.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-API-CLIENT-CLIENT
+    file: packages/api-client/tests/client.test.ts
+    command: npm run test -w packages/api-client
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 17
+    studied: header
+    purpose: 'Мок транспорта с точной сигнатурой fetch: без неё vitest выводит тип аргументов как пустой кортеж, и обращение к mock.calls[0][1] не типизируется.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-CONTRACTS-ANALYSIS-INPUT
+    file: packages/contracts/tests/analysis-input.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 9
+    studied: header
+    purpose: 'Единый вход разбора (6.1). Проверяется не «функция собирает объект», а три обещания, которые она даёт читателю отчёта: ответы идут с формулировками вопросов; поля, которых нет в снимке, не выдумываются; источник каждого значения назван, и значения из меняющейся карточки не выдаются за содержание поданной версии.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-CONTRACTS-APPLICATION-FORM
+    file: packages/contracts/tests/application-form.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 22
+    studied: header
+    purpose: 'Глубокая копия стартовой конфигурации — тесты её мутируют.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-CONTRACTS-APPLICATION-READINESS
+    file: packages/contracts/tests/application-readiness.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 11
+    studied: header
+    purpose: 'Готовность заявки (план 0.2 §4): чистая формула на стартовой конфигурации. Свойства, которые обещает план: неприменимое не снижает процент; при смене стадии набор меняется, а ответы не теряются; веса нормализуются; результат детерминирован; подача — только при заполненных обязательных.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-CONTRACTS-APPLICATION-VIEWS-EFFECTIVE
+    file: packages/contracts/tests/application-views-effective.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 3
+    studied: header
+    purpose: 'Эффективная видимость (5.7.2): представление строится по карте «ключ → видимость» (строже из активной конфигурации и версии согласия), а не по видимости вопроса в переданной форме. Ключ без карты — `private`.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-CONTRACTS-APPLICATION-VIEWS
+    file: packages/contracts/tests/application-views.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 6
+    studied: header
+    purpose: 'Инвесторское представление по правилам видимости (план 0.2 §2.11). Проверяется критерий этапа 4.4: в сводке нет ни одного поля `private` / `platform`, и из одних и тех же данных (черновик, снимок) получается одно и то же представление.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-CONTRACTS-CONTRACTS
+    file: packages/contracts/tests/contracts.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 37
+    studied: header
+    purpose: 'Согласие на публичный контур. Список раскрываемых полей до Ф50 был свободным текстом: пятьдесят строк по 64 символа. Его читает медиаконтур и исполняет — значит он обязан быть словарём, а не пересказом.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-CONTRACTS-FUNDING-ROUND
+    file: packages/contracts/tests/funding-round.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 11
+    studied: header
+    purpose: 'Контракты раунда и условий страны обслуживания (этап 5.6.2, план 0.2 §0г).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-CONTRACTS-ROUND-PRICING
+    file: packages/contracts/tests/round-pricing.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 14
+    studied: header
+    purpose: 'Расчёт стоимости запуска раунда (5.9.2). Проверяется то, из-за чего расчёт вообще вынесен в одно место: подбор пакета по диапазону, право выбрать более полный пакет и докупить услугу, отказ вместо догадки, когда правило не задано или сетка не покрывает сумму, и арифметика без плавающей точки.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-CONTRACTS-VISIBILITY
+    file: packages/contracts/tests/visibility.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 10
+    studied: header
+    purpose: 'Предикат аудитории (этап 5.7.1, план `заявка-04` §3.3) — зеркало `lab.project_audience`. Паритет с SQL по той же матрице — `database/tests/project-access.test.ts`.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+
+  - id: UNIT-PKG-UI-MARKDOWN
+    file: packages/ui/tests/markdown.test.ts
+    command: npm run test -w packages/ui
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 10
+    studied: header
+    purpose: 'Разбор безопасного Markdown (план 0.2 §2.6, постановка §11.3). Главное здесь — не что рендерится, а что НЕ рендерится: HTML, опасные схемы ссылок и всё за пределами allowlist остаются текстом.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
 
 requirements:
   # ------------------------------------------------------------ доступ и роли
@@ -2518,17 +2973,74 @@ requirements:
       Покрыты материалы и изображения проекта. Аватары пользователей,
       выгрузки административных списков и вложения обращений в поддержку
       этим прогоном НЕ покрыты.
+  - id: QUA-UNIT-002
+    title: Модульные проверки пакетов запускаются автоматикой, а не никем
+    area: качество
+    severity: high
+    rationale: >-
+      163 утверждения в packages/contracts, packages/ui и
+      packages/api-client не запускал НИКТО: задание CI unit звало только
+      apps/core, задание database — только тесты схемы. Там живут договоры
+      между клиентом и сервером, разбор разметки и клиент API — зелёный CI
+      о них не говорил ничего.
+    checks:
+      [
+        UNIT-PKG-CONTRACTS-CONTRACTS,
+        UNIT-PKG-CONTRACTS-VISIBILITY,
+        UNIT-PKG-CONTRACTS-ROUND-PRICING,
+        UNIT-PKG-UI-MARKDOWN,
+        UNIT-PKG-API-CLIENT-CLIENT,
+      ]
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+    sensitivity: { status: not-verified }
+    runPolicy: ci
+    limits: >-
+      Найдено и закрыто 2026-09-22 перепроверкой инвентаризации: в задание CI
+      unit добавлен шаг «Тесты пакетов». До этого дня прогоны существовали,
+      были зелёными и не запускались нигде.
+
+  - id: QUA-UNIT-003
+    title: Модульные проверки ядра проходят и на машине разработчика
+    area: качество
+    severity: medium
+    rationale: >-
+      Три проверки apps/core падают локально, потому что читают настоящее
+      окружение разработчика: при WEBHOOK_DELIVERY_MODE=capture в .env
+      проверка «production-конфигурация принимается» получает отказ
+      валидации. В CI переменной нет, поэтому там зелено. Красный локальный
+      прогон приучает не смотреть на результат и прячет настоящие поломки.
+    checks: [UNIT-CORE-SECURITY, UNIT-CORE-VERIFICATION]
+    coverage: partial
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
+    sensitivity: { status: not-verified }
+    runPolicy: gap
+    limits: >-
+      Дефект самих проверок, а не продукта: окружение протекает в тест.
+      Починка отдельной правкой, во второй этап.
+
   - id: GAP-SEARCH-001
     title: Поиск и выгрузки не показывают записи, недоступные по правам
     area: доступ
     severity: high
-    rationale: Протечка через поиск — классическая дыра, обходящая RLS на уровне выдачи.
-    checks: []
-    coverage: none
-    confirmation: not-run
+    rationale: >-
+      Протечка через поиск обходит RLS на уровне выдачи: строка не читается
+      напрямую, но попадает в список результатов или в счётчик.
+    checks: [SMK-LAB]
+    coverage: partial
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
     sensitivity: { status: not-verified }
     runPolicy: gap
-
+    limits: >-
+      ИСПРАВЛЕНИЕ ОЦЕНКИ 2026-09-22. Стояло «не покрыто ничем» — неверно:
+      smoke-lab проверяет, что публичный поиск по каталогу НЕ находит проект
+      по непубличному описанию, что в тизере нет описания и внутреннего
+      статуса. Не покрыто другое: не появляется ли в каталоге и поиске
+      проект в режиме «выбранные инвесторы»; поиск и выгрузки внутри
+      кабинетов эксперта и инвестора; счётчики и пагинация как канал утечки
+      (число найденного при пустой выдаче).
   - id: CNC-001
     title: Конкурентные действия в денежном контуре не нарушают инвариантов
     area: целостность
@@ -2548,40 +3060,245 @@ requirements:
     severity: high
     rationale: >-
       Денежный контур покрыт восемью сценариями (CNC-001), а переходы
-      состояний заявки, одновременная правка проекта и профиля — нет.
-    checks: []
-    coverage: none
-    confirmation: not-run
+      состояний заявки и одновременная правка проекта и профиля — нет.
+    checks: [SMK-LAB]
+    coverage: partial
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
     sensitivity: { status: not-verified }
     runPolicy: gap
-
-  - id: GAP-UNIT-001
-    title: Логика ядра покрыта модульными проверками
+    limits: >-
+      ИСПРАВЛЕНИЕ ОЦЕНКИ 2026-09-22. Стояло «не закрыты ничем» — неверно:
+      smoke-lab запускает четыре одновременных создания юрлица и проверяет,
+      что нет внутренней ошибки. Но проверяется только отсутствие 5xx, а не
+      сохранность обновлений. Не покрыто: одновременная правка одного
+      проекта двумя вкладками, гонка переходов состояния заявки,
+      одновременная правка профиля.
+  - id: QUA-UNIT-001
+    title: Логика ядра и договоров покрыта модульными проверками
     area: качество
     severity: medium
     rationale: >-
-      Модульных тестов в apps/ и packages/ НЕТ НИ ОДНОГО: задание CI `unit`
-      выполняет `npm run test`, который сейчас сводится к тестам схемы БД.
-      Каждая ошибка в чистой логике ловится только сквозным прогоном.
-    checks: []
-    coverage: none
-    confirmation: not-run
+      Ошибка в чистой логике, пойманная только сквозным прогоном, обходится
+      дорого по времени и поздно по месту.
+    checks:
+      [
+        UNIT-CORE-SECURITY,
+        UNIT-CORE-LAB,
+        UNIT-CORE-EVENTS,
+        UNIT-CORE-EXPERTS,
+        UNIT-CORE-SCORING-RULES,
+        UNIT-PKG-CONTRACTS-CONTRACTS,
+        UNIT-PKG-CONTRACTS-VISIBILITY,
+        UNIT-PKG-CONTRACTS-ROUND-PRICING,
+      ]
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-22
     sensitivity: { status: not-verified }
-    runPolicy: gap
+    runPolicy: ci
+    limits: >-
+      ИСПРАВЛЕНИЕ ОЦЕНКИ 2026-09-22. Здесь стояло «модульных тестов нет ни
+      одного» — неверно: их 24 файла и 463 утверждения (apps/core 300,
+      packages/contracts 136, packages/ui 10, packages/api-client 17). Вывод
+      был сделан по тому, что корневой npm run test выводил тесты схемы, без
+      осмотра рабочих областей. Настоящие пробелы названы отдельно:
+      QUA-UNIT-002 и QUA-UNIT-003.
 
-# ---------------------------------------------------------------------------
-# НАБОРЫ: воспроизводимые команды вместо «прогони, что вспомнишь».
+# ФУНКЦИОНАЛЬНЫЕ БЛОКИ
 #
-# `handoff`    — перед передачей изменений владельцу. Основные цепочки и
-#                критические границы доступа. Сверх него матрица изменений
-#                добавляет прогоны затронутых областей.
-# `regression` — перед выкатом и по требованию. Всё безопасное, что есть.
-# `isolated`   — разрушительные проверки: своё ядро, своя база, свой брокер.
-#                Запускаются отдельно и никогда не трогают рабочий стенд.
+# Зачем. «После большого изменения — регрессия затронутого» должно быть
+# командой, а не пожеланием. Блок — это то, что проверяют вместе, когда
+# трогали одну часть продукта: npm run suite:block доступ
 #
-# Ночной автоматизации нет: наборы запускает человек. Это записано честно,
-# а не подразумевается.
-# ---------------------------------------------------------------------------
+# Состав блока — СУЖДЕНИЕ о том, что может сломаться вместе, собранное по
+# назначению прогонов. Это не доказательство: тело большинства проверок не
+# читалось (поле studied у каждой записи говорит правду об этом). Прогон,
+# попавший не в свой блок, — ошибка группировки, а не продукта.
+#
+# Один прогон может входить в несколько блоков: граница доступа к файлам
+# нужна и когда трогали файлы, и когда трогали права.
+blocks:
+  доступ:
+    title: Права, роли, видимость и границы доступа
+    members:
+      [
+        DBT-RLS,
+        DBT-ACCESS-PATHS,
+        DBT-PROJECT-ACCESS,
+        DBT-PROJECT-ACCESS-DIRECTORY,
+        DBT-STAFF-CAPABILITIES,
+        DBT-ROUND-VISIBILITY,
+        DBT-ROUND-DISCLOSURE,
+        DBT-PROJECT-VIEWS,
+        UNIT-CORE-SECURITY,
+        UNIT-PKG-CONTRACTS-VISIBILITY,
+        UNIT-PKG-CONTRACTS-APPLICATION-VIEWS,
+        UNIT-PKG-CONTRACTS-APPLICATION-VIEWS-EFFECTIVE,
+        CHK-FILE-ACCESS,
+        CHK-TESTING-SESSIONS,
+        SMK-PROJECT-ACCESS,
+        SMK-ADMIN-ROLES,
+        SMK-STAFF-CAPABILITIES,
+        SCN-ROUND-REVIEW,
+      ]
+
+  вход:
+    title: Вход, сессии, восстановление доступа
+    members:
+      [UNIT-CORE-VERIFICATION, SMK-AUTH-RECOVERY, SMK-CORE, RND-AUTH, CHK-PROFILE-API, RND-PROFILE]
+
+  заявка:
+    title: Заявка, проект и материалы (кабинет основателя)
+    members:
+      [
+        DBT-APPLICATIONS,
+        DBT-APPLICATION-FORMS,
+        DBT-INVARIANTS,
+        UNIT-CORE-LAB,
+        UNIT-CORE-APPLICATIONS,
+        UNIT-CORE-APPLICATION-SUBMIT,
+        UNIT-CORE-PUBLICATION-CONSENTS,
+        UNIT-PKG-CONTRACTS-APPLICATION-FORM,
+        UNIT-PKG-CONTRACTS-APPLICATION-READINESS,
+        SMK-LAB,
+        SMK-PROJECT-MEDIA,
+        CHK-FILE-ACCESS,
+        RND-LAB,
+        RND-LAB-V2,
+        RND-PROJECT-PAGE,
+        RND-PROJECT-MEDIA,
+      ]
+
+  инвестор:
+    title: Каталог, избранное, сделки
+    members:
+      [SMK-INVESTMENTS, SMK-FAVORITES, RND-INVESTOR, RND-FAVORITES, RND-ADMIN-DEALS, RND-FIRST-TIER]
+
+  эксперт:
+    title: Назначения и разбор
+    members:
+      [UNIT-CORE-EXPERTS, UNIT-CORE-SCORING-RULES, SMK-EXPERTS, SMK-SERVICE-EXECUTION, RND-EXPERT]
+
+  деньги:
+    title: Тарифы, подписки, комиссии, оплата, раунды
+    members:
+      [
+        DBT-PAYMENTS,
+        DBT-COMMISSION,
+        DBT-FUNDING-ROUNDS,
+        DBT-ROUND-PACKAGES,
+        UNIT-CORE-BILLING,
+        UNIT-PKG-CONTRACTS-FUNDING-ROUND,
+        UNIT-PKG-CONTRACTS-ROUND-PRICING,
+        SMK-BILLING,
+        SMK-PAYMENTS,
+        SMK-COMMISSION,
+        SMK-ROUND-PACKAGES,
+        SMK-ROUND-PRICING,
+        SMK-ROUND-PURCHASE,
+        RND-ADMIN-COMMISSION,
+        RND-ADMIN-ROUND-PACKAGES,
+        RND-LAB-ROUND-COST,
+        RND-ROUND-PURCHASE,
+      ]
+
+  администрирование:
+    title: Пользователи, сотрудники, полномочия, админка
+    members:
+      [
+        CHK-ADMIN-USERS-API,
+        SMK-ADMIN-ROLES,
+        SMK-STAFF-CAPABILITIES,
+        RND-ADMIN,
+        RND-ADMIN-USERS,
+        RND-STAFF-ACCESS,
+        RND-TESTING-SESSIONS,
+        CHK-TESTING-SESSIONS,
+      ]
+
+  содержимое:
+    title: Подготовленное содержимое, витрина, поддержка
+    members:
+      [
+        CHK-CONTENT-TRANSFER,
+        DBT-DATA-CLASSES,
+        SMK-CONTENT,
+        SMK-SUPPORT,
+        UNIT-PKG-UI-MARKDOWN,
+        RND-WEB-PUBLIC,
+        RND-ADMIN-QUESTIONS,
+        RND-ADMIN-COUNTRIES,
+        RND-SUPPORT,
+        RND-MEDIA-EMBEDDING,
+      ]
+
+  события:
+    title: Outbox, брокер, вебхуки, интеграции, почта
+    members:
+      [
+        DBT-OPERATOR-NOTIFICATIONS,
+        UNIT-CORE-EVENTS,
+        UNIT-CORE-INTEGRATION,
+        SMK-EVENTS,
+        SMK-INTEGRATION,
+        SMK-MAIL-SMTP,
+        SMK-OPERATOR-NOTIFICATIONS,
+        CHK-OUTBOUND-BOUNDARIES,
+      ]
+
+  надёжность:
+    title: База, соединения, живучесть под сбоями
+    members: [CHK-DB-RECONNECT, CHK-DB-RESILIENCE, DBT-CONCURRENCY, DBT-INVARIANTS, SMK-CORE]
+
+  граница:
+    title: Договоры, сборка, общие пакеты
+    members:
+      [
+        UNIT-PKG-CONTRACTS-CONTRACTS,
+        UNIT-PKG-API-CLIENT-CLIENT,
+        UNIT-PKG-UI-MARKDOWN,
+        SMK-API-CLIENT,
+        CHK-FRONTEND-BOUNDARY,
+        CHK-FRONT-BUILDS,
+      ]
+
+  безопасность:
+    title: Секреты, роли БД, шифрование, выкат
+    members:
+      [
+        CHK-SERVICE-ROLES,
+        CHK-DEFINER-PRIVILEGES,
+        CHK-KEK-DOMAINS,
+        CHK-SECRET-REUSE,
+        CHK-CHECKPOINT-SECRETS,
+        CHK-ROLE-ENV-CONSISTENCY,
+        CHK-SSH-KEYS,
+        CHK-SAST-CONFIG,
+        CHK-UPSTREAM-OWNER,
+        CHK-CONSOLE-PRIVATE,
+        UNIT-CORE-SECURITY,
+      ]
+
+  стенд:
+    title: Порты, развёртывание, консоль
+    members:
+      [
+        CHK-PORTS-CONSISTENCY,
+        CHK-STAND,
+        CHK-STAND-LOGINS,
+        CHK-FRONT-BUILDS,
+        RND-CONSOLE,
+        RND-DEMO,
+        SMK-DEMO,
+      ]
+
+  разбор-моделью:
+    title: Шлюз языковой модели
+    members: [GAT-AI-GATEWAY, SMK-AI, UNIT-CORE-AI, UNIT-PKG-CONTRACTS-ANALYSIS-INPUT]
+
+  порядок:
+    title: Сам реестр проверок и учёт техдолга
+    members: [CHK-TEST-REGISTRY, SMK-TECHDEBT, UNIT-CORE-TECHDEBT]
 
 suites:
   handoff:

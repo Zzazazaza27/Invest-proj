@@ -43,6 +43,7 @@
     "check:file-access": "node scripts/check-file-access.mjs",
     "check:registry": "node scripts/check-test-registry.mjs",
     "docs:registry": "node scripts/build-test-registry-doc.mjs",
+    "suite:block": "node scripts/run-suite.mjs",
     "suite:handoff": "node scripts/run-suite.mjs handoff",
     "suite:regression": "node scripts/run-suite.mjs regression",
     "suite:isolated": "node scripts/run-suite.mjs isolated",
