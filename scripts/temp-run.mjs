@@ -89,6 +89,10 @@ try {
   process.exit(2);
 }
 
+// Адрес намеренно по http: это точка входа временного контура на петлевом
+// интерфейсе, поднятая этой же машиной на время прогона. TLS к собственному
+// процессу на 127.0.0.1 ничего не защищает, а правило смотрит на схему.
+// nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
 const health = await fetch(`http://127.0.0.1:${WEB_PORT}/v1/health`, {
   signal: AbortSignal.timeout(5000),
 }).catch(() => null);
