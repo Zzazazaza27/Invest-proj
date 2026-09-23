@@ -46,6 +46,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { namedIn } from './lib/intel-names.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const DATA = join(ROOT, 'docs', 'product', 'market-intelligence', 'data');
@@ -134,16 +135,20 @@ function domainOf(url) {
 }
 const isUrl = (v) => typeof v === 'string' && /^https?:\/\/[^\s]+$/i.test(v) && domainOf(v);
 
+// --recheck-evidence — перепроверить УЖЕ загруженные подтверждённые факты
+// правилом «имя сущности видно в цитате» (кроме страниц о самой сущности).
+const RECHECK = process.argv.includes('--recheck-evidence');
+const args = process.argv.slice(2).filter((a) => !a.startsWith('--'));
 const files =
-  process.argv.length > 2
-    ? process.argv.slice(2).map((f) => resolve(f))
+  args.length > 0
+    ? args.map((f) => resolve(f))
     : existsSync(DATA)
       ? readdirSync(DATA)
           .filter((f) => f.endsWith('.json'))
           .sort()
           .map((f) => join(DATA, f))
       : [];
-if (files.length === 0) {
+if (files.length === 0 && !RECHECK) {
   console.warn('Файлов с находками нет.');
   process.exit(0);
 }
@@ -151,6 +156,40 @@ if (files.length === 0) {
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER, max: 2 });
 const client = await pool.connect();
 const q = async (sql, params = []) => (await client.query(sql, params)).rows;
+
+if (RECHECK) {
+  const rows = await q(
+    `SELECT m.id, m.evidence, e.name, e.type,
+            (EXISTS (SELECT 1 FROM intelligence.external_ids x
+                      WHERE x.entity_id = e.id AND x.external_url = m.page_url)
+             OR s.represents_entity_id = e.id) AS about
+       FROM intelligence.mentions m
+       JOIN intelligence.entities e ON e.id = m.entity_id
+       JOIN intelligence.sources s ON s.id = m.source_id
+      WHERE m.verification = 'verified' AND m.evidence IS NOT NULL`,
+  );
+  let downgraded = 0;
+  for (const r of rows) {
+    if (r.about || namedIn(r.name, r.type, r.evidence)) continue;
+    await q(
+      `UPDATE intelligence.mentions
+          SET verification = 'candidate', verified_at = NULL,
+              notes = concat_ws('; ', notes,
+                'подтверждение снято перепроверкой: в цитате не видно имени сущности')
+        WHERE id = $1`,
+      [r.id],
+    );
+    downgraded += 1;
+  }
+  console.warn(
+    `Перепроверено подтверждённых фактов с цитатой: ${rows.length}; понижено до кандидатов: ${downgraded}.`,
+  );
+  if (files.length === 0 || args.length === 0) {
+    client.release();
+    await pool.end();
+    process.exit(0);
+  }
+}
 
 const problems = [];
 
@@ -227,6 +266,22 @@ async function resolveEntity(
     ],
   );
   return { id, created: true };
+}
+
+/**
+ * Страница — о самой сущности: её карточка в каталоге или её собственный
+ * сайт. Тогда имя в цитате не обязательно: сущность — предмет страницы
+ * («Сооснователь фонда Almaz Capital» на карточке Галицкого).
+ */
+async function pageIsAbout(entityId, sourceId, pageUrl) {
+  const [row] = await q(
+    `SELECT (EXISTS (SELECT 1 FROM intelligence.external_ids
+                      WHERE entity_id = $1 AND external_url = $3)
+          OR EXISTS (SELECT 1 FROM intelligence.sources
+                      WHERE id = $2 AND represents_entity_id = $1)) AS about`,
+    [entityId, sourceId, pageUrl],
+  );
+  return row.about;
 }
 
 /** Источник для страницы: этот адрес, иначе корень того же домена, иначе новый сайт. */
@@ -366,6 +421,15 @@ async function ingestFact(f, run) {
   if (verification === 'verified' && !text(f.evidence, 2000)) {
     verification = 'candidate';
     notes = [notes, 'подтверждение снято загрузчиком: нет цитаты со страницы']
+      .filter(Boolean)
+      .join('; ');
+  } else if (
+    verification === 'verified' &&
+    !namedIn(f.entity, entityType, f.evidence) &&
+    !(await pageIsAbout(entity.id, sourceId, f.page_url))
+  ) {
+    verification = 'candidate';
+    notes = [notes, 'подтверждение снято загрузчиком: в цитате не видно имени сущности']
       .filter(Boolean)
       .join('; ');
   }
