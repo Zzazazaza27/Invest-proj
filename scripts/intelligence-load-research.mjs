@@ -247,9 +247,12 @@ for (const line of lines.slice(start + 1, end)) {
     counts.sources += 1;
     if (source.inserted) counts.sourcesNew += 1;
     const inserted = await q(
-      `INSERT INTO intelligence.mentions (id, entity_id, source_id, page_url, context)
-       VALUES ($1, $2, $3, $4, $5)
-       ON CONFLICT (entity_id, source_id, coalesce(page_url, '')) DO NOTHING
+      // Кандидат, а не подтверждённый факт: агент видел выдачу, страниц не
+      // открывал (ТЗ-перестройка §8). Роль — подпись пункта из файла.
+      `INSERT INTO intelligence.mentions
+         (id, entity_id, source_id, page_url, role, verification, notes)
+       VALUES ($1, $2, $3, $4, $5, 'candidate', 'из выдачи поиска, страница не открывалась')
+       ON CONFLICT DO NOTHING
        RETURNING id`,
       [randomUUID(), person.id, source.id, url, label],
     );

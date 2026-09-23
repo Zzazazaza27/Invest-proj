@@ -349,6 +349,10 @@ export function App() {
             <Route path="/testing" element={<TestingSessionsPage />} />
             <Route path="/access" element={<AccessPage />} />
             <Route path="/intelligence" element={<IntelligencePage />} />
+            <Route
+              path="/intelligence/platforms"
+              element={<IntelligenceSourcesPage platformsOnly />}
+            />
             <Route path="/intelligence/sources" element={<IntelligenceSourcesPage />} />
             <Route path="/intelligence/sources/:id" element={<IntelligenceSourceCardPage />} />
             <Route path="/intelligence/:id" element={<IntelligenceCardPage />} />

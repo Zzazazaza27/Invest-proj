@@ -10,10 +10,14 @@ import {
   ENTITY_TYPES,
   IntelligenceService,
   LEVELS,
+  PARSEABLE,
+  REVIEW,
+  SOURCE_TYPES,
+  VERIFICATION,
 } from './intelligence.service';
 
 /**
- * Market Intelligence (M137, M139) — внутренний раздел админки.
+ * Market Intelligence — внутренний раздел админки.
  *
  * Только администратор: ни организатору, ни персоналу эти сведения не нужны,
  * а отдельной системы ролей ТЗ прямо не просит (§13).
@@ -42,6 +46,14 @@ const optionalUuid = z
   .nullish()
   .or(z.literal(''))
   .transform((v) => (v ? v : null));
+
+/** Да / нет / не знаю: пусто — «не знаю», а не «нет». */
+const optionalBool = z
+  .union([z.boolean(), z.literal('true'), z.literal('false'), z.literal('')])
+  .nullish()
+  .transform((v) =>
+    v === true || v === 'true' ? true : v === false || v === 'false' ? false : null,
+  );
 
 const httpUrl = z
   .string()
@@ -72,9 +84,9 @@ const CreateSchema = EntityFieldsSchema.extend({
 
 const UpdateSchema = EntityFieldsSchema.partial();
 
-const MentionFieldsSchema = z.object({
-  context: optionalText(300),
-  summary: optionalText(4000),
+const FactFieldsSchema = z.object({
+  role: optionalText(300),
+  action: optionalText(4000),
   happenedOn: z
     .string()
     .regex(/^\d{4}-\d{2}-\d{2}$/, 'дата в виде ГГГГ-ММ-ДД')
@@ -82,9 +94,14 @@ const MentionFieldsSchema = z.object({
     .or(z.literal(''))
     .transform((v) => (v ? v : null)),
   happenedPrecision: optionalEnum(['day', 'month', 'year'] as const),
+  organizationId: optionalUuid,
+  eventId: optionalUuid,
+  verification: z.enum(VERIFICATION).optional(),
+  evidence: optionalText(2000),
+  notes: optionalText(20000),
 });
 
-const MentionSchema = MentionFieldsSchema.extend({ url: httpUrl });
+const FactSchema = FactFieldsSchema.extend({ url: httpUrl });
 
 const SourceFieldsSchema = z.object({
   url: httpUrl,
@@ -100,6 +117,12 @@ const SourceFieldsSchema = z.object({
   viaEntityId: optionalUuid,
   representsEntityId: optionalUuid,
   notes: optionalText(20000),
+  isProfile: optionalBool,
+  sourceType: optionalEnum(SOURCE_TYPES),
+  hasEvents: optionalBool,
+  hasParticipantLists: optionalBool,
+  parseable: optionalEnum(PARSEABLE),
+  reviewStatus: z.enum(REVIEW).default('unchecked'),
 });
 
 const AsSourceSchema = z.object({
@@ -130,6 +153,11 @@ export class IntelligenceController {
     return { items: await this.intelligence.list(ctx, { ...filter, q: filter.q.trim() }) };
   }
 
+  @Get('lookup')
+  async lookup(@Ctx() ctx: RequestContext, @Query('q') q: string | undefined) {
+    return { items: await this.intelligence.lookup(ctx, (q ?? '').trim().slice(0, 200)) };
+  }
+
   @Get('entities/:id')
   async card(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     return this.intelligence.card(ctx, uuid(id));
@@ -145,9 +173,16 @@ export class IntelligenceController {
     return this.intelligence.update(ctx, uuid(id), UpdateSchema.parse(body));
   }
 
-  @Post('entities/:id/mentions')
-  async addMention(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body() body: unknown) {
-    return this.intelligence.addMention(ctx, uuid(id), MentionSchema.parse(body));
+  @Post('entities/:id/merge')
+  @HttpCode(200)
+  async merge(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body() body: unknown) {
+    const { dropId } = z.object({ dropId: z.string().uuid() }).parse(body);
+    return this.intelligence.merge(ctx, uuid(id), dropId);
+  }
+
+  @Post('entities/:id/facts')
+  async addFact(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body() body: unknown) {
+    return this.intelligence.addFact(ctx, uuid(id), FactSchema.parse(body));
   }
 
   @Post('entities/:id/as-source')
@@ -155,15 +190,15 @@ export class IntelligenceController {
     return this.intelligence.entityAsSource(ctx, uuid(id), AsSourceSchema.parse(body ?? {}).url);
   }
 
-  @Patch('mentions/:id')
-  async updateMention(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body() body: unknown) {
-    return this.intelligence.updateMention(ctx, uuid(id), MentionFieldsSchema.parse(body));
+  @Patch('facts/:id')
+  async updateFact(@Ctx() ctx: RequestContext, @Param('id') id: string, @Body() body: unknown) {
+    return this.intelligence.updateFact(ctx, uuid(id), FactFieldsSchema.parse(body));
   }
 
-  @Delete('mentions/:id')
+  @Delete('facts/:id')
   @HttpCode(200)
-  async removeMention(@Ctx() ctx: RequestContext, @Param('id') id: string) {
-    await this.intelligence.removeMention(ctx, uuid(id));
+  async removeFact(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    await this.intelligence.removeFact(ctx, uuid(id));
     return { ok: true };
   }
 

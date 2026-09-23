@@ -12,37 +12,43 @@ import {
 } from './intelligence.fetch';
 
 /**
- * Market Intelligence (M137, M139): сведения об участниках инвестиционного
- * рынка. Постановка — docs/product/market-intelligence/ТЗ-MVP.md.
+ * Market Intelligence — профильная база российского инвестиционного рынка.
  *
- * Три понятия:
- *  * СУЩНОСТЬ — участник рынка: человек, фонд, клуб, мероприятие;
- *  * ИСТОЧНИК — сайт или страница, где участники собраны (каталог, статья,
- *    список спикеров). Ценен сам по себе: это результат поиска по
- *    интернету, ещё до разбора;
- *  * УПОМИНАНИЕ — сущность найдена в источнике. Одна сущность бывает во
- *    многих источниках, и так они сводятся вместе.
+ * Постановки: docs/product/market-intelligence/ТЗ-MVP.md и ТЗ-перестройка.md.
  *
- * Сущность может сама быть источником (`representsEntityId`): сайт фонда с
- * портфелем, страница клуба с участниками. Обратный путь поиска (ТЗ §17,
- * путь 2) — `viaEntityId`: источник найден, когда искали вокруг сущности.
+ *  * СУЩНОСТЬ — человек (всегда `person`), фонд, клуб, акселератор,
+ *    мероприятие… «Инвестор», «спикер», «партнёр» — роли в фактах, а не типы.
+ *  * ИСТОЧНИК — сайт или страница. Бывает ПРОФИЛЬНЫМ (площадка
+ *    инвестиционного рынка) или нет (СМИ, блог). Пока не разобран — признак
+ *    пуст. Собственный сайт сущности в её вес не идёт.
+ *  * ФАКТ (таблица mentions) — когда, где, в какой роли, что произошло, с
+ *    какой организацией и событием. В показатели идёт только ПОДТВЕРЖДЁННЫЙ:
+ *    открыта конкретная страница, сущность на ней есть.
+ *
+ * Показатели (ТЗ-перестройка §11) — только по подтверждённым фактам, без
+ * коэффициентов: сколько разных профильных площадок, сколько профильных
+ * фактов, сколько медийных, когда впервые и в последний раз замечена на
+ * профильной площадке.
  *
  * ПРАВИЛО ИМПОРТА: повторный импорт ничего, внесённого человеком, не
- * перетирает. Он дополняет пустые поля, обновляет сведения источника
- * (`attributes`) и отметку проверки. Статус и заметки — только человека.
+ * перетирает — дополняет пустые поля, обновляет сведения источника и
+ * отметку проверки.
  */
 
 export const ENTITY_TYPES = [
   'person',
-  'investor',
   'organization',
   'fund',
   'investor_club',
   'accelerator',
+  'venture_studio',
   'bootcamp',
   'event',
+  'platform',
   'media',
   'corporation',
+  'program',
+  'project',
   'other',
 ] as const;
 export type EntityType = (typeof ENTITY_TYPES)[number];
@@ -54,6 +60,44 @@ export const LEVELS = ['high', 'medium', 'low'] as const;
 export const CONTACTS = ['yes', 'partial', 'no'] as const;
 export const ALIVE = ['yes', 'no', 'unknown'] as const;
 export const DISCOVERY = ['direct', 'reverse', 'import', 'manual'] as const;
+export const PARSEABLE = ['yes', 'partial', 'no'] as const;
+export const REVIEW = ['unchecked', 'checked', 'unreachable'] as const;
+export const VERIFICATION = ['verified', 'candidate', 'rejected'] as const;
+export const SOURCE_TYPES = [
+  'fund',
+  'investor_club',
+  'accelerator',
+  'venture_studio',
+  'incubator',
+  'bootcamp',
+  'demo_day',
+  'pitch_session',
+  'conference',
+  'competition',
+  'investment_platform',
+  'crowdinvesting',
+  'investor_catalog',
+  'startup_catalog',
+  'community',
+  'corporate_program',
+  'bank_program',
+  'university_program',
+  'gov_program',
+  'market_portal',
+  'aggregator',
+  'event_calendar',
+  'media',
+  'news',
+  'blog',
+  'telegram',
+  'general',
+  'speaker_agency',
+  'education',
+  'own_site',
+  'other',
+] as const;
+
+export type Precision = 'day' | 'month' | 'year';
 
 export interface EntityFields {
   type: EntityType;
@@ -82,6 +126,25 @@ export interface SourceFields {
   viaEntityId: string | null;
   representsEntityId: string | null;
   notes: string | null;
+  isProfile: boolean | null;
+  sourceType: (typeof SOURCE_TYPES)[number] | null;
+  hasEvents: boolean | null;
+  hasParticipantLists: boolean | null;
+  parseable: (typeof PARSEABLE)[number] | null;
+  reviewStatus: (typeof REVIEW)[number];
+}
+
+/** Факт: что, когда, в какой роли, с кем. Статус проверки — человека. */
+export interface FactInput {
+  role: string | null;
+  action?: string | null;
+  happenedOn?: string | null;
+  happenedPrecision?: Precision | null;
+  organizationId?: string | null;
+  eventId?: string | null;
+  verification?: (typeof VERIFICATION)[number];
+  evidence?: string | null;
+  notes?: string | null;
 }
 
 interface EntityRow {
@@ -105,6 +168,16 @@ interface EntityRow {
   updated_at: Date;
 }
 
+interface MetricsRow {
+  profile_sources: string;
+  profile_facts: string;
+  media_facts: string;
+  verified_facts: string;
+  candidate_facts: string;
+  first_profile: Date | string | null;
+  last_profile: Date | string | null;
+}
+
 interface SourceRow {
   id: string;
   source_url: string;
@@ -121,6 +194,12 @@ interface SourceRow {
   discovery: SourceFields['discovery'];
   via_entity_id: string | null;
   represents_entity_id: string | null;
+  is_profile: boolean | null;
+  source_type: SourceFields['sourceType'];
+  has_events: boolean | null;
+  has_participant_lists: boolean | null;
+  parseable: SourceFields['parseable'];
+  review_status: SourceFields['reviewStatus'];
   discovered_at: Date;
   last_checked_at: Date | null;
   updated_at: Date;
@@ -128,34 +207,44 @@ interface SourceRow {
 }
 
 type SourceRowExt = SourceRow & {
-  mention_count?: string;
+  fact_count?: string;
+  verified_count?: string;
+  entity_count?: string;
   via_entity_name?: string | null;
   represents_entity_name?: string | null;
 };
 
-interface MentionRow {
+interface FactRow {
   id: string;
   entity_id: string;
   source_id: string;
   page_url: string | null;
-  context: string | null;
+  role: string | null;
+  action: string | null;
   notes: string | null;
+  evidence: string | null;
   found_at: Date;
   last_checked_at: Date | null;
   happened_on: Date | string | null;
   happened_precision: Precision | null;
-  summary: string | null;
+  organization_id: string | null;
+  event_id: string | null;
+  verification: (typeof VERIFICATION)[number];
+  verified_at: Date | null;
 }
 
-export type Precision = 'day' | 'month' | 'year';
-
-/** Хроника: что, когда. Поля человека, импорт их не перетирает. */
-export interface MentionInput {
-  context: string | null;
-  summary?: string | null;
-  happenedOn?: string | null;
-  happenedPrecision?: Precision | null;
-}
+type FactRowExt = FactRow & {
+  source_name: string | null;
+  source_url: string;
+  source_domain: string | null;
+  is_profile: boolean | null;
+  source_type: string | null;
+  own_source: boolean;
+  organization_name: string | null;
+  event_name: string | null;
+  entity_name?: string;
+  entity_type?: EntityType;
+};
 
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
 
@@ -192,6 +281,18 @@ function entityView(row: EntityRow) {
   };
 }
 
+function metricsView(row: MetricsRow) {
+  return {
+    uniqueProfileSources: Number(row.profile_sources),
+    profileFacts: Number(row.profile_facts),
+    mediaFacts: Number(row.media_facts),
+    verifiedFacts: Number(row.verified_facts),
+    candidateFacts: Number(row.candidate_facts),
+    firstProfileOn: dateOnly(row.first_profile),
+    lastProfileOn: dateOnly(row.last_profile),
+  };
+}
+
 function sourceView(row: SourceRowExt) {
   return {
     id: row.id,
@@ -211,7 +312,15 @@ function sourceView(row: SourceRowExt) {
     viaEntityName: row.via_entity_name ?? null,
     representsEntityId: row.represents_entity_id,
     representsEntityName: row.represents_entity_name ?? null,
-    mentionCount: Number(row.mention_count ?? 0),
+    isProfile: row.is_profile,
+    sourceType: row.source_type,
+    hasEvents: row.has_events,
+    hasParticipantLists: row.has_participant_lists,
+    parseable: row.parseable,
+    reviewStatus: row.review_status,
+    factCount: Number(row.fact_count ?? 0),
+    verifiedCount: Number(row.verified_count ?? 0),
+    entityCount: Number(row.entity_count ?? 0),
     discoveredAt: row.discovered_at.toISOString(),
     lastCheckedAt: iso(row.last_checked_at),
     updatedAt: row.updated_at.toISOString(),
@@ -219,19 +328,34 @@ function sourceView(row: SourceRowExt) {
   };
 }
 
-function mentionView(row: MentionRow) {
+function factView(row: FactRowExt) {
   return {
     id: row.id,
     entityId: row.entity_id,
+    entityName: row.entity_name ?? null,
+    entityType: row.entity_type ?? null,
     sourceId: row.source_id,
+    sourceName: row.source_name,
+    sourceUrl: row.source_url,
+    sourceDomain: row.source_domain,
+    isProfileSource: row.is_profile,
+    sourceType: row.source_type,
+    ownSource: row.own_source,
     pageUrl: row.page_url,
-    context: row.context,
+    role: row.role,
+    action: row.action,
+    organizationId: row.organization_id,
+    organizationName: row.organization_name,
+    eventId: row.event_id,
+    eventName: row.event_name,
+    happenedOn: dateOnly(row.happened_on),
+    happenedPrecision: row.happened_precision,
+    verification: row.verification,
+    verifiedAt: iso(row.verified_at),
+    evidence: row.evidence,
     notes: row.notes,
     foundAt: row.found_at.toISOString(),
     lastCheckedAt: iso(row.last_checked_at),
-    happenedOn: dateOnly(row.happened_on),
-    happenedPrecision: row.happened_precision,
-    summary: row.summary,
   };
 }
 
@@ -248,10 +372,59 @@ function likeEscape(value: string): string {
   return value.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-/** Источник со счётчиком упоминаний и именами связанных сущностей. */
+/**
+ * Показатели сущности `e` (ТЗ-перестройка §6, §11). Только подтверждённые
+ * факты; собственный сайт сущности (represents_entity_id = она сама) не в
+ * счёт; «медийные» — на источниках, которые РАЗОБРАНЫ как непрофильные
+ * (неразобранные не причисляются никуда).
+ */
+const METRICS_LATERAL = `
+  LEFT JOIN LATERAL (
+    SELECT
+      count(DISTINCT coalesce(s.source_domain, s.id::text))
+        FILTER (WHERE m.verification = 'verified' AND s.is_profile
+                  AND s.represents_entity_id IS DISTINCT FROM e.id) AS profile_sources,
+      count(*) FILTER (WHERE m.verification = 'verified' AND s.is_profile
+                         AND s.represents_entity_id IS DISTINCT FROM e.id) AS profile_facts,
+      count(*) FILTER (WHERE m.verification = 'verified' AND s.is_profile = false
+                         AND s.represents_entity_id IS DISTINCT FROM e.id
+                         AND s.source_type IS DISTINCT FROM 'own_site') AS media_facts,
+      count(*) FILTER (WHERE m.verification = 'verified') AS verified_facts,
+      count(*) FILTER (WHERE m.verification = 'candidate') AS candidate_facts,
+      min(coalesce(m.happened_on, m.found_at::date))
+        FILTER (WHERE m.verification = 'verified' AND s.is_profile
+                  AND s.represents_entity_id IS DISTINCT FROM e.id) AS first_profile,
+      max(coalesce(m.happened_on, m.found_at::date))
+        FILTER (WHERE m.verification = 'verified' AND s.is_profile
+                  AND s.represents_entity_id IS DISTINCT FROM e.id) AS last_profile
+      FROM intelligence.mentions m
+      JOIN intelligence.sources s ON s.id = m.source_id
+     WHERE m.entity_id = e.id
+  ) x ON true`;
+
+/** Факт со всем, что нужно показать: источник, организация, событие. */
+const FACT_SELECT = `
+  SELECT m.*,
+         s.name AS source_name, s.source_url, s.source_domain, s.is_profile, s.source_type,
+         (s.represents_entity_id = m.entity_id OR s.source_type = 'own_site') AS own_source,
+         org.name AS organization_name,
+         ev.name AS event_name,
+         ent.name AS entity_name,
+         ent.type AS entity_type
+    FROM intelligence.mentions m
+    JOIN intelligence.sources s ON s.id = m.source_id
+    JOIN intelligence.entities ent ON ent.id = m.entity_id
+    LEFT JOIN intelligence.entities org ON org.id = m.organization_id
+    LEFT JOIN intelligence.entities ev ON ev.id = m.event_id`;
+
+/** Источник со счётчиками фактов и именами связанных сущностей. */
 const SOURCE_SELECT = `
   SELECT s.*,
-         (SELECT count(*) FROM intelligence.mentions m WHERE m.source_id = s.id) AS mention_count,
+         (SELECT count(*) FROM intelligence.mentions m WHERE m.source_id = s.id) AS fact_count,
+         (SELECT count(*) FROM intelligence.mentions m
+           WHERE m.source_id = s.id AND m.verification = 'verified') AS verified_count,
+         (SELECT count(DISTINCT m.entity_id) FROM intelligence.mentions m
+           WHERE m.source_id = s.id) AS entity_count,
          via.name AS via_entity_name,
          rep.name AS represents_entity_name
     FROM intelligence.sources s
@@ -271,6 +444,12 @@ const SOURCE_COLUMNS: Record<Exclude<keyof SourceFields, 'url'>, string> = {
   viaEntityId: 'via_entity_id',
   representsEntityId: 'represents_entity_id',
   notes: 'notes',
+  isProfile: 'is_profile',
+  sourceType: 'source_type',
+  hasEvents: 'has_events',
+  hasParticipantLists: 'has_participant_lists',
+  parseable: 'parseable',
+  reviewStatus: 'review_status',
 };
 
 @Injectable()
@@ -281,29 +460,17 @@ export class IntelligenceService {
 
   async list(ctx: RequestContext, filter: { q: string; type?: string; status?: string }) {
     return this.db.readOnly(ctx, async (tx) => {
-      const { rows } = await tx.query<
-        EntityRow & { source_count: string; source_names: string | null; duplicate: boolean }
-      >(
-        `SELECT e.*,
-                -- Вес сущности — число разных САЙТОВ, где она упомянута: две
-                -- страницы одного сайта (rb.ru и rb.ru/data) — один голос.
-                (SELECT count(DISTINCT coalesce(s.source_domain, s.id::text))
-                   FROM intelligence.mentions m
-                   JOIN intelligence.sources s ON s.id = m.source_id
-                  WHERE m.entity_id = e.id) AS source_count,
-                (SELECT string_agg(DISTINCT coalesce(s.name, s.source_domain), ', ')
-                   FROM intelligence.mentions m
-                   JOIN intelligence.sources s ON s.id = m.source_id
-                  WHERE m.entity_id = e.id) AS source_names,
+      const { rows } = await tx.query<EntityRow & MetricsRow & { duplicate: boolean }>(
+        `SELECT e.*, x.*,
                 EXISTS (
                   SELECT 1 FROM intelligence.entities d
                    WHERE d.id <> e.id
                      AND ((e.external_url IS NOT NULL AND d.external_url = e.external_url)
-                       OR (lower(d.name) = lower(e.name)
-                           AND lower(coalesce(d.organization_name, ''))
-                             = lower(coalesce(e.organization_name, ''))))
+                       OR (d.type = e.type
+                           AND intelligence.norm_name(d.name) = intelligence.norm_name(e.name)))
                 ) AS duplicate
            FROM intelligence.entities e
+           ${METRICS_LATERAL}
           WHERE ($1 = '' OR e.name ILIKE '%' || $1 || '%'
                          OR e.organization_name ILIKE '%' || $1 || '%'
                          OR e.description ILIKE '%' || $1 || '%'
@@ -312,13 +479,12 @@ export class IntelligenceService {
             AND ($2::text IS NULL OR e.type = $2)
             AND ($3::text IS NULL OR e.status = $3)
           ORDER BY e.updated_at DESC
-          LIMIT 5000`,
+          LIMIT 10000`,
         [likeEscape(filter.q), filter.type ?? null, filter.status ?? null],
       );
       return rows.map((row) => ({
         ...entityView(row),
-        sourceCount: Number(row.source_count),
-        sourceNames: row.source_names,
+        metrics: metricsView(row),
         duplicate: row.duplicate,
       }));
     });
@@ -329,18 +495,26 @@ export class IntelligenceService {
   }
 
   private async cardIn(tx: Tx, id: string) {
-    const { rows } = await tx.query<EntityRow>(
-      'SELECT * FROM intelligence.entities WHERE id = $1',
+    const { rows } = await tx.query<EntityRow & MetricsRow>(
+      `SELECT e.*, x.* FROM intelligence.entities e ${METRICS_LATERAL} WHERE e.id = $1`,
       [id],
     );
     const row = rows[0];
     if (!row) throw errors.notFound({ entity: 'intelligence.entity', id });
-    const mentions = await tx.query<MentionRow & SourceRowExt & { mention_id: string }>(
-      `SELECT m.*, m.id AS mention_id, s.source_url, s.source_domain, s.name AS source_name
-         FROM intelligence.mentions m
-         JOIN intelligence.sources s ON s.id = m.source_id
+
+    const facts = await tx.query<FactRowExt>(
+      `${FACT_SELECT}
         WHERE m.entity_id = $1
-        ORDER BY m.happened_on DESC NULLS LAST, m.found_at DESC`,
+        ORDER BY (m.verification = 'rejected'), m.happened_on DESC NULLS LAST, m.found_at DESC`,
+      [id],
+    );
+    // Связи в обратную сторону: кто и что связано с этой организацией или
+    // событием (партнёры фонда, спикеры Demo Day).
+    const related = await tx.query<FactRowExt>(
+      `${FACT_SELECT}
+        WHERE (m.organization_id = $1 OR m.event_id = $1) AND m.entity_id <> $1
+        ORDER BY m.happened_on DESC NULLS LAST, ent.name
+        LIMIT 1000`,
       [id],
     );
     const own = await tx.query<SourceRowExt>(
@@ -349,14 +523,37 @@ export class IntelligenceService {
       [id],
     );
     const duplicates = await this.duplicatesIn(tx, row, id);
+
+    // Роли — из подтверждённых фактов: «Managing Partner — XYZ Ventures».
+    const roles = new Map<
+      string,
+      {
+        role: string;
+        organizationId: string | null;
+        organizationName: string | null;
+        facts: number;
+      }
+    >();
+    for (const f of facts.rows) {
+      if (f.verification !== 'verified' || !f.role) continue;
+      const key = `${f.role.toLowerCase()}|${f.organization_id ?? ''}`;
+      const current = roles.get(key);
+      if (current) current.facts += 1;
+      else
+        roles.set(key, {
+          role: f.role,
+          organizationId: f.organization_id,
+          organizationName: f.organization_name,
+          facts: 1,
+        });
+    }
+
     return {
       entity: entityView(row),
-      mentions: mentions.rows.map((m) => ({
-        ...mentionView({ ...m, id: m.mention_id }),
-        sourceName: (m as unknown as { source_name: string | null }).source_name,
-        sourceUrl: m.source_url,
-        sourceDomain: m.source_domain,
-      })),
+      metrics: metricsView(row),
+      roles: [...roles.values()],
+      facts: facts.rows.map(factView),
+      related: related.rows.map(factView),
       ownSources: own.rows.map(sourceView),
       duplicates,
     };
@@ -364,7 +561,7 @@ export class IntelligenceService {
 
   private async duplicatesIn(
     tx: Tx,
-    probe: { name: string; organization_name: string | null; external_url: string | null },
+    probe: { name: string; type: string; external_url: string | null },
     exceptId: string | null,
   ) {
     const { rows } = await tx.query<{
@@ -376,10 +573,9 @@ export class IntelligenceService {
       `SELECT id, name, type, organization_name FROM intelligence.entities
         WHERE ($4::uuid IS NULL OR id <> $4)
           AND (($3::text IS NOT NULL AND external_url = $3)
-            OR (lower(name) = lower($1)
-                AND lower(coalesce(organization_name, '')) = lower(coalesce($2, ''))))
+            OR (type = $2 AND intelligence.norm_name(name) = intelligence.norm_name($1)))
         LIMIT 20`,
-      [probe.name, probe.organization_name, probe.external_url, exceptId],
+      [probe.name, probe.type, probe.external_url, exceptId],
     );
     return rows.map((r) => ({
       id: r.id,
@@ -387,6 +583,20 @@ export class IntelligenceService {
       type: r.type,
       organizationName: r.organization_name,
     }));
+  }
+
+  /** Сущности для выбора организации или события в форме факта. */
+  async lookup(ctx: RequestContext, q: string) {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<{ id: string; name: string; type: EntityType }>(
+        `SELECT id, name, type FROM intelligence.entities
+          WHERE name ILIKE '%' || $1 || '%'
+          ORDER BY (lower(name) = lower($1)) DESC, length(name), name
+          LIMIT 20`,
+        [likeEscape(q)],
+      );
+      return rows;
+    });
   }
 
   async create(ctx: RequestContext, input: EntityFields & { sourceUrl: string | null }) {
@@ -413,7 +623,9 @@ export class IntelligenceService {
         ],
       );
       if (input.sourceUrl) {
-        await this.mentionByUrlIn(tx, ctx, id, { url: input.sourceUrl, context: null });
+        // Адрес из формы добавления — кандидат: человек его указал, но
+        // «открыта и проверена страница» — отдельное утверждение.
+        await this.factByUrlIn(tx, ctx, id, { url: input.sourceUrl, role: null });
       }
       return this.cardIn(tx, id);
     });
@@ -451,13 +663,98 @@ export class IntelligenceService {
     });
   }
 
-  // ========================================================== упоминания
+  /**
+   * Объединить дубль `dropId` в `keepId` (ТЗ-перестройка §15, шаг 3).
+   *
+   * Факты, связи, источники и ключи импорта переезжают; пустые поля
+   * оставляемой записи дополняются из дубля; сведения дубля сохраняются в
+   * `attributes.merged` — ничего не теряется. Ключи импорта переезжают тоже,
+   * иначе следующий импорт воскресил бы удалённый дубль.
+   */
+  async merge(ctx: RequestContext, keepId: string, dropId: string) {
+    if (keepId === dropId) throw errors.conflict('Нельзя объединить запись саму с собой.');
+    return this.db.transaction(ctx, async (tx) => {
+      const { rows } = await tx.query<EntityRow>(
+        'SELECT * FROM intelligence.entities WHERE id = ANY($1::uuid[]) FOR UPDATE',
+        [[keepId, dropId]],
+      );
+      const keep = rows.find((r) => r.id === keepId);
+      const drop = rows.find((r) => r.id === dropId);
+      if (!keep || !drop) throw errors.notFound({ entity: 'intelligence.entity', keepId, dropId });
 
-  /** «Найдено здесь»: адрес страницы → источник по домену → упоминание. */
-  async addMention(ctx: RequestContext, entityId: string, input: MentionInput & { url: string }) {
+      // Факты дубля: копия на оставляемую запись; совпадающие схлопываются.
+      await tx.query(
+        `INSERT INTO intelligence.mentions
+           (id, entity_id, source_id, page_url, role, action, notes, evidence, found_at,
+            last_checked_at, happened_on, happened_precision, organization_id, event_id,
+            verification, verified_at, created_by)
+         SELECT gen_random_uuid(), $1, source_id, page_url, role, action, notes, evidence,
+                found_at, last_checked_at, happened_on, happened_precision,
+                CASE WHEN organization_id = $1 THEN NULL ELSE organization_id END,
+                CASE WHEN event_id = $1 THEN NULL ELSE event_id END,
+                verification, verified_at, created_by
+           FROM intelligence.mentions WHERE entity_id = $2
+         ON CONFLICT DO NOTHING`,
+        [keepId, dropId],
+      );
+      // Ссылки на дубль как на организацию или событие.
+      for (const column of ['organization_id', 'event_id']) {
+        await tx.query(
+          `UPDATE intelligence.mentions m SET ${column} = $1
+            WHERE m.${column} = $2 AND m.entity_id <> $1
+              AND NOT EXISTS (
+                SELECT 1 FROM intelligence.mentions o
+                 WHERE o.entity_id = m.entity_id AND o.source_id = m.source_id
+                   AND coalesce(o.page_url, '') = coalesce(m.page_url, '')
+                   AND coalesce(o.role, '') = coalesce(m.role, '')
+                   AND o.${column} = $1)`,
+          [keepId, dropId],
+        );
+      }
+      await tx.query(
+        'UPDATE intelligence.sources SET via_entity_id = $1 WHERE via_entity_id = $2',
+        [keepId, dropId],
+      );
+      await tx.query(
+        'UPDATE intelligence.sources SET represents_entity_id = $1 WHERE represents_entity_id = $2',
+        [keepId, dropId],
+      );
+      await tx.query('UPDATE intelligence.external_ids SET entity_id = $1 WHERE entity_id = $2', [
+        keepId,
+        dropId,
+      ]);
+      await tx.query(
+        `UPDATE intelligence.entities k
+            SET organization_name = coalesce(k.organization_name, d.organization_name),
+                description = coalesce(k.description, d.description),
+                website_url = coalesce(k.website_url, d.website_url),
+                email = coalesce(k.email, d.email),
+                telegram = coalesce(k.telegram, d.telegram),
+                linkedin = coalesce(k.linkedin, d.linkedin),
+                notes = CASE WHEN d.notes IS NULL THEN k.notes
+                             WHEN k.notes IS NULL THEN d.notes
+                             ELSE k.notes || E'\\n\\n' || d.notes END,
+                attributes = k.attributes || jsonb_build_object(
+                  'merged', coalesce(k.attributes->'merged', '[]'::jsonb) || jsonb_build_array(
+                    jsonb_build_object('id', d.id, 'name', d.name, 'type', d.type,
+                                       'mergedAt', now(), 'attributes', d.attributes))),
+                updated_at = now()
+           FROM intelligence.entities d
+          WHERE k.id = $1 AND d.id = $2`,
+        [keepId, dropId],
+      );
+      await tx.query('DELETE FROM intelligence.entities WHERE id = $1', [dropId]);
+      return this.cardIn(tx, keepId);
+    });
+  }
+
+  // =============================================================== факты
+
+  /** Факт по адресу страницы: источник находится по домену или заводится. */
+  async addFact(ctx: RequestContext, entityId: string, input: FactInput & { url: string }) {
     return this.db.transaction(ctx, async (tx) => {
       await this.assertEntityIn(tx, entityId);
-      await this.mentionByUrlIn(tx, ctx, entityId, input);
+      await this.factByUrlIn(tx, ctx, entityId, input);
       await tx.query('UPDATE intelligence.entities SET updated_at = now() WHERE id = $1', [
         entityId,
       ]);
@@ -465,28 +762,44 @@ export class IntelligenceService {
     });
   }
 
-  /** Правка строки хроники: роль, что делал, когда. */
-  async updateMention(ctx: RequestContext, mentionId: string, patch: MentionInput) {
+  async updateFact(ctx: RequestContext, factId: string, patch: FactInput) {
     return this.db.transaction(ctx, async (tx) => {
       const precision = patch.happenedOn ? (patch.happenedPrecision ?? 'day') : null;
       const { rows } = await tx.query<{ entity_id: string }>(
         `UPDATE intelligence.mentions
-            SET context = $2, summary = $3, happened_on = $4, happened_precision = $5
+            SET role = $2, action = $3, happened_on = $4, happened_precision = $5,
+                organization_id = $6, event_id = $7,
+                verification = coalesce($8, verification),
+                verified_at = CASE WHEN $8 = 'verified' AND verification <> 'verified' THEN now()
+                                   WHEN $8 IS NOT NULL AND $8 <> 'verified' THEN NULL
+                                   ELSE verified_at END,
+                evidence = $9, notes = $10
           WHERE id = $1
           RETURNING entity_id`,
-        [mentionId, patch.context, patch.summary ?? null, patch.happenedOn ?? null, precision],
+        [
+          factId,
+          patch.role,
+          patch.action ?? null,
+          patch.happenedOn ?? null,
+          precision,
+          patch.organizationId ?? null,
+          patch.eventId ?? null,
+          patch.verification ?? null,
+          patch.evidence ?? null,
+          patch.notes ?? null,
+        ],
       );
-      if (!rows[0]) throw errors.notFound({ entity: 'intelligence.mention', id: mentionId });
+      if (!rows[0]) throw errors.notFound({ entity: 'intelligence.mention', id: factId });
       return this.cardIn(tx, rows[0].entity_id);
     });
   }
 
-  async removeMention(ctx: RequestContext, mentionId: string) {
+  async removeFact(ctx: RequestContext, factId: string) {
     return this.db.transaction(ctx, async (tx) => {
       const { rowCount } = await tx.query('DELETE FROM intelligence.mentions WHERE id = $1', [
-        mentionId,
+        factId,
       ]);
-      if (!rowCount) throw errors.notFound({ entity: 'intelligence.mention', id: mentionId });
+      if (!rowCount) throw errors.notFound({ entity: 'intelligence.mention', id: factId });
     });
   }
 
@@ -495,55 +808,77 @@ export class IntelligenceService {
     if (!exists.rowCount) throw errors.notFound({ entity: 'intelligence.entity', id });
   }
 
-  private async mentionByUrlIn(
+  private async factByUrlIn(
     tx: Tx,
     ctx: RequestContext,
     entityId: string,
-    input: MentionInput & { url: string },
+    input: FactInput & { url: string },
   ) {
     const sourceId = await this.resolveSourceIn(tx, ctx, input.url);
-    await this.mentionIn(tx, ctx, { ...input, entityId, sourceId, pageUrl: input.url });
+    await this.factIn(tx, ctx, { ...input, entityId, sourceId, pageUrl: input.url });
   }
 
-  private async mentionIn(
+  /**
+   * Записать факт. Совпадающий (та же страница, роль, организация) не
+   * дублируется: дополняются пустые поля, отметка проверки обновляется, а
+   * статус может только ПОВЫСИТЬСЯ до подтверждённого — понизить его вправе
+   * только человек.
+   */
+  private async factIn(
     tx: Tx,
     ctx: RequestContext,
-    m: MentionInput & { entityId: string; sourceId: string; pageUrl: string | null },
+    f: FactInput & { entityId: string; sourceId: string; pageUrl: string | null },
   ) {
-    const precision = m.happenedOn ? (m.happenedPrecision ?? 'day') : null;
+    const precision = f.happenedOn ? (f.happenedPrecision ?? 'day') : null;
+    const verification = f.verification ?? 'candidate';
     await tx.query(
       `INSERT INTO intelligence.mentions
-         (id, entity_id, source_id, page_url, context, summary, happened_on,
-          happened_precision, last_checked_at, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9)
-       ON CONFLICT (entity_id, source_id, coalesce(page_url, ''))
+         (id, entity_id, source_id, page_url, role, action, happened_on, happened_precision,
+          organization_id, event_id, verification, verified_at, evidence, notes,
+          last_checked_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+               CASE WHEN $11 = 'verified' THEN now() END, $12, $13, now(), $14)
+       ON CONFLICT (entity_id, source_id, coalesce(page_url, ''), coalesce(role, ''),
+                    coalesce(organization_id::text, ''))
        DO UPDATE SET last_checked_at = now(),
-                     context = coalesce(intelligence.mentions.context, EXCLUDED.context),
-                     summary = coalesce(intelligence.mentions.summary, EXCLUDED.summary),
+                     action = coalesce(intelligence.mentions.action, EXCLUDED.action),
+                     evidence = coalesce(intelligence.mentions.evidence, EXCLUDED.evidence),
+                     event_id = coalesce(intelligence.mentions.event_id, EXCLUDED.event_id),
                      happened_precision = CASE WHEN intelligence.mentions.happened_on IS NULL
                                                THEN EXCLUDED.happened_precision
                                                ELSE intelligence.mentions.happened_precision END,
-                     happened_on = coalesce(intelligence.mentions.happened_on, EXCLUDED.happened_on)`,
+                     happened_on = coalesce(intelligence.mentions.happened_on, EXCLUDED.happened_on),
+                     verification = CASE WHEN EXCLUDED.verification = 'verified'
+                                              AND intelligence.mentions.verification = 'candidate'
+                                         THEN 'verified'
+                                         ELSE intelligence.mentions.verification END,
+                     verified_at = CASE WHEN EXCLUDED.verification = 'verified'
+                                             AND intelligence.mentions.verification = 'candidate'
+                                        THEN now()
+                                        ELSE intelligence.mentions.verified_at END`,
       [
         randomUUID(),
-        m.entityId,
-        m.sourceId,
-        m.pageUrl,
-        m.context,
-        m.summary ?? null,
-        m.happenedOn ?? null,
+        f.entityId,
+        f.sourceId,
+        f.pageUrl,
+        f.role,
+        f.action ?? null,
+        f.happenedOn ?? null,
         precision,
+        f.organizationId ?? null,
+        f.eventId ?? null,
+        verification,
+        f.evidence ?? null,
+        f.notes ?? null,
         ctx.userId,
       ],
     );
   }
 
   /**
-   * Источник для адреса страницы.
-   *
-   * Сначала — источник ровно с этим адресом, затем — любой источник того же
-   * домена (предпочитая корень сайта). Если нет ни того, ни другого,
-   * заводится источник-сайт: страница — это упоминание, а не новый источник.
+   * Источник для адреса страницы: ровно этот адрес, иначе любой источник
+   * того же домена (предпочитая корень), иначе — новый источник-сайт,
+   * НЕРАЗОБРАННЫЙ: профильный он или нет, решает разбор, а не добавление.
    */
   private async resolveSourceIn(tx: Tx, ctx: RequestContext, url: string): Promise<string> {
     const domain = domainOf(url);
@@ -570,7 +905,7 @@ export class IntelligenceService {
   async sources(ctx: RequestContext) {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<SourceRowExt>(
-        `${SOURCE_SELECT} ORDER BY s.updated_at DESC LIMIT 2000`,
+        `${SOURCE_SELECT} ORDER BY s.updated_at DESC LIMIT 5000`,
       );
       return rows.map(sourceView);
     });
@@ -583,25 +918,11 @@ export class IntelligenceService {
   private async sourceCardIn(tx: Tx, id: string) {
     const { rows } = await tx.query<SourceRowExt>(`${SOURCE_SELECT} WHERE s.id = $1`, [id]);
     if (!rows[0]) throw errors.notFound({ entity: 'intelligence.source', id });
-    const mentions = await tx.query<
-      MentionRow & { entity_name: string; entity_type: EntityType; mention_id: string }
-    >(
-      `SELECT m.*, m.id AS mention_id, e.name AS entity_name, e.type AS entity_type
-         FROM intelligence.mentions m
-         JOIN intelligence.entities e ON e.id = m.entity_id
-        WHERE m.source_id = $1
-        ORDER BY e.name
-        LIMIT 2000`,
+    const facts = await tx.query<FactRowExt>(
+      `${FACT_SELECT} WHERE m.source_id = $1 ORDER BY ent.name LIMIT 5000`,
       [id],
     );
-    return {
-      source: sourceView(rows[0]),
-      mentions: mentions.rows.map((m) => ({
-        ...mentionView({ ...m, id: m.mention_id }),
-        entityName: m.entity_name,
-        entityType: m.entity_type,
-      })),
-    };
+    return { source: sourceView(rows[0]), facts: facts.rows.map(factView) };
   }
 
   async updateSource(ctx: RequestContext, id: string, patch: Partial<SourceFields>) {
@@ -631,12 +952,12 @@ export class IntelligenceService {
     });
   }
 
-  /** Источник удаляется только пустым: упоминания — это найденное, его жалко. */
+  /** Источник удаляется только пустым: факты — это найденное, его жалко. */
   async removeSource(ctx: RequestContext, id: string) {
     return this.db.transaction(ctx, async (tx) => {
       const used = await tx.query('SELECT 1 FROM intelligence.mentions WHERE source_id = $1', [id]);
       if (used.rowCount) {
-        throw errors.conflict('У источника есть упоминания — сначала уберите их.');
+        throw errors.conflict('У источника есть факты — сначала уберите их.');
       }
       const { rowCount } = await tx.query('DELETE FROM intelligence.sources WHERE id = $1', [id]);
       if (!rowCount) throw errors.notFound({ entity: 'intelligence.source', id });
@@ -644,12 +965,9 @@ export class IntelligenceService {
   }
 
   /**
-   * «Импорт URL» (ТЗ §8) и ручное добавление источника: адрес сохраняется
-   * В ЛЮБОМ СЛУЧАЕ, заголовок — если страницу удалось получить. Неудача
-   * загрузки не отменяет находку.
-   *
-   * Сущности из произвольной страницы не извлекаются: универсального
-   * разборщика ТЗ прямо не просит, а угадывание дало бы мусор.
+   * Новый источник по адресу: адрес сохраняется В ЛЮБОМ СЛУЧАЕ, заголовок —
+   * если страницу удалось получить. Сущности из произвольной страницы не
+   * извлекаются — это работа разбора.
    */
   async importUrl(ctx: RequestContext, input: Partial<SourceFields> & { url: string }) {
     let title: string | null = null;
@@ -670,10 +988,12 @@ export class IntelligenceService {
         `INSERT INTO intelligence.sources
            (id, source_url, source_domain, source_title, name, kind, description, obtainable,
             structure, public_contacts, alive, parser_priority, discovery, via_entity_id,
-            represents_entity_id, last_checked_at, notes, created_by)
+            represents_entity_id, last_checked_at, notes, created_by, is_profile, source_type,
+            has_events, has_participant_lists, parseable, review_status)
          VALUES ($1, $2, $3, $4, coalesce($5, $4, $3), $6, $7, $8, $9, $10,
                  coalesce($11, CASE WHEN $16::timestamptz IS NULL THEN NULL ELSE 'yes' END),
-                 $12, $13, $14, $15, $16, $17, $18)
+                 $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+                 coalesce($24, 'unchecked'))
          ON CONFLICT (source_url) WHERE entity_id IS NULL
          DO UPDATE SET source_title = coalesce(EXCLUDED.source_title, intelligence.sources.source_title),
                        last_checked_at = coalesce(EXCLUDED.last_checked_at,
@@ -699,6 +1019,12 @@ export class IntelligenceService {
           checkedAt,
           [input.notes, fetchNote].filter(Boolean).join('\n') || null,
           ctx.userId,
+          input.isProfile ?? null,
+          input.sourceType ?? null,
+          input.hasEvents ?? null,
+          input.hasParticipantLists ?? null,
+          input.parseable ?? null,
+          input.reviewStatus ?? null,
         ],
       );
       const card = await this.sourceCardIn(tx, rows[0]!.id);
@@ -707,7 +1033,8 @@ export class IntelligenceService {
   }
 
   /**
-   * «Сущность сама источник»: сайт фонда, страница клуба или мероприятия.
+   * Собственный сайт сущности (ТЗ-перестройка §12): источник данных о ней,
+   * но НЕ независимое подтверждение присутствия на рынке — в её вес не идёт.
    * Без адреса берётся сайт сущности.
    */
   async entityAsSource(ctx: RequestContext, entityId: string, url: string | null) {
@@ -730,11 +1057,11 @@ export class IntelligenceService {
       name: target.name,
       discovery: 'manual',
     });
-    // Источник мог существовать раньше (тот же адрес): привязка ставится
-    // явно, а не только при создании.
     return this.db.transaction(ctx, async (tx) => {
       await tx.query(
-        `UPDATE intelligence.sources SET represents_entity_id = $2, updated_at = now()
+        `UPDATE intelligence.sources
+            SET represents_entity_id = $2, updated_at = now(),
+                source_type = coalesce(source_type, 'own_site')
           WHERE id = $1`,
         [created.source.id, entityId],
       );
@@ -745,9 +1072,9 @@ export class IntelligenceService {
   // ================================================= импорт get-investor.ru
 
   /**
-   * Каталоги get-investor.ru (ТЗ §9) — ОДИН источник, в котором найдены
-   * сотни сущностей. Каждая карточка каталога — упоминание со ссылкой на
-   * свою страницу. Разбор карточек — `intelligence.fetch.ts`.
+   * Каталоги get-investor.ru (ТЗ §9) — ОДИН профильный источник. Каждая
+   * карточка — подтверждённый факт «сущность в каталоге» со ссылкой на свою
+   * страницу: карточка получена, сущность на ней есть по построению.
    */
   async importGetInvestor(ctx: RequestContext) {
     const report: {
@@ -762,7 +1089,9 @@ export class IntelligenceService {
       await tx.query(
         `UPDATE intelligence.sources
             SET name = coalesce(name, 'Get-Investor'), discovery = 'import',
-                last_checked_at = now(), updated_at = now()
+                is_profile = coalesce(is_profile, true),
+                source_type = coalesce(source_type, 'aggregator'),
+                review_status = 'checked', last_checked_at = now(), updated_at = now()
           WHERE id = $1`,
         [id],
       );
@@ -805,15 +1134,16 @@ export class IntelligenceService {
     product: Parameters<typeof mapGetInvestorProduct>[1],
   ): Promise<'created' | 'updated'> {
     const fields = mapGetInvestorProduct(catalog, product);
-    const { rows } = await tx.query<{ id: string }>(
-      `SELECT id FROM intelligence.entities
+    // По ключу, а не по колонке записи: после объединения дублей у одной
+    // сущности может быть несколько номеров каталога.
+    const { rows } = await tx.query<{ entity_id: string }>(
+      `SELECT entity_id FROM intelligence.external_ids
         WHERE import_source = 'get-investor' AND external_id = $1`,
       [fields.externalId],
     );
-    const existing = rows[0];
     let entityId: string;
     let outcome: 'created' | 'updated';
-    if (!existing) {
+    if (!rows[0]) {
       entityId = randomUUID();
       outcome = 'created';
       await tx.query(
@@ -838,10 +1168,16 @@ export class IntelligenceService {
           ctx.userId,
         ],
       );
+      await tx.query(
+        `INSERT INTO intelligence.external_ids (import_source, external_id, entity_id, external_url)
+         VALUES ('get-investor', $1, $2, $3)`,
+        [fields.externalId, entityId, fields.externalUrl],
+      );
     } else {
-      entityId = existing.id;
+      entityId = rows[0].entity_id;
       outcome = 'updated';
       // Только пустые поля: поправленное человеком импорт не перетирает.
+      // `attributes` дополняются, а не заменяются: там же след объединений.
       await tx.query(
         `UPDATE intelligence.entities
             SET organization_name = coalesce(organization_name, $2),
@@ -850,8 +1186,7 @@ export class IntelligenceService {
                 email = coalesce(email, $5),
                 telegram = coalesce(telegram, $6),
                 linkedin = coalesce(linkedin, $7),
-                attributes = $8,
-                external_url = $9,
+                attributes = attributes || $8::jsonb,
                 imported_at = now()
           WHERE id = $1`,
         [
@@ -863,16 +1198,26 @@ export class IntelligenceService {
           fields.telegram,
           fields.linkedin,
           JSON.stringify(fields.attributes),
-          fields.externalUrl,
         ],
       );
     }
-    await this.mentionIn(tx, ctx, {
+    await this.factIn(tx, ctx, {
       entityId,
       sourceId,
       pageUrl: fields.externalUrl,
-      context: catalog.label,
+      role: CATALOG_ROLE[catalog.key] ?? 'в каталоге',
+      verification: 'verified',
     });
     return outcome;
   }
 }
+
+/** Роль карточки каталога — та же, что проставила миграция M141. */
+const CATALOG_ROLE: Record<string, string> = {
+  'business-angels': 'бизнес-ангел (в каталоге)',
+  'investment-funds': 'фонд в каталоге',
+  'investor-clubs': 'клуб в каталоге',
+  accelerators: 'акселератор в каталоге',
+  'venture-studios': 'венчурная студия в каталоге',
+  'events-calendar': 'мероприятие в календаре',
+};

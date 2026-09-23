@@ -201,7 +201,12 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   'intelligence.mentions': {
     kind: 'content',
     exportable: false,
-    note: 'сущность найдена в источнике',
+    note: 'факты о сущностях: когда, где, в какой роли; с проверкой',
+  },
+  'intelligence.external_ids': {
+    kind: 'content',
+    exportable: false,
+    note: 'ключи внешних источников; после объединения дублей их несколько',
   },
 
   // --------------------------------------------------------------- identity

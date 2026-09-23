@@ -6,45 +6,53 @@ import {
   INTEL_CONTACTS,
   INTEL_DISCOVERY,
   INTEL_LEVELS,
+  INTEL_PARSEABLE,
+  INTEL_REVIEW,
+  INTEL_SOURCE_TYPES,
   INTEL_STATUSES,
   INTEL_TYPES,
+  INTEL_VERIFICATION,
   type IntelCard,
   type IntelEntityInput,
-  type IntelMention,
-  type IntelMentionInput,
+  type IntelFact,
+  type IntelFactInput,
   type IntelRow,
   type IntelSource,
   type IntelSourceCard,
   type IntelSourceInput,
   type IntelStatus,
   type IntelType,
+  type IntelVerification,
 } from '../api';
 import { formatDate, problemText } from '../lib/format';
 
 /**
- * Market Intelligence (M137, M139) — сведения об инвестиционном рынке.
+ * Market Intelligence — профильная база российского инвестиционного рынка.
  *
- * Постановка — docs/product/market-intelligence/ТЗ-MVP.md. Три понятия:
- * СУЩНОСТЬ (участник рынка), ИСТОЧНИК (сайт или страница, где участники
- * собраны) и УПОМИНАНИЕ (сущность найдена в источнике). «Встречается» у
- * сущности — число разных источников с её упоминанием: по нему видно, кто
- * на рынке заметнее.
+ * Постановки: docs/product/market-intelligence/ТЗ-MVP.md и ТЗ-перестройка.md.
+ * Сущность (человек — всегда «Человек», роли в фактах), источник
+ * (профильная площадка или нет) и факт (когда, где, в какой роли, что
+ * произошло; подтверждён или кандидат). Показатели считаются только по
+ * подтверждённым фактам; главный — число разных профильных площадок.
  *
- * Сортировка и фильтры — на клиенте поверх выборки: записей сотни, не
- * миллионы, и так экран отвечает мгновенно.
+ * Сортировка и фильтры — на клиенте поверх выборки: записей сотни и
+ * тысячи, а не миллионы, и так экран отвечает мгновенно.
  */
 
 export const TYPE_LABEL: Record<IntelType, string> = {
   person: 'Человек',
-  investor: 'Инвестор',
   organization: 'Организация',
   fund: 'Фонд',
   investor_club: 'Клуб инвесторов',
   accelerator: 'Акселератор',
+  venture_studio: 'Венчурная студия',
   bootcamp: 'Буткемп',
   event: 'Мероприятие',
+  platform: 'Инвест-платформа',
   media: 'Медиа',
   corporation: 'Корпорация',
+  program: 'Программа поддержки',
+  project: 'Проект',
   other: 'Другое',
 };
 
@@ -64,16 +72,71 @@ const STATUS_BADGE: Record<IntelStatus, string> = {
   archived: 'badge badge--muted',
 };
 
+const SOURCE_TYPE_LABEL: Record<string, string> = {
+  fund: 'фонд',
+  investor_club: 'клуб инвесторов',
+  accelerator: 'акселератор',
+  venture_studio: 'венчурная студия',
+  incubator: 'инкубатор',
+  bootcamp: 'буткемп',
+  demo_day: 'Demo Day',
+  pitch_session: 'питч-сессия',
+  conference: 'форум / конференция',
+  competition: 'конкурс стартапов',
+  investment_platform: 'инвест-платформа',
+  crowdinvesting: 'краудинвестинг',
+  investor_catalog: 'каталог инвесторов',
+  startup_catalog: 'каталог стартапов',
+  community: 'профильное сообщество',
+  corporate_program: 'корпоративная программа',
+  bank_program: 'программа банка',
+  university_program: 'университетская программа',
+  gov_program: 'гос. / региональная программа',
+  market_portal: 'портал рынка',
+  aggregator: 'агрегатор',
+  event_calendar: 'календарь мероприятий',
+  media: 'СМИ',
+  news: 'новостной портал',
+  blog: 'блог',
+  telegram: 'Telegram-канал',
+  general: 'общий сайт',
+  speaker_agency: 'агентство спикеров',
+  education: 'образование',
+  own_site: 'собственный сайт',
+  other: 'другое',
+};
+
+const VERIFICATION_LABEL: Record<IntelVerification, string> = {
+  verified: 'подтверждён',
+  candidate: 'кандидат',
+  rejected: 'отклонён',
+};
+const VERIFICATION_BADGE: Record<IntelVerification, string> = {
+  verified: 'badge badge--ok',
+  candidate: 'badge badge--warn',
+  rejected: 'badge badge--muted',
+};
+
 const LEVEL_LABEL: Record<string, string> = { high: 'высокая', medium: 'средняя', low: 'низкая' };
 const PRIORITY_LABEL: Record<string, string> = { high: 'HIGH', medium: 'MEDIUM', low: 'LOW' };
 const CONTACTS_LABEL: Record<string, string> = { yes: 'есть', partial: 'частично', no: 'нет' };
 const ALIVE_LABEL: Record<string, string> = { yes: 'да', no: 'нет', unknown: 'не проверен' };
+const PARSEABLE_LABEL: Record<string, string> = { yes: 'да', partial: 'частично', no: 'нет' };
+const REVIEW_LABEL: Record<string, string> = {
+  unchecked: 'не разобран',
+  checked: 'разобран',
+  unreachable: 'не открылся',
+};
 const DISCOVERY_LABEL: Record<string, string> = {
   direct: 'прямой поиск',
   reverse: 'обратный поиск',
   import: 'импорт',
   manual: 'вручную',
 };
+
+function profileLabel(value: boolean | null): string {
+  return value === true ? 'профильный' : value === false ? 'непрофильный' : 'не разобран';
+}
 
 function contactOf(row: IntelRow): string {
   return [
@@ -86,11 +149,22 @@ function contactOf(row: IntelRow): string {
     .join(', ');
 }
 
+const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
+
+/** Дата с той точностью, с какой она известна. */
+function dateLabel(value: string | null, precision: 'day' | 'month' | 'year' | null = 'day') {
+  if (!value) return null;
+  const [y, mo, d] = value.split('-');
+  if (precision === 'year') return y!;
+  if (precision === 'month') return `${MONTHS[Number(mo) - 1]} ${y}`;
+  return `${d}.${mo}.${y}`;
+}
+
 /** Сортировка по заголовку колонки: повторный щелчок меняет направление. */
 function useSort<K extends string>(initial: K, initialDir: 1 | -1 = 1) {
   const [sort, setSort] = useState<{ key: K; dir: 1 | -1 }>({ key: initial, dir: initialDir });
-  const header = (key: K, label: string, numeric = false) => (
-    <th>
+  const header = (key: K, label: string, numeric = false, title?: string) => (
+    <th title={title}>
       <button
         type="button"
         className="intel-sort"
@@ -118,31 +192,30 @@ function compare(a: string | number, b: string | number): number {
 // ================================================================= оболочка
 
 function Shell({ children, actions }: { children: React.ReactNode; actions?: React.ReactNode }) {
+  const tab = ({ isActive }: { isActive: boolean }) =>
+    `intel-tab${isActive ? ' intel-tab--active' : ''}`;
   return (
     <div data-page="intelligence">
       <div className="page-head">
         <div>
           <h1>Market Intelligence</h1>
           <p className="page-hint">
-            Участники инвестиционного рынка, источники, где они собраны, и упоминания — кто где
-            найден. Чем в большем числе источников встречается сущность, тем она заметнее.
+            Профильная база инвестиционного рынка: кто где появляется, в какой роли и что делает.
+            Вес сущности — на скольких разных профильных площадках она подтверждённо замечена; СМИ
+            обогащают профиль, но в вес не идут.
           </p>
         </div>
         {actions ? <div className="row-actions">{actions}</div> : null}
       </div>
       <div className="intel-tabs">
-        <NavLink
-          end
-          to="/intelligence"
-          className={({ isActive }) => `intel-tab${isActive ? ' intel-tab--active' : ''}`}
-        >
+        <NavLink end to="/intelligence" className={tab}>
           Сущности
         </NavLink>
-        <NavLink
-          to="/intelligence/sources"
-          className={({ isActive }) => `intel-tab${isActive ? ' intel-tab--active' : ''}`}
-        >
-          Источники
+        <NavLink end to="/intelligence/platforms" className={tab} data-intel-tab-platforms>
+          Профильные площадки
+        </NavLink>
+        <NavLink end to="/intelligence/sources" className={tab}>
+          Все источники
         </NavLink>
       </div>
       {children}
@@ -153,7 +226,14 @@ function Shell({ children, actions }: { children: React.ReactNode; actions?: Rea
 // ============================================================ сущности
 
 type EntitySortKey =
-  'type' | 'name' | 'organizationName' | 'sourceCount' | 'contact' | 'status' | 'updatedAt';
+  | 'type'
+  | 'name'
+  | 'organizationName'
+  | 'profileSources'
+  | 'mediaFacts'
+  | 'contact'
+  | 'status'
+  | 'updatedAt';
 
 export function IntelligencePage() {
   const navigate = useNavigate();
@@ -163,7 +243,7 @@ export function IntelligencePage() {
   const [q, setQ] = useState('');
   const [type, setType] = useState('');
   const [status, setStatus] = useState('');
-  const { sort, header } = useSort<EntitySortKey>('updatedAt', -1);
+  const { sort, header } = useSort<EntitySortKey>('profileSources', -1);
   const [adding, setAdding] = useState(false);
   const [importing, setImporting] = useState(false);
 
@@ -189,8 +269,11 @@ export function IntelligencePage() {
           return TYPE_LABEL[r.type];
         case 'status':
           return INTEL_STATUSES.indexOf(r.status);
-        case 'sourceCount':
-          return r.sourceCount;
+        case 'profileSources':
+          // При равном числе площадок выше та, у кого больше профильных фактов.
+          return r.metrics.uniqueProfileSources * 10000 + r.metrics.profileFacts;
+        case 'mediaFacts':
+          return r.metrics.mediaFacts;
         case 'contact':
           return contactOf(r);
         case 'organizationName':
@@ -207,7 +290,7 @@ export function IntelligencePage() {
           (!type || r.type === type) &&
           (!status || r.status === status) &&
           (!needle ||
-            [r.name, r.organizationName, r.description, r.email, r.notes, r.sourceNames]
+            [r.name, r.organizationName, r.description, r.email, r.notes]
               .filter(Boolean)
               .some((v) => v!.toLowerCase().includes(needle))),
       )
@@ -274,7 +357,7 @@ export function IntelligencePage() {
         <div className="intel-filters">
           <input
             type="search"
-            placeholder="Поиск: имя, организация, описание, почта, заметки, источник"
+            placeholder="Поиск: имя, организация, описание, почта, заметки"
             value={q}
             onChange={(e) => setQ(e.target.value)}
             data-intel-search
@@ -315,7 +398,18 @@ export function IntelligencePage() {
                     {header('type', 'Тип')}
                     {header('name', 'Название')}
                     {header('organizationName', 'Организация')}
-                    {header('sourceCount', 'Встречается', true)}
+                    {header(
+                      'profileSources',
+                      'Профильных площадок',
+                      true,
+                      'На скольких разных профильных площадках сущность подтверждённо замечена (в скобках — профильных фактов)',
+                    )}
+                    {header(
+                      'mediaFacts',
+                      'СМИ',
+                      true,
+                      'Подтверждённые упоминания в непрофильных источниках',
+                    )}
                     {header('contact', 'Контакт')}
                     {header('status', 'Статус')}
                     {header('updatedAt', 'Обновлено')}
@@ -338,17 +432,24 @@ export function IntelligencePage() {
                           <span
                             className="badge badge--warn"
                             style={{ marginLeft: 6 }}
-                            title="Есть запись с тем же именем и организацией или той же ссылкой"
+                            title="Есть запись того же типа с тем же нормализованным именем или той же ссылкой"
                           >
                             дубль?
                           </span>
                         ) : null}
                       </td>
                       <td className="small">{r.organizationName ?? '—'}</td>
-                      <td className="small" title={r.sourceNames ?? ''}>
-                        <strong>{r.sourceCount}</strong>
-                        {r.sourceNames ? <span className="muted"> · {r.sourceNames}</span> : null}
+                      <td className="small" data-intel-weight>
+                        <strong>{r.metrics.uniqueProfileSources}</strong>
+                        <span className="muted"> ({r.metrics.profileFacts})</span>
+                        {r.metrics.candidateFacts > 0 ? (
+                          <span className="muted" title="Кандидаты — не проверены, в вес не идут">
+                            {' '}
+                            +{r.metrics.candidateFacts}?
+                          </span>
+                        ) : null}
                       </td>
+                      <td className="small">{r.metrics.mediaFacts || '—'}</td>
                       <td className="small">{contactOf(r) || '—'}</td>
                       <td>
                         <span className={STATUS_BADGE[r.status]}>{STATUS_LABEL[r.status]}</span>
@@ -371,21 +472,28 @@ export function IntelligencePage() {
 // ============================================================ источники
 
 type SourceSortKey =
-  'name' | 'kind' | 'discovery' | 'structure' | 'parserPriority' | 'mentionCount' | 'updatedAt';
+  'name' | 'sourceType' | 'profile' | 'review' | 'parserPriority' | 'entityCount' | 'updatedAt';
 
 const LEVEL_ORDER: Record<string, number> = { high: 3, medium: 2, low: 1 };
 
-export function IntelligenceSourcesPage() {
+/**
+ * Список источников. `platformsOnly` — карта профильных площадок (ТЗ-
+ * перестройка §10): только разобранные и признанные профильными; СМИ и
+ * неразобранное туда не попадают.
+ */
+export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOnly?: boolean }) {
   const navigate = useNavigate();
   const [items, setItems] = useState<IntelSource[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [q, setQ] = useState('');
-  const [discovery, setDiscovery] = useState('');
+  const [profile, setProfile] = useState('');
+  const [review, setReview] = useState('');
   const [priority, setPriority] = useState('');
-  const { sort, header } = useSort<SourceSortKey>('mentionCount', -1);
+  const { sort, header } = useSort<SourceSortKey>('entityCount', -1);
   const [adding, setAdding] = useState(false);
 
   useEffect(() => {
+    setItems(null);
     api.intelligence
       .sources()
       .then((list) => setItems(list.items))
@@ -397,16 +505,16 @@ export function IntelligenceSourcesPage() {
     const needle = q.trim().toLowerCase();
     const value = (s: IntelSource): string | number => {
       switch (sort.key) {
-        case 'kind':
-          return s.kind ?? '';
-        case 'discovery':
-          return DISCOVERY_LABEL[s.discovery] ?? s.discovery;
-        case 'structure':
-          return LEVEL_ORDER[s.structure ?? ''] ?? 0;
+        case 'sourceType':
+          return s.sourceType ? (SOURCE_TYPE_LABEL[s.sourceType] ?? s.sourceType) : '';
+        case 'profile':
+          return s.isProfile === true ? 2 : s.isProfile === false ? 0 : 1;
+        case 'review':
+          return INTEL_REVIEW.indexOf(s.reviewStatus);
         case 'parserPriority':
           return LEVEL_ORDER[s.parserPriority ?? ''] ?? 0;
-        case 'mentionCount':
-          return s.mentionCount;
+        case 'entityCount':
+          return s.entityCount;
         case 'updatedAt':
           return s.updatedAt;
         default:
@@ -416,7 +524,12 @@ export function IntelligenceSourcesPage() {
     return items
       .filter(
         (s) =>
-          (!discovery || s.discovery === discovery) &&
+          (!platformsOnly || s.isProfile === true) &&
+          (!profile ||
+            (profile === 'yes' && s.isProfile === true) ||
+            (profile === 'no' && s.isProfile === false) ||
+            (profile === 'unknown' && s.isProfile === null)) &&
+          (!review || s.reviewStatus === review) &&
           (!priority || s.parserPriority === priority) &&
           (!needle ||
             [s.name, s.url, s.kind, s.description, s.obtainable, s.notes, s.viaEntityName]
@@ -424,7 +537,7 @@ export function IntelligenceSourcesPage() {
               .some((v) => v!.toLowerCase().includes(needle))),
       )
       .sort((a, b) => compare(value(a), value(b)) * sort.dir);
-  }, [items, q, discovery, priority, sort]);
+  }, [items, q, profile, review, priority, platformsOnly, sort]);
 
   return (
     <Shell
@@ -435,22 +548,26 @@ export function IntelligenceSourcesPage() {
       }
     >
       {error && <div className="alert alert--error">{error}</div>}
+      {platformsOnly ? (
+        <p className="small muted">
+          Карта профильных площадок: только источники, которые после разбора признаны площадками
+          инвестиционного рынка. СМИ, блоги и неразобранное — на вкладке «Все источники».
+        </p>
+      ) : null}
       {adding ? (
         <section className="card">
           <h2>Новый источник</h2>
           <p className="small muted">
-            Сайт или страница, где собраны участники рынка. Страница загружается, чтобы взять
-            заголовок; адрес сохраняется, даже если она сейчас не открывается. Адреса внутренней
-            сети сервер не загружает.
+            Сайт или страница. Страница загружается, чтобы взять заголовок; адрес сохраняется, даже
+            если она сейчас не открывается. Адреса внутренней сети сервер не загружает. Профильный
+            ли источник — решает разбор; можно указать сразу, если уже понятно.
           </p>
           <SourceForm
             submitLabel="Сохранить источник"
             onCancel={() => setAdding(false)}
             onSubmit={async (input) => {
               const created = await api.intelligence.createSource(input);
-              navigate(`/intelligence/sources/${created.source.id}`, {
-                state: { problem: created.problem },
-              });
+              navigate(`/intelligence/sources/${created.source.id}`);
             }}
           />
         </section>
@@ -465,11 +582,23 @@ export function IntelligenceSourcesPage() {
             onChange={(e) => setQ(e.target.value)}
             data-intel-source-search
           />
-          <select value={discovery} onChange={(e) => setDiscovery(e.target.value)}>
-            <option value="">Как найден — любой</option>
-            {INTEL_DISCOVERY.map((d) => (
-              <option key={d} value={d}>
-                {DISCOVERY_LABEL[d]}
+          {platformsOnly ? null : (
+            <select
+              value={profile}
+              onChange={(e) => setProfile(e.target.value)}
+              data-intel-profile-filter
+            >
+              <option value="">Профильные и нет</option>
+              <option value="yes">Только профильные</option>
+              <option value="no">Только непрофильные</option>
+              <option value="unknown">Не разобранные</option>
+            </select>
+          )}
+          <select value={review} onChange={(e) => setReview(e.target.value)}>
+            <option value="">Разбор — любой</option>
+            {INTEL_REVIEW.map((r) => (
+              <option key={r} value={r}>
+                {REVIEW_LABEL[r]}
               </option>
             ))}
           </select>
@@ -484,78 +613,89 @@ export function IntelligenceSourcesPage() {
         </div>
         {items === null ? (
           <div className="spinner">Загрузка…</div>
-        ) : items.length === 0 ? (
-          <p className="muted">Источников пока нет.</p>
         ) : (
           <>
             <div className="small muted" style={{ marginBottom: 6 }}>
               Показано {visible.length} из {items.length}
             </div>
-            <div className="intel-table-wrap">
-              <table className="table">
-                <thead>
-                  <tr>
-                    {header('name', 'Источник')}
-                    {header('kind', 'Тип')}
-                    {header('discovery', 'Как найден')}
-                    {header('structure', 'Структура', true)}
-                    {header('parserPriority', 'Парсер', true)}
-                    {header('mentionCount', 'Сущностей', true)}
-                    {header('updatedAt', 'Обновлён')}
-                  </tr>
-                </thead>
-                <tbody>
-                  {visible.map((s) => (
-                    <tr
-                      key={s.id}
-                      className="intel-row"
-                      data-intel-source-row={s.id}
-                      onClick={() => navigate(`/intelligence/sources/${s.id}`)}
-                    >
-                      <td>
-                        <Link
-                          to={`/intelligence/sources/${s.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          {s.name ?? s.domain ?? s.url}
-                        </Link>
-                        <div className="small muted">{s.domain ?? s.url}</div>
-                      </td>
-                      <td className="small">{s.kind ?? '—'}</td>
-                      <td className="small">
-                        {DISCOVERY_LABEL[s.discovery]}
-                        {s.viaEntityName ? (
-                          <div className="muted">от: {s.viaEntityName}</div>
-                        ) : null}
-                        {s.representsEntityName ? (
-                          <div className="muted">это: {s.representsEntityName}</div>
-                        ) : null}
-                      </td>
-                      <td className="small">{s.structure ? LEVEL_LABEL[s.structure] : '—'}</td>
-                      <td className="small">
-                        {s.parserPriority ? (
+            {visible.length === 0 ? (
+              <p className="muted">
+                {platformsOnly
+                  ? 'Профильных площадок пока нет: источники ещё не разобраны.'
+                  : 'Под отбор ничего не подходит.'}
+              </p>
+            ) : (
+              <div className="intel-table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      {header('name', 'Источник')}
+                      {header('sourceType', 'Тип')}
+                      {header('profile', 'Профильный', true)}
+                      {header('review', 'Разбор')}
+                      {header('parserPriority', 'Парсер', true)}
+                      {header('entityCount', 'Сущностей', true)}
+                      {header('updatedAt', 'Обновлён')}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((s) => (
+                      <tr
+                        key={s.id}
+                        className="intel-row"
+                        data-intel-source-row={s.id}
+                        onClick={() => navigate(`/intelligence/sources/${s.id}`)}
+                      >
+                        <td>
+                          <Link
+                            to={`/intelligence/sources/${s.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            {s.name ?? s.domain ?? s.url}
+                          </Link>
+                          <div className="small muted">
+                            {s.domain ?? s.url} · {DISCOVERY_LABEL[s.discovery]}
+                            {s.viaEntityName ? ` от «${s.viaEntityName}»` : ''}
+                          </div>
+                        </td>
+                        <td className="small">
+                          {s.sourceType ? SOURCE_TYPE_LABEL[s.sourceType] : (s.kind ?? '—')}
+                        </td>
+                        <td className="small">
                           <span
                             className={
-                              s.parserPriority === 'high' ? 'badge badge--ok' : 'badge badge--muted'
+                              s.isProfile === true
+                                ? 'badge badge--ok'
+                                : s.isProfile === false
+                                  ? 'badge badge--muted'
+                                  : 'badge badge--warn'
                             }
                           >
-                            {PRIORITY_LABEL[s.parserPriority]}
+                            {profileLabel(s.isProfile)}
                           </span>
-                        ) : (
-                          '—'
-                        )}
-                      </td>
-                      <td className="small">
-                        <strong>{s.mentionCount}</strong>
-                      </td>
-                      <td className="small muted">
-                        {new Date(s.updatedAt).toLocaleDateString('ru-RU')}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                        </td>
+                        <td className="small">{REVIEW_LABEL[s.reviewStatus]}</td>
+                        <td className="small">
+                          {s.parserPriority ? PRIORITY_LABEL[s.parserPriority] : '—'}
+                        </td>
+                        <td className="small">
+                          <strong>{s.entityCount}</strong>
+                          {s.factCount > s.verifiedCount ? (
+                            <span className="muted">
+                              {' '}
+                              · кандидатов {s.factCount - s.verifiedCount}
+                            </span>
+                          ) : null}
+                        </td>
+                        <td className="small muted">
+                          {new Date(s.updatedAt).toLocaleDateString('ru-RU')}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </>
         )}
       </section>
@@ -566,7 +706,7 @@ export function IntelligenceSourcesPage() {
 // ========================================================== форма сущности
 
 const emptyEntity = (): IntelEntityInput & { sourceUrl: string } => ({
-  type: 'investor',
+  type: 'person',
   name: '',
   organizationName: '',
   description: '',
@@ -626,13 +766,16 @@ function EntityForm({
               </option>
             ))}
           </select>
+          <div className="field__hint">
+            Человек — всегда «Человек»; инвестор, спикер, партнёр — роли в фактах.
+          </div>
         </div>
         <div className="field">
-          <label>Название / имя *</label>
+          <label>Название / ФИО *</label>
           <input value={form.name} onChange={set('name')} required maxLength={300} name="name" />
         </div>
         <div className="field">
-          <label>Организация</label>
+          <label>Основная организация</label>
           <input
             value={form.organizationName ?? ''}
             onChange={set('organizationName')}
@@ -642,7 +785,7 @@ function EntityForm({
         </div>
       </div>
       <div className="field">
-        <label>Описание</label>
+        <label>Краткое описание</label>
         <textarea rows={3} value={form.description ?? ''} onChange={set('description')} />
       </div>
       <div className="grid-2">
@@ -682,14 +825,13 @@ function EntityForm({
             name="sourceUrl"
           />
           <div className="field__hint">
-            Страница станет упоминанием в источнике того же сайта; если такого источника нет, он
-            будет заведён.
+            Станет фактом-кандидатом: подтвердить его можно в карточке, когда страница проверена.
           </div>
         </div>
       ) : null}
       <div className="grid-3">
         <div className="field">
-          <label>Статус</label>
+          <label>Статус работы</label>
           <select value={form.status} onChange={set('status')}>
             {INTEL_STATUSES.map((s) => (
               <option key={s} value={s}>
@@ -740,7 +882,11 @@ function FormButtons({
 
 // ========================================================= форма источника
 
-type SourceFormState = Required<{ [K in keyof IntelSourceInput]: string }>;
+type SourceFormState = Record<keyof IntelSourceInput, string>;
+
+const boolText = (v: boolean | null | undefined) =>
+  v === true ? 'true' : v === false ? 'false' : '';
+const textBool = (v: string) => (v === 'true' ? true : v === 'false' ? false : null);
 
 function sourceState(initial?: IntelSource): SourceFormState {
   return {
@@ -757,6 +903,12 @@ function sourceState(initial?: IntelSource): SourceFormState {
     viaEntityId: initial?.viaEntityId ?? '',
     representsEntityId: initial?.representsEntityId ?? '',
     notes: initial?.notes ?? '',
+    isProfile: boolText(initial?.isProfile),
+    sourceType: initial?.sourceType ?? '',
+    hasEvents: boolText(initial?.hasEvents),
+    hasParticipantLists: boolText(initial?.hasParticipantLists),
+    parseable: initial?.parseable ?? '',
+    reviewStatus: initial?.reviewStatus ?? 'unchecked',
   };
 }
 
@@ -782,7 +934,13 @@ function SourceForm({
     setBusy(true);
     setError(null);
     try {
-      await onSubmit({ ...form, url: form.url.trim() });
+      await onSubmit({
+        ...form,
+        url: form.url.trim(),
+        isProfile: textBool(form.isProfile),
+        hasEvents: textBool(form.hasEvents),
+        hasParticipantLists: textBool(form.hasParticipantLists),
+      });
     } catch (err) {
       setError(problemText(err, 'Источник не сохранён'));
     } finally {
@@ -802,6 +960,13 @@ function SourceForm({
           {labels[v]}
         </option>
       ))}
+    </select>
+  );
+  const tri = (key: keyof SourceFormState) => (
+    <select value={form[key]} onChange={set(key)} name={key}>
+      <option value="">не знаю</option>
+      <option value="true">да</option>
+      <option value="false">нет</option>
     </select>
   );
 
@@ -828,13 +993,39 @@ function SourceForm({
             placeholder="возьмётся из заголовка страницы"
           />
         </div>
+      </div>
+      <div className="grid-3">
+        <div className="field">
+          <label>Профильная площадка?</label>
+          <select value={form.isProfile} onChange={set('isProfile')} name="isProfile">
+            <option value="">не разобран</option>
+            <option value="true">профильный</option>
+            <option value="false">непрофильный</option>
+          </select>
+        </div>
         <div className="field">
           <label>Тип источника</label>
-          <input
-            value={form.kind}
-            onChange={set('kind')}
-            placeholder="каталог, клуб, медиа, мероприятие…"
-          />
+          {choice('sourceType', INTEL_SOURCE_TYPES, SOURCE_TYPE_LABEL)}
+        </div>
+        <div className="field">
+          <label>Разбор</label>
+          <select value={form.reviewStatus} onChange={set('reviewStatus')} name="reviewStatus">
+            {INTEL_REVIEW.map((r) => (
+              <option key={r} value={r}>
+                {REVIEW_LABEL[r]}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <div className="field">
+        <label>Кратко</label>
+        <textarea rows={2} value={form.description} onChange={set('description')} />
+      </div>
+      <div className="grid-2">
+        <div className="field">
+          <label>Что даёт</label>
+          <input value={form.obtainable} onChange={set('obtainable')} />
         </div>
         <div className="field">
           <label>Как найден</label>
@@ -847,15 +1038,19 @@ function SourceForm({
           </select>
         </div>
       </div>
-      <div className="field">
-        <label>Кратко</label>
-        <textarea rows={2} value={form.description} onChange={set('description')} />
-      </div>
-      <div className="field">
-        <label>Какие сущности можно получить</label>
-        <input value={form.obtainable} onChange={set('obtainable')} />
-      </div>
       <div className="grid-3">
+        <div className="field">
+          <label>Есть события</label>
+          {tri('hasEvents')}
+        </div>
+        <div className="field">
+          <label>Есть списки участников</label>
+          {tri('hasParticipantLists')}
+        </div>
+        <div className="field">
+          <label>Можно парсить</label>
+          {choice('parseable', INTEL_PARSEABLE, PARSEABLE_LABEL)}
+        </div>
         <div className="field">
           <label>Структурированность</label>
           {choice('structure', INTEL_LEVELS, LEVEL_LABEL)}
@@ -884,6 +1079,279 @@ function SourceForm({
         onCancel={onCancel}
       />
     </form>
+  );
+}
+
+// ================================================ выбор сущности в форме
+
+/**
+ * Выбор организации или события для факта: поиск по имени среди сущностей.
+ * Новую организацию заводят отдельно («Добавить сущность») — факт ссылается
+ * только на существующую, чтобы не плодить дубли опечатками.
+ */
+function EntityPicker({
+  value,
+  onChange,
+  placeholder,
+  name,
+}: {
+  value: { id: string; name: string } | null;
+  onChange: (next: { id: string; name: string } | null) => void;
+  placeholder: string;
+  name: string;
+}) {
+  const [q, setQ] = useState('');
+  const [options, setOptions] = useState<{ id: string; name: string; type: IntelType }[]>([]);
+
+  useEffect(() => {
+    const needle = q.trim();
+    if (needle.length < 2) {
+      setOptions([]);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      api.intelligence
+        .lookup(needle)
+        .then((r) => setOptions(r.items))
+        .catch(() => setOptions([]));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [q]);
+
+  if (value) {
+    return (
+      <div className="intel-picked" data-intel-picked={name}>
+        <span>{value.name}</span>
+        <button type="button" className="btn--ghost btn--sm" onClick={() => onChange(null)}>
+          ×
+        </button>
+      </div>
+    );
+  }
+  return (
+    <div className="intel-picker">
+      <input
+        value={q}
+        onChange={(e) => setQ(e.target.value)}
+        placeholder={placeholder}
+        data-intel-picker={name}
+      />
+      {options.length > 0 ? (
+        <ul className="intel-picker__list">
+          {options.map((o) => (
+            <li key={o.id}>
+              <button
+                type="button"
+                className="btn--ghost btn--sm"
+                onClick={() => {
+                  onChange({ id: o.id, name: o.name });
+                  setQ('');
+                  setOptions([]);
+                }}
+              >
+                {o.name} <span className="muted">· {TYPE_LABEL[o.type]}</span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
+// ================================================================ факты
+
+type FactState = {
+  url: string;
+  role: string;
+  action: string;
+  happenedOn: string;
+  happenedPrecision: 'day' | 'month' | 'year';
+  organization: { id: string; name: string } | null;
+  event: { id: string; name: string } | null;
+  verification: IntelVerification;
+  evidence: string;
+};
+
+const emptyFact = (): FactState => ({
+  url: '',
+  role: '',
+  action: '',
+  happenedOn: '',
+  happenedPrecision: 'day',
+  organization: null,
+  event: null,
+  verification: 'candidate',
+  evidence: '',
+});
+
+const factState = (f: IntelFact): FactState => ({
+  url: f.pageUrl ?? '',
+  role: f.role ?? '',
+  action: f.action ?? '',
+  happenedOn: f.happenedOn ?? '',
+  happenedPrecision: f.happenedPrecision ?? 'day',
+  organization: f.organizationId ? { id: f.organizationId, name: f.organizationName ?? '' } : null,
+  event: f.eventId ? { id: f.eventId, name: f.eventName ?? '' } : null,
+  verification: f.verification,
+  evidence: f.evidence ?? '',
+});
+
+const factPayload = (v: FactState): IntelFactInput => ({
+  role: v.role.trim() || null,
+  action: v.action.trim() || null,
+  happenedOn: v.happenedOn || null,
+  happenedPrecision: v.happenedOn ? v.happenedPrecision : null,
+  organizationId: v.organization?.id ?? null,
+  eventId: v.event?.id ?? null,
+  verification: v.verification,
+  evidence: v.evidence.trim() || null,
+});
+
+/** Поля факта: одинаковы при добавлении и правке. */
+function FactFields({
+  value,
+  onChange,
+  withUrl,
+}: {
+  value: FactState;
+  onChange: (next: FactState) => void;
+  withUrl: boolean;
+}) {
+  const set = (key: keyof FactState) => (e: { target: { value: string } }) =>
+    onChange({ ...value, [key]: e.target.value });
+  return (
+    <div className="intel-fact-form">
+      {withUrl ? (
+        <input
+          value={value.url}
+          onChange={set('url')}
+          placeholder="Конкретная страница: https://…"
+          className="intel-fact-form__wide"
+          data-intel-fact-url
+        />
+      ) : null}
+      <input
+        value={value.role}
+        onChange={set('role')}
+        placeholder="Роль: инвестор, спикер, managing partner…"
+        data-intel-fact-role
+      />
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          type="date"
+          value={value.happenedOn}
+          onChange={set('happenedOn')}
+          aria-label="Когда было"
+          data-intel-fact-date
+        />
+        <select
+          value={value.happenedPrecision}
+          onChange={set('happenedPrecision')}
+          aria-label="Точность даты"
+          style={{ width: 110 }}
+        >
+          <option value="day">день</option>
+          <option value="month">месяц</option>
+          <option value="year">год</option>
+        </select>
+      </div>
+      <EntityPicker
+        name="organization"
+        value={value.organization}
+        onChange={(organization) => onChange({ ...value, organization })}
+        placeholder="Организация: начните вводить название"
+      />
+      <EntityPicker
+        name="event"
+        value={value.event}
+        onChange={(event) => onChange({ ...value, event })}
+        placeholder="Событие: Demo Day, форум…"
+      />
+      <input
+        value={value.action}
+        onChange={set('action')}
+        placeholder="Что произошло: вложился в…, выступил про…, вошёл в жюри…"
+        className="intel-fact-form__wide"
+        data-intel-fact-action
+      />
+      <input
+        value={value.evidence}
+        onChange={set('evidence')}
+        placeholder="Цитата со страницы, подтверждающая факт"
+        className="intel-fact-form__wide"
+        data-intel-fact-evidence
+      />
+      <select
+        value={value.verification}
+        onChange={set('verification')}
+        data-intel-fact-verification
+      >
+        {INTEL_VERIFICATION.map((v) => (
+          <option key={v} value={v}>
+            {VERIFICATION_LABEL[v]}
+            {v === 'verified' ? ' — страница открыта, сущность на ней есть' : ''}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function sourceKindLabel(f: IntelFact): string {
+  if (f.ownSource) return 'собственный сайт';
+  if (f.isProfileSource === true) return 'профильная площадка';
+  if (f.isProfileSource === false) {
+    return f.sourceType ? (SOURCE_TYPE_LABEL[f.sourceType] ?? 'непрофильный') : 'непрофильный';
+  }
+  return 'источник не разобран';
+}
+
+function FactLine({ f, showEntity }: { f: IntelFact; showEntity?: boolean }) {
+  return (
+    <div>
+      {showEntity && f.entityName ? (
+        <div>
+          <Link to={`/intelligence/${f.entityId}`}>
+            <strong>{f.entityName}</strong>
+          </Link>
+          {f.entityType ? <span className="muted small"> · {TYPE_LABEL[f.entityType]}</span> : null}
+        </div>
+      ) : null}
+      <div>
+        {f.role ? <strong>{f.role}</strong> : null}
+        {f.organizationName ? (
+          <>
+            {f.role ? ' — ' : ''}
+            <Link to={`/intelligence/${f.organizationId}`}>{f.organizationName}</Link>
+          </>
+        ) : null}
+        {f.eventName ? (
+          <>
+            {' · '}
+            <Link to={`/intelligence/${f.eventId}`}>{f.eventName}</Link>
+          </>
+        ) : null}
+      </div>
+      {f.action ? <div>{f.action}</div> : null}
+      {f.evidence ? <div className="small muted">«{f.evidence}»</div> : null}
+      <div className="small">
+        <span className={VERIFICATION_BADGE[f.verification]}>
+          {VERIFICATION_LABEL[f.verification]}
+        </span>{' '}
+        <Link to={`/intelligence/sources/${f.sourceId}`}>
+          {f.sourceName ?? f.sourceDomain ?? f.sourceUrl}
+        </Link>{' '}
+        <span className="muted">· {sourceKindLabel(f)}</span>
+      </div>
+      {f.pageUrl ? (
+        <div className="small">
+          <a href={f.pageUrl} target="_blank" rel="noreferrer noopener">
+            {f.pageUrl}
+          </a>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -928,10 +1396,28 @@ export function IntelligenceCardPage() {
   }
 
   const e = card.entity;
+  const m = card.metrics;
   const characteristics = (e.attributes.characteristics ?? {}) as Record<string, string[]>;
   const fullText = typeof e.attributes.text === 'string' ? e.attributes.text : null;
   const phone = typeof e.attributes.phone === 'string' ? e.attributes.phone : null;
-  const distinctSources = new Set(card.mentions.map((m) => m.sourceDomain ?? m.sourceId)).size;
+  const merged = Array.isArray(e.attributes.merged)
+    ? (e.attributes.merged as { id: string; name: string; mergedAt?: string }[])
+    : [];
+
+  async function mergeIn(dropId: string, dropName: string) {
+    if (
+      !window.confirm(
+        `Объединить «${dropName}» в «${e.name}»? Факты, связи и ключи импорта переедут сюда, пустые поля дополнятся, а сведения дубля сохранятся в истории записи.`,
+      )
+    )
+      return;
+    try {
+      setCard(await api.intelligence.merge(e.id, dropId));
+      setNotice(`«${dropName}» объединена с этой записью.`);
+    } catch (err) {
+      setError(problemText(err, 'Записи не объединены'));
+    }
+  }
 
   return (
     <div data-page="intelligence-card">
@@ -943,8 +1429,7 @@ export function IntelligenceCardPage() {
           <h1>{e.name}</h1>
           <p className="page-hint">
             {TYPE_LABEL[e.type]}
-            {e.organizationName ? ` · ${e.organizationName}` : ''} · встречается на{' '}
-            <strong>{distinctSources}</strong> сайтах{' '}
+            {e.organizationName ? ` · ${e.organizationName}` : ''}{' '}
             <span className={STATUS_BADGE[e.status]}>{STATUS_LABEL[e.status]}</span>
           </p>
         </div>
@@ -986,15 +1471,71 @@ export function IntelligenceCardPage() {
       {notice && <div className="alert alert--ok">{notice}</div>}
       {card.duplicates.length > 0 ? (
         <div className="alert alert--info" data-intel-duplicates>
-          Возможный дубль — та же ссылка источника или те же имя и организация:{' '}
-          {card.duplicates.map((d, i) => (
-            <span key={d.id}>
-              {i > 0 ? ', ' : ''}
-              <Link to={`/intelligence/${d.id}`}>{d.name}</Link>
-            </span>
-          ))}
-          . Записи автоматически не объединяются.
+          Возможный дубль — тот же тип и то же имя без учёта кавычек и родовых слов, или та же
+          ссылка источника:
+          <ul style={{ margin: '6px 0 0' }}>
+            {card.duplicates.map((d) => (
+              <li key={d.id}>
+                <Link to={`/intelligence/${d.id}`}>{d.name}</Link>{' '}
+                <button
+                  type="button"
+                  className="btn--ghost btn--sm"
+                  data-intel-merge={d.id}
+                  onClick={() => void mergeIn(d.id, d.name)}
+                >
+                  Объединить сюда
+                </button>
+              </li>
+            ))}
+          </ul>
         </div>
+      ) : null}
+
+      <section className="card" data-intel-metrics>
+        <h2>Профильные показатели</h2>
+        <div className="intel-metrics">
+          <Metric
+            value={m.uniqueProfileSources}
+            label="профильных площадок"
+            hint="Разных профильных площадок, где сущность подтверждённо замечена. Собственный сайт не в счёт."
+          />
+          <Metric value={m.profileFacts} label="профильных фактов" />
+          <Metric
+            value={m.mediaFacts}
+            label="в СМИ и прочем"
+            hint="Подтверждённые упоминания в непрофильных источниках: обогащают профиль, в вес не идут."
+          />
+          <Metric
+            value={m.candidateFacts}
+            label="кандидатов"
+            hint="Не проверены, в показатели не идут."
+          />
+          <Metric value={dateLabel(m.firstProfileOn) ?? '—'} label="первое профильное появление" />
+          <Metric
+            value={dateLabel(m.lastProfileOn) ?? '—'}
+            label="последнее профильное появление"
+          />
+        </div>
+      </section>
+
+      {card.roles.length > 0 ? (
+        <section className="card" data-intel-roles>
+          <h2>Роли</h2>
+          <ul className="intel-roles">
+            {card.roles.map((r) => (
+              <li key={`${r.role}|${r.organizationId ?? ''}`}>
+                <strong>{r.role}</strong>
+                {r.organizationName ? (
+                  <>
+                    {' — '}
+                    <Link to={`/intelligence/${r.organizationId}`}>{r.organizationName}</Link>
+                  </>
+                ) : null}
+                <span className="muted small"> · фактов: {r.facts}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       ) : null}
 
       {editing ? (
@@ -1026,27 +1567,19 @@ export function IntelligenceCardPage() {
         <section className="card" data-intel-card>
           <h2>Основное</h2>
           <dl className="intel-dl">
-            <dt>Описание</dt>
-            <dd style={{ whiteSpace: 'pre-wrap' }}>{e.description ?? '—'}</dd>
-            <dt>Сайт</dt>
-            <dd>{e.websiteUrl ? <ExternalLink href={e.websiteUrl} /> : '—'}</dd>
-            <dt>Email</dt>
-            <dd>{e.email ?? '—'}</dd>
-            <dt>Telegram</dt>
-            <dd>{e.telegram ?? '—'}</dd>
-            <dt>LinkedIn</dt>
-            <dd>{e.linkedin ? <ExternalLink href={e.linkedin} /> : '—'}</dd>
-            {phone ? (
-              <>
-                <dt>Телефон</dt>
-                <dd>{phone}</dd>
-              </>
-            ) : null}
+            <DlRow title="Описание" value={<Pre text={e.description} />} />
+            <DlRow title="Основная организация" value={e.organizationName ?? '—'} />
+            <DlRow title="Сайт" value={e.websiteUrl ? <ExternalLink href={e.websiteUrl} /> : '—'} />
+            <DlRow title="Email" value={e.email ?? '—'} />
+            <DlRow title="Telegram" value={e.telegram ?? '—'} />
+            <DlRow title="LinkedIn" value={e.linkedin ? <ExternalLink href={e.linkedin} /> : '—'} />
+            {phone ? <DlRow title="Телефон" value={phone} /> : null}
             {Object.entries(characteristics).map(([title, values]) => (
               <DlRow key={title} title={title} value={values.join(', ')} />
             ))}
-            <dt>Заметки</dt>
-            <dd style={{ whiteSpace: 'pre-wrap' }}>{e.notes ?? '—'}</dd>
+            <DlRow title="Впервые обнаружена" value={formatDate(e.createdAt)} />
+            <DlRow title="Обновлена" value={formatDate(e.updatedAt)} />
+            <DlRow title="Заметки" value={<Pre text={e.notes} />} />
           </dl>
           {fullText ? (
             <details>
@@ -1059,28 +1592,60 @@ export function IntelligenceCardPage() {
         </section>
       )}
 
-      <MentionsBlock card={card} onChanged={setCard} onError={setError} />
+      <FactsBlock card={card} onChanged={setCard} onError={setError} />
+
+      {card.related.length > 0 ? (
+        <section className="card" data-intel-related>
+          <h2>Связи · {card.related.length}</h2>
+          <p className="small muted">
+            Факты других сущностей, где эта названа организацией или событием: партнёры фонда,
+            участники Demo Day, члены клуба.
+          </p>
+          <ul className="intel-sources">
+            {card.related.map((f) => (
+              <li key={f.id}>
+                <div className="intel-timeline__date small">
+                  {dateLabel(f.happenedOn, f.happenedPrecision) ?? (
+                    <span className="muted">без даты</span>
+                  )}
+                </div>
+                <div style={{ flex: 1 }}>
+                  <FactLine f={f} showEntity />
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
       <OwnSourcesBlock card={card} onChanged={setCard} onError={setError} />
 
-      <section className="card">
-        <h2>История</h2>
-        <dl className="intel-dl">
-          <dt>Создано</dt>
-          <dd>{formatDate(e.createdAt)}</dd>
-          <dt>Последнее изменение</dt>
-          <dd>{formatDate(e.updatedAt)}</dd>
-          {e.importSource ? (
-            <>
-              <dt>Импорт</dt>
-              <dd>
-                {e.importSource}
-                {e.importedAt ? ` · ${formatDate(e.importedAt)}` : ''}
-                {e.externalId ? ` · № ${e.externalId}` : ''}
-              </dd>
-            </>
-          ) : null}
-        </dl>
-      </section>
+      {merged.length > 0 ? (
+        <section className="card">
+          <h2>Объединённые записи</h2>
+          <ul className="small">
+            {merged.map((d) => (
+              <li key={d.id}>
+                {d.name}{' '}
+                {d.mergedAt ? <span className="muted">· {formatDate(d.mergedAt)}</span> : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+    </div>
+  );
+}
+
+function Pre({ text }: { text: string | null }) {
+  return <span style={{ whiteSpace: 'pre-wrap' }}>{text ?? '—'}</span>;
+}
+
+function Metric({ value, label, hint }: { value: number | string; label: string; hint?: string }) {
+  return (
+    <div className="intel-metric" title={hint}>
+      <div className="intel-metric__value">{value}</div>
+      <div className="small muted">{label}</div>
     </div>
   );
 }
@@ -1103,93 +1668,12 @@ function ExternalLink({ href }: { href: string }) {
   );
 }
 
-const MONTHS = ['янв', 'фев', 'мар', 'апр', 'май', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'];
-
-/** Дата события с той точностью, с какой она известна. */
-function happenedLabel(m: IntelMention): string | null {
-  if (!m.happenedOn) return null;
-  const [y, mo, d] = m.happenedOn.split('-');
-  if (m.happenedPrecision === 'year') return y!;
-  if (m.happenedPrecision === 'month') return `${MONTHS[Number(mo) - 1]} ${y}`;
-  return `${d}.${mo}.${y}`;
-}
-
-type TimelineState = {
-  context: string;
-  summary: string;
-  happenedOn: string;
-  happenedPrecision: 'day' | 'month' | 'year';
-};
-
-/** Поля хроники: роль, что делал, когда. Одинаковы при добавлении и правке. */
-function TimelineFields({
-  value,
-  onChange,
-}: {
-  value: TimelineState;
-  onChange: (next: TimelineState) => void;
-}) {
-  const set = (key: keyof TimelineState) => (e: { target: { value: string } }) =>
-    onChange({ ...value, [key]: e.target.value });
-  return (
-    <>
-      <input
-        value={value.context}
-        onChange={set('context')}
-        placeholder="Роль: спикер, жюри, инвестор раунда…"
-        style={{ flex: '1 1 200px' }}
-        data-intel-mention-context
-      />
-      <input
-        type="date"
-        value={value.happenedOn}
-        onChange={set('happenedOn')}
-        style={{ flex: '0 1 160px' }}
-        aria-label="Когда было"
-        data-intel-mention-date
-      />
-      <select
-        value={value.happenedPrecision}
-        onChange={set('happenedPrecision')}
-        style={{ flex: '0 1 120px' }}
-        aria-label="Точность даты"
-      >
-        <option value="day">день</option>
-        <option value="month">месяц</option>
-        <option value="year">год</option>
-      </select>
-      <input
-        value={value.summary}
-        onChange={set('summary')}
-        placeholder="Что делал: выступил про…, вложился в…, дал интервью о…"
-        style={{ flex: '1 1 100%' }}
-        data-intel-mention-summary
-      />
-    </>
-  );
-}
-
-const emptyTimeline = (): TimelineState => ({
-  context: '',
-  summary: '',
-  happenedOn: '',
-  happenedPrecision: 'day',
-});
-
-const timelinePayload = (v: TimelineState): IntelMentionInput => ({
-  context: v.context.trim() || null,
-  summary: v.summary.trim() || null,
-  happenedOn: v.happenedOn || null,
-  happenedPrecision: v.happenedOn ? v.happenedPrecision : null,
-});
-
 /**
- * Профиль сущности: хроника упоминаний.
- *
- * Сначала датированные события — новые сверху, затем найденное без даты. По
- * этой ленте видно, кто это и что делал, — основа для адресного письма.
+ * Хронология сущности (ТЗ-перестройка §7): факты по датам, новые сверху,
+ * затем без даты; отклонённые скрыты по умолчанию. У каждого — источник,
+ * профильный ли он, и статус проверки.
  */
-function MentionsBlock({
+function FactsBlock({
   card,
   onChanged,
   onError,
@@ -1198,121 +1682,114 @@ function MentionsBlock({
   onChanged: (card: IntelCard) => void;
   onError: (text: string) => void;
 }) {
-  const [url, setUrl] = useState('');
-  const [fields, setFields] = useState(emptyTimeline());
+  const [adding, setAdding] = useState(emptyFact());
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
-  const [draft, setDraft] = useState(emptyTimeline());
+  const [draft, setDraft] = useState(emptyFact());
+  const [showRejected, setShowRejected] = useState(false);
 
   async function add(e: React.FormEvent) {
     e.preventDefault();
     setBusy(true);
     try {
       onChanged(
-        await api.intelligence.addMention(card.entity.id, {
-          url: url.trim(),
-          ...timelinePayload(fields),
+        await api.intelligence.addFact(card.entity.id, {
+          url: adding.url.trim(),
+          ...factPayload(adding),
         }),
       );
-      setUrl('');
-      setFields(emptyTimeline());
+      setAdding(emptyFact());
     } catch (err) {
-      onError(problemText(err, 'Упоминание не добавлено'));
+      onError(problemText(err, 'Факт не добавлен'));
     } finally {
       setBusy(false);
     }
   }
 
-  async function save(e: React.FormEvent, mentionId: string) {
+  async function save(e: React.FormEvent, factId: string) {
     e.preventDefault();
     try {
-      onChanged(await api.intelligence.updateMention(mentionId, timelinePayload(draft)));
+      onChanged(await api.intelligence.updateFact(factId, factPayload(draft)));
       setEditing(null);
     } catch (err) {
-      onError(problemText(err, 'Упоминание не сохранено'));
+      onError(problemText(err, 'Факт не сохранён'));
     }
   }
 
-  async function remove(mentionId: string, label: string) {
-    if (!window.confirm(`Убрать упоминание: ${label}?`)) return;
+  async function remove(factId: string) {
+    if (
+      !window.confirm(
+        'Удалить факт? Чтобы сохранить след проверки, лучше отметить его отклонённым.',
+      )
+    )
+      return;
     try {
-      await api.intelligence.removeMention(mentionId);
+      await api.intelligence.removeFact(factId);
       onChanged(await api.intelligence.card(card.entity.id));
     } catch (err) {
-      onError(problemText(err, 'Упоминание не удалено'));
+      onError(problemText(err, 'Факт не удалён'));
     }
   }
 
-  const sources = new Set(card.mentions.map((m) => m.sourceDomain ?? m.sourceId)).size;
+  const rejected = card.facts.filter((f) => f.verification === 'rejected').length;
+  const shown = card.facts.filter((f) => showRejected || f.verification !== 'rejected');
 
   return (
-    <section className="card" data-intel-mentions>
-      <h2>
-        Профиль: где упоминается и что делал · {card.mentions.length}
-        <span className="small muted" style={{ fontWeight: 400 }}>
-          {' '}
-          (сайтов: {sources})
-        </span>
-      </h2>
-      {card.mentions.length === 0 ? <p className="muted small">Упоминаний пока нет.</p> : null}
+    <section className="card" data-intel-facts>
+      <h2>Хронология · {card.facts.length - rejected}</h2>
+      {card.facts.length === 0 ? <p className="muted small">Фактов пока нет.</p> : null}
+      {rejected > 0 ? (
+        <label className="small" style={{ display: 'flex', gap: 6, fontWeight: 400 }}>
+          <input
+            type="checkbox"
+            style={{ width: 'auto' }}
+            checked={showRejected}
+            onChange={(e) => setShowRejected(e.target.checked)}
+          />
+          Показать отклонённые ({rejected})
+        </label>
+      ) : null}
       <ul className="intel-sources">
-        {card.mentions.map((m) => (
-          <li key={m.id} data-intel-mention={m.id}>
+        {shown.map((f) => (
+          <li key={f.id} data-intel-fact={f.id} data-intel-fact-status={f.verification}>
             <div className="intel-timeline__date small">
-              {happenedLabel(m) ?? <span className="muted">без даты</span>}
-            </div>
-            <div style={{ flex: 1 }}>
-              {editing === m.id ? (
-                <form onSubmit={(e) => void save(e, m.id)} className="intel-filters">
-                  <TimelineFields value={draft} onChange={setDraft} />
-                  <button type="submit" className="btn--sm">
-                    Сохранить
-                  </button>
-                  <button
-                    type="button"
-                    className="btn--ghost btn--sm"
-                    onClick={() => setEditing(null)}
-                  >
-                    Отмена
-                  </button>
-                </form>
-              ) : (
-                <>
-                  {m.summary ? <div>{m.summary}</div> : null}
-                  <div className={m.summary ? 'small' : ''}>
-                    <Link to={`/intelligence/sources/${m.sourceId}`}>
-                      <strong>{m.sourceName ?? m.sourceDomain ?? m.sourceUrl}</strong>
-                    </Link>
-                    {m.context ? <span className="muted"> · {m.context}</span> : null}
-                  </div>
-                  {m.pageUrl ? (
-                    <div className="small">
-                      <a href={m.pageUrl} target="_blank" rel="noreferrer noopener">
-                        {m.pageUrl}
-                      </a>
-                    </div>
-                  ) : null}
-                  <div className="small muted">
-                    найдено {formatDate(m.foundAt)}
-                    {m.lastCheckedAt ? ` · проверено ${formatDate(m.lastCheckedAt)}` : ''}
-                  </div>
-                </>
+              {dateLabel(f.happenedOn, f.happenedPrecision) ?? (
+                <span className="muted">без даты</span>
               )}
             </div>
-            {editing === m.id ? null : (
+            <div style={{ flex: 1 }}>
+              {editing === f.id ? (
+                <form onSubmit={(e) => void save(e, f.id)}>
+                  <FactFields value={draft} onChange={setDraft} withUrl={false} />
+                  <div
+                    className="row-actions"
+                    style={{ justifyContent: 'flex-start', marginTop: 6 }}
+                  >
+                    <button type="submit" className="btn--sm">
+                      Сохранить
+                    </button>
+                    <button
+                      type="button"
+                      className="btn--ghost btn--sm"
+                      onClick={() => setEditing(null)}
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <FactLine f={f} />
+              )}
+            </div>
+            {editing === f.id ? null : (
               <div className="row-actions">
                 <button
                   type="button"
                   className="btn--ghost btn--sm"
-                  data-intel-mention-edit
+                  data-intel-fact-edit
                   onClick={() => {
-                    setEditing(m.id);
-                    setDraft({
-                      context: m.context ?? '',
-                      summary: m.summary ?? '',
-                      happenedOn: m.happenedOn ?? '',
-                      happenedPrecision: m.happenedPrecision ?? 'day',
-                    });
+                    setEditing(f.id);
+                    setDraft(factState(f));
                   }}
                 >
                   Изменить
@@ -1320,26 +1797,22 @@ function MentionsBlock({
                 <button
                   type="button"
                   className="btn--danger btn--sm"
-                  onClick={() => void remove(m.id, m.pageUrl ?? m.sourceUrl)}
+                  onClick={() => void remove(f.id)}
                 >
-                  Убрать
+                  Удалить
                 </button>
               </div>
             )}
           </li>
         ))}
       </ul>
-      <form onSubmit={(e) => void add(e)} className="intel-filters">
-        <input
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="Где ещё найдено: https://…"
-          style={{ flex: '1 1 100%' }}
-          data-intel-mention-url
-        />
-        <TimelineFields value={fields} onChange={setFields} />
-        <button type="submit" disabled={busy || !url.trim()}>
-          Добавить упоминание
+      <form onSubmit={(e) => void add(e)} data-intel-fact-add>
+        <h3 className="small" style={{ margin: '8px 0' }}>
+          Новый факт
+        </h3>
+        <FactFields value={adding} onChange={setAdding} withUrl />
+        <button type="submit" disabled={busy || !adding.url.trim()} style={{ marginTop: 6 }}>
+          Добавить факт
         </button>
       </form>
     </section>
@@ -1374,11 +1847,10 @@ function OwnSourcesBlock({
 
   return (
     <section className="card" data-intel-own-sources>
-      <h2>Сущность как источник</h2>
+      <h2>Собственные сайты и найденное от сущности</h2>
       <p className="small muted">
-        Сайт фонда с портфелем, страница клуба с участниками, мероприятие со спикерами — сама
-        сущность становится местом, где искать другие. Здесь же источники, найденные обратным
-        поиском от этой сущности.
+        Собственный сайт — источник сведений о сущности, но не независимое подтверждение: в её вес
+        он не идёт. Здесь же источники, найденные обратным поиском от неё.
       </p>
       {card.ownSources.length > 0 ? (
         <ul className="intel-sources">
@@ -1390,8 +1862,8 @@ function OwnSourcesBlock({
                 </Link>
                 <span className="muted small">
                   {' '}
-                  · {s.representsEntityId === e.id ? 'это сама сущность' : 'найден от неё'} ·
-                  сущностей в нём: {s.mentionCount}
+                  · {s.representsEntityId === e.id ? 'собственный сайт' : 'найден от неё'} ·{' '}
+                  {profileLabel(s.isProfile)}
                 </span>
                 <div className="small">{s.url}</div>
               </div>
@@ -1404,9 +1876,7 @@ function OwnSourcesBlock({
           value={url}
           onChange={(ev) => setUrl(ev.target.value)}
           placeholder={
-            e.websiteUrl
-              ? `Адрес (по умолчанию сайт: ${e.websiteUrl})`
-              : 'Адрес страницы: https://…'
+            e.websiteUrl ? `Адрес (по умолчанию сайт: ${e.websiteUrl})` : 'Адрес сайта: https://…'
           }
           data-intel-as-source-url
         />
@@ -1416,7 +1886,7 @@ function OwnSourcesBlock({
           disabled={busy || (!url.trim() && !e.websiteUrl)}
           data-intel-as-source
         >
-          Сделать источником
+          Отметить собственным сайтом
         </button>
       </form>
     </section>
@@ -1469,17 +1939,34 @@ export function IntelligenceSourceCardPage() {
     }
   }
 
+  const yesNo = (v: boolean | null) => (v === null ? '—' : v ? 'да' : 'нет');
+
   return (
     <div data-page="intelligence-source">
-      <Link to="/intelligence/sources" className="small">
-        ← Источники
+      <Link
+        to={s.isProfile ? '/intelligence/platforms' : '/intelligence/sources'}
+        className="small"
+      >
+        ← {s.isProfile ? 'Профильные площадки' : 'Источники'}
       </Link>
       <div className="page-head">
         <div>
           <h1>{s.name ?? s.domain ?? s.url}</h1>
           <p className="page-hint">
-            {s.kind ? `${s.kind} · ` : ''}
-            {DISCOVERY_LABEL[s.discovery]} · сущностей: <strong>{s.mentionCount}</strong>
+            <span
+              className={
+                s.isProfile === true
+                  ? 'badge badge--ok'
+                  : s.isProfile === false
+                    ? 'badge badge--muted'
+                    : 'badge badge--warn'
+              }
+            >
+              {profileLabel(s.isProfile)}
+            </span>{' '}
+            {s.sourceType ? `${SOURCE_TYPE_LABEL[s.sourceType]} · ` : ''}
+            {REVIEW_LABEL[s.reviewStatus]} · {DISCOVERY_LABEL[s.discovery]} · сущностей:{' '}
+            <strong>{s.entityCount}</strong>
           </p>
         </div>
         <div className="row-actions">
@@ -1489,9 +1976,9 @@ export function IntelligenceSourceCardPage() {
             onClick={() => setEditing(!editing)}
             data-intel-source-edit
           >
-            {editing ? 'Закрыть правку' : 'Редактировать'}
+            {editing ? 'Закрыть правку' : 'Разобрать / править'}
           </button>
-          {s.mentionCount === 0 ? (
+          {s.factCount === 0 ? (
             <button type="button" className="btn--danger btn--sm" onClick={() => void remove()}>
               Удалить
             </button>
@@ -1503,10 +1990,10 @@ export function IntelligenceSourceCardPage() {
 
       {editing ? (
         <section className="card">
-          <h2>Правка</h2>
+          <h2>Разбор источника</h2>
           <SourceForm
             initial={s}
-            submitLabel="Сохранить изменения"
+            submitLabel="Сохранить"
             onCancel={() => setEditing(false)}
             onSubmit={async (input) => {
               setCard(await api.intelligence.updateSource(s.id, input));
@@ -1523,7 +2010,10 @@ export function IntelligenceSourceCardPage() {
               <DlRow title="Заголовок страницы" value={s.title} />
             ) : null}
             <DlRow title="Кратко" value={s.description ?? '—'} />
-            <DlRow title="Какие сущности даёт" value={s.obtainable ?? '—'} />
+            <DlRow title="Что даёт" value={s.obtainable ?? '—'} />
+            <DlRow title="Есть события" value={yesNo(s.hasEvents)} />
+            <DlRow title="Есть списки участников" value={yesNo(s.hasParticipantLists)} />
+            <DlRow title="Можно парсить" value={s.parseable ? PARSEABLE_LABEL[s.parseable] : '—'} />
             <DlRow
               title="Структурированность"
               value={s.structure ? LEVEL_LABEL[s.structure] : '—'}
@@ -1545,7 +2035,7 @@ export function IntelligenceSourceCardPage() {
             ) : null}
             {s.representsEntityId ? (
               <DlRow
-                title="Это сама сущность"
+                title="Собственный сайт сущности"
                 value={
                   <Link to={`/intelligence/${s.representsEntityId}`}>{s.representsEntityName}</Link>
                 }
@@ -1553,20 +2043,17 @@ export function IntelligenceSourceCardPage() {
             ) : null}
             <DlRow title="Найден" value={formatDate(s.discoveredAt)} />
             <DlRow title="Проверен" value={s.lastCheckedAt ? formatDate(s.lastCheckedAt) : '—'} />
-            <DlRow
-              title="Заметки"
-              value={<span style={{ whiteSpace: 'pre-wrap' }}>{s.notes ?? '—'}</span>}
-            />
+            <DlRow title="Заметки" value={<Pre text={s.notes} />} />
           </dl>
         </section>
       )}
 
-      <section className="card" data-intel-source-mentions>
-        <h2>Сущности в источнике · {card.mentions.length}</h2>
-        {card.mentions.length === 0 ? (
+      <section className="card" data-intel-source-facts>
+        <h2>Факты из источника · {card.facts.length}</h2>
+        {card.facts.length === 0 ? (
           <p className="muted small">
-            Сущности из источника ещё не извлечены. Добавить упоминание можно из карточки сущности:
-            «Где найдено».
+            Из источника ещё ничего не извлечено. Факт добавляется в карточке сущности —
+            «Хронология».
           </p>
         ) : (
           <div className="intel-table-wrap">
@@ -1574,22 +2061,34 @@ export function IntelligenceSourceCardPage() {
               <thead>
                 <tr>
                   <th>Сущность</th>
-                  <th>Тип</th>
-                  <th>Роль / раздел</th>
+                  <th>Роль</th>
+                  <th>Когда</th>
+                  <th>Проверка</th>
                   <th>Страница</th>
                 </tr>
               </thead>
               <tbody>
-                {card.mentions.map((m) => (
-                  <tr key={m.id}>
+                {card.facts.map((f) => (
+                  <tr key={f.id}>
                     <td>
-                      <Link to={`/intelligence/${m.entityId}`}>{m.entityName}</Link>
+                      <Link to={`/intelligence/${f.entityId}`}>{f.entityName}</Link>
+                      {f.entityType ? (
+                        <div className="small muted">{TYPE_LABEL[f.entityType]}</div>
+                      ) : null}
                     </td>
-                    <td className="small">{TYPE_LABEL[m.entityType]}</td>
-                    <td className="small">{m.context ?? '—'}</td>
                     <td className="small">
-                      {m.pageUrl ? (
-                        <a href={m.pageUrl} target="_blank" rel="noreferrer noopener">
+                      {f.role ?? '—'}
+                      {f.organizationName ? ` — ${f.organizationName}` : ''}
+                    </td>
+                    <td className="small">{dateLabel(f.happenedOn, f.happenedPrecision) ?? '—'}</td>
+                    <td className="small">
+                      <span className={VERIFICATION_BADGE[f.verification]}>
+                        {VERIFICATION_LABEL[f.verification]}
+                      </span>
+                    </td>
+                    <td className="small">
+                      {f.pageUrl ? (
+                        <a href={f.pageUrl} target="_blank" rel="noreferrer noopener">
                           открыть
                         </a>
                       ) : (

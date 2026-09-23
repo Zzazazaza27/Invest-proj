@@ -705,3 +705,74 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+/* Показатели сущности: плитки в строку, переносятся на узком экране. */
+.intel-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+}
+
+.intel-metric {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.intel-metric__value {
+  font-size: 20px;
+  font-weight: 700;
+}
+
+.intel-roles {
+  margin: 0;
+  padding-left: 18px;
+}
+
+/* Форма факта: две колонки, длинные поля — во всю ширину. */
+.intel-fact-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.intel-fact-form__wide {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 640px) {
+  .intel-fact-form {
+    grid-template-columns: 1fr;
+  }
+}
+
+.intel-picker {
+  position: relative;
+}
+
+.intel-picker__list {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface);
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.intel-picker__list button {
+  width: 100%;
+  text-align: left;
+  border: 0;
+}
+
+.intel-picked {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 3px 3px 3px 10px;
+}

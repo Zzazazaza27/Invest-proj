@@ -27,7 +27,7 @@ export const GET_INVESTOR_CATALOGS: readonly GetInvestorCatalog[] = [
     storePart: '808184690301',
     type: 'fund',
   },
-  { key: 'business-angels', label: 'Бизнес-ангелы', storePart: '960638328541', type: 'investor' },
+  { key: 'business-angels', label: 'Бизнес-ангелы', storePart: '960638328541', type: 'person' },
   {
     key: 'investor-clubs',
     label: 'Клубы инвесторов',
@@ -45,14 +45,14 @@ export const GET_INVESTOR_CATALOGS: readonly GetInvestorCatalog[] = [
     key: 'venture-studios',
     label: 'Венчурные студии',
     storePart: '186154586061',
-    type: 'organization',
+    type: 'venture_studio',
     founderIsOrganization: true,
   },
   {
     key: 'grants-and-subsidies',
     label: 'Гранты и субсидии',
     storePart: '494791447563',
-    type: 'other',
+    type: 'program',
   },
   {
     key: 'economic-zones',

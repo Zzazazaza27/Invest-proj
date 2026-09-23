@@ -170,56 +170,103 @@ try {
     new URL(page.url()).pathname,
   );
 
-  console.warn('[2] Ручное добавление');
+  console.warn('[2] Ручное добавление: адрес из формы — кандидат');
   await addEntity({
     type: 'fund',
-    name: `${MARK} Фонд`,
+    name: MARK,
     org: 'MI Capital',
     source: `https://${HOST_A}/fund`,
   });
-  check('карточка открылась', (await page.locator('h1').innerText()).includes(`${MARK} Фонд`));
-  check(
-    'адрес из формы стал упоминанием',
-    (await page.locator('[data-intel-mentions]').innerText()).includes(`https://${HOST_A}/fund`),
-  );
-  const [site] = await sql(`SELECT source_url FROM intelligence.sources WHERE source_domain = $1`, [
-    HOST_A,
-  ]);
-  check('источник заведён на сайт, а не на страницу', site?.source_url === `https://${HOST_A}/`);
+  check('карточка открылась', (await page.locator('h1').innerText()).includes(MARK));
   const id = new URL(page.url()).pathname.split('/').pop();
-  await screenshot('card');
-
-  console.warn('[3] Хроника: второе упоминание с датой и правка');
-  await page.fill('[data-intel-mention-url]', `https://${HOST_B}/event-speakers`);
-  await page.fill('[data-intel-mention-context]', 'спикер');
-  await page.fill('[data-intel-mention-date]', '2026-05-14');
-  await page.fill('[data-intel-mention-summary]', 'выступил про ранние раунды');
-  await page.getByRole('button', { name: 'Добавить упоминание' }).click();
-  await page.waitForSelector('text=выступил про ранние раунды', { timeout: 10_000 });
-  const [{ n }] = await sql(
-    'SELECT count(DISTINCT source_id)::int AS n FROM intelligence.mentions WHERE entity_id = $1',
+  const [factA] = await sql(
+    `SELECT m.verification, s.source_url, s.is_profile FROM intelligence.mentions m
+       JOIN intelligence.sources s ON s.id = m.source_id WHERE m.entity_id = $1`,
     [id],
   );
-  check('сущность встречается в двух источниках', n === 2, `${n}`);
-  const first = page.locator('[data-intel-mention]').first();
+  check('адрес из формы — факт-кандидат', factA?.verification === 'candidate', factA?.verification);
   check(
-    'датированное событие — первым в хронике, с датой',
+    'источник заведён на сайт и не разобран',
+    factA?.source_url === `https://${HOST_A}/` && factA?.is_profile === null,
+  );
+  await screenshot('card');
+
+  console.warn('[3] Подтверждённый факт с организацией, профильная площадка, вес');
+  const [org] = await sql(
+    `SELECT id, name FROM intelligence.entities WHERE type = 'investor_club' ORDER BY name LIMIT 1`,
+  );
+  await page.fill('[data-intel-fact-add] [data-intel-fact-url]', `https://${HOST_B}/demo-day`);
+  await page.fill('[data-intel-fact-add] [data-intel-fact-role]', 'член жюри');
+  await page.fill('[data-intel-fact-add] [data-intel-fact-date]', '2026-05-14');
+  await page.fill('[data-intel-fact-add] [data-intel-fact-action]', 'оценивал питчи ранней стадии');
+  await page.fill('[data-intel-fact-add] [data-intel-fact-evidence]', 'В жюри — MI Capital');
+  if (org) {
+    await page.fill(
+      '[data-intel-fact-add] [data-intel-picker="organization"]',
+      org.name.slice(0, 6),
+    );
+    await page.locator('.intel-picker__list button', { hasText: org.name }).first().click();
+  }
+  await page.selectOption('[data-intel-fact-add] [data-intel-fact-verification]', 'verified');
+  await page.getByRole('button', { name: 'Добавить факт' }).click();
+  await page.waitForSelector('text=оценивал питчи ранней стадии', { timeout: 10_000 });
+  const first = page.locator('[data-intel-fact]').first();
+  check(
+    'датированный факт — первым в хронологии',
     (await first.innerText()).includes('14.05.2026'),
   );
-  await first.locator('[data-intel-mention-edit]').click();
-  await first.locator('select').selectOption('month');
+  check(
+    'подтверждённый факт на неразобранной площадке веса не даёт',
+    (await page.locator('[data-intel-metrics] .intel-metric__value').first().innerText()) === '0',
+  );
+  await first.locator('[data-intel-fact-edit]').click();
+  await first.locator('select').first().selectOption('month');
   await first.getByRole('button', { name: 'Сохранить', exact: true }).click();
-  await page.waitForSelector('[data-intel-mention] >> text=май 2026', { timeout: 10_000 });
+  await page.waitForSelector('[data-intel-fact] >> text=май 2026', { timeout: 10_000 });
   const [prec] = await sql(
-    `SELECT happened_on::text AS d, happened_precision AS p FROM intelligence.mentions
+    `SELECT happened_on::text AS d, happened_precision AS p, organization_id FROM intelligence.mentions
       WHERE entity_id = $1 AND happened_on IS NOT NULL`,
     [id],
   );
   check(
-    'точность даты сохранена, день не сдвинут',
-    prec?.p === 'month' && prec?.d === '2026-05-14',
+    'точность даты сохранена, день не сдвинут, организация на месте',
+    prec?.p === 'month' && prec?.d === '2026-05-14' && (!org || prec?.organization_id === org.id),
     `${prec?.d} ${prec?.p}`,
   );
+  if (org) {
+    check(
+      'роль с организацией видна в «Ролях»',
+      (await page.locator('[data-intel-roles]').innerText()).includes(org.name),
+    );
+  }
+
+  // Площадку размечаем профильной через её карточку — как это сделает человек.
+  const [srcB] = await sql(`SELECT id FROM intelligence.sources WHERE source_domain = $1`, [
+    HOST_B,
+  ]);
+  await page.goto(`${BASE}/intelligence/sources/${srcB.id}`, { waitUntil: 'networkidle' });
+  await page.click('[data-intel-source-edit]');
+  await page.selectOption('[data-intel-source-form] select[name="isProfile"]', 'true');
+  await page.selectOption('[data-intel-source-form] select[name="sourceType"]', 'demo_day');
+  await page.selectOption('[data-intel-source-form] select[name="reviewStatus"]', 'checked');
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await page.waitForSelector('text=Изменения сохранены', { timeout: 10_000 });
+  await page.goto(`${BASE}/intelligence/${id}`, { waitUntil: 'networkidle' });
+  const metric = await page.locator('[data-intel-metrics] .intel-metric__value').allInnerTexts();
+  check(
+    'профильная площадка: вес 1, кандидат 1 в вес не идёт',
+    metric[0] === '1' && metric[3] === '1',
+    metric.join(' / '),
+  );
+  if (org) {
+    await page.goto(`${BASE}/intelligence/${org.id}`, { waitUntil: 'networkidle' });
+    check(
+      'у организации в «Связях» видна наша сущность',
+      (await page.locator('[data-intel-related]').innerText()).includes(MARK),
+    );
+    await page.goto(`${BASE}/intelligence/${id}`, { waitUntil: 'networkidle' });
+  }
+
   await page.click('[data-intel-edit]');
   await page.locator('[data-intel-form] input[name="email"]').fill('hello@example.com');
   await page.getByRole('button', { name: 'Сохранить изменения' }).click();
@@ -231,11 +278,12 @@ try {
   const [status] = await sql('SELECT status FROM intelligence.entities WHERE id = $1', [id]);
   check('статус меняется из карточки', status?.status === 'interesting');
 
-  console.warn('[4] Дубль');
+  console.warn('[4] Дубль с кавычками и родовым словом');
   await page.goto(`${BASE}/intelligence`, { waitUntil: 'networkidle' });
-  await addEntity({ type: 'fund', name: `${MARK} Фонд`, org: 'MI Capital', source: '' });
+  await addEntity({ type: 'fund', name: `Фонд «${MARK}»`, org: '', source: '' });
+  const dupId = new URL(page.url()).pathname.split('/').pop();
   check(
-    'предупреждение о дубле показано',
+    '«Фонд «X»» узнан как дубль «X»',
     (await page.locator('[data-intel-duplicates]').count()) === 1,
   );
 
@@ -256,11 +304,28 @@ try {
   await page.selectOption('[data-intel-type]', '');
   await screenshot('table');
 
-  console.warn('[6] Источники: список и новый источник');
-  await page.getByRole('link', { name: 'Источники', exact: true }).click();
+  console.warn('[5б] Объединение дублей');
+  await page.goto(`${BASE}/intelligence/${id}`, { waitUntil: 'networkidle' });
+  page.once('dialog', (d) => void d.accept());
+  await page.click(`[data-intel-merge="${dupId}"]`);
+  await page.waitForSelector('text=объединена с этой записью', { timeout: 10_000 });
+  const [after] = await sql(
+    `SELECT (SELECT count(*)::int FROM intelligence.entities WHERE name LIKE $1) AS n,
+            (SELECT count(*)::int FROM intelligence.mentions WHERE entity_id = $2) AS facts`,
+    [`%${MARK}%`, id],
+  );
+  check(
+    'после объединения одна запись, факты на месте',
+    after.n === 1 && after.facts === 2,
+    `${after.n} / ${after.facts}`,
+  );
+
+  console.warn('[6] Источники и профильные площадки');
+  await page.goto(`${BASE}/intelligence/sources`, { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-intel-sources] table', { timeout: 15_000 });
   const [gi] = await sql(
-    `SELECT id, (SELECT count(*)::int FROM intelligence.mentions m WHERE m.source_id = s.id) AS n
+    `SELECT id, (SELECT count(DISTINCT entity_id)::int FROM intelligence.mentions m
+                  WHERE m.source_id = s.id) AS n
        FROM intelligence.sources s WHERE source_url = 'https://get-investor.ru/'`,
   );
   if (gi) {
@@ -272,20 +337,36 @@ try {
     );
   }
   await screenshot('sources-list');
-  // Профиль человека из обратного поиска — если исследование загружено.
+  await page.click('[data-intel-tab-platforms]');
+  await page.waitForSelector('[data-intel-sources]', { timeout: 15_000 });
+  const platforms = await page.locator('[data-intel-source-row]').count();
+  const [{ profileCount }] = await sql(
+    `SELECT count(*)::int AS "profileCount" FROM intelligence.sources WHERE is_profile`,
+  );
+  check(
+    'во вкладке «Профильные площадки» только профильные',
+    platforms === profileCount && platforms >= 1,
+    `${platforms} / ${profileCount}`,
+  );
+  check(
+    'размеченная площадка прогона — среди профильных',
+    (await page.locator(`[data-intel-source-row="${srcB.id}"]`).count()) === 1,
+  );
+  await screenshot('platforms');
+  // Профиль самого «богатого» фактами человека — для глаз.
   const [person] = await sql(
     `SELECT e.id FROM intelligence.entities e
-      WHERE EXISTS (SELECT 1 FROM intelligence.mentions m WHERE m.entity_id = e.id
-                    GROUP BY m.entity_id HAVING count(DISTINCT m.source_id) > 5)
-      LIMIT 1`,
+      JOIN intelligence.mentions m ON m.entity_id = e.id
+     WHERE e.type = 'person'
+     GROUP BY e.id ORDER BY count(*) DESC LIMIT 1`,
   );
   if (person) {
     await page.goto(`${BASE}/intelligence/${person.id}`, { waitUntil: 'networkidle' });
-    await page.waitForSelector('[data-intel-mentions]', { timeout: 15_000 });
+    await page.waitForSelector('[data-intel-facts]', { timeout: 15_000 });
     await screenshot('profile');
-    await page.goto(`${BASE}/intelligence/sources`, { waitUntil: 'networkidle' });
-    await page.waitForSelector('[data-intel-sources] table', { timeout: 15_000 });
   }
+  await page.goto(`${BASE}/intelligence/sources`, { waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-intel-sources] table', { timeout: 15_000 });
   await page.click('[data-intel-source-add]');
   await page.fill('[data-intel-source-form] input[name="url"]', 'http://127.0.0.1/admin/');
   await page.getByRole('button', { name: 'Сохранить источник' }).click();
@@ -335,7 +416,7 @@ try {
   check('непредвиденных ошибок в консоли нет', unexpected.length === 0, unexpected[0] ?? '');
 } finally {
   await browser.close();
-  await sql(`DELETE FROM intelligence.entities WHERE name LIKE $1`, [`${MARK}%`]);
+  await sql(`DELETE FROM intelligence.entities WHERE name LIKE $1`, [`%${MARK}%`]);
   await sql(
     `DELETE FROM intelligence.sources WHERE source_url = 'http://127.0.0.1/admin/' AND entity_id IS NULL`,
   );

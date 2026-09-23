@@ -276,26 +276,70 @@ function listOf<T>(schema: z.ZodType<T>) {
 
 export { ApiError };
 
-// --------------------------------------------------- Market Intelligence (M137)
+// --------------------------------------------------- Market Intelligence
 // Схемы живут здесь, а не в contracts: раздел внутренний, у ответов один
-// потребитель — эта админка.
+// потребитель — эта админка. Модель — docs/product/market-intelligence/README.md.
 
 export const INTEL_TYPES = [
   'person',
-  'investor',
   'organization',
   'fund',
   'investor_club',
   'accelerator',
+  'venture_studio',
   'bootcamp',
   'event',
+  'platform',
   'media',
   'corporation',
+  'program',
+  'project',
   'other',
 ] as const;
 export type IntelType = (typeof INTEL_TYPES)[number];
 export const INTEL_STATUSES = ['raw', 'reviewed', 'interesting', 'contacted', 'archived'] as const;
 export type IntelStatus = (typeof INTEL_STATUSES)[number];
+export const INTEL_LEVELS = ['high', 'medium', 'low'] as const;
+export const INTEL_CONTACTS = ['yes', 'partial', 'no'] as const;
+export const INTEL_ALIVE = ['yes', 'no', 'unknown'] as const;
+export const INTEL_DISCOVERY = ['direct', 'reverse', 'import', 'manual'] as const;
+export const INTEL_PARSEABLE = ['yes', 'partial', 'no'] as const;
+export const INTEL_REVIEW = ['unchecked', 'checked', 'unreachable'] as const;
+export const INTEL_VERIFICATION = ['verified', 'candidate', 'rejected'] as const;
+export type IntelVerification = (typeof INTEL_VERIFICATION)[number];
+export const INTEL_SOURCE_TYPES = [
+  'fund',
+  'investor_club',
+  'accelerator',
+  'venture_studio',
+  'incubator',
+  'bootcamp',
+  'demo_day',
+  'pitch_session',
+  'conference',
+  'competition',
+  'investment_platform',
+  'crowdinvesting',
+  'investor_catalog',
+  'startup_catalog',
+  'community',
+  'corporate_program',
+  'bank_program',
+  'university_program',
+  'gov_program',
+  'market_portal',
+  'aggregator',
+  'event_calendar',
+  'media',
+  'news',
+  'blog',
+  'telegram',
+  'general',
+  'speaker_agency',
+  'education',
+  'own_site',
+  'other',
+] as const;
 
 const IntelEntitySchema = z.object({
   id: z.string().uuid(),
@@ -319,17 +363,22 @@ const IntelEntitySchema = z.object({
 });
 export type IntelEntity = z.infer<typeof IntelEntitySchema>;
 
+const IntelMetricsSchema = z.object({
+  uniqueProfileSources: z.number(),
+  profileFacts: z.number(),
+  mediaFacts: z.number(),
+  verifiedFacts: z.number(),
+  candidateFacts: z.number(),
+  firstProfileOn: z.string().nullable(),
+  lastProfileOn: z.string().nullable(),
+});
+export type IntelMetrics = z.infer<typeof IntelMetricsSchema>;
+
 const IntelRowSchema = IntelEntitySchema.extend({
-  sourceCount: z.number(),
-  sourceNames: z.string().nullable(),
+  metrics: IntelMetricsSchema,
   duplicate: z.boolean(),
 });
 export type IntelRow = z.infer<typeof IntelRowSchema>;
-
-export const INTEL_LEVELS = ['high', 'medium', 'low'] as const;
-export const INTEL_CONTACTS = ['yes', 'partial', 'no'] as const;
-export const INTEL_ALIVE = ['yes', 'no', 'unknown'] as const;
-export const INTEL_DISCOVERY = ['direct', 'reverse', 'import', 'manual'] as const;
 
 const IntelSourceSchema = z.object({
   id: z.string().uuid(),
@@ -349,7 +398,15 @@ const IntelSourceSchema = z.object({
   viaEntityName: z.string().nullable(),
   representsEntityId: z.string().uuid().nullable(),
   representsEntityName: z.string().nullable(),
-  mentionCount: z.number(),
+  isProfile: z.boolean().nullable(),
+  sourceType: z.enum(INTEL_SOURCE_TYPES).nullable(),
+  hasEvents: z.boolean().nullable(),
+  hasParticipantLists: z.boolean().nullable(),
+  parseable: z.enum(INTEL_PARSEABLE).nullable(),
+  reviewStatus: z.enum(INTEL_REVIEW),
+  factCount: z.number(),
+  verifiedCount: z.number(),
+  entityCount: z.number(),
   discoveredAt: z.string(),
   lastCheckedAt: z.string().nullable(),
   updatedAt: z.string(),
@@ -357,37 +414,61 @@ const IntelSourceSchema = z.object({
 });
 export type IntelSource = z.infer<typeof IntelSourceSchema>;
 
-const IntelMentionSchema = z.object({
+const IntelFactSchema = z.object({
   id: z.string().uuid(),
   entityId: z.string().uuid(),
+  entityName: z.string().nullable(),
+  entityType: z.enum(INTEL_TYPES).nullable(),
   sourceId: z.string().uuid(),
+  sourceName: z.string().nullable(),
+  sourceUrl: z.string(),
+  sourceDomain: z.string().nullable(),
+  isProfileSource: z.boolean().nullable(),
+  sourceType: z.string().nullable(),
+  ownSource: z.boolean().nullable(),
   pageUrl: z.string().nullable(),
-  context: z.string().nullable(),
+  role: z.string().nullable(),
+  action: z.string().nullable(),
+  organizationId: z.string().uuid().nullable(),
+  organizationName: z.string().nullable(),
+  eventId: z.string().uuid().nullable(),
+  eventName: z.string().nullable(),
+  happenedOn: z.string().nullable(),
+  happenedPrecision: z.enum(['day', 'month', 'year']).nullable(),
+  verification: z.enum(INTEL_VERIFICATION),
+  verifiedAt: z.string().nullable(),
+  evidence: z.string().nullable(),
   notes: z.string().nullable(),
   foundAt: z.string(),
   lastCheckedAt: z.string().nullable(),
-  happenedOn: z.string().nullable(),
-  happenedPrecision: z.enum(['day', 'month', 'year']).nullable(),
-  summary: z.string().nullable(),
 });
-export type IntelMention = z.infer<typeof IntelMentionSchema>;
+export type IntelFact = z.infer<typeof IntelFactSchema>;
 
-export interface IntelMentionInput {
-  context?: string | null;
-  summary?: string | null;
+export interface IntelFactInput {
+  role?: string | null;
+  action?: string | null;
   happenedOn?: string | null;
   happenedPrecision?: 'day' | 'month' | 'year' | null;
+  organizationId?: string | null;
+  eventId?: string | null;
+  verification?: IntelVerification;
+  evidence?: string | null;
+  notes?: string | null;
 }
 
 const IntelCardSchema = z.object({
   entity: IntelEntitySchema,
-  mentions: z.array(
-    IntelMentionSchema.extend({
-      sourceName: z.string().nullable(),
-      sourceUrl: z.string(),
-      sourceDomain: z.string().nullable(),
+  metrics: IntelMetricsSchema,
+  roles: z.array(
+    z.object({
+      role: z.string(),
+      organizationId: z.string().uuid().nullable(),
+      organizationName: z.string().nullable(),
+      facts: z.number(),
     }),
   ),
+  facts: z.array(IntelFactSchema),
+  related: z.array(IntelFactSchema),
   ownSources: z.array(IntelSourceSchema),
   duplicates: z.array(
     z.object({
@@ -402,9 +483,7 @@ export type IntelCard = z.infer<typeof IntelCardSchema>;
 
 const IntelSourceCardSchema = z.object({
   source: IntelSourceSchema,
-  mentions: z.array(
-    IntelMentionSchema.extend({ entityName: z.string(), entityType: z.enum(INTEL_TYPES) }),
-  ),
+  facts: z.array(IntelFactSchema),
 });
 export type IntelSourceCard = z.infer<typeof IntelSourceCardSchema>;
 
@@ -422,6 +501,12 @@ export interface IntelSourceInput {
   viaEntityId?: string | null;
   representsEntityId?: string | null;
   notes?: string | null;
+  isProfile?: boolean | null;
+  sourceType?: string | null;
+  hasEvents?: boolean | null;
+  hasParticipantLists?: boolean | null;
+  parseable?: string | null;
+  reviewStatus?: string;
 }
 
 export interface IntelEntityInput {
@@ -438,7 +523,7 @@ export interface IntelEntityInput {
 }
 
 export const api = {
-  /** Market Intelligence (M137): сведения об участниках рынка. */
+  /** Market Intelligence: профильная база инвестиционного рынка. */
   intelligence: {
     list: (filter: { q?: string; type?: string; status?: string }) => {
       const params = new URLSearchParams();
@@ -451,6 +536,13 @@ export const api = {
         schema: listOf(IntelRowSchema),
       });
     },
+    lookup: (q: string) =>
+      client.request({
+        path: `/v1/admin/intelligence/lookup?q=${encodeURIComponent(q)}`,
+        schema: listOf(
+          z.object({ id: z.string().uuid(), name: z.string(), type: z.enum(INTEL_TYPES) }),
+        ),
+      }),
     card: (id: string) =>
       client.request({ path: `/v1/admin/intelligence/entities/${id}`, schema: IntelCardSchema }),
     create: (body: IntelEntityInput & { sourceUrl?: string | null }) =>
@@ -467,23 +559,30 @@ export const api = {
         body,
         schema: IntelCardSchema,
       }),
-    updateMention: (mentionId: string, body: IntelMentionInput) =>
+    merge: (keepId: string, dropId: string) =>
       client.request({
-        path: `/v1/admin/intelligence/mentions/${mentionId}`,
-        method: 'PATCH',
-        body,
+        path: `/v1/admin/intelligence/entities/${keepId}/merge`,
+        method: 'POST',
+        body: { dropId },
         schema: IntelCardSchema,
       }),
-    addMention: (id: string, body: IntelMentionInput & { url: string }) =>
+    addFact: (id: string, body: IntelFactInput & { url: string }) =>
       client.request({
-        path: `/v1/admin/intelligence/entities/${id}/mentions`,
+        path: `/v1/admin/intelligence/entities/${id}/facts`,
         method: 'POST',
         body,
         schema: IntelCardSchema,
       }),
-    removeMention: (mentionId: string) =>
+    updateFact: (factId: string, body: IntelFactInput) =>
       client.request({
-        path: `/v1/admin/intelligence/mentions/${mentionId}`,
+        path: `/v1/admin/intelligence/facts/${factId}`,
+        method: 'PATCH',
+        body,
+        schema: IntelCardSchema,
+      }),
+    removeFact: (factId: string) =>
+      client.request({
+        path: `/v1/admin/intelligence/facts/${factId}`,
         method: 'DELETE',
         schema: z.object({ ok: z.boolean() }),
       }),
