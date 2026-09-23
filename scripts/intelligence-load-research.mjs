@@ -130,7 +130,9 @@ const counts = { sources: 0, sourcesNew: 0, priorities: 0, mentions: 0, skipped:
 
 // ------------------------------------------------ §1.1 и §1.2: источники
 for (const r of tableRows('### 1.1.')) {
-  const [, name, kind, url, description, obtainable, struct, contact, date, isAlive] = r;
+  const [, name, kind, rawCell, description, obtainable, struct, contact, date, isAlive] = r;
+  // В ячейке бывает приписка («… (xlsx: …)») — берётся только сама ссылка.
+  const url = /^https?:\/\/\S+/.exec(rawCell)?.[0] ?? rawCell;
   if (!/^https?:\/\//.test(url)) {
     counts.skipped.push(`${name}: адрес не ссылка (${url})`);
     continue;
