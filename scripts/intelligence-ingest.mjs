@@ -281,7 +281,7 @@ async function upsertSource(s, run) {
     verification:
       oneOf(s.verification, ['candidate', 'verified', 'rejected']) ??
       (s.review_status === 'checked' ? 'verified' : 'candidate'),
-    reliability: oneOf(s.reliability, ['unassessed', 'reliable', 'doubtful']),
+    reliability: oneOf(s.reliability, ['unassessed', 'reliable', 'doubtful']) ?? 'unassessed',
     via_entity_id: via?.id ?? null,
     represents_entity_id: rep?.id ?? null,
     notes: text(s.notes, 20000),
@@ -291,12 +291,28 @@ async function upsertSource(s, run) {
   const cols = Object.keys(values);
   // Неразобранный источник принимает разбор целиком; разобранный — только
   // в пустые поля (правку человека загрузка не перетирает).
+  //
+  // Проверенность и достоверность обязательны (не бывают пустыми), поэтому
+  // правило «только в пустое» к ним не подходит: проверенность меняется,
+  // только пока площадка кандидат; достоверность — только пока не оценена.
+  // Решение человека («сомнительная», «отклонена») загрузка не перетирает.
+  const special = {
+    verification: `CASE WHEN intelligence.sources.verification = 'candidate'
+                        THEN EXCLUDED.verification
+                        ELSE intelligence.sources.verification END`,
+    reliability: `CASE WHEN intelligence.sources.reliability = 'unassessed'
+                       THEN EXCLUDED.reliability
+                       ELSE intelligence.sources.reliability END`,
+  };
   const setters = cols
     .map(
       (c) =>
-        `${c} = CASE WHEN intelligence.sources.review_status = 'unchecked'
+        `${c} = ${
+          special[c] ??
+          `CASE WHEN intelligence.sources.review_status = 'unchecked'
                      THEN coalesce(EXCLUDED.${c}, intelligence.sources.${c})
-                     ELSE coalesce(intelligence.sources.${c}, EXCLUDED.${c}) END`,
+                     ELSE coalesce(intelligence.sources.${c}, EXCLUDED.${c}) END`
+        }`,
     )
     .join(',\n');
   const [row] = await q(
