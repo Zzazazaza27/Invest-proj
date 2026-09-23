@@ -184,6 +184,17 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   'experts.experts': { kind: 'operational' },
   'experts.review_consensus': { kind: 'operational' },
 
+  // ----------------------------------------------------------- intelligence
+  // Market Intelligence (M137): владелец копит сведения о рынке руками и
+  // импортом. Сброс стенда не должен их уносить — поэтому `content`. В файлы
+  // пока не выгружается: у ручной записи нет естественного ключа (TODO.md).
+  'intelligence.entities': {
+    kind: 'content',
+    exportable: false,
+    note: 'админка → Market Intelligence',
+  },
+  'intelligence.sources': { kind: 'content', exportable: false, note: 'источники сущностей рынка' },
+
   // --------------------------------------------------------------- identity
   'identity.auth_identities': { kind: 'operational' },
   'identity.consent_events': { kind: 'journal' },

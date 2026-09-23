@@ -31,6 +31,7 @@ import { DealsPage } from './pages/DealsPage';
 import { UsersPage } from './pages/UsersPage';
 import { TestingSessionsPage } from './pages/TestingSessionsPage';
 import { UserCardPage } from './pages/UserCardPage';
+import { IntelligenceCardPage, IntelligencePage } from './pages/IntelligencePage';
 
 /**
  * Корень админки.
@@ -229,6 +230,16 @@ export function App() {
             <NavItem to="/round-packages" label="Пакеты раунда" />
           </NavGroup>
 
+          {/*
+            Market Intelligence — сведения о рынке для маркетинга и поиска
+            инвесторов. Не работа с участниками платформы, поэтому своя группа.
+          */}
+          {isAdmin ? (
+            <NavGroup title="Рынок">
+              <NavItem to="/intelligence" label="Market Intelligence" />
+            </NavGroup>
+          ) : null}
+
           <NavGroup title="Коммуникации">
             <NavItem to="/templates" label="Уведомления" />
             <NavItem to="/support" label="Поддержка" />
@@ -332,6 +343,8 @@ export function App() {
             <Route path="/flags" element={<FlagsPage />} />
             <Route path="/testing" element={<TestingSessionsPage />} />
             <Route path="/access" element={<AccessPage />} />
+            <Route path="/intelligence" element={<IntelligencePage />} />
+            <Route path="/intelligence/:id" element={<IntelligenceCardPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
         </main>

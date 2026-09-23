@@ -21,6 +21,8 @@ import { TemplatesService } from './admin/templates.service';
 import { AuthGuard } from './auth/guards';
 import { AccessContextService } from './auth/access-context.service';
 import { TestingController } from './testing/testing.controller';
+import { IntelligenceController } from './intelligence/intelligence.controller';
+import { IntelligenceService } from './intelligence/intelligence.service';
 import { TestingSessionsService } from './testing/testing-sessions.service';
 import { TokenVerifier } from './auth/token.verifier';
 import { AiGatewayClient } from './ai/ai-gateway.client';
@@ -158,6 +160,7 @@ import { S3Service } from './storage/s3.service';
   controllers: [
     HealthController,
     TestingController,
+    IntelligenceController,
     PricingController,
     ContentController,
     AdminContentController,
@@ -226,6 +229,7 @@ import { S3Service } from './storage/s3.service';
     TokenRevocationService,
     AccessContextService,
     TestingSessionsService,
+    IntelligenceService,
     LoginThrottleService,
     S3Service,
     IdentityService,

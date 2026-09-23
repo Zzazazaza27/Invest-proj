@@ -276,7 +276,176 @@ function listOf<T>(schema: z.ZodType<T>) {
 
 export { ApiError };
 
+// --------------------------------------------------- Market Intelligence (M137)
+// Схемы живут здесь, а не в contracts: раздел внутренний, у ответов один
+// потребитель — эта админка.
+
+export const INTEL_TYPES = [
+  'person',
+  'investor',
+  'organization',
+  'fund',
+  'investor_club',
+  'accelerator',
+  'bootcamp',
+  'event',
+  'media',
+  'corporation',
+  'other',
+] as const;
+export type IntelType = (typeof INTEL_TYPES)[number];
+export const INTEL_STATUSES = ['raw', 'reviewed', 'interesting', 'contacted', 'archived'] as const;
+export type IntelStatus = (typeof INTEL_STATUSES)[number];
+
+const IntelEntitySchema = z.object({
+  id: z.string().uuid(),
+  type: z.enum(INTEL_TYPES),
+  name: z.string(),
+  organizationName: z.string().nullable(),
+  description: z.string().nullable(),
+  websiteUrl: z.string().nullable(),
+  email: z.string().nullable(),
+  telegram: z.string().nullable(),
+  linkedin: z.string().nullable(),
+  status: z.enum(INTEL_STATUSES),
+  notes: z.string().nullable(),
+  attributes: z.record(z.string(), z.unknown()),
+  importSource: z.string().nullable(),
+  externalUrl: z.string().nullable(),
+  externalId: z.string().nullable(),
+  importedAt: z.string().nullable(),
+  createdAt: z.string(),
+  updatedAt: z.string(),
+});
+export type IntelEntity = z.infer<typeof IntelEntitySchema>;
+
+const IntelRowSchema = IntelEntitySchema.extend({
+  sourceCount: z.number(),
+  sourceDomains: z.string().nullable(),
+  duplicate: z.boolean(),
+});
+export type IntelRow = z.infer<typeof IntelRowSchema>;
+
+const IntelSourceSchema = z.object({
+  id: z.string().uuid(),
+  entityId: z.string().uuid().nullable(),
+  entityName: z.string().nullable(),
+  url: z.string(),
+  domain: z.string().nullable(),
+  title: z.string().nullable(),
+  discoveredAt: z.string(),
+  lastCheckedAt: z.string().nullable(),
+  notes: z.string().nullable(),
+});
+export type IntelSource = z.infer<typeof IntelSourceSchema>;
+
+const IntelCardSchema = z.object({
+  entity: IntelEntitySchema,
+  sources: z.array(IntelSourceSchema),
+  duplicates: z.array(
+    z.object({
+      id: z.string().uuid(),
+      name: z.string(),
+      type: z.string(),
+      organizationName: z.string().nullable(),
+    }),
+  ),
+});
+export type IntelCard = z.infer<typeof IntelCardSchema>;
+
+export interface IntelEntityInput {
+  type: IntelType;
+  name: string;
+  organizationName?: string | null;
+  description?: string | null;
+  websiteUrl?: string | null;
+  email?: string | null;
+  telegram?: string | null;
+  linkedin?: string | null;
+  status?: IntelStatus;
+  notes?: string | null;
+}
+
 export const api = {
+  /** Market Intelligence (M137): сведения об участниках рынка. */
+  intelligence: {
+    list: (filter: { q?: string; type?: string; status?: string }) => {
+      const params = new URLSearchParams();
+      if (filter.q) params.set('q', filter.q);
+      if (filter.type) params.set('type', filter.type);
+      if (filter.status) params.set('status', filter.status);
+      const qs = params.toString();
+      return client.request({
+        path: `/v1/admin/intelligence/entities${qs ? `?${qs}` : ''}`,
+        schema: listOf(IntelRowSchema),
+      });
+    },
+    card: (id: string) =>
+      client.request({ path: `/v1/admin/intelligence/entities/${id}`, schema: IntelCardSchema }),
+    create: (body: IntelEntityInput & { sourceUrl?: string | null }) =>
+      client.request({
+        path: '/v1/admin/intelligence/entities',
+        method: 'POST',
+        body,
+        schema: IntelCardSchema,
+      }),
+    update: (id: string, body: Partial<IntelEntityInput>) =>
+      client.request({
+        path: `/v1/admin/intelligence/entities/${id}`,
+        method: 'PATCH',
+        body,
+        schema: IntelCardSchema,
+      }),
+    addSource: (id: string, body: { url: string; title?: string | null; notes?: string | null }) =>
+      client.request({
+        path: `/v1/admin/intelligence/entities/${id}/sources`,
+        method: 'POST',
+        body,
+        schema: IntelCardSchema,
+      }),
+    removeSource: (sourceId: string) =>
+      client.request({
+        path: `/v1/admin/intelligence/sources/${sourceId}`,
+        method: 'DELETE',
+        schema: z.object({ ok: z.boolean() }),
+      }),
+    sources: (loose: boolean) =>
+      client.request({
+        path: `/v1/admin/intelligence/sources${loose ? '?loose=1' : ''}`,
+        schema: listOf(IntelSourceSchema),
+      }),
+    importUrl: (body: { url: string; entityId?: string | null }) =>
+      client.request({
+        path: '/v1/admin/intelligence/sources/import',
+        method: 'POST',
+        timeoutMs: 40_000,
+        body,
+        schema: z.object({
+          source: IntelSourceSchema,
+          fetched: z.boolean(),
+          problem: z.string().nullable(),
+        }),
+      }),
+    importGetInvestor: () =>
+      client.request({
+        path: '/v1/admin/intelligence/import/get-investor',
+        method: 'POST',
+        // Восемь каталогов по сети и несколько сотен записей: дольше обычного.
+        timeoutMs: 120_000,
+        schema: z.object({
+          report: z.array(
+            z.object({
+              catalog: z.string(),
+              fetched: z.number(),
+              created: z.number(),
+              updated: z.number(),
+              error: z.string().optional(),
+            }),
+          ),
+        }),
+      }),
+  },
+
   /**
    * Тестовые сессии (M129).
    *

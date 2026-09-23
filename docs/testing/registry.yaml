@@ -1286,6 +1286,25 @@ checks:
     purpose: 'Рендер-проверка экрана «Сделки» в админке (M097). Что проверяется: раздел в меню; сделка открывается и показывает транши, возвраты и начисления; «Зафиксировать возврат» записывает событие и пересчитывает возвращённую сум'
     confirmation: reviewed-in-code
 
+  - id: RND-ADMIN-INTELLIGENCE
+    file: scripts/render-check-admin-intelligence.mjs
+    command: UNICORN_ENTRY=web node scripts/render-check-admin-intelligence.mjs
+    kind: render
+    level: сквозной
+    runner: manual
+    asserts: 14
+    needs: [db, core, web]
+    effects:
+      [
+        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
+        'записи Market Intelligence прогона удаляются в finally по префиксу имени',
+        'INTEL_LIVE_IMPORT=1 ходит в интернет (get-investor.ru) и оставляет импортированные записи — это настоящие данные',
+      ]
+    studied: code
+    studiedOn: 2026-09-23
+    purpose: 'Рендер-проверка раздела Market Intelligence (M137). Что проверяется: раздел в меню по адресу /admin/intelligence; ручное добавление с источником; второй источник; правка и смена статуса; предупреждение о дубле; поиск и фильтры по типу и статусу; «Импорт URL» сохраняет адрес внутренней сети, но не загружает его.'
+    confirmation: reviewed-in-code
+
   - id: RND-ADMIN-QUESTIONS
     circuit: temp
     file: scripts/render-check-admin-questions.mjs
@@ -4220,6 +4239,7 @@ blocks:
         RND-STAFF-ACCESS,
         RND-TESTING-SESSIONS,
         CHK-TESTING-SESSIONS,
+        RND-ADMIN-INTELLIGENCE,
       ]
 
   содержимое:

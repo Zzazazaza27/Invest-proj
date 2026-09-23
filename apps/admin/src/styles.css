@@ -590,3 +590,93 @@ button:disabled {
     overflow-x: auto;
   }
 }
+
+/* ------------------------------------------------ Market Intelligence (M137) */
+
+.intel-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 12px;
+}
+
+.intel-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.intel-filters > input {
+  flex: 1 1 280px;
+}
+
+.intel-filters > select {
+  flex: 0 1 200px;
+  width: auto;
+}
+
+.intel-table-wrap {
+  overflow-x: auto;
+}
+
+.intel-row {
+  cursor: pointer;
+}
+
+.intel-row:hover td {
+  background: var(--u-bg-inset);
+}
+
+/* Заголовок колонки — кнопка сортировки, но выглядит заголовком. */
+.intel-sort,
+.intel-sort:hover:not(:disabled) {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+}
+
+[data-page='intelligence-card'] .row-actions select {
+  width: auto;
+}
+
+.intel-dl {
+  display: grid;
+  grid-template-columns: minmax(120px, 200px) 1fr;
+  gap: 6px 16px;
+  margin: 0 0 10px;
+}
+
+.intel-dl dt {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.intel-dl dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.intel-sources {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.intel-sources li {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 640px) {
+  .intel-dl {
+    grid-template-columns: 1fr;
+  }
+}
