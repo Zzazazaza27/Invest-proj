@@ -8,6 +8,8 @@ import {
   INTEL_LEVELS,
   INTEL_PARSEABLE,
   INTEL_RELIABILITY,
+  INTEL_CRAWL_EXTRACT,
+  INTEL_CRAWL_MODES,
   INTEL_REVIEW,
   INTEL_SOURCE_VERIFICATION,
   INTEL_SOURCE_TYPES,
@@ -141,6 +143,23 @@ const SOURCE_VERIFICATION_LABEL: Record<string, string> = {
   verified: 'подтверждена',
   rejected: 'отклонена',
 };
+const CRAWL_MODE_LABEL: Record<string, string> = {
+  off: 'не обходить',
+  daily: 'ежедневно',
+  weekly: 'еженедельно',
+};
+
+const CRAWL_EXTRACT_LABEL: Record<string, string> = {
+  announcements: 'анонсы',
+  jury: 'жюри',
+  speakers: 'спикеры',
+  deals: 'сделки',
+  portfolio: 'портфель',
+  team: 'команда',
+  calendar: 'календарь',
+  catalog: 'каталог участников',
+};
+
 const RELIABILITY_LABEL: Record<string, string> = {
   unassessed: 'не оценена',
   reliable: 'надёжная',
@@ -234,6 +253,9 @@ function Shell({ children, actions }: { children: React.ReactNode; actions?: Rea
         </NavLink>
         <NavLink end to="/intelligence/platforms" className={tab} data-intel-tab-platforms>
           Профильные площадки
+        </NavLink>
+        <NavLink end to="/intelligence/telegram" className={tab} data-intel-tab-telegram>
+          Telegram
         </NavLink>
         <NavLink end to="/intelligence/sources" className={tab}>
           Все источники
@@ -502,7 +524,13 @@ const LEVEL_ORDER: Record<string, number> = { high: 3, medium: 2, low: 1 };
  * перестройка §10): только разобранные и признанные профильными; СМИ и
  * неразобранное туда не попадают.
  */
-export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOnly?: boolean }) {
+export function IntelligenceSourcesPage({
+  platformsOnly = false,
+  telegramOnly = false,
+}: {
+  platformsOnly?: boolean;
+  telegramOnly?: boolean;
+}) {
   const navigate = useNavigate();
   const [items, setItems] = useState<IntelSource[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -510,6 +538,7 @@ export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOn
   const [profile, setProfile] = useState('');
   const [review, setReview] = useState('');
   const [priority, setPriority] = useState('');
+  const [crawl, setCrawl] = useState('');
   const { sort, header } = useSort<SourceSortKey>('entityCount', -1);
   const [adding, setAdding] = useState(false);
 
@@ -546,6 +575,8 @@ export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOn
       .filter(
         (s) =>
           (!platformsOnly || (s.isProfile === true && s.verification === 'verified')) &&
+          (!telegramOnly || s.sourceType === 'telegram') &&
+          (!crawl || (crawl === 'on' ? s.crawlMode !== 'off' : s.crawlMode === 'off')) &&
           (!profile ||
             (profile === 'yes' && s.isProfile === true) ||
             (profile === 'no' && s.isProfile === false) ||
@@ -558,7 +589,7 @@ export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOn
               .some((v) => v!.toLowerCase().includes(needle))),
       )
       .sort((a, b) => compare(value(a), value(b)) * sort.dir);
-  }, [items, q, profile, review, priority, platformsOnly, sort]);
+  }, [items, q, profile, review, priority, crawl, platformsOnly, telegramOnly, sort]);
 
   return (
     <Shell
@@ -573,6 +604,12 @@ export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOn
         <p className="small muted">
           Карта профильных площадок: только источники, которые после разбора признаны площадками
           инвестиционного рынка. СМИ, блоги и неразобранное — на вкладке «Все источники».
+        </p>
+      ) : null}
+      {telegramOnly ? (
+        <p className="small muted">
+          Telegram-каналы — такие же площадки, как сайты, выделены отдельной категорией. Канал
+          читается через открытое превью t.me/s/… без входа. Метка «обход» — для будущего краулера.
         </p>
       ) : null}
       {adding ? (
@@ -622,6 +659,11 @@ export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOn
                 {REVIEW_LABEL[r]}
               </option>
             ))}
+          </select>
+          <select value={crawl} onChange={(e) => setCrawl(e.target.value)} data-intel-crawl-filter>
+            <option value="">Обход — любой</option>
+            <option value="on">На обходе краулером</option>
+            <option value="off">Не обходится</option>
           </select>
           <select value={priority} onChange={(e) => setPriority(e.target.value)}>
             <option value="">Приоритет парсера — любой</option>
@@ -697,6 +739,13 @@ export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOn
                           {s.reliability === 'doubtful' ? (
                             <div>
                               <span className="badge badge--warn">сомнительная</span>
+                            </div>
+                          ) : null}
+                          {s.crawlMode !== 'off' ? (
+                            <div>
+                              <span className="badge badge--ok" data-intel-crawl-badge>
+                                обход: {CRAWL_MODE_LABEL[s.crawlMode]}
+                              </span>
                             </div>
                           ) : null}
                         </td>
@@ -943,6 +992,9 @@ function sourceState(initial?: IntelSource): SourceFormState {
     reviewStatus: initial?.reviewStatus ?? 'unchecked',
     verification: initial?.verification ?? 'candidate',
     reliability: initial?.reliability ?? 'unassessed',
+    crawlMode: initial?.crawlMode ?? 'off',
+    crawlExtract: (initial?.crawlExtract ?? []).join(','),
+    crawlRule: initial?.crawlRule ?? '',
   };
 }
 
@@ -974,6 +1026,8 @@ function SourceForm({
         isProfile: textBool(form.isProfile),
         hasEvents: textBool(form.hasEvents),
         hasParticipantLists: textBool(form.hasParticipantLists),
+        crawlExtract: form.crawlExtract ? form.crawlExtract.split(',') : [],
+        crawlRule: form.crawlRule.trim() || null,
       });
     } catch (err) {
       setError(problemText(err, 'Источник не сохранён'));
@@ -1075,6 +1129,53 @@ function SourceForm({
             Сомнительная хранит факты, но веса сущностям не добавляет.
           </div>
         </div>
+      </div>
+      <div className="grid-2" data-intel-crawl>
+        <div className="field">
+          <label>Обход краулером</label>
+          <select value={form.crawlMode} onChange={set('crawlMode')} name="crawlMode">
+            {INTEL_CRAWL_MODES.map((v) => (
+              <option key={v} value={v}>
+                {CRAWL_MODE_LABEL[v]}
+              </option>
+            ))}
+          </select>
+          <div className="field__hint">Метка для регулярного обхода; сам краулер — позже.</div>
+        </div>
+        <div className="field">
+          <label>Что снимать при обходе</label>
+          <div className="intel-checks">
+            {INTEL_CRAWL_EXTRACT.map((v) => {
+              const chosen = form.crawlExtract ? form.crawlExtract.split(',') : [];
+              return (
+                <label key={v} className="small">
+                  <input
+                    type="checkbox"
+                    name="crawlExtract"
+                    value={v}
+                    checked={chosen.includes(v)}
+                    onChange={(e) => {
+                      const next = e.target.checked
+                        ? [...chosen, v]
+                        : chosen.filter((x) => x !== v);
+                      setForm((f) => ({ ...f, crawlExtract: next.join(',') }));
+                    }}
+                  />{' '}
+                  {CRAWL_EXTRACT_LABEL[v]}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+      <div className="field">
+        <label>Правило обхода</label>
+        <input
+          value={form.crawlRule}
+          onChange={set('crawlRule')}
+          name="crawlRule"
+          placeholder="какой раздел или какие посты читать и что заносить в базу"
+        />
       </div>
       <div className="field">
         <label>Кратко</label>

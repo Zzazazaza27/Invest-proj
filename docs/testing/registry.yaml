@@ -1292,7 +1292,7 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 25
+    asserts: 27
     needs: [db, core, web]
     effects:
       [

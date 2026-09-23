@@ -89,6 +89,16 @@ const ENTITY_TYPES = new Set([
   'project',
   'other',
 ]);
+const CRAWL_EXTRACT = new Set([
+  'announcements',
+  'jury',
+  'speakers',
+  'deals',
+  'portfolio',
+  'team',
+  'calendar',
+  'catalog',
+]);
 const SOURCE_TYPES = new Set([
   'fund',
   'investor_club',
@@ -284,8 +294,19 @@ async function pageIsAbout(entityId, sourceId, pageUrl) {
   return row.about;
 }
 
+/**
+ * Адрес для сопоставления с источниками. Пост Telegram-канала
+ * (t.me/<канал>/<номер>) относится к площадке-каналу, записанной адресом
+ * открытого превью t.me/s/<канал>, — иначе он уезжал бы на общий t.me.
+ */
+function matchUrl(url) {
+  const m = /^https?:\/\/t\.me\/(?!s\/)([A-Za-z0-9_]+)\/(\d+)/.exec(url);
+  return m ? `https://t.me/s/${m[1]}/${m[2]}` : url;
+}
+
 /** Источник для страницы: этот адрес, иначе корень того же домена, иначе новый сайт. */
-async function resolveSourceForPage(url, discovery) {
+async function resolveSourceForPage(pageUrl, discovery) {
+  const url = matchUrl(pageUrl);
   const domain = domainOf(url);
   const [found] = await q(
     `SELECT id FROM intelligence.sources
@@ -337,6 +358,12 @@ async function upsertSource(s, run) {
       oneOf(s.verification, ['candidate', 'verified', 'rejected']) ??
       (s.review_status === 'checked' ? 'verified' : 'candidate'),
     reliability: oneOf(s.reliability, ['unassessed', 'reliable', 'doubtful']) ?? 'unassessed',
+    // Метка обхода краулером (M144): как часто и что снимать.
+    crawl_mode: oneOf(s.crawl_mode, ['off', 'daily', 'weekly']) ?? 'off',
+    crawl_extract: (Array.isArray(s.crawl_extract) ? s.crawl_extract : []).filter((v) =>
+      CRAWL_EXTRACT.has(v),
+    ),
+    crawl_rule: text(s.crawl_rule, 2000),
     via_entity_id: via?.id ?? null,
     represents_entity_id: rep?.id ?? null,
     notes: text(s.notes, 20000),
@@ -358,6 +385,13 @@ async function upsertSource(s, run) {
     reliability: `CASE WHEN intelligence.sources.reliability = 'unassessed'
                        THEN EXCLUDED.reliability
                        ELSE intelligence.sources.reliability END`,
+    // Метку обхода ставит загрузка, только пока её не ставил человек.
+    crawl_mode: `CASE WHEN intelligence.sources.crawl_mode = 'off'
+                      THEN EXCLUDED.crawl_mode
+                      ELSE intelligence.sources.crawl_mode END`,
+    crawl_extract: `CASE WHEN cardinality(intelligence.sources.crawl_extract) = 0
+                         THEN EXCLUDED.crawl_extract
+                         ELSE intelligence.sources.crawl_extract END`,
   };
   const setters = cols
     .map(

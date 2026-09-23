@@ -308,6 +308,17 @@ export const INTEL_REVIEW = ['unchecked', 'checked', 'unreachable'] as const;
 export const INTEL_VERIFICATION = ['verified', 'candidate', 'rejected'] as const;
 export const INTEL_SOURCE_VERIFICATION = ['candidate', 'verified', 'rejected'] as const;
 export const INTEL_RELIABILITY = ['unassessed', 'reliable', 'doubtful'] as const;
+export const INTEL_CRAWL_MODES = ['off', 'daily', 'weekly'] as const;
+export const INTEL_CRAWL_EXTRACT = [
+  'announcements',
+  'jury',
+  'speakers',
+  'deals',
+  'portfolio',
+  'team',
+  'calendar',
+  'catalog',
+] as const;
 export type IntelVerification = (typeof INTEL_VERIFICATION)[number];
 export const INTEL_SOURCE_TYPES = [
   'fund',
@@ -408,6 +419,9 @@ const IntelSourceSchema = z.object({
   reviewStatus: z.enum(INTEL_REVIEW),
   verification: z.enum(INTEL_SOURCE_VERIFICATION),
   reliability: z.enum(INTEL_RELIABILITY),
+  crawlMode: z.enum(INTEL_CRAWL_MODES),
+  crawlExtract: z.array(z.enum(INTEL_CRAWL_EXTRACT)),
+  crawlRule: z.string().nullable(),
   factCount: z.number(),
   verifiedCount: z.number(),
   entityCount: z.number(),
@@ -513,6 +527,9 @@ export interface IntelSourceInput {
   reviewStatus?: string;
   verification?: string;
   reliability?: string;
+  crawlMode?: string;
+  crawlExtract?: string[];
+  crawlRule?: string | null;
 }
 
 export interface IntelEntityInput {

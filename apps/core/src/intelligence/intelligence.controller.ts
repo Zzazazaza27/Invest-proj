@@ -12,6 +12,8 @@ import {
   LEVELS,
   PARSEABLE,
   RELIABILITY,
+  CRAWL_EXTRACT,
+  CRAWL_MODES,
   REVIEW,
   SOURCE_VERIFICATION,
   SOURCE_TYPES,
@@ -127,6 +129,9 @@ const SourceFieldsSchema = z.object({
   reviewStatus: z.enum(REVIEW).default('unchecked'),
   verification: z.enum(SOURCE_VERIFICATION).default('candidate'),
   reliability: z.enum(RELIABILITY).default('unassessed'),
+  crawlMode: z.enum(CRAWL_MODES).default('off'),
+  crawlExtract: z.array(z.enum(CRAWL_EXTRACT)).max(CRAWL_EXTRACT.length).default([]),
+  crawlRule: optionalText(2000),
 });
 
 const AsSourceSchema = z.object({

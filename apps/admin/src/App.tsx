@@ -353,6 +353,10 @@ export function App() {
               path="/intelligence/platforms"
               element={<IntelligenceSourcesPage platformsOnly />}
             />
+            <Route
+              path="/intelligence/telegram"
+              element={<IntelligenceSourcesPage telegramOnly />}
+            />
             <Route path="/intelligence/sources" element={<IntelligenceSourcesPage />} />
             <Route path="/intelligence/sources/:id" element={<IntelligenceSourceCardPage />} />
             <Route path="/intelligence/:id" element={<IntelligenceCardPage />} />

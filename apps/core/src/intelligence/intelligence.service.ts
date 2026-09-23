@@ -65,6 +65,18 @@ export const REVIEW = ['unchecked', 'checked', 'unreachable'] as const;
 export const VERIFICATION = ['verified', 'candidate', 'rejected'] as const;
 export const SOURCE_VERIFICATION = ['candidate', 'verified', 'rejected'] as const;
 export const RELIABILITY = ['unassessed', 'reliable', 'doubtful'] as const;
+/** Метка обхода краулером (M144): как часто и что снимать. */
+export const CRAWL_MODES = ['off', 'daily', 'weekly'] as const;
+export const CRAWL_EXTRACT = [
+  'announcements',
+  'jury',
+  'speakers',
+  'deals',
+  'portfolio',
+  'team',
+  'calendar',
+  'catalog',
+] as const;
 export const SOURCE_TYPES = [
   'fund',
   'investor_club',
@@ -136,6 +148,9 @@ export interface SourceFields {
   reviewStatus: (typeof REVIEW)[number];
   verification: (typeof SOURCE_VERIFICATION)[number];
   reliability: (typeof RELIABILITY)[number];
+  crawlMode: (typeof CRAWL_MODES)[number];
+  crawlExtract: (typeof CRAWL_EXTRACT)[number][];
+  crawlRule: string | null;
 }
 
 /** Факт: что, когда, в какой роли, с кем. Статус проверки — человека. */
@@ -206,6 +221,9 @@ interface SourceRow {
   review_status: SourceFields['reviewStatus'];
   verification: SourceFields['verification'];
   reliability: SourceFields['reliability'];
+  crawl_mode: SourceFields['crawlMode'];
+  crawl_extract: SourceFields['crawlExtract'];
+  crawl_rule: string | null;
   discovered_at: Date;
   last_checked_at: Date | null;
   updated_at: Date;
@@ -326,6 +344,9 @@ function sourceView(row: SourceRowExt) {
     reviewStatus: row.review_status,
     verification: row.verification,
     reliability: row.reliability,
+    crawlMode: row.crawl_mode,
+    crawlExtract: row.crawl_extract,
+    crawlRule: row.crawl_rule,
     factCount: Number(row.fact_count ?? 0),
     verifiedCount: Number(row.verified_count ?? 0),
     entityCount: Number(row.entity_count ?? 0),
@@ -467,7 +488,20 @@ const SOURCE_COLUMNS: Record<Exclude<keyof SourceFields, 'url'>, string> = {
   reviewStatus: 'review_status',
   verification: 'verification',
   reliability: 'reliability',
+  crawlMode: 'crawl_mode',
+  crawlExtract: 'crawl_extract',
+  crawlRule: 'crawl_rule',
 };
+
+/**
+ * Пост Telegram-канала (t.me/<канал>/<номер>) относится к площадке-каналу,
+ * записанной адресом открытого превью t.me/s/<канал>; без этого факт уезжал
+ * бы на общий источник t.me.
+ */
+function telegramPostAsPreview(url: string): string {
+  const m = /^https?:\/\/t\.me\/(?!s\/)([A-Za-z0-9_]+)\/(\d+)/.exec(url);
+  return m ? `https://t.me/s/${m[1]}/${m[2]}` : url;
+}
 
 @Injectable()
 export class IntelligenceService {
@@ -901,7 +935,8 @@ export class IntelligenceService {
    * того же домена (предпочитая корень), иначе — новый источник-сайт,
    * НЕРАЗОБРАННЫЙ: профильный он или нет, решает разбор, а не добавление.
    */
-  private async resolveSourceIn(tx: Tx, ctx: RequestContext, url: string): Promise<string> {
+  private async resolveSourceIn(tx: Tx, ctx: RequestContext, pageUrl: string): Promise<string> {
+    const url = telegramPostAsPreview(pageUrl);
     const domain = domainOf(url);
     const { rows } = await tx.query<{ id: string }>(
       `SELECT id FROM intelligence.sources

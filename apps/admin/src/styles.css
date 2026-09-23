@@ -776,3 +776,9 @@ button:disabled {
   border-radius: 7px;
   padding: 3px 3px 3px 10px;
 }
+
+.intel-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}

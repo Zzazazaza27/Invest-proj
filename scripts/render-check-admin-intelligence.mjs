@@ -380,6 +380,36 @@ try {
     (await page.locator(`[data-intel-source-row="${srcB.id}"]`).count()) === 1,
   );
   await screenshot('platforms');
+  // Telegram — отдельная категория площадок (M144): вкладка показывает только
+  // каналы, метка обхода краулером видна и отбирается фильтром.
+  const [{ tgCount, tgCrawl }] = await sql(
+    `SELECT count(*)::int AS "tgCount",
+            count(*) FILTER (WHERE crawl_mode <> 'off')::int AS "tgCrawl"
+       FROM intelligence.sources WHERE source_type = 'telegram'`,
+  );
+  await page.click('[data-intel-tab-telegram]');
+  await page.waitForURL(/\/intelligence\/telegram$/, { timeout: 15_000 });
+  await page
+    .waitForFunction(
+      (n) => globalThis.document.querySelectorAll('[data-intel-source-row]').length === n,
+      tgCount,
+      { timeout: 10_000 },
+    )
+    .catch(() => undefined);
+  check(
+    'во вкладке «Telegram» только каналы',
+    (await page.locator('[data-intel-source-row]').count()) === tgCount,
+    `${tgCount}`,
+  );
+  await page.selectOption('[data-intel-crawl-filter]', 'on');
+  const crawled = await page.locator('[data-intel-source-row]').count();
+  const badges = await page.locator('[data-intel-crawl-badge]').count();
+  check(
+    'фильтр «на обходе» — только помеченные, у каждой метка',
+    crawled === tgCrawl && badges === crawled,
+    `${crawled} / ${tgCrawl}, меток ${badges}`,
+  );
+  await screenshot('telegram');
   // Профиль самого «богатого» фактами человека — для глаз.
   const [person] = await sql(
     `SELECT e.id FROM intelligence.entities e
