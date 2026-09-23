@@ -1,0 +1,30 @@
+# Рамблер (движок Яндекса) «региональный венчурный фонд стартапы», страницы 1–20, Chrome владельца; 158 доменов, СМИ/глоссарии/брокеры отсечены. 2026-09-23
+1 i.moscow/ventures_list/
+2 rshb.ru/about/agrotech-projects
+3 ivf.tatarstan.ru/about_the_fund.htm
+3 itventure.ru/
+4 rb.ru/list/15-rossijskih-venchur-bilderov/
+4 investryazan.ru/ru/post/64
+6 afford.capital/ru
+6 mybiz63.ru/posts/news/portfelnyi-startap-vencurnog
+7 mr-group.ru/news/mr-group-sozdala-korporativnyy-ven
+8 tech-innovations.ru/
+8 znamus.ru/page/venturecapital
+8 samara.vc/
+9 ask-vc.org/jobs
+9 ipfund.ru/
+10 raiar.ru/invest/
+10 startup.network/
+12 up123.ru/
+12 startup-tour.ru/
+13 preqveca.ru/funds/
+13 sk.ru/foundation/international/regions/regrep
+14 frprf.ru/partnery/
+15 mostfund.vc/ru
+16 ysia.ru/venchurnaya-kompaniya-yakutiya-my-seem/
+16 rmpvo.ru/
+17 kr-rb.ru/gospodderzhka/finansovaya-podderzhka/
+17 nb-fund.ru/
+19 spbtech.ru/
+19 innokam.ru/
+# прочие — СМИ, глоссарии, брокеры, региональные новости — непрофильные.

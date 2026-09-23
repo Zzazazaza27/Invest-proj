@@ -1,0 +1,32 @@
+# Рамблер (движок Яндекса) «краудинвестинговая платформа инвестиции в стартапы», страницы 1–20, Chrome владельца; 136 доменов, СМИ/глоссарии/банки/краудфандинг общего профиля отсечены. 2026-09-23
+1 zapusk.tech/
+1 unicornbase.ru/investors/crowdinvesting
+1 crowdfin.ru/
+2 rounds.ru/organizations
+2 investmen.pro/
+2 platform.rostatus.ru/
+3 bizmall.ru/
+4 iplatform.vtbreg.ru/
+4 get-investor.ru/catalog/crowdfunding
+4 investor.potok.digital/
+5 brics-invest.club/
+6 starttrack.ru/
+7 xn--b1aghuwg.xn--p1ai/
+8 lender-invest.ru/
+10 xn----ctbjkcaaba6brxigai3e.xn--p1ai/
+10 ant-prom.ru/group/ant-investment
+12 invest.iidf.ru/
+12 rossip.ru/
+13 xn--e1afhkpll.xn--p1ai/
+14 crowdmonitor.ru/crowdinvesting/zapusk/
+14 investoffers.ru/investors
+15 hedlainer.ru/
+15 investshishka.com/
+16 smally.me/
+16 estateinvest.online/
+17 roscongress-invest.com/
+17 endowments.ru/
+18 platforma-online.ru/
+18 investprojects.info/
+19 vdelo.cloud/
+# прочие — СМИ, глоссарии, банковские блоги, краудфандинг и краудлендинг общего профиля — непрофильные.

@@ -1,0 +1,20 @@
+# Рамблер (движок Яндекса) «бизнес-инкубатор для стартапов буткемп», страницы 1–9 (дальше «ничего не найдено»), Chrome владельца; 73 домена, СМИ/глоссарии/зарубежные отсечены. 2026-09-23
+1 community.sfihub.com/bootcamp
+1 itpark.ru/predprenimatelyam/
+1 vcyakutia.ru/akselerator-b8-zapuskaet-bootcamp-dlya-
+1 rsbootcamp.com/
+2 sbi.tusur.ru/
+2 mostbi.com/
+2 ioe.hse.ru/stand_up_and_fight/
+2 wtg-group.com/services/incubator/
+3 jetbrains.com/ru-ru/company/incubators/
+4 platrum.ru/bootcamp
+4 vk.ru/binkubator
+5 developers.sber.ru/kak-v-sbere/bootcamp
+6 startup-course.com/
+7 tpykt.ru/accelerator/
+7 bricsincubator.com/ru
+8 venture-news.ru/53431-vypusknik-biznes-inkubatora-it-pa
+9 bcamp.pro/
+9 binkrm.ru/
+# прочие — СМИ, глоссарии, зарубежные буткемпы, научные статьи — непрофильные.
