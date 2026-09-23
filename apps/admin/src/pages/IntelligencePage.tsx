@@ -7,7 +7,9 @@ import {
   INTEL_DISCOVERY,
   INTEL_LEVELS,
   INTEL_PARSEABLE,
+  INTEL_RELIABILITY,
   INTEL_REVIEW,
+  INTEL_SOURCE_VERIFICATION,
   INTEL_SOURCE_TYPES,
   INTEL_STATUSES,
   INTEL_TYPES,
@@ -133,6 +135,25 @@ const DISCOVERY_LABEL: Record<string, string> = {
   import: 'импорт',
   manual: 'вручную',
 };
+
+const SOURCE_VERIFICATION_LABEL: Record<string, string> = {
+  candidate: 'кандидат',
+  verified: 'подтверждена',
+  rejected: 'отклонена',
+};
+const RELIABILITY_LABEL: Record<string, string> = {
+  unassessed: 'не оценена',
+  reliable: 'надёжная',
+  doubtful: 'сомнительная',
+};
+
+/**
+ * Добавляет ли площадка вес сущностям: профильная, подтверждённая и не
+ * сомнительная. Та же формула, что WEIGHTED_SOURCE на сервере.
+ */
+function weighs(s: IntelSource): boolean {
+  return s.isProfile === true && s.verification === 'verified' && s.reliability !== 'doubtful';
+}
 
 function profileLabel(value: boolean | null): string {
   return value === true ? 'профильный' : value === false ? 'непрофильный' : 'не разобран';
@@ -524,7 +545,7 @@ export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOn
     return items
       .filter(
         (s) =>
-          (!platformsOnly || s.isProfile === true) &&
+          (!platformsOnly || (s.isProfile === true && s.verification === 'verified')) &&
           (!profile ||
             (profile === 'yes' && s.isProfile === true) ||
             (profile === 'no' && s.isProfile === false) ||
@@ -673,8 +694,19 @@ export function IntelligenceSourcesPage({ platformsOnly = false }: { platformsOn
                           >
                             {profileLabel(s.isProfile)}
                           </span>
+                          {s.reliability === 'doubtful' ? (
+                            <div>
+                              <span className="badge badge--warn">сомнительная</span>
+                            </div>
+                          ) : null}
                         </td>
-                        <td className="small">{REVIEW_LABEL[s.reviewStatus]}</td>
+                        <td className="small">
+                          {SOURCE_VERIFICATION_LABEL[s.verification]}
+                          <div className="muted">
+                            {REVIEW_LABEL[s.reviewStatus]}
+                            {weighs(s) ? ' · даёт вес' : ''}
+                          </div>
+                        </td>
                         <td className="small">
                           {s.parserPriority ? PRIORITY_LABEL[s.parserPriority] : '—'}
                         </td>
@@ -909,6 +941,8 @@ function sourceState(initial?: IntelSource): SourceFormState {
     hasParticipantLists: boolText(initial?.hasParticipantLists),
     parseable: initial?.parseable ?? '',
     reviewStatus: initial?.reviewStatus ?? 'unchecked',
+    verification: initial?.verification ?? 'candidate',
+    reliability: initial?.reliability ?? 'unassessed',
   };
 }
 
@@ -1016,6 +1050,30 @@ function SourceForm({
               </option>
             ))}
           </select>
+        </div>
+        <div className="field">
+          <label>Площадка проверена</label>
+          <select value={form.verification} onChange={set('verification')} name="verification">
+            {INTEL_SOURCE_VERIFICATION.map((v) => (
+              <option key={v} value={v}>
+                {SOURCE_VERIFICATION_LABEL[v]}
+              </option>
+            ))}
+          </select>
+          <div className="field__hint">Подтверждена — открыта и классифицирована.</div>
+        </div>
+        <div className="field">
+          <label>Достоверность для карты рынка</label>
+          <select value={form.reliability} onChange={set('reliability')} name="reliability">
+            {INTEL_RELIABILITY.map((v) => (
+              <option key={v} value={v}>
+                {RELIABILITY_LABEL[v]}
+              </option>
+            ))}
+          </select>
+          <div className="field__hint">
+            Сомнительная хранит факты, но веса сущностям не добавляет.
+          </div>
         </div>
       </div>
       <div className="field">
@@ -1965,8 +2023,11 @@ export function IntelligenceSourceCardPage() {
               {profileLabel(s.isProfile)}
             </span>{' '}
             {s.sourceType ? `${SOURCE_TYPE_LABEL[s.sourceType]} · ` : ''}
-            {REVIEW_LABEL[s.reviewStatus]} · {DISCOVERY_LABEL[s.discovery]} · сущностей:{' '}
+            площадка {SOURCE_VERIFICATION_LABEL[s.verification]} · достоверность:{' '}
+            {RELIABILITY_LABEL[s.reliability]} · {DISCOVERY_LABEL[s.discovery]} · сущностей:{' '}
             <strong>{s.entityCount}</strong>
+            {' · '}
+            {weighs(s) ? 'даёт вес сущностям' : 'веса не даёт'}
           </p>
         </div>
         <div className="row-actions">

@@ -63,6 +63,8 @@ export const DISCOVERY = ['direct', 'reverse', 'import', 'manual'] as const;
 export const PARSEABLE = ['yes', 'partial', 'no'] as const;
 export const REVIEW = ['unchecked', 'checked', 'unreachable'] as const;
 export const VERIFICATION = ['verified', 'candidate', 'rejected'] as const;
+export const SOURCE_VERIFICATION = ['candidate', 'verified', 'rejected'] as const;
+export const RELIABILITY = ['unassessed', 'reliable', 'doubtful'] as const;
 export const SOURCE_TYPES = [
   'fund',
   'investor_club',
@@ -132,6 +134,8 @@ export interface SourceFields {
   hasParticipantLists: boolean | null;
   parseable: (typeof PARSEABLE)[number] | null;
   reviewStatus: (typeof REVIEW)[number];
+  verification: (typeof SOURCE_VERIFICATION)[number];
+  reliability: (typeof RELIABILITY)[number];
 }
 
 /** Факт: что, когда, в какой роли, с кем. Статус проверки — человека. */
@@ -200,6 +204,8 @@ interface SourceRow {
   has_participant_lists: boolean | null;
   parseable: SourceFields['parseable'];
   review_status: SourceFields['reviewStatus'];
+  verification: SourceFields['verification'];
+  reliability: SourceFields['reliability'];
   discovered_at: Date;
   last_checked_at: Date | null;
   updated_at: Date;
@@ -318,6 +324,8 @@ function sourceView(row: SourceRowExt) {
     hasParticipantLists: row.has_participant_lists,
     parseable: row.parseable,
     reviewStatus: row.review_status,
+    verification: row.verification,
+    reliability: row.reliability,
     factCount: Number(row.fact_count ?? 0),
     verifiedCount: Number(row.verified_count ?? 0),
     entityCount: Number(row.entity_count ?? 0),
@@ -373,30 +381,37 @@ function likeEscape(value: string): string {
 }
 
 /**
+ * Площадка, которая добавляет вес (решение владельца 2026-09-23): профильная,
+ * ПОДТВЕРЖДЁННАЯ (открыта и классифицирована) и не помеченная сомнительной.
+ * Собственный сайт сущности не в счёт. Сомнительная площадка хранит факты —
+ * они видны в хронике, — но веса не добавляет.
+ */
+const WEIGHTED_SOURCE = `s.is_profile AND s.verification = 'verified'
+                  AND s.reliability <> 'doubtful'
+                  AND s.represents_entity_id IS DISTINCT FROM e.id`;
+
+/**
  * Показатели сущности `e` (ТЗ-перестройка §6, §11). Только подтверждённые
- * факты; собственный сайт сущности (represents_entity_id = она сама) не в
- * счёт; «медийные» — на источниках, которые РАЗОБРАНЫ как непрофильные
- * (неразобранные не причисляются никуда).
+ * факты. «Профильные» — на площадках WEIGHTED_SOURCE; «медийные» — на
+ * источниках, которые РАЗОБРАНЫ как непрофильные (неразобранные, не
+ * открывшиеся и сомнительные не причисляются никуда).
  */
 const METRICS_LATERAL = `
   LEFT JOIN LATERAL (
     SELECT
       count(DISTINCT coalesce(s.source_domain, s.id::text))
-        FILTER (WHERE m.verification = 'verified' AND s.is_profile
-                  AND s.represents_entity_id IS DISTINCT FROM e.id) AS profile_sources,
-      count(*) FILTER (WHERE m.verification = 'verified' AND s.is_profile
-                         AND s.represents_entity_id IS DISTINCT FROM e.id) AS profile_facts,
+        FILTER (WHERE m.verification = 'verified' AND ${WEIGHTED_SOURCE}) AS profile_sources,
+      count(*) FILTER (WHERE m.verification = 'verified' AND ${WEIGHTED_SOURCE}) AS profile_facts,
       count(*) FILTER (WHERE m.verification = 'verified' AND s.is_profile = false
+                         AND s.verification = 'verified'
                          AND s.represents_entity_id IS DISTINCT FROM e.id
                          AND s.source_type IS DISTINCT FROM 'own_site') AS media_facts,
       count(*) FILTER (WHERE m.verification = 'verified') AS verified_facts,
       count(*) FILTER (WHERE m.verification = 'candidate') AS candidate_facts,
       min(coalesce(m.happened_on, m.found_at::date))
-        FILTER (WHERE m.verification = 'verified' AND s.is_profile
-                  AND s.represents_entity_id IS DISTINCT FROM e.id) AS first_profile,
+        FILTER (WHERE m.verification = 'verified' AND ${WEIGHTED_SOURCE}) AS first_profile,
       max(coalesce(m.happened_on, m.found_at::date))
-        FILTER (WHERE m.verification = 'verified' AND s.is_profile
-                  AND s.represents_entity_id IS DISTINCT FROM e.id) AS last_profile
+        FILTER (WHERE m.verification = 'verified' AND ${WEIGHTED_SOURCE}) AS last_profile
       FROM intelligence.mentions m
       JOIN intelligence.sources s ON s.id = m.source_id
      WHERE m.entity_id = e.id
@@ -450,6 +465,8 @@ const SOURCE_COLUMNS: Record<Exclude<keyof SourceFields, 'url'>, string> = {
   hasParticipantLists: 'has_participant_lists',
   parseable: 'parseable',
   reviewStatus: 'review_status',
+  verification: 'verification',
+  reliability: 'reliability',
 };
 
 @Injectable()
@@ -995,11 +1012,13 @@ export class IntelligenceService {
            (id, source_url, source_domain, source_title, name, kind, description, obtainable,
             structure, public_contacts, alive, parser_priority, discovery, via_entity_id,
             represents_entity_id, last_checked_at, notes, created_by, is_profile, source_type,
-            has_events, has_participant_lists, parseable, review_status)
+            has_events, has_participant_lists, parseable, review_status, verification,
+            reliability)
          VALUES ($1, $2, $3, $4, coalesce($5, $4, $3), $6, $7, $8, $9, $10,
                  coalesce($11, CASE WHEN $16::timestamptz IS NULL THEN NULL ELSE 'yes' END),
                  $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-                 coalesce($24, 'unchecked'))
+                 coalesce($24, 'unchecked'), coalesce($25, 'candidate'),
+                 coalesce($26, 'unassessed'))
          ON CONFLICT (source_url) WHERE entity_id IS NULL
          DO UPDATE SET source_title = coalesce(EXCLUDED.source_title, intelligence.sources.source_title),
                        last_checked_at = coalesce(EXCLUDED.last_checked_at,
@@ -1031,6 +1050,8 @@ export class IntelligenceService {
           input.hasParticipantLists ?? null,
           input.parseable ?? null,
           input.reviewStatus ?? null,
+          input.verification ?? null,
+          input.reliability ?? null,
         ],
       );
       const card = await this.sourceCardIn(tx, rows[0]!.id);
@@ -1097,6 +1118,7 @@ export class IntelligenceService {
             SET name = coalesce(name, 'Get-Investor'), discovery = 'import',
                 is_profile = coalesce(is_profile, true),
                 source_type = coalesce(source_type, 'aggregator'),
+                verification = 'verified',
                 review_status = 'checked', last_checked_at = now(), updated_at = now()
           WHERE id = $1`,
         [id],

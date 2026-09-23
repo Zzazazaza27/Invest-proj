@@ -306,6 +306,8 @@ export const INTEL_DISCOVERY = ['direct', 'reverse', 'import', 'manual'] as cons
 export const INTEL_PARSEABLE = ['yes', 'partial', 'no'] as const;
 export const INTEL_REVIEW = ['unchecked', 'checked', 'unreachable'] as const;
 export const INTEL_VERIFICATION = ['verified', 'candidate', 'rejected'] as const;
+export const INTEL_SOURCE_VERIFICATION = ['candidate', 'verified', 'rejected'] as const;
+export const INTEL_RELIABILITY = ['unassessed', 'reliable', 'doubtful'] as const;
 export type IntelVerification = (typeof INTEL_VERIFICATION)[number];
 export const INTEL_SOURCE_TYPES = [
   'fund',
@@ -404,6 +406,8 @@ const IntelSourceSchema = z.object({
   hasParticipantLists: z.boolean().nullable(),
   parseable: z.enum(INTEL_PARSEABLE).nullable(),
   reviewStatus: z.enum(INTEL_REVIEW),
+  verification: z.enum(INTEL_SOURCE_VERIFICATION),
+  reliability: z.enum(INTEL_RELIABILITY),
   factCount: z.number(),
   verifiedCount: z.number(),
   entityCount: z.number(),
@@ -507,6 +511,8 @@ export interface IntelSourceInput {
   hasParticipantLists?: boolean | null;
   parseable?: string | null;
   reviewStatus?: string;
+  verification?: string;
+  reliability?: string;
 }
 
 export interface IntelEntityInput {

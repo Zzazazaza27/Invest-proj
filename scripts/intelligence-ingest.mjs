@@ -276,6 +276,12 @@ async function upsertSource(s, run) {
     has_events: bool(s.has_events),
     has_participant_lists: bool(s.has_participant_lists),
     parseable: oneOf(s.parseable, ['yes', 'partial', 'no']),
+    // Проверенность площадки: открыта и разобрана — подтверждена; не
+    // открылась — кандидат. Исследователь может явно отклонить (не площадка).
+    verification:
+      oneOf(s.verification, ['candidate', 'verified', 'rejected']) ??
+      (s.review_status === 'checked' ? 'verified' : 'candidate'),
+    reliability: oneOf(s.reliability, ['unassessed', 'reliable', 'doubtful']),
     via_entity_id: via?.id ?? null,
     represents_entity_id: rep?.id ?? null,
     notes: text(s.notes, 20000),

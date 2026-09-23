@@ -249,6 +249,7 @@ try {
   await page.selectOption('[data-intel-source-form] select[name="isProfile"]', 'true');
   await page.selectOption('[data-intel-source-form] select[name="sourceType"]', 'demo_day');
   await page.selectOption('[data-intel-source-form] select[name="reviewStatus"]', 'checked');
+  await page.selectOption('[data-intel-source-form] select[name="verification"]', 'verified');
   await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
   await page.waitForSelector('text=Изменения сохранены', { timeout: 10_000 });
   await page.goto(`${BASE}/intelligence/${id}`, { waitUntil: 'networkidle' });
@@ -258,6 +259,23 @@ try {
     metric[0] === '1' && metric[3] === '1',
     metric.join(' / '),
   );
+  // Сомнительная площадка хранит факт, но веса не даёт (решение владельца
+  // 2026-09-23); сам факт остаётся подтверждённым.
+  await page.goto(`${BASE}/intelligence/sources/${srcB.id}`, { waitUntil: 'networkidle' });
+  await page.click('[data-intel-source-edit]');
+  await page.selectOption('[data-intel-source-form] select[name="reliability"]', 'doubtful');
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await page.waitForSelector('text=Изменения сохранены', { timeout: 10_000 });
+  await page.goto(`${BASE}/intelligence/${id}`, { waitUntil: 'networkidle' });
+  const doubtful = await page.locator('[data-intel-metrics] .intel-metric__value').allInnerTexts();
+  check(
+    'сомнительная площадка веса не даёт, факт остаётся подтверждённым',
+    doubtful[0] === '0' &&
+      (await page.locator('[data-intel-fact-status="verified"]').count()) === 1,
+    doubtful.join(' / '),
+  );
+  await sql(`UPDATE intelligence.sources SET reliability = 'reliable' WHERE id = $1`, [srcB.id]);
+  await page.goto(`${BASE}/intelligence/${id}`, { waitUntil: 'networkidle' });
   if (org) {
     await page.goto(`${BASE}/intelligence/${org.id}`, { waitUntil: 'networkidle' });
     check(
@@ -337,12 +355,21 @@ try {
     );
   }
   await screenshot('sources-list');
-  await page.click('[data-intel-tab-platforms]');
-  await page.waitForSelector('[data-intel-sources]', { timeout: 15_000 });
-  const platforms = await page.locator('[data-intel-source-row]').count();
   const [{ profileCount }] = await sql(
-    `SELECT count(*)::int AS "profileCount" FROM intelligence.sources WHERE is_profile`,
+    `SELECT count(*)::int AS "profileCount" FROM intelligence.sources
+      WHERE is_profile AND verification = 'verified'`,
   );
+  await page.click('[data-intel-tab-platforms]');
+  await page.waitForURL(/\/intelligence\/platforms$/, { timeout: 15_000 });
+  // Вкладка — тот же список с другим отбором: ждём, пока строки перерисуются.
+  await page
+    .waitForFunction(
+      (n) => globalThis.document.querySelectorAll('[data-intel-source-row]').length === n,
+      profileCount,
+      { timeout: 10_000 },
+    )
+    .catch(() => undefined);
+  const platforms = await page.locator('[data-intel-source-row]').count();
   check(
     'во вкладке «Профильные площадки» только профильные',
     platforms === profileCount && platforms >= 1,

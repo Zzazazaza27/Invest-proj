@@ -11,7 +11,9 @@ import {
   IntelligenceService,
   LEVELS,
   PARSEABLE,
+  RELIABILITY,
   REVIEW,
+  SOURCE_VERIFICATION,
   SOURCE_TYPES,
   VERIFICATION,
 } from './intelligence.service';
@@ -123,6 +125,8 @@ const SourceFieldsSchema = z.object({
   hasParticipantLists: optionalBool,
   parseable: optionalEnum(PARSEABLE),
   reviewStatus: z.enum(REVIEW).default('unchecked'),
+  verification: z.enum(SOURCE_VERIFICATION).default('candidate'),
+  reliability: z.enum(RELIABILITY).default('unassessed'),
 });
 
 const AsSourceSchema = z.object({
