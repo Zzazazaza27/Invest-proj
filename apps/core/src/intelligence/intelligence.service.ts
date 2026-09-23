@@ -1,21 +1,31 @@
 import { Injectable } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { lookup } from 'node:dns/promises';
-import { BlockList, isIP } from 'node:net';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { errors } from '../common/errors';
+import {
+  extractTitle,
+  fetchTildaProducts,
+  GET_INVESTOR_CATALOGS,
+  mapGetInvestorProduct,
+  safeFetchText,
+  type GetInvestorCatalog,
+} from './intelligence.fetch';
 
 /**
- * Market Intelligence (M137): сведения об участниках инвестиционного рынка.
+ * Market Intelligence (M137, M139): сведения об участниках инвестиционного
+ * рынка. Постановка — docs/product/market-intelligence/ТЗ-MVP.md.
  *
- * Постановка — docs/product/market-intelligence/ТЗ-MVP.md. Это склад, а не
- * CRM: ни связей, ни скоринга, ни воронки. Сначала данные, потом модель.
+ * Три понятия:
+ *  * СУЩНОСТЬ — участник рынка: человек, фонд, клуб, мероприятие;
+ *  * ИСТОЧНИК — сайт или страница, где участники собраны (каталог, статья,
+ *    список спикеров). Ценен сам по себе: это результат поиска по
+ *    интернету, ещё до разбора;
+ *  * УПОМИНАНИЕ — сущность найдена в источнике. Одна сущность бывает во
+ *    многих источниках, и так они сводятся вместе.
  *
- * Три пути наполнения:
- *  * вручную из админки;
- *  * «Импорт URL» — страница сохраняется как источник (адрес, заголовок,
- *    домен), разбор её остаётся человеку;
- *  * импорт каталогов get-investor.ru — первый специализированный разборщик.
+ * Сущность может сама быть источником (`representsEntityId`): сайт фонда с
+ * портфелем, страница клуба с участниками. Обратный путь поиска (ТЗ §17,
+ * путь 2) — `viaEntityId`: источник найден, когда искали вокруг сущности.
  *
  * ПРАВИЛО ИМПОРТА: повторный импорт ничего, внесённого человеком, не
  * перетирает. Он дополняет пустые поля, обновляет сведения источника
@@ -40,6 +50,11 @@ export type EntityType = (typeof ENTITY_TYPES)[number];
 export const ENTITY_STATUSES = ['raw', 'reviewed', 'interesting', 'contacted', 'archived'] as const;
 export type EntityStatus = (typeof ENTITY_STATUSES)[number];
 
+export const LEVELS = ['high', 'medium', 'low'] as const;
+export const CONTACTS = ['yes', 'partial', 'no'] as const;
+export const ALIVE = ['yes', 'no', 'unknown'] as const;
+export const DISCOVERY = ['direct', 'reverse', 'import', 'manual'] as const;
+
 export interface EntityFields {
   type: EntityType;
   name: string;
@@ -50,6 +65,22 @@ export interface EntityFields {
   telegram: string | null;
   linkedin: string | null;
   status: EntityStatus;
+  notes: string | null;
+}
+
+export interface SourceFields {
+  url: string;
+  name: string | null;
+  kind: string | null;
+  description: string | null;
+  obtainable: string | null;
+  structure: (typeof LEVELS)[number] | null;
+  publicContacts: (typeof CONTACTS)[number] | null;
+  alive: (typeof ALIVE)[number] | null;
+  parserPriority: (typeof LEVELS)[number] | null;
+  discovery: (typeof DISCOVERY)[number];
+  viaEntityId: string | null;
+  representsEntityId: string | null;
   notes: string | null;
 }
 
@@ -76,16 +107,67 @@ interface EntityRow {
 
 interface SourceRow {
   id: string;
-  entity_id: string | null;
   source_url: string;
   source_domain: string | null;
   source_title: string | null;
+  name: string | null;
+  kind: string | null;
+  description: string | null;
+  obtainable: string | null;
+  structure: SourceFields['structure'];
+  public_contacts: SourceFields['publicContacts'];
+  alive: SourceFields['alive'];
+  parser_priority: SourceFields['parserPriority'];
+  discovery: SourceFields['discovery'];
+  via_entity_id: string | null;
+  represents_entity_id: string | null;
   discovered_at: Date;
   last_checked_at: Date | null;
+  updated_at: Date;
   notes: string | null;
 }
 
+type SourceRowExt = SourceRow & {
+  mention_count?: string;
+  via_entity_name?: string | null;
+  represents_entity_name?: string | null;
+};
+
+interface MentionRow {
+  id: string;
+  entity_id: string;
+  source_id: string;
+  page_url: string | null;
+  context: string | null;
+  notes: string | null;
+  found_at: Date;
+  last_checked_at: Date | null;
+  happened_on: Date | string | null;
+  happened_precision: Precision | null;
+  summary: string | null;
+}
+
+export type Precision = 'day' | 'month' | 'year';
+
+/** Хроника: что, когда. Поля человека, импорт их не перетирает. */
+export interface MentionInput {
+  context: string | null;
+  summary?: string | null;
+  happenedOn?: string | null;
+  happenedPrecision?: Precision | null;
+}
+
 const iso = (d: Date | null) => (d ? d.toISOString() : null);
+
+/**
+ * DATE без часового пояса. Драйвер отдаёт его объектом Date на ЛОКАЛЬНУЮ
+ * полночь; `toISOString` сдвинул бы день назад восточнее Гринвича.
+ */
+function dateOnly(value: Date | string | null): string | null {
+  if (value === null || typeof value === 'string') return value;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}`;
+}
 
 function entityView(row: EntityRow) {
   return {
@@ -110,21 +192,50 @@ function entityView(row: EntityRow) {
   };
 }
 
-function sourceView(row: SourceRow & { entity_name?: string | null }) {
+function sourceView(row: SourceRowExt) {
   return {
     id: row.id,
-    entityId: row.entity_id,
-    entityName: row.entity_name ?? null,
     url: row.source_url,
     domain: row.source_domain,
     title: row.source_title,
+    name: row.name,
+    kind: row.kind,
+    description: row.description,
+    obtainable: row.obtainable,
+    structure: row.structure,
+    publicContacts: row.public_contacts,
+    alive: row.alive,
+    parserPriority: row.parser_priority,
+    discovery: row.discovery,
+    viaEntityId: row.via_entity_id,
+    viaEntityName: row.via_entity_name ?? null,
+    representsEntityId: row.represents_entity_id,
+    representsEntityName: row.represents_entity_name ?? null,
+    mentionCount: Number(row.mention_count ?? 0),
     discoveredAt: row.discovered_at.toISOString(),
     lastCheckedAt: iso(row.last_checked_at),
+    updatedAt: row.updated_at.toISOString(),
     notes: row.notes,
   };
 }
 
-function domainOf(url: string): string | null {
+function mentionView(row: MentionRow) {
+  return {
+    id: row.id,
+    entityId: row.entity_id,
+    sourceId: row.source_id,
+    pageUrl: row.page_url,
+    context: row.context,
+    notes: row.notes,
+    foundAt: row.found_at.toISOString(),
+    lastCheckedAt: iso(row.last_checked_at),
+    happenedOn: dateOnly(row.happened_on),
+    happenedPrecision: row.happened_precision,
+    summary: row.summary,
+  };
+}
+
+export function domainOf(url: string): string | null {
   try {
     return new URL(url).hostname.replace(/^www\./, '').toLowerCase();
   } catch {
@@ -137,27 +248,60 @@ function likeEscape(value: string): string {
   return value.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
+/** Источник со счётчиком упоминаний и именами связанных сущностей. */
+const SOURCE_SELECT = `
+  SELECT s.*,
+         (SELECT count(*) FROM intelligence.mentions m WHERE m.source_id = s.id) AS mention_count,
+         via.name AS via_entity_name,
+         rep.name AS represents_entity_name
+    FROM intelligence.sources s
+    LEFT JOIN intelligence.entities via ON via.id = s.via_entity_id
+    LEFT JOIN intelligence.entities rep ON rep.id = s.represents_entity_id`;
+
+const SOURCE_COLUMNS: Record<Exclude<keyof SourceFields, 'url'>, string> = {
+  name: 'name',
+  kind: 'kind',
+  description: 'description',
+  obtainable: 'obtainable',
+  structure: 'structure',
+  publicContacts: 'public_contacts',
+  alive: 'alive',
+  parserPriority: 'parser_priority',
+  discovery: 'discovery',
+  viaEntityId: 'via_entity_id',
+  representsEntityId: 'represents_entity_id',
+  notes: 'notes',
+};
+
 @Injectable()
 export class IntelligenceService {
   constructor(private readonly db: Database) {}
 
-  // ------------------------------------------------------------- чтение
+  // ============================================================ сущности
 
   async list(ctx: RequestContext, filter: { q: string; type?: string; status?: string }) {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<
-        EntityRow & { source_count: string; source_domains: string | null; duplicate: boolean }
+        EntityRow & { source_count: string; source_names: string | null; duplicate: boolean }
       >(
         `SELECT e.*,
-                (SELECT count(*) FROM intelligence.sources s WHERE s.entity_id = e.id) AS source_count,
-                (SELECT string_agg(DISTINCT s.source_domain, ', ')
-                   FROM intelligence.sources s WHERE s.entity_id = e.id) AS source_domains,
+                -- Вес сущности — число разных САЙТОВ, где она упомянута: две
+                -- страницы одного сайта (rb.ru и rb.ru/data) — один голос.
+                (SELECT count(DISTINCT coalesce(s.source_domain, s.id::text))
+                   FROM intelligence.mentions m
+                   JOIN intelligence.sources s ON s.id = m.source_id
+                  WHERE m.entity_id = e.id) AS source_count,
+                (SELECT string_agg(DISTINCT coalesce(s.name, s.source_domain), ', ')
+                   FROM intelligence.mentions m
+                   JOIN intelligence.sources s ON s.id = m.source_id
+                  WHERE m.entity_id = e.id) AS source_names,
                 EXISTS (
                   SELECT 1 FROM intelligence.entities d
                    WHERE d.id <> e.id
                      AND ((e.external_url IS NOT NULL AND d.external_url = e.external_url)
                        OR (lower(d.name) = lower(e.name)
-                           AND lower(coalesce(d.organization_name, '')) = lower(coalesce(e.organization_name, ''))))
+                           AND lower(coalesce(d.organization_name, ''))
+                             = lower(coalesce(e.organization_name, ''))))
                 ) AS duplicate
            FROM intelligence.entities e
           WHERE ($1 = '' OR e.name ILIKE '%' || $1 || '%'
@@ -174,7 +318,7 @@ export class IntelligenceService {
       return rows.map((row) => ({
         ...entityView(row),
         sourceCount: Number(row.source_count),
-        sourceDomains: row.source_domains,
+        sourceNames: row.source_names,
         duplicate: row.duplicate,
       }));
     });
@@ -191,14 +335,29 @@ export class IntelligenceService {
     );
     const row = rows[0];
     if (!row) throw errors.notFound({ entity: 'intelligence.entity', id });
-    const sources = await tx.query<SourceRow>(
-      `SELECT * FROM intelligence.sources WHERE entity_id = $1 ORDER BY discovered_at`,
+    const mentions = await tx.query<MentionRow & SourceRowExt & { mention_id: string }>(
+      `SELECT m.*, m.id AS mention_id, s.source_url, s.source_domain, s.name AS source_name
+         FROM intelligence.mentions m
+         JOIN intelligence.sources s ON s.id = m.source_id
+        WHERE m.entity_id = $1
+        ORDER BY m.happened_on DESC NULLS LAST, m.found_at DESC`,
+      [id],
+    );
+    const own = await tx.query<SourceRowExt>(
+      `${SOURCE_SELECT} WHERE s.represents_entity_id = $1 OR s.via_entity_id = $1
+        ORDER BY s.discovered_at`,
       [id],
     );
     const duplicates = await this.duplicatesIn(tx, row, id);
     return {
       entity: entityView(row),
-      sources: sources.rows.map(sourceView),
+      mentions: mentions.rows.map((m) => ({
+        ...mentionView({ ...m, id: m.mention_id }),
+        sourceName: (m as unknown as { source_name: string | null }).source_name,
+        sourceUrl: m.source_url,
+        sourceDomain: m.source_domain,
+      })),
+      ownSources: own.rows.map(sourceView),
       duplicates,
     };
   }
@@ -217,7 +376,8 @@ export class IntelligenceService {
       `SELECT id, name, type, organization_name FROM intelligence.entities
         WHERE ($4::uuid IS NULL OR id <> $4)
           AND (($3::text IS NOT NULL AND external_url = $3)
-            OR (lower(name) = lower($1) AND lower(coalesce(organization_name, '')) = lower(coalesce($2, ''))))
+            OR (lower(name) = lower($1)
+                AND lower(coalesce(organization_name, '')) = lower(coalesce($2, ''))))
         LIMIT 20`,
       [probe.name, probe.organization_name, probe.external_url, exceptId],
     );
@@ -228,23 +388,6 @@ export class IntelligenceService {
       organizationName: r.organization_name,
     }));
   }
-
-  async sources(ctx: RequestContext, onlyLoose: boolean) {
-    return this.db.readOnly(ctx, async (tx) => {
-      const { rows } = await tx.query<SourceRow & { entity_name: string | null }>(
-        `SELECT s.*, e.name AS entity_name
-           FROM intelligence.sources s
-           LEFT JOIN intelligence.entities e ON e.id = s.entity_id
-          WHERE (NOT $1 OR s.entity_id IS NULL)
-          ORDER BY s.discovered_at DESC
-          LIMIT 1000`,
-        [onlyLoose],
-      );
-      return rows.map(sourceView);
-    });
-  }
-
-  // ------------------------------------------------------------- запись
 
   async create(ctx: RequestContext, input: EntityFields & { sourceUrl: string | null }) {
     return this.db.transaction(ctx, async (tx) => {
@@ -270,7 +413,7 @@ export class IntelligenceService {
         ],
       );
       if (input.sourceUrl) {
-        await this.attachSourceIn(tx, ctx, id, { url: input.sourceUrl, title: null, notes: null });
+        await this.mentionByUrlIn(tx, ctx, id, { url: input.sourceUrl, context: null });
       }
       return this.cardIn(tx, id);
     });
@@ -308,17 +451,13 @@ export class IntelligenceService {
     });
   }
 
-  async addSource(
-    ctx: RequestContext,
-    entityId: string,
-    input: { url: string; title: string | null; notes: string | null },
-  ) {
+  // ========================================================== упоминания
+
+  /** «Найдено здесь»: адрес страницы → источник по домену → упоминание. */
+  async addMention(ctx: RequestContext, entityId: string, input: MentionInput & { url: string }) {
     return this.db.transaction(ctx, async (tx) => {
-      const exists = await tx.query('SELECT 1 FROM intelligence.entities WHERE id = $1', [
-        entityId,
-      ]);
-      if (!exists.rowCount) throw errors.notFound({ entity: 'intelligence.entity', id: entityId });
-      await this.attachSourceIn(tx, ctx, entityId, input);
+      await this.assertEntityIn(tx, entityId);
+      await this.mentionByUrlIn(tx, ctx, entityId, input);
       await tx.query('UPDATE intelligence.entities SET updated_at = now() WHERE id = $1', [
         entityId,
       ]);
@@ -326,115 +465,289 @@ export class IntelligenceService {
     });
   }
 
-  async removeSource(ctx: RequestContext, sourceId: string) {
+  /** Правка строки хроники: роль, что делал, когда. */
+  async updateMention(ctx: RequestContext, mentionId: string, patch: MentionInput) {
     return this.db.transaction(ctx, async (tx) => {
-      const { rowCount } = await tx.query('DELETE FROM intelligence.sources WHERE id = $1', [
-        sourceId,
-      ]);
-      if (!rowCount) throw errors.notFound({ entity: 'intelligence.source', id: sourceId });
+      const precision = patch.happenedOn ? (patch.happenedPrecision ?? 'day') : null;
+      const { rows } = await tx.query<{ entity_id: string }>(
+        `UPDATE intelligence.mentions
+            SET context = $2, summary = $3, happened_on = $4, happened_precision = $5
+          WHERE id = $1
+          RETURNING entity_id`,
+        [mentionId, patch.context, patch.summary ?? null, patch.happenedOn ?? null, precision],
+      );
+      if (!rows[0]) throw errors.notFound({ entity: 'intelligence.mention', id: mentionId });
+      return this.cardIn(tx, rows[0].entity_id);
     });
   }
 
-  private async attachSourceIn(
+  async removeMention(ctx: RequestContext, mentionId: string) {
+    return this.db.transaction(ctx, async (tx) => {
+      const { rowCount } = await tx.query('DELETE FROM intelligence.mentions WHERE id = $1', [
+        mentionId,
+      ]);
+      if (!rowCount) throw errors.notFound({ entity: 'intelligence.mention', id: mentionId });
+    });
+  }
+
+  private async assertEntityIn(tx: Tx, id: string) {
+    const exists = await tx.query('SELECT 1 FROM intelligence.entities WHERE id = $1', [id]);
+    if (!exists.rowCount) throw errors.notFound({ entity: 'intelligence.entity', id });
+  }
+
+  private async mentionByUrlIn(
     tx: Tx,
     ctx: RequestContext,
     entityId: string,
-    input: { url: string; title: string | null; notes: string | null },
+    input: MentionInput & { url: string },
   ) {
+    const sourceId = await this.resolveSourceIn(tx, ctx, input.url);
+    await this.mentionIn(tx, ctx, { ...input, entityId, sourceId, pageUrl: input.url });
+  }
+
+  private async mentionIn(
+    tx: Tx,
+    ctx: RequestContext,
+    m: MentionInput & { entityId: string; sourceId: string; pageUrl: string | null },
+  ) {
+    const precision = m.happenedOn ? (m.happenedPrecision ?? 'day') : null;
     await tx.query(
-      `INSERT INTO intelligence.sources
-         (id, entity_id, source_url, source_domain, source_title, notes, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (entity_id, source_url) WHERE entity_id IS NOT NULL
-       DO UPDATE SET source_title = coalesce(EXCLUDED.source_title, intelligence.sources.source_title),
-                     notes = coalesce(EXCLUDED.notes, intelligence.sources.notes)`,
+      `INSERT INTO intelligence.mentions
+         (id, entity_id, source_id, page_url, context, summary, happened_on,
+          happened_precision, last_checked_at, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9)
+       ON CONFLICT (entity_id, source_id, coalesce(page_url, ''))
+       DO UPDATE SET last_checked_at = now(),
+                     context = coalesce(intelligence.mentions.context, EXCLUDED.context),
+                     summary = coalesce(intelligence.mentions.summary, EXCLUDED.summary),
+                     happened_precision = CASE WHEN intelligence.mentions.happened_on IS NULL
+                                               THEN EXCLUDED.happened_precision
+                                               ELSE intelligence.mentions.happened_precision END,
+                     happened_on = coalesce(intelligence.mentions.happened_on, EXCLUDED.happened_on)`,
       [
         randomUUID(),
-        entityId,
-        input.url,
-        domainOf(input.url),
-        input.title,
-        input.notes,
+        m.entityId,
+        m.sourceId,
+        m.pageUrl,
+        m.context,
+        m.summary ?? null,
+        m.happenedOn ?? null,
+        precision,
         ctx.userId,
       ],
     );
   }
 
-  // ------------------------------------------------------ импорт страницы
+  /**
+   * Источник для адреса страницы.
+   *
+   * Сначала — источник ровно с этим адресом, затем — любой источник того же
+   * домена (предпочитая корень сайта). Если нет ни того, ни другого,
+   * заводится источник-сайт: страница — это упоминание, а не новый источник.
+   */
+  private async resolveSourceIn(tx: Tx, ctx: RequestContext, url: string): Promise<string> {
+    const domain = domainOf(url);
+    const { rows } = await tx.query<{ id: string }>(
+      `SELECT id FROM intelligence.sources
+        WHERE source_url = $1 OR ($2::text IS NOT NULL AND source_domain = $2)
+        ORDER BY (source_url = $1) DESC, length(source_url)
+        LIMIT 1`,
+      [url, domain],
+    );
+    if (rows[0]) return rows[0].id;
+    const id = randomUUID();
+    await tx.query(
+      `INSERT INTO intelligence.sources
+         (id, source_url, source_domain, name, discovery, created_by)
+       VALUES ($1, $2, $3, $4, 'manual', $5)`,
+      [id, domain ? `https://${domain}/` : url, domain, domain, ctx.userId],
+    );
+    return id;
+  }
+
+  // ============================================================ источники
+
+  async sources(ctx: RequestContext) {
+    return this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<SourceRowExt>(
+        `${SOURCE_SELECT} ORDER BY s.updated_at DESC LIMIT 2000`,
+      );
+      return rows.map(sourceView);
+    });
+  }
+
+  async sourceCard(ctx: RequestContext, id: string) {
+    return this.db.readOnly(ctx, (tx) => this.sourceCardIn(tx, id));
+  }
+
+  private async sourceCardIn(tx: Tx, id: string) {
+    const { rows } = await tx.query<SourceRowExt>(`${SOURCE_SELECT} WHERE s.id = $1`, [id]);
+    if (!rows[0]) throw errors.notFound({ entity: 'intelligence.source', id });
+    const mentions = await tx.query<
+      MentionRow & { entity_name: string; entity_type: EntityType; mention_id: string }
+    >(
+      `SELECT m.*, m.id AS mention_id, e.name AS entity_name, e.type AS entity_type
+         FROM intelligence.mentions m
+         JOIN intelligence.entities e ON e.id = m.entity_id
+        WHERE m.source_id = $1
+        ORDER BY e.name
+        LIMIT 2000`,
+      [id],
+    );
+    return {
+      source: sourceView(rows[0]),
+      mentions: mentions.rows.map((m) => ({
+        ...mentionView({ ...m, id: m.mention_id }),
+        entityName: m.entity_name,
+        entityType: m.entity_type,
+      })),
+    };
+  }
+
+  async updateSource(ctx: RequestContext, id: string, patch: Partial<SourceFields>) {
+    const sets: string[] = [];
+    const values: unknown[] = [id];
+    for (const [key, column] of Object.entries(SOURCE_COLUMNS) as [
+      keyof typeof SOURCE_COLUMNS,
+      string,
+    ][]) {
+      if (patch[key] === undefined) continue;
+      values.push(patch[key]);
+      sets.push(`${column} = $${values.length}`);
+    }
+    if (patch.url !== undefined) {
+      values.push(patch.url, domainOf(patch.url));
+      sets.push(`source_url = $${values.length - 1}`, `source_domain = $${values.length}`);
+    }
+    return this.db.transaction(ctx, async (tx) => {
+      if (sets.length > 0) {
+        const { rowCount } = await tx.query(
+          `UPDATE intelligence.sources SET ${sets.join(', ')}, updated_at = now() WHERE id = $1`,
+          values,
+        );
+        if (!rowCount) throw errors.notFound({ entity: 'intelligence.source', id });
+      }
+      return this.sourceCardIn(tx, id);
+    });
+  }
+
+  /** Источник удаляется только пустым: упоминания — это найденное, его жалко. */
+  async removeSource(ctx: RequestContext, id: string) {
+    return this.db.transaction(ctx, async (tx) => {
+      const used = await tx.query('SELECT 1 FROM intelligence.mentions WHERE source_id = $1', [id]);
+      if (used.rowCount) {
+        throw errors.conflict('У источника есть упоминания — сначала уберите их.');
+      }
+      const { rowCount } = await tx.query('DELETE FROM intelligence.sources WHERE id = $1', [id]);
+      if (!rowCount) throw errors.notFound({ entity: 'intelligence.source', id });
+    });
+  }
 
   /**
-   * «Импорт URL» (ТЗ §8): адрес сохраняется В ЛЮБОМ СЛУЧАЕ, а заголовок —
-   * если страницу удалось получить. Неудача загрузки не отменяет находку:
-   * сайт мог быть недоступен минуту, а адрес уже ценен.
+   * «Импорт URL» (ТЗ §8) и ручное добавление источника: адрес сохраняется
+   * В ЛЮБОМ СЛУЧАЕ, заголовок — если страницу удалось получить. Неудача
+   * загрузки не отменяет находку.
    *
    * Сущности из произвольной страницы не извлекаются: универсального
    * разборщика ТЗ прямо не просит, а угадывание дало бы мусор.
    */
-  async importUrl(ctx: RequestContext, input: { url: string; entityId: string | null }) {
+  async importUrl(ctx: RequestContext, input: Partial<SourceFields> & { url: string }) {
     let title: string | null = null;
     let fetchNote: string | null = null;
     let checkedAt: Date | null = null;
     try {
-      const html = await safeFetchText(input.url);
-      title = extractTitle(html);
+      title = extractTitle(await safeFetchText(input.url));
       checkedAt = new Date();
     } catch (error) {
       fetchNote = `Страница не получена: ${error instanceof Error ? error.message : String(error)}`;
     }
 
     return this.db.transaction(ctx, async (tx) => {
-      if (input.entityId) {
-        const exists = await tx.query('SELECT 1 FROM intelligence.entities WHERE id = $1', [
-          input.entityId,
-        ]);
-        if (!exists.rowCount)
-          throw errors.notFound({ entity: 'intelligence.entity', id: input.entityId });
+      for (const ref of [input.viaEntityId, input.representsEntityId]) {
+        if (ref) await this.assertEntityIn(tx, ref);
       }
-      const { rows } = await tx.query<SourceRow>(
-        input.entityId
-          ? `INSERT INTO intelligence.sources
-               (id, entity_id, source_url, source_domain, source_title, last_checked_at, notes, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (entity_id, source_url) WHERE entity_id IS NOT NULL
-             DO UPDATE SET source_title = coalesce(EXCLUDED.source_title, intelligence.sources.source_title),
-                           last_checked_at = coalesce(EXCLUDED.last_checked_at, intelligence.sources.last_checked_at)
-             RETURNING *`
-          : `INSERT INTO intelligence.sources
-               (id, entity_id, source_url, source_domain, source_title, last_checked_at, notes, created_by)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (source_url) WHERE entity_id IS NULL
-             DO UPDATE SET source_title = coalesce(EXCLUDED.source_title, intelligence.sources.source_title),
-                           last_checked_at = coalesce(EXCLUDED.last_checked_at, intelligence.sources.last_checked_at)
-             RETURNING *`,
+      const { rows } = await tx.query<{ id: string }>(
+        `INSERT INTO intelligence.sources
+           (id, source_url, source_domain, source_title, name, kind, description, obtainable,
+            structure, public_contacts, alive, parser_priority, discovery, via_entity_id,
+            represents_entity_id, last_checked_at, notes, created_by)
+         VALUES ($1, $2, $3, $4, coalesce($5, $4, $3), $6, $7, $8, $9, $10,
+                 coalesce($11, CASE WHEN $16::timestamptz IS NULL THEN NULL ELSE 'yes' END),
+                 $12, $13, $14, $15, $16, $17, $18)
+         ON CONFLICT (source_url) WHERE entity_id IS NULL
+         DO UPDATE SET source_title = coalesce(EXCLUDED.source_title, intelligence.sources.source_title),
+                       last_checked_at = coalesce(EXCLUDED.last_checked_at,
+                                                  intelligence.sources.last_checked_at),
+                       updated_at = now()
+         RETURNING id`,
         [
           randomUUID(),
-          input.entityId,
           input.url,
           domainOf(input.url),
           title,
+          input.name ?? null,
+          input.kind ?? null,
+          input.description ?? null,
+          input.obtainable ?? null,
+          input.structure ?? null,
+          input.publicContacts ?? null,
+          input.alive ?? null,
+          input.parserPriority ?? null,
+          input.discovery ?? 'manual',
+          input.viaEntityId ?? null,
+          input.representsEntityId ?? null,
           checkedAt,
-          fetchNote,
+          [input.notes, fetchNote].filter(Boolean).join('\n') || null,
           ctx.userId,
         ],
       );
-      return { source: sourceView(rows[0]!), fetched: checkedAt !== null, problem: fetchNote };
+      const card = await this.sourceCardIn(tx, rows[0]!.id);
+      return { ...card, fetched: checkedAt !== null, problem: fetchNote };
     });
   }
 
-  // ------------------------------------------------- импорт get-investor.ru
+  /**
+   * «Сущность сама источник»: сайт фонда, страница клуба или мероприятия.
+   * Без адреса берётся сайт сущности.
+   */
+  async entityAsSource(ctx: RequestContext, entityId: string, url: string | null) {
+    const target = await this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<{ website_url: string | null; name: string }>(
+        'SELECT website_url, name FROM intelligence.entities WHERE id = $1',
+        [entityId],
+      );
+      if (!rows[0]) throw errors.notFound({ entity: 'intelligence.entity', id: entityId });
+      return rows[0];
+    });
+    const address = url ?? target.website_url;
+    if (!address || !/^https?:\/\//i.test(address)) {
+      throw errors.validation([
+        { path: 'url', message: 'У сущности нет сайта — укажите адрес страницы' },
+      ]);
+    }
+    const created = await this.importUrl(ctx, {
+      url: address,
+      name: target.name,
+      discovery: 'manual',
+    });
+    // Источник мог существовать раньше (тот же адрес): привязка ставится
+    // явно, а не только при создании.
+    return this.db.transaction(ctx, async (tx) => {
+      await tx.query(
+        `UPDATE intelligence.sources SET represents_entity_id = $2, updated_at = now()
+          WHERE id = $1`,
+        [created.source.id, entityId],
+      );
+      return this.cardIn(tx, entityId);
+    });
+  }
+
+  // ================================================= импорт get-investor.ru
 
   /**
-   * Каталоги get-investor.ru (ТЗ §9).
-   *
-   * Сайт на Тильде: карточки каталогов отдаёт её публичный API магазина
-   * (`store.tildaapi.com`) — тот же, которым страница рисует себя в браузере.
-   * Это структурированный JSON, а не разбор вёрстки, поэтому поля берутся как
-   * есть: заголовок, короткое описание, характеристики каталога, ссылка на
-   * карточку. Чего в карточке нет — остаётся пустым (ТЗ: «не дополнять
-   * данные догадками»).
-   *
-   * Номера разделов найдены 2026-09-23 по страницам каталогов. Если сайт
-   * перестроят, раздел вернёт ноль карточек — это видно в отчёте импорта.
+   * Каталоги get-investor.ru (ТЗ §9) — ОДИН источник, в котором найдены
+   * сотни сущностей. Каждая карточка каталога — упоминание со ссылкой на
+   * свою страницу. Разбор карточек — `intelligence.fetch.ts`.
    */
   async importGetInvestor(ctx: RequestContext) {
     const report: {
@@ -444,8 +757,19 @@ export class IntelligenceService {
       updated: number;
       error?: string;
     }[] = [];
+    const sourceId = await this.db.transaction(ctx, async (tx) => {
+      const id = await this.resolveSourceIn(tx, ctx, 'https://get-investor.ru/');
+      await tx.query(
+        `UPDATE intelligence.sources
+            SET name = coalesce(name, 'Get-Investor'), discovery = 'import',
+                last_checked_at = now(), updated_at = now()
+          WHERE id = $1`,
+        [id],
+      );
+      return id;
+    });
     for (const catalog of GET_INVESTOR_CATALOGS) {
-      let products: TildaProduct[];
+      let products: Awaited<ReturnType<typeof fetchTildaProducts>>;
       try {
         products = await fetchTildaProducts(catalog.storePart);
       } catch (error) {
@@ -462,7 +786,7 @@ export class IntelligenceService {
         let created = 0;
         let updated = 0;
         for (const product of products) {
-          const outcome = await this.upsertGetInvestorIn(tx, ctx, catalog, product);
+          const outcome = await this.upsertGetInvestorIn(tx, ctx, sourceId, catalog, product);
           if (outcome === 'created') created += 1;
           else updated += 1;
         }
@@ -476,12 +800,14 @@ export class IntelligenceService {
   private async upsertGetInvestorIn(
     tx: Tx,
     ctx: RequestContext,
+    sourceId: string,
     catalog: GetInvestorCatalog,
-    product: TildaProduct,
+    product: Parameters<typeof mapGetInvestorProduct>[1],
   ): Promise<'created' | 'updated'> {
     const fields = mapGetInvestorProduct(catalog, product);
     const { rows } = await tx.query<{ id: string }>(
-      `SELECT id FROM intelligence.entities WHERE import_source = 'get-investor' AND external_id = $1`,
+      `SELECT id FROM intelligence.entities
+        WHERE import_source = 'get-investor' AND external_id = $1`,
       [fields.externalId],
     );
     const existing = rows[0];
@@ -492,8 +818,9 @@ export class IntelligenceService {
       outcome = 'created';
       await tx.query(
         `INSERT INTO intelligence.entities
-           (id, type, name, organization_name, description, website_url, email, telegram, linkedin,
-            attributes, import_source, external_url, external_id, imported_at, created_by)
+           (id, type, name, organization_name, description, website_url, email, telegram,
+            linkedin, attributes, import_source, external_url, external_id, imported_at,
+            created_by)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, 'get-investor', $11, $12, now(), $13)`,
         [
           entityId,
@@ -540,294 +867,12 @@ export class IntelligenceService {
         ],
       );
     }
-    await tx.query(
-      `INSERT INTO intelligence.sources
-         (id, entity_id, source_url, source_domain, source_title, last_checked_at, created_by)
-       VALUES ($1, $2, $3, 'get-investor.ru', $4, now(), $5)
-       ON CONFLICT (entity_id, source_url) WHERE entity_id IS NOT NULL
-       DO UPDATE SET last_checked_at = now()`,
-      [randomUUID(), entityId, fields.externalUrl, `Get-Investor · ${catalog.label}`, ctx.userId],
-    );
+    await this.mentionIn(tx, ctx, {
+      entityId,
+      sourceId,
+      pageUrl: fields.externalUrl,
+      context: catalog.label,
+    });
     return outcome;
   }
-}
-
-// =================================================== get-investor: разбор
-
-interface GetInvestorCatalog {
-  key: string;
-  label: string;
-  storePart: string;
-  type: EntityType;
-  /** Поле «Учредитель» в карточке — это организация, названная источником. */
-  founderIsOrganization?: boolean;
-  /** У мероприятия ссылка в тексте — страница регистрации, а не «Сайт:». */
-  firstLinkIsWebsite?: boolean;
-}
-
-const GET_INVESTOR_CATALOGS: readonly GetInvestorCatalog[] = [
-  {
-    key: 'investment-funds',
-    label: 'Инвестиционные фонды',
-    storePart: '808184690301',
-    type: 'fund',
-  },
-  { key: 'business-angels', label: 'Бизнес-ангелы', storePart: '960638328541', type: 'investor' },
-  {
-    key: 'investor-clubs',
-    label: 'Клубы инвесторов',
-    storePart: '969184541201',
-    type: 'investor_club',
-  },
-  {
-    key: 'accelerators',
-    label: 'Акселераторы',
-    storePart: '631093317701',
-    type: 'accelerator',
-    founderIsOrganization: true,
-  },
-  {
-    key: 'venture-studios',
-    label: 'Венчурные студии',
-    storePart: '186154586061',
-    type: 'organization',
-    founderIsOrganization: true,
-  },
-  {
-    key: 'grants-and-subsidies',
-    label: 'Гранты и субсидии',
-    storePart: '494791447563',
-    type: 'other',
-  },
-  {
-    key: 'economic-zones',
-    label: 'Особые экономические зоны',
-    storePart: '556588871351',
-    type: 'other',
-  },
-  {
-    key: 'events-calendar',
-    label: 'Календарь мероприятий',
-    storePart: '710860811731',
-    type: 'event',
-    firstLinkIsWebsite: true,
-  },
-];
-
-interface TildaProduct {
-  uid: number | string;
-  title: string;
-  descr?: string;
-  text?: string;
-  url?: string;
-  gallery?: string;
-  characteristics?: { title: string; value: string }[];
-}
-
-async function fetchTildaProducts(storePart: string): Promise<TildaProduct[]> {
-  const all: TildaProduct[] = [];
-  const size = 100;
-  for (let slice = 1; slice <= 30; slice += 1) {
-    const url =
-      `https://store.tildaapi.com/api/getproductslist/?storepartuid=${storePart}` +
-      `&getparts=false&getoptions=false&slice=${slice}&size=${size}`;
-    const response = await fetch(url, {
-      headers: { 'user-agent': USER_AGENT, referer: 'https://get-investor.ru/' },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) throw new Error(`каталог ответил ${response.status}`);
-    const body = (await response.json()) as { products?: TildaProduct[]; total?: number | string };
-    const page = body.products ?? [];
-    all.push(...page);
-    const total = Number(body.total ?? 0);
-    if (page.length === 0 || all.length >= total) break;
-  }
-  return all;
-}
-
-function mapGetInvestorProduct(catalog: GetInvestorCatalog, product: TildaProduct) {
-  const html = product.text ?? '';
-  const plain = htmlToText(html);
-  const hrefs = [...html.matchAll(/href="([^"]+)"/gi)].map((m) => decodeEntities(m[1]!));
-
-  const site = /Сайт[\s\S]{0,80}?<a[^>]+href="([^"]+)"/i.exec(html);
-  const websiteUrl = catalog.firstLinkIsWebsite
-    ? (hrefs.find((h) => /^https?:\/\//i.test(h)) ?? null)
-    : site
-      ? decodeEntities(site[1]!)
-      : null;
-
-  const characteristics: Record<string, string[]> = {};
-  for (const c of product.characteristics ?? []) {
-    (characteristics[c.title] ??= []).push(c.value);
-  }
-
-  const phone = /Телефон[^:\n]*:\s*([+\d][\d\s().-]{5,}\d)/i.exec(plain)?.[1]?.trim() ?? null;
-  const founder = catalog.founderIsOrganization
-    ? (/Учредитель\s*:\s*([^\n]+)/i.exec(plain)?.[1]?.trim() ?? null)
-    : null;
-
-  const image = firstImage(product.gallery);
-
-  const attributes: Record<string, unknown> = {
-    catalog: catalog.key,
-    characteristics,
-    text: plain,
-  };
-  if (phone) attributes.phone = phone;
-  if (image) attributes.image = image;
-
-  return {
-    type: catalog.type,
-    name: decodeEntities(product.title).trim().slice(0, 300),
-    organizationName: founder ? founder.slice(0, 300) : null,
-    description: product.descr ? htmlToText(product.descr).slice(0, 20000) || null : null,
-    websiteUrl,
-    email: /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/.exec(plain)?.[0] ?? null,
-    telegram: hrefs.find((h) => /(?:t\.me|telegram\.me)\//i.test(h)) ?? null,
-    linkedin: hrefs.find((h) => /linkedin\.com\//i.test(h)) ?? null,
-    attributes,
-    externalId: String(product.uid),
-    externalUrl: product.url ?? `https://get-investor.ru/${catalog.key}#${product.uid}`,
-  };
-}
-
-/** Первая картинка карточки: `gallery` — JSON строкой, и он бывает битым. */
-function firstImage(gallery: string | undefined): string | null {
-  try {
-    return (JSON.parse(gallery ?? '[]') as { img?: string }[])[0]?.img ?? null;
-  } catch {
-    return null;
-  }
-}
-
-// ================================================================ HTML
-
-function decodeEntities(value: string): string {
-  const named: Record<string, string> = {
-    nbsp: ' ',
-    amp: '&',
-    quot: '"',
-    apos: "'",
-    lt: '<',
-    gt: '>',
-    laquo: '«',
-    raquo: '»',
-    mdash: '—',
-    ndash: '–',
-    hellip: '…',
-  };
-  return value.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (whole, code: string) => {
-    if (code[0] === '#') {
-      const n =
-        code[1]?.toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10);
-      return Number.isFinite(n) ? String.fromCodePoint(n) : whole;
-    }
-    return named[code.toLowerCase()] ?? whole;
-  });
-}
-
-function htmlToText(html: string): string {
-  return decodeEntities(
-    html
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<\/(p|div|li|h\d)>/gi, '\n')
-      .replace(/<[^>]+>/g, ''),
-  )
-    .replace(/[ \t]+/g, ' ')
-    .replace(/ *\n */g, '\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
-}
-
-function extractTitle(html: string): string | null {
-  const og = /<meta[^>]+property=["']og:title["'][^>]+content=["']([^"']+)["']/i.exec(html)?.[1];
-  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1];
-  const value = decodeEntities((title ?? og ?? '').replace(/\s+/g, ' ')).trim();
-  return value ? value.slice(0, 1000) : null;
-}
-
-// ======================================================= безопасная загрузка
-
-const USER_AGENT = 'Mozilla/5.0 (compatible; FifthElementIntelligence/0.1)';
-
-/**
- * Адреса, куда сервер не ходит по ссылке из формы: петля, частные сети,
- * служебные диапазоны облаков. Иначе «Импорт URL» стал бы способом
- * заглянуть изнутри в соседние службы стенда (база, брокер, метаданные).
- */
-const FORBIDDEN = new BlockList();
-for (const [net, prefix] of [
-  ['0.0.0.0', 8],
-  ['10.0.0.0', 8],
-  ['100.64.0.0', 10],
-  ['127.0.0.0', 8],
-  ['169.254.0.0', 16],
-  ['172.16.0.0', 12],
-  ['192.168.0.0', 16],
-  ['198.18.0.0', 15],
-  ['224.0.0.0', 4],
-] as const) {
-  FORBIDDEN.addSubnet(net, prefix, 'ipv4');
-}
-for (const [net, prefix] of [
-  ['::', 128],
-  ['::1', 128],
-  ['fc00::', 7],
-  ['fe80::', 10],
-  ['::ffff:0:0', 96],
-] as const) {
-  FORBIDDEN.addSubnet(net, prefix, 'ipv6');
-}
-
-async function assertPublicHost(url: URL): Promise<void> {
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-    throw new Error('допустимы только адреса http и https');
-  }
-  if (url.port && url.port !== '80' && url.port !== '443') {
-    throw new Error('нестандартный порт не загружается');
-  }
-  const host = url.hostname.replace(/^\[|\]$/g, '');
-  const addresses = isIP(host)
-    ? [{ address: host, family: isIP(host) }]
-    : await lookup(host, { all: true });
-  for (const { address, family } of addresses) {
-    if (FORBIDDEN.check(address, family === 6 ? 'ipv6' : 'ipv4')) {
-      throw new Error('адрес ведёт во внутреннюю сеть');
-    }
-  }
-}
-
-async function safeFetchText(raw: string): Promise<string> {
-  let url = new URL(raw);
-  for (let hop = 0; hop < 4; hop += 1) {
-    await assertPublicHost(url);
-    const response = await fetch(url, {
-      redirect: 'manual',
-      headers: { 'user-agent': USER_AGENT, accept: 'text/html,*/*;q=0.5' },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (response.status >= 300 && response.status < 400 && response.headers.get('location')) {
-      url = new URL(response.headers.get('location')!, url);
-      continue;
-    }
-    if (!response.ok) throw new Error(`сайт ответил ${response.status}`);
-    const reader = response.body?.getReader();
-    if (!reader) return '';
-    const chunks: Uint8Array[] = [];
-    let size = 0;
-    const limit = 3 * 1024 * 1024;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      chunks.push(value);
-      if (size >= limit) {
-        await reader.cancel();
-        break;
-      }
-    }
-    return new TextDecoder('utf-8', { fatal: false }).decode(Buffer.concat(chunks));
-  }
-  throw new Error('слишком много перенаправлений');
 }

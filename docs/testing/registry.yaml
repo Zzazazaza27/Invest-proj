@@ -1292,17 +1292,17 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 14
+    asserts: 18
     needs: [db, core, web]
     effects:
       [
         'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'записи Market Intelligence прогона удаляются в finally по префиксу имени',
+        'записи Market Intelligence прогона удаляются в finally по префиксу имени, источники — по своим доменам прогона',
         'INTEL_LIVE_IMPORT=1 ходит в интернет (get-investor.ru) и оставляет импортированные записи — это настоящие данные',
       ]
     studied: code
     studiedOn: 2026-09-23
-    purpose: 'Рендер-проверка раздела Market Intelligence (M137). Что проверяется: раздел в меню по адресу /admin/intelligence; ручное добавление с источником; второй источник; правка и смена статуса; предупреждение о дубле; поиск и фильтры по типу и статусу; «Импорт URL» сохраняет адрес внутренней сети, но не загружает его.'
+    purpose: 'Рендер-проверка раздела Market Intelligence (M137, M139, M140). Что проверяется: раздел в меню по адресу /admin/intelligence; ручное добавление — адрес становится упоминанием в источнике-сайте; хроника: упоминание с датой и ролью, первым в профиле, точность даты без сдвига дня; правка и смена статуса; предупреждение о дубле; поиск и фильтры; вкладка «Источники» — get-investor.ru один источник со всеми сущностями; новый источник с адресом внутренней сети сохраняется, но не загружается.'
     confirmation: reviewed-in-code
 
   - id: RND-ADMIN-QUESTIONS
@@ -1859,6 +1859,22 @@ checks:
     purpose: 'Запуск набора по реестру с отчётом: версия кода, состав, результаты, пропуски и причины.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
+
+  - id: TOOL-INTEL-LOAD-RESEARCH
+    file: scripts/intelligence-load-research.mjs
+    command: node scripts/intelligence-load-research.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db]
+    effects: ['пишет в БД']
+    studied: code
+    studiedOn: 2026-09-23
+    note: >-
+      переносит исследовательский проход рынка из docs/product/market-intelligence/источники-рынка.md в Market Intelligence; повторный запуск безопасен
+    purpose: 'Загрузка исследования рынка: источники с признаками из ТЗ §17, приоритеты парсеров и обратный поиск от людей как упоминания. Заполненное человеком не перетирает.'
+    confirmation: reviewed-in-code
 
   - id: TOOL-SEED-DEMO
     file: scripts/seed-demo.mjs

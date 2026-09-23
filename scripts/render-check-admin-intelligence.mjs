@@ -114,6 +114,10 @@ async function register(tag) {
 }
 
 const MARK = `Проверка MI ${suffix}`;
+// Свои домены прогона: источники заводятся по домену, и чужой example.com
+// уборка не тронет.
+const HOST_A = `mi${suffix}.example.com`;
+const HOST_B = `mi${suffix}.example.org`;
 const BASE = ADMIN_URL.replace(/\/$/, '');
 
 console.warn('\n=== РЕНДЕР-ПРОВЕРКА: MARKET INTELLIGENCE (M137) ===\n');
@@ -171,27 +175,51 @@ try {
     type: 'fund',
     name: `${MARK} Фонд`,
     org: 'MI Capital',
-    source: 'https://example.com/fund',
+    source: `https://${HOST_A}/fund`,
   });
   check('карточка открылась', (await page.locator('h1').innerText()).includes(`${MARK} Фонд`));
   check(
-    'источник из формы сохранён',
-    (await page.locator('[data-intel-card-sources]').innerText()).includes(
-      'https://example.com/fund',
-    ),
+    'адрес из формы стал упоминанием',
+    (await page.locator('[data-intel-mentions]').innerText()).includes(`https://${HOST_A}/fund`),
   );
+  const [site] = await sql(`SELECT source_url FROM intelligence.sources WHERE source_domain = $1`, [
+    HOST_A,
+  ]);
+  check('источник заведён на сайт, а не на страницу', site?.source_url === `https://${HOST_A}/`);
   const id = new URL(page.url()).pathname.split('/').pop();
   await screenshot('card');
 
-  console.warn('[3] Второй источник и правка');
-  await page.fill('[data-intel-source-url]', 'https://example.org/event-speakers');
-  await page.getByRole('button', { name: 'Добавить источник' }).click();
-  await page.waitForSelector('text=https://example.org/event-speakers', { timeout: 10_000 });
+  console.warn('[3] Хроника: второе упоминание с датой и правка');
+  await page.fill('[data-intel-mention-url]', `https://${HOST_B}/event-speakers`);
+  await page.fill('[data-intel-mention-context]', 'спикер');
+  await page.fill('[data-intel-mention-date]', '2026-05-14');
+  await page.fill('[data-intel-mention-summary]', 'выступил про ранние раунды');
+  await page.getByRole('button', { name: 'Добавить упоминание' }).click();
+  await page.waitForSelector('text=выступил про ранние раунды', { timeout: 10_000 });
   const [{ n }] = await sql(
-    'SELECT count(*)::int AS n FROM intelligence.sources WHERE entity_id = $1',
+    'SELECT count(DISTINCT source_id)::int AS n FROM intelligence.mentions WHERE entity_id = $1',
     [id],
   );
-  check('у записи два источника', n === 2, `${n}`);
+  check('сущность встречается в двух источниках', n === 2, `${n}`);
+  const first = page.locator('[data-intel-mention]').first();
+  check(
+    'датированное событие — первым в хронике, с датой',
+    (await first.innerText()).includes('14.05.2026'),
+  );
+  await first.locator('[data-intel-mention-edit]').click();
+  await first.locator('select').selectOption('month');
+  await first.getByRole('button', { name: 'Сохранить', exact: true }).click();
+  await page.waitForSelector('[data-intel-mention] >> text=май 2026', { timeout: 10_000 });
+  const [prec] = await sql(
+    `SELECT happened_on::text AS d, happened_precision AS p FROM intelligence.mentions
+      WHERE entity_id = $1 AND happened_on IS NOT NULL`,
+    [id],
+  );
+  check(
+    'точность даты сохранена, день не сдвинут',
+    prec?.p === 'month' && prec?.d === '2026-05-14',
+    `${prec?.d} ${prec?.p}`,
+  );
   await page.click('[data-intel-edit]');
   await page.locator('[data-intel-form] input[name="email"]').fill('hello@example.com');
   await page.getByRole('button', { name: 'Сохранить изменения' }).click();
@@ -228,11 +256,40 @@ try {
   await page.selectOption('[data-intel-type]', '');
   await screenshot('table');
 
-  console.warn('[6] Импорт URL');
-  await page.click('[data-intel-import-url]');
-  await page.fill('[data-intel-url]', 'http://127.0.0.1/admin/');
+  console.warn('[6] Источники: список и новый источник');
+  await page.getByRole('link', { name: 'Источники', exact: true }).click();
+  await page.waitForSelector('[data-intel-sources] table', { timeout: 15_000 });
+  const [gi] = await sql(
+    `SELECT id, (SELECT count(*)::int FROM intelligence.mentions m WHERE m.source_id = s.id) AS n
+       FROM intelligence.sources s WHERE source_url = 'https://get-investor.ru/'`,
+  );
+  if (gi) {
+    const row = page.locator(`[data-intel-source-row="${gi.id}"]`);
+    check(
+      'get-investor.ru — один источник со всеми сущностями',
+      (await row.count()) === 1 && (await row.innerText()).includes(String(gi.n)),
+      `${gi.n}`,
+    );
+  }
+  await screenshot('sources-list');
+  // Профиль человека из обратного поиска — если исследование загружено.
+  const [person] = await sql(
+    `SELECT e.id FROM intelligence.entities e
+      WHERE EXISTS (SELECT 1 FROM intelligence.mentions m WHERE m.entity_id = e.id
+                    GROUP BY m.entity_id HAVING count(DISTINCT m.source_id) > 5)
+      LIMIT 1`,
+  );
+  if (person) {
+    await page.goto(`${BASE}/intelligence/${person.id}`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('[data-intel-mentions]', { timeout: 15_000 });
+    await screenshot('profile');
+    await page.goto(`${BASE}/intelligence/sources`, { waitUntil: 'networkidle' });
+    await page.waitForSelector('[data-intel-sources] table', { timeout: 15_000 });
+  }
+  await page.click('[data-intel-source-add]');
+  await page.fill('[data-intel-source-form] input[name="url"]', 'http://127.0.0.1/admin/');
   await page.getByRole('button', { name: 'Сохранить источник' }).click();
-  await page.waitForSelector('[data-intel-sources] table', { timeout: 20_000 });
+  await page.waitForSelector('[data-page="intelligence-source"] h1', { timeout: 20_000 });
   const [inner] = await sql(
     `SELECT source_title, notes FROM intelligence.sources
       WHERE source_url = 'http://127.0.0.1/admin/' AND entity_id IS NULL`,
@@ -282,6 +339,7 @@ try {
   await sql(
     `DELETE FROM intelligence.sources WHERE source_url = 'http://127.0.0.1/admin/' AND entity_id IS NULL`,
   );
+  await sql(`DELETE FROM intelligence.sources WHERE source_domain = ANY($1)`, [[HOST_A, HOST_B]]);
   await pool.end();
 }
 

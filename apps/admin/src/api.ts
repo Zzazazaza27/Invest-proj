@@ -321,27 +321,74 @@ export type IntelEntity = z.infer<typeof IntelEntitySchema>;
 
 const IntelRowSchema = IntelEntitySchema.extend({
   sourceCount: z.number(),
-  sourceDomains: z.string().nullable(),
+  sourceNames: z.string().nullable(),
   duplicate: z.boolean(),
 });
 export type IntelRow = z.infer<typeof IntelRowSchema>;
 
+export const INTEL_LEVELS = ['high', 'medium', 'low'] as const;
+export const INTEL_CONTACTS = ['yes', 'partial', 'no'] as const;
+export const INTEL_ALIVE = ['yes', 'no', 'unknown'] as const;
+export const INTEL_DISCOVERY = ['direct', 'reverse', 'import', 'manual'] as const;
+
 const IntelSourceSchema = z.object({
   id: z.string().uuid(),
-  entityId: z.string().uuid().nullable(),
-  entityName: z.string().nullable(),
   url: z.string(),
   domain: z.string().nullable(),
   title: z.string().nullable(),
+  name: z.string().nullable(),
+  kind: z.string().nullable(),
+  description: z.string().nullable(),
+  obtainable: z.string().nullable(),
+  structure: z.enum(INTEL_LEVELS).nullable(),
+  publicContacts: z.enum(INTEL_CONTACTS).nullable(),
+  alive: z.enum(INTEL_ALIVE).nullable(),
+  parserPriority: z.enum(INTEL_LEVELS).nullable(),
+  discovery: z.enum(INTEL_DISCOVERY),
+  viaEntityId: z.string().uuid().nullable(),
+  viaEntityName: z.string().nullable(),
+  representsEntityId: z.string().uuid().nullable(),
+  representsEntityName: z.string().nullable(),
+  mentionCount: z.number(),
   discoveredAt: z.string(),
   lastCheckedAt: z.string().nullable(),
+  updatedAt: z.string(),
   notes: z.string().nullable(),
 });
 export type IntelSource = z.infer<typeof IntelSourceSchema>;
 
+const IntelMentionSchema = z.object({
+  id: z.string().uuid(),
+  entityId: z.string().uuid(),
+  sourceId: z.string().uuid(),
+  pageUrl: z.string().nullable(),
+  context: z.string().nullable(),
+  notes: z.string().nullable(),
+  foundAt: z.string(),
+  lastCheckedAt: z.string().nullable(),
+  happenedOn: z.string().nullable(),
+  happenedPrecision: z.enum(['day', 'month', 'year']).nullable(),
+  summary: z.string().nullable(),
+});
+export type IntelMention = z.infer<typeof IntelMentionSchema>;
+
+export interface IntelMentionInput {
+  context?: string | null;
+  summary?: string | null;
+  happenedOn?: string | null;
+  happenedPrecision?: 'day' | 'month' | 'year' | null;
+}
+
 const IntelCardSchema = z.object({
   entity: IntelEntitySchema,
-  sources: z.array(IntelSourceSchema),
+  mentions: z.array(
+    IntelMentionSchema.extend({
+      sourceName: z.string().nullable(),
+      sourceUrl: z.string(),
+      sourceDomain: z.string().nullable(),
+    }),
+  ),
+  ownSources: z.array(IntelSourceSchema),
   duplicates: z.array(
     z.object({
       id: z.string().uuid(),
@@ -352,6 +399,30 @@ const IntelCardSchema = z.object({
   ),
 });
 export type IntelCard = z.infer<typeof IntelCardSchema>;
+
+const IntelSourceCardSchema = z.object({
+  source: IntelSourceSchema,
+  mentions: z.array(
+    IntelMentionSchema.extend({ entityName: z.string(), entityType: z.enum(INTEL_TYPES) }),
+  ),
+});
+export type IntelSourceCard = z.infer<typeof IntelSourceCardSchema>;
+
+export interface IntelSourceInput {
+  url: string;
+  name?: string | null;
+  kind?: string | null;
+  description?: string | null;
+  obtainable?: string | null;
+  structure?: string | null;
+  publicContacts?: string | null;
+  alive?: string | null;
+  parserPriority?: string | null;
+  discovery?: string;
+  viaEntityId?: string | null;
+  representsEntityId?: string | null;
+  notes?: string | null;
+}
 
 export interface IntelEntityInput {
   type: IntelType;
@@ -396,35 +467,64 @@ export const api = {
         body,
         schema: IntelCardSchema,
       }),
-    addSource: (id: string, body: { url: string; title?: string | null; notes?: string | null }) =>
+    updateMention: (mentionId: string, body: IntelMentionInput) =>
       client.request({
-        path: `/v1/admin/intelligence/entities/${id}/sources`,
+        path: `/v1/admin/intelligence/mentions/${mentionId}`,
+        method: 'PATCH',
+        body,
+        schema: IntelCardSchema,
+      }),
+    addMention: (id: string, body: IntelMentionInput & { url: string }) =>
+      client.request({
+        path: `/v1/admin/intelligence/entities/${id}/mentions`,
         method: 'POST',
         body,
         schema: IntelCardSchema,
       }),
-    removeSource: (sourceId: string) =>
+    removeMention: (mentionId: string) =>
       client.request({
-        path: `/v1/admin/intelligence/sources/${sourceId}`,
+        path: `/v1/admin/intelligence/mentions/${mentionId}`,
         method: 'DELETE',
         schema: z.object({ ok: z.boolean() }),
       }),
-    sources: (loose: boolean) =>
+    asSource: (id: string, url: string | null) =>
       client.request({
-        path: `/v1/admin/intelligence/sources${loose ? '?loose=1' : ''}`,
-        schema: listOf(IntelSourceSchema),
+        path: `/v1/admin/intelligence/entities/${id}/as-source`,
+        method: 'POST',
+        timeoutMs: 40_000,
+        body: { url },
+        schema: IntelCardSchema,
       }),
-    importUrl: (body: { url: string; entityId?: string | null }) =>
+    sources: () =>
+      client.request({ path: '/v1/admin/intelligence/sources', schema: listOf(IntelSourceSchema) }),
+    sourceCard: (id: string) =>
       client.request({
-        path: '/v1/admin/intelligence/sources/import',
+        path: `/v1/admin/intelligence/sources/${id}`,
+        schema: IntelSourceCardSchema,
+      }),
+    createSource: (body: IntelSourceInput) =>
+      client.request({
+        path: '/v1/admin/intelligence/sources',
         method: 'POST',
         timeoutMs: 40_000,
         body,
-        schema: z.object({
-          source: IntelSourceSchema,
+        schema: IntelSourceCardSchema.extend({
           fetched: z.boolean(),
           problem: z.string().nullable(),
         }),
+      }),
+    updateSource: (id: string, body: Partial<IntelSourceInput>) =>
+      client.request({
+        path: `/v1/admin/intelligence/sources/${id}`,
+        method: 'PATCH',
+        body,
+        schema: IntelSourceCardSchema,
+      }),
+    removeSource: (id: string) =>
+      client.request({
+        path: `/v1/admin/intelligence/sources/${id}`,
+        method: 'DELETE',
+        schema: z.object({ ok: z.boolean() }),
       }),
     importGetInvestor: () =>
       client.request({

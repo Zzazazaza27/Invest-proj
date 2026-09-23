@@ -193,7 +193,16 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
     exportable: false,
     note: 'админка → Market Intelligence',
   },
-  'intelligence.sources': { kind: 'content', exportable: false, note: 'источники сущностей рынка' },
+  'intelligence.sources': {
+    kind: 'content',
+    exportable: false,
+    note: 'источники: сайты и страницы',
+  },
+  'intelligence.mentions': {
+    kind: 'content',
+    exportable: false,
+    note: 'сущность найдена в источнике',
+  },
 
   // --------------------------------------------------------------- identity
   'identity.auth_identities': { kind: 'operational' },

@@ -31,7 +31,12 @@ import { DealsPage } from './pages/DealsPage';
 import { UsersPage } from './pages/UsersPage';
 import { TestingSessionsPage } from './pages/TestingSessionsPage';
 import { UserCardPage } from './pages/UserCardPage';
-import { IntelligenceCardPage, IntelligencePage } from './pages/IntelligencePage';
+import {
+  IntelligenceCardPage,
+  IntelligencePage,
+  IntelligenceSourceCardPage,
+  IntelligenceSourcesPage,
+} from './pages/IntelligencePage';
 
 /**
  * Корень админки.
@@ -344,6 +349,8 @@ export function App() {
             <Route path="/testing" element={<TestingSessionsPage />} />
             <Route path="/access" element={<AccessPage />} />
             <Route path="/intelligence" element={<IntelligencePage />} />
+            <Route path="/intelligence/sources" element={<IntelligenceSourcesPage />} />
+            <Route path="/intelligence/sources/:id" element={<IntelligenceSourceCardPage />} />
             <Route path="/intelligence/:id" element={<IntelligenceCardPage />} />
             <Route path="*" element={<NotFoundPage />} />
           </Routes>
