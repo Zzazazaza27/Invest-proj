@@ -554,7 +554,10 @@ function ImportUrlPanel({ onDone }: { onDone: (text: string) => Promise<void> })
 
 function SourcesList() {
   const [items, setItems] = useState<IntelSource[] | null>(null);
-  const [loose, setLoose] = useState(true);
+  // По умолчанию — все источники. Отбор «только непривязанные» пустой почти
+  // всегда (импорт привязывает каждый источник к записи), и вкладка выглядела
+  // так, будто данных нет вовсе.
+  const [loose, setLoose] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -583,9 +586,17 @@ function SourcesList() {
       {items === null ? (
         <div className="spinner">Загрузка…</div>
       ) : items.length === 0 ? (
-        <p className="muted">Источников нет.</p>
+        <p className="muted">
+          {loose
+            ? 'Непривязанных источников нет: все найденные страницы уже относятся к записям. Снимите отметку, чтобы увидеть все.'
+            : 'Источников нет.'}
+        </p>
       ) : (
         <div className="intel-table-wrap">
+          <div className="small muted" style={{ margin: '6px 0' }}>
+            Показано {items.length}
+            {items.length >= 1000 ? ' (последние 1000)' : ''}
+          </div>
           <table className="table">
             <thead>
               <tr>
