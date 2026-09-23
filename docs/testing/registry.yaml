@@ -24,6 +24,18 @@
 #   sensitivity   — проверено ли, что проверка КРАСНЕЕТ без починки.
 #                 Отсутствие подтверждения не делает проверку бесполезной,
 #                 но и не даёт считать её регрессионной защитой.
+#
+# ГДЕ ПРОГОН ЗАПУСКАТЬ:
+#   circuit: temp — только на ВРЕМЕННОМ КОНТУРЕ (своя база, своё ядро,
+#                 свой вход: `scripts/temp-stand.mjs`). Так помечены
+#                 прогоны, которые создают НЕУДАЛЯЕМЫЕ записи —
+#                 опубликованную версию анкеты, версию условий страны,
+#                 версию тарифа или пакета раунда. Убрать их за собой
+#                 прогон не может по устройству данных, а ослаблять
+#                 неизменяемость ради проверок нельзя. Поэтому у них своя
+#                 база, которая после работы удаляется целиком.
+#                 Набор поднимает контур сам; вручную —
+#                 `npm run temp:run -- <файл>`.
 
 version: 1
 date: 2026-09-22
@@ -1219,6 +1231,7 @@ checks:
     confirmation: reviewed-in-code
 
   - id: RND-ADMIN-COMMISSION
+    circuit: temp
     file: scripts/render-check-admin-commission.mjs
     command: node scripts/render-check-admin-commission.mjs
     kind: render
@@ -1237,6 +1250,7 @@ checks:
     confirmation: reviewed-in-code
 
   - id: RND-ADMIN-COUNTRIES
+    circuit: temp
     file: scripts/render-check-admin-countries.mjs
     command: node scripts/render-check-admin-countries.mjs
     kind: render
@@ -1273,6 +1287,7 @@ checks:
     confirmation: reviewed-in-code
 
   - id: RND-ADMIN-QUESTIONS
+    circuit: temp
     file: scripts/render-check-admin-questions.mjs
     command: node scripts/render-check-admin-questions.mjs
     kind: render
@@ -1291,6 +1306,7 @@ checks:
     confirmation: reviewed-in-code
 
   - id: RND-ADMIN-ROUND-PACKAGES
+    circuit: temp
     file: scripts/render-check-admin-round-packages.mjs
     command: node scripts/render-check-admin-round-packages.mjs
     kind: render
@@ -1494,6 +1510,7 @@ checks:
     confirmation: reviewed-in-code
 
   - id: RND-LAB-V2
+    circuit: temp
     file: scripts/render-check-lab-v2.mjs
     command: node scripts/render-check-lab-v2.mjs
     kind: render
@@ -2450,6 +2467,51 @@ checks:
       семь шагов подъёма стенда; от него зависят все живые и браузерные прогоны
     purpose: 'Поднять локальный стенд одной командой. Последовательность одна и та же каждый раз: починить сокет Docker, дождаться демона, поднять контейнеры, накатить миграции, создать стрим NATS, запустить ядро, поднять единую точку'
     confirmation: reviewed-in-code
+
+  - id: TOOL-TEMP-STAND
+    file: scripts/temp-stand.mjs
+    command: npm run temp:up
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db, core]
+    effects:
+      [
+        'СОЗДАЁТ И УДАЛЯЕТ базу unicorn_temp_stand целиком — своя, одноразовая, к рабочей отношения не имеет',
+        'поднимает отдельное ядро на 4302 и отдельную точку входа на 8081 (профиль compose testing)',
+        'внешние каналы закрыты: почта none, вебхуки capture, платежи test',
+      ]
+    studied: code
+    studiedOn: 2026-09-23
+    note: >-
+      контур для прогонов, создающих неудаляемые записи; рабочий стенд, его
+      адреса и его база не затрагиваются
+    purpose: 'Временный контур для прогонов, меняющих общие справочники. Часть браузерных проходов создаёт записи, которые нельзя удалить по устройству: опубликованная версия анкеты неизменяема, политика страны меняется только новой версией. Значит нужна СВОЯ база, которая после прогона удаляется целиком.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-23
+
+  - id: TOOL-TEMP-RUN
+    file: scripts/temp-run.mjs
+    command: npm run temp:run
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db, core, web]
+    effects:
+      [
+        'подставляет прогону адреса временного контура — базу, ядро и вход сразу',
+        'ОТКАЗЫВАЕТСЯ запускать прогон, если контур не поднят: молчаливый уход в рабочую базу исключён',
+      ]
+    studied: code
+    studiedOn: 2026-09-23
+    note: >-
+      обёртка запуска на временном контуре; её же подставляет набор прогонам с
+      пометкой circuit: temp
+    purpose: 'Запуск прогона на временном контуре. Контур — это три вещи сразу: своя база, своё ядро и своя точка входа. Забыть одну переменную — значит получить прогон, который регистрирует человека во временной базе, а ищет его в рабочей.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-09-23
 
   - id: TOOL-VITE-BUILD
     file: scripts/vite-build.mjs

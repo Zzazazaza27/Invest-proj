@@ -190,12 +190,19 @@ export function renderRegistryDoc(registry) {
     L.push('| Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |');
     L.push('| --- | --- | --- | --- | --- |');
     for (const c of checks.filter((x) => x.kind === kind)) {
+      /*
+       * Прогон временного контура запускается НЕ объявленной командой, а
+       * обёрткой: прямой запуск ушёл бы в рабочую базу и создал там
+       * неудаляемые записи. В читаемом представлении показывается то, что
+       * человек действительно наберёт.
+       */
+      const command = c.circuit === 'temp' ? `npm run temp:run -- ${c.file}` : c.command;
+      const where =
+        c.circuit === 'temp'
+          ? `временный контур · ${whereRun(c.id, suiteOf, c.runner)}`
+          : whereRun(c.id, suiteOf, c.runner);
       L.push(
-        `| ${c.id} | \`${c.command}\` | ${c.asserts ?? 0} | ${RUNNER_TITLE[c.runner] ?? c.runner} | ${whereRun(
-          c.id,
-          suiteOf,
-          c.runner,
-        )} |`,
+        `| ${c.id} | \`${command}\` | ${c.asserts ?? 0} | ${RUNNER_TITLE[c.runner] ?? c.runner} | ${where} |`,
       );
     }
     L.push('');

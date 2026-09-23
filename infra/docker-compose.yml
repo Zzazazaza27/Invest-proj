@@ -57,6 +57,40 @@ services:
       timeout: 5s
       retries: 5
 
+  # ВРЕМЕННАЯ ТОЧКА ВХОДА для прогонов, меняющих общие справочники.
+  #
+  # Те же собранные фронтенды, но маршрут /v1/ ведёт в ядро временного
+  # контура, а не в рабочее. Профиль `testing` означает, что обычный
+  # `stand:up` этот контейнер не поднимает: он живёт ровно столько, сколько
+  # идёт прогон, и поднимается скриптом temp-stand.
+  #
+  # Рабочий стенд не затрагивается ничем: свой порт, свой конфиг, свой
+  # контейнер. Конфигурацию работающего nginx править не пришлось.
+  web-test:
+    image: nginx:1.27-alpine
+    container_name: unicorn-web-test
+    profiles: ['testing']
+    restart: 'no'
+    ports:
+      - '127.0.0.1:${TEMP_WEB_PORT:-8081}:80'
+    volumes:
+      - ../.local/temp-stand/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ../apps/web-public/dist:/srv/web-public:ro
+      - ../apps/lab/dist:/srv/lab:ro
+      - ../apps/investor/dist:/srv/investor:ro
+      - ../apps/expert/dist:/srv/expert:ro
+      - ../apps/admin/dist:/srv/admin:ro
+      - ../apps/staff/dist:/srv/staff:ro
+      - ../apps/auth/dist:/srv/auth:ro
+      - ../apps/console/dist:/srv/console:ro
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
+    healthcheck:
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1/ >/dev/null || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
   postgres:
     build:
       context: ./postgres

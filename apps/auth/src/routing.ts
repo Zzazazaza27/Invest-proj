@@ -85,6 +85,17 @@ export function cabinetsForRoles(roles: string[]): Cabinet[] {
  */
 export function cabinetUrl(cabinet: Cabinet): string {
   const { protocol, hostname, port } = window.location;
-  if (port === '') return cabinet.path;
-  return `${protocol}//${hostname}:${__CABINET_PORTS__[cabinet.key]}/`;
+  /*
+   * Порт страницы НЕ ЯВЛЯЕТСЯ признаком единой точки входа.
+   *
+   * Признак — пустая карта портов: её подставляет сборка, когда адрес API
+   * относительный, то есть страница и API живут на одном origin. У
+   * временного контура проверок вход стоит на 8081, и прежнее условие
+   * уводило человека на dev-адрес localhost:5175, которого там нет.
+   *
+   * Пустой порт по-прежнему означает единый вход — это частный случай.
+   */
+  const devPort = __CABINET_PORTS__[cabinet.key];
+  if (port === '' || devPort === undefined) return cabinet.path;
+  return `${protocol}//${hostname}:${devPort}/`;
 }

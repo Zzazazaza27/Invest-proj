@@ -26,6 +26,24 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
  */
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ROOT, '');
+  /*
+   * Карта dev-портов нужна ТОЛЬКО прямому запуску dev-сервером.
+   *
+   * Относительный адрес API означает, что страница и API живут на одном
+   * origin, — это единая точка входа, и переходы между кабинетами идут по
+   * пути. Пустая карта ровно это и означает: в hrefFor для неизвестного
+   * порта уже есть ветка «вернуть путь».
+   *
+   * Прежде признаком служил пустой порт страницы. На временном контуре
+   * (вход на 8081) он давал неверный ответ: кабинет уводил на dev-адрес
+   * localhost:5179, которого там нет.
+   */
+  // process.env читается ПЕРВЫМ: loadEnv берёт только файлы, а сборка
+  // задаёт относительный адрес именно переменной окружения
+  // (scripts/vite-build.mjs).
+  const singleEntry = (process.env.VITE_API_BASE_URL ?? env.VITE_API_BASE_URL ?? '').startsWith(
+    '/',
+  );
   const raw = env.EXPERT_PORT;
   const port = raw === undefined || raw === '' ? 5177 : Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -55,13 +73,17 @@ export default defineConfig(({ mode }) => {
      */
     define: {
       __APP_VERSION__: JSON.stringify(appVersion()),
-      __CABINET_PORTS__: JSON.stringify({
-        lab: Number(env.LAB_PORT || 5175),
-        investor: Number(env.INVESTOR_PORT || 5176),
-        expert: Number(env.EXPERT_PORT || 5177),
-        admin: Number(env.ADMIN_PORT || 5174),
-        login: Number(env.AUTH_PORT || 5179),
-      }),
+      __CABINET_PORTS__: JSON.stringify(
+        singleEntry
+          ? {}
+          : {
+              lab: Number(env.LAB_PORT || 5175),
+              investor: Number(env.INVESTOR_PORT || 5176),
+              expert: Number(env.EXPERT_PORT || 5177),
+              admin: Number(env.ADMIN_PORT || 5174),
+              login: Number(env.AUTH_PORT || 5179),
+            },
+      ),
     },
     // Пакеты монорепо собираются в CommonJS: их потребляет и ядро на NestJS,
     // которое ESM не принимает. Vite не пре-бандлит связанные пакеты по

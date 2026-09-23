@@ -94,6 +94,34 @@ function standUp() {
 const version = codeVersion();
 const stand = standUp();
 
+/*
+ * ВРЕМЕННЫЙ КОНТУР ПОДНИМАЕТСЯ ОДИН РАЗ НА ВЕСЬ НАБОР.
+ *
+ * Часть прогонов создаёт записи, которые нельзя удалить по устройству
+ * данных: опубликованную версию анкеты, версию условий страны, версию
+ * тарифа. Им нужна своя база, которая после работы удаляется целиком
+ * (`circuit: temp` в реестре).
+ *
+ * Поднимать её на каждый прогон отдельно — это минуты миграций на каждую
+ * проверку. Поднимается один раз перед набором и гасится после: внутри
+ * набора прогоны делят одну одноразовую базу, а от РАБОЧЕЙ отделены все
+ * до единого.
+ *
+ * Если контур поднять не удалось, такие прогоны ПРОПУСКАЮТСЯ с причиной.
+ * Молча уйти в рабочую базу нельзя — ровно этого контур и не допускает.
+ */
+const needsCircuit = suite.members.some((id) => byId.get(id)?.circuit === 'temp');
+let circuitUp = false;
+if (needsCircuit) {
+  console.warn('  временный контур: поднимаю (нужен прогонам с circuit: temp)');
+  const up = spawnSync('node', [join(ROOT, 'scripts', 'temp-stand.mjs'), 'up'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  });
+  circuitUp = up.status === 0;
+  console.warn(`  временный контур: ${circuitUp ? 'поднят' : 'ПОДНЯТЬ НЕ УДАЛОСЬ'}`);
+}
+
 console.warn(`\n=== НАБОР «${suite.title}» ===\n`);
 console.warn(`  версия кода: ${version.commit}${version.dirty ? ' + незакоммиченные правки' : ''}`);
 console.warn(`  стенд: ${stand ? 'поднят' : 'НЕ поднят'}`);
@@ -129,9 +157,10 @@ function runOne(id) {
   return {
     id,
     title: entry.purpose?.slice(0, 70) ?? id,
-    command: entry.command,
+    command: entry.circuit === 'temp' ? `node scripts/temp-run.mjs ${entry.file}` : entry.command,
     needs: entry.needs ?? [],
     kind: entry.kind,
+    circuit: entry.circuit,
   };
 }
 
@@ -164,12 +193,34 @@ for (const id of suite.members) {
     continue;
   }
 
-  const needsStand =
-    item.kind === 'render' || item.kind === 'scenario' || item.needs.includes('core');
-  if (needsStand && !stand) {
-    results.push({ id, state: 'пропущено', reason: 'стенд не поднят (npm run stand:up)', ms: 0 });
-    console.warn(`  ПРОПУСК ${id} — стенд не поднят`);
-    continue;
+  /*
+   * Прогону временного контура рабочий стенд не нужен вовсе: у него свои
+   * база, ядро и вход. Проверяется наличие ИМЕННО контура.
+   */
+  if (item.circuit === 'temp') {
+    if (!circuitUp) {
+      results.push({
+        id,
+        state: 'пропущено',
+        reason: 'временный контур не поднят (npm run temp:up)',
+        ms: 0,
+      });
+      console.warn(`  ПРОПУСК ${id} — временный контур не поднят`);
+      continue;
+    }
+  } else {
+    const needsStand =
+      item.kind === 'render' || item.kind === 'scenario' || item.needs.includes('core');
+    if (needsStand && !stand) {
+      results.push({
+        id,
+        state: 'пропущено',
+        reason: 'стенд не поднят (npm run stand:up)',
+        ms: 0,
+      });
+      console.warn(`  ПРОПУСК ${id} — стенд не поднят`);
+      continue;
+    }
   }
 
   /*
@@ -229,6 +280,21 @@ for (const id of suite.members) {
   );
 }
 
+/*
+ * Контур гасится ВСЕГДА, даже если прогоны упали: одноразовая база на то и
+ * одноразовая, а оставленный контейнер занимает порт до следующего раза.
+ * Данные упавшего прогона при этом теряются — разбирать отказ нужно
+ * повторным запуском одного прогона (`npm run temp:run -- <файл>`), где
+ * контур остаётся поднятым.
+ */
+if (circuitUp) {
+  spawnSync('node', [join(ROOT, 'scripts', 'temp-stand.mjs'), 'down'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+  });
+  console.warn('\n  временный контур погашен, одноразовая база удалена');
+}
+
 // ---------------------------------------------------------------- отчёт
 const failed = results.filter((r) => r.state === 'ОТКАЗ');
 const skipped = results.filter((r) => r.state === 'пропущено');
@@ -240,6 +306,13 @@ const lines = [
   `- Дата: ${new Date().toLocaleString('ru-RU')}`,
   `- Версия кода: \`${version.commit}\`${version.dirty ? ' **+ незакоммиченные правки**' : ''}`,
   `- Стенд: ${stand ? 'поднят' : 'не поднят'}`,
+  ...(needsCircuit
+    ? [
+        `- Временный контур (своя одноразовая база): ${
+          circuitUp ? 'поднят и погашен после набора' : 'ПОДНЯТЬ НЕ УДАЛОСЬ'
+        }`,
+      ]
+    : []),
   `- Итог: успех ${passed.length}, отказ ${failed.length}, пропущено ${skipped.length}`,
   '',
   '| Проверка | Итог | Время | Подробности |',

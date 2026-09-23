@@ -24,6 +24,21 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
  */
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ROOT, '');
+  /*
+   * Признак единой точки входа — ОТНОСИТЕЛЬНЫЙ адрес API, а не пустой порт
+   * страницы. Относительный адрес означает «страница и API на одном
+   * origin»: это и есть единый вход, каким бы портом он ни был опубликован.
+   * `process.env` читается первым — относительный адрес задаёт сборка
+   * (`scripts/vite-build.mjs`), а `loadEnv` видит только файлы.
+   *
+   * Ноль в карте означает «порта нет, ходи по пути»: у ссылки на консоль
+   * такая ветка уже есть. Прежде её выбирал пустой порт страницы, и на
+   * временном контуре проверок (вход на 8081) ссылка уводила на dev-адрес
+   * localhost:5178, которого там нет.
+   */
+  const singleEntry = (process.env.VITE_API_BASE_URL ?? env.VITE_API_BASE_URL ?? '').startsWith(
+    '/',
+  );
   const raw = env.ADMIN_PORT;
   const port = raw === undefined || raw === '' ? 5174 : Number(raw);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
@@ -42,7 +57,7 @@ export default defineConfig(({ mode }) => {
     // Порт служебной консоли попадает в сборку значением: за единой точкой
     // входа ссылка на неё идёт по пути `/console/`, а при прямом запуске
     // dev-сервером — по своему порту, иначе вела бы в никуда.
-    define: { __CONSOLE_PORT__: Number(env.CONSOLE_PORT || 5178) },
+    define: { __CONSOLE_PORT__: singleEntry ? 0 : Number(env.CONSOLE_PORT || 5178) },
     plugins: [react()],
     // Пакеты монорепо собираются в CommonJS: их потребляет и ядро на NestJS,
     // которое ESM не принимает. Vite не пре-бандлит связанные пакеты по

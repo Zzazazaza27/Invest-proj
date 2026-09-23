@@ -93,6 +93,28 @@ check(
   badCommands.map((c) => `${c.id} → ${c.command}`).join(', '),
 );
 
+/*
+ * ПРОГОН ВРЕМЕННОГО КОНТУРА ОБЯЗАН ИМЕТЬ ФАЙЛ.
+ *
+ * Набор запускает такой прогон не объявленной командой, а обёрткой
+ * `temp-run.mjs <файл>` — иначе он ушёл бы в рабочую базу и создал там
+ * неудаляемые записи, ради чего контур и заведён. Без `file` обёртке нечего
+ * запускать, и пометка молча ничего не значила бы.
+ */
+const badCircuit = checks.filter((c) => c.circuit !== undefined && c.circuit !== 'temp');
+check(
+  'пометка контура — только temp',
+  badCircuit.length === 0,
+  badCircuit.map((c) => `${c.id} → ${c.circuit}`).join(', '),
+);
+const circuitWithoutFile = checks.filter((c) => c.circuit === 'temp' && !c.file);
+check(
+  'у прогонов временного контура указан файл',
+  circuitWithoutFile.length === 0,
+  circuitWithoutFile.map((c) => c.id).join(', ') ||
+    `помечено ${checks.filter((c) => c.circuit === 'temp').length}`,
+);
+
 // ------------------------------------------------------------------ сироты
 const known = new Set(checks.filter((c) => c.file).map((c) => c.file.replace(/\\/g, '/')));
 const orphanScripts = readdirSync(join(ROOT, 'scripts'))
