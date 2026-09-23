@@ -461,15 +461,19 @@ export class IntelligenceService {
   async list(ctx: RequestContext, filter: { q: string; type?: string; status?: string }) {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<EntityRow & MetricsRow & { duplicate: boolean }>(
-        `SELECT e.*, x.*,
-                EXISTS (
-                  SELECT 1 FROM intelligence.entities d
-                   WHERE d.id <> e.id
-                     AND ((e.external_url IS NOT NULL AND d.external_url = e.external_url)
-                       OR (d.type = e.type
-                           AND intelligence.norm_name(d.name) = intelligence.norm_name(e.name)))
-                ) AS duplicate
+        // Признак дубля — оконным подсчётом по ВСЕЙ таблице: нормализованное
+        // имя считается один раз на запись. Попарное сравнение (EXISTS с OR)
+        // индексом не пользовалось и на тысяче записей занимало секунды.
+        `WITH dup AS (
+           SELECT id,
+                  count(*) OVER (PARTITION BY type, intelligence.norm_name(name)) > 1
+                  OR (external_url IS NOT NULL
+                      AND count(*) OVER (PARTITION BY external_url) > 1) AS duplicate
+             FROM intelligence.entities
+         )
+         SELECT e.*, x.*, dup.duplicate
            FROM intelligence.entities e
+           JOIN dup ON dup.id = e.id
            ${METRICS_LATERAL}
           WHERE ($1 = '' OR e.name ILIKE '%' || $1 || '%'
                          OR e.organization_name ILIKE '%' || $1 || '%'
@@ -885,7 +889,9 @@ export class IntelligenceService {
     const { rows } = await tx.query<{ id: string }>(
       `SELECT id FROM intelligence.sources
         WHERE source_url = $1 OR ($2::text IS NOT NULL AND source_domain = $2)
-        ORDER BY (source_url = $1) DESC, length(source_url)
+        ORDER BY (source_url = $1) DESC,
+               starts_with($1, source_url) DESC,
+               CASE WHEN starts_with($1, source_url) THEN -length(source_url) ELSE length(source_url) END
         LIMIT 1`,
       [url, domain],
     );

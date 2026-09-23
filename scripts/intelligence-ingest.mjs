@@ -235,7 +235,9 @@ async function resolveSourceForPage(url, discovery) {
   const [found] = await q(
     `SELECT id FROM intelligence.sources
       WHERE source_url = $1 OR source_domain = $2
-      ORDER BY (source_url = $1) DESC, length(source_url)
+      ORDER BY (source_url = $1) DESC,
+               starts_with($1, source_url) DESC,
+               CASE WHEN starts_with($1, source_url) THEN -length(source_url) ELSE length(source_url) END
       LIMIT 1`,
     [url, domain],
   );
