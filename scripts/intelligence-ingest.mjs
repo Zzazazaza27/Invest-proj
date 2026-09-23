@@ -162,6 +162,17 @@ async function resolveEntity(
 ) {
   const clean = text(name, 300);
   if (!clean) return null;
+  // Ссылка на уже известную сущность без указания типа (собственный сайт,
+  // «найден от»): сравнивается только имя — тип здесь не известен.
+  if (!create && !ENTITY_TYPES.has(type)) {
+    const [any] = await q(
+      `SELECT id FROM intelligence.entities
+        WHERE intelligence.norm_name(name) = intelligence.norm_name($1)
+        ORDER BY (type = 'person') DESC, created_at LIMIT 1`,
+      [clean],
+    );
+    return any ? { id: any.id, created: false } : null;
+  }
   const wanted = ENTITY_TYPES.has(type) ? type : organizationLike ? 'organization' : 'other';
   const [found] = await q(
     `SELECT id FROM intelligence.entities

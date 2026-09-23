@@ -1,0 +1,701 @@
+{
+ "run": {
+  "id": "2026-09-23-candidates-recheck",
+  "date": "2026-09-23",
+  "discovery": "reverse",
+  "method": "Для каждой пары «человек + домен» — WebSearch site:<домен> с фамилией, затем WebFetch найденной конкретной страницы и дословная цитата. Не открывшиеся страницы — candidate с конкретным URL, старый кандидат на корне домена — rejected."
+ },
+ "sources": [
+  {
+   "url": "https://oskarhartmann.com/",
+   "name": "Oskar Hartmann",
+   "is_profile": false,
+   "source_type": "own_site",
+   "represents_entity": "Оскар Хартманн",
+   "review_status": "checked",
+   "notes": "Личный сайт на английском: биография, менторство, выступления, инвестиции."
+  },
+  {
+   "url": "https://unicornfellowship.ru/",
+   "name": "Программы, форумы и проекты Оскара Хартманна",
+   "is_profile": false,
+   "source_type": "own_site",
+   "represents_entity": "Оскар Хартманн",
+   "review_status": "checked",
+   "notes": "Портал проектов Хартманна: Unicorn Lab, Unicorn Insights, Арена Единорогов, Братство Оскара Хартманна."
+  },
+  {
+   "url": "https://speaker.unicornfellowship.ru/",
+   "name": "Оскар Хартманн — спикер",
+   "is_profile": false,
+   "source_type": "own_site",
+   "represents_entity": "Оскар Хартманн",
+   "review_status": "checked",
+   "notes": "Страница приглашения Хартманна как спикера."
+  },
+  {
+   "url": "https://t.me/oskar_hartmann",
+   "name": "Оскар Хартманн (Telegram)",
+   "is_profile": false,
+   "source_type": "own_site",
+   "represents_entity": "Оскар Хартманн",
+   "review_status": "checked",
+   "notes": "Собственный Telegram-канал; описание «Охотник за единорогами. Бизнес-ангел. Филантроп.». В задании был адрес с лишней точкой в конце."
+  },
+  {
+   "url": "https://arena.unicornfellowship.ru/",
+   "name": "Арена Единорогов",
+   "is_profile": true,
+   "source_type": "pitch_session",
+   "kind": "инвестиционное шоу, питчинг стартапов",
+   "description": "Инвестиционное шоу Оскара Хартманна: открытый питчинг стартапов инвесторам.",
+   "obtainable": "даты и площадки мероприятий, инвесторы-участники",
+   "has_events": true,
+   "alive": "yes",
+   "review_status": "checked",
+   "notes": "Домен из рубрики «Свои домены», но по смыслу — площадка питчинга. Ближайшее событие 22 сентября 2026, Москва, Центр событий РБК."
+  }
+ ],
+ "facts": [
+  {
+   "entity": "Александр Галицкий",
+   "entity_type": "person",
+   "page_url": "https://www.tadviser.ru/index.php/%D0%9F%D0%B5%D1%80%D1%81%D0%BE%D0%BD%D0%B0:%D0%93%D0%B0%D0%BB%D0%B8%D1%86%D0%BA%D0%B8%D0%B9_%D0%90%D0%BB%D0%B5%D0%BA%D1%81%D0%B0%D0%BD%D0%B4%D1%80_%D0%92%D0%BB%D0%B0%D0%B4%D0%B8%D0%BC%D0%B8%D1%80%D0%BE%D0%B2%D0%B8%D1%87",
+   "role": "персона справочника",
+   "action": "персональная страница в справочнике TAdviser (найдена поиском, не открылась)",
+   "verification": "candidate",
+   "notes": "WebFetch вернул 404, прямой запрос — ошибка TLS. Страница в поисковом индексе с заголовком «Галицкий Александр Владимирович»."
+  },
+  {
+   "entity": "Александр Галицкий",
+   "entity_type": "person",
+   "page_url": "https://tadviser.ru/",
+   "verification": "rejected",
+   "notes": "Корень домена не является страницей упоминания; конкретная страница вынесена отдельным кандидатом."
+  },
+  {
+   "entity": "Александр Галицкий",
+   "entity_type": "person",
+   "page_url": "https://equity.today/top-biznes-angelov-rossii.html",
+   "role": "основатель",
+   "action": "9-е место в списке бизнес-ангелов России на equity.today",
+   "organization": "Almaz Capital",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "Александр Галицкий. Основатель фонда Almaz Capital, специализирующийся на IT-проектах."
+  },
+  {
+   "entity": "Аркадий Морейнис",
+   "entity_type": "person",
+   "page_url": "https://antistartup.darkside.vc/",
+   "verification": "rejected",
+   "notes": "Домен не резолвится (ENOTFOUND) на 2026-09-23. По поисковому индексу — страница курса «Антистартап», автор Морейнис; подтвердить открытием нельзя."
+  },
+  {
+   "entity": "Аркадий Морейнис",
+   "entity_type": "person",
+   "page_url": "https://exp.fm/@amoreynis",
+   "verification": "rejected",
+   "notes": "Профиль отдаёт 404 (и exp.fm/posts/189 тоже); в индексе поисковика остался."
+  },
+  {
+   "entity": "Аркадий Морейнис",
+   "entity_type": "person",
+   "page_url": "https://kontur.ru/articles/1419",
+   "role": "предприниматель и инвестор, автор курса",
+   "action": "выпустил видеокурс «Антистартап. Новая надежда» для предпринимателей",
+   "date": "2014-12-08",
+   "date_precision": "day",
+   "verification": "verified",
+   "evidence": "Известный предприниматель и инвестор Аркадий Морейнис выпустил видеокурс для предпринимателей под названием «Антистартап. Новая надежда»"
+  },
+  {
+   "entity": "Аркадий Морейнис",
+   "entity_type": "person",
+   "page_url": "https://mbschool.ru/faq/articles/biznes-angely-i-venchurnoe-finansirovanie/",
+   "role": "бизнес-ангел",
+   "action": "назван среди известных бизнес-ангелов России",
+   "date": "2025-07-15",
+   "date_precision": "day",
+   "organization": "Unovo Capital",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "В России к известным ангелам относятся Игорь Рябенький (Altair Capital) и Аркадий Морейнис (Unovo Capital)."
+  },
+  {
+   "entity": "Аркадий Морейнис",
+   "entity_type": "person",
+   "page_url": "https://equity.today/top-biznes-angelov-rossii.html",
+   "role": "основатель, бизнес-ангел",
+   "action": "27-е место в списке бизнес-ангелов России на equity.today",
+   "organization": "Price.ru",
+   "organization_type": "project",
+   "verification": "verified",
+   "evidence": "Аркадий Морейнис. Основатель проекта Price.ru, ведущий бизнес-ангел, инвестирующий в ранние интернет- и IT-стартапы."
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://abireg.ru/newsitem/111977/",
+   "role": "венчурный инвестор, герой интервью",
+   "action": "интервью о главной ошибке стартапов (пересказ подкаста Александра Соколовского)",
+   "date": "2026-02-02",
+   "date_precision": "day",
+   "verification": "verified",
+   "evidence": "Венчурный инвестор Игорь Рябенький: «Вас будут вышибать»"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://altaclub.vc/",
+   "role": "основатель и управляющий партнёр",
+   "action": "указан основателем AltaIR Capital и AltaClub на сайте клуба",
+   "organization": "AltaClub",
+   "organization_type": "investor_club",
+   "verification": "verified",
+   "evidence": "Dr. IGOR RYABENKIY Founder of Altair Capital and AltaClub"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://altaclub.vc/",
+   "role": "основатель",
+   "action": "указан основателем AltaIR Capital на сайте AltaClub",
+   "organization": "AltaIR Capital",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "Dr. IGOR RYABENKIY Founder of Altair Capital and AltaClub"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://equity.today/top-biznes-angelov-rossii.html",
+   "role": "управляющий партнёр",
+   "action": "14-е место в списке бизнес-ангелов России на equity.today",
+   "organization": "Altair Capital",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "Игорь Рябенький. Управляющий партнер Altair Capital, поддерживающий технологические проекты."
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://plusworld.ru/articles/70011/",
+   "role": "основатель и управляющий партнёр, герой статьи",
+   "action": "статья «Как выживать бизнесу в борьбе с гигантами» с его позицией",
+   "date": "2026-02-01",
+   "date_precision": "day",
+   "organization": "AltaIR Capital",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "Игорь Рябенский — бизнес-ангел, один из первых венчурных инвесторов в России, основатель и управляющий партнер венчурного фонда AltaIR Capital",
+   "notes": "На странице фамилия с опечаткой «Рябенский»; по контексту (AltaIR Capital) — тот же человек."
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://rb.ru/interview/kto-igor-ryabenkij/",
+   "role": "суперангел, управляющий партнёр",
+   "action": "герой рубрики «Кто есть кто» на RB.RU",
+   "date": "2015-06-08",
+   "date_precision": "day",
+   "organization": "AltaIR Capital",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "В рубрике «Кто есть кто» — суперангел и управляющий партнер фонда AltaIR Capital Игорь Рябенький."
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://rb.ru/data/igor-ryabenkij-80174/",
+   "role": "основатель",
+   "action": "карточка основателя в каталоге RB.RU Data; в 2015 запустил клуб AltaClub",
+   "organization": "AltaClub",
+   "organization_type": "investor_club",
+   "verification": "verified",
+   "evidence": "В 2015 году Рябенький запустил венчурный клуб для бизнес-ангелов AltaClub."
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://rb.ru/data/igor-ryabenkij-80174/",
+   "role": "основатель",
+   "action": "карточка в RB.RU Data: в 2005 году основал AltaIR Capital",
+   "date": "2005-01-01",
+   "date_precision": "year",
+   "organization": "AltaIR Capital",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "В 2005 году основал инвестиционную компанию AltaIR Capital"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://rusinvestproject.ru/investors/buzines-proekty-igor-rybenkyi/",
+   "role": "инвестор (карточка в каталоге инвесторов)",
+   "action": "карточка инвестора в каталоге RusInvestProject",
+   "verification": "verified",
+   "evidence": "Бизнес-ангел и предприниматель Игорь Рябенький активно поддерживает бизнес-проекты на стадиях от идеи до выхода на международные рынки"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://spbtech.ru/tekhnopark-sankt-peterburga/biznes-inkubator/rezidentura/investicii/tproduct/680490738662-igor-ryabenkii",
+   "role": "инвестор (карточка в разделе «Инвестиции» бизнес-инкубатора)",
+   "action": "карточка в разделе «Инвестиции» резидентуры бизнес-инкубатора Технопарка Санкт-Петербурга",
+   "organization": "AltaIR Capital",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "Игорь Аркадьевич Рябенький — венчурный инвестор, основатель и генеральный партнёр инвестиционной фирмы AltaIR Capital, бизнес-ангел."
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://svoi.vc/reyting-biznes-angelov-rossii/",
+   "role": "бизнес-ангел (позиция в рейтинге)",
+   "action": "включён в рейтинг бизнес-ангелов России на SVOI.VC",
+   "date": "2023-06-20",
+   "date_precision": "day",
+   "verification": "verified",
+   "evidence": "Игорь Рябенький — Профессиональный инвестор, владелец собственного фонда, лауреат премии «Ангел года – 2013»."
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://unicornbase.ru/investors/angels/Igor-ryabenkIj",
+   "role": "бизнес-ангел (карточка в базе)",
+   "action": "карточка бизнес-ангела в базе UNICORN BASE",
+   "organization": "Altair Capital",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "Игорь Рябенький. Основатель и управляющий партнер Altair Capital",
+   "notes": "Подробности карточки закрыты входом (modal-login); имя и должность видны публично."
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "entity_type": "person",
+   "page_url": "https://vc.ru/id4994551/2243886-igor-ryabenkiy-vlozhilsya-v-fond-mento-vc",
+   "role": "партнёр (non-managing), якорный инвестор",
+   "action": "вложился в фонд Mento VC и стал партнёром управляющей компании",
+   "date": "2025-09-29",
+   "date_precision": "day",
+   "organization": "Mento VC",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "Рябенький стал партнером [non-managing] в управляющей компании и одним из якорных инвесторов фонда"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://abn.agency/2026/03/05/brainbox-i-oskar-hartmann-obedinyayut-usiliya-dlya-investiczij-v-2-mlrd-rublej-v-it-startapy/",
+   "role": "член инвестиционного комитета, стратегический партнёр",
+   "action": "присоединился к платформе brainbox.vc и фонду brainbox_I",
+   "date": "2026-03-05",
+   "date_precision": "day",
+   "organization": "brainbox.vc",
+   "organization_type": "platform",
+   "verification": "verified",
+   "evidence": "Оскар Хартманн войдет в инвестиционный комитет платформы и фонда, а также станет стратегическим партнером экосистемы"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://aktivo.ru/about",
+   "role": "основатель и президент",
+   "action": "указан основателем и президентом AKTIVO",
+   "organization": "AKTIVO",
+   "organization_type": "platform",
+   "verification": "verified",
+   "evidence": "Оскар Хартманн — Основатель и президент AKTIVO"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://arena.unicornfellowship.ru/",
+   "role": "инвестор, организатор инвестиционного шоу",
+   "action": "инвестиционное шоу «Арена Единорогов», Москва, Центр событий РБК",
+   "date": "2026-09-22",
+   "date_precision": "day",
+   "event": "Арена Единорогов",
+   "event_type": "event",
+   "verification": "verified",
+   "evidence": "Оскар Хартманн — ТОП-18 бизнес-ангелов мира, международный предприниматель и венчурный инвестор"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://bookspeaker.agency/oskarhartman",
+   "role": "спикер (карточка агентства)",
+   "action": "карточка спикера в агентстве BookSpeaker",
+   "organization": "KupiVIP.ru",
+   "organization_type": "project",
+   "verification": "verified",
+   "evidence": "Спикер Оскар Хартманн | Агентство BookSpeaker … Основатель и генеральный директор компании KupiVIP.ru."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://brainbox.vc/unicornarena",
+   "role": "стратегический партнёр, член инвестиционного комитета",
+   "action": "соглашение Brainbox и Хартманна; участие в инвесткомитете фонда brainbox_I",
+   "organization": "brainbox.vc",
+   "organization_type": "platform",
+   "verification": "verified",
+   "evidence": "Мы создали венчурный смарт-фонд brainbox_I и пригласили Оскара Хартманна участвовать в инвестиционном комитете"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://digitalbusiness.kz/2026-02-05/oskar-hartmann-investiroval-v-kazahstanskiy-startap-detali-sdelki/",
+   "role": "бизнес-ангел",
+   "action": "инвестировал в казахстанский стартап (по заголовку в поисковой выдаче)",
+   "verification": "candidate",
+   "notes": "Страница отдаёт 403 (защита от ботов), не открыта."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://digitalbusiness.kz/",
+   "verification": "rejected",
+   "notes": "Корень домена не является страницей упоминания; конкретная страница вынесена отдельным кандидатом."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://doersdoings.ru/personality/oskar-hartmann/",
+   "role": "герой очерка",
+   "action": "очерк «Оскар Хартманн: предприниматель без иллюзий»",
+   "date": "2026-04-23",
+   "date_precision": "day",
+   "verification": "verified",
+   "evidence": "Оскар Хартманн: предприниматель без иллюзий — дисциплина, дистанция и честность"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://hlb-magazine.ru/guide/business-meroptiyatiya/20-iyunya-v-sochi-projdyot-investiczionnoe-shou-oskara-hartmanna-arena-edinorogov/",
+   "role": "организатор инвестиционного шоу",
+   "action": "анонс шоу «Арена Единорогов» в Сочи",
+   "date": "2026-06-20",
+   "date_precision": "day",
+   "event": "Арена Единорогов",
+   "event_type": "event",
+   "verification": "verified",
+   "evidence": "20 июня в Сочи пройдёт инвестиционное шоу Оскара Хартманна «Арена Единорогов»"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://ict2go.ru/events/72236/",
+   "role": "инвестор, принимающий питчи",
+   "action": "открытый питч проектов «Арена Единорогов», Москва, Центр событий РБК",
+   "date": "2026-09-22",
+   "date_precision": "day",
+   "event": "Арена Единорогов",
+   "event_type": "event",
+   "verification": "verified",
+   "evidence": "открытый питч проектов Оскару Хартманну и другим инвесторам мирового уровня"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://oskarhartmann.com/",
+   "role": "сооснователь и партнёр фондов",
+   "action": "собственный сайт: сооснователь и партнёр Fast Lane Ventures, Simile Ventures Partners и LARIX",
+   "organization": "Fast Lane Ventures",
+   "organization_type": "venture_studio",
+   "verification": "verified",
+   "evidence": "As a co-founder and partner of Fast Lane Ventures, Simile Ventures Partners, and LARIX funds, he meticulously curated a portfolio that spans over 70 companies."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://oskarhartmann.com/",
+   "role": "сооснователь и партнёр",
+   "action": "собственный сайт: сооснователь и партнёр Simile Ventures Partners",
+   "organization": "Simile Ventures Partners",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "As a co-founder and partner of Fast Lane Ventures, Simile Ventures Partners, and LARIX funds, he meticulously curated a portfolio that spans over 70 companies."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://oskarhartmann.com/",
+   "role": "сооснователь и партнёр",
+   "action": "собственный сайт: сооснователь и партнёр LARIX",
+   "organization": "LARIX",
+   "organization_type": "fund",
+   "verification": "verified",
+   "evidence": "As a co-founder and partner of Fast Lane Ventures, Simile Ventures Partners, and LARIX funds, he meticulously curated a portfolio that spans over 70 companies."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://prostars.org/catalog/showman/oskar-xartman/",
+   "role": "спикер (карточка агентства)",
+   "action": "карточка в каталоге агентства PROSTARS (по поисковой выдаче)",
+   "verification": "candidate",
+   "notes": "WebFetch вернул 404, страница не открыта."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://prostars.org/",
+   "verification": "rejected",
+   "notes": "Корень домена не является страницей упоминания; конкретная страница вынесена отдельным кандидатом."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://speaker.unicornfellowship.ru/",
+   "role": "спикер",
+   "action": "собственная страница для приглашения на выступления",
+   "verification": "verified",
+   "evidence": "Оскар Хартманн — спикер на мероприятия."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://style.rbc.ru/people/66a23e199a79472a0b98af33",
+   "role": "основатель и партнёр",
+   "action": "интервью РБК Стиль о балансе и целях",
+   "date": "2024-07-26",
+   "date_precision": "day",
+   "organization": "Hartmann Holdings",
+   "organization_type": "organization",
+   "verification": "verified",
+   "evidence": "Бизнесмен Оскар Хартманн, основатель и партнер Hartmann Holdings, Fastlane Ventures, Simile Ventures Partners и HR CAPITAL LARIX"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://t.me/oskar_hartmann",
+   "role": "автор канала",
+   "action": "собственный Telegram-канал",
+   "verification": "verified",
+   "evidence": "Оскар Хартманн. Охотник за единорогами. Бизнес-ангел. Филантроп."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://t.me/oskar_hartmann.",
+   "verification": "rejected",
+   "notes": "Адрес с лишней точкой в конце; настоящий — https://t.me/oskar_hartmann (подтверждён отдельным фактом)."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://topspeaker.ru/speakers/biznes/entrepreneurs/oskar-khartmann/",
+   "role": "спикер (карточка агентства); член попечительского совета Рыбаков-фонда",
+   "action": "карточка спикера в агентстве TopSpeaker",
+   "organization": "Рыбаков-фонд",
+   "organization_type": "organization",
+   "verification": "verified",
+   "evidence": "Серийный предприниматель и филантроп. Член попечительского совета Рыбаков-фонда."
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "entity_type": "person",
+   "page_url": "https://unicornfellowship.ru/",
+   "role": "основатель проектов",
+   "action": "портал программ и проектов Хартманна (Unicorn Lab, Арена Единорогов и др.)",
+   "verification": "verified",
+   "evidence": "опытный предприниматель и инвестор Оскара Хартманна"
+  }
+ ],
+ "reject_facts": [
+  {
+   "entity": "Александр Галицкий",
+   "domain": "tadviser.ru",
+   "role": "Исторические точки",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Аркадий Морейнис",
+   "domain": "antistartup.darkside.vc",
+   "role": "Домены",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Аркадий Морейнис",
+   "domain": "exp.fm",
+   "role": "Домены",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Аркадий Морейнис",
+   "domain": "kontur.ru",
+   "role": "Домены",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Аркадий Морейнис",
+   "domain": "mbschool.ru",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "abireg.ru",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "altaclub.vc",
+   "role": "Свои структуры",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "equity.today",
+   "role": "Рейтинги",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "plusworld.ru",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "rb.ru",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "rb.ru",
+   "role": "Карточки в базах",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "rusinvestproject.ru",
+   "role": "Карточки в базах",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "spbtech.ru",
+   "role": "Карточки в базах",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "svoi.vc",
+   "role": "Рейтинги",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "unicornbase.ru",
+   "role": "Карточки в базах",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Игорь Рябенький",
+   "domain": "vc.ru",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "abn.agency",
+   "role": "Партнёры",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "aktivo.ru",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "arena.unicornfellowship.ru",
+   "role": "Свои домены",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "bookspeaker.agency",
+   "role": "Агентства спикеров",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "brainbox.vc",
+   "role": "Партнёры",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "digitalbusiness.kz",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "doersdoings.ru",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "hlb-magazine.ru",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "ict2go.ru",
+   "role": "Агентства спикеров",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "oskarhartmann.com",
+   "role": "Свои домены",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "prostars.org",
+   "role": "Агентства спикеров",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "speaker.unicornfellowship.ru",
+   "role": "Свои домены",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "style.rbc.ru",
+   "role": "Медиа",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "t.me",
+   "role": "Свои домены",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "topspeaker.ru",
+   "role": "Агентства спикеров",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  },
+  {
+   "entity": "Оскар Хартманн",
+   "domain": "unicornfellowship.ru",
+   "role": "Свои домены",
+   "reason": "первый проход: домен из выдачи без страницы; заменён перепроверкой 2026-09-23 (см. факты этого файла)"
+  }
+ ]
+}
