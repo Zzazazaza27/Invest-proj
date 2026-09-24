@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { AdminUserCard, AdminUserRow } from '@unicorn/contracts';
 import { api } from '../api';
 
@@ -159,6 +159,12 @@ export function cabinetsOf(
  * журналы доступа не попадает, а вкладка сразу переложит его в своё
  * состояние и вычистит адрес.
  */
+/**
+ * Одна ширина и одна строка для кнопки кабинета в списке — с меню и без.
+ * Иначе столбец «ехал» от числа ролей: стрелка переносилась, строка росла.
+ */
+const CABINET_BUTTON_STYLE: React.CSSProperties = { minWidth: '7.5em', whiteSpace: 'nowrap' };
+
 export function ViewCabinetAction({
   userId,
   roles,
@@ -171,6 +177,25 @@ export function ViewCabinetAction({
   const cabinets = cabinetsOf(roles);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLSpanElement>(null);
+
+  // Меню закрывается щелчком мимо и Escape — как любое выпадающее меню.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onPointer);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onPointer);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuOpen]);
 
   const open = async (href: string) => {
     setBusy(true);
@@ -229,6 +254,7 @@ export function ViewCabinetAction({
           type="button"
           className="btn--ghost btn--sm"
           data-view-cabinet={only.role}
+          style={CABINET_BUTTON_STYLE}
           disabled={busy}
           onClick={() => void open(only.href)}
           title={`Открыть ${only.title} только для чтения`}
@@ -237,30 +263,61 @@ export function ViewCabinetAction({
         </button>
       );
     }
-    // Размер выпадающего списка — как у мелкой кнопки рядом: обычный select
-    // на 35px поднимал строку списка выше кнопочного варианта, и плотность
-    // зависела от того, сколько у человека ролей.
+    // Кнопка та же, что при одной роли, — столбец не «едет» от числа ролей.
+    // Раньше здесь стоял select шире кнопки, и строки с несколькими ролями
+    // выглядели иначе. Выбор кабинета — меню под кнопкой.
     return (
-      <select
-        aria-label="Посмотреть кабинет"
-        data-view-cabinet="choose"
-        disabled={busy}
-        value=""
-        onChange={(event) => {
-          const href = event.target.value;
-          event.target.value = '';
-          if (href) void open(href);
-        }}
-        className="select--sm"
-        style={{ width: 'auto' }}
-      >
-        <option value="">Кабинет…</option>
-        {cabinets.map((cabinet) => (
-          <option key={cabinet.href} value={cabinet.href}>
-            {cabinet.title.replace('кабинет ', '')}
-          </option>
-        ))}
-      </select>
+      <span ref={menuRef} style={{ position: 'relative', display: 'inline-block' }}>
+        <button
+          type="button"
+          className="btn--ghost btn--sm"
+          data-view-cabinet-menu
+          style={CABINET_BUTTON_STYLE}
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          disabled={busy}
+          onClick={() => setMenuOpen((value) => !value)}
+          title="Выбрать кабинет для просмотра только для чтения"
+        >
+          Кабинет ▾
+        </button>
+        {menuOpen ? (
+          <span
+            role="menu"
+            style={{
+              position: 'absolute',
+              right: 0,
+              top: 'calc(100% + 4px)',
+              zIndex: 20,
+              display: 'flex',
+              flexDirection: 'column',
+              minWidth: '100%',
+              padding: 4,
+              background: 'var(--u-surface)',
+              border: '1px solid var(--u-border)',
+              borderRadius: 'var(--u-radius-md)',
+              boxShadow: 'var(--u-shadow-md)',
+            }}
+          >
+            {cabinets.map((cabinet) => (
+              <button
+                key={cabinet.href}
+                type="button"
+                role="menuitem"
+                className="btn--ghost btn--sm"
+                data-view-cabinet={cabinet.role}
+                style={{ justifyContent: 'flex-start', whiteSpace: 'nowrap' }}
+                onClick={() => {
+                  setMenuOpen(false);
+                  void open(cabinet.href);
+                }}
+              >
+                {cabinet.title.charAt(0).toUpperCase() + cabinet.title.slice(1)}
+              </button>
+            ))}
+          </span>
+        ) : null}
+      </span>
     );
   }
 
