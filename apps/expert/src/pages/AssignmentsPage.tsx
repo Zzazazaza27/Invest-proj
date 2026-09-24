@@ -229,7 +229,7 @@ export function AssignmentsPage() {
                   ) : null}
 
                   <Button
-                    variant="ghost"
+                    variant="quiet"
                     onClick={() =>
                       setWorkspaceFor((current) =>
                         current === assignment.id ? null : assignment.id,
@@ -239,12 +239,12 @@ export function AssignmentsPage() {
                     {workspaceFor === assignment.id ? 'Скрыть ход работы' : 'Ход рассмотрения'}
                   </Button>
 
-                  <Button variant="ghost" onClick={() => setConflictFor(assignment)}>
+                  <Button variant="quiet" onClick={() => setConflictFor(assignment)}>
                     Заявить конфликт интересов
                   </Button>
 
                   <Button
-                    variant="ghost"
+                    variant="quiet"
                     onClick={() =>
                       setMaterialsFor((current) =>
                         current === assignment.projectId ? null : assignment.projectId,

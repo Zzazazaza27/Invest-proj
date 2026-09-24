@@ -446,7 +446,8 @@ function StatusSection({
           <div className="row-actions" style={{ justifyContent: 'flex-start' }}>
             <button
               type="submit"
-              className={suspended ? '' : 'btn--danger'}
+              // Последний шаг блокировки — заливка; открывающая кнопка ниже — контур.
+              className={suspended ? '' : 'btn--danger-confirm'}
               data-status-confirm
               disabled={busy || reason.trim().length < 3}
             >

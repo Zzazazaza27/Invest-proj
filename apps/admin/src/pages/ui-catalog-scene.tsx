@@ -1,5 +1,5 @@
 import { useId } from 'react';
-import { Button } from '@unicorn/ui';
+import { Button, type ButtonVariant } from '@unicorn/ui';
 
 /*
  * Эталонная сцена каталога «Элементы интерфейса».
@@ -20,7 +20,7 @@ import { Button } from '@unicorn/ui';
 
 export type SceneAction =
   | { set: 'admin'; className?: string; label: string }
-  | { set: 'ui'; variant: 'primary' | 'secondary' | 'ghost' | 'danger' | 'brand'; label: string };
+  | { set: 'ui'; variant: ButtonVariant; label: string };
 
 /** Цвет обводки — инструмент каталога, а не часть скина: заметен на любом фоне. */
 const MARKER = '#ff2d95';

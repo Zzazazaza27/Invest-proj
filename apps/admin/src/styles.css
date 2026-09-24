@@ -429,10 +429,16 @@ button:disabled {
   cursor: not-allowed;
 }
 
+/*
+ * Тихая кнопка — та же роль, что `quiet` в @unicorn/ui (рабочее решение
+ * владельца 2026-09-24): нейтральный текст, серая рамка, белая подложка.
+ * Подложка белая на любом фоне — на цветной шапке страницы прозрачная
+ * кнопка с ним сливалась.
+ */
 .btn--ghost {
-  background: transparent;
+  background: var(--surface);
   color: var(--text);
-  border-color: var(--border);
+  border-color: var(--u-border-strong);
 }
 
 .btn--ghost:hover:not(:disabled) {
@@ -447,16 +453,9 @@ button:disabled {
   color: var(--text);
 }
 
-/*
- * Шапка страницы лежит на цветном фоне: прозрачная кнопка с ним сливалась.
- * В шапке у неё белая подложка — как у карточек ниже.
- */
-.page-head .btn--ghost {
-  background: var(--surface);
-}
-
+/* Опасное действие на экране — контур (роль `danger` в @unicorn/ui). */
 .btn--danger {
-  background: transparent;
+  background: var(--surface);
   color: var(--danger);
   border-color: var(--danger);
 }
@@ -464,6 +463,18 @@ button:disabled {
 .btn--danger:hover:not(:disabled) {
   background: var(--danger-bg);
   color: var(--danger);
+}
+
+/* Последний необратимый шаг в подтверждении — заливка (`danger-confirm`). */
+.btn--danger-confirm {
+  background: var(--danger);
+  color: var(--u-on-accent);
+  border-color: var(--danger);
+}
+
+.btn--danger-confirm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 85%, var(--text));
+  color: var(--u-on-accent);
 }
 
 .btn--sm {

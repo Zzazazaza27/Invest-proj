@@ -12,7 +12,7 @@ import {
 } from '@unicorn/ui';
 import { Avatar } from './users-shared';
 import { SCENE_TOKENS, Scene, type SceneAction } from './ui-catalog-scene';
-import { ButtonDecisions } from './ui-catalog-candidates';
+import { ButtonRoles } from './ui-catalog-roles';
 
 /*
  * «Элементы интерфейса» — рабочий каталог для оценки скина.
@@ -283,12 +283,13 @@ export function UiCatalogPage() {
         </p>
         <Surfaces>{() => <ButtonsTable />}</Surfaces>
 
-        <h2 style={{ marginTop: 24 }}>Решения по кнопкам: тихая и опасная</h2>
+        <h2 style={{ marginTop: 24 }}>Роли кнопок в действиях</h2>
         <p className="small muted">
-          Вид не закреплён. Выбери кандидатов — сцена с настоящими действиями перерисуется. Наведи
-          курсор и пройди клавишей Tab: состояния живые. Скин выбирается вверху страницы.
+          Рабочее решение 2026-09-24, не окончательное: тихая — нейтральная с рамкой, опасная —
+          контур на экране и заливка в последнем шаге подтверждения. Настоящие компоненты, живые
+          наведение и фокус; скин выбирается вверху страницы.
         </p>
-        <ButtonDecisions />
+        <ButtonRoles />
 
         <h2 style={{ marginTop: 24 }}>Поля</h2>
         <Surfaces>{(where) => <FieldsBlock where={where} />}</Surfaces>
@@ -532,9 +533,10 @@ const ADMIN_BUTTONS: { label: string; className?: string }[] = [
   { label: 'ghost', className: 'btn--ghost' },
   { label: 'ghost, sm', className: 'btn--ghost btn--sm' },
   { label: 'danger', className: 'btn--danger' },
+  { label: 'danger-confirm', className: 'btn--danger-confirm' },
 ];
 
-const UI_BUTTONS = ['primary', 'secondary', 'ghost', 'danger', 'brand'] as const;
+const UI_BUTTONS = ['primary', 'secondary', 'quiet', 'danger', 'danger-confirm', 'brand'] as const;
 
 /** Кнопка «Показать в сцене» — раскрывает сцену прямо под строкой образца. */
 function SceneToggle({ open, onClick }: { open: boolean; onClick: () => void }) {

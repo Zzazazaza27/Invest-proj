@@ -25,14 +25,27 @@ const TONE_VARS: Record<Tone, { fg: string; bg: string }> = {
 
 // --------------------------------------------------------------------- кнопка
 
+/**
+ * Смысловые роли кнопки (рабочее решение владельца 2026-09-24, не окончательное):
+ *
+ *  * `primary`   — основное действие зоны;
+ *  * `secondary` — важное, но не главное: акцентный текст и рамка;
+ *  * `quiet`     — тихое («Отмена», «Открыть»): нейтральный текст и серая рамка —
+ *                  рядом со `secondary` отличается цветом, а не только весом;
+ *  * `danger`    — опасное действие на экране: красный контур;
+ *  * `danger-confirm` — последний необратимый шаг в окне подтверждения: заливка.
+ *
+ * `brand` — вид `primary` с градиентом темы Nova, не отдельная роль.
+ * `ghost` — прежнее имя, сохранено как псевдоним `quiet`.
+ *
+ * Цвета и состояния — классы `u-btn--*` в `tokens.css`: наведение inline-стилем
+ * не описывается. Ширину кнопки задаёт экран, не компонент.
+ */
+export type ButtonVariant =
+  'primary' | 'secondary' | 'quiet' | 'danger' | 'danger-confirm' | 'brand' | 'ghost';
+
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
-  /**
-   * `brand` — тот же primary, но с градиентной заливкой темы: она объявлена
-   * классом в `theme-nova.css`, потому что градиент с наведением inline-стилем
-   * не описывается. Без темы вариант деградирует до сплошного акцента, а не
-   * до прозрачной кнопки.
-   */
-  variant?: 'primary' | 'secondary' | 'ghost' | 'danger' | 'brand';
+  variant?: ButtonVariant;
   /**
    * Кнопка в работе. Блокируется и объявляет это ассистивным технологиям:
    * `aria-busy` — не украшение, без него скринридер сообщит «кнопка», как будто
@@ -50,25 +63,15 @@ export function Button({
   className,
   ...rest
 }: ButtonProps): React.ReactElement {
-  const palette: Record<string, React.CSSProperties> = {
-    primary: { background: 'var(--u-accent)', color: 'var(--u-on-accent)', border: 'none' },
-    brand: { background: 'var(--u-accent)', color: '#ffffff', border: 'none' },
-    secondary: {
-      background: 'var(--u-surface)',
-      color: 'var(--u-text)',
-      border: '1px solid var(--u-border-strong)',
-    },
-    ghost: { background: 'transparent', color: 'var(--u-accent)', border: 'none' },
-    danger: { background: 'var(--u-danger)', color: 'var(--u-on-accent)', border: 'none' },
-  };
+  const role = variant === 'ghost' ? 'quiet' : variant === 'brand' ? 'primary' : variant;
 
   return (
     <button
       {...rest}
-      className={
-        [variant === 'brand' ? 'u-btn-brand' : null, className].filter(Boolean).join(' ') ||
-        undefined
-      }
+      data-variant={role}
+      className={['u-btn', `u-btn--${role}`, variant === 'brand' ? 'u-btn-brand' : null, className]
+        .filter(Boolean)
+        .join(' ')}
       disabled={disabled || loading}
       aria-busy={loading || undefined}
       style={{
@@ -85,8 +88,8 @@ export function Button({
         fontFamily: 'inherit',
         cursor: disabled || loading ? 'not-allowed' : 'pointer',
         opacity: disabled || loading ? 0.6 : 1,
-        transition: 'background var(--u-transition), opacity var(--u-transition)',
-        ...palette[variant],
+        transition:
+          'background var(--u-transition), border-color var(--u-transition), opacity var(--u-transition)',
         ...style,
       }}
     >

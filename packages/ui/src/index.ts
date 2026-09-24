@@ -27,6 +27,7 @@ export {
   TextArea,
   UI_KEYFRAMES,
   type ButtonProps,
+  type ButtonVariant,
   type FieldProps,
 } from './primitives';
 

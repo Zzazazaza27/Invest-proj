@@ -119,7 +119,7 @@ export function PromptDialog({
         </Field>
 
         <div style={{ display: 'flex', gap: 'var(--u-space-3)', justifyContent: 'flex-end' }}>
-          <Button type="button" variant="secondary" onClick={onCancel}>
+          <Button type="button" variant="quiet" onClick={onCancel}>
             Отмена
           </Button>
           <Button type="submit" disabled={trimmed.length === 0}>

@@ -152,6 +152,76 @@ body {
   outline-offset: 2px;
 }
 
+/*
+ * Кнопки: цвета ролей и состояния (компонент Button из @unicorn/ui).
+ * Раскладку — высоту, отступы, радиус — держит сам компонент, ширину — экран.
+ *
+ * Селекторы с `button.` и `:not(:disabled)`: приложения объявляют общее
+ * правило для `button` (админка — ещё и `button:hover:not(:disabled)`), и без
+ * этого веса оно перекрашивало бы роль в фирменный цвет.
+ *
+ * Рабочее решение владельца 2026-09-24: тихая — нейтральная с рамкой,
+ * опасная — контур, последний шаг подтверждения — заливка. Тихая отличается
+ * от второстепенной цветом: нейтральный текст и серая рамка против акцентных.
+ */
+button.u-btn {
+  border: 1px solid transparent;
+}
+
+button.u-btn--primary {
+  background: var(--u-accent);
+  color: var(--u-on-accent);
+}
+
+button.u-btn--primary:hover:not(:disabled) {
+  background: var(--u-accent-hover);
+  color: var(--u-on-accent);
+}
+
+button.u-btn--secondary {
+  background: var(--u-surface);
+  color: var(--u-accent);
+  border-color: var(--u-accent);
+}
+
+button.u-btn--secondary:hover:not(:disabled) {
+  background: var(--u-accent-subtle);
+  color: var(--u-accent);
+}
+
+button.u-btn--quiet {
+  background: var(--u-surface);
+  color: var(--u-text);
+  border-color: var(--u-border-strong);
+}
+
+button.u-btn--quiet:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--u-text) 7%, var(--u-surface));
+  border-color: color-mix(in srgb, var(--u-text) 25%, var(--u-surface));
+  color: var(--u-text);
+}
+
+button.u-btn--danger {
+  background: var(--u-surface);
+  color: var(--u-danger);
+  border-color: var(--u-danger);
+}
+
+button.u-btn--danger:hover:not(:disabled) {
+  background: var(--u-danger-subtle);
+  color: var(--u-danger);
+}
+
+button.u-btn--danger-confirm {
+  background: var(--u-danger);
+  color: var(--u-on-accent);
+}
+
+button.u-btn--danger-confirm:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--u-danger) 85%, var(--u-text));
+  color: var(--u-on-accent);
+}
+
 /* Ссылка «пропустить к содержимому»: первое, что встречает клавиатурный вход. */
 .u-skip-link {
   position: absolute;
