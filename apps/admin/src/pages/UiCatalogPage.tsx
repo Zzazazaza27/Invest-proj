@@ -19,7 +19,7 @@ import {
   TextArea,
 } from '@unicorn/ui';
 import { Avatar } from './users-shared';
-import { SCENE_TOKENS, Scene, type SceneAction } from './ui-catalog-scene';
+import { SCENE_TOKENS, Scene, SceneModal, type SceneAction } from './ui-catalog-scene';
 import { ButtonRoles } from './ui-catalog-roles';
 
 /*
@@ -378,7 +378,6 @@ const ORIGIN_LABEL: Record<TokenView['origin'], string> = {
 };
 
 function TokensBlock({ tokens, skinTitle }: { tokens: TokenView[]; skinTitle: string }) {
-  const [open, setOpen] = useState<string | null>(null);
   const groups = GROUP_ORDER.map((group) => ({
     group,
     items: tokens.filter((token) => groupOf(token.name) === group),
@@ -417,22 +416,15 @@ function TokensBlock({ tokens, skinTitle }: { tokens: TokenView[]; skinTitle: st
                     </td>
                     <td style={{ width: 90 }}>
                       {SCENE_TOKENS.has(token.name) ? (
-                        <SceneToggle
-                          open={open === token.name}
-                          onClick={() =>
-                            setOpen((value) => (value === token.name ? null : token.name))
-                          }
+                        <ScenePreview
+                          title={`Где на сцене цвет ${token.name}`}
+                          render={() => <Scene highlight={token.name} />}
                         />
                       ) : (
                         <span className="small muted">на сцене нет</span>
                       )}
                     </td>
                   </tr>
-                  {open === token.name ? (
-                    <SceneRow colSpan={5}>
-                      <Scene highlight={token.name} />
-                    </SceneRow>
-                  ) : null}
                 </Fragment>
               ))}
             </tbody>
@@ -544,34 +536,33 @@ const ADMIN_BUTTONS: { label: string; className?: string }[] = [
   { label: 'danger-confirm', className: 'btn--danger-confirm' },
 ];
 
-/** Кнопка «Показать в сцене» — раскрывает сцену прямо под строкой образца. */
-function SceneToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
+/**
+ * «Показать» — открывает эталонную сцену с образцом в окне. Окно рисуется
+ * рядом с кнопкой, то есть внутри блока предпросмотра, и получает его скин.
+ */
+function ScenePreview({ title, render }: { title: string; render: () => React.ReactNode }) {
+  const [open, setOpen] = useState(false);
   return (
-    <button
-      type="button"
-      className="btn--ghost btn--sm"
-      aria-expanded={open}
-      data-scene-toggle
-      onClick={onClick}
-    >
-      {open ? 'Скрыть' : 'Показать'}
-    </button>
-  );
-}
-
-function SceneRow({ colSpan, children }: { colSpan: number; children: React.ReactNode }) {
-  return (
-    <tr data-scene-row>
-      <td colSpan={colSpan} style={{ padding: '8px 0 14px' }}>
-        {children}
-      </td>
-    </tr>
+    <>
+      <Button
+        variant="quiet"
+        size="sm"
+        aria-haspopup="dialog"
+        data-scene-toggle
+        onClick={() => setOpen(true)}
+      >
+        Показать
+      </Button>
+      {open ? (
+        <SceneModal title={title} onClose={() => setOpen(false)}>
+          {render()}
+        </SceneModal>
+      ) : null}
+    </>
   );
 }
 
 function ButtonsTable() {
-  const [open, setOpen] = useState<string | null>(null);
-  const toggle = (key: string) => setOpen((value) => (value === key ? null : key));
   return (
     <table style={{ minWidth: 640 }} data-sample="buttons">
       <thead>
@@ -624,14 +615,12 @@ function ButtonsTable() {
                 </td>
                 <td className="small muted">нет состояния</td>
                 <td>
-                  <SceneToggle open={open === key} onClick={() => toggle(key)} />
+                  <ScenePreview
+                    title={`Сцена: ${action.label}`}
+                    render={() => <Scene action={action} />}
+                  />
                 </td>
               </tr>
-              {open === key ? (
-                <SceneRow colSpan={7}>
-                  <Scene action={action} />
-                </SceneRow>
-              ) : null}
             </Fragment>
           );
         })}
@@ -663,14 +652,14 @@ function ButtonsTable() {
                   </Button>
                 </td>
                 <td>
-                  <SceneToggle open={open === key} onClick={() => toggle(key)} />
+                  <ScenePreview
+                    title={`Сцена: @unicorn/ui · ${variant}`}
+                    render={() => (
+                      <Scene action={{ set: 'ui', variant, label: `@unicorn/ui · ${variant}` }} />
+                    )}
+                  />
                 </td>
               </tr>
-              {open === key ? (
-                <SceneRow colSpan={7}>
-                  <Scene action={{ set: 'ui', variant, label: `@unicorn/ui · ${variant}` }} />
-                </SceneRow>
-              ) : null}
             </Fragment>
           );
         })}

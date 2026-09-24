@@ -1,5 +1,112 @@
-import { useId } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { Button, type ButtonVariant } from '@unicorn/ui';
+
+/**
+ * Окно со сценой. Раньше сцена раскрывалась строкой внутри таблицы — без
+ * рамки она сливалась с образцами вокруг (замечание владельца 2026-09-24).
+ *
+ * Окно рисуется ВНУТРИ блока предпросмотра, а не в конце страницы: так сцена
+ * получает выбранный скин (`data-brand` предка), а не скин приложения.
+ * Закрывается крестиком, клавишей Escape и щелчком по затемнению; фокус
+ * ставится на крестик и возвращается на кнопку, которая окно открыла.
+ */
+export function SceneModal({
+  title,
+  onClose,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  const titleId = useId();
+  // Button из @unicorn/ui не пробрасывает ref — крестик находится по id.
+  const closeId = `${titleId}-close`;
+  // Страница передаёт новую функцию при каждой перерисовке; эффект открытия
+  // не должен из-за этого перезапускаться и заново ставить фокус.
+  const onCloseRef = useRef(onClose);
+  useEffect(() => {
+    onCloseRef.current = onClose;
+  });
+
+  useEffect(() => {
+    const opener = document.activeElement as HTMLElement | null;
+    document.getElementById(closeId)?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onCloseRef.current();
+    };
+    window.addEventListener('keydown', onKey);
+    const overflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = overflow;
+      opener?.focus();
+    };
+  }, [closeId]);
+
+  return (
+    <div
+      data-scene-modal
+      onClick={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 100,
+        display: 'grid',
+        placeItems: 'center',
+        padding: 'var(--u-space-4)',
+        background: 'color-mix(in srgb, var(--u-text) 45%, transparent)',
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        style={{
+          width: 'min(1100px, 100%)',
+          maxHeight: '90vh',
+          overflow: 'auto',
+          background: 'var(--u-surface)',
+          color: 'var(--u-text)',
+          border: '1px solid var(--u-border-strong)',
+          borderRadius: 'var(--u-radius-lg)',
+          boxShadow: 'var(--u-shadow-md)',
+        }}
+      >
+        <div
+          style={{
+            position: 'sticky',
+            top: 0,
+            zIndex: 3,
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: 12,
+            padding: '10px 16px',
+            background: 'var(--u-surface)',
+            borderBottom: '1px solid var(--u-border)',
+          }}
+        >
+          <strong id={titleId}>{title}</strong>
+          <Button
+            variant="quiet"
+            size="sm"
+            aria-label="Закрыть"
+            data-scene-close
+            onClick={onClose}
+            id={closeId}
+          >
+            ✕
+          </Button>
+        </div>
+        <div style={{ padding: 16 }}>{children}</div>
+      </div>
+    </div>
+  );
+}
 
 /*
  * Эталонная сцена каталога «Элементы интерфейса».
