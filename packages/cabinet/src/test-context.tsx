@@ -188,8 +188,46 @@ export interface TestContextPort {
 
 const LABEL: Record<CurrentContext['kind'], string> = {
   participant: 'Тестовая сессия',
-  readonly: 'Просмотр от имени',
+  readonly: 'Просмотр от',
   guest: 'Тестовая сессия · гость',
+};
+
+/** Что значит «только чтение» — человеческим языком, в подсказке при наведении. */
+const READONLY_HINT =
+  'Вы видите кабинет глазами этого пользователя, с его настоящими данными. ' +
+  'Нажимать можно, но ничего не сохранится: сервер отклоняет любое изменение — ' +
+  'сохранение, отправку, удаление. Это не песочница с копией данных, а просмотр.';
+
+/*
+ * Цвета плашки — из темы, а не значением: мягкое предупреждение (выбор
+ * владельца 2026-09-24 из пяти вариантов) — светлая янтарная подложка, текст
+ * цветом предупреждения, полоса слева. Говорит «особый режим», но не давит;
+ * меняется вместе со скином.
+ */
+const BAR: React.CSSProperties = {
+  position: 'sticky',
+  top: 0,
+  zIndex: 1000,
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'center',
+  gap: 12,
+  padding: '8px 16px',
+  background: 'var(--u-warning-subtle)',
+  color: 'var(--u-warning)',
+  borderLeft: '5px solid color-mix(in srgb, var(--u-warning) 55%, var(--u-surface))',
+  fontSize: 13,
+  lineHeight: 1.4,
+};
+
+const BAR_BUTTON: React.CSSProperties = {
+  background: 'var(--u-surface)',
+  color: 'var(--u-warning)',
+  border: '1px solid var(--u-warning)',
+  borderRadius: 6,
+  padding: '3px 10px',
+  font: 'inherit',
+  cursor: 'pointer',
 };
 
 /**
@@ -278,18 +316,13 @@ export function TestContextBanner({
       <div
         data-test-context="stale"
         role="alert"
+        // Недействительный просмотр — тоном ошибки темы, чтобы не спутать
+        // с действующим.
         style={{
-          position: 'sticky',
-          top: 0,
-          zIndex: 1000,
-          display: 'flex',
-          flexWrap: 'wrap',
-          alignItems: 'center',
-          gap: 12,
-          padding: '8px 16px',
-          background: '#8a1c1c',
-          color: '#fff',
-          fontSize: 13,
+          ...BAR,
+          background: 'var(--u-danger)',
+          color: 'var(--u-on-accent)',
+          borderLeft: 'none',
         }}
       >
         <strong>Просмотр больше не действует</strong>
@@ -300,12 +333,10 @@ export function TestContextBanner({
           data-test-context-drop
           onClick={drop}
           style={{
-            background: 'rgba(255,255,255,0.16)',
-            color: '#fff',
-            border: '1px solid rgba(255,255,255,0.4)',
-            borderRadius: 6,
-            padding: '3px 10px',
-            cursor: 'pointer',
+            ...BAR_BUTTON,
+            background: 'transparent',
+            color: 'var(--u-on-accent)',
+            borderColor: 'color-mix(in srgb, var(--u-on-accent) 55%, transparent)',
           }}
         >
           Выйти из просмотра
@@ -316,42 +347,33 @@ export function TestContextBanner({
 
   if (!context) return null;
 
-  const who = subjectName ? ` · ${subjectName}` : '';
+  const who = subjectName ? `: «${subjectName}»` : '';
   return (
     <div
       data-test-context={context.kind}
       role="region"
       aria-label="Режим тестового просмотра"
-      style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 1000,
-        display: 'flex',
-        flexWrap: 'wrap',
-        alignItems: 'center',
-        gap: 12,
-        padding: '8px 16px',
-        background: context.readOnly ? '#7a3b00' : '#1f3a5f',
-        color: '#fff',
-        fontSize: 13,
-        lineHeight: 1.4,
-      }}
+      style={BAR}
     >
       <strong data-test-context-title>
         {LABEL[context.kind]}
         {who}
       </strong>
       {context.readOnly ? (
+        // Пояснение, а не кнопка: обычный текст с пунктиром и подсказкой.
         <span
           data-test-context-readonly
+          title={READONLY_HINT}
+          tabIndex={0}
+          aria-label={`Только чтение. ${READONLY_HINT}`}
           style={{
-            padding: '1px 8px',
-            borderRadius: 999,
-            background: 'rgba(255,255,255,0.18)',
-            fontWeight: 600,
+            textDecoration: 'underline dotted',
+            textUnderlineOffset: 3,
+            cursor: 'help',
+            opacity: 0.85,
           }}
         >
-          Только чтение
+          только чтение — изменения не сохраняются
         </span>
       ) : null}
       <span style={{ flex: 1 }} />
@@ -373,11 +395,7 @@ export function TestContextBanner({
         onClick={() => void finish()}
         disabled={closing}
         style={{
-          background: 'rgba(255,255,255,0.16)',
-          color: '#fff',
-          border: '1px solid rgba(255,255,255,0.4)',
-          borderRadius: 6,
-          padding: '3px 10px',
+          ...BAR_BUTTON,
           cursor: closing ? 'progress' : 'pointer',
           opacity: closing ? 0.7 : 1,
         }}
