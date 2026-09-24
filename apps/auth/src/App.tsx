@@ -456,6 +456,16 @@ export default function App() {
     }
   }
 
+  // Один кабинет — переход уже запущен (applySession). Экран выбора здесь
+  // мелькнул бы на время загрузки кабинета: показывать нечего выбирать.
+  if (user && cabinets.length === 1) {
+    return (
+      <Container>
+        <p className="auth-status">Открываем кабинет…</p>
+      </Container>
+    );
+  }
+
   if (checking) {
     return (
       <Container>
