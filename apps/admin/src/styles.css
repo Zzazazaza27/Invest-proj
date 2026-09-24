@@ -319,6 +319,61 @@ tr:last-child td {
   border-bottom: none;
 }
 
+/*
+ * Таблицы каталога «Элементы интерфейса» (/admin/ui): явная сетка, чтобы
+ * образцы не сливались. Ячейки прозрачные — на подложке «фон страницы»
+ * образец стоит на фоне страницы, а не на белом.
+ */
+table.ui-cat-table {
+  min-width: 0;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--u-border-strong);
+  border-radius: var(--u-radius-md);
+  overflow: hidden;
+}
+
+table.ui-cat-table th {
+  background: var(--u-bg-subtle);
+  color: var(--u-text-muted);
+  font-size: 12.5px;
+  text-transform: none;
+  letter-spacing: 0;
+  border-bottom: 1px solid var(--u-border-strong);
+}
+
+table.ui-cat-table th,
+table.ui-cat-table td {
+  padding: 8px 10px;
+  border-right: 1px solid var(--u-border);
+}
+
+table.ui-cat-table td {
+  border-bottom: 1px solid var(--u-border);
+}
+
+table.ui-cat-table th:last-child,
+table.ui-cat-table td:last-child {
+  border-right: none;
+}
+
+table.ui-cat-table tr:last-child td {
+  border-bottom: none;
+}
+
+table.ui-cat-table tr.ui-cat-group td {
+  background: var(--u-bg-subtle);
+  font-weight: 700;
+  font-size: 13px;
+}
+
+/* Второй план: код в теме, значение — для разработчика. */
+.ui-cat-code {
+  font-family: var(--u-font-mono);
+  font-size: 12px;
+  color: var(--u-text-muted);
+}
+
 .num {
   text-align: right;
   white-space: nowrap;

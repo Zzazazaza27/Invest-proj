@@ -70,10 +70,16 @@ function RoleScene({ set }: { set: 'ui' | 'admin' }) {
   return (
     <div
       data-role-scene={set}
-      style={{ background: 'var(--u-bg)', padding: 16, borderRadius: 8, marginBottom: 12 }}
+      style={{
+        background: 'var(--u-bg)',
+        padding: 16,
+        borderRadius: 8,
+        marginBottom: 12,
+        border: '1px solid var(--u-border-strong)',
+      }}
     >
       <div className="small" style={{ color: 'var(--u-text-muted)', marginBottom: 8 }}>
-        {set === 'ui' ? 'Button из @unicorn/ui' : 'Кнопки админки (классы styles.css)'}
+        {set === 'ui' ? 'Общий набор' : 'Админка'}
       </div>
 
       <div

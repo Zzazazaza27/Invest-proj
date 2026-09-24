@@ -235,9 +235,9 @@ export function UiCatalogPage() {
         <div>
           <h1>Элементы интерфейса</h1>
           <p className="page-hint">
-            Каталог для оценки скина: реальные элементы админки и <code>@unicorn/ui</code> рядом, на
-            фоне страницы и на карточке. Скин ниже меняется только в этом блоке — тема платформы и
-            твои настройки не трогаются.
+            Как выглядят элементы интерфейса в выбранном скине: элементы админки и общего набора
+            кабинетов рядом, на фоне страницы и на карточке. Скин меняется только на этой странице —
+            тема платформы и твои настройки не трогаются.
           </p>
         </div>
       </div>
@@ -261,8 +261,11 @@ export function UiCatalogPage() {
           ))}
         </div>
         <p className="small muted" style={{ marginTop: 8 }}>
-          Значения: {current?.source}. Светлый или тёмный вариант — по настройке системы. Новый скин
-          подключается по инструкции в <code>packages/ui/src/skins.ts</code>.
+          Светлый или тёмный вариант — по настройке системы.{' '}
+          <span className="ui-cat-code">
+            Для разработчика: {current?.source}; новый скин — по инструкции в
+            packages/ui/src/skins.ts
+          </span>
         </p>
       </section>
 
@@ -286,16 +289,15 @@ export function UiCatalogPage() {
 
         <h2 style={{ marginTop: 24 }}>Кнопки</h2>
         <p className="small muted">
-          Наведение, нажатие и фокус — живые: наведи курсор, нажми, пройди клавишей Tab. Выключенное
-          и загрузка показаны статично.
+          Кнопки живые: наведи курсор, нажми, пройди клавишей Tab. «Пример» открывает кнопку в
+          типовых местах экрана.
         </p>
         <Surfaces>{() => <ButtonsTable />}</Surfaces>
 
         <h2 style={{ marginTop: 24 }}>Роли кнопок в действиях</h2>
         <p className="small muted">
-          Рабочее решение 2026-09-24, не окончательное: тихая — нейтральная с рамкой, опасная —
-          контур на экране и заливка в последнем шаге подтверждения. Настоящие компоненты, живые
-          наведение и фокус; скин выбирается вверху страницы.
+          Рабочее решение от 24.09, не окончательное: тихая — нейтральная с рамкой, опасная — контур
+          на экране и заливка в последнем шаге подтверждения.
         </p>
         <ButtonRoles />
 
@@ -307,16 +309,13 @@ export function UiCatalogPage() {
 
         <h2 style={{ marginTop: 24 }}>Таблица</h2>
         <p className="small muted">
-          В <code>@unicorn/ui</code> компонента таблицы нет — показан только вариант админки. У
-          строк админки нет состояния наведения.
+          Таблица есть только в админке, в общем наборе её нет. Строки не подсвечиваются при
+          наведении.
         </p>
         <Surfaces>{() => <TableSample />}</Surfaces>
 
         <h2 style={{ marginTop: 24 }}>Аватары</h2>
-        <p className="small muted">
-          В <code>@unicorn/ui</code> аватара нет — показан вариант админки: обычный и для цветного
-          фона (<code>raised</code>).
-        </p>
+        <p className="small muted">Аватар есть только в админке, в общем наборе его нет.</p>
         <Surfaces>{() => <AvatarsSample />}</Surfaces>
       </div>
     </div>
@@ -325,29 +324,47 @@ export function UiCatalogPage() {
 
 /* --------------------------------------------------------------- подложки */
 
+/**
+ * Две подложки: каждый блок показан на фоне страницы и на карточке —
+ * сливание видно только так. У каждой подложки своя рамка и подпись.
+ */
 function Surfaces({ children }: { children: (where: 'page' | 'card') => React.ReactNode }) {
-  return (
-    <div style={{ display: 'grid', gap: 12 }}>
-      <div data-surface="page" style={{ padding: 12, background: 'var(--u-bg)' }}>
-        <div className="small muted" style={{ marginBottom: 8 }}>
-          На фоне страницы (--u-bg)
-        </div>
-        {children('page')}
-      </div>
+  const panel = (where: 'page' | 'card', title: string) => (
+    <div
+      data-surface={where}
+      style={{
+        border: '1px solid var(--u-border-strong)',
+        borderRadius: 'var(--u-radius-md)',
+        overflow: 'hidden',
+      }}
+    >
       <div
-        data-surface="card"
         style={{
-          padding: 12,
-          background: 'var(--u-surface)',
-          border: '1px solid var(--u-border)',
-          borderRadius: 'var(--u-radius-md)',
+          padding: '6px 12px',
+          fontSize: 12.5,
+          fontWeight: 600,
+          color: 'var(--u-text-muted)',
+          background: 'var(--u-bg-subtle)',
+          borderBottom: '1px solid var(--u-border-strong)',
         }}
       >
-        <div className="small muted" style={{ marginBottom: 8 }}>
-          На карточке (--u-surface)
-        </div>
-        {children('card')}
+        {title}
       </div>
+      <div
+        style={{
+          padding: 12,
+          background: where === 'page' ? 'var(--u-bg)' : 'var(--u-surface)',
+          overflowX: 'auto',
+        }}
+      >
+        {children(where)}
+      </div>
+    </div>
+  );
+  return (
+    <div style={{ display: 'grid', gap: 12 }}>
+      {panel('page', 'На фоне страницы')}
+      {panel('card', 'На карточке')}
     </div>
   );
 }
@@ -372,10 +389,46 @@ function Swatch({ value }: { value: string }) {
 }
 
 const ORIGIN_LABEL: Record<TokenView['origin'], string> = {
-  skin: 'объявлен в скине',
-  base: 'из базовой',
-  inherited: 'в скине нет — взят у страницы',
+  skin: 'задан в этом скине',
+  base: 'берётся из базового скина',
+  inherited: 'в этом скине не задан — показан цвет платформы',
 };
+
+/**
+ * Назначение цвета человеческим языком. Код темы (`--u-…`) — для
+ * разработчика, он показан вторым планом. Цвет без записи здесь выводится с
+ * пометкой «назначение не описано» — это повод дописать строку, а не ошибка.
+ */
+const TOKEN_MEANING: Record<string, string> = {
+  '--u-bg': 'Фон страницы',
+  '--u-page-bg': 'Фон страницы с узором (Nova)',
+  '--u-bg-subtle': 'Приглушённый фон: заголовки групп, выключенные поля',
+  '--u-bg-inset': 'Вставка внутри карточки: пояснение, цитата, код',
+  '--u-surface': 'Карточка, окно, поле ввода',
+  '--u-surface-raised': 'Поднятая поверхность: всплывающее окно',
+  '--u-tile-bg': 'Плитка со значком: фон',
+  '--u-tile-fg': 'Плитка со значком: значок',
+  '--u-border': 'Граница карточек и строк таблицы',
+  '--u-border-strong': 'Рамка полей и кнопок',
+  '--u-text': 'Основной текст',
+  '--u-text-muted': 'Второстепенный текст, подсказки',
+  '--u-text-inverse': 'Текст на тёмном фоне',
+  '--u-on-accent': 'Текст на акцентной заливке',
+  '--u-accent': 'Акцент: основная кнопка, ссылки, выбранное',
+  '--u-accent-hover': 'Акцент при наведении',
+  '--u-accent-subtle': 'Мягкий акцент: выбранная строка, выделение',
+  '--u-brand-gradient': 'Фирменный градиент (кнопка brand)',
+  '--u-brand-gradient-deep': 'Фирменный градиент, насыщенный',
+  '--u-brand-gradient-hover': 'Фирменный градиент при наведении',
+  '--u-success': 'Успех: текст и значок',
+  '--u-success-subtle': 'Успех: подложка',
+  '--u-warning': 'Предупреждение: текст и значок',
+  '--u-warning-subtle': 'Предупреждение: подложка',
+  '--u-danger': 'Ошибка и опасное действие: текст, рамка',
+  '--u-danger-subtle': 'Ошибка: подложка',
+};
+
+const meaningOf = (name: string) => TOKEN_MEANING[name] ?? 'назначение не описано';
 
 function TokensBlock({ tokens, skinTitle }: { tokens: TokenView[]; skinTitle: string }) {
   const groups = GROUP_ORDER.map((group) => ({
@@ -386,51 +439,59 @@ function TokensBlock({ tokens, skinTitle }: { tokens: TokenView[]; skinTitle: st
     <section className="card" data-block="tokens">
       <h2>Цвета скина «{skinTitle}»</h2>
       <p className="small muted">
-        Список — из файлов темы, значения — из выбранного скина. «В скине нет — взят у страницы»:
-        токен объявлен только в другом скине, и образцы, которые на него опираются, здесь выглядят
-        как на платформе.
+        Из каких цветов собран интерфейс и для чего каждый. «Показать» открывает сцену, где цвет
+        обведён на месте. Код в теме и значение нужны разработчику.
       </p>
-      {groups.map(({ group, items }) => (
-        <div key={group} style={{ marginTop: 12 }}>
-          <h3 style={{ fontSize: 13, margin: '0 0 6px' }}>{group}</h3>
-          <table style={{ minWidth: 0 }}>
-            <tbody>
+      <table data-tokens-table className="ui-cat-table">
+        <thead>
+          <tr>
+            <th style={{ width: 64 }}>Цвет</th>
+            <th>Назначение</th>
+            <th>Код в теме</th>
+            <th>Значение</th>
+            <th>Откуда</th>
+            <th style={{ width: 100 }}>Пример</th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map(({ group, items }) => (
+            <Fragment key={group}>
+              <tr data-token-group={group} className="ui-cat-group">
+                <td colSpan={6}>{group}</td>
+              </tr>
               {items.map((token) => (
-                <Fragment key={token.name}>
-                  <tr data-token={token.name} data-token-origin={token.origin}>
-                    <td style={{ width: 60 }}>
-                      <Swatch value={token.value} />
-                    </td>
-                    <td>
-                      <code>{token.name}</code>
-                    </td>
-                    <td className="small" style={{ fontFamily: 'var(--u-font-mono)' }}>
-                      {token.value.length > 60 ? `${token.value.slice(0, 60)}…` : token.value}
-                    </td>
-                    <td className={token.origin === 'inherited' ? 'small' : 'small muted'}>
-                      {token.origin === 'inherited' ? (
-                        <span className="badge badge--warn">{ORIGIN_LABEL[token.origin]}</span>
-                      ) : (
-                        ORIGIN_LABEL[token.origin]
-                      )}
-                    </td>
-                    <td style={{ width: 90 }}>
-                      {SCENE_TOKENS.has(token.name) ? (
-                        <ScenePreview
-                          title={`Где на сцене цвет ${token.name}`}
-                          render={() => <Scene highlight={token.name} />}
-                        />
-                      ) : (
-                        <span className="small muted">на сцене нет</span>
-                      )}
-                    </td>
-                  </tr>
-                </Fragment>
+                <tr key={token.name} data-token={token.name} data-token-origin={token.origin}>
+                  <td>
+                    <Swatch value={token.value} />
+                  </td>
+                  <td style={{ fontWeight: 600 }}>{meaningOf(token.name)}</td>
+                  <td className="ui-cat-code">{token.name}</td>
+                  <td className="ui-cat-code">
+                    {token.value.length > 40 ? `${token.value.slice(0, 40)}…` : token.value}
+                  </td>
+                  <td className="small">
+                    {token.origin === 'inherited' ? (
+                      <span className="badge badge--warn">{ORIGIN_LABEL[token.origin]}</span>
+                    ) : (
+                      <span className="muted">{ORIGIN_LABEL[token.origin]}</span>
+                    )}
+                  </td>
+                  <td>
+                    {SCENE_TOKENS.has(token.name) ? (
+                      <ScenePreview
+                        title={`Где на сцене: ${meaningOf(token.name).toLowerCase()}`}
+                        render={() => <Scene highlight={token.name} />}
+                      />
+                    ) : (
+                      <span className="small muted">на сцене нет</span>
+                    )}
+                  </td>
+                </tr>
               ))}
-            </tbody>
-          </table>
-        </div>
-      ))}
+            </Fragment>
+          ))}
+        </tbody>
+      </table>
     </section>
   );
 }
@@ -446,47 +507,55 @@ function PairsBlock({
     const d = ca && cb ? deltaE(ca, cb) : null;
     return (
       <tr key={key} data-pair={key}>
-        <td>{meaning}</td>
-        <td className="small">{label}</td>
+        <td style={{ fontWeight: 600 }}>{meaning}</td>
         <td>
           {ca && cb ? (
-            <span style={{ display: 'inline-flex' }}>
+            <span
+              style={{
+                display: 'inline-flex',
+                border: '1px solid var(--u-border-strong)',
+                borderRadius: 4,
+                overflow: 'hidden',
+              }}
+            >
               <span style={{ width: 28, height: 22, background: toHex(ca) }} />
               <span style={{ width: 28, height: 22, background: toHex(cb) }} />
             </span>
           ) : null}
         </td>
-        <td className="num">{d === null ? '—' : d.toFixed(1)}</td>
-        <td className="num">{ca && cb ? `${contrast(ca, cb).toFixed(2)}:1` : '—'}</td>
         <td>
           {d === null ? (
-            <span className="muted">нет в скине</span>
+            <span className="muted">в этом скине нет</span>
           ) : d < 5 ? (
             <span className="badge badge--warn">{distinctWords(d)}</span>
           ) : (
             <span className="muted">{distinctWords(d)}</span>
           )}
         </td>
+        <td className="num">{d === null ? '—' : d.toFixed(1)}</td>
+        <td className="num">{ca && cb ? `${contrast(ca, cb).toFixed(1)} : 1` : '—'}</td>
+        <td className="ui-cat-code">{label}</td>
       </tr>
     );
   };
   return (
     <section className="card" data-block="pairs" style={{ marginTop: 16 }}>
-      <h2>Различимость соседних слоёв</h2>
+      <h2>Различимость соседних цветов</h2>
       <p className="small muted">
-        Разница — расстояние в OKLab ×100: меньше 2 на глаз не отличить, меньше 5 едва заметно.
-        Контраст — по WCAG, для текста нужно не меньше 4,5:1. Это подписи, а не проверка: решение о
-        допустимом — за тобой.
+        Насколько цвета, которые стоят рядом, отличаются друг от друга. «Разница»: меньше 2 — на
+        глаз не отличить, 2–5 — едва заметно, больше 10 — хорошо видно. «Контраст» важен, когда один
+        из цветов — текст: для чтения нужно не меньше 4,5 : 1. Это подсказка, а не проверка —
+        решение за тобой.
       </p>
-      <table>
+      <table className="ui-cat-table">
         <thead>
           <tr>
             <th>Что с чем</th>
-            <th>Токены</th>
             <th>Образец</th>
+            <th>На глаз</th>
             <th className="num">Разница</th>
             <th className="num">Контраст</th>
-            <th>На глаз</th>
+            <th>Код в теме</th>
           </tr>
         </thead>
         <tbody>
@@ -495,7 +564,7 @@ function PairsBlock({
               `${pair.a}|${pair.b}`,
               pair.meaning,
               <>
-                <code>{pair.a}</code> / <code>{pair.b}</code>
+                {pair.a} / {pair.b}
               </>,
               pair.ca,
               pair.cb,
@@ -503,19 +572,15 @@ function PairsBlock({
           )}
           {row(
             'ghost-hover|bg',
-            'наведение кнопки админки и фон страницы',
-            <>
-              <code>.btn--ghost:hover</code> / <code>--u-bg</code>
-            </>,
+            'тихая кнопка админки при наведении и фон страницы',
+            <>.btn--ghost:hover / --u-bg</>,
             hover.hover,
             hover.bg,
           )}
           {row(
             'ghost-hover|surface',
-            'наведение кнопки админки и карточка',
-            <>
-              <code>.btn--ghost:hover</code> / <code>--u-surface</code>
-            </>,
+            'тихая кнопка админки при наведении и карточка',
+            <>.btn--ghost:hover / --u-surface</>,
             hover.hover,
             hover.surface,
           )}
@@ -527,14 +592,23 @@ function PairsBlock({
 
 /* ---------------------------------------------------------------- кнопки */
 
-const ADMIN_BUTTONS: { label: string; className?: string }[] = [
-  { label: 'основная' },
-  { label: 'основная, sm', className: 'btn--sm' },
-  { label: 'ghost', className: 'btn--ghost' },
-  { label: 'ghost, sm', className: 'btn--ghost btn--sm' },
-  { label: 'danger', className: 'btn--danger' },
-  { label: 'danger-confirm', className: 'btn--danger-confirm' },
+/** Кнопки админки по ролям; плотный размер — отдельный столбец таблицы. */
+const ADMIN_BUTTONS: { label: string; role: string; className?: string }[] = [
+  { label: 'основная', role: 'Основная' },
+  { label: 'ghost', role: 'Тихая', className: 'btn--ghost' },
+  { label: 'danger', role: 'Опасная', className: 'btn--danger' },
+  { label: 'danger-confirm', role: 'Опасная, подтверждение', className: 'btn--danger-confirm' },
 ];
+
+/** Роль кнопки общего набора человеческим языком. */
+const UI_ROLE: Record<(typeof BUTTON_VARIANTS)[number], string> = {
+  primary: 'Основная',
+  secondary: 'Второстепенная',
+  quiet: 'Тихая',
+  danger: 'Опасная',
+  'danger-confirm': 'Опасная, подтверждение',
+  brand: 'Основная с градиентом (Nova)',
+};
 
 /**
  * «Показать» — открывает эталонную сцену с образцом в окне. Окно рисуется
@@ -564,16 +638,16 @@ function ScenePreview({ title, render }: { title: string; render: () => React.Re
 
 function ButtonsTable() {
   return (
-    <table style={{ minWidth: 640 }} data-sample="buttons">
+    <table className="ui-cat-table" data-sample="buttons">
       <thead>
         <tr>
-          <th>Набор</th>
-          <th>Вариант</th>
-          <th>Живая</th>
-          <th>Плотная (sm)</th>
+          <th>Роль</th>
+          <th>Откуда</th>
+          <th>Обычная</th>
+          <th>Плотная</th>
           <th>Выключена</th>
           <th>Загрузка</th>
-          <th>Сцена</th>
+          <th>Пример</th>
         </tr>
       </thead>
       <tbody>
@@ -581,15 +655,16 @@ function ButtonsTable() {
           const key = `admin:${item.label}`;
           const action: SceneAction = {
             set: 'admin',
-            className: item.className?.replace('btn--sm', '').trim() || undefined,
+            className: item.className,
             label: `админка · ${item.className ?? 'button'}`,
           };
           return (
             <Fragment key={key}>
               <tr data-button-sample={key}>
-                <td className="small muted">админка</td>
+                <td style={{ fontWeight: 600 }}>{item.role}</td>
                 <td>
-                  <code>{item.className ?? 'button'}</code>
+                  <span className="small">админка</span>{' '}
+                  <span className="ui-cat-code">{item.className ?? 'button'}</span>
                 </td>
                 <td>
                   <button type="button" className={item.className}>
@@ -597,16 +672,12 @@ function ButtonsTable() {
                   </button>
                 </td>
                 <td>
-                  {item.className?.includes('btn--sm') ? (
-                    <span className="small muted">—</span>
-                  ) : (
-                    <button
-                      type="button"
-                      className={[item.className, 'btn--sm'].filter(Boolean).join(' ')}
-                    >
-                      Действие
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    className={[item.className, 'btn--sm'].filter(Boolean).join(' ')}
+                  >
+                    Действие
+                  </button>
                 </td>
                 <td>
                   <button type="button" className={item.className} disabled>
@@ -616,7 +687,7 @@ function ButtonsTable() {
                 <td className="small muted">нет состояния</td>
                 <td>
                   <ScenePreview
-                    title={`Сцена: ${action.label}`}
+                    title={`Пример: ${item.role.toLowerCase()} кнопка (админка)`}
                     render={() => <Scene action={action} />}
                   />
                 </td>
@@ -629,9 +700,10 @@ function ButtonsTable() {
           return (
             <Fragment key={key}>
               <tr data-button-sample={key}>
-                <td className="small muted">@unicorn/ui</td>
+                <td style={{ fontWeight: 600 }}>{UI_ROLE[variant]}</td>
                 <td>
-                  <code>{variant}</code>
+                  <span className="small">общий набор</span>{' '}
+                  <span className="ui-cat-code">{variant}</span>
                 </td>
                 <td>
                   <Button variant={variant}>Действие</Button>
@@ -653,7 +725,7 @@ function ButtonsTable() {
                 </td>
                 <td>
                   <ScenePreview
-                    title={`Сцена: @unicorn/ui · ${variant}`}
+                    title={`Пример: ${UI_ROLE[variant].toLowerCase()} кнопка (общий набор)`}
                     render={() => (
                       <Scene action={{ set: 'ui', variant, label: `@unicorn/ui · ${variant}` }} />
                     )}
@@ -670,118 +742,207 @@ function ButtonsTable() {
 
 /* ------------------------------------------------------------------ поля */
 
+const none = <span className="small muted">нет состояния</span>;
+
+/**
+ * Поля: строки — состояния, столбцы — админка и общий набор в двух размерах.
+ * Подписи полей скрыты в aria-label: состояние названо в первом столбце.
+ */
 function FieldsBlock({ where }: { where: 'page' | 'card' }) {
   const id = (name: string) => `ui-catalog-${where}-${name}`;
+  const rows: {
+    state: string;
+    admin: React.ReactNode;
+    md: React.ReactNode;
+    sm: React.ReactNode;
+  }[] = [
+    {
+      state: 'Пустое, подсказка внутри',
+      admin: <input aria-label="Пустое, админка" placeholder="Название проекта" />,
+      md: <Input aria-label="Пустое, обычное" placeholder="Название проекта" />,
+      sm: <Input aria-label="Пустое, плотное" size="sm" placeholder="Название проекта" />,
+    },
+    {
+      state: 'Заполненное',
+      admin: <input aria-label="Заполненное, админка" defaultValue="Пятый элемент" />,
+      md: <Input aria-label="Заполненное, обычное" defaultValue="Пятый элемент" />,
+      sm: <Input aria-label="Заполненное, плотное" size="sm" defaultValue="Пятый элемент" />,
+    },
+    {
+      state: 'С ошибкой',
+      admin: none,
+      md: (
+        <Field label="Название" htmlFor={id('err-md')} error="Название обязательно">
+          <Input id={id('err-md')} />
+        </Field>
+      ),
+      sm: (
+        <Field label="Название" htmlFor={id('err-sm')} error="Название обязательно">
+          <Input id={id('err-sm')} size="sm" />
+        </Field>
+      ),
+    },
+    {
+      state: 'Выключенное',
+      admin: <input aria-label="Выключенное, админка" defaultValue="Нельзя изменить" disabled />,
+      md: <Input aria-label="Выключенное, обычное" defaultValue="Нельзя изменить" disabled />,
+      sm: (
+        <Input
+          aria-label="Выключенное, плотное"
+          size="sm"
+          defaultValue="Нельзя изменить"
+          disabled
+        />
+      ),
+    },
+    {
+      state: 'Список',
+      admin: (
+        <select aria-label="Список, админка" defaultValue="b">
+          <option value="a">Первый</option>
+          <option value="b">Второй</option>
+        </select>
+      ),
+      md: (
+        <Select aria-label="Список, обычный" defaultValue="b">
+          <option value="a">Первый</option>
+          <option value="b">Второй</option>
+        </Select>
+      ),
+      sm: (
+        <Select aria-label="Список, плотный" size="sm" defaultValue="b">
+          <option value="a">Первый</option>
+          <option value="b">Второй</option>
+        </Select>
+      ),
+    },
+    {
+      state: 'Многострочное',
+      admin: (
+        <textarea aria-label="Многострочное, админка" rows={2} defaultValue="Текст в две строки" />
+      ),
+      md: (
+        <TextArea aria-label="Многострочное, обычное" rows={2} defaultValue="Текст в две строки" />
+      ),
+      sm: (
+        <TextArea
+          aria-label="Многострочное, плотное"
+          size="sm"
+          rows={2}
+          defaultValue="Текст в две строки"
+        />
+      ),
+    },
+  ];
+
+  const toggles: {
+    state: string;
+    checked?: boolean;
+    disabled?: boolean;
+    description?: string;
+    admin?: boolean;
+  }[] = [
+    { state: 'Не отмечен', admin: true },
+    { state: 'Отмечен', checked: true, admin: true },
+    { state: 'С пояснением', checked: true, description: 'Пояснение под подписью.' },
+    { state: 'Недоступен', disabled: true },
+    { state: 'Недоступен и отмечен', checked: true, disabled: true },
+  ];
+
   return (
-    <div className="grid-2" data-sample="fields">
-      <div>
-        <div className="small muted" style={{ marginBottom: 6 }}>
-          админка (<code>.field</code>)
-        </div>
-        <div className="field">
-          <label htmlFor={id('a-empty')}>Пустое с подсказкой внутри</label>
-          <input id={id('a-empty')} placeholder="Название проекта" />
-          <div className="field__hint">Подсказка под полем.</div>
-        </div>
-        <div className="field">
-          <label htmlFor={id('a-filled')}>Заполненное</label>
-          <input id={id('a-filled')} defaultValue="Пятый элемент" />
-        </div>
-        <div className="field">
-          <label htmlFor={id('a-disabled')}>Выключенное</label>
-          <input id={id('a-disabled')} defaultValue="Нельзя изменить" disabled />
-        </div>
-        <div className="field">
-          <label htmlFor={id('a-select')}>Список</label>
-          <select id={id('a-select')} defaultValue="b">
-            <option value="a">Первый</option>
-            <option value="b">Второй</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor={id('a-select-sm')}>Маленький список</label>
-          <select id={id('a-select-sm')} className="select--sm" style={{ width: 'auto' }}>
-            <option>Кабинет…</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor={id('a-text')}>Многострочное</label>
-          <textarea id={id('a-text')} rows={2} defaultValue="Текст в две строки" />
-        </div>
-        <label className="switch">
-          <input type="checkbox" defaultChecked />
-          Переключатель (на деле флажок в подписи)
-        </label>
-        <p className="small muted">Состояния ошибки у полей админки нет.</p>
-      </div>
-      <div style={{ display: 'grid', gap: 12, alignContent: 'start' }}>
-        <div className="small muted">
-          @unicorn/ui (<code>Field</code>) — просторный и плотный размер
-        </div>
-        <Field
-          label="Пустое с подсказкой внутри"
-          htmlFor={id('u-empty')}
-          hint="Подсказка под полем."
-        >
-          <Input id={id('u-empty')} placeholder="Название проекта" />
-        </Field>
-        <Field label="Заполненное, плотное (sm)" htmlFor={id('u-filled-sm')}>
-          <Input id={id('u-filled-sm')} size="sm" defaultValue="Пятый элемент" />
-        </Field>
-        <Field label="С ошибкой" htmlFor={id('u-error')} error="Название обязательно">
-          <Input id={id('u-error')} />
-        </Field>
-        <Field label="С ошибкой, плотное" htmlFor={id('u-error-sm')} error="Выберите стадию">
-          <Select id={id('u-error-sm')} size="sm" defaultValue="">
-            <option value="">— не выбрано —</option>
-            <option value="a">Идея</option>
-          </Select>
-        </Field>
-        <Field label="Выключенное" htmlFor={id('u-disabled')}>
-          <Input id={id('u-disabled')} defaultValue="Нельзя изменить" disabled />
-        </Field>
-        <Field label="Список" htmlFor={id('u-select')}>
-          <Select id={id('u-select')} defaultValue="b">
-            <option value="a">Первый</option>
-            <option value="b">Второй</option>
-          </Select>
-        </Field>
-        <Field label="Многострочное, плотное" htmlFor={id('u-text')}>
-          <TextArea id={id('u-text')} size="sm" rows={2} defaultValue="Текст в две строки" />
-        </Field>
+    <div style={{ display: 'grid', gap: 16 }}>
+      <table className="ui-cat-table" data-sample="fields">
+        <thead>
+          <tr>
+            <th style={{ width: 170 }}>Поле ввода</th>
+            <th>Админка</th>
+            <th>Общий набор, обычное</th>
+            <th>Общий набор, плотное</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.state}>
+              <td style={{ fontWeight: 600 }}>{row.state}</td>
+              <td>{row.admin}</td>
+              <td>{row.md}</td>
+              <td>{row.sm}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
-        <div className="small muted" style={{ marginTop: 4 }}>
-          <code>Checkbox</code> — выбор в форме, применяется кнопкой
-        </div>
-        <div data-sample="checkboxes" style={{ display: 'grid', gap: 8 }}>
-          <Checkbox label="Не отмечен" />
-          <Checkbox label="Отмечен" defaultChecked />
-          <Checkbox
-            label="С пояснением"
-            description="Пояснение второстепенным цветом под подписью."
-            defaultChecked
-          />
-          <Checkbox label="Выключен" disabled />
-          <Checkbox label="Выключен и отмечен" disabled defaultChecked />
-          <Checkbox label="Плотный (sm)" size="sm" defaultChecked />
-        </div>
-
-        <div className="small muted" style={{ marginTop: 4 }}>
-          <code>Switch</code> — включение с немедленным действием
-        </div>
-        <div data-sample="switches" style={{ display: 'grid', gap: 8 }}>
-          <Switch label="Выключен" />
-          <Switch label="Включён" defaultChecked />
-          <Switch
-            label="С пояснением"
-            description="Черновики занимают место в лимите."
-            defaultChecked
-          />
-          <Switch label="Недоступен" disabled />
-          <Switch label="Недоступен и включён" disabled defaultChecked />
-          <Switch label="Плотный (sm)" size="sm" defaultChecked />
-        </div>
-      </div>
+      <table className="ui-cat-table" data-sample="toggles">
+        <thead>
+          <tr>
+            <th style={{ width: 170 }}>Флажок и переключатель</th>
+            <th>Админка</th>
+            <th>Флажок, обычный</th>
+            <th>Флажок, плотный</th>
+            <th>Переключатель, обычный</th>
+            <th>Переключатель, плотный</th>
+          </tr>
+        </thead>
+        <tbody>
+          {toggles.map((t) => (
+            <tr key={t.state}>
+              <td style={{ fontWeight: 600 }}>{t.state}</td>
+              <td>
+                {t.admin ? (
+                  <label className="switch">
+                    <input
+                      type="checkbox"
+                      defaultChecked={t.checked}
+                      style={{ width: 'auto', margin: 0 }}
+                    />
+                    Подпись
+                  </label>
+                ) : (
+                  none
+                )}
+              </td>
+              <td data-sample="checkboxes">
+                <Checkbox
+                  label="Подпись"
+                  description={t.description}
+                  defaultChecked={t.checked}
+                  disabled={t.disabled}
+                />
+              </td>
+              <td>
+                <Checkbox
+                  label="Подпись"
+                  size="sm"
+                  description={t.description}
+                  defaultChecked={t.checked}
+                  disabled={t.disabled}
+                />
+              </td>
+              <td data-sample="switches">
+                <Switch
+                  label="Подпись"
+                  description={t.description}
+                  defaultChecked={t.checked}
+                  disabled={t.disabled}
+                />
+              </td>
+              <td>
+                <Switch
+                  label="Подпись"
+                  size="sm"
+                  description={t.description}
+                  defaultChecked={t.checked}
+                  disabled={t.disabled}
+                />
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="small muted" style={{ margin: 0 }}>
+        Флажок — выбор в форме, который применяется кнопкой. Переключатель — включение, которое
+        срабатывает сразу. «Переключатель» админки на деле флажок в подписи.
+      </p>
     </div>
   );
 }
@@ -823,14 +984,14 @@ const MISSING_TONES = [
 function StatusBlock() {
   return (
     <div data-sample="statuses">
-      <table style={{ minWidth: 640 }}>
+      <table className="ui-cat-table">
         <thead>
           <tr>
             <th>Смысл</th>
-            <th>Значок админки</th>
-            <th>Плашка админки</th>
-            <th>Badge @unicorn/ui</th>
-            <th>Alert @unicorn/ui</th>
+            <th>Значок, админка</th>
+            <th>Плашка, админка</th>
+            <th>Значок, общий набор</th>
+            <th>Сообщение, общий набор</th>
           </tr>
         </thead>
         <tbody>
@@ -890,7 +1051,7 @@ function StatusBlock() {
 
 function TableSample() {
   return (
-    <table data-sample="table">
+    <table data-sample="table" style={{ border: '1px solid var(--u-border-strong)' }}>
       <thead>
         <tr>
           <th>Имя</th>
@@ -960,19 +1121,46 @@ const SAMPLE_PHOTO =
 function AvatarsSample() {
   const letter = { displayName: 'Ирина', avatarUrl: null };
   const photo = { displayName: 'Ирина', avatarUrl: SAMPLE_PHOTO };
-  const cell = (label: string, node: React.ReactNode) => (
-    <div style={{ display: 'grid', justifyItems: 'center', gap: 4 }}>
-      {node}
-      <span className="small muted">{label}</span>
-    </div>
-  );
   return (
-    <div style={{ display: 'flex', gap: 24, flexWrap: 'wrap' }} data-sample="avatars">
-      {cell('буква, 32', <Avatar user={letter} size={32} />)}
-      {cell('буква, 48', <Avatar user={letter} size={48} />)}
-      {cell('raised, 48', <Avatar user={letter} size={48} raised />)}
-      {cell('фото, 32', <Avatar user={photo} size={32} />)}
-      {cell('фото, 48', <Avatar user={photo} size={48} />)}
-    </div>
+    <table className="ui-cat-table" data-sample="avatars">
+      <thead>
+        <tr>
+          <th>Аватар</th>
+          <th>Маленький (32)</th>
+          <th>Большой (48)</th>
+          <th>Где используется</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style={{ fontWeight: 600 }}>Буква</td>
+          <td>
+            <Avatar user={letter} size={32} />
+          </td>
+          <td>
+            <Avatar user={letter} size={48} />
+          </td>
+          <td className="small muted">список пользователей, шапка кабинета</td>
+        </tr>
+        <tr>
+          <td style={{ fontWeight: 600 }}>Буква на цветном фоне</td>
+          <td className="small muted">—</td>
+          <td>
+            <Avatar user={letter} size={48} raised />
+          </td>
+          <td className="small muted">шапка карточки пользователя</td>
+        </tr>
+        <tr>
+          <td style={{ fontWeight: 600 }}>Фото</td>
+          <td>
+            <Avatar user={photo} size={32} />
+          </td>
+          <td>
+            <Avatar user={photo} size={48} />
+          </td>
+          <td className="small muted">когда человек загрузил фото</td>
+        </tr>
+      </tbody>
+    </table>
   );
 }
