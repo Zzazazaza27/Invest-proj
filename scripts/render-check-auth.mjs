@@ -250,11 +250,21 @@ async function requestLink(address) {
 }
 
 const known = await requestLink(founder.email);
+// Режим — только по двум ожидаемым ответам. Любой другой (429 после
+// соседнего прогона, 500) — не «почта подключена», а сбой, и о нём говорится.
 const mailOff = known.status === 503;
+const mailOn = known.status === 202;
+if (!mailOff && !mailOn) {
+  check('запрос ссылки дал ожидаемый ответ (202 или 503)', false, `HTTP ${known.status}`);
+  await browser.close();
+  await run.finish(false);
+  console.warn(`\nИТОГО: ${passed} пройдено, ${failed} провалено\n`);
+  process.exit(1);
+}
 console.warn(
   mailOff
     ? '  РЕЖИМ: без почты (сервер ответил 503) — путь через письмо этим прогоном НЕ проверен'
-    : `  РЕЖИМ: почта подключена (сервер ответил ${known.status})`,
+    : '  РЕЖИМ: почта подключена (сервер ответил 202)',
 );
 
 if (mailOff) {
