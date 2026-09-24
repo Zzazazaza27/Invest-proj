@@ -32,7 +32,7 @@
  * неизменяемы (M002): физически удалить человека схема не даёт. То же
  * решение принято в `clean-probe-data`.
  */
-import { randomUUID } from 'node:crypto';
+import { randomInt, randomUUID } from 'node:crypto';
 
 import { CORE_URL } from './ports.mjs';
 
@@ -187,7 +187,7 @@ const CONSENTS = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind)
  * эксперта назначает платформа, их регистрацией не получить.
  */
 export async function registerProbeUser(run, { role, label }) {
-  const suffix = `${Date.now() % 1e9}${Math.floor(Math.random() * 1e3)}`;
+  const suffix = `${Date.now() % 1e9}${randomInt(1000)}`;
   const email = `${label}-${suffix}@test.local`;
   const password = `Pw-${randomUUID()}`;
   const displayName = `Прогон ${label} ${suffix}`;

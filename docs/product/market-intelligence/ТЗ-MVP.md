@@ -46,11 +46,11 @@
 
 Пример:
 
-| Type | Name | Organization | Source | Contact | Status | Updated |
-|---|---|---|---|---|---|---|
-| Investor | Иван Иванов | XYZ Ventures | Get-Investor | Telegram | Reviewed | 23.09.2026 |
-| Fund | ABC Capital | — | Get-Investor | Website | Raw | 23.09.2026 |
-| Event | Demo Day 2026 | Unicorn Fellowship | arena... | — | Interesting | 23.09.2026 |
+| Type     | Name          | Organization       | Source       | Contact  | Status      | Updated    |
+| -------- | ------------- | ------------------ | ------------ | -------- | ----------- | ---------- |
+| Investor | Иван Иванов   | XYZ Ventures       | Get-Investor | Telegram | Reviewed    | 23.09.2026 |
+| Fund     | ABC Capital   | —                  | Get-Investor | Website  | Raw         | 23.09.2026 |
+| Event    | Demo Day 2026 | Unicorn Fellowship | arena...     | —        | Interesting | 23.09.2026 |
 
 Минимально нужны:
 
