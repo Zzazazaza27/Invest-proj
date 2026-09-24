@@ -163,6 +163,9 @@ export function cabinetsOf(
  * Одна ширина и одна строка для кнопки кабинета в списке — с меню и без.
  * Иначе столбец «ехал» от числа ролей: стрелка переносилась, строка росла.
  */
+/** Где у экрана стоит меню кабинетов: под кнопкой (`top`) или над ней (`bottom`). */
+type MenuPosition = { right: number; minWidth: number; top?: number; bottom?: number };
+
 const CABINET_BUTTON_STYLE: React.CSSProperties = { minWidth: '7.5em', whiteSpace: 'nowrap' };
 
 export function ViewCabinetAction({
@@ -177,10 +180,37 @@ export function ViewCabinetAction({
   const cabinets = cabinetsOf(roles);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
+  const [menuAt, setMenuAt] = useState<MenuPosition | null>(null);
+  const menuOpen = menuAt !== null;
+  const setMenuOpen = (value: boolean) => {
+    if (!value) setMenuAt(null);
+  };
   const menuRef = useRef<HTMLSpanElement>(null);
 
-  // Меню закрывается щелчком мимо и Escape — как любое выпадающее меню.
+  /*
+   * Меню стоит поверх страницы (`position: fixed`) у кнопки, а не внутри
+   * таблицы. Внутри таблицы оно растягивало её прокручиваемый блок, и у
+   * нижних строк появлялась лишняя прокрутка. Места снизу не хватает —
+   * открывается вверх.
+   */
+  const toggleMenu = (button: HTMLElement) => {
+    if (menuAt) {
+      setMenuAt(null);
+      return;
+    }
+    const rect = button.getBoundingClientRect();
+    const estimated = cabinets.length * 34 + 12;
+    const right = window.innerWidth - rect.right;
+    const minWidth = rect.width;
+    setMenuAt(
+      window.innerHeight - rect.bottom < estimated + 8
+        ? { right, minWidth, bottom: window.innerHeight - rect.top + 4 }
+        : { right, minWidth, top: rect.bottom + 4 },
+    );
+  };
+
+  // Меню закрывается щелчком мимо, Escape, прокруткой и сменой размера окна:
+  // прикреплённое к экрану, оно иначе отстало бы от своей кнопки.
   useEffect(() => {
     if (!menuOpen) return;
     const onPointer = (event: MouseEvent) => {
@@ -189,11 +219,16 @@ export function ViewCabinetAction({
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setMenuOpen(false);
     };
+    const close = () => setMenuOpen(false);
     document.addEventListener('mousedown', onPointer);
     document.addEventListener('keydown', onKey);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
     return () => {
       document.removeEventListener('mousedown', onPointer);
       document.removeEventListener('keydown', onKey);
+      window.removeEventListener('scroll', close, true);
+      window.removeEventListener('resize', close);
     };
   }, [menuOpen]);
 
@@ -276,22 +311,20 @@ export function ViewCabinetAction({
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           disabled={busy}
-          onClick={() => setMenuOpen((value) => !value)}
+          onClick={(event) => toggleMenu(event.currentTarget)}
           title="Выбрать кабинет для просмотра только для чтения"
         >
           Кабинет ▾
         </button>
-        {menuOpen ? (
+        {menuAt ? (
           <span
             role="menu"
             style={{
-              position: 'absolute',
-              right: 0,
-              top: 'calc(100% + 4px)',
-              zIndex: 20,
+              position: 'fixed',
+              ...menuAt,
+              zIndex: 50,
               display: 'flex',
               flexDirection: 'column',
-              minWidth: '100%',
               padding: 4,
               background: 'var(--u-surface)',
               border: '1px solid var(--u-border)',
