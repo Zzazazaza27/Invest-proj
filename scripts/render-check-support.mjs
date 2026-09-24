@@ -24,12 +24,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PORTS } from './lib/ports.mjs';
+import { registerProbeUser, startProbeRun } from './lib/probe-run.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BASE =
   process.env.WEB_URL ?? (PORTS.web === 80 ? 'http://127.0.0.1' : `http://127.0.0.1:${PORTS.web}`);
 
-/** Пароль стенда читается из `.env` и НЕ печатается: он такой же секрет, как остальные. */
+/** Пароль демонстрационного комплекта читается из `.env` и НЕ печатается: он такой же секрет, как остальные. */
 function standPassword() {
   const envFile = join(ROOT, '.env');
   if (!existsSync(envFile)) return null;
@@ -60,10 +61,17 @@ if (!password) {
   process.exit(1);
 }
 
-async function signIn(page, login) {
+// Инвестор — свой, заведённый прогоном: обращения пишутся в базу и под общей
+// учёткой смешивались бы с чужими. Сотрудник — `demo-admin`: роль
+// администратора регистрацией не получить.
+const run = await startProbeRun('RND-SUPPORT');
+const investor = await registerProbeUser(run, { role: 'investor', label: 'render-support' });
+const staffMember = { email: 'demo-admin', password };
+
+async function signIn(page, who) {
   await page.goto(`${BASE}/login/`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.locator('#email').fill(login);
-  await page.locator('#password').fill(password);
+  await page.locator('#email').fill(who.email);
+  await page.locator('#password').fill(who.password);
   await page.getByRole('button', { name: 'Войти' }).first().click();
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1500);
@@ -82,7 +90,7 @@ const bugSubject = `Проверка рендера: белый экран ${sta
 const supportSubject = `Проверка рендера: вопрос по счёту ${stamp}`;
 
 console.warn('[1] Кабинет инвестора открывается');
-await signIn(page, 'stand-investor');
+await signIn(page, investor);
 check('инвестор в своём кабинете', page.url().includes('/investor'), page.url());
 
 console.warn('\n[2] Служебная комбинация Ctrl+Alt+B');
@@ -168,7 +176,7 @@ console.warn('\n[6] Сотрудник поддержки отвечает');
   const staffContext = await browser.newContext({ viewport: { width: 1400, height: 950 } });
   const staff = await staffContext.newPage();
   staff.on('pageerror', (error) => pageErrors.push(`admin: ${error}`));
-  await signIn(staff, 'stand-admin');
+  await signIn(staff, staffMember);
   await staff.goto(`${BASE}/admin/support`, { waitUntil: 'networkidle' });
   await staff.waitForTimeout(1500);
 
@@ -214,7 +222,7 @@ console.warn('\n[8] Телефон');
   const mobile = await browser.newContext({ viewport: { width: 390, height: 844 } });
   const small = await mobile.newPage();
   small.on('pageerror', (error) => pageErrors.push(`mobile: ${error}`));
-  await signIn(small, 'stand-investor');
+  await signIn(small, investor);
   await small.getByRole('button', { name: 'Поддержка' }).click();
   await small.waitForTimeout(1200);
 
@@ -240,6 +248,7 @@ check('исключений на страницах нет', pageErrors.length =
 
 await context.close();
 await browser.close();
+await run.finish(failed === 0);
 
 console.warn(`\nИТОГО: ${passed} пройдено, ${failed} провалено\n`);
 process.exit(failed === 0 ? 0 : 1);

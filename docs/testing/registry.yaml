@@ -482,38 +482,6 @@ checks:
     purpose: 'Ищет НАСТОЯЩИЕ блоки приватного ключа и возвращает их типы. Почему не поиск подстроки `BEGIN RSA PRIVATE KEY`: эта строка встречается в исходнике самого гейта (список выше) и, следовательно, в транскриптах сессий, где ге'
     confirmation: reviewed-in-code
 
-  - id: CHK-STAND-LOGINS
-    file: scripts/check-stand-logins.mjs
-    command: node scripts/check-stand-logins.mjs
-    kind: check
-    level: интеграционный
-    runner: manual
-    asserts: 0
-    needs: [core, web]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['входит под существующими учётными записями стенда — новых не заводит']
-    note: >-
-      «Пароль у всех один» — утверждение, проверяемое только попыткой входа.
-      Учётные записи стенда заводят три разных скрипта, и ротация пароля в
-      .env доходит не до всех.
-    purpose: 'Проверка входа под всеми учётными записями стенда. Зачем: «пароль у всех один» — утверждение, которое проверяется только попыткой входа. Сиды заводят учётки тремя разными скриптами (`dev-seed-test-user`, `dev-stand`, `se'
-    confirmation: reviewed-in-code
-
-  - id: CHK-STAND
-    file: scripts/check-stand.mjs
-    command: node scripts/check-stand.mjs
-    kind: check
-    level: интеграционный
-    runner: manual
-    asserts: 22
-    needs: [core, web]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['входит под существующими учётными записями стенда — новых не заводит']
-    purpose: 'Проверка стенда глазами браузера. Развёрнутый стенд и работающий стенд — разные утверждения. Скрипт `dev-stand.mjs` заводит учётные записи и данные; здесь проверяется, что этими учётными записями действительно ВХОДЯТ, и '
-    confirmation: reviewed-in-code
-
   - id: CHK-TEST-REGISTRY
     file: scripts/check-test-registry.mjs
     command: npm run check:registry
@@ -668,18 +636,6 @@ checks:
     purpose: 'Удаление тестовой учётной записи из базы — по решению владельца 2026-08-28 (учётка `ssurgut`, все пять ролей сразу). Почему скрипт, а не `DELETE FROM identity.users`: на `identity.users` ссылаются 46 внешних ключей, и **'
     confirmation: reviewed-in-code
 
-  - id: TOOL-DEV-RESET-STAND-PASSWORDS
-    file: scripts/dev-reset-stand-passwords.mjs
-    command: node scripts/dev-reset-stand-passwords.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [db]
-    studied: header
-    purpose: 'Привести пароли тестовых учёток стенда к значению из `.env`. Зачем отдельный скрипт, а не перезапуск сидов: учётки заводят ТРИ разных скрипта (`dev-seed-test-user`, `dev-stand`, `seed-demo`), и ротация пароля в `.env` не'
-    confirmation: reviewed-in-code
-
   - id: TOOL-DEV-SEED-TEST-USER
     file: scripts/dev-seed-test-user.mjs
     command: node scripts/dev-seed-test-user.mjs
@@ -694,22 +650,6 @@ checks:
     note: >-
       учётная запись ssurgut со всеми ролями — чтобы пройти платформу целиком
     purpose: 'Тестовый пользователь для разработки. Заводит учётную запись `ssurgut` со всеми ролями, нужными, чтобы пройти платформу целиком: основатель, инвестор, эксперт, организатор, администратор. Пароль берётся из `DEV_TEST_USER'
-    confirmation: reviewed-in-code
-
-  - id: TOOL-DEV-STAND
-    file: scripts/dev-stand.mjs
-    command: node scripts/dev-stand.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [db, core]
-    effects: ['пишет в БД']
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      по учётной записи на роль: на совмещённой учётке не видно, что роли видят разное
-    purpose: 'Локальный стенд: учётные записи по ролям и данные, на которых видно работу. Зачем отдельно от `dev-seed-test-user.mjs`: та учётка совмещает ВСЕ роли, и на ней невозможно увидеть главное свойство платформы — что роли видя'
     confirmation: reviewed-in-code
 
   - id: TOOL-DR-RESTORE-CHECK
@@ -1398,11 +1338,14 @@ checks:
     needs: [db, core, web]
     studied: code
     studiedOn: 2026-09-22
-    effects: ['работает под существующими учётными записями стенда — своих не заводит']
+    effects:
+      [
+        'заводит своих участников через учёт запуска (probe-run) и убирает за собой; администратор — demo-admin из демонстрационного комплекта',
+      ]
     note: >-
       Единственная дверь в платформу: её поломка закрывает вход всем,
-      независимо от исправности остального. Своих учётных записей не
-      заводит — ходит под учётками стенда.
+      независимо от исправности остального. Основателя заводит себе сам
+      (учёт запуска), короткое имя проверяет на demo-admin.
     purpose: 'Проверка входа и регистрации в РЕАЛЬНОМ рендере (`RULES.md` §2). Это единственная дверь в платформу: её поломка означает, что внутрь не может попасть никто, независимо от исправности остального. Поэтому проверяется не «с'
     confirmation: reviewed-in-code
 
@@ -1466,7 +1409,10 @@ checks:
     needs: [db, core, web]
     studied: code
     studiedOn: 2026-09-22
-    effects: ['работает под существующими учётными записями стенда — своих не заводит']
+    effects:
+      [
+        'заводит своих участников через учёт запуска (probe-run) и убирает за собой; администратор — demo-admin из демонстрационного комплекта',
+      ]
     purpose: 'Избранное инвестора в РЕАЛЬНОМ рендере (`RULES.md` §2). ТЗ требовало проверить сценарий end-to-end. Проверяется путь человека: 1. в каталоге у карточки есть отметка, и её состояние объявлено не только цветом (`aria-press'
     confirmation: reviewed-in-code
 
@@ -1694,7 +1640,10 @@ checks:
     needs: [db, core, web]
     studied: code
     studiedOn: 2026-09-22
-    effects: ['работает под существующими учётными записями стенда — своих не заводит']
+    effects:
+      [
+        'заводит своих участников через учёт запуска (probe-run) и убирает за собой; администратор — demo-admin из демонстрационного комплекта',
+      ]
     note: >-
       Проверяет, что форма сообщения об ошибке показывает, ЧТО именно будет
       отправлено, и что в этом нет ни пароля, ни иных секретов. Это граница
@@ -1922,22 +1871,6 @@ checks:
     note: >-
       комплект демонстрационных данных; восстановим из ФАЙЛОВ, а не разово налит — от него зависит SMK-DEMO
     purpose: 'Восстановимый комплект демонстрационных данных UNICORN LAUNCH. Задача не в том, чтобы «налить данных один раз». Комплект должен полностью восстанавливать наполнение после переустановки приложения, очистки БД или развёрты'
-    confirmation: reviewed-in-code
-
-  - id: TOOL-SEED-LOCAL-SCENARIOS
-    file: scripts/seed-local-scenarios.mjs
-    command: node scripts/seed-local-scenarios.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [db, core]
-    effects: ['создаёт пользователей']
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      несколько понятных состояний вместо витрины «платформа живёт год»
-    purpose: 'Минимальный набор сценариев локального стенда. Заменяет прежний демонстрационный комплект (`seed-demo`) там, где нужна не витрина «как будто платформа живёт год», а несколько понятных состояний, по которым видно поведени'
     confirmation: reviewed-in-code
 
   - id: SMK-ADMIN-ROLES
@@ -4384,16 +4317,7 @@ blocks:
 
   стенд:
     title: Порты, развёртывание, консоль
-    members:
-      [
-        CHK-PORTS-CONSISTENCY,
-        CHK-STAND,
-        CHK-STAND-LOGINS,
-        CHK-FRONT-BUILDS,
-        RND-CONSOLE,
-        RND-DEMO,
-        SMK-DEMO,
-      ]
+    members: [CHK-PORTS-CONSISTENCY, CHK-FRONT-BUILDS, RND-CONSOLE, RND-DEMO, SMK-DEMO]
 
   разбор-моделью:
     title: Шлюз языковой модели

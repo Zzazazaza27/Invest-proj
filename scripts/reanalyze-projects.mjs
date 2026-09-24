@@ -18,7 +18,7 @@
  *                                                       которой считает платформа сейчас
  *
  * Учётка администратора — из окружения: REANALYZE_ADMIN_EMAIL (по умолчанию
- * stand-admin@unicorn.local) и REANALYZE_ADMIN_PASSWORD (по умолчанию
+ * demo-admin@unicorn.local) и REANALYZE_ADMIN_PASSWORD (по умолчанию
  * DEV_TEST_USER_PASSWORD из .env). Пароль в аргументы не передаётся и не печатается.
  *
  * Список проектов читается из БД владельцем схем (DATABASE_URL_OWNER): это
@@ -47,7 +47,7 @@ const concurrency = Math.max(1, Math.min(4, Number(arg('--concurrency', '2'))));
 const BASE = process.env.CORE_URL || CORE_URL;
 const SESSION_COOKIE = process.env.SESSION_COOKIE_NAME ?? 'ul_session';
 const CSRF_COOKIE = process.env.CSRF_COOKIE_NAME ?? 'ul_csrf';
-const ADMIN_EMAIL = process.env.REANALYZE_ADMIN_EMAIL ?? 'stand-admin@unicorn.local';
+const ADMIN_EMAIL = process.env.REANALYZE_ADMIN_EMAIL ?? 'demo-admin@unicorn.local';
 const ADMIN_PASSWORD = process.env.REANALYZE_ADMIN_PASSWORD ?? process.env.DEV_TEST_USER_PASSWORD;
 
 function loadDotEnv() {

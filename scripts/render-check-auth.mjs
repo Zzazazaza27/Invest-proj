@@ -21,12 +21,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PORTS } from './lib/ports.mjs';
+import { registerProbeUser, startProbeRun } from './lib/probe-run.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BASE =
   process.env.WEB_URL ?? (PORTS.web === 80 ? 'http://127.0.0.1' : `http://127.0.0.1:${PORTS.web}`);
 
-/** Пароль стенда читается из `.env` и НЕ печатается: он такой же секрет, как остальные. */
+/** Пароль демонстрационного комплекта читается из `.env` и НЕ печатается: он такой же секрет, как остальные. */
 function standPassword() {
   const envFile = join(ROOT, '.env');
   if (!existsSync(envFile)) return null;
@@ -54,10 +55,16 @@ function check(name, condition, detail = '') {
 const password = standPassword();
 if (!password) {
   console.error(
-    'DEV_TEST_USER_PASSWORD не задан в .env — прогон без учётных записей стенда невозможен.',
+    'DEV_TEST_USER_PASSWORD не задан в .env — прогон без демонстрационного комплекта невозможен.',
   );
   process.exit(1);
 }
+
+// Основатель — свой, заведённый прогоном: вход проверяется настоящим входом,
+// а общая учётка пропадает с пересозданием базы. Администратор для [6] — из
+// демонстрационного комплекта: эту роль регистрацией не получить.
+const run = await startProbeRun('RND-AUTH');
+const founder = await registerProbeUser(run, { role: 'founder', label: 'render-auth' });
 
 console.warn('\n=== РЕНДЕР-ПРОВЕРКА: ВХОД И РЕГИСТРАЦИЯ ===\n');
 
@@ -147,8 +154,8 @@ check(
 console.warn('\n[5] Вход уводит в кабинет по роли');
 await page.getByRole('button', { name: 'Войти' }).last().click();
 await page.waitForTimeout(300);
-await page.locator('#email').fill('stand-founder@unicorn.local');
-await page.locator('#password').fill(password);
+await page.locator('#email').fill(founder.email);
+await page.locator('#password').fill(founder.password);
 await page.getByRole('button', { name: 'Войти' }).first().click();
 await page.waitForLoadState('networkidle');
 await page.waitForTimeout(1500);
@@ -158,13 +165,13 @@ check('в адресе кабинета нет порта', !new URL(page.url())
 console.warn('\n[6] Короткое имя учётной записи принимается');
 // Служебные учётки заводятся как `имя@unicorn.local`, и кабинеты дополняют
 // домен сами. Экран входа обязан вести себя так же: иначе верно введённый
-// `stand-admin` отвергается проверкой адреса, и человек видит «проверьте
+// `demo-admin` отвергается проверкой адреса, и человек видит «проверьте
 // заполнение полей» на правильном логине.
 {
   const shortCtx = await browser.newContext();
   const shortPage = await shortCtx.newPage();
   await shortPage.goto(`${BASE}/login/`, { waitUntil: 'networkidle' });
-  await shortPage.locator('#email').fill('stand-admin');
+  await shortPage.locator('#email').fill('demo-admin');
   await shortPage.locator('#password').fill(password);
   await shortPage.getByRole('button', { name: 'Войти' }).first().click();
   await shortPage.waitForTimeout(2500);
@@ -176,7 +183,7 @@ console.warn('\n[7] Неверный пароль не различает при
 const clean = await browser.newContext();
 const p2 = await clean.newPage();
 await p2.goto(`${BASE}/login/`, { waitUntil: 'networkidle' });
-await p2.locator('#email').fill('stand-founder@unicorn.local');
+await p2.locator('#email').fill(founder.email);
 await p2.locator('#password').fill('заведомо-неверный-пароль');
 await p2.getByRole('button', { name: 'Войти' }).first().click();
 await p2.waitForTimeout(1500);
@@ -212,7 +219,7 @@ await p3.waitForTimeout(400);
 check('экран восстановления открылся', (await p3.locator('#forgot-email').count()) === 1);
 check('на экране восстановления нет поля пароля', (await p3.locator('#password').count()) === 0);
 
-await p3.locator('#forgot-email').fill('stand-founder@unicorn.local');
+await p3.locator('#forgot-email').fill(founder.email);
 await p3.getByRole('button', { name: 'Прислать ссылку' }).click();
 await p3.waitForTimeout(1500);
 const knownNotice = ((await p3.locator('[role="status"]').first().textContent()) ?? '').trim();
@@ -269,5 +276,6 @@ check(
 check('исключений на страницах нет', pageErrors.length === 0, pageErrors.slice(0, 2).join(' | '));
 
 await browser.close();
+await run.finish(failed === 0);
 console.warn(`\nИТОГО: ${passed} пройдено, ${failed} провалено\n`);
 if (failed > 0) process.exit(1);

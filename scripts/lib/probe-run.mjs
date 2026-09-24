@@ -32,6 +32,8 @@
  * неизменяемы (M002): физически удалить человека схема не даёт. То же
  * решение принято в `clean-probe-data`.
  */
+import { randomUUID } from 'node:crypto';
+
 import { CORE_URL } from './ports.mjs';
 
 /** Единственное значение для браузерных проходов: его знает уборка (M127). */
@@ -164,4 +166,45 @@ export async function startProbeRun(probeId) {
       );
     },
   };
+}
+
+const CONSENTS = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind) => ({
+  kind,
+  version: 'v1',
+  locale: 'ru-RU',
+}));
+
+/**
+ * Завести прогону своего участника обычной регистрацией — с паролем, чтобы
+ * входить в браузере настоящим входом.
+ *
+ * Зачем, а не общая учётка: общие учётки живут в базе и пропадают при её
+ * пересоздании (так ушли `stand-*`), а записи прогона под общей учёткой
+ * смешиваются с чужими. Свой участник помечен происхождением прогона, и
+ * успешный `finish` его убирает.
+ *
+ * Роль — только самостоятельная (`founder` / `investor`): администратора и
+ * эксперта назначает платформа, их регистрацией не получить.
+ */
+export async function registerProbeUser(run, { role, label }) {
+  const suffix = `${Date.now() % 1e9}${Math.floor(Math.random() * 1e3)}`;
+  const email = `${label}-${suffix}@test.local`;
+  const password = `Pw-${randomUUID()}`;
+  const displayName = `Прогон ${label} ${suffix}`;
+  const response = await fetch(`${CORE_URL}/v1/auth/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...run.headers() },
+    body: JSON.stringify({
+      email,
+      password,
+      displayName,
+      role,
+      locale: 'ru-RU',
+      consents: CONSENTS,
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (response.status >= 400)
+    throw new Error(`регистрация участника прогона: HTTP ${response.status}`);
+  return { email, password, displayName };
 }

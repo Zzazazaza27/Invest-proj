@@ -16,30 +16,15 @@
  * Прогон идёт через единую точку входа.
  *
  * Запуск: node scripts/render-check-favorites.mjs
- * Требуется: `npm run web:up`, ядро, собранные фронтенды и заполненный стенд.
+ * Требуется: `npm run web:up`, ядро, собранные фронтенды и загруженный демонстрационный комплект (`seed-demo`).
  */
 import { chromium } from 'playwright';
-import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 
 import { PORTS } from './lib/ports.mjs';
+import { registerProbeUser, startProbeRun } from './lib/probe-run.mjs';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const BASE =
   process.env.WEB_URL ?? (PORTS.web === 80 ? 'http://127.0.0.1' : `http://127.0.0.1:${PORTS.web}`);
-
-/** Пароль стенда читается из `.env` и НЕ печатается. */
-function standPassword() {
-  const envFile = join(ROOT, '.env');
-  if (!existsSync(envFile)) return null;
-  for (const line of readFileSync(envFile, 'utf8').split('\n')) {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('DEV_TEST_USER_PASSWORD=')) continue;
-    return trimmed.slice('DEV_TEST_USER_PASSWORD='.length).trim();
-  }
-  return null;
-}
 
 let passed = 0;
 let failed = 0;
@@ -54,16 +39,15 @@ function check(name, condition, detail = '') {
   }
 }
 
-const password = standPassword();
-if (!password) {
-  console.error('DEV_TEST_USER_PASSWORD не задан в .env — прогон невозможен.');
-  process.exit(1);
-}
+// Инвестор — свой, заведённый прогоном: избранное пишется в базу, и под
+// общей учёткой оно смешивалось бы с чужим. Успешный прогон его убирает.
+const run = await startProbeRun('RND-FAVORITES');
+const investor = await registerProbeUser(run, { role: 'investor', label: 'render-favorites' });
 
 async function signIn(page) {
   await page.goto(`${BASE}/login/`, { waitUntil: 'networkidle', timeout: 30_000 });
-  await page.locator('#email').fill('stand-investor');
-  await page.locator('#password').fill(password);
+  await page.locator('#email').fill(investor.email);
+  await page.locator('#password').fill(investor.password);
   await page.getByRole('button', { name: 'Войти' }).first().click();
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1500);
@@ -84,8 +68,9 @@ check('инвестор в своём кабинете', page.url().includes('/i
 const addButtons = page.getByRole('button', { name: /В избранное|В избранном/ });
 const cardCount = await addButtons.count();
 if (cardCount === 0) {
-  console.error('В каталоге нет карточек — заполните стенд: node scripts/dev-stand.mjs');
+  console.error('В каталоге нет карточек — загрузите комплект: node scripts/seed-demo.mjs load');
   await browser.close();
+  await run.finish(false);
   process.exit(1);
 }
 check('отметка есть у карточек каталога', cardCount > 0, `карточек: ${cardCount}`);
@@ -207,6 +192,7 @@ check('исключений на страницах нет', pageErrors.length =
 
 await context.close();
 await browser.close();
+await run.finish(failed === 0);
 
 console.warn(`\nИТОГО: ${passed} пройдено, ${failed} провалено\n`);
 process.exit(failed === 0 ? 0 : 1);

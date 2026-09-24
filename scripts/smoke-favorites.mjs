@@ -151,7 +151,7 @@ const catalog = await raw('/v1/catalog?limit=2');
 const listed = catalog.json?.items ?? [];
 if (listed.length === 0) {
   console.error('В публичном каталоге нет ни одного листинга — прогон невозможен.');
-  console.error('Заполните стенд: node scripts/dev-stand.mjs');
+  console.error('Загрузите комплект: node scripts/seed-demo.mjs load');
   await pool.end();
   process.exit(1);
 }
