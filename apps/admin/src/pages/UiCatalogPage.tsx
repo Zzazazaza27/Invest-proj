@@ -12,6 +12,7 @@ import {
 } from '@unicorn/ui';
 import { Avatar } from './users-shared';
 import { SCENE_TOKENS, Scene, type SceneAction } from './ui-catalog-scene';
+import { ButtonDecisions } from './ui-catalog-candidates';
 
 /*
  * «Элементы интерфейса» — рабочий каталог для оценки скина.
@@ -281,6 +282,13 @@ export function UiCatalogPage() {
           и загрузка показаны статично.
         </p>
         <Surfaces>{() => <ButtonsTable />}</Surfaces>
+
+        <h2 style={{ marginTop: 24 }}>Решения по кнопкам: тихая и опасная</h2>
+        <p className="small muted">
+          Вид не закреплён. Выбери кандидатов — сцена с настоящими действиями перерисуется. Наведи
+          курсор и пройди клавишей Tab: состояния живые. Скин выбирается вверху страницы.
+        </p>
+        <ButtonDecisions />
 
         <h2 style={{ marginTop: 24 }}>Поля</h2>
         <Surfaces>{(where) => <FieldsBlock where={where} />}</Surfaces>
