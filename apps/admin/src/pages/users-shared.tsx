@@ -153,6 +153,24 @@ export function cabinetsOf(
   return result;
 }
 
+/** Где у экрана стоит меню кабинетов: под кнопкой (`top`) или над ней (`bottom`). */
+type MenuPosition = { right: number; minWidth: number; top?: number; bottom?: number };
+
+/**
+ * Одна ширина и одна строка для кнопки кабинета в списке — с меню и без.
+ * Иначе столбец «ехал» от числа ролей: стрелка переносилась, строка росла.
+ */
+const CABINET_BUTTON_STYLE: React.CSSProperties = { minWidth: '7.5em', whiteSpace: 'nowrap' };
+
+/**
+ * Куда вернуть вкладку просмотра, если браузер не даст её закрыть: страница
+ * админки, с которой просмотр открыли (`#…&back=…`). Кабинет принимает только
+ * пути внутри `/admin/`.
+ */
+export function backHere(): string {
+  return encodeURIComponent(window.location.pathname);
+}
+
 /**
  * «Посмотреть кабинет» — режим ДИАГНОСТИКИ рабочего аккаунта.
  *
@@ -162,17 +180,8 @@ export function cabinetsOf(
  *
  * Идентификатор контекста уезжает в ЯКОРЕ адреса: на сервер он не уходит и в
  * журналы доступа не попадает, а вкладка сразу переложит его в своё
- * состояние и вычистит адрес.
+ * состояние и вычистит адрес. «Завершить просмотр» закрывает эту вкладку.
  */
-/**
- * Одна ширина и одна строка для кнопки кабинета в списке — с меню и без.
- * Иначе столбец «ехал» от числа ролей: стрелка переносилась, строка росла.
- */
-/** Где у экрана стоит меню кабинетов: под кнопкой (`top`) или над ней (`bottom`). */
-type MenuPosition = { right: number; minWidth: number; top?: number; bottom?: number };
-
-const CABINET_BUTTON_STYLE: React.CSSProperties = { minWidth: '7.5em', whiteSpace: 'nowrap' };
-
 export function ViewCabinetAction({
   userId,
   roles,
@@ -242,7 +251,7 @@ export function ViewCabinetAction({
     setError(null);
     try {
       const { contextId } = await api.testing.openUserView(userId);
-      window.open(`${href}#ctx=${contextId}`, '_blank', 'noopener');
+      window.open(`${href}#ctx=${contextId}&back=${backHere()}`, '_blank', 'noopener');
     } catch (problem) {
       setError(problem instanceof Error ? problem.message : 'не удалось открыть');
     } finally {

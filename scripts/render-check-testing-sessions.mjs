@@ -316,12 +316,18 @@ try {
 
   // --------------------------------------------------- [6] завершение просмотра
   console.warn('\n[6] Завершение просмотра');
+  // Просмотр открыт в НОВОЙ вкладке, админка осталась в своей. Завершение
+  // закрывает вкладку просмотра, а не уводит её в админку второй копией
+  // (решение владельца 2026-09-24: иначе копились вкладки).
+  const viewClosed = viewPage
+    .waitForEvent('close', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
   await viewPage.locator('[data-test-context-finish]').click();
-  await viewPage.waitForTimeout(3000);
   expect(
-    'После завершения вкладка уходит в админку',
-    viewPage.url().includes('/admin'),
-    viewPage.url(),
+    'После завершения вкладка просмотра закрывается',
+    await viewClosed,
+    viewPage.isClosed() ? 'закрыта' : viewPage.url(),
   );
   const closed = await sql(
     `SELECT count(*)::int AS n FROM testing.access_contexts
@@ -364,33 +370,25 @@ try {
       .innerText()
       .catch(() => 'плашки нет'),
   );
+  // Выход из недействительного просмотра тоже закрывает вкладку: контекст жил
+  // в её sessionStorage и исчезает вместе с ней. Прежняя проверка «назад не
+  // возвращает в кабинет» теряет предмет — после завершения вкладки нет, и
+  // вернуться в кабинет из неё нельзя.
+  const secondClosed = secondView
+    .waitForEvent('close', { timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
   await secondView.locator('[data-test-context-drop]').click();
-  await secondView.waitForTimeout(2500);
-  const dropped = await secondView.evaluate(() =>
-    // eslint-disable-next-line no-undef -- исполняется в браузере
-    window.sessionStorage.getItem('unicorn.test-context'),
-  );
-  expect('Выход из просмотра забывает контекст', dropped === null, String(dropped));
-
-  // История: после завершения «назад» не должно возвращать в кабинет, где
-  // режима уже нет, — именно это читается как «плашка пропала».
-  const [thirdView] = await Promise.all([
-    context.waitForEvent('page'),
-    page.locator(`[data-user-row="${realFounder.id}"] [data-view-cabinet]`).first().click(),
-  ]);
-  await thirdView.waitForLoadState('networkidle');
-  await thirdView.waitForTimeout(2000);
-  await thirdView.locator('[data-test-context-finish]').click();
-  await thirdView.waitForTimeout(3000);
-  await thirdView.goBack();
-  await thirdView.waitForTimeout(2500);
   expect(
-    'После завершения «назад» не возвращает в кабинет',
-    !thirdView.url().includes('/lab/'),
-    thirdView.url(),
+    'Выход из недействительного просмотра закрывает вкладку вместе с контекстом',
+    await secondClosed,
+    secondView.isClosed() ? 'закрыта' : secondView.url(),
   );
-  await thirdView.close();
-  await secondView.close();
+  expect(
+    'Админская вкладка на месте, где и была',
+    !page.isClosed() && page.url().includes('/admin'),
+    page.url(),
+  );
 
   // ------------------------------------------------------------ [8] уборка
   console.warn('\n[8] Уборка сессии из интерфейса');

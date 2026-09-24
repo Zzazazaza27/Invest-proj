@@ -8,6 +8,7 @@ import type {
 import { TESTING_RESULT_LABEL, TESTING_STATUS_LABEL } from '@unicorn/contracts';
 import type { z } from 'zod';
 import { api } from '../api';
+import { backHere } from './users-shared';
 
 /**
  * Тестовые сессии.
@@ -219,7 +220,7 @@ function SessionCard({ id, onChanged }: { id: string; onChanged: () => Promise<v
       try {
         const { contextId } = await api.testing.openParticipant(id, userId);
         const base = CABINET_BY_ROLE[role] ?? '/lab/';
-        window.open(`${base}#ctx=${contextId}`, '_blank', 'noopener');
+        window.open(`${base}#ctx=${contextId}&back=${backHere()}`, '_blank', 'noopener');
       } catch (problem) {
         setMessage(problem instanceof Error ? problem.message : 'не удалось открыть кабинет');
       } finally {
@@ -233,7 +234,7 @@ function SessionCard({ id, onChanged }: { id: string; onChanged: () => Promise<v
     setBusy(true);
     try {
       const { contextId } = await api.testing.openGuest(id);
-      window.open(`/#ctx=${contextId}`, '_blank', 'noopener');
+      window.open(`/#ctx=${contextId}&back=${backHere()}`, '_blank', 'noopener');
     } catch (problem) {
       setMessage(problem instanceof Error ? problem.message : 'не удалось открыть витрину');
     } finally {

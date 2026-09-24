@@ -18,6 +18,22 @@ import type { CurrentContext } from '@unicorn/contracts';
 
 const STORAGE_KEY = 'unicorn.test-context';
 const HASH_KEY = 'ctx';
+/**
+ * Откуда в админке открыли просмотр (`#…&back=/admin/users/…`). Нужен, чтобы
+ * «Завершить просмотр» вернул туда же, а не на первую страницу админки.
+ */
+const BACK_KEY = 'unicorn.test-context.back';
+const HASH_BACK = 'back';
+
+/**
+ * Возврат принимается только внутрь админки того же сайта: путь `/admin/…`
+ * без схемы, хоста и `..`. Иначе параметр в адресе стал бы открытым
+ * перенаправлением — ссылкой, уводящей человека на чужой сайт.
+ */
+function safeBack(value: string | null): string | null {
+  if (!value) return null;
+  return /^\/admin\/[A-Za-z0-9/_\-.]*$/.test(value) && !value.includes('..') ? value : null;
+}
 
 /** Прочитать контекст из адреса, переложить во вкладку и вычистить адрес. */
 export function adoptTestContextFromUrl(): string | null {
@@ -27,13 +43,16 @@ export function adoptTestContextFromUrl(): string | null {
     const params = new URLSearchParams(hash);
     const fromUrl = params.get(HASH_KEY);
     if (fromUrl) {
+      const back = safeBack(params.get(HASH_BACK));
       try {
         window.sessionStorage.setItem(STORAGE_KEY, fromUrl);
+        if (back) window.sessionStorage.setItem(BACK_KEY, back);
       } catch {
         // Приватное окно или запрет хранилища: контекст проживёт до
         // перезагрузки. Это хуже, но лучше, чем белый экран.
       }
       params.delete(HASH_KEY);
+      params.delete(HASH_BACK);
       const rest = params.toString();
       window.history.replaceState(
         null,
@@ -53,9 +72,33 @@ export function adoptTestContextFromUrl(): string | null {
 export function forgetTestContext(): void {
   try {
     window.sessionStorage.removeItem(STORAGE_KEY);
+    window.sessionStorage.removeItem(BACK_KEY);
   } catch {
     /* хранилище недоступно — забывать нечего */
   }
+}
+
+/**
+ * Уйти из просмотра обратно в админку.
+ *
+ * Просмотр открывается в НОВОЙ вкладке, и вкладка с админкой остаётся
+ * открытой. Поэтому сначала вкладка просмотра закрывается — человек
+ * оказывается там, откуда открыл кабинет, и вкладок не копится. Браузер
+ * разрешает закрыть не всякую вкладку (например, если в ней уже переходили
+ * по страницам) — тогда она уходит на страницу админки, откуда открыли
+ * просмотр, а без неё — на `fallback`.
+ */
+function leaveToAdmin(fallback: string): void {
+  let back: string | null = null;
+  try {
+    back = safeBack(window.sessionStorage.getItem(BACK_KEY));
+  } catch {
+    back = null;
+  }
+  forgetTestContext();
+  window.close();
+  // Если вкладка закрылась, этот код уже не выполнится.
+  window.setTimeout(() => window.location.replace(back ?? fallback), 200);
 }
 
 /**
@@ -206,14 +249,13 @@ export function TestContextBanner({
     setError(null);
     try {
       await port.close(context.id);
-      forgetTestContext();
       /*
-       * `replace`, а не `assign`: адрес просмотренного кабинета не остаётся
-       * в истории вкладки. Иначе кнопка «назад» возвращает на ту же
-       * страницу — уже без режима и без плашки, — и это читается как «плашка
-       * пропала», хотя просмотр честно завершён.
+       * Закрыть вкладку, а если нельзя — `replace`, а не `assign`: адрес
+       * просмотренного кабинета не остаётся в истории вкладки. Иначе кнопка
+       * «назад» возвращает на ту же страницу — уже без режима и без плашки, —
+       * и это читается как «плашка пропала», хотя просмотр честно завершён.
        */
-      window.location.replace(port.adminUrl);
+      leaveToAdmin(port.adminUrl);
     } catch (problem) {
       setClosing(false);
       setError(problem instanceof Error ? problem.message : 'не удалось завершить');
@@ -222,8 +264,7 @@ export function TestContextBanner({
 
   /** Выйти из недействительного просмотра: забыть контекст и уйти в админку. */
   const drop = useCallback(() => {
-    forgetTestContext();
-    window.location.replace(port.adminUrl);
+    leaveToAdmin(port.adminUrl);
   }, [port]);
 
   /*
