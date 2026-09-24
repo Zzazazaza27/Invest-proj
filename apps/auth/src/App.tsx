@@ -93,6 +93,20 @@ function tokenFromHash(): { mode: Mode; token: string } | null {
  * `verify` открываются только вместе с токеном, а `forgot` — осознанным
  * действием человека, а не ссылкой со стороны.
  */
+/**
+ * Почта на платформе не подключена (`MAIL_TRANSPORT=none`): маршруты
+ * восстановления отвечают `feature_disabled`. Сервер отказывает ДО поиска
+ * адреса, поэтому ответ одинаков для любого адреса и перебора учёток не
+ * открывает. Человеку — прямо, что канала нет: «Сервер недоступен» заставлял
+ * бы повторять попытку впустую.
+ */
+const MAIL_DISABLED_TEXT =
+  'Восстановление пароля пока недоступно: отправка писем на платформе не подключена.';
+
+function isMailDisabled(err: unknown): boolean {
+  return err instanceof ApiError && err.code === 'feature_disabled';
+}
+
 function modeFromHash(): Mode | null {
   const hash = window.location.hash;
   if (hash === '#register') return 'register';
@@ -287,6 +301,9 @@ export default function App() {
       if (err.status === 422 || err.status === 400) {
         return err.problem?.detail ?? 'Проверьте заполнение полей';
       }
+      // Выключенная функция — не сбой: сервер отвечает, повтор ничего не даст.
+      // «Сервер недоступен» здесь заставлял бы человека пробовать снова.
+      if (err.code === 'feature_disabled') return 'Эта функция пока недоступна';
       return 'Сервер недоступен. Попробуйте позже';
     }
     // Собственные сообщения приложения (например, «документ не опубликован»)
@@ -405,7 +422,10 @@ export default function App() {
       );
       setMode('login');
     } catch (err) {
-      setError(describe(err));
+      // Почта на платформе не подключена (MAIL_TRANSPORT=none): сервер
+      // отказывает ДО поиска адреса, поэтому ответ одинаков для любого адреса
+      // и перебора учёток не открывает. Человеку — прямо, что канала нет.
+      setError(isMailDisabled(err) ? MAIL_DISABLED_TEXT : describe(err));
     } finally {
       setBusy(false);
     }
@@ -434,10 +454,13 @@ export default function App() {
       // и текст здесь тоже один. Разные формулировки подсказывали бы
       // подбирающему, что он близко, а человеку всё равно нужно одно и то же:
       // запросить письмо заново.
+      // Без почты сервер отказывает и здесь — тем же текстом, что при запросе.
       setError(
-        err instanceof ApiError && (err.status === 400 || err.status === 422)
-          ? 'Ссылка недействительна или устарела. Запросите новую.'
-          : describe(err),
+        isMailDisabled(err)
+          ? MAIL_DISABLED_TEXT
+          : err instanceof ApiError && (err.status === 400 || err.status === 422)
+            ? 'Ссылка недействительна или устарела. Запросите новую.'
+            : describe(err),
       );
     } finally {
       setBusy(false);

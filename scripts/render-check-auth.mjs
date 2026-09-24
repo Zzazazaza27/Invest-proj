@@ -208,9 +208,15 @@ check(
 // ------------------------------------------- восстановление пароля (Ф51)
 //
 // Проверяется путь, который человек проходит целиком: ссылка «Забыли пароль?»
-// → форма адреса → одинаковое сообщение независимо от того, зарегистрирован ли
+// → форма адреса → одинаковый ответ независимо от того, зарегистрирован ли
 // адрес. Токен из письма здесь не берётся — это дело смоук-прогона; браузеру
 // важно, что экран есть, отвечает и ничего не выдаёт.
+//
+// ДВА РЕЖИМА, и прогон называет, какой проверил. Без почтового контура
+// (`MAIL_TRANSPORT=none`) сервер по задумке отказывает `feature_disabled`, и
+// экран обязан сказать, что восстановления нет, а не что «сервер недоступен».
+// С почтой — прежняя проверка сообщения об отправке. Режим определяется по
+// ответу формы, а не по `.env`: проверяется то, что увидел человек.
 console.warn('\n[8] Восстановление пароля');
 const p3 = await (await browser.newContext()).newPage();
 await p3.goto(`${BASE}/login/`, { waitUntil: 'networkidle' });
@@ -219,25 +225,75 @@ await p3.waitForTimeout(400);
 check('экран восстановления открылся', (await p3.locator('#forgot-email').count()) === 1);
 check('на экране восстановления нет поля пароля', (await p3.locator('#password').count()) === 0);
 
-await p3.locator('#forgot-email').fill(founder.email);
-await p3.getByRole('button', { name: 'Прислать ссылку' }).click();
-await p3.waitForTimeout(1500);
-const knownNotice = ((await p3.locator('[role="status"]').first().textContent()) ?? '').trim();
+/** Ответ формы на запрос ссылки: сообщение об отправке или отказ. */
+async function requestLink(address) {
+  const forgotResponse = p3.waitForResponse((r) => r.url().includes('/v1/auth/password/forgot'));
+  await p3.locator('#forgot-email').fill(address);
+  await p3.getByRole('button', { name: 'Прислать ссылку' }).click();
+  const status = (await forgotResponse).status();
+  await p3.waitForSelector('[role="status"], [role="alert"]', { timeout: 10_000 });
+  const alert = (
+    (await p3
+      .locator('[role="alert"]')
+      .first()
+      .textContent()
+      .catch(() => '')) ?? ''
+  ).trim();
+  const notice = (
+    (await p3
+      .locator('[role="status"]')
+      .first()
+      .textContent()
+      .catch(() => '')) ?? ''
+  ).trim();
+  return { status, alert, notice };
+}
 
-await p3.getByRole('button', { name: 'Забыли пароль?' }).click();
-await p3.waitForTimeout(300);
-await p3.locator('#forgot-email').fill('no-such-account-91745@unicorn.local');
-await p3.getByRole('button', { name: 'Прислать ссылку' }).click();
-await p3.waitForTimeout(1500);
-const unknownNotice = ((await p3.locator('[role="status"]').first().textContent()) ?? '').trim();
-
-// Разные сообщения здесь — это перечисление пользователей, причём удобнее
-// формы входа: пароль не нужен вовсе.
-check(
-  'сообщение одинаково для зарегистрированного и чужого адреса',
-  knownNotice === unknownNotice && knownNotice.length > 0,
-  `«${knownNotice.slice(0, 60)}» против «${unknownNotice.slice(0, 60)}»`,
+const known = await requestLink(founder.email);
+const mailOff = known.status === 503;
+console.warn(
+  mailOff
+    ? '  РЕЖИМ: без почты (сервер ответил 503) — путь через письмо этим прогоном НЕ проверен'
+    : `  РЕЖИМ: почта подключена (сервер ответил ${known.status})`,
 );
+
+if (mailOff) {
+  // Форма остаётся на экране восстановления: второй адрес вводится туда же.
+  const unknown = await requestLink('no-such-account-91745@unicorn.local');
+  check(
+    'без почты экран говорит, что восстановление недоступно',
+    known.alert.includes('Восстановление пароля пока недоступно'),
+    known.alert,
+  );
+  check(
+    'без почты нет ложного «Сервер недоступен»',
+    !known.alert.includes('Сервер недоступен'),
+    known.alert,
+  );
+  check(
+    'без почты не обещано письмо',
+    known.notice === '' && !/отправлено/i.test(known.alert),
+    known.notice || known.alert,
+  );
+  // Отказ одинаков для любого адреса — иначе выключенная почта стала бы
+  // способом перечислить зарегистрированных.
+  check(
+    'отказ одинаков для зарегистрированного и чужого адреса',
+    unknown.status === known.status && unknown.alert === known.alert,
+    `${known.status} «${known.alert.slice(0, 40)}» против ${unknown.status} «${unknown.alert.slice(0, 40)}»`,
+  );
+} else {
+  await p3.getByRole('button', { name: 'Забыли пароль?' }).click();
+  await p3.waitForTimeout(300);
+  const unknown = await requestLink('no-such-account-91745@unicorn.local');
+  // Разные сообщения здесь — это перечисление пользователей, причём удобнее
+  // формы входа: пароль не нужен вовсе.
+  check(
+    'сообщение одинаково для зарегистрированного и чужого адреса',
+    known.notice === unknown.notice && known.notice.length > 0,
+    `«${known.notice.slice(0, 60)}» против «${unknown.notice.slice(0, 60)}»`,
+  );
+}
 
 // Ссылка из письма открывает форму нового пароля. Токен заведомо недействующий:
 // проверяется экран, а не смена пароля — её проверяет смоук-прогон.
@@ -260,11 +316,19 @@ await p3.locator('#repeat-password').fill('Some-long-passw0rd!');
 await p3.getByRole('button', { name: 'Сменить пароль' }).click();
 await p3.waitForTimeout(1500);
 const resetError = ((await p3.locator('[role="alert"]').first().textContent()) ?? '').trim();
-check(
-  'недействующая ссылка объяснена словами и предлагает выход',
-  resetError.includes('недействительна') && resetError.includes('новую'),
-  resetError.slice(0, 70),
-);
+if (mailOff) {
+  check(
+    'без почты смена по ссылке тоже объяснена отключённой почтой',
+    resetError.includes('Восстановление пароля пока недоступно'),
+    resetError.slice(0, 70),
+  );
+} else {
+  check(
+    'недействующая ссылка объяснена словами и предлагает выход',
+    resetError.includes('недействительна') && resetError.includes('новую'),
+    resetError.slice(0, 70),
+  );
+}
 
 const inputsWithoutLabel = await p3.locator('input:not([id]):not([aria-label])').count();
 check(
