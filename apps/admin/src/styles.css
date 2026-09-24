@@ -430,7 +430,14 @@ button:disabled {
 }
 
 .btn--ghost:hover:not(:disabled) {
-  background: var(--u-bg-inset);
+  /*
+   * Не `--u-bg-inset`: в теме он (#ecebfe) почти совпадает с фоном страницы
+   * (#eceffa), и кнопка в шапке при наведении сливалась с ним. Нейтральная
+   * подмесь текста к белому видна и на белой карточке, и на цветном фоне —
+   * тот же приём, что у заголовков групп меню.
+   */
+  background: color-mix(in srgb, var(--text) 7%, var(--surface));
+  border-color: color-mix(in srgb, var(--text) 25%, var(--surface));
   color: var(--text);
 }
 
