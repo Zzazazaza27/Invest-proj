@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import {
   Badge,
   Button,
@@ -11,6 +11,7 @@ import {
   TextArea,
 } from '@unicorn/ui';
 import { Avatar } from './users-shared';
+import { SCENE_TOKENS, Scene, type SceneAction } from './ui-catalog-scene';
 
 /*
  * «Элементы интерфейса» — рабочий каталог для оценки скина.
@@ -360,6 +361,7 @@ const ORIGIN_LABEL: Record<TokenView['origin'], string> = {
 };
 
 function TokensBlock({ tokens, skinTitle }: { tokens: TokenView[]; skinTitle: string }) {
+  const [open, setOpen] = useState<string | null>(null);
   const groups = GROUP_ORDER.map((group) => ({
     group,
     items: tokens.filter((token) => groupOf(token.name) === group),
@@ -378,24 +380,43 @@ function TokensBlock({ tokens, skinTitle }: { tokens: TokenView[]; skinTitle: st
           <table style={{ minWidth: 0 }}>
             <tbody>
               {items.map((token) => (
-                <tr key={token.name} data-token={token.name} data-token-origin={token.origin}>
-                  <td style={{ width: 60 }}>
-                    <Swatch value={token.value} />
-                  </td>
-                  <td>
-                    <code>{token.name}</code>
-                  </td>
-                  <td className="small" style={{ fontFamily: 'var(--u-font-mono)' }}>
-                    {token.value.length > 60 ? `${token.value.slice(0, 60)}…` : token.value}
-                  </td>
-                  <td className={token.origin === 'inherited' ? 'small' : 'small muted'}>
-                    {token.origin === 'inherited' ? (
-                      <span className="badge badge--warn">{ORIGIN_LABEL[token.origin]}</span>
-                    ) : (
-                      ORIGIN_LABEL[token.origin]
-                    )}
-                  </td>
-                </tr>
+                <Fragment key={token.name}>
+                  <tr data-token={token.name} data-token-origin={token.origin}>
+                    <td style={{ width: 60 }}>
+                      <Swatch value={token.value} />
+                    </td>
+                    <td>
+                      <code>{token.name}</code>
+                    </td>
+                    <td className="small" style={{ fontFamily: 'var(--u-font-mono)' }}>
+                      {token.value.length > 60 ? `${token.value.slice(0, 60)}…` : token.value}
+                    </td>
+                    <td className={token.origin === 'inherited' ? 'small' : 'small muted'}>
+                      {token.origin === 'inherited' ? (
+                        <span className="badge badge--warn">{ORIGIN_LABEL[token.origin]}</span>
+                      ) : (
+                        ORIGIN_LABEL[token.origin]
+                      )}
+                    </td>
+                    <td style={{ width: 90 }}>
+                      {SCENE_TOKENS.has(token.name) ? (
+                        <SceneToggle
+                          open={open === token.name}
+                          onClick={() =>
+                            setOpen((value) => (value === token.name ? null : token.name))
+                          }
+                        />
+                      ) : (
+                        <span className="small muted">на сцене нет</span>
+                      )}
+                    </td>
+                  </tr>
+                  {open === token.name ? (
+                    <SceneRow colSpan={5}>
+                      <Scene highlight={token.name} />
+                    </SceneRow>
+                  ) : null}
+                </Fragment>
               ))}
             </tbody>
           </table>
@@ -507,7 +528,34 @@ const ADMIN_BUTTONS: { label: string; className?: string }[] = [
 
 const UI_BUTTONS = ['primary', 'secondary', 'ghost', 'danger', 'brand'] as const;
 
+/** Кнопка «Показать в сцене» — раскрывает сцену прямо под строкой образца. */
+function SceneToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="btn--ghost btn--sm"
+      aria-expanded={open}
+      data-scene-toggle
+      onClick={onClick}
+    >
+      {open ? 'Скрыть' : 'Показать'}
+    </button>
+  );
+}
+
+function SceneRow({ colSpan, children }: { colSpan: number; children: React.ReactNode }) {
+  return (
+    <tr data-scene-row>
+      <td colSpan={colSpan} style={{ padding: '8px 0 14px' }}>
+        {children}
+      </td>
+    </tr>
+  );
+}
+
 function ButtonsTable() {
+  const [open, setOpen] = useState<string | null>(null);
+  const toggle = (key: string) => setOpen((value) => (value === key ? null : key));
   return (
     <table style={{ minWidth: 640 }} data-sample="buttons">
       <thead>
@@ -517,49 +565,81 @@ function ButtonsTable() {
           <th>Живая</th>
           <th>Выключена</th>
           <th>Загрузка</th>
+          <th>Сцена</th>
         </tr>
       </thead>
       <tbody>
-        {ADMIN_BUTTONS.map((item) => (
-          <tr key={`admin-${item.label}`} data-button-sample={`admin:${item.label}`}>
-            <td className="small muted">админка</td>
-            <td>
-              <code>{item.className ?? 'button'}</code>
-            </td>
-            <td>
-              <button type="button" className={item.className}>
-                Действие
-              </button>
-            </td>
-            <td>
-              <button type="button" className={item.className} disabled>
-                Действие
-              </button>
-            </td>
-            <td className="small muted">нет состояния</td>
-          </tr>
-        ))}
-        {UI_BUTTONS.map((variant) => (
-          <tr key={`ui-${variant}`} data-button-sample={`ui:${variant}`}>
-            <td className="small muted">@unicorn/ui</td>
-            <td>
-              <code>{variant}</code>
-            </td>
-            <td>
-              <Button variant={variant}>Действие</Button>
-            </td>
-            <td>
-              <Button variant={variant} disabled>
-                Действие
-              </Button>
-            </td>
-            <td>
-              <Button variant={variant} loading>
-                Действие
-              </Button>
-            </td>
-          </tr>
-        ))}
+        {ADMIN_BUTTONS.map((item) => {
+          const key = `admin:${item.label}`;
+          const action: SceneAction = {
+            set: 'admin',
+            className: item.className?.replace('btn--sm', '').trim() || undefined,
+            label: `админка · ${item.className ?? 'button'}`,
+          };
+          return (
+            <Fragment key={key}>
+              <tr data-button-sample={key}>
+                <td className="small muted">админка</td>
+                <td>
+                  <code>{item.className ?? 'button'}</code>
+                </td>
+                <td>
+                  <button type="button" className={item.className}>
+                    Действие
+                  </button>
+                </td>
+                <td>
+                  <button type="button" className={item.className} disabled>
+                    Действие
+                  </button>
+                </td>
+                <td className="small muted">нет состояния</td>
+                <td>
+                  <SceneToggle open={open === key} onClick={() => toggle(key)} />
+                </td>
+              </tr>
+              {open === key ? (
+                <SceneRow colSpan={6}>
+                  <Scene action={action} />
+                </SceneRow>
+              ) : null}
+            </Fragment>
+          );
+        })}
+        {UI_BUTTONS.map((variant) => {
+          const key = `ui:${variant}`;
+          return (
+            <Fragment key={key}>
+              <tr data-button-sample={key}>
+                <td className="small muted">@unicorn/ui</td>
+                <td>
+                  <code>{variant}</code>
+                </td>
+                <td>
+                  <Button variant={variant}>Действие</Button>
+                </td>
+                <td>
+                  <Button variant={variant} disabled>
+                    Действие
+                  </Button>
+                </td>
+                <td>
+                  <Button variant={variant} loading>
+                    Действие
+                  </Button>
+                </td>
+                <td>
+                  <SceneToggle open={open === key} onClick={() => toggle(key)} />
+                </td>
+              </tr>
+              {open === key ? (
+                <SceneRow colSpan={6}>
+                  <Scene action={{ set: 'ui', variant, label: `@unicorn/ui · ${variant}` }} />
+                </SceneRow>
+              ) : null}
+            </Fragment>
+          );
+        })}
       </tbody>
     </table>
   );
