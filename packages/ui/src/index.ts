@@ -70,6 +70,7 @@ export { describeRaising, raisingTone, RAISING_LABEL, type RaisingState } from '
 
 export { PromptDialog } from './prompt-dialog';
 export { SKINS, type Skin } from './skins';
+export { applyPlatformSkin, featuresUrl } from './skin-loader';
 
 /**
  * Безопасный Markdown продуктовых текстов: подсказки, примеры, словарь, ЧАВО.

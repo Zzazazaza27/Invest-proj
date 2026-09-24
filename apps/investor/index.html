@@ -4,7 +4,12 @@
   разметке, а не выставляется скриптом: иначе первая отрисовка успевала бы
   пройти в базовой теме и страница моргала бы палитрой.
 -->
-<html lang="ru" data-brand="nova">
+<!--
+  data-brand — скин по умолчанию (DEFAULT_SKIN), data-skin-pending — страница
+  скрыта, пока main.tsx не прочитает скин платформы (applyPlatformSkin, M145).
+  Так нет мелькания: страница впервые показывается уже в выбранном скине.
+-->
+<html lang="ru" data-brand="nova" data-skin-pending>
   <head>
     <meta charset="UTF-8" />
     <meta name="robots" content="noindex, nofollow" />

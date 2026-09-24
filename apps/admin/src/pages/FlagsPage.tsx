@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { FeatureFlag } from '@unicorn/contracts';
+import { UI_SKIN_FLAG, type FeatureFlag } from '@unicorn/contracts';
 import { PromptDialog } from '@unicorn/ui';
 import { api } from '../api';
 import { formatDate, problemText } from '../lib/format';
@@ -19,7 +19,9 @@ export function FlagsPage() {
 
   const load = useCallback(async () => {
     try {
-      setFlags(await api.featureFlags());
+      // Скин платформы — значение, а не включатель: он меняется в «Элементах
+      // интерфейса», и переключать его здесь сервер не даст (M145).
+      setFlags((await api.featureFlags()).filter((flag) => flag.key !== UI_SKIN_FLAG));
       setError(null);
     } catch (err) {
       setError(problemText(err, 'Не удалось загрузить список функций'));

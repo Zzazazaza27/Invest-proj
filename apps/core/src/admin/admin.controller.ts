@@ -5,6 +5,8 @@ import {
   ClosePlanRequestSchema,
   FeatureFlagSchema,
   PublishPlanRequestSchema,
+  SetUiSkinRequestSchema,
+  UiSkinSchema,
   UpdateDraftPlanRequestSchema,
   UpdateFeatureFlagRequestSchema,
   UuidSchema,
@@ -194,5 +196,12 @@ export class AdminController {
     return FeatureFlagSchema.parse(
       await this.admin.setFeatureFlag(ctx, key, input.enabled, input.reason),
     );
+  }
+
+  /** Скин всей платформы (M145). Только администратор — роль контроллера. */
+  @Put('ui-skin')
+  async setUiSkin(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(SetUiSkinRequestSchema, rawBody);
+    return UiSkinSchema.parse(await this.admin.setUiSkin(ctx, input.skin, input.reason));
   }
 }

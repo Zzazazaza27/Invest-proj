@@ -1,4 +1,5 @@
-import { Fragment, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { SKIN_IDS, type SkinId } from '@unicorn/contracts';
 import {
   ALERT_TONES,
   Alert,
@@ -14,10 +15,13 @@ import {
   ErrorState,
   Field,
   Input,
+  PromptDialog,
   SKINS,
   Select,
   TextArea,
 } from '@unicorn/ui';
+import { api } from '../api';
+import { problemText } from '../lib/format';
 import { Avatar } from './users-shared';
 import { SCENE_TOKENS, Scene, SceneModal, type SceneAction } from './ui-catalog-scene';
 import { ButtonRoles } from './ui-catalog-roles';
@@ -162,6 +166,9 @@ function groupOf(name: string): string {
   return 'Прочее';
 }
 
+/** Название скина для подписей; неизвестный показывается своим кодом. */
+const titleOf = (id: string) => SKINS.find((item) => item.id === id)?.title ?? id;
+
 const GROUP_ORDER = [
   'Фоны и поверхности',
   'Границы',
@@ -184,7 +191,50 @@ export function UiCatalogPage() {
   >([]);
   const [hover, setHover] = useState<{ bg?: Rgb; surface?: Rgb; hover?: Rgb }>({});
 
-  const pageSkin = document.documentElement.dataset.brand ?? 'base';
+  /**
+   * Скин всей платформы — с сервера (`/v1/features`). Пока ответа нет —
+   * то, что поставил загрузчик скина на эту страницу.
+   */
+  const [platformSkin, setPlatformSkin] = useState<string | null>(
+    document.documentElement.dataset.brand ?? null,
+  );
+  const [applying, setApplying] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [applyNotice, setApplyNotice] = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    api
+      .platformSkin()
+      .then(setPlatformSkin)
+      .catch(() => undefined);
+  }, []);
+
+  const apply = async (reason: string) => {
+    setApplying(false);
+    setBusy(true);
+    setApplyNotice(null);
+    try {
+      const saved = await api.setPlatformSkin(skin as SkinId, reason);
+      setPlatformSkin(saved.skin);
+      // Сама админка тоже переходит на новый скин сразу, без перезагрузки.
+      document.documentElement.dataset.brand = saved.skin;
+      setApplyNotice({
+        ok: true,
+        text: `Скин «${titleOf(saved.skin)}» применён для всей платформы. Остальные интерфейсы откроются в нём после обновления страницы.`,
+      });
+    } catch (err) {
+      setApplyNotice({ ok: false, text: problemText(err, 'Не удалось применить скин') });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Списки скинов на сервере (контракты) и в интерфейсе (packages/ui) должны
+  // совпадать; расхождение показывается здесь, а не всплывает на экранах.
+  const skinMismatch = [
+    ...SKIN_IDS.filter((id) => !SKINS.some((item) => item.id === id)),
+    ...SKINS.map((item) => item.id).filter((id) => !(SKIN_IDS as readonly string[]).includes(id)),
+  ];
 
   // Пересчёт после отрисовки: значения читаются у блока уже в новом скине.
   useLayoutEffect(() => {
@@ -236,8 +286,8 @@ export function UiCatalogPage() {
           <h1>Элементы интерфейса</h1>
           <p className="page-hint">
             Как выглядят элементы интерфейса в выбранном скине: элементы админки и общего набора
-            кабинетов рядом, на фоне страницы и на карточке. Скин меняется только на этой странице —
-            тема платформы и твои настройки не трогаются.
+            кабинетов рядом, на фоне страницы и на карточке. Выбор скина ниже — только предпросмотр
+            на этой странице; вся платформа меняется кнопкой «Применить».
           </p>
         </div>
       </div>
@@ -256,10 +306,63 @@ export function UiCatalogPage() {
               onClick={() => setSkin(item.id)}
             >
               {item.title}
-              {item.id === pageSkin ? ' · сейчас на платформе' : ''}
+              {item.id === platformSkin ? ' · сейчас на платформе' : ''}
             </button>
           ))}
         </div>
+
+        <div
+          style={{
+            display: 'flex',
+            gap: 12,
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            marginTop: 12,
+          }}
+          data-skin-apply
+        >
+          <span className="small">
+            Сейчас на платформе:{' '}
+            <strong data-platform-skin={platformSkin ?? ''}>
+              {platformSkin ? titleOf(platformSkin) : '…'}
+            </strong>
+          </span>
+          <Button
+            size="sm"
+            variant="primary"
+            data-skin-apply-button
+            disabled={busy || platformSkin === null || skin === platformSkin}
+            onClick={() => setApplying(true)}
+          >
+            {`Применить «${titleOf(skin)}» для всей платформы`}
+          </Button>
+        </div>
+        {applyNotice ? (
+          <Alert
+            size="sm"
+            tone={applyNotice.ok ? 'success' : 'danger'}
+            data-skin-apply-notice
+            style={{ marginTop: 10 }}
+          >
+            {applyNotice.text}
+          </Alert>
+        ) : null}
+        {skinMismatch.length > 0 ? (
+          <Alert size="sm" tone="danger" style={{ marginTop: 10 }}>
+            Списки скинов на сервере и в интерфейсе расходятся: {skinMismatch.join(', ')}.
+          </Alert>
+        ) : null}
+        <PromptDialog
+          open={applying}
+          title="Применить скин для всей платформы?"
+          description={`Все восемь интерфейсов откроются в скине «${titleOf(skin)}» после обновления страницы. Изменение попадёт в журнал действий.`}
+          label="Причина"
+          placeholder="Например: переходим на новый фирменный стиль"
+          confirmText="Применить"
+          onConfirm={(reason) => void apply(reason)}
+          onCancel={() => setApplying(false)}
+        />
+
         <p className="small muted" style={{ marginTop: 8 }}>
           Светлый или тёмный вариант — по настройке системы.{' '}
           <span className="ui-cat-code">

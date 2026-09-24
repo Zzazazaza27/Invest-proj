@@ -4,6 +4,10 @@ import {
   CleanupPlanSchema,
   CleanupResultSchema,
   OpenedContextSchema,
+  FeaturesSchema,
+  UiSkinSchema,
+  type SkinId,
+  type UiSkin,
 } from '@unicorn/contracts';
 import { ApiClient, ApiError } from '@unicorn/api-client';
 import {
@@ -862,6 +866,26 @@ export const api = {
       path: `/v1/admin/feature-flags/${key}`,
       body: { enabled, reason },
       schema: FeatureFlagSchema,
+    });
+  },
+
+  /** Скин платформы, который сейчас видят все интерфейсы (публичный `/v1/features`). */
+  async platformSkin(): Promise<SkinId> {
+    const features = await client.request({
+      method: 'GET',
+      path: '/v1/features',
+      schema: FeaturesSchema,
+    });
+    return features.skin;
+  },
+
+  /** Применить скин для всей платформы (M145): флаг `ui.skin`, с причиной и в журнал. */
+  setPlatformSkin(skin: SkinId, reason: string): Promise<UiSkin> {
+    return client.request({
+      method: 'PUT',
+      path: '/v1/admin/ui-skin',
+      body: { skin, reason },
+      schema: UiSkinSchema,
     });
   },
 

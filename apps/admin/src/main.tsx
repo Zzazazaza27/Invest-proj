@@ -7,7 +7,13 @@ import '@unicorn/ui/tokens.css';
 // крупные формы. Включается атрибутом `data-brand="nova"` в `index.html`;
 // убрать её — снять атрибут и этот импорт.
 import '@unicorn/ui/theme-nova.css';
+import { applyPlatformSkin } from '@unicorn/ui';
+
 import './styles.css';
+
+// Скин платформы (M145): до его прочтения страница скрыта (data-skin-pending
+// в index.html). Отрисовка не ждёт — показ снимает сама функция.
+void applyPlatformSkin(import.meta.env.VITE_API_BASE_URL as string | undefined);
 
 const container = document.getElementById('root');
 if (!container) throw new Error('Не найден корневой элемент #root');
