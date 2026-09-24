@@ -434,6 +434,14 @@ button:disabled {
   color: var(--text);
 }
 
+/*
+ * Шапка страницы лежит на цветном фоне: прозрачная кнопка с ним сливалась.
+ * В шапке у неё белая подложка — как у карточек ниже.
+ */
+.page-head .btn--ghost {
+  background: var(--surface);
+}
+
 .btn--danger {
   background: transparent;
   color: var(--danger);

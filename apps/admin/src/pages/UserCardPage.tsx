@@ -109,16 +109,25 @@ export function UserCardPage() {
 
   return (
     <div data-page="user-card" data-user-id={card.id}>
+      {/* Возврат — над заголовком слева, как на остальных страницах-карточках. */}
+      <Link
+        to="/users"
+        className="small"
+        data-back-to-users
+        style={{ display: 'inline-block', marginBottom: 8 }}
+      >
+        ← Пользователи
+      </Link>
       <div className="page-head">
         <div style={{ display: 'flex', gap: 14, alignItems: 'center', minWidth: 0 }}>
-          <Avatar user={card} size={48} />
+          <Avatar user={card} size={48} raised />
           <div style={{ minWidth: 0 }}>
             <h1 style={{ marginBottom: 2 }}>{card.displayName}</h1>
             <div className="small muted">
               <span className={`badge badge--${statusTone(card.status)}`} data-user-status>
                 {STATUS_LABEL[card.status] ?? card.status}
               </span>{' '}
-              · {ROLE_LABEL[card.primaryRole] ?? card.primaryRole} · {card.id}
+              · {ROLE_LABEL[card.primaryRole] ?? card.primaryRole}
             </div>
           </div>
         </div>
@@ -131,9 +140,6 @@ export function UserCardPage() {
             userId={card.id}
             roles={card.roles.filter((item) => item.revokedAt === null).map((item) => item.role)}
           />
-          <Link to="/users" className="btn--ghost btn--sm" style={{ textDecoration: 'none' }}>
-            ← К списку
-          </Link>
         </div>
       </div>
 
@@ -173,6 +179,12 @@ export function UserCardPage() {
             <Row label="Регистрация">{formatDateTime(card.createdAt)}</Row>
             <Row label="Изменён">{formatDateTime(card.updatedAt)}</Row>
             <Row label="Сессии действительны с">{formatDateTime(card.sessionsValidFrom)}</Row>
+            {/* Идентификатор нужен поддержке и журналам, но не заголовку. */}
+            <Row label="Идентификатор">
+              <code className="small" data-user-id-value>
+                {card.id}
+              </code>
+            </Row>
           </tbody>
         </table>
         <div className="toolbar" style={{ marginTop: 12, marginBottom: 0 }}>

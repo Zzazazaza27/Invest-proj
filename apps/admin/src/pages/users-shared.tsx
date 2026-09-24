@@ -82,9 +82,12 @@ export function statusTone(status: string): 'ok' | 'warn' | 'danger' | 'muted' {
 export function Avatar({
   user,
   size = 32,
+  raised = false,
 }: {
   user: Pick<AdminUserRow, 'displayName' | 'avatarUrl'> | AdminUserCard;
   size?: number;
+  /** На цветном фоне (шапка карточки) — белая подложка с рамкой, иначе буква сливается. */
+  raised?: boolean;
 }) {
   const letter = user.displayName.trim().charAt(0).toUpperCase() || '?';
   const common: React.CSSProperties = {
@@ -106,7 +109,8 @@ export function Avatar({
         display: 'inline-flex',
         alignItems: 'center',
         justifyContent: 'center',
-        background: 'var(--u-accent-subtle)',
+        background: raised ? 'var(--u-surface)' : 'var(--u-accent-subtle)',
+        boxShadow: raised ? 'inset 0 0 0 1px var(--border)' : undefined,
         color: 'var(--u-accent)',
         fontWeight: 700,
         fontSize: Math.round(size * 0.45),
