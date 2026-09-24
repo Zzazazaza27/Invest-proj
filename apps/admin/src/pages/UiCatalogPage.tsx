@@ -449,7 +449,6 @@ function TokensBlock({ tokens, skinTitle }: { tokens: TokenView[]; skinTitle: st
             <th>Назначение</th>
             <th>Код в теме</th>
             <th>Значение</th>
-            <th>Откуда</th>
             <th style={{ width: 100 }}>Пример</th>
           </tr>
         </thead>
@@ -457,24 +456,32 @@ function TokensBlock({ tokens, skinTitle }: { tokens: TokenView[]; skinTitle: st
           {groups.map(({ group, items }) => (
             <Fragment key={group}>
               <tr data-token-group={group} className="ui-cat-group">
-                <td colSpan={6}>{group}</td>
+                <td colSpan={5}>{group}</td>
               </tr>
               {items.map((token) => (
                 <tr key={token.name} data-token={token.name} data-token-origin={token.origin}>
                   <td>
                     <Swatch value={token.value} />
                   </td>
-                  <td style={{ fontWeight: 600 }}>{meaningOf(token.name)}</td>
+                  <td style={{ fontWeight: 600 }}>
+                    {meaningOf(token.name)}
+                    {/* Обычно цвет задан в выбранном скине — это не подписывается.
+                        Пометка только у исключений. */}
+                    {token.origin === 'skin' ? null : (
+                      <div style={{ marginTop: 4, fontWeight: 400 }}>
+                        <span
+                          className={
+                            token.origin === 'inherited' ? 'badge badge--warn' : 'small muted'
+                          }
+                        >
+                          {ORIGIN_LABEL[token.origin]}
+                        </span>
+                      </div>
+                    )}
+                  </td>
                   <td className="ui-cat-code">{token.name}</td>
                   <td className="ui-cat-code">
                     {token.value.length > 40 ? `${token.value.slice(0, 40)}…` : token.value}
-                  </td>
-                  <td className="small">
-                    {token.origin === 'inherited' ? (
-                      <span className="badge badge--warn">{ORIGIN_LABEL[token.origin]}</span>
-                    ) : (
-                      <span className="muted">{ORIGIN_LABEL[token.origin]}</span>
-                    )}
                   </td>
                   <td>
                     {SCENE_TOKENS.has(token.name) ? (
