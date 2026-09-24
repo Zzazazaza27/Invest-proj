@@ -7,6 +7,9 @@
 *.sql text eol=lf
 Dockerfile text eol=lf
 
+# Пакетные файлы Windows (scripts/win) исполняет cmd.exe — ему нужны CRLF.
+*.cmd text eol=crlf
+
 # Бинарные файлы не трогать.
 *.png binary
 *.jpg binary

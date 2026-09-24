@@ -321,6 +321,27 @@ function nats() {
   return true;
 }
 
+/**
+ * Запустить долгоживущий процесс стенда вне сессии, из которой запущен
+ * скрипт (Windows): через Проводник и пакетный файл из `scripts/win`.
+ *
+ * Зачем. Запущенный напрямую, процесс остаётся потомком того, кто поднял
+ * стенд. Если это Claude для рабочего стола, его автообновление закрывает всё
+ * запущенное из его сессий (2026-09-24 так упали Docker и ядро). Потомок
+ * Проводника это обновление переживает.
+ *
+ * Вывода запускателя здесь нет — готовность проверяется ответом сервиса.
+ */
+function launchOutsideSession(cmdFile, healthUrl, seconds = 60) {
+  const path = resolve(ROOT, 'scripts/win', cmdFile);
+  run(`powershell -NoProfile -Command "Start-Process explorer.exe -ArgumentList '\\"${path}\\"'"`);
+  for (let i = 0; i < seconds; i += 1) {
+    sleep(1000);
+    if (probe(healthUrl).code === 200) return true;
+  }
+  return false;
+}
+
 function core() {
   step('Ядро');
   const alive = probe('http://127.0.0.1:4300/v1/health').code === 200;
@@ -335,6 +356,14 @@ function core() {
     }
   } else if (alive) {
     ok('уже работает на :4300 (перезапуск — `--restart-core`)');
+    return true;
+  }
+  if (process.platform === 'win32') {
+    if (!launchOutsideSession('start-core.cmd', 'http://127.0.0.1:4300/v1/health')) {
+      fail('ядро не ответило за минуту — смотрите core.log');
+      return false;
+    }
+    ok(`запущено вне сессии (pid ${portOwner(4300) ?? '?'}), лог core.log`);
     return true;
   }
   const out = run('node scripts/dev-core.mjs --detached');
@@ -369,6 +398,18 @@ function gateway() {
     warn(
       '  apps/ai-gateway/.venv/Scripts/python -m pip install -r apps/ai-gateway/requirements.txt',
     );
+    return true;
+  }
+  if (process.platform === 'win32') {
+    const healthy = launchOutsideSession(
+      'start-ai-gateway.cmd',
+      `http://127.0.0.1:${PORTS.aiGateway}/healthz`,
+    );
+    if (!healthy) {
+      warn('не ответил за минуту — смотрите ai-gateway.log; разбор заявки будет недоступен');
+      return true;
+    }
+    ok('запущен вне сессии, лог ai-gateway.log');
     return true;
   }
   const out = run('node scripts/dev-ai-gateway.mjs --detached');
