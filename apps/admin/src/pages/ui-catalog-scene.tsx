@@ -26,7 +26,13 @@ export type SceneAction =
 const MARKER = '#ff2d95';
 
 function Action({ action, text, small }: { action: SceneAction; text: string; small?: boolean }) {
-  if (action.set === 'ui') return <Button variant={action.variant}>{text}</Button>;
+  if (action.set === 'ui') {
+    return (
+      <Button variant={action.variant} size={small ? 'sm' : 'md'}>
+        {text}
+      </Button>
+    );
+  }
   const cls = [action.className, small ? 'btn--sm' : null].filter(Boolean).join(' ') || undefined;
   return (
     <button type="button" className={cls}>

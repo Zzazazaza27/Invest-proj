@@ -222,6 +222,245 @@ button.u-btn--danger-confirm:hover:not(:disabled) {
   color: var(--u-on-accent);
 }
 
+/*
+ * Поля ввода (Input, Select, TextArea): цвета и состояния. Раскладку по
+ * размеру держит компонент, ширину — экран.
+ *
+ * Селекторы с именем элемента: приложения объявляют общие правила для
+ * input/select/textarea (у админки — ещё и :focus), и без этого веса они
+ * перебивали бы состояния поля.
+ */
+input.u-control,
+select.u-control,
+textarea.u-control {
+  border: 1px solid var(--u-border-strong);
+  border-radius: var(--u-radius-md);
+  background: var(--u-surface);
+  color: var(--u-text);
+  transition:
+    border-color var(--u-transition),
+    box-shadow var(--u-transition);
+}
+
+input.u-control::placeholder,
+textarea.u-control::placeholder {
+  color: var(--u-text-muted);
+}
+
+input.u-control:hover:not(:disabled),
+select.u-control:hover:not(:disabled),
+textarea.u-control:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--u-text) 35%, var(--u-surface));
+}
+
+input.u-control:focus,
+select.u-control:focus,
+textarea.u-control:focus {
+  outline: none;
+  border-color: var(--u-accent);
+  box-shadow: var(--u-focus-ring);
+}
+
+/* С наведением: правило наведения весомее, и без него ошибка теряла рамку. */
+input.u-control[aria-invalid='true'],
+select.u-control[aria-invalid='true'],
+textarea.u-control[aria-invalid='true'],
+input.u-control[aria-invalid='true']:hover:not(:disabled),
+select.u-control[aria-invalid='true']:hover:not(:disabled),
+textarea.u-control[aria-invalid='true']:hover:not(:disabled) {
+  border-color: var(--u-danger);
+}
+
+input.u-control[aria-invalid='true']:focus,
+select.u-control[aria-invalid='true']:focus,
+textarea.u-control[aria-invalid='true']:focus {
+  box-shadow: 0 0 0 3px var(--u-danger-subtle);
+}
+
+input.u-control:disabled,
+select.u-control:disabled,
+textarea.u-control:disabled {
+  background: var(--u-bg-subtle);
+  color: var(--u-text-muted);
+  cursor: not-allowed;
+}
+
+/*
+ * Флажок (Checkbox). Нативный checkbox с `accent-color` скина: форма,
+ * клавиатура и диктор работают сами. Размеры квадрата — геометрия
+ * компонента, а не решение экрана.
+ */
+.u-check {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: var(--u-space-2);
+  font-size: var(--u-text-sm);
+  line-height: 1.4;
+  color: var(--u-text);
+  cursor: pointer;
+}
+
+input.u-check__box {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin: 1px 0 0;
+  padding: 0;
+  border: none;
+  background: none;
+  accent-color: var(--u-accent);
+  cursor: inherit;
+}
+
+input.u-check__box:focus-visible {
+  outline: 2px solid var(--u-accent);
+  outline-offset: 2px;
+}
+
+.u-check--sm {
+  font-size: var(--u-text-xs);
+}
+
+.u-check--sm input.u-check__box {
+  width: 14px;
+  height: 14px;
+}
+
+.u-check__desc {
+  display: block;
+  color: var(--u-text-muted);
+  font-size: var(--u-text-xs);
+}
+
+.u-check:has(input:disabled),
+.u-switch:has(input:disabled) {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+
+/*
+ * Переключатель (Switch). Поле остаётся настоящим checkbox с role="switch" —
+ * оно невидимо, но фокусируется и нажимается; дорожка рисует состояние.
+ */
+.u-switch {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--u-space-2);
+  font-size: var(--u-text-sm);
+  line-height: 1.4;
+  color: var(--u-text);
+  cursor: pointer;
+}
+
+input.u-switch__input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+}
+
+.u-switch__track {
+  position: relative;
+  flex: none;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--u-border-strong);
+  transition: background var(--u-transition);
+}
+
+.u-switch__track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--u-surface);
+  box-shadow: var(--u-shadow-sm);
+  transition: transform var(--u-transition);
+}
+
+.u-switch__input:checked + .u-switch__track {
+  background: var(--u-accent);
+}
+
+.u-switch__input:checked + .u-switch__track::after {
+  transform: translateX(16px);
+}
+
+.u-switch__input:focus-visible + .u-switch__track {
+  outline: 2px solid var(--u-accent);
+  outline-offset: 2px;
+}
+
+.u-switch--sm {
+  font-size: var(--u-text-xs);
+}
+
+.u-switch--sm .u-switch__track {
+  width: 28px;
+  height: 16px;
+}
+
+.u-switch--sm .u-switch__track::after {
+  width: 12px;
+  height: 12px;
+}
+
+.u-switch--sm .u-switch__input:checked + .u-switch__track::after {
+  transform: translateX(12px);
+}
+
+/*
+ * Сообщение (Alert): итог действия, предупреждение, ошибка. Текст — цветом
+ * тона на его мягкой подложке.
+ */
+.u-alert {
+  border-radius: var(--u-radius-md);
+  padding: var(--u-space-3) var(--u-space-4);
+  font-size: var(--u-text-sm);
+  line-height: 1.45;
+  border: 1px solid transparent;
+}
+
+.u-alert--sm {
+  padding: var(--u-space-2) var(--u-space-3);
+}
+
+.u-alert__title {
+  display: block;
+  margin-bottom: 2px;
+}
+
+.u-alert--info {
+  background: var(--u-accent-subtle);
+  color: var(--u-accent);
+  border-color: color-mix(in srgb, var(--u-accent) 25%, transparent);
+}
+
+.u-alert--success {
+  background: var(--u-success-subtle);
+  color: var(--u-success);
+  border-color: color-mix(in srgb, var(--u-success) 25%, transparent);
+}
+
+.u-alert--warning {
+  background: var(--u-warning-subtle);
+  color: var(--u-warning);
+  border-color: color-mix(in srgb, var(--u-warning) 25%, transparent);
+}
+
+.u-alert--danger {
+  background: var(--u-danger-subtle);
+  color: var(--u-danger);
+  border-color: color-mix(in srgb, var(--u-danger) 25%, transparent);
+}
+
 /* Ссылка «пропустить к содержимому»: первое, что встречает клавиатурный вход. */
 .u-skip-link {
   position: absolute;

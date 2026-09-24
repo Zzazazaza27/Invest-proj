@@ -35,7 +35,7 @@ function Act({
 }) {
   if (set === 'ui') {
     return (
-      <Button variant={role} data-role-sample={role}>
+      <Button variant={role} size={sm ? 'sm' : 'md'} data-role-sample={role}>
         {children}
       </Button>
     );

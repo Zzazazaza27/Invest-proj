@@ -1,5 +1,13 @@
 import { Fragment, useLayoutEffect, useRef, useState } from 'react';
 import {
+  ALERT_TONES,
+  Alert,
+  BADGE_TONES,
+  BUTTON_VARIANTS,
+  Checkbox,
+  Switch,
+  type AlertTone,
+  type Tone,
   Badge,
   Button,
   EmptyState,
@@ -536,8 +544,6 @@ const ADMIN_BUTTONS: { label: string; className?: string }[] = [
   { label: 'danger-confirm', className: 'btn--danger-confirm' },
 ];
 
-const UI_BUTTONS = ['primary', 'secondary', 'quiet', 'danger', 'danger-confirm', 'brand'] as const;
-
 /** Кнопка «Показать в сцене» — раскрывает сцену прямо под строкой образца. */
 function SceneToggle({ open, onClick }: { open: boolean; onClick: () => void }) {
   return (
@@ -573,6 +579,7 @@ function ButtonsTable() {
           <th>Набор</th>
           <th>Вариант</th>
           <th>Живая</th>
+          <th>Плотная (sm)</th>
           <th>Выключена</th>
           <th>Загрузка</th>
           <th>Сцена</th>
@@ -599,6 +606,18 @@ function ButtonsTable() {
                   </button>
                 </td>
                 <td>
+                  {item.className?.includes('btn--sm') ? (
+                    <span className="small muted">—</span>
+                  ) : (
+                    <button
+                      type="button"
+                      className={[item.className, 'btn--sm'].filter(Boolean).join(' ')}
+                    >
+                      Действие
+                    </button>
+                  )}
+                </td>
+                <td>
                   <button type="button" className={item.className} disabled>
                     Действие
                   </button>
@@ -609,14 +628,14 @@ function ButtonsTable() {
                 </td>
               </tr>
               {open === key ? (
-                <SceneRow colSpan={6}>
+                <SceneRow colSpan={7}>
                   <Scene action={action} />
                 </SceneRow>
               ) : null}
             </Fragment>
           );
         })}
-        {UI_BUTTONS.map((variant) => {
+        {BUTTON_VARIANTS.map((variant) => {
           const key = `ui:${variant}`;
           return (
             <Fragment key={key}>
@@ -627,6 +646,11 @@ function ButtonsTable() {
                 </td>
                 <td>
                   <Button variant={variant}>Действие</Button>
+                </td>
+                <td>
+                  <Button variant={variant} size="sm">
+                    Действие
+                  </Button>
                 </td>
                 <td>
                   <Button variant={variant} disabled>
@@ -643,7 +667,7 @@ function ButtonsTable() {
                 </td>
               </tr>
               {open === key ? (
-                <SceneRow colSpan={6}>
+                <SceneRow colSpan={7}>
                   <Scene action={{ set: 'ui', variant, label: `@unicorn/ui · ${variant}` }} />
                 </SceneRow>
               ) : null}
@@ -697,13 +721,13 @@ function FieldsBlock({ where }: { where: 'page' | 'card' }) {
         </div>
         <label className="switch">
           <input type="checkbox" defaultChecked />
-          Переключатель
+          Переключатель (на деле флажок в подписи)
         </label>
         <p className="small muted">Состояния ошибки у полей админки нет.</p>
       </div>
-      <div>
-        <div className="small muted" style={{ marginBottom: 6 }}>
-          @unicorn/ui (<code>Field</code>)
+      <div style={{ display: 'grid', gap: 12, alignContent: 'start' }}>
+        <div className="small muted">
+          @unicorn/ui (<code>Field</code>) — просторный и плотный размер
         </div>
         <Field
           label="Пустое с подсказкой внутри"
@@ -712,11 +736,17 @@ function FieldsBlock({ where }: { where: 'page' | 'card' }) {
         >
           <Input id={id('u-empty')} placeholder="Название проекта" />
         </Field>
-        <Field label="Заполненное" htmlFor={id('u-filled')}>
-          <Input id={id('u-filled')} defaultValue="Пятый элемент" />
+        <Field label="Заполненное, плотное (sm)" htmlFor={id('u-filled-sm')}>
+          <Input id={id('u-filled-sm')} size="sm" defaultValue="Пятый элемент" />
         </Field>
         <Field label="С ошибкой" htmlFor={id('u-error')} error="Название обязательно">
-          <Input id={id('u-error')} aria-invalid="true" />
+          <Input id={id('u-error')} />
+        </Field>
+        <Field label="С ошибкой, плотное" htmlFor={id('u-error-sm')} error="Выберите стадию">
+          <Select id={id('u-error-sm')} size="sm" defaultValue="">
+            <option value="">— не выбрано —</option>
+            <option value="a">Идея</option>
+          </Select>
         </Field>
         <Field label="Выключенное" htmlFor={id('u-disabled')}>
           <Input id={id('u-disabled')} defaultValue="Нельзя изменить" disabled />
@@ -727,9 +757,41 @@ function FieldsBlock({ where }: { where: 'page' | 'card' }) {
             <option value="b">Второй</option>
           </Select>
         </Field>
-        <Field label="Многострочное" htmlFor={id('u-text')}>
-          <TextArea id={id('u-text')} rows={2} defaultValue="Текст в две строки" />
+        <Field label="Многострочное, плотное" htmlFor={id('u-text')}>
+          <TextArea id={id('u-text')} size="sm" rows={2} defaultValue="Текст в две строки" />
         </Field>
+
+        <div className="small muted" style={{ marginTop: 4 }}>
+          <code>Checkbox</code> — выбор в форме, применяется кнопкой
+        </div>
+        <div data-sample="checkboxes" style={{ display: 'grid', gap: 8 }}>
+          <Checkbox label="Не отмечен" />
+          <Checkbox label="Отмечен" defaultChecked />
+          <Checkbox
+            label="С пояснением"
+            description="Пояснение второстепенным цветом под подписью."
+            defaultChecked
+          />
+          <Checkbox label="Выключен" disabled />
+          <Checkbox label="Выключен и отмечен" disabled defaultChecked />
+          <Checkbox label="Плотный (sm)" size="sm" defaultChecked />
+        </div>
+
+        <div className="small muted" style={{ marginTop: 4 }}>
+          <code>Switch</code> — включение с немедленным действием
+        </div>
+        <div data-sample="switches" style={{ display: 'grid', gap: 8 }}>
+          <Switch label="Выключен" />
+          <Switch label="Включён" defaultChecked />
+          <Switch
+            label="С пояснением"
+            description="Черновики занимают место в лимите."
+            defaultChecked
+          />
+          <Switch label="Недоступен" disabled />
+          <Switch label="Недоступен и включён" disabled defaultChecked />
+          <Switch label="Плотный (sm)" size="sm" defaultChecked />
+        </div>
       </div>
     </div>
   );
@@ -737,18 +799,36 @@ function FieldsBlock({ where }: { where: 'page' | 'card' }) {
 
 /* --------------------------------------------------------------- статусы */
 
+/**
+ * Строки выровнены по смыслу. Тона `@unicorn/ui` берутся из перечней пакета
+ * (BADGE_TONES, ALERT_TONES) — здесь только сопоставление с админкой.
+ */
 const STATUS_ROWS: {
   meaning: string;
   badge?: string;
   alert?: string;
-  tone?: 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
+  tone?: Tone;
+  uiAlert?: AlertTone;
 }[] = [
   { meaning: 'нейтральный', badge: 'muted', tone: 'neutral' },
   { meaning: 'акцент', tone: 'accent' },
-  { meaning: 'успех', badge: 'ok', alert: 'ok', tone: 'success' },
-  { meaning: 'предупреждение', badge: 'warn', tone: 'warning' },
-  { meaning: 'опасность / ошибка', badge: 'danger', alert: 'error', tone: 'danger' },
-  { meaning: 'сведения', alert: 'info' },
+  { meaning: 'сведения', alert: 'info', uiAlert: 'info' },
+  { meaning: 'успех', badge: 'ok', alert: 'ok', tone: 'success', uiAlert: 'success' },
+  { meaning: 'предупреждение', badge: 'warn', tone: 'warning', uiAlert: 'warning' },
+  {
+    meaning: 'опасность / ошибка',
+    badge: 'danger',
+    alert: 'error',
+    tone: 'danger',
+    uiAlert: 'danger',
+  },
+];
+
+// Перечни пакета и сопоставление должны сходиться: новый тон в пакете без
+// строки здесь — сразу видно в каталоге, а не молча пропущено.
+const MISSING_TONES = [
+  ...BADGE_TONES.filter((t) => !STATUS_ROWS.some((r) => r.tone === t)),
+  ...ALERT_TONES.filter((t) => !STATUS_ROWS.some((r) => r.uiAlert === t)),
 ];
 
 function StatusBlock() {
@@ -761,6 +841,7 @@ function StatusBlock() {
             <th>Значок админки</th>
             <th>Плашка админки</th>
             <th>Badge @unicorn/ui</th>
+            <th>Alert @unicorn/ui</th>
           </tr>
         </thead>
         <tbody>
@@ -790,10 +871,24 @@ function StatusBlock() {
                   <span className="small muted">нет</span>
                 )}
               </td>
+              <td data-alert-sample={row.uiAlert}>
+                {row.uiAlert ? (
+                  <Alert tone={row.uiAlert} size="sm" title={row.uiAlert}>
+                    Текст сообщения.
+                  </Alert>
+                ) : (
+                  <span className="small muted">нет</span>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>
       </table>
+      {MISSING_TONES.length > 0 ? (
+        <p className="small" style={{ color: 'var(--u-danger)' }}>
+          В пакете есть тона без строки в каталоге: {MISSING_TONES.join(', ')}
+        </p>
+      ) : null}
       <div className="grid-2" style={{ marginTop: 12 }}>
         <EmptyState title="Пусто (EmptyState)" />
         <ErrorState title="Ошибка (ErrorState)" />

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
+import { Alert, Button } from '@unicorn/ui';
 import type { AdminUserCard } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import {
@@ -98,8 +99,9 @@ export function UserCardPage() {
         <p className="page-hint" data-user-missing>
           {error.text}
         </p>
-        <Link to="/users" className="btn--ghost btn--sm" style={{ textDecoration: 'none' }}>
-          ← К списку пользователей
+        {/* Переход на другую страницу — ссылка, а не кнопка. */}
+        <Link to="/users" className="small">
+          ← Пользователи
         </Link>
       </div>
     );
@@ -144,9 +146,14 @@ export function UserCardPage() {
       </div>
 
       {notice ? (
-        <div className={`alert alert--${notice.tone === 'ok' ? 'ok' : 'error'}`} data-user-notice>
+        <Alert
+          tone={notice.tone === 'ok' ? 'success' : 'danger'}
+          size="sm"
+          data-user-notice
+          style={{ marginBottom: 12 }}
+        >
           {notice.text}
-        </div>
+        </Alert>
       ) : null}
 
       <StatusSection card={card} busy={busy} run={run} />
@@ -444,30 +451,32 @@ function StatusSection({
             </div>
           </div>
           <div className="row-actions" style={{ justifyContent: 'flex-start' }}>
-            <button
+            <Button
               type="submit"
+              size="sm"
               // Последний шаг блокировки — заливка; открывающая кнопка ниже — контур.
-              className={suspended ? '' : 'btn--danger-confirm'}
+              variant={suspended ? 'primary' : 'danger-confirm'}
               data-status-confirm
               disabled={busy || reason.trim().length < 3}
             >
               {suspended ? 'Снять блокировку' : 'Заблокировать'}
-            </button>
-            <button type="button" className="btn--ghost" onClick={() => setOpen(false)}>
+            </Button>
+            <Button type="button" size="sm" variant="quiet" onClick={() => setOpen(false)}>
               Отмена
-            </button>
+            </Button>
           </div>
         </form>
       ) : (
-        <button
+        <Button
           type="button"
-          className={suspended ? '' : 'btn--danger'}
+          size="sm"
+          variant={suspended ? 'primary' : 'danger'}
           data-status-open
           disabled={busy}
           onClick={() => setOpen(true)}
         >
           {suspended ? 'Снять блокировку' : 'Заблокировать'}
-        </button>
+        </Button>
       )}
     </section>
   );

@@ -13,7 +13,16 @@ import * as React from 'react';
  * гадает, что произошло.
  */
 
-type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
+export type Tone = 'neutral' | 'accent' | 'success' | 'warning' | 'danger';
+
+/** Тона значка для перебора (каталог `/admin/ui`). */
+export const BADGE_TONES = [
+  'neutral',
+  'accent',
+  'success',
+  'warning',
+  'danger',
+] as const satisfies readonly Tone[];
 
 const TONE_VARS: Record<Tone, { fg: string; bg: string }> = {
   neutral: { fg: 'var(--u-text-muted)', bg: 'var(--u-bg-inset)' },
@@ -44,8 +53,26 @@ const TONE_VARS: Record<Tone, { fg: string; bg: string }> = {
 export type ButtonVariant =
   'primary' | 'secondary' | 'quiet' | 'danger' | 'danger-confirm' | 'brand' | 'ghost';
 
+/** Роли кнопки для перебора (каталог `/admin/ui`); `ghost` — псевдоним, в перечень не входит. */
+export const BUTTON_VARIANTS = [
+  'primary',
+  'secondary',
+  'quiet',
+  'danger',
+  'danger-confirm',
+  'brand',
+] as const satisfies readonly ButtonVariant[];
+
+/**
+ * Размер элемента: `md` — просторный (кабинеты, 44px — цель нажатия на
+ * сенсорном экране), `sm` — плотный (рабочие экраны админки, строки таблиц).
+ * Ширину размер не задаёт — её выбирает экран.
+ */
+export type ControlSize = 'md' | 'sm';
+
 export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
+  size?: ControlSize;
   /**
    * Кнопка в работе. Блокируется и объявляет это ассистивным технологиям:
    * `aria-busy` — не украшение, без него скринридер сообщит «кнопка», как будто
@@ -56,6 +83,7 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 export function Button({
   variant = 'primary',
+  size = 'md',
   loading = false,
   disabled,
   children,
@@ -69,6 +97,7 @@ export function Button({
     <button
       {...rest}
       data-variant={role}
+      data-size={size}
       className={['u-btn', `u-btn--${role}`, variant === 'brand' ? 'u-btn-brand' : null, className]
         .filter(Boolean)
         .join(' ')}
@@ -79,11 +108,12 @@ export function Button({
         alignItems: 'center',
         justifyContent: 'center',
         gap: 'var(--u-space-2)',
-        // 44px по высоте — минимальная цель нажатия на сенсорном экране.
-        minHeight: 44,
-        padding: '0 var(--u-space-5)',
+        // 44px — цель нажатия на сенсорном экране; плотный — 30px, нижняя
+        // граница удобного попадания мышью (та же, что у админки).
+        minHeight: size === 'sm' ? 30 : 44,
+        padding: size === 'sm' ? '0 var(--u-space-3)' : '0 var(--u-space-5)',
         borderRadius: 'var(--u-radius-md)',
-        fontSize: 'var(--u-text-sm)',
+        fontSize: size === 'sm' ? 'var(--u-text-xs)' : 'var(--u-text-sm)',
         fontWeight: 600,
         fontFamily: 'inherit',
         cursor: disabled || loading ? 'not-allowed' : 'pointer',
@@ -113,16 +143,27 @@ export interface FieldProps {
 /**
  * Обёртка поля.
  *
- * Ошибка связывается с полем через `aria-describedby` на стороне вызывающего:
- * подпись красным цветом — это сообщение только для тех, кто видит цвет.
+ * Ошибка связывается с полем через `aria-describedby` — это делает сама
+ * обёртка: подпись красным цветом — сообщение только для тех, кто видит цвет.
  */
 export function Field({ label, htmlFor, error, hint, children }: FieldProps): React.ReactElement {
+  // Ошибку и подсказку поле получает само: `aria-invalid` включает красную
+  // рамку (класс `u-control` в tokens.css), `aria-describedby` связывает поле
+  // с текстом — экранный диктор прочтёт его вместе с полем. Явно заданные
+  // вызывающим значения не перетираются.
+  const describedBy = error ? `${htmlFor}-error` : hint ? `${htmlFor}-hint` : undefined;
+  const control = React.isValidElement<Record<string, unknown>>(children)
+    ? React.cloneElement(children, {
+        'aria-invalid': children.props['aria-invalid'] ?? (error ? true : undefined),
+        'aria-describedby': children.props['aria-describedby'] ?? describedBy,
+      })
+    : children;
   return (
     <div style={{ display: 'grid', gap: 'var(--u-space-2)' }}>
       <label htmlFor={htmlFor} style={{ fontSize: 'var(--u-text-sm)', fontWeight: 600 }}>
         {label}
       </label>
-      {children}
+      {control}
       {hint && !error ? (
         <span
           id={`${htmlFor}-hint`}
@@ -144,60 +185,212 @@ export function Field({ label, htmlFor, error, hint, children }: FieldProps): Re
   );
 }
 
-export function Input(props: React.InputHTMLAttributes<HTMLInputElement>): React.ReactElement {
-  const { style, ...rest } = props;
+/*
+ * Поля ввода. Цвета, рамка и состояния (наведение, фокус, ошибка через
+ * `aria-invalid`, выключенное) — класс `u-control` в tokens.css: состояния
+ * inline-стилем не описываются. Здесь — только раскладка по размеру.
+ *
+ * `width: 100%` — поле заполняет контейнер, который ему выделил экран; саму
+ * ширину решает экран, и `style` её переопределяет.
+ *
+ * Нативный атрибут `size` у input/select заменён размером элемента: число
+ * символов для ширины здесь не используется — ширину задаёт экран.
+ */
+function controlLayout(size: ControlSize, multiline = false): React.CSSProperties {
+  const sm = size === 'sm';
+  return {
+    minHeight: sm ? 32 : 44,
+    padding: multiline
+      ? sm
+        ? 'var(--u-space-2) var(--u-space-3)'
+        : 'var(--u-space-3)'
+      : '0 var(--u-space-3)',
+    fontSize: sm ? 'var(--u-text-sm)' : 'var(--u-text-md)',
+    fontFamily: 'inherit',
+    width: '100%',
+    boxSizing: 'border-box',
+  };
+}
+
+const controlClass = (size: ControlSize, className?: string) =>
+  ['u-control', size === 'sm' ? 'u-control--sm' : null, className].filter(Boolean).join(' ');
+
+export interface InputProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'size'> {
+  size?: ControlSize;
+}
+
+export function Input({ size = 'md', style, className, ...rest }: InputProps): React.ReactElement {
   return (
     <input
       {...rest}
-      style={{
-        minHeight: 44,
-        padding: '0 var(--u-space-3)',
-        borderRadius: 'var(--u-radius-md)',
-        border: '1px solid var(--u-border-strong)',
-        background: 'var(--u-surface)',
-        color: 'var(--u-text)',
-        fontSize: 'var(--u-text-md)',
-        fontFamily: 'inherit',
-        width: '100%',
-        ...style,
-      }}
+      className={controlClass(size, className)}
+      style={{ ...controlLayout(size), ...style }}
     />
   );
 }
 
-const CONTROL_STYLE: React.CSSProperties = {
-  padding: 'var(--u-space-3)',
-  borderRadius: 'var(--u-radius-md)',
-  border: '1px solid var(--u-border-strong)',
-  background: 'var(--u-surface)',
-  color: 'var(--u-text)',
-  fontSize: 'var(--u-text-md)',
-  fontFamily: 'inherit',
-  width: '100%',
-  boxSizing: 'border-box',
-};
+export interface TextAreaProps extends React.TextareaHTMLAttributes<HTMLTextAreaElement> {
+  size?: ControlSize;
+}
 
-/** Многострочное поле: тот же вид, что у `Input`; высота растёт с содержимым до предела. */
-export function TextArea(
-  props: React.TextareaHTMLAttributes<HTMLTextAreaElement>,
-): React.ReactElement {
-  const { style, rows = 4, ...rest } = props;
+/** Многострочное поле: тот же вид, что у `Input`; высоту можно тянуть по вертикали. */
+export function TextArea({
+  size = 'md',
+  style,
+  className,
+  rows = 4,
+  ...rest
+}: TextAreaProps): React.ReactElement {
   return (
     <textarea
       {...rest}
       rows={rows}
-      style={{ ...CONTROL_STYLE, minHeight: 44, resize: 'vertical', lineHeight: 1.5, ...style }}
+      className={controlClass(size, className)}
+      style={{ ...controlLayout(size, true), resize: 'vertical', lineHeight: 1.5, ...style }}
     />
   );
 }
 
+export interface SelectProps extends Omit<React.SelectHTMLAttributes<HTMLSelectElement>, 'size'> {
+  size?: ControlSize;
+}
+
 /** Выпадающий список: нативный `<select>` — клавиатура и телефон работают сами. */
-export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>): React.ReactElement {
-  const { style, children, ...rest } = props;
+export function Select({
+  size = 'md',
+  style,
+  className,
+  children,
+  ...rest
+}: SelectProps): React.ReactElement {
   return (
-    <select {...rest} style={{ ...CONTROL_STYLE, minHeight: 44, ...style }}>
+    <select
+      {...rest}
+      className={controlClass(size, className)}
+      style={{ ...controlLayout(size), ...style }}
+    >
       {children}
     </select>
+  );
+}
+
+// ------------------------------------------------------- флажок и переключатель
+
+export interface CheckboxProps extends Omit<
+  React.InputHTMLAttributes<HTMLInputElement>,
+  'type' | 'size'
+> {
+  label: React.ReactNode;
+  /** Пояснение под подписью — второстепенным цветом. */
+  description?: React.ReactNode;
+  size?: ControlSize;
+}
+
+/**
+ * Флажок с подписью. Нативный checkbox — клавиатура, форма и экранный диктор
+ * работают сами; вид — `accent-color` скина. `className` и `style` относятся
+ * к подписи-обёртке (раскладку задаёт экран), остальные свойства — к полю.
+ */
+export function Checkbox({
+  label,
+  description,
+  size = 'md',
+  className,
+  style,
+  ...rest
+}: CheckboxProps): React.ReactElement {
+  return (
+    <label
+      className={['u-check', size === 'sm' ? 'u-check--sm' : null, className]
+        .filter(Boolean)
+        .join(' ')}
+      style={style}
+    >
+      <input {...rest} type="checkbox" className="u-check__box" />
+      <span>
+        {label}
+        {description ? <span className="u-check__desc">{description}</span> : null}
+      </span>
+    </label>
+  );
+}
+
+/**
+ * Переключатель: включение и выключение с немедленным действием («функция
+ * включена»). Для выбора в форме, который применяется кнопкой, — `Checkbox`.
+ * Под капотом checkbox с `role="switch"`: диктор объявляет «переключатель,
+ * включено».
+ */
+export function Switch({
+  label,
+  description,
+  size = 'md',
+  className,
+  style,
+  ...rest
+}: CheckboxProps): React.ReactElement {
+  return (
+    <label
+      className={['u-switch', size === 'sm' ? 'u-switch--sm' : null, className]
+        .filter(Boolean)
+        .join(' ')}
+      style={style}
+    >
+      <input {...rest} type="checkbox" role="switch" className="u-switch__input" />
+      <span className="u-switch__track" aria-hidden="true" />
+      <span>
+        {label}
+        {description ? <span className="u-check__desc">{description}</span> : null}
+      </span>
+    </label>
+  );
+}
+
+// ----------------------------------------------------------------- сообщение
+
+export type AlertTone = 'info' | 'success' | 'warning' | 'danger';
+
+/** Тона сообщения для перебора (каталог). */
+export const ALERT_TONES = [
+  'info',
+  'success',
+  'warning',
+  'danger',
+] as const satisfies readonly AlertTone[];
+
+export interface AlertProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'title'> {
+  tone?: AlertTone;
+  title?: React.ReactNode;
+  size?: ControlSize;
+}
+
+/**
+ * Сообщение в потоке страницы: итог действия, предупреждение, ошибка.
+ *
+ * Роль по тону: ошибка и предупреждение — `alert` (диктор перебивает),
+ * сведения и успех — `status` (объявляется в очередь). «Сохранено»,
+ * прочитанное как тревога, сбивает с толку сильнее, чем тишина.
+ */
+export function Alert({
+  tone = 'info',
+  title,
+  size = 'md',
+  className,
+  children,
+  ...rest
+}: AlertProps): React.ReactElement {
+  return (
+    <div
+      role={tone === 'danger' || tone === 'warning' ? 'alert' : 'status'}
+      {...rest}
+      data-tone={tone}
+      className={['u-alert', `u-alert--${tone}`, size === 'sm' ? 'u-alert--sm' : null, className]
+        .filter(Boolean)
+        .join(' ')}
+    >
+      {title ? <strong className="u-alert__title">{title}</strong> : null}
+      {children}
+    </div>
   );
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { AdminUserCard, AdminUserRow } from '@unicorn/contracts';
+import { Button } from '@unicorn/ui';
 import { api } from '../api';
 
 /**
@@ -289,9 +290,10 @@ export function ViewCabinetAction({
   if (compact) {
     if (only) {
       return (
-        <button
+        <Button
           type="button"
-          className="btn--ghost btn--sm"
+          variant="quiet"
+          size="sm"
           data-view-cabinet={only.role}
           style={CABINET_BUTTON_STYLE}
           disabled={busy}
@@ -299,7 +301,7 @@ export function ViewCabinetAction({
           title={`Открыть ${only.title} только для чтения`}
         >
           Кабинет
-        </button>
+        </Button>
       );
     }
     // Кнопка та же, что при одной роли, — столбец не «едет» от числа ролей.
@@ -307,9 +309,10 @@ export function ViewCabinetAction({
     // выглядели иначе. Выбор кабинета — меню под кнопкой.
     return (
       <span ref={menuRef} style={{ position: 'relative', display: 'inline-block' }}>
-        <button
+        <Button
           type="button"
-          className="btn--ghost btn--sm"
+          variant="quiet"
+          size="sm"
           data-view-cabinet-menu
           style={CABINET_BUTTON_STYLE}
           aria-haspopup="menu"
@@ -319,7 +322,7 @@ export function ViewCabinetAction({
           title="Выбрать кабинет для просмотра только для чтения"
         >
           Кабинет ▾
-        </button>
+        </Button>
         {menuAt ? (
           <span
             role="menu"
@@ -361,17 +364,18 @@ export function ViewCabinetAction({
   return (
     <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
       {cabinets.map((cabinet) => (
-        <button
+        <Button
           key={cabinet.href}
           type="button"
-          className="btn--ghost btn--sm"
+          variant="quiet"
+          size="sm"
           data-view-cabinet={cabinet.role}
           disabled={busy}
           onClick={() => void open(cabinet.href)}
           title={`Открыть ${cabinet.title} только для чтения`}
         >
           {`Посмотреть ${cabinet.title}`}
-        </button>
+        </Button>
       ))}
       {error ? (
         <span

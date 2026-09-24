@@ -6,7 +6,7 @@ import type {
   ReadinessConfig,
   ReadinessConfigVersion,
 } from '@unicorn/contracts';
-import { PromptDialog } from '@unicorn/ui';
+import { Checkbox, PromptDialog } from '@unicorn/ui';
 import { api } from '../api';
 import { formatDate, problemText } from '../lib/format';
 
@@ -217,14 +217,13 @@ function PolicyBlock({
           <div className="field__hint">Защита от дробления одного запроса на много заявок.</div>
         </div>
       </div>
-      <label className="switch">
-        <input
-          type="checkbox"
-          checked={form.count.draft}
-          onChange={(e) => setForm({ ...form, count: { ...form.count, draft: e.target.checked } })}
-        />
-        Черновики занимают место в лимите
-      </label>
+      {/* Выбор в форме, применяется кнопкой ниже, — поэтому флажок, а не переключатель. */}
+      <Checkbox
+        size="sm"
+        label="Черновики занимают место в лимите"
+        checked={form.count.draft}
+        onChange={(e) => setForm({ ...form, count: { ...form.count, draft: e.target.checked } })}
+      />
       <div className="row-actions" style={{ marginTop: 12 }}>
         <button type="button" disabled={busy} onClick={() => setConfirm(true)}>
           Активировать новой версией

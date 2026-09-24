@@ -1,5 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { Badge, Button, Card, Container, Field, IconTile, Input, Select, Stack } from '@unicorn/ui';
+import {
+  Badge,
+  Button,
+  Card,
+  Checkbox,
+  Container,
+  Field,
+  IconTile,
+  Input,
+  Select,
+  Stack,
+} from '@unicorn/ui';
 import type { ServiceCountry } from '@unicorn/contracts';
 import { SessionCheckFailed, classifySessionFailure, type SessionFailure } from '@unicorn/cabinet';
 import { ApiError, api, setCsrf } from './api';
@@ -80,20 +91,6 @@ function tokenFromHash(): { mode: Mode; token: string } | null {
 }
 
 /**
- * Экран, названный фрагментом адреса: `#register` и `#login`.
- *
- * Витрина ведёт на это приложение двумя разными кнопками, и до Ф60 обе
- * открывали вход: кнопка «Регистрация» вводила в заблуждение — форма
- * регистрации существовала, но попасть на неё можно было только переключателем
- * внизу. Фрагмент выбран по той же причине, что и для токенов: он не уходит на
- * сервер, поэтому его добавление не меняет ни кэширование статики, ни маршрут
- * прокси — с точки зрения nginx это тот же `/login/`.
- *
- * Ничего, кроме двух известных значений, не принимается: режимы `reset` и
- * `verify` открываются только вместе с токеном, а `forgot` — осознанным
- * действием человека, а не ссылкой со стороны.
- */
-/**
  * Почта на платформе не подключена (`MAIL_TRANSPORT=none`): маршруты
  * восстановления отвечают `feature_disabled`. Сервер отказывает ДО поиска
  * адреса, поэтому ответ одинаков для любого адреса и перебора учёток не
@@ -107,6 +104,20 @@ function isMailDisabled(err: unknown): boolean {
   return err instanceof ApiError && err.code === 'feature_disabled';
 }
 
+/**
+ * Экран, названный фрагментом адреса: `#register` и `#login`.
+ *
+ * Витрина ведёт на это приложение двумя разными кнопками, и до Ф60 обе
+ * открывали вход: кнопка «Регистрация» вводила в заблуждение — форма
+ * регистрации существовала, но попасть на неё можно было только переключателем
+ * внизу. Фрагмент выбран по той же причине, что и для токенов: он не уходит на
+ * сервер, поэтому его добавление не меняет ни кэширование статики, ни маршрут
+ * прокси — с точки зрения nginx это тот же `/login/`.
+ *
+ * Ничего, кроме двух известных значений, не принимается: режимы `reset` и
+ * `verify` открываются только вместе с токеном, а `forgot` — осознанным
+ * действием человека, а не ссылкой со стороны.
+ */
 function modeFromHash(): Mode | null {
   const hash = window.location.hash;
   if (hash === '#register') return 'register';
@@ -771,21 +782,21 @@ export default function App() {
               {mode === 'register' && countries && countries.length > 0 ? (
                 <div data-service-country={serviceCountry || 'none'}>
                   {countries.length === 1 ? (
-                    <label className="auth-consent">
-                      <input
-                        type="checkbox"
-                        id="serviceCountry"
-                        checked={countryConfirmed}
-                        onChange={(e) => {
-                          setCountryConfirmed(e.target.checked);
-                          setServiceCountry(e.target.checked ? countries[0]!.code : '');
-                        }}
-                      />
-                      <span>
-                        Страна обслуживания — {countries[0]!.code.toUpperCase()}. Подтверждаю: от
-                        неё зависят валюта и условия привлечения; сменить её позже нельзя.
-                      </span>
-                    </label>
+                    <Checkbox
+                      className="auth-consent"
+                      id="serviceCountry"
+                      checked={countryConfirmed}
+                      onChange={(e) => {
+                        setCountryConfirmed(e.target.checked);
+                        setServiceCountry(e.target.checked ? countries[0]!.code : '');
+                      }}
+                      label={
+                        <>
+                          Страна обслуживания — {countries[0]!.code.toUpperCase()}. Подтверждаю: от
+                          неё зависят валюта и условия привлечения; сменить её позже нельзя.
+                        </>
+                      }
+                    />
                   ) : (
                     <Field
                       label="Страна обслуживания"
@@ -845,17 +856,12 @@ export default function App() {
               </Field>
 
               {mode === 'register' ? (
-                <label className="auth-consent">
-                  <input
-                    type="checkbox"
-                    checked={consentGiven}
-                    onChange={(e) => setConsentGiven(e.target.checked)}
-                  />
-                  <span>
-                    Принимаю правила платформы, оферту, согласие на обработку персональных данных и
-                    условия вознаграждения оператора
-                  </span>
-                </label>
+                <Checkbox
+                  className="auth-consent"
+                  checked={consentGiven}
+                  onChange={(e) => setConsentGiven(e.target.checked)}
+                  label="Принимаю правила платформы, оферту, согласие на обработку персональных данных и условия вознаграждения оператора"
+                />
               ) : null}
 
               {notice ? (
