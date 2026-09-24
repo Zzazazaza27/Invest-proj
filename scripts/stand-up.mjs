@@ -142,7 +142,13 @@ function ensureDocker() {
       fail('Docker Desktop не найден — запустите вручную');
       return false;
     }
-    run(`powershell -NoProfile -Command "Start-Process '${exe}'"`);
+    // Через Проводник, а не прямым Start-Process. Запущенный напрямую, Docker
+    // становится частью дерева процессов того, кто запустил скрипт; если это
+    // Claude для рабочего стола, его автообновление закрывает Docker вместе с
+    // собой — резко, без штатного завершения (2026-09-24: оставшийся сокет
+    // `docker-secrets-engine\engine.sock` потом не даёт Docker запуститься).
+    // Запуск через explorer.exe делает Docker процессом Проводника.
+    run(`powershell -NoProfile -Command "Start-Process explorer.exe -ArgumentList '\\"${exe}\\"'"`);
     warn('Docker Desktop запущен, жду демона (до 4 минут)');
   } else {
     fail('демон Docker не отвечает — запустите его сами');
