@@ -530,6 +530,25 @@ checks:
     purpose: 'Гейт «в репозиторий коммитит только владелец». Репозиторий принадлежит прежнему исполнителю, и доступ у него остался. Ничего плохого он, скорее всего, не сделает — но узнать о чужом коммите нужно ДО того, как поверх него'
     confirmation: reviewed-in-code
 
+  - id: CHK-PRE-PUSH
+    file: scripts/check-pre-push.mjs
+    command: npm run gate:pre-push
+    kind: check
+    level: статический
+    runner: manual
+    asserts: 0
+    studied: code
+    studiedOn: 2026-09-24
+    needs: []
+    effects:
+      ['читает изменённые файлы и историю git, запускает semgrep в докере — ничего не меняет']
+    note: >-
+      Запускается хуком .githooks/pre-push на файлах, уходящих в origin:
+      prettier, eslint, semgrep guardian. Заведён 2026-09-24, когда первая
+      проверка кода случалась только в CI. Типы, сборку и тесты не заменяет.
+    purpose: 'Быстрая проверка перед отправкой: только файлы, которые уходят в origin. До 2026-09-24 перед отправкой не проверялось ничего, кроме чужих коммитов в origin; форматирование, линтер и semgrep впервые запускались в CI.'
+    confirmation: reviewed-in-code
+
   - id: TOOL-CLEAN-PROBE-DATA
     file: scripts/clean-probe-data.mjs
     command: npm run stand:clean-probes
@@ -4311,6 +4330,7 @@ blocks:
         CHK-SSH-KEYS,
         CHK-SAST-CONFIG,
         CHK-UPSTREAM-OWNER,
+        CHK-PRE-PUSH,
         CHK-CONSOLE-PRIVATE,
         UNIT-CORE-SECURITY,
       ]

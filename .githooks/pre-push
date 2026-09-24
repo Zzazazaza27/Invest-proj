@@ -17,11 +17,18 @@ if ! command -v node >/dev/null 2>&1; then
   exit 0
 fi
 
+# Ввод хука (какие коммиты уходят) нужен второй проверке — сохраняем его.
+refs=$(cat)
+
 node scripts/check-upstream-owner.mjs || {
   echo "" >&2
   echo "PUSH ОСТАНОВЛЕН: в origin есть коммиты не от вас (см. выше)." >&2
   echo "Отправить всё равно: git push --no-verify" >&2
   exit 1
 }
+
+# Быстрая проверка изменённых файлов: prettier, eslint, semgrep guardian.
+# До неё первые проверки кода запускались только в CI (2026-09-24).
+printf '%s\n' "$refs" | node scripts/check-pre-push.mjs || exit 1
 
 exit 0
