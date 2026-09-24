@@ -30,6 +30,7 @@ import { CommissionPage } from './pages/CommissionPage';
 import { DealsPage } from './pages/DealsPage';
 import { UsersPage } from './pages/UsersPage';
 import { TestingSessionsPage } from './pages/TestingSessionsPage';
+import { UiCatalogPage } from './pages/UiCatalogPage';
 import { UserCardPage } from './pages/UserCardPage';
 import {
   IntelligenceCardPage,
@@ -269,6 +270,7 @@ export function App() {
           */}
           <NavGroup title="Проверка">
             <NavItem to="/testing" label="Тестовые сессии" />
+            <NavItem to="/ui" label="Элементы интерфейса" />
           </NavGroup>
 
           <NavGroup title="Настройки платформы">
@@ -347,6 +349,7 @@ export function App() {
             <Route path="/deals" element={<DealsPage />} />
             <Route path="/flags" element={<FlagsPage />} />
             <Route path="/testing" element={<TestingSessionsPage />} />
+            <Route path="/ui" element={<UiCatalogPage />} />
             <Route path="/access" element={<AccessPage />} />
             <Route path="/intelligence" element={<IntelligencePage />} />
             <Route
