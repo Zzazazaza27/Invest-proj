@@ -132,6 +132,7 @@ const SourceFieldsSchema = z.object({
   crawlMode: z.enum(CRAWL_MODES).default('off'),
   crawlExtract: z.array(z.enum(CRAWL_EXTRACT)).max(CRAWL_EXTRACT.length).default([]),
   crawlRule: optionalText(2000),
+  platformReview: optionalText(20000),
 });
 
 const AsSourceSchema = z.object({

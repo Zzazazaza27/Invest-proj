@@ -426,6 +426,8 @@ const IntelSourceSchema = z.object({
   crawlMode: z.enum(INTEL_CRAWL_MODES),
   crawlExtract: z.array(z.enum(INTEL_CRAWL_EXTRACT)),
   crawlRule: z.string().nullable(),
+  platformReview: z.string().nullable(),
+  platformReviewAt: z.string().nullable(),
   factCount: z.number(),
   verifiedCount: z.number(),
   entityCount: z.number(),
@@ -534,6 +536,7 @@ export interface IntelSourceInput {
   crawlMode?: string;
   crawlExtract?: string[];
   crawlRule?: string | null;
+  platformReview?: string | null;
 }
 
 export interface IntelEntityInput {

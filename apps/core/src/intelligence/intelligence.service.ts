@@ -151,6 +151,8 @@ export interface SourceFields {
   crawlMode: (typeof CRAWL_MODES)[number];
   crawlExtract: (typeof CRAWL_EXTRACT)[number][];
   crawlRule: string | null;
+  /** Обзор площадки из исследования (M146); время записи ставит ядро. */
+  platformReview: string | null;
 }
 
 /** Факт: что, когда, в какой роли, с кем. Статус проверки — человека. */
@@ -224,6 +226,8 @@ interface SourceRow {
   crawl_mode: SourceFields['crawlMode'];
   crawl_extract: SourceFields['crawlExtract'];
   crawl_rule: string | null;
+  platform_review: string | null;
+  platform_review_at: Date | null;
   discovered_at: Date;
   last_checked_at: Date | null;
   updated_at: Date;
@@ -347,6 +351,8 @@ function sourceView(row: SourceRowExt) {
     crawlMode: row.crawl_mode,
     crawlExtract: row.crawl_extract,
     crawlRule: row.crawl_rule,
+    platformReview: row.platform_review,
+    platformReviewAt: iso(row.platform_review_at),
     factCount: Number(row.fact_count ?? 0),
     verifiedCount: Number(row.verified_count ?? 0),
     entityCount: Number(row.entity_count ?? 0),
@@ -491,6 +497,7 @@ const SOURCE_COLUMNS: Record<Exclude<keyof SourceFields, 'url'>, string> = {
   crawlMode: 'crawl_mode',
   crawlExtract: 'crawl_extract',
   crawlRule: 'crawl_rule',
+  platformReview: 'platform_review',
 };
 
 /**
@@ -997,6 +1004,9 @@ export class IntelligenceService {
     if (patch.url !== undefined) {
       values.push(patch.url, domainOf(patch.url));
       sets.push(`source_url = $${values.length - 1}`, `source_domain = $${values.length}`);
+    }
+    if (patch.platformReview !== undefined) {
+      sets.push(`platform_review_at = ${patch.platformReview === null ? 'NULL' : 'now()'}`);
     }
     return this.db.transaction(ctx, async (tx) => {
       if (sets.length > 0) {

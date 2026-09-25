@@ -28,6 +28,7 @@ import {
   type IntelType,
   type IntelVerification,
 } from '../api';
+import { Markdown } from '@unicorn/ui';
 import { formatDate, problemText } from '../lib/format';
 
 /**
@@ -963,7 +964,8 @@ function FormButtons({
 
 // ========================================================= форма источника
 
-type SourceFormState = Record<keyof IntelSourceInput, string>;
+// Обзор площадки (M146) пишется исследованием через API, в форме разбора его нет.
+type SourceFormState = Record<Exclude<keyof IntelSourceInput, 'platformReview'>, string>;
 
 const boolText = (v: boolean | null | undefined) =>
   v === true ? 'true' : v === false ? 'false' : '';
@@ -2209,6 +2211,17 @@ export function IntelligenceSourceCardPage() {
           </dl>
         </section>
       )}
+
+      {s.platformReview ? (
+        <section className="card" data-intel-platform-review>
+          <h2>Обзор площадки</h2>
+          <p className="muted small">
+            Из исследования площадок
+            {s.platformReviewAt ? ` · записан ${formatDate(s.platformReviewAt)}` : ''}
+          </p>
+          <Markdown source={s.platformReview} maxLength={20000} />
+        </section>
+      ) : null}
 
       <section className="card" data-intel-source-facts>
         <h2>Факты из источника · {card.facts.length}</h2>
