@@ -32,7 +32,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ZERO = /^0+$/;
-// Тот же образ, что в .github/workflows/ci.yml (SEC-18: дайджест, не тег).
+// Тот же образ, что в .github/workflows/secrets.yml (SEC-18: дайджест, не тег).
 const SEMGREP_IMAGE =
   'semgrep/semgrep@sha256:ae27024c16f7848cdbfd49c24ed0b78b13f13b85fcd7b87c679aaa8b0c0dce98';
 const FORMAT_EXT = /\.(ts|tsx|js|jsx|mjs|cjs|json|md|yml|yaml)$/;

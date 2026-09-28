@@ -53,6 +53,9 @@ automation:
     note: >-
       Браузерные прогоны, smoke и probe в CI не запускаются: им нужен
       поднятый стенд с базой, брокером и хранилищем, которого в CI нет.
+      С 2026-09-28 ci.yml не запускается на push только с Markdown, docs/
+      (кроме docs/testing/) и obsidian-notes/; секрет-скан вынесен в
+      secrets.yml и идёт на любой push.
   manual:
     note: >-
       Всё остальное запускает человек. Наборы `suite:handoff` и
@@ -2968,7 +2971,7 @@ checks:
     confirmedOn: 2026-09-22
 
   - id: CI-SECRETS
-    file: .github/workflows/ci.yml
+    file: .github/workflows/secrets.yml
     command: gitleaks (задание secrets-scan)
     kind: ci-step
     level: статический
