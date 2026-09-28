@@ -90,7 +90,22 @@ console.warn(
   `infra: ${command} — postgres:${PORTS.postgres} redis:${PORTS.redis} ` +
     `nats:${PORTS.nats} s3:${PORTS.s3}`,
 );
-const result = spawnSync('docker', args, { stdio: 'inherit', cwd: ROOT });
+// На Linux nginx не может найти host.docker.internal через DNS Docker (см.
+// infra/nginx/default.conf), поэтому хост ядра передаётся адресом: шлюз сети
+// bridge — тот же адрес, который extra_hosts кладёт по host-gateway.
+const env = { ...process.env };
+if (process.platform === 'linux' && !env.CORE_HOST) {
+  const gw = spawnSync(
+    'docker',
+    ['network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}'],
+    { encoding: 'utf8' },
+  );
+  const ip = gw.status === 0 ? gw.stdout.trim() : '';
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(ip)) env.CORE_HOST = ip;
+  else console.warn('infra: не удалось узнать шлюз Docker — /v1/ через прокси может не работать');
+}
+
+const result = spawnSync('docker', args, { stdio: 'inherit', cwd: ROOT, env });
 
 if (result.error) {
   console.error(`infra: не удалось запустить docker — ${result.error.message}`);

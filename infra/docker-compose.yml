@@ -27,7 +27,10 @@ services:
     ports:
       - '127.0.0.1:${WEB_PORT:-80}:80'
     volumes:
-      - ../infra/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      # Шаблон: образ nginx при старте подставляет ${CORE_HOST} и кладёт
+      # результат в conf.d/default.conf. Переменные самого nginx ($host и т.п.)
+      # не трогаются — подставляются только объявленные в окружении.
+      - ../infra/nginx/default.conf:/etc/nginx/templates/default.conf.template:ro
       - ../apps/web-public/dist:/srv/web-public:ro
       - ../apps/lab/dist:/srv/lab:ro
       - ../apps/investor/dist:/srv/investor:ro
@@ -51,6 +54,10 @@ services:
     # нет — поэтому оно объявлено явно.
     extra_hosts:
       - 'host.docker.internal:host-gateway'
+    # Хост ядра для /v1/ (см. infra/nginx/default.conf). На Linux его задаёт
+    # scripts/infra.mjs — IPv4-шлюз Docker.
+    environment:
+      CORE_HOST: ${CORE_HOST:-host.docker.internal}
     healthcheck:
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1/ >/dev/null || exit 1']
       interval: 10s
