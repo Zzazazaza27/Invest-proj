@@ -2,7 +2,7 @@
 /**
  * Стартовая конфигурация вопросов заявки (версия 1) — из банка вопросов.
  *
- * Источник — `docs/product/каталог-вопросов-заявки.md` (версия 2): таблицы
+ * Источник — `docs/product/application-questions-catalog.md` (версия 2): таблицы
  * разделов дают ключ, тип, состояния по стадиям, видимость и подтверждение;
  * карточки под таблицами — формулировку, подсказку, примеры и варианты.
  * Результат — `packages/contracts/src/domain/application-form.v1.ts`:
@@ -20,7 +20,7 @@ import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..');
-const SOURCE = resolve(ROOT, 'docs/product/каталог-вопросов-заявки.md');
+const SOURCE = resolve(ROOT, 'docs/product/application-questions-catalog.md');
 const TARGET = resolve(ROOT, 'packages/contracts/src/domain/application-form.v1.ts');
 const CHECK = process.argv.includes('--check');
 
@@ -291,7 +291,7 @@ const config = {
 
 const header = `/**
  * СГЕНЕРИРОВАНО scripts/build-application-form-v1.mjs из
- * docs/product/каталог-вопросов-заявки.md (версия 2). Не править руками:
+ * docs/product/application-questions-catalog.md (версия 2). Не править руками:
  * до первой публикации формулировки правятся в каталоге и файл
  * перегенерируется, после — действующая конфигурация живёт в БД и правится
  * в админке, а этот документ остаётся запасным RU-текстом и источником

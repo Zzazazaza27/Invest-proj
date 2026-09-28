@@ -2,7 +2,7 @@
 /**
  * Загрузка исследовательского прохода в Market Intelligence.
  *
- * Читает docs/product/market-intelligence/источники-рынка.md и переносит в
+ * Читает docs/product/market-intelligence/market-sources.md и переносит в
  * базу то, что там найдено:
  *  * таблицы источников (§1.1 живые, §1.2 непроверенные) → intelligence.sources
  *    с признаками из ТЗ §17 (тип, что даёт, структурированность, контакты);
@@ -23,7 +23,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const FILE = join(ROOT, 'docs', 'product', 'market-intelligence', 'источники-рынка.md');
+const FILE = join(ROOT, 'docs', 'product', 'market-intelligence', 'market-sources.md');
 
 loadDotEnv();
 
@@ -227,7 +227,7 @@ for (const line of lines.slice(start + 1, end)) {
         '⚠ Репутационный риск: по выдаче поиска (pravo.ru, CNews, Fontanka, The Moscow Times, ' +
           'март–май 2026) суд признал деятельность Галицкого и Almaz Capital «экстремистским ' +
           'объединением». Первоисточники не открывались. В маркетинге не использовать до ' +
-          'юридической оценки. См. источники-рынка.md §2.',
+          'юридической оценки. См. market-sources.md §2.',
       ]);
     }
     continue;
@@ -250,7 +250,7 @@ for (const line of lines.slice(start + 1, end)) {
     if (source.inserted) counts.sourcesNew += 1;
     const inserted = await q(
       // Кандидат, а не подтверждённый факт: агент видел выдачу, страниц не
-      // открывал (ТЗ-перестройка §8). Роль — подпись пункта из файла.
+      // открывал (spec-rebuild §8). Роль — подпись пункта из файла.
       `INSERT INTO intelligence.mentions
          (id, entity_id, source_id, page_url, role, verification, notes)
        VALUES ($1, $2, $3, $4, $5, 'candidate', 'из выдачи поиска, страница не открывалась')

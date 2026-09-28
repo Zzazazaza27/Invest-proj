@@ -4,7 +4,7 @@
  *
  * До этого состояние сервера узнавалось только заходом по SSH: сервер
  * недоступен — узнать нечем, а история развёртываний не сохранялась вовсе.
- * Теперь снимок кладётся в `docs/runbooks/состояние-стендов.md`, и его видно
+ * Теперь снимок кладётся в `docs/runbooks/stands-status.md`, и его видно
  * без доступа к серверу и без git.
  *
  * Скрипт ничего не меняет на сервере: только читает и записывает файл.
@@ -19,7 +19,7 @@ import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 
 const ROOT = resolve(import.meta.dirname, '..');
-const OUT = resolve(ROOT, 'docs/runbooks/состояние-стендов.md');
+const OUT = resolve(ROOT, 'docs/runbooks/stands-status.md');
 const DRY = process.argv.includes('--dry-run');
 
 const HOST = 'root@193.233.217.210';

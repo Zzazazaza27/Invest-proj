@@ -21,7 +21,7 @@
  *   * ссылки требований и наборов ведут на существующие записи;
  *   * требование без покрытия помечено явно (`coverage: none`), а не молча;
  *   * у подтверждения запуском есть дата, у чувствительности — метод;
- *   * читаемое представление `docs/testing/реестр.md` собрано из текущего
+ *   * читаемое представление `docs/testing/registry.md` собрано из текущего
  *     реестра, а не отстало на несколько правок.
  *
  * Запуск: npm run check:registry (входит в CI, задание static)
@@ -309,7 +309,7 @@ check(
 /** Перевод строк не должен решать, отстал документ или нет. */
 const normalizeEol = (text) => text.split(String.fromCharCode(13)).join(String.fromCharCode());
 
-const DOC = join(ROOT, 'docs', 'testing', 'реестр.md');
+const DOC = join(ROOT, 'docs', 'testing', 'registry.md');
 const expected = renderRegistryDoc(registry);
 const actual = existsSync(DOC) ? readFileSync(DOC, 'utf8') : '';
 const docFresh = normalizeEol(actual) === expected;

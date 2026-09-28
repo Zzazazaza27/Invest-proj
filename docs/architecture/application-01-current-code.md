@@ -1,0 +1,1041 @@
+# Инвестиционная заявка — что есть в коде
+
+Этап 0, коммит 0.1 плана `docs/product/application-stages-plan.md`. Дата: 2026-09-14.
+Код: `main` @ `b0dba04`. Постановка: `docs/product/investment-application-spec-v3.md`.
+
+**Что это.** Факты о текущей реализации, собранные по §19 и §25 постановки.
+Каждое утверждение — со ссылкой `файл:строка`. Здесь **нет предложений**: они в
+следующем документе (`application-02-technical-plan.md`). Если факт выглядит
+странно — это не обоснование, а наблюдение; см. `dont-treat-implementation-as-spec`.
+
+**Как читать.** §1–§5 — данные и ядро. §6 — анализ ИИ. §7 — материалы и
+хранилище. §8 — интерфейсы. §9 — админка, контент, конфигурация. §10 —
+сводка «что уже schema-driven, где тексты зашиты». §11 — расхождения, найденные
+по дороге. §12 — чего в коде нет.
+
+**Поправка к отзыву на v2.** Там сказано, что «стадия — часть внешнего
+контракта» из-за события `lab.project.stage_changed`. Это неверно: событие
+относится к **этапу воронки сезона** (колонка `status`), а не к стадии
+зрелости (`stage`). Подробно в §3.5.
+
+---
+
+## 1. Сущности данных
+
+### 1.1. Проект — `lab.projects`
+
+Одна таблица совмещает карточку проекта, инвестиционный запрос и позицию в
+воронке сезона. `database/migrations/M004_lab.sql:18-51`:
+
+| Группа    | Колонки                                                                                                                                                                                     | Где                  |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| Карточка  | `title` 2–200, `tagline` ≤300, `description` ≤20 000, `taxonomy_id`, `geo_country CHAR(2)`, `geo_region`                                                                                    | `M004_lab.sql:20-26` |
+| Стадия    | `stage TEXT NOT NULL CHECK (stage IN ('idea','mvp','early_revenue','growth'))`                                                                                                              | `M004_lab.sql:24`    |
+| Запрос    | `investment_ask NUMERIC(14,2) > 0`, `ask_currency CHAR(3) DEFAULT 'RUB' CHECK (= 'RUB')`, `required_plan_id` (FK → `billing.subscription_plans`, M009)                                      | `M004_lab.sql:29-31` |
+| Листинг   | `listing_status` ∈ `not_listed/listed/suspended_billing/unlisted`, `listed_at`, `teaser_jsonb`                                                                                              | `M004_lab.sql:34-37` |
+| Воронка   | `status` ∈ `draft/submitted/ai_review/expert_review/bootcamp/finalist/graduated/rejected/archived`, `season_id` (FK → `seasons.seasons`, M007), `current_version_id`                        | `M004_lab.sql:39-44` |
+| Служебные | `capital_ref`, `search_tsv`, `created_at/updated_at/deleted_at`; позже `public_search_tsv` (генерируемая, `M013_kyc_lab_guards.sql:99-104`), `graduated_at` (`M022_integration_api.sql:72`) | `M004_lab.sql:45-49` |
+
+Перечислений как типов PostgreSQL нет вовсе — везде `TEXT + CHECK`
+(`CREATE TYPE` в `database/migrations` не встречается).
+
+Триггеры на `lab.projects`: FTS + `updated_at` (`M004_lab.sql:63-79`);
+ограничение организатора «менять можно только `status`» (`M025_reviewer_materials_and_stages.sql:115-117`,
+переписано в `M029:22-55`, `M030:22-58`); порядок этапов воронки (`M025:153-155`);
+штамп `graduated_at` (`M022:91-93`); constraint-триггер «листинг требует тариф и
+подписку» (`M009_billing.sql:293-296`).
+
+Зеркало в контрактах: `ProjectStageSchema` — `packages/contracts/src/domain/lab.ts:11`;
+`ProjectStatusSchema` — `lab.ts:15-25`; `PROJECT_TRANSITIONS` — `lab.ts:39-49`;
+`SEASON_SELECTION_STAGES` — `lab.ts:52-58`; `ListingStatusSchema` — `lab.ts:86-91`.
+
+### 1.2. Основатели — `lab.founders_projects`
+
+`(project_id, user_id, role ∈ 'owner'|'cofounder', equity_pct)` —
+`M004_lab.sql:88-97`; ровно один владелец на проект (частичный уникальный
+индекс, `M004:96-97`).
+
+### 1.3. Версия заявки — `lab.project_versions`
+
+`M004_lab.sql:102-112`: `id`, `project_id`, **`season_id NOT NULL`** (FK
+`M007_experts_seasons.sql:119-120`), `version_no > 0`, `snapshot_jsonb`,
+`submitted_at`; `UNIQUE (project_id, season_id, version_no)`. Append-only:
+триггер `project_versions_immutable` запрещает UPDATE и DELETE
+(`M004:121-132`); GRANT только `SELECT, INSERT` (`M004:315`).
+
+Состав снимка задаёт приложение, не БД — `apps/core/src/lab/projects.service.ts:296-306`:
+`title, tagline, description, stage, taxonomyId, geoCountry, geoRegion, investmentAsk, askCurrency`.
+В снимке **нет** материалов, `status`, `listing_status`, `required_plan_id`,
+`season_id`, результатов анализа, версии какой-либо схемы.
+
+Снимок наружу не отдаётся: `ProjectVersionSchema` содержит только метаданные —
+`packages/contracts/src/domain/lab.ts:310-316`, комментарий `:306-309`.
+
+### 1.4. Материалы — `lab.project_materials`
+
+`M004_lab.sql:134-152`: `type ∈ deck/video/doc/product_link`, `version`,
+`s3_key` XOR `url` (`M004:147-148`), `parse_status`, `uploaded_by`. Связь
+**только с проектом**; с версией заявки материалы не связаны. Позднее:
+`uploaded_at`, `size_bytes` (`M037_material_upload_state.sql:19-21`),
+`content_hash` (`M044_material_content_hash.sql:18-24`), инварианты состояния
+(`M047:25-36`, `M050`, `M051`). Разбор — `lab.project_material_parses`
+(`M004:154-167`). Подробнее в §7.
+
+### 1.5. Сезон — `seasons.seasons`
+
+`M007_experts_seasons.sql:101-114`: `number UNIQUE`, `status ∈
+draft/applications_open/review/bootcamp/final/closed`, `funnel_config_jsonb`
+(квоты и расписание этапов; форма — `SeasonFunnelConfigSchema`,
+`packages/contracts/src/domain/misc.ts:519-539`). Связи: `lab.projects.season_id`,
+`lab.project_versions.season_id NOT NULL`, `experts.expert_assignments.season_id`,
+`experts.review_consensus.season_id`, `seasons.golden_tickets (project_id, season_id)`
+(`M007:117-135`). Подробнее в §4.
+
+### 1.6. Тариф — `billing.subscription_plans`
+
+`M009_billing.sql:12-32`: `code ∈ founder_t1..t5, investor_membership`,
+`version`, `audience`, `name`, **`ask_limit NUMERIC(14,2)`** — единственное
+поле-лимит, `price`, `currency CHECK (= 'RUB')`, `billing_period`,
+**`features_jsonb JSONB DEFAULT '{}'`**, `valid_from/valid_to`.
+`features_jsonb` типизирован как `z.record(z.string(), z.unknown())`
+(`packages/contracts/src/domain/billing.ts:132,160,179`), пишется и читается
+только админским API (`apps/core/src/admin/admin.service.ts:48,111,164,609,705`)
+и **ни в одной проверке сервера не участвует**.
+
+Лимит числа проектов или заявок на тариф в схеме отсутствует: ни колонки, ни
+CHECK, ни триггера, ни запроса `count(*)` по владельцу в `apps/core/src`.
+
+Сид: t1 ≤ 1 млн / 4990, t2 ≤ 10 млн / 9990, t3 ≤ 100 млн / 29 990,
+t4 ≤ 1 млрд / 199 990, t5 `ask_limit NULL, individual_pricing` —
+`M011_seeds.sql:84-92`.
+
+### 1.7. Подписка — `billing.subscriptions`
+
+`M009_billing.sql:154-178`. Подписка основателя привязана к **конкретному
+проекту**: `project_id NOT NULL` для `audience='founder'`, `NULL` для инвестора
+(`M009:188-224`); одна активная подписка на проект (`M009:181-185`).
+Клиент при оформлении передаёт `projectId`, а не `planId` —
+`packages/contracts/src/domain/billing.ts:112-122`; сервер резолвит план и
+проверяет владельца — `apps/core/src/billing/billing.service.ts:200-232`.
+
+### 1.8. Результаты анализа — схема `scoring`
+
+`M006_scoring.sql:11-150`: `score_models`, `investment_passports`
+(`jsonb_data`, `disclosure_tier`, `sources`, `UNIQUE (project_id, version)`,
+частичный уникальный «один действующий» `M006:45-46`), `passport_facts`,
+`scores` (9 осей), `irs_scores` (append-only, `M006:101-113`), `readiness_map`,
+`roadmaps/roadmap_steps`. M066+: `scoring.ai_provider_credentials`
+(`M066_llm_scoring.sql:14-29`), `scoring.passport_texts (passport_id, locale)`
+(`M066:59-66`, `locale ∈ ru-RU/en-US` — `M066:61`). Подробнее в §6.
+
+Паспорт привязан к `project_id` и собственной `version`, **не к
+`project_versions` и не к хешу входа**. Provenance живёт в
+`audit.agent_runs` + `audit.node_checkpoints` (узел `input_snapshot` с
+`inputSha256`) — `apps/core/src/ai/analysis.service.ts:184-197`.
+
+### 1.9. Контент витрины — `content.landing_blocks`
+
+`M048_landing_content.sql:25-44`: `key` из allowlist девяти значений
+(`M048:29-31`), `locale ∈ ru-RU/en-US` (`M048:32`), `title ≤300`, `body 1–8000`,
+`link_url ~ ^https://`, `valid_from/valid_to`, `created_by`. Версионирование
+вместо правки на месте (`M048:13-18`): «одна действующая версия ключа в
+локали» — частичный уникальный индекс `WHERE valid_to IS NULL` (`M048:52-54`).
+RLS: чтение всем, запись `app.has_role('admin')` (`M048:63-72`). Глаголы
+журнала `content.landing_block.published/withdrawn` — `M049_landing_content_verbs.sql:14-17`.
+Это единственный в коде образец «редактируемый текст в БД с версиями».
+Подробнее в §9.
+
+### 1.10. Флаги и аудит
+
+`audit.feature_flags (key, enabled, rules_jsonb, updated_by, updated_at)` —
+`M010_audit_extra_integration.sql:25-31`; сид десяти флагов —
+`M011_seeds.sql:47-58`; `billing.payments.enabled=false` — `M061:24-28`;
+`ai.scoring.llm.enabled=false` с `requires` — `M066:92-95`.
+
+Журнал: `audit.event_type_registry` (fail-closed allowlist глаголов) —
+`M001_audit_core.sql:10-18`; `audit.events` партиционирован, hash-chain —
+`M001:21-40`; `audit.outbox_events` — `M001:233`; `audit.agent_runs` /
+`audit.node_checkpoints` — `M010:37-61`.
+
+### 1.11. RLS и роли
+
+`ENABLE + FORCE ROW LEVEL SECURITY` на всех таблицах `lab` — `M004:217-230`.
+Политики проекта: `projects_select` (admin / organizer / член команды /
+инвестор с подпиской при `listed`) — `M004:238-245`; `projects_update_owner` —
+`M004:247-250`; `projects_insert_service WITH CHECK (true)` — `M004:252`
+(поэтому `create` без `RETURNING`, `projects.service.ts:91-99`);
+`projects_public_teaser TO app_public_read` — `M004:255-256`;
+`projects_select_reviewer` — `M021:44-45`; `projects_update_organizer` —
+`M025:80-81`. Версии: `versions_select/insert` — `M004:277-281`,
+`versions_select_reviewer` — `M025:33-34`.
+
+Сервисные роли по ADR-006: каждая — своим подключением, `SET ROLE` вверх
+запрещён (`docs/architecture/ADR-006-service-role-connections.md:22-41`);
+bootstrap — `database/src/bootstrap-roles.ts:18-68,133-199`.
+
+### 1.12. Соглашения по миграциям
+
+Раннер `database/src/migrate.ts`: forward-only без down (`:10-11`), checksum
+каждого файла и отказ при правке применённого (`:41,81-91`), своя транзакция
+на миграцию (`:123,142`), `-- migrate:no-transaction` для CONCURRENTLY
+(`:121-131`). Линтер `database/src/lint-migrations.ts`: `DROP TABLE/COLUMN`,
+`TRUNCATE`, смена типа — ERROR без метки `-- migrate:contract` (`:66-98`);
+каждая новая таблица обязана иметь ENABLE + FORCE RLS и политику (`:147-190`);
+`SET search_path` у каждой функции (`:218-231`); деньги не FLOAT (`:247-256`).
+Тест «12 схем и 72 таблицы» держит число вручную —
+`database/tests/rls.test.ts:1178-1227`; «каждый глагол аудита из кода
+зарегистрирован» — `database/tests/invariants.test.ts:123-146`.
+
+---
+
+## 2. Контракты и маршруты: `create → materials → submit → analysis → listing`
+
+### 2.1. Контракты входа
+
+`CreateProjectRequestSchema` — `packages/contracts/src/domain/lab.ts:109-119`:
+`title boundedString(2,200)`, `tagline? (0,300)`, `description? (0,20000)`,
+`stage`, `taxonomyId`, `geoCountry?`, `geoRegion? (0,120)`,
+`investmentAsk: MoneyAmountSchema`, `askCurrency: CurrencySchema`.
+`UpdateProjectRequestSchema = Create.partial()` — `lab.ts:122`.
+`MoneyAmountSchema` — строка `^\d{1,12}(\.\d{1,2})?$` > 0 —
+`packages/contracts/src/common/primitives.ts:64-67`; `CurrencySchema = z.literal('RUB')`
+— `primitives.ts:71`. `requiredPlanId` во входе отсутствует намеренно
+(`lab.ts:106-108`); строгий разбор отвергает неизвестные поля —
+`apps/core/src/common/validation.ts:17-36,68-88`, тест
+`apps/core/tests/lab.test.ts:235-264`.
+
+Выдача: `ProjectTeaserSchema` (зеркало `v_public_catalog`) — `lab.ts:129-139`;
+`ProjectFullSchema` — `lab.ts:156-167` (+`description, geoRegion, status,
+listingStatus, seasonId, requiredPlanId, currentVersionId, irs, createdAt,
+updatedAt`); `ProjectSummarySchema` — `lab.ts:320-332`;
+`ProjectMaterialSchema` — `lab.ts:294-303` (`s3Key` не отдаётся, `:293`).
+
+### 2.2. Маршруты
+
+`ProjectsController` (`apps/core/src/lab/projects.controller.ts`):
+
+| Маршрут                                          | Строка     | Роли               |
+| ------------------------------------------------ | ---------- | ------------------ |
+| `POST /projects`                                 | `:34-39`   | founder, admin     |
+| `GET /projects`, `GET /projects/:id`             | `:41-51`   | сессия; фильтр RLS |
+| `PATCH /projects/:id`                            | `:53-59`   | founder, admin     |
+| `POST /projects/:id/submit`                      | `:61-66`   | founder, admin     |
+| `GET /projects/:id/versions`                     | `:69-74`   | сессия; RLS        |
+| `GET /projects/:id/materials`                    | `:78-83`   | сессия             |
+| `GET /projects/:id/materials/:mid/content`       | `:96-131`  | сессия; RLS        |
+| `POST /projects/:id/materials/link`              | `:133-141` | founder, admin     |
+| `POST /projects/:id/materials/upload`            | `:143-153` | founder, admin     |
+| `POST /projects/:id/materials/:mid/finalize`     | `:162-172` | founder, admin     |
+| `POST /projects/:id/listing`, `DELETE …/listing` | `:174-186` | founder, admin     |
+
+`AnalysisController` (`apps/core/src/ai/analysis.controller.ts`):
+`POST /projects/:id/analysis` — `:27-31` (право проверяется в сервисе);
+`GET /projects/:id/passport|readiness|roadmap` — `:65-81`;
+`GET /projects/scoring-reviews`, `POST …/:passportId/decision` — `:44-63`, admin.
+**Отдельного маршрута `reanalyze` нет** — повтор это тот же `POST …/analysis`.
+
+`CatalogController` — `GET /taxonomy`, `GET /catalog`, `GET /catalog/:id`, все
+`@Public()` (`apps/core/src/lab/catalog.controller.ts:26-49`).
+`FavoritesController` — `investor/favorites` (`favorites.controller.ts:24-48`).
+`SeasonsController` — `GET /seasons/current` публичный (`seasons.controller.ts:25-30`);
+`POST /seasons/:id/projects/:projectId/stage` — admin, organizer (`:101-116`).
+
+Владение проектом в коде для create/update/submit/materials/listing **не
+проверяется** — границу держит RLS через `lab.is_project_member()`
+(`M004:190-200`). Явные проверки владельца только в подписке
+(`billing.service.ts:215-219`) и в запуске анализа (`analysis.service.ts:132-143`).
+
+Админских маршрутов для проектов нет: `apps/core/src/admin/admin.controller.ts`
+содержит ключи ИИ, планы, подписки, флаги (`:50-201`).
+
+### 2.3. Create и update
+
+`create` — `apps/core/src/lab/projects.service.ts:86-134`: резолв тарифа по
+сумме (`:89`), INSERT без RETURNING (`:91-113`), запись владельца (`:115-118`),
+`audit.emit('lab.project.created', {investmentAsk, stage})` (`:120-128`).
+
+`update` — `:181-250`: пересчёт тарифа **только если пришёл `investmentAsk`**
+(`:203-205`), иначе `COALESCE` сохраняет старый `required_plan_id` (`:217`).
+Проверки статуса нет: любое поле, включая `stage`, меняется и после подачи.
+Колонка `ask_currency` в UPDATE отсутствует (`:208-220`), хотя схема
+`askCurrency` принимает (`lab.ts:122`).
+
+### 2.4. Submit
+
+`submit` — `projects.service.ts:259-343`:
+
+1. advisory-лок на проект (`:265-267`);
+2. допустимы только статусы `draft` и `submitted` (`:274-277`);
+3. **сезон обязателен**: берётся сезон со `status='applications_open'`, иначе
+   «Приём заявок в сезон сейчас закрыт» (`:278-287`); клиент сезон не передаёт;
+4. `version_no = MAX+1` в пределах `(project_id, season_id)` (`:288-293`);
+5. снимок девяти полей (`:296-306`), INSERT в `project_versions` (`:308-313`);
+6. `UPDATE projects SET current_version_id, season_id, status='submitted'` —
+   `season_id` проекта проставляется **именно здесь** (`:315-321`);
+7. `audit.record('lab.project.submitted', {projectId, seasonId, versionNo})` —
+   журнал + outbox (`:323-332`).
+
+Submit **не запускает анализ**: в `projects.service.ts` нет ни импорта, ни
+вызова `AnalysisService`. KYC и подписка на submit не проверяются — это
+условия листинга.
+
+Ограничение «сезон открыт» существует только в приложении; в БД
+`project_versions.season_id NOT NULL` требует лишь существования сезона.
+
+### 2.5. Analysis
+
+Запуск только ручной — `POST /projects/:id/analysis`. Вызывают кнопка кабинета
+(`apps/lab/src/pages/ProjectPage.tsx:197-200`), консоль
+(`apps/console/src/operations/lab.ts:312-320`), скрипт
+`scripts/reanalyze-projects.mjs:139-172`. Автоматической связки ни с submit,
+ни с outbox, ни с воркером нет. Анализ читает **живую строку** `lab.projects`
+(`analysis.service.ts:127-138`), а не снимок версии. Подробнее в §6.
+
+### 2.6. Listing
+
+`publishListing` — `projects.service.ts:703-801`: идемпотентность (`:720-722`)
+→ KYC владельца `kyc.has_valid_kyc(owner,'identity')` (`:726-730`) → пересчёт
+плана (`:734`) → активная подписка этого плана (`:736-745`) → непустые
+`complianceFlags` действующего паспорта блокируют (`:752-766`) → `UPDATE
+listing_status='listed', listed_at, required_plan_id` (`:768-774`) →
+`audit.record('lab.listing.published', {projectId, investmentAsk, currency})`
+(`:776-796`). Снятие — `:803-837`.
+
+Публичный каталог: роль БД `app_public_read`, keyset по `(listed_at, id)`,
+сортировки `listed_at_desc / ask_asc / ask_desc / relevance` —
+`apps/core/src/lab/catalog.service.ts:100-133,159-177`; фильтры
+`CatalogFilterSchema` (`q, taxonomyId, stage, geoCountry, askMin, askMax`) —
+`lab.ts:170-177`. Вью `lab.v_public_catalog` отдаёт `id, taxonomy_id, title,
+tagline, stage, geo_country, investment_ask, ask_currency, listed_at` —
+`M004_lab.sql:83-87`; `teaser_jsonb` наружу не отдаётся (`M004:81-82`).
+Права публичной роли ровно на allowlist колонок — тест
+`database/tests/rls.test.ts:300`, `invariants.test.ts:762`.
+
+Полная карточка инвестору — не отдельная вью, а RLS `projects_select`
+(`M004:238-245`); паспорт — `passports_read` (`M006:173-183`); материалы —
+`materials_select_investor` (`M065_investor_materials_access.sql:25-40`).
+Избранное — `lab.project_favorites` (`M063_project_favorites.sql:45-58`),
+добавить можно только проект из публичного каталога
+(`favorites.service.ts:143-151`).
+
+### 2.7. События по проекту
+
+| Глагол                      | Где                                             | Куда                   |
+| --------------------------- | ----------------------------------------------- | ---------------------- |
+| `lab.project.created`       | `projects.service.ts:120-128`                   | только журнал (`emit`) |
+| `lab.project.updated`       | `projects.service.ts:237-245`                   | только журнал          |
+| `lab.material.added`        | `projects.service.ts:509-517, 624-632, 673-681` | только журнал          |
+| `lab.project.submitted`     | `projects.service.ts:323-332`                   | журнал + outbox        |
+| `lab.listing.published`     | `projects.service.ts:776-796`                   | журнал + outbox        |
+| `lab.listing.unpublished`   | `projects.service.ts:819-833`                   | журнал + outbox        |
+| `lab.project.scored`        | `analysis.service.ts:479-504`                   | журнал + outbox        |
+| `lab.project.stage_changed` | `seasons.service.ts:387-402`                    | журнал + outbox        |
+
+`audit.record = emit + enqueue` — `apps/core/src/audit/audit.repository.ts:141-173`;
+outbox идемпотентен по `(aggregate_type, aggregate_id, aggregate_version, event_type)`
+(`:66-111`). Зарегистрированы, но никогда не эмитятся:
+`lab.project.status_changed` (`M011_seeds.sql:15`), `lab.project.graduated`,
+`lab.irs.recalculated`. Payload-схемы есть только для семи глаголов
+(`packages/contracts/src/events.ts:131-139`); для `stage_changed`, `submitted`,
+`scored` схемы нет.
+
+### 2.8. OpenAPI и тесты пути
+
+`openapi.json` собирается с декораторов Nest (`apps/core/src/health/openapi.routes.ts:51`,
+`openapi.controller.ts:30-135`), отдаётся только по сессии (`:41-59`). Пины:
+`apps/core/tests/techdebt.test.ts:136-169`, `security.test.ts:600-673`,
+`scripts/smoke-techdebt.mjs:465-503`.
+
+Тесты пути: `apps/core/tests/lab.test.ts` (S3-конфиг, presigned-форма, курсор,
+`RequestUploadSchema`, строгая валидация, `SEASON_TRANSITIONS`);
+`techdebt.test.ts:13-60` (`PROJECT_TRANSITIONS`); `billing.test.ts:24`;
+`database/tests/invariants.test.ts:217,246,349,363,592-610` (резолв тарифа,
+листинг без подписки, рост суммы блокирует листинг, версии append-only).
+Живые прогоны: `scripts/smoke-lab.mjs` (весь путь, `:174-995`),
+`scripts/smoke-techdebt.mjs`. **Скрипта `smoke:techdebt` в `package.json` нет** —
+запуск `node scripts/smoke-techdebt.mjs`.
+
+---
+
+## 3. Зависимости от `stage` (стадия зрелости)
+
+### 3.1. БД
+
+Три места: CHECK (`M004_lab.sql:24`), вью `v_public_catalog` (`M004:84`),
+column-level GRANT публичной роли (`M004:328-330`). **Ни одного триггера,
+индекса, функции или события, привязанных к `stage`, нет.**
+
+### 3.2. Ядро
+
+- INSERT/UPDATE — `projects.service.ts:97,106,212,225`; аудит создания — `:126`.
+- Выдача: `ProjectFull.stage` `:940,994`, `ProjectSummary.stage` `:139,153`.
+- Каталог: фильтр `stage = $n` — `catalog.service.ts:83-86`; колонка — `:114,138`.
+- Избранное — `favorites.service.ts:103,125`.
+- Интеграционный API: выпускники `integration.service.ts:358,747,760`, публичный
+  профиль `:525,539`; в контрактах интеграции `stage: z.string()`, не enum —
+  `packages/contracts/src/domain/integration.ts:45,104`.
+
+### 3.3. Анализ и скоринг
+
+- Читается `p.stage` (`analysis.service.ts:128`), входит в снимок входа и в
+  `inputSha256` (`:170,182`), уходит в шлюз (`:219`).
+- Потолки балла по стадии — `apps/core/src/ai/scoring-rules.ts:94-108`:
+  `no_verifiable_activity_claims` → 7 для `idea`, иначе 5;
+  `legal_form_missing` → 8 для `idea|mvp`, иначе 7;
+  `business_model_missing`/`numbers_contradict` → 4; `no_product_customer_money` → 3;
+  `ask_without_use_of_funds` → 7.
+- Тип `Stage` продублирован локально (`scoring-rules.ts:32`), не импортирован
+  из контрактов.
+- Эвристика шлюза: `STAGE_MATURITY` содержит **шесть** значений
+  (`idea 0.15, prototype 0.35, mvp 0.55, early_revenue 0.65, growth 0.75, scale 0.9`)
+  против четырёх в контракте; неизвестная стадия → `idea` —
+  `apps/ai-gateway/app/analyzer.py:149-156,294-295`. Стадия входит
+  множителем `(0.6 + 0.4·maturity)` в оси market/demand/scalability
+  (`:318,330,402`) и напрямую в `investment_readiness`/`product_readiness`
+  (`:417,432-434`).
+- Системный промпт LLM задаёт коридоры IRS по стадиям (idea 20–35, mvp 35–55,
+  early_revenue 45–65, growth 55–75) —
+  `apps/ai-gateway/prompts/project_analysis.system.v2.5.2.txt:327-338`.
+- Штраф `stage_mismatch` — `packages/contracts/src/domain/scoring-llm.ts:91`.
+
+### 3.4. Интерфейсы
+
+Русские подписи стадий зашиты в четырёх файлах:
+`apps/lab/src/pages/ProjectsPage.tsx:270-273`, `apps/web-public/src/App.tsx:389-394`,
+`apps/investor/src/pages/CatalogPage.tsx:23-28`,
+`apps/investor/src/pages/ProjectDetailsPage.tsx:17-22`. В избранном инвестора
+стадия выводится сырым кодом (`apps/investor/src/pages/FavoritesPage.tsx:133`).
+
+### 3.5. `lab.project.stage_changed` — про `status`, не про `stage`
+
+- Регистрация: `'Проект переведён на другой этап сезона'`, роли admin/organizer —
+  `M025_reviewer_materials_and_stages.sql:26`.
+- Эмиссия: `apps/core/src/seasons/seasons.service.ts:387-402`, payload
+  `{seasonId, from, to, reason, goldenTicketRedeemed}`, где `from/to` —
+  значения `ProjectStatus` (`draft → submitted → ai_review → …`).
+- Триггер `lab.enforce_stage_order()` работает с колонкой `status`
+  (`M025:122-155`); сообщения триггеров говорят «stage», имея в виду `status`
+  (`M025:107,112`, `M029:48,54`, `M030:51,57`).
+- Внешний скоуп `graduates:read` — `packages/contracts/src/index.ts:62`.
+  Потребителей внутри монорепо нет; наружу — вебхуки по скоупу
+  (`apps/core/src/events/webhooks.service.ts:174`).
+- Уведомления `season.stage.advanced/rejected` — `M026_stage_templates.sql:23-41`;
+  `STAGE_TITLES` — `seasons.service.ts:525-532`.
+
+Вывод: стадия зрелости `stage` во внешних контрактах фигурирует только как
+поле выдачи (`integration.ts:45,104`, `v_public_catalog`), а не как событие.
+Терминологическая ловушка сохраняется в коде: «этап» в сезонах = `status`.
+
+---
+
+## 4. Зависимости от `season_id`
+
+- Колонка проекта `M004:43`; индекс `(season_id, status)` `M004:52`
+  (повторная попытка в `M025:158-159` не применяется — имя занято).
+- `project_versions.season_id NOT NULL`, `UNIQUE (project_id, season_id, version_no)`
+  — `M004:102-112`.
+- Проставляется **только в submit** (`projects.service.ts:315-321`) из сезона
+  `applications_open` (`:278-287`).
+- Отдаётся: `ProjectFull.seasonId` (`:949,1004`), `ProjectVersion.seasonId`
+  (`:338,367`).
+- Перевод этапа требует `project.season_id === seasonId`, иначе «Проект не
+  участвует в этом сезоне» — `seasons.service.ts:330-332`; закрытый сезон
+  блокирует переводы — `:314-316`; квоты и расписание из `funnel_config_jsonb`
+  — `:514-522`; занятость этапов — `:275-281`.
+- Золотые билеты `(project_id, season_id)` — `:191-194,443-448`.
+- Рейтинг `seasons.mv_season_rating WHERE season_id` — `:119-126`; MV
+  пересоздана в `M067_rating_by_score10.sql:13-38`, фильтр `status IN
+('expert_review','bootcamp','finalist','graduated')`.
+- Интеграция: фильтр выпускников по `season_id` — `integration.service.ts:367`;
+  `season_number` в профиле — `:525-533`.
+- Эксперты: `expert_assignments.season_id`, `review_consensus.season_id` —
+  `M007:121-124`.
+- **Не зависят** от сезона: каталог, листинг, материалы, анализ, избранное
+  (в `catalog.service.ts`, `favorites.service.ts`, `analysis.service.ts`
+  `season_id` не встречается).
+- Кто переводит из `submitted` в `ai_review`: только организатор вручную
+  (`POST /seasons/:id/projects/:projectId/stage`); автоматической связки
+  «анализ завершён → этап» нет.
+
+---
+
+## 5. `investment_ask` → `required_plan_id` → подписка → листинг
+
+- Резолвер в БД: `billing.resolve_founder_plan(p_ask, p_at)` — активная версия
+  плана с `ask_limit IS NULL OR p_ask <= ask_limit`, `ORDER BY ask_limit NULLS
+LAST, version DESC LIMIT 1` — `M009_billing.sql:131-143`. Обёртка в ядре —
+  `projects.service.ts:911-921`; при `null` — `errors.internal`.
+- Вызовы: create `:89`; update только при `investmentAsk` `:203-205`;
+  публикация — пересчёт заново `:734`.
+- Constraint-триггер `lab.enforce_listing_requires_subscription()` —
+  `M009:264-291`: при `listed` и при **любом** изменении суммы или плана
+  требуется `required_plan_id = resolve_founder_plan(investment_ask)`
+  (`:280-284`) и `lab.can_list_project()` (активная подписка владельца на тот
+  же `plan_id`, `:246-262`). Перевод ошибок БД в доменные — `runMapped`,
+  `projects.service.ts:876-899`.
+- Тесты: «рост запроса сверх лимита тарифа блокирует публикацию» —
+  `database/tests/invariants.test.ts:363`; «листинг без подписки невозможен» —
+  `:349`.
+- Платежи выключены флагом `billing.payments.enabled` (`billing.service.ts:190-198`);
+  `POST /billing/payments` всегда `featureDisabled` (`billing.controller.ts:55-64`).
+  Подписка создаётся в `pending_payment` (`billing.service.ts:72`).
+- Кабинет: `BillingCard` показывает тариф по `requiredPlanId` —
+  `apps/lab/src/pages/BillingCard.tsx:123-124`; форма подсказывает «От суммы
+  зависит тариф подписки — его определяет сервер» (`ProjectsPage.tsx:294-309`).
+- Жёсткий рубль повторяется в пяти таблицах: `lab.projects.ask_currency`
+  (`M004:30`), `subscription_plans.currency` (`M009:23`),
+  `subscriptions.currency_snapshot` (`M009:162`), `commission_accruals.currency`
+  (`M009:305`), `invoices.currency` (`M009:378`), `payments.currency` (`M009:402`);
+  в контрактах `CurrencySchema = z.literal('RUB')` (`primitives.ts:71`); в
+  outbox `lab.listing.published` валюта константой `'RUB'`
+  (`projects.service.ts:776-796`).
+
+Понятий `entitlement` / `capability` в коде нет — они встречаются только в
+постановке и плане.
+
+---
+
+## 6. Вход анализа и скоринг после M066
+
+### 6.1. Что уходит в анализ
+
+Сборка входа — `apps/core/src/ai/analysis.service.ts:79-200`, одной
+транзакцией под advisory-локами на проект и пользователя (`:83-93`).
+
+Читается: `p.id, title, tagline, description, stage, updated_at,
+investment_ask, ask_currency, geo_country`, `taxonomy.name_ru`, `can_edit`
+(`:127-138`). Материалы — только `id, type, version` и только `uploaded_at IS
+NOT NULL` (`:148-153`).
+
+Снимок входа (`:165-181`): `title`, `tagline`, `description`,
+`summary = tagline + "\n" + description` (после `stripSlotMarkers`), `stage`,
+`nonce` (HMAC от `id|updated_at|title|summary`, `crypto.service.ts:166-171`),
+`markersRemoved`, `metadata {investmentAsk, currency, taxonomy, geoCountry}`,
+`projectUpdatedAt`, `materials[{id,type,version}]`.
+`inputSha256 = sha256(JSON.stringify(snapshot))` (`:182`).
+
+В шлюз уходит `{title, summary, stage, nonce, metadata, materials:[{type}]}`
+(`:215-230`). **Содержимое материалов не передаётся** — комментарий `:222-224`
+(«парсера дек нет, а ходить по ссылке сервером — SSRF»). Поля
+`Material.text/url` в типах есть (`ai-gateway.client.ts:35-52`,
+`apps/ai-gateway/app/main.py:158-189`), ядро их не заполняет. `launchCountry`
+объявлен шлюзом и промптом (`main.py:171`, `project_analysis.user.v2.5.2.txt:10`),
+ядром не заполняется. `taxonomy` уходит строкой `name_ru`, не кодом.
+
+Подстановка в промпт — `apps/ai-gateway/app/llm.py:216-228`; пользовательское
+сообщение — `apps/ai-gateway/prompts/project_analysis.user.v2.5.2.txt` (метка
+слота, метаданные, слот заявки `TITLE + SUMMARY`, повтор метаданных).
+Системный промпт 58 500 байт, константный байт в байт (`llm.py:101-115`).
+
+Следствие для входа из кабинета: форма основателя не содержит поля
+`description` (§8.1), а редактирование проекта из кабинета отсутствует, поэтому
+для проектов, созданных через кабинет, `summary` = `tagline` ≤ 300 знаков.
+
+### 6.2. Пайплайн
+
+- Триггер только ручной HTTP (§2.5). Outbox используется **после** анализа
+  для `lab.project.scored` (`:498-504`).
+- Ретраев вызова шлюза нет по решению (`ai-gateway.client.ts:24-28`).
+- Защиты: закрытие брошенных прогонов старше `AI_ANALYSIS_STALE_MINUTES`
+  (`:97-103`), отказ при активном прогоне (`:105-112`), суточная квота
+  `AI_ANALYSIS_DAILY_LIMIT` на пользователя (`:116-125`; env
+  `apps/core/src/config/env.ts:311,318`).
+- Проверка «вход не изменился» перед публикацией по `updated_at` и списку
+  материалов → `409` и отбрасывание результата (`:288-308`).
+- Голосование в шлюзе: N параллельных прогонов, публикуется медианный по IRS,
+  `votes=5` для DeepSeek — `apps/ai-gateway/app/main.py:435-546`,
+  `policy/ai-policy.json:191`.
+- Право запуска: `fp.role IN ('owner','editor')` или admin (`:132-143`), при
+  том что CHECK допускает только `owner/cofounder` (`M004:91`) — со-основатель
+  запустить анализ не может.
+
+`scripts/reanalyze-projects.mjs`: логин администратором и обычный
+`POST /projects/:id/analysis` (`:139-172`); `--only-stale` (`:101-111`)
+сравнивает только `model_id` действующего паспорта с активной моделью и не
+видит смены версии промпта — описано в `TODO.md:17-22,91-98`.
+
+### 6.3. Что считает код
+
+`apps/core/src/ai/scoring-rules.ts`: `AXIS_WEIGHTS` (`:20-30`: market .15,
+demand .15, competitive_edge .10, uniqueness .10, profitability .10,
+presentation_quality .05, scalability .15, investment_readiness .10,
+product_readiness .10), `computeIrs` (`:40-48`), `SCORE_TABLE` полуинтервалы
+82/74/66/58/50/42/33/24/13/0 → 10…1 (`:70-81`), потолки по стадии (`:94-108`),
+`computeScore10` (`:125-153`), `assertReadinessComplete` — ровно 13 измерений
+(`:158-168`), `assertAxesComplete` (`:171-179`),
+`IRS_DISCREPANCY_TOLERANCE = 0.5` (`:35`). Применение — `analysis.service.ts:531-572`;
+`score10Published = base`, `score10Proposed` — с потолками; расхождения с
+моделью в чекпойнт `scoring_rules` (`:326-344`).
+
+Эвристика и LLM **не смешиваются** — выбирается один провайдер
+(`main.py:334-338,412,592`); общее у них — форма ответа и пересчёт ядром.
+ADR-008 §3: веса осей неизменны, «иначе история паспортов несравнима»
+(`docs/architecture/ADR-008-llm-scoring.md:85-110`).
+
+### 6.4. Хранение результата и provenance
+
+Одной транзакцией `publish()` (`analysis.service.ts:276-521`):
+`investment_passports` (`:348-360`, `sources=[{type:'analysis_run', ref:runId}]`,
+предыдущий `superseded_at` `:975-991`), `passport_facts` (`:362-391`, finance/legal
+шифруются), `scores` (`:393-412`), `irs_scores` (`:417-428`), `readiness_map`
+(`:430-440`), `roadmaps` (`:444-470`), `agent_runs` (`:184-188,472-477`),
+`node_checkpoints` (`input_snapshot :193-197`, `scoring_rules :326-344`,
+`human_review :679-687`), `passport_texts` (`localization.service.ts:89-96`),
+`audit.events + outbox` (`:479-504`).
+
+Связь результата с входом — только через `sources[].ref = runId →
+node_checkpoints.input_snapshot.inputSha256`. Колонки хеша входа или ссылки
+на `project_versions` нет. `promptVersion` отдельной колонкой не хранится —
+только внутри строки `score_models.version` и в контексте аудит-события
+(`:491`).
+
+### 6.5. Локализация паспорта
+
+`apps/core/src/ai/localization.service.ts`: канон `ru-RU`, одна целевая
+`TARGET_LOCALE='en-US'` (`:24`), переводимые поля `:27-38`, отдельный прогон
+`passport_translation` (`:63-69`). Чтение подставляет вариант по
+`identity.users.locale`, не по `Accept-Language` (`analysis.service.ts:927-934`);
+при отсутствии — `translationPending` (`:788`).
+
+### 6.6. «Готовность» в коде
+
+В коде `readiness` — карта из 13 измерений с уровнями `low/medium/high`
+(`packages/contracts/src/domain/misc.ts:194-227`), не процент. Понятий
+`completeness` / процента заполненности в коде нет; единственные упоминания —
+в постановке (`постановка…v3.md:755,1240,1251`). Поле `recommendations`
+контракта (`misc.ts:221-227`) в кабинете не выводится (§8.4).
+
+### 6.7. Флаги, гейт, тесты
+
+Флаги `ai.scoring.enabled`, `ai.scoring.llm.enabled` — `analysis.service.ts:952-962`;
+включение LLM требует активного ключа и `eval_metrics_jsonb->>'passed'` для
+`llm:<provider>:<model>:v2.5.2` — `admin.service.ts:498-536`. Пер-тарифной или
+платной привязки анализа нет: в `run` ни entitlements, ни проверки подписки.
+Ключи: `scoring.ai_provider_credentials` (`M066:14-29`), провайдеры
+`yandex_gpt, gigachat, anthropic, openai` → `+kimi, qwen` (M069) → `+deepseek` (M070).
+
+Гейт `scripts/eval-ai-scoring.mjs` — 12 проверок (`:289-621`), фикстура 100
+карточек `fixtures/catalog/projects.json`, результат в
+`score_models.eval_metrics_jsonb` (`:623-652`). Тесты:
+`apps/core/tests/scoring-rules.test.ts`, `ai.test.ts`,
+`apps/ai-gateway/tests/test_analyzer.py`, `test_llm.py`, `test_policy.py`.
+
+---
+
+## 7. Материалы и хранилище
+
+- Правила загрузки — единый источник в контрактах `MATERIAL_UPLOAD_RULES`
+  (`lab.ts:190-206`): `deck` 50 МБ (pdf, pptx), `video` 500 МБ (mp4), `doc`
+  25 МБ (pdf, png, jpeg). `RequestUploadSchema` с `superRefine` тип↔MIME↔размер
+  (`lab.ts:218-252`). `AddProductLinkSchema` — только `https`, блок приватных
+  адресов (`lab.ts:274-286`).
+- Сервер: presigned **POST**-форма, ключ строит сервер
+  `projects/{projectId}/materials/{kind}/{materialId}` —
+  `apps/core/src/storage/s3.service.ts:57-59`, `presignUpload :392`; бакет из
+  `S3_BUCKET` (`:49-51`); MinIO с versioning — `infra/docker-compose.yml:155-209`.
+- Билет — `projects.service.ts:647-699`; подтверждение с проверкой сигнатуры
+  первых байт (`:62-69`, `:426-523`); квоты 50 материалов и 5 незавершённых
+  загрузок на проект (`:41,44,381-417`) через `lab.material_counters()`
+  SECURITY DEFINER (`M057:21-49`).
+- Отдача байт ядром, presigned-ссылок на чтение нет (`:555-593`, заголовки
+  `projects.controller.ts:96-131`); допускаются `pdf/png/jpeg/webp` (`:582`).
+- Уборка брошенных загрузок — роль `app_maintenance`
+  (`M039_maintenance_role_and_material_janitor.sql:25-80`),
+  `apps/core/src/maintenance/storage-janitor.service.ts:52-103`.
+- Видимости у материала **нет** ни в схеме, ни в контракте
+  (`ProjectMaterialSchema`, `lab.ts:294-303`); доступ решает RLS по роли
+  (`materials_member` `M056:59-69`/`M058:17-30`, рецензент `M025:36-37`,
+  инвестор `M065:25-31`).
+- Из кабинета основателя грузится **только `deck`**: тип зашит
+  (`apps/lab/src/pages/MaterialsCard.tsx:140,258`); `video` и `doc` из UI
+  недоступны. Индикатора прогресса нет (`:262`).
+- Изображений как сущности нет: ни логотипа, ни обложки — ни в контракте
+  проекта (`lab.ts:156-167`), ни в профиле (`identity.ts:178-190`); `sharp`
+  и библиотеки кадрирования отсутствуют во всех `package.json`. Единственный
+  путь картинки — материал `doc` с MIME `image/png|jpeg` (`lab.ts:204,223-229`).
+
+---
+
+## 8. Интерфейсы
+
+### 8.1. Форма основателя
+
+Одна форма — `CreateProjectForm`, `apps/lab/src/pages/ProjectsPage.tsx:178-336`,
+инлайн внутри списка проектов (`:61-79`). Стек React 18 + Vite, без роутера,
+стейт-менеджера и form-библиотеки (`apps/lab/package.json:15-25`).
+
+Поля (подписи дословно): «Название» `title` (`:242-252`), «Короткое описание»
+`tagline` (`:254-261`), «Стадия» — нативный `<select>` с опциями
+Идея / MVP / Первая выручка / Рост (`:263-275`), «Направление» — `<select>` из
+`nameRu` таксономии (`:277-292`), «Запрос инвестиций, ₽» `investmentAsk`
+с `pattern` и подсказкой про тариф (`:294-309`). Валюта зашита `'RUB'` (`:218`).
+
+Чего в форме **нет**, хотя контракт принимает: `description` (до 20 000),
+`geoCountry`, `geoRegion` (`lab.ts:109-119`). **Формы редактирования проекта
+нет**: `api.projects.update` вызывает только служебная консоль
+(`apps/console/src/operations/lab.ts:97-125`).
+
+Валидация — только HTML-атрибуты; Zod на клиенте применяется к **ответу**
+сервера (`packages/api-client/src/index.ts:364-371`); ошибки полей приходят от
+сервера списком `problem.errors` и раскладываются по `path` (`:221-233`).
+
+Черновика и автосохранения нет: в `apps/lab` нет `localStorage`/`sessionStorage`/
+IndexedDB; «Отмена» размонтирует форму. «Черновик» в продукте — серверный
+статус `draft` (`apps/lab/src/App.tsx:290`).
+
+### 8.2. Навигация кабинета
+
+Роутера нет — условный рендер по `useState openProject`
+(`apps/lab/src/App.tsx:127,183-203`); URL не меняется. `react-router-dom` есть
+только у админки (`apps/admin/package.json:18`). Страница проекта —
+`ProjectPage.tsx:141-240`: шапка, нотис, «Действия» («Подать в сезон»,
+«Запустить анализ», «Опубликовать листинг» / «Снять листинг», `:187-224`),
+далее `BillingCard`, `RoadmapCard`, `MaterialsCard`, `PassportCard`,
+`ReadinessCard`, `PublicationConsentsCard` (`:233-238`). Отдельных страниц
+версий и материалов нет; история подач — внутри `RoadmapCard`
+(`MaterialsCard.tsx:343-360`), этапы сезона — статичный список `STAGE_TITLES`
+(`:270-278`). `api.projects.roadmap` и `RoadmapSchema` существуют, но кабинет
+их не вызывает.
+
+### 8.3. Материалы в UI
+
+`MaterialsCard.tsx:55-267`: три шага (билет → `fetch` POST-формы с таймаутом
+300 с → `finalizeUpload`, `:123-178`); лимит проверяется до запроса билета из
+контракта (`:127-133`); ссылка на продукт — `Field` «Ссылка на продукт»,
+`type="url"` (`:237-248`). Список: `Badge` типа (`TYPE_TITLES :26-31`), статус
+разбора (`PARSE_STATUS_TITLES :39-45`).
+
+### 8.4. Паспорт у основателя и инвестора
+
+`PassportCard` — `ProjectPage.tsx:256-318`: версия, **сырой** `disclosureTier`
+(`:293`), `ScoreProvenance`, оси из `SCORE_AXIS_TITLES` (`:50-60`).
+`ReadinessCard` — `:320-380`: уровни low/medium/high → «слабо/средне/сильно»
+(`:43-47`), названия 13 измерений (`:27-41`); `recommendations` не выводятся.
+`ScoreProvenance` — `packages/cabinet/src/ScoreProvenance.tsx:31-84`: балл
+`score10Published`, строка происхождения, дисклеймер (`:17-19`),
+`translationPending` (`:81`).
+
+Инвестор: каталог `apps/investor/src/pages/CatalogPage.tsx:246-334`
+(стадия, title, tagline, сумма, избранное), превью при наведении
+`PreviewPopover` (`:346-391`); карточка `ProjectDetailsPage.tsx:176-357` —
+`description` как plain text `pre-line` (`:206-214`), оси (`:218-248`),
+материалы: ссылки (`:268-275`), файлы в `<iframe>` на
+`…/materials/:id/content#toolbar=0` с водяным знаком (`:289-351`).
+Избранное `FavoritesPage.tsx:130-175`.
+
+Витрина `apps/web-public/src/App.tsx`: каталог секцией (`:268-362`),
+`TeaserCard` (`:364-382`) — стадия, страна, title, tagline, сумма с «₽»
+(`:554-559`). **Страницы проекта на витрине нет**; серверный `/catalog/:id`
+фронт не вызывает. Картинок в карточках нет; файлы
+`apps/web-public/public/assets/*.jpg|png` не подключены ни в одном исходнике.
+
+### 8.5. i18n
+
+Механизма i18n нет: ни `i18next`, ни словарей, ни провайдера ни в одной
+`package.json`. Все пользовательские строки — инлайн в компонентах; локальные
+`Record<string,string>` дублируются между приложениями: оси —
+`ProjectPage.tsx:50-60` и `ProjectDetailsPage.tsx:31-41`; стадии — четыре
+файла (§3.4); статусы — `apps/lab/src/App.tsx:289-306`. `<html lang="ru">` во
+всех семи приложениях. Даты — `'ru-RU'` строкой (`MaterialsCard.tsx:356`,
+`BillingCard.tsx:186,263`, `ScoreProvenance.tsx:42` и др.); деньги — своя
+функция без `Intl` (`packages/ui/src/format.ts:19-37`) и отдельная копия в
+витрине (`web-public/src/App.tsx:554-559`).
+
+Локаль есть в модели: `LocaleSchema = ['ru-RU','en-US']`
+(`primitives.ts:99`), `CurrentUser.locale` (`identity.ts:184`), при
+регистрации жёстко `'ru-RU'` (`apps/auth/src/App.tsx:43`). Параметр `locale`
+принимают `/content/landing` и `/auth/consents/templates`
+(`api-client/src/index.ts:124-127,218-221`). Серверная локализация — только
+тексты паспорта (§6.5). `Accept-Language` не читается нигде.
+
+Оценка объёма: внутри `CreateProjectForm` ~17 пользовательских строк, на весь
+кабинет основателя ~200.
+
+### 8.6. Markdown
+
+Рендерера и санитайзера нет: ни `react-markdown`, ни `marked`, ни
+`DOMPurify` ни в одной `package.json`; `dangerouslySetInnerHTML` не
+встречается. Длинные тексты выводятся `whiteSpace:'pre-line'`
+(`ProjectDetailsPage.tsx:207`).
+
+### 8.7. Примитивы форм в `packages/ui`
+
+Есть (`packages/ui/src/primitives.tsx`): `Button` (`:44-97`), `Field`
+(label + hint + error, `role="alert"`, `:116-142`), `Input` (`:144-163`),
+`Card`, `Badge`, `Spinner`, `Skeleton`, `LoadingState`, `EmptyState`,
+`ErrorState`, `OfflineBanner`, `Container`, `Stack`; Nova-формы
+`PageHeading`, `TileCard`, `SectionCard`, `HeroBanner` и др.
+(`packages/ui/src/nova.tsx`); `PromptDialog` (`prompt-dialog.tsx:18-38`).
+
+Нет: `Select`, `TextArea`, `Checkbox`, `Radio`, `Switch`, `FileInput`, `Form`,
+`DatePicker`, `Modal` (кроме `PromptDialog`), `Tabs`, `Stepper`. `<select>`
+стилизуется локальной копией стиля `Input` (`ProjectsPage.tsx:338-348`),
+чекбоксы — голые `<input>` (`PublicationConsentsCard.tsx:190-200`).
+
+Схемо-ориентированный рендер форм существует **только в служебной консоли**:
+`OperationField {name,label,kind,required,options,placeholder,help,defaultValue}`,
+`FieldKind = text|password|number|select|textarea|checkbox|json|file` —
+`apps/console/src/types.ts:11-30`; рендер — `apps/console/src/components/OperationForm.tsx:12-153`.
+Заявка основателя уже описана в этой модели, включая `description`,
+`geoCountry`, `geoRegion` — `apps/console/src/operations/lab.ts:19-73`.
+
+### 8.8. Конфигурация фронта
+
+Всё build-time: `VITE_API_BASE_URL` или вывод из origin (`apps/lab/src/api.ts:22-52`),
+`__APP_VERSION__`, `__CABINET_PORTS__` через `define`
+(`apps/lab/vite.config.ts:56-65`). Публичного `/config` или `/features` нет;
+флаги читает только админка (`GET /admin/feature-flags`,
+`admin.controller.ts:191`). В кабинеты флаг доходит только как отказ `503
+feature_disabled` (`apps/core/src/common/errors.ts:125`). Переключателя
+«версии интерфейса» нет.
+
+### 8.9. Тесты фронта
+
+Юнит/компонентных тестов нет: `vitest.config.ts:16` — только `apps/core`,
+`database`, `packages/contracts`, `packages/api-client`. Форму покрывает
+`scripts/render-check-lab.mjs` (playwright): вход, форма, статус «Черновик»,
+материалы, подписка, согласия, доступность (`:201-525`).
+
+---
+
+## 9. Админка, контент в БД, конфигурация
+
+### 9.1. `apps/admin`
+
+React 18 + react-router 7 + Vite, ~4200 строк. Маршруты —
+`apps/admin/src/App.tsx:120-134`: `/plans`, `/subscriptions`, `/compliance`,
+`/season`, `/funnel`, `/templates`, `/support`, `/integrations`, `/flags`,
+`/access`. Экраны: тарифы (`pages/PlansPage.tsx:31`), подписки
+(`SubscriptionsPage.tsx:19`), комплаенс + решения по скорингу
+(`CompliancePage.tsx:24`, `ScoringReviewsSection.tsx:1-30`), статус сезона
+(`SeasonPage.tsx:11`), воронка сезона (`FunnelPage.tsx`), шаблоны уведомлений
+(`TemplatesPage.tsx:19`), поддержка (`SupportPage.tsx:25`), интеграции и ключи
+ИИ (`IntegrationsPage.tsx:69-90`), флаги (`FlagsPage.tsx:15`), роли
+(`AccessPage.tsx:25`).
+
+Единственный файл, знающий HTTP, — `apps/admin/src/api.ts:58-64,173-653`.
+Фронтенд ничего не решает о правах (`App.tsx:16-22,65`); весь
+`AdminController` закрыт `@Roles('admin')` на уровне класса
+(`apps/core/src/admin/admin.controller.ts:36-37`).
+
+Переиспользуемое для редактора текстов: `FeatureEditor`
+(`apps/admin/src/components/FeatureEditor.tsx:11`, список строк + пары
+ключ/значение), `PromptDialog` (основание правки). Общего компонента таблицы
+или CRUD-формы **нет** — каждая страница рисует свой `<table>`. Экранов
+«пользователи», «проекты», «эксперты» нет; есть справочник-автодополнение
+`GET /v1/admin/users|projects` (`apps/core/src/admin/directory.controller.ts:20-33`).
+
+### 9.2. Тексты витрины — эталонный образец «текст в БД + правка без релиза»
+
+БД описана в §1.9. Модель версий: черновиков и статуса публикации **нет** —
+действующая версия та, у которой `valid_from <= now() AND valid_to IS NULL`
+(`M048:16-17`). Публикация = закрыть прежнюю + вставить новую одной
+транзакцией (`apps/core/src/content/content.service.ts:50-84`); снятие —
+`:103-125`; история — 100 последних версий (`:128-140`). В журнал идут только
+`key/locale/reason`, сам текст не кладётся (`:86-96,115-123`).
+
+API — `apps/core/src/content/content.controller.ts`: `GET /v1/content/landing?locale=`
+публичный (`:27-33`), `POST /v1/admin/content/landing` (`:40-45`),
+`POST …/:id/withdraw` (`:47-54`), `GET …/history` (`:56-68`). Публичное чтение
+идёт под ролью БД `app_public_read` (`content.service.ts:36`). Контракты —
+`packages/contracts/src/domain/content.ts:19-76`; публикация требует `reason`
+3–500 (`:60-69`).
+
+**Экрана в `apps/admin` нет.** Правка доступна только в служебной консоли
+(`apps/console/src/operations/admin.ts:457-543`), которая на боевой контур не
+выкладывается (`gate:console-private`).
+
+Витрина читает `api.landingContent()` при монтировании
+(`apps/web-public/src/App.tsx:183,540`); при отсутствии блока подставляется
+**зашитый запасной текст** (`:157-176`). Кеша и ETag нет: ядро на каждый
+ответ ставит `Cache-Control: no-store` (`apps/core/src/main.ts:287-293`).
+Тело блока выводится текстовым узлом React, не разметкой (`App.tsx:198,201,547`).
+Живой прогон — `scripts/smoke-content.mjs` (7 проверок).
+
+### 9.3. Конфигурация в рантайме
+
+- Флаги `audit.feature_flags` читаются **прямым SELECT на каждый вызов, без
+  кеша** (`billing.service.ts:190-198`, `investments.service.ts:430,443`,
+  `analysis.service.ts:952-962`) — перезапуск не нужен. Правка —
+  `GET/PATCH /v1/admin/feature-flags[/:key]` (`admin.controller.ts:191-215`),
+  аудит `admin.feature_flag.changed` (`admin.service.ts:564-572`).
+- Env — `apps/core/src/config/env.ts` (821 строка zod), значение кешируется
+  на уровне модуля (`:790-816`) — изменение env = перезапуск.
+- Общей таблицы `settings` нет. Роль настроек играют флаги и версионируемые
+  доменные таблицы: `billing.subscription_plans`, `comms.notification_templates`,
+  `content.landing_blocks`, `seasons.seasons.funnel_config_jsonb`.
+- Ключи провайдеров ИИ: `scoring.ai_provider_credentials` (§6.7); адрес
+  провайдера в БД не хранится — он в `apps/ai-gateway/policy/ai-policy.json`.
+
+### 9.4. Тарифы в админке
+
+API — `admin.controller.ts:108-149`: `GET/POST plans`, `PATCH plans/:id`
+(правка ещё не вступившей версии), `DELETE plans/:id`, `POST plans/:id/close`.
+Правила: запрет публикации задним числом (`admin.service.ts:62-66`), не более
+одного объявления (`:70-82`), неизменяемость действующей версии триггерами
+(`M015_billing_admin_events.sql:62-66`, `M016_scheduled_plan_changes.sql:40-44`,
+в список отслеживаемых колонок входит `features_jsonb`). UI — `PlansPage.tsx` +
+`FeatureEditor.tsx` (в плейсхолдере пример `maxProjects`, `:110`).
+Публичный `/v1/pricing` `features_jsonb` не отдаёт
+(`apps/core/src/pricing/pricing.controller.ts:25-45`).
+
+### 9.5. Аудит и паттерн «версии + журнал»
+
+Глаголы регистрируются миграциями (19 файлов, последний —
+`M068_audit_verbs_llm_scoring.sql:13-23`); незарегистрированный глагол роняет
+транзакцию (`M068:3-8`). Гейт от расхождения кода и реестра —
+`database/tests/invariants.test.ts:123-146`. Паттерн «новая версия строки +
+глагол журнала» повторён четырежды: тарифы (`M009:12-33`), шаблоны
+уведомлений (`M008_comms.sql:29-43`, `apps/core/src/admin/templates.service.ts:51-111`),
+тексты витрины (§9.2), паспорта и переводы (`superseded_at`, `M066:59-70`).
+
+### 9.6. Шаблоны уведомлений и письма
+
+`comms.notification_templates` — `M008_comms.sql:29-43`: `code`, `channel`
+(push/telegram/email/sms/inapp), `locale` дефолт `ru-RU`, `version`,
+`title_template`, `body_template`; «одна активная на (code, channel, locale)»
+(`:42-43`). Сиды только `ru-RU`. Редактирование —
+`apps/core/src/admin/templates.controller.ts:20-43`, денилист персональных
+плейсхолдеров `templates.service.ts:156-187`.
+
+Транзакционные письма **мимо таблицы**, текст в коде:
+`apps/core/src/identity/verification.service.ts:100,182,274-285`,
+`apps/core/src/comms/support.service.ts:308-310`,
+`apps/core/src/identity/identity.service.ts:257-259`.
+
+### 9.7. Сезоны в админке
+
+Статус сезона — `SeasonPage.tsx:85-121`; воронка — `FunnelPage.tsx`.
+**Создания сезона нет ни в API, ни в UI** — только `M011_seeds.sql:77` и
+скрипты (`scripts/dev-stand.mjs:199`, `seed-demo.mjs:470`, `smoke-*.mjs`).
+
+### 9.8. Имя продукта «UNICORN LAUNCH» — где видно пользователю
+
+Для этапа 1. Видимые места: `<title>` семи приложений
+(`apps/{admin,web-public,auth,console,expert,investor,lab}/index.html:13`);
+шапки `apps/admin/src/App.tsx:71`, `apps/web-public/src/App.tsx:80,168`,
+`apps/expert/src/App.tsx:128`, `apps/investor/src/App.tsx:168`,
+`apps/lab/src/App.tsx:229`; водяной знак
+`apps/investor/src/pages/ProjectDetailsPage.tsx:171-172`; заголовок OpenAPI
+`apps/core/src/health/openapi.controller.ts:104`; темы писем
+`verification.service.ts:100,182`; `displayName` реалма и клиента
+`infra/keycloak/realm-launch.json:4,29`; баннеры скриптов
+`scripts/dev-stand.mjs:144`, `scripts/probe-mail-delivery.mjs:80`.
+
+Favicon `packages/ui/public/favicon.svg` текста не содержит.
+
+Внутренние идентификаторы (не трогать по плану): `@unicorn/*` в
+`package.json` пакетов; `unicorn-launch-core` (`apps/core/src/db/unit-of-work.ts:46,94`,
+`events/nats.client.ts:67`, `health/health.controller.ts:28`); база URI проблем
+`https://unicorn.vc/problems` (`packages/contracts/src/common/problem.ts:63`,
+`apps/core/src/main.ts:274`, `cache/ip-ceiling.ts:83,97`); БД `unicorn_launch`,
+роль `unicorn_owner`, бакет `unicorn-launch` (`.env.example:71-100,152`); realm
+и clientId (`realm-launch.json:2,28`); каталог `/opt/unicorn-launch`
+(`scripts/deploy.mjs:38`).
+
+### 9.9. Документация и скрипты
+
+`CHANGELOG.md`: последняя фаза **Ф69** (`:90`); правило «TODO — что осталось,
+CHANGELOG — что закрыли» (`:1-13`). Пост-фазовый порядок — `RULES.md:425-487`.
+Индекс ADR живёт в корневом `README.md:1108-1119` и **устарел**: ADR-008 не
+внесён, `database/` описан как «M000–M058» (`README.md:133`) при фактических 71. В `docs/architecture` индекса нет.
+
+`npm run session` (`package.json:18`) — сокет Docker → чужие коммиты →
+состояние стенда. `npm run deploy` (`:27`) — семь шагов с дампом БД и точкой
+отката (`scripts/deploy.mjs:1-29`). `gate` (`:63`) — агрегат из upstream,
+lint, typecheck, test, boundary, deps, secret-reuse, kek, roles-env,
+sast-config, ssh-keys, ai, net:strict.
+
+---
+
+## 10. Сводка: что schema-driven, где тексты зашиты
+
+| Что                                    | Источник правды сегодня                                                        | Правится без релиза      |
+| -------------------------------------- | ------------------------------------------------------------------------------ | ------------------------ |
+| Поля заявки                            | `lab.projects` + `CreateProjectRequestSchema` (`lab.ts:109-119`)               | нет                      |
+| Стадии                                 | CHECK `M004:24` + `ProjectStageSchema` `lab.ts:11` + 4 словаря в UI            | нет                      |
+| Подписи полей, подсказки, ошибки       | инлайн в `ProjectsPage.tsx:178-336` и других компонентах                       | нет                      |
+| Названия осей, измерений, статусов     | локальные `Record` в каждом приложении (§8.5)                                  | нет                      |
+| Тарифы, `ask_limit`, цена              | `billing.subscription_plans`, админский API                                    | да                       |
+| Тексты витрины (9 ключей)              | `content.landing_blocks` с версиями (§1.9, §9.2)                               | да, но только из консоли |
+| Шаблоны уведомлений                    | `comms.notification_templates` (`M026:22-41`), `/admin/notification-templates` | да                       |
+| Квоты и расписание этапов сезона       | `seasons.seasons.funnel_config_jsonb`                                          | да                       |
+| Флаги                                  | `audit.feature_flags`                                                          | да                       |
+| Веса осей IRS, таблица баллов, потолки | `scoring-rules.ts:20-108` (по ADR-008 неизменны)                               | нет                      |
+| Промпт LLM                             | файлы `apps/ai-gateway/prompts/*.v2.5.2.txt`                                   | нет                      |
+| Политика провайдеров ИИ                | `apps/ai-gateway/policy/ai-policy.json`; ключ и модель — из админки            | частично                 |
+| Описание формы заявки для консоли      | `apps/console/src/operations/lab.ts:19-73` (`OperationField`)                  | нет                      |
+| Таксономия                             | `lab.project_taxonomy (slug, name_ru, name_en)` `M004:8-16`                    | данные, не UI            |
+
+Двуязычие в данных есть в двух местах: `project_taxonomy.name_ru/name_en`
+(`M004:11-12`) и `landing_blocks.locale` / `passport_texts.locale`.
+
+---
+
+## 11. Расхождения и странности, найденные по пути
+
+Без оценки «баг или замысел» — только что делает код.
+
+1. **`askCurrency` при PATCH принимается схемой и молча не сохраняется** —
+   `lab.ts:122` против `projects.service.ts:208-220`.
+2. **Запуск анализа ищет роль `editor`**, которой нет в CHECK
+   (`analysis.service.ts:134` против `M004:91`); со-основатель запустить
+   анализ не может.
+3. **`stage` можно менять после подачи** (`update` без проверки статуса,
+   `:181-250`); снимок не пересоздаётся, а анализ отбросит результат по
+   `updated_at` (`analysis.service.ts:299-308`).
+4. **Сумма запроса меняется после листинга** и триггер БД потребует
+   соответствия тарифу — `M009:264-291`; в UI такого сценария нет, потому что
+   редактирования нет.
+5. **Событие `lab.project.status_changed` зарегистрировано, но не эмитится**
+   (`M011_seeds.sql:15`); `lab.project.graduated` и `lab.irs.recalculated` —
+   тоже; `graduated_at` ставит триггер БД (`M022:78-93`).
+6. **`created/updated/material.added` не идут в outbox** — внешние потребители
+   об изменении заявки не узнают.
+7. **Индекс из `M025:158-159` не применяется** — имя `projects_season_status`
+   занято `M004:52`, `IF NOT EXISTS` молча пропускает новое определение с
+   `WHERE deleted_at IS NULL`.
+8. **`launchCountry` в промпте всегда «не указана»** — ядро поле не заполняет.
+9. **`--only-stale` не видит смены промпта** (§6.2).
+10. **`disclosureTier`, `item.stage` в избранном, `invoice.status` выводятся
+    сырыми кодами** (`ProjectPage.tsx:293`, `FavoritesPage.tsx:133`,
+    `BillingCard.tsx:262`).
+11. **`show.publication.enabled=false`** при готовом экране согласий на
+    публичность (`PublicationConsentsCard.tsx`); связь флага с экраном в коде
+    не прослеживается.
+12. **Тип `Stage` продублирован** в `scoring-rules.ts:32`; в эвристике шлюза
+    шесть стадий против четырёх в контракте.
+13. **Заявка в консоли описана полнее, чем в кабинете** — консоль умеет
+    `description`, `geoCountry`, `geoRegion` и PATCH; кабинет — нет.
+
+---
+
+## 12. Чего в коде нет
+
+Подтверждённое отсутствие, по пунктам постановки:
+
+- отдельной сущности «инвестиционная заявка»; нескольких заявок на проект;
+- типа бизнеса; условности полей по стадии или типу; понятия
+  «применимо / обязательно / рекомендуется»;
+- готовности заявки как процента; весов разделов; версий схемы формы или
+  конфигурации готовности; ссылки снимка на какую-либо версию схемы;
+- лимита числа заявок или проектов на тариф; `entitlements` / `capabilities`;
+  платной привязки анализа;
+- уровня проверки заявки (`self_prepared / ai_reviewed / expert_reviewed`);
+  привязки паспорта к версии заявки или хешу входа на уровне схемы;
+- i18n на фронтендах; редактируемых продуктовых текстов в БД, кроме девяти
+  блоков витрины и шаблонов уведомлений; экрана правки текстов в админке;
+  словаря и ЧАВО; Markdown-рендерера и санитайзера; кеша публичного
+  контента; создания сезона из админки;
+- формы редактирования проекта в кабинете; черновика на клиенте;
+  автосохранения; мастера; роутера в кабинете; `Select`/`TextArea`/`Stepper`
+  в `packages/ui`;
+- логотипа, обложки, кадрирования, вариантов размеров, `sharp`;
+- уровней видимости полей (кроме allowlist колонок `v_public_catalog` и RLS);
+  видимости у материала; связи материалов с версией;
+- страницы проекта на витрине; публичного эндпоинта конфигурации для
+  кабинетов; переключателя версии интерфейса;
+- автоматического запуска анализа; воркера; связи «анализ → этап воронки»;
+- маршрута истории изменений проекта (есть только снимки подач и
+  `audit.events` без API);
+- юнит-тестов фронтенда.

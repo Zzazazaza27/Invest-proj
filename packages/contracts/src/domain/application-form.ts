@@ -5,7 +5,7 @@ import { BusinessTypeSchema, FundingScopeSchema, QuestionKeySchema } from './app
 
 /**
  * Конфигурация вопросов инвестиционной заявки
- * (docs/architecture/заявка-02-технический-план.md §0в).
+ * (docs/architecture/application-02-technical-plan.md §0в).
  *
  * Состав вопросов, их порядок, тексты и обязательность по стадиям — ДАННЫЕ:
  * документ этой формы лежит в `lab.application_form_versions`, публикуется
