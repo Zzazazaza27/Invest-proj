@@ -44,10 +44,21 @@
 - [legal-research-task.md](legal-research-task.md) — юридические вопросы
   (исследует Вика).
 - Исследовательская сводка «функции по площадкам» (118 разделов) — вне Git,
-  в рабочей папке исследования.
+  в рабочей папке исследования (`D:\Programming\Git\Daniz\Unicorn-research-maus`,
+  свежие PDF — `D:\Programming\Docs\Unicorn\Площадки\`).
 
-- [stage-2-architecture-clean-sheet.md](stage-2-architecture-clean-sheet.md) — архитектура Stage 2 с чистого листа (предложение, на обсуждении).
-- [stage-2-adr-provenance-milestones.md](stage-2-adr-provenance-milestones.md) — рабочие заметки: ревизия ADR, provenance, вехи.
+**Рабочие документы стадии 2** (по порядку чтения):
+
+- [stage-2-architecture-clean-sheet.md](stage-2-architecture-clean-sheet.md) —
+  архитектура Stage 2 с чистого листа, v2: инварианты, принципы, модель,
+  три контура (предложение на обсуждении).
+- [stage-2-vertical-slices.md](stage-2-vertical-slices.md) — план
+  вертикальных пользовательских срезов (ждёт подтверждения).
+- [stage-2-repo-migration-plan.md](stage-2-repo-migration-plan.md) — план
+  независимого репозитория с сохранением истории (ждёт подтверждения).
+- [stage-2-adr-provenance-milestones.md](stage-2-adr-provenance-milestones.md) —
+  рабочие заметки: ревизия ADR, provenance, вехи (не рамка; метки ADR — не
+  решения).
 
 ## Что обсудить (порядок — предложение)
 
