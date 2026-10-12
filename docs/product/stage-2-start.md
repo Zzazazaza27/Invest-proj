@@ -47,15 +47,21 @@
   в рабочей папке исследования (`D:\Programming\Git\Daniz\Unicorn-research-maus`,
   свежие PDF — `D:\Programming\Docs\Unicorn\Площадки\`).
 
-**Рабочие документы стадии 2** (по порядку чтения):
+> **Курс 2026-10-12:** проектирование бизнес-логики Stage 2 **приостановлено**
+> (сущности, сценарии, MVP, схема, срезы). Сначала — как вообще организовать
+> разработку одним человеком с AI-агентами (исследование готовых решений:
+> [ai-dev-harness-research.md](ai-dev-harness-research.md)).
 
-- [stage-2-architecture-clean-sheet.md](stage-2-architecture-clean-sheet.md) —
-  архитектура Stage 2 с чистого листа, v2: инварианты, принципы, модель,
-  три контура (предложение на обсуждении).
-- [stage-2-vertical-slices.md](stage-2-vertical-slices.md) — план
-  вертикальных пользовательских срезов (ждёт подтверждения).
+**Рабочие документы стадии 2** (ни один не является утверждённым решением):
+
 - [stage-2-repo-migration-plan.md](stage-2-repo-migration-plan.md) — план
-  независимого репозитория с сохранением истории (ждёт подтверждения).
+  независимого приватного репозитория с сохранением истории; решения Томаса
+  приняты, ждёт только имени репозитория.
+- [stage-2-architecture-clean-sheet.md](stage-2-architecture-clean-sheet.md) —
+  рабочий исследовательский документ: факты о существующем коде ценны,
+  продуктовая модель **не утверждена**.
+- [stage-2-vertical-slices.md](stage-2-vertical-slices.md) — **непринятый
+  преждевременный черновик, не roadmap.**
 - [stage-2-adr-provenance-milestones.md](stage-2-adr-provenance-milestones.md) —
   рабочие заметки: ревизия ADR, provenance, вехи (не рамка; метки ADR — не
   решения).
