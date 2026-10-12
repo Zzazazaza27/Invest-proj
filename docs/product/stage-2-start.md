@@ -46,6 +46,9 @@
 - Исследовательская сводка «функции по площадкам» (118 разделов) — вне Git,
   в рабочей папке исследования.
 
+- [stage-2-architecture-clean-sheet.md](stage-2-architecture-clean-sheet.md) — архитектура Stage 2 с чистого листа (предложение, на обсуждении).
+- [stage-2-adr-provenance-milestones.md](stage-2-adr-provenance-milestones.md) — рабочие заметки: ревизия ADR, provenance, вехи.
+
 ## Что обсудить (порядок — предложение)
 
 1. **Основной цикл в деталях** — что человек делает на каждом шаге, зачем
