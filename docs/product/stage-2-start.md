@@ -53,8 +53,9 @@
 > [ai-dev-harness-research.md](ai-dev-harness-research.md), принято как основа:
 > родной Claude Code + GitHub, Codex как независимый второй агент/ревьюер,
 > UI-оркестратор не ставим, собственный harness не пишем; эксперимент не
-> начат). Следующая задача — архитектура безопасной AI-native среды и обмена
-> Claude Code ↔ Codex.
+> начат). Исследование безопасной AI-native среды и обмена Claude Code ↔ Codex
+> выполнено, ждёт решений Томаса:
+> [ai-dev-environment-architecture.md](ai-dev-environment-architecture.md).
 >
 > **Репозиторий** (2026-10-12): работа идёт только в
 > `rebel-diesel/fifth-element` (приватный); старый — `legacy`, справочно.
