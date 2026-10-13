@@ -54,7 +54,8 @@
 > родной Claude Code + GitHub, Codex как независимый второй агент/ревьюер,
 > UI-оркестратор не ставим, собственный harness не пишем; эксперимент не
 > начат). Исследование безопасной AI-native среды и обмена Claude Code ↔ Codex
-> выполнено, ждёт решений Томаса:
+> выполнено, решения Томаса приняты 2026-10-13; дизайн эксперимента ручного
+> кросс-ревью — [ai-cross-review-experiment-design.md](ai-cross-review-experiment-design.md):
 > [ai-dev-environment-architecture.md](ai-dev-environment-architecture.md).
 >
 > **Репозиторий** (2026-10-12): работа идёт только в
