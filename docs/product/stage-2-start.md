@@ -75,6 +75,8 @@
   продуктовая модель **не утверждена**.
 - [stage-2-vertical-slices.md](stage-2-vertical-slices.md) — **непринятый
   преждевременный черновик, не roadmap.**
+- [mvp-readiness-map.md](mvp-readiness-map.md) и [stage-2-mvp-reconciliation.md](stage-2-mvp-reconciliation.md) — что нужно для запуска MVP; сверка ответов Тэнка и Мауса (черновики).
+- [stage-2-ops-requirements.md](stage-2-ops-requirements.md) — **обязательные требования к новому коду и выкату**: масштабирование, обновления без простоя.
 - [stage-2-adr-provenance-milestones.md](stage-2-adr-provenance-milestones.md) —
   рабочие заметки: ревизия ADR, provenance, вехи (не рамка; метки ADR — не
   решения).
