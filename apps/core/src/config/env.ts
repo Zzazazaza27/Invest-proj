@@ -56,20 +56,6 @@ const RawEnvSchema = z.object({
 
   DATABASE_URL: NonEmpty,
   /**
-   * Отдельное подключение регулируемого контура (логин-роль
-   * `app_investments_user`).
-   *
-   * Роль приложения `app_backend` намеренно НЕ состоит в группе
-   * `app_investments`: иначе любая ошибка в коде или SQL-инъекция в
-   * пользовательском контуре могла бы переключиться на роль, которой разрешена
-   * запись в реестр договоров. Поэтому инвестиционные команды идут не через
-   * `SET ROLE`, а через собственное соединение с собственными правами.
-   *
-   * Пусто — контур недоступен: операции упадут явной ошибкой конфигурации, а не
-   * тихо выполнятся под правами пользовательской роли.
-   */
-  DATABASE_URL_APP_INVESTMENTS: z.string().default(''),
-  /**
    * Подключение интеграционного контура. Роль `app_integration` читает проекции
    * для внешних систем и владеет вебхуками; роль приложения в эту группу не
    * входит. Пусто — Integration API недоступен, и это правильное поведение:
@@ -85,31 +71,6 @@ const RawEnvSchema = z.object({
    */
   INTEGRATION_TOKEN_SIGNING_KEY: z.string().default(''),
 
-  /**
-   * Оператор онлайн-платежей за услуги платформы (5.9.9).
-   *
-   * `test` — встроенный тестовый адаптер: денег не двигает, платежи помечаются
-   * тестовыми и раунд по ним в рабочем окружении не открывается. Настоящий
-   * провайдер ещё не выбран, поэтому другого значения пока нет.
-   *
-   * Ключ проверки подписи уведомлений живёт ЗДЕСЬ, а не в продуктовых
-   * настройках и не в Git: в базе его увидел бы любой, кто имеет доступ к
-   * администрированию, а в репозитории — вообще кто угодно. Пустой ключ
-   * означает, что уведомления проверить нечем, и они отвергаются.
-   */
-  PAYMENTS_PROVIDER: z.enum(['test']).default('test'),
-  PAYMENTS_MODE: z.enum(['test', 'live']).default('test'),
-  PAYMENTS_WEBHOOK_SECRET: z.string().default(''),
-  /**
-   * Подключение денежного контура. Роль `app_billing` пишет начисления, счета и
-   * платежи; роль приложения в эту группу не входит по той же причине, что и в
-   * `app_investments`, — ошибка в пользовательском контуре не должна получать
-   * право переписать деньги.
-   *
-   * Пусто — денежные сервисные операции недоступны и падают явной ошибкой
-   * конфигурации (ADR-006).
-   */
-  DATABASE_URL_APP_BILLING: z.string().default(''),
   /**
    * Подключение контура доставки уведомлений. Роль `app_notifications` читает
    * шаблоны и обновляет статусы отправки; читать прикладные данные ей не нужно
@@ -162,26 +123,13 @@ const RawEnvSchema = z.object({
   KEK_KYC_DOCUMENTS: z.string().default(''),
   KEK_KYB_DOCUMENTS: z.string().default(''),
   KEK_PASSPORT_SENSITIVE: z.string().default(''),
-  KEK_INVESTMENT_DOCUMENTS: z.string().default(''),
-  KEK_NOMINAL_ACCOUNT_EVIDENCE: z.string().default(''),
-  KEK_BILLING_DOCUMENTS: z.string().default(''),
   KEK_WEBHOOK_SECRETS: z.string().default(''),
-  KEK_AI_PROVIDER_SECRETS: z.string().default(''),
 
   RATE_LIMIT_DEFAULT_PER_MIN: z.coerce.number().int().min(1).default(120),
   RATE_LIMIT_AUTH_PER_MIN: z.coerce.number().int().min(1).default(30),
-  RATE_LIMIT_MONEY_PER_MIN: z.coerce.number().int().min(1).default(10),
-  /**
-   * Входящие уведомления оператора платежей.
-   *
-   * Выше денежного намеренно: здесь считается не пользователь, а внешняя
-   * система, чьё сообщение уже проверено подписью. Потерять уведомление
-   * дороже, чем пропустить лишний запрос.
-   */
-  RATE_LIMIT_PROVIDER_PER_MIN: z.coerce.number().int().min(1).default(120),
-  // Административные операции — отдельный класс. Денежный лимит 10/мин здесь
-  // неприменим: оператор за минуту делает и просмотры, и несколько правок, и
-  // такой лимит превращает кабинет в неработающий (проверено живым прогоном).
+  // Административные операции — отдельный класс: оператор за минуту делает и
+  // просмотры, и несколько правок, и жёсткий лимит превращает кабинет в
+  // неработающий (проверено живым прогоном).
   RATE_LIMIT_ADMIN_PER_MIN: z.coerce.number().int().min(1).default(60),
   /**
    * Потолок частоты по адресу поверх классовых вёдер.
@@ -360,29 +308,6 @@ const RawEnvSchema = z.object({
    */
   INTEGRATION_CLIENT_CERT_HEADER: z.string().default(''),
 
-  // --- AI-контур ----------------------------------------------------------
-  // Шлюз — единственный выход к моделям (ADR-007). Адрес и токен приходят из
-  // конфигурации: часть URL из пользовательского ввода была бы SSRF.
-  AI_GATEWAY_URL: z.string().default(''),
-  AI_GATEWAY_TOKEN: z.string().default(''),
-  // Вызов LLM-провайдера через шлюз идёт минуты: потолок 10 минут, значение — из .env.
-  AI_GATEWAY_TIMEOUT_MS: z.coerce.number().int().min(1000).max(600_000).default(30_000),
-  /**
-   * Сколько прогонов анализа один пользователь может запустить за сутки.
-   *
-   * Общий предел частоты тут не защищает: он на порядки выше стоимости одного
-   * анализа, и редактор проекта мог запускать дорогие прогоны десятками
-   * (SEC-17). После подключения платной модели это прямые деньги.
-   */
-  AI_ANALYSIS_DAILY_LIMIT: z.coerce.number().int().min(1).max(1000).default(20),
-  /**
-   * Через сколько минут прогон со статусом `running` считается брошенным.
-   *
-   * Нужен, чтобы упавший экземпляр не заблокировал проект навсегда: без этого
-   * «один активный прогон на проект» превратился бы в «ни одного больше».
-   */
-  AI_ANALYSIS_STALE_MINUTES: z.coerce.number().int().min(1).max(240).default(15),
-
   // --- Объектное хранилище (материалы проектов) ---------------------------
   // Файл идёт в S3 напрямую по presigned URL: через API он не проходит, чтобы
   // недоверенный контент не касался прикладного процесса.
@@ -429,9 +354,6 @@ function isLoopbackHost(host: string): boolean {
   const parts = octets.slice(1).map(Number);
   return parts.every((value) => value <= 255) && parts[0] === 127;
 }
-
-/** Потолок суточных запусков анализа для боевого контура (см. superRefine ниже). */
-const LLM_DAILY_LIMIT_PROD_MAX = 20;
 
 const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
   const isProd = env.NODE_ENV === 'production';
@@ -607,19 +529,6 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
     });
   }
 
-  // Тестовый адаптер платежей в рабочем окружении — это приём денег, которого
-  // не происходит, при внешне успешном экране оплаты. Либо настоящий
-  // провайдер, либо приём платежей выключен совсем.
-  if (isProd && env.PAYMENTS_MODE === 'live' && env.PAYMENTS_PROVIDER === 'test') {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['PAYMENTS_PROVIDER'],
-      message:
-        'рабочий режим платежей с тестовым адаптером: настоящий провайдер не подключён. ' +
-        'Выберите провайдера или оставьте PAYMENTS_MODE=test',
-    });
-  }
-
   if (isProd && env.DATABASE_URL_APP_INTEGRATION && !env.INTEGRATION_CLIENT_CERT_HEADER) {
     ctx.addIssue({
       code: 'custom',
@@ -642,17 +551,15 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
     // Проверяются ВСЕ фактически используемые домены, а не один blind index:
     // прежде остальные семь падали при первом использовании — ошибка
     // конфигурации всплывала на пользовательском запросе вместо старта
-    // (LOW внешнего аудита №2). Три домена (`kyc_documents`,
-    // `nominal_account_evidence`, `billing_documents`) намеренно
-    // зарезервированы схемой и кодом не вызываются — решение Ф27, их
-    // отсутствие в `.env` законно и держится гейтом `gate:kek`.
+    // (LOW внешнего аудита №2). Домен `kyc_documents` намеренно
+    // зарезервирован схемой и кодом не вызывается — решение Ф27, его
+    // отсутствие в `.env` законно и держится гейтом `gate:kek`. Домены
+    // инвестиционных, денежных документов и ключей ИИ удалены в 2.1-W05.
     const REQUIRED_KEK_ENVS = [
       'KEK_SEARCH_INDEX',
       'KEK_PASSPORT_SENSITIVE',
       'KEK_KYB_DOCUMENTS',
-      'KEK_INVESTMENT_DOCUMENTS',
       'KEK_WEBHOOK_SECRETS',
-      'KEK_AI_PROVIDER_SECRETS',
     ] as const;
     for (const name of REQUIRED_KEK_ENVS) {
       if (!Base64Key32.safeParse(env[name]).success) {
@@ -726,38 +633,6 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
       code: 'custom',
       path: ['S3_ENDPOINT'],
       message: 'в production обращение к хранилищу — только по https',
-    });
-  }
-
-  // ---- AI-контур ----------------------------------------------------------
-  // Адрес и токен идут парой: адрес без токена означает запросы к шлюзу без
-  // аутентификации, токен без адреса — секрет в конфигурации без применения.
-  if (Boolean(env.AI_GATEWAY_URL) !== Boolean(env.AI_GATEWAY_TOKEN)) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['AI_GATEWAY_URL'],
-      message: 'AI_GATEWAY_URL и AI_GATEWAY_TOKEN задаются вместе либо не задаются вовсе',
-    });
-  }
-  if (isProd && env.AI_GATEWAY_URL && !env.AI_GATEWAY_URL.startsWith('https://')) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['AI_GATEWAY_URL'],
-      message: 'в production обращение к шлюзу — только по https',
-    });
-  }
-  // Суточный предел запусков анализа. На стенде он поднимается до 1000, чтобы
-  // разово пересчитать весь каталог; в production такой лимит означает, что
-  // один пользователь может сжечь бюджет на модель за сутки. Предел боевого
-  // контура — 20 (LLM_DAILY_LIMIT_PROD_MAX); поднимать его осознанно и вместе
-  // с решением по стоимости, а не переменной окружения на горячую.
-  if (isProd && env.AI_ANALYSIS_DAILY_LIMIT > LLM_DAILY_LIMIT_PROD_MAX) {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['AI_ANALYSIS_DAILY_LIMIT'],
-      message:
-        `в production предел запусков анализа не выше ${LLM_DAILY_LIMIT_PROD_MAX} в сутки: ` +
-        'каждый запуск — платный вызов модели',
     });
   }
 

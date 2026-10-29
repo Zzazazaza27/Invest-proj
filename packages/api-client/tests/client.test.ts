@@ -156,11 +156,11 @@ describe('Транспорт: заголовки и учётные данные'
 describe('Обработка ошибок RFC 9457', () => {
   it('превращает problem+json в типизированную ApiError', async () => {
     const problem = {
-      type: 'https://unicorn.vc/problems/subscription_required',
-      title: 'Требуется подписка',
+      type: 'https://unicorn.vc/problems/kyc_required',
+      title: 'Требуется верификация',
       status: 403,
-      code: 'subscription_required',
-      detail: 'Полная карточка доступна по подписке инвестора',
+      code: 'kyc_required',
+      detail: 'Расширенный доступ открывается после проверки личности',
       traceId: 'trace-42',
     };
     const client = new ApiClient({
@@ -171,10 +171,10 @@ describe('Обработка ошибок RFC 9457', () => {
     const error = await client.request({ path: '/projects/x' }).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ApiError);
     const apiError = error as ApiError;
-    expect(apiError.code).toBe('subscription_required');
+    expect(apiError.code).toBe('kyc_required');
     expect(apiError.status).toBe(403);
     expect(apiError.traceId).toBe('trace-42');
-    expect(apiError.needsSubscription).toBe(true);
+    expect(apiError.needsKyc).toBe(true);
   });
 
   it('распознаёт требование step-up MFA', async () => {

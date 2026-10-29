@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createHmac } from 'node:crypto';
 import {
-  CreateListingRefRequestSchema,
   CreateServiceAccountRequestSchema,
   CreateWebhookRequestSchema,
   INTEGRATION_SCOPES,
@@ -9,10 +8,7 @@ import {
 } from '@unicorn/contracts';
 import { resetEnvCache } from '../src/config/env';
 import { parseOrThrow } from '../src/common/validation';
-import {
-  decodeIntegrationCursor,
-  encodeIntegrationCursor,
-} from '../src/integration/integration.service';
+import { decodeIntegrationCursor, encodeIntegrationCursor } from '../src/common/keyset-cursor';
 import { issueServiceToken, verifyServiceToken } from '../src/integration/service-auth';
 
 /**
@@ -38,9 +34,7 @@ const BASE_ENV: NodeJS.ProcessEnv = {
   // ронять запуск, а не всплывать на пользовательском запросе.
   KEK_PASSPORT_SENSITIVE: Buffer.alloc(32, 8).toString('base64'),
   KEK_KYB_DOCUMENTS: Buffer.alloc(32, 9).toString('base64'),
-  KEK_INVESTMENT_DOCUMENTS: Buffer.alloc(32, 10).toString('base64'),
   KEK_WEBHOOK_SECRETS: Buffer.alloc(32, 11).toString('base64'),
-  KEK_AI_PROVIDER_SECRETS: Buffer.alloc(32, 12).toString('base64'),
 };
 
 /*
@@ -72,7 +66,7 @@ describe('Токен сервисного клиента', () => {
   const input = {
     serviceAccountId: '018f2b7c-0000-7000-8000-000000000001',
     clientId: 'capital',
-    scopes: ['graduates:read', 'passport:read'],
+    scopes: ['webhooks:manage'],
     tokenEpoch: 1,
   };
 
@@ -204,7 +198,7 @@ describe('Контракты Integration API', () => {
         CreateServiceAccountRequestSchema.safeParse({
           name: 'X',
           clientId,
-          scopes: ['deals:read'],
+          scopes: ['webhooks:manage'],
           mtlsCertFingerprint: 'a'.repeat(64),
         }).success,
       ).toBe(false);
@@ -231,7 +225,7 @@ describe('Контракты Integration API', () => {
     expect(
       CreateWebhookRequestSchema.safeParse({
         url: 'https://example.org/hook',
-        subscribedVerbs: ['lab.project.graduated'],
+        subscribedVerbs: ['lab.listing.published'],
       }).success,
     ).toBe(true);
   });
@@ -241,16 +235,5 @@ describe('Контракты Integration API', () => {
       CreateWebhookRequestSchema.safeParse({ url: 'https://example.org', subscribedVerbs: [] })
         .success,
     ).toBe(false);
-  });
-
-  it('регистрация листинга требует внешнего идентификатора', () => {
-    expect(() =>
-      parseOrThrow(CreateListingRefRequestSchema, {
-        projectId: '018f2b7c-0000-7000-8000-000000000001',
-        remoteSystem: 'unicorn-capital',
-        remoteType: 'listing',
-        remoteId: '',
-      }),
-    ).toThrow();
   });
 });

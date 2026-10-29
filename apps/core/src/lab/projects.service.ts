@@ -3,14 +3,10 @@ import {
   uuidv7,
   type AddProductLink,
   type CreateProjectRequest,
-  type ApplicationPolicy,
-  type ApplyDisclosureResult,
   type ProjectFull,
-  type ProjectLimits,
   type ProjectMaterial,
   type MaterialUploadResult,
   type ProjectSummary,
-  type ProjectVersion,
   type RequestUpload,
   type UpdateProjectRequest,
   type UploadTicket,
@@ -19,10 +15,6 @@ import { AppError, errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
-import { SEASONS_FLAG, seasonsEnabled } from '../common/seasons-gate';
-import { ApplicationsService, activeSchemaVersion, loadActivePolicy } from './applications.service';
-import { currentDisclosureDigest } from './project-views.service';
-import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
 import { MAX_UPLOAD_BYTES } from './material-rules';
 import { MaterialUploadsService } from './material-uploads.service';
 
@@ -30,16 +22,10 @@ import { MaterialUploadsService } from './material-uploads.service';
  * Проекты и листинги основателя.
  *
  * Публикация — не смена флага, а прохождение условий: действующая проверка
- * личности владельца и отсутствие остановки комплаенса. Тариф основателя в
- * условия НЕ входит: ежемесячная подписка по сумме привлечения отменена
- * (M094, 5.9) — запуск конкретного раунда оплачивается разово.
+ * личности владельца.
  */
 
-/** Лимиты загрузки по типу материала. Больше — отказ на стороне хранилища. */
-/**
- * Предел числа материалов на проект. Не «красивое число»: заявка с полусотней
- * приложений не читается человеком, а рецензент обязан её прочесть.
- */
+/** Предел числа материалов на проект: полсотни приложений человек не прочтёт. */
 const MAX_MATERIALS_PER_PROJECT = 50;
 
 /** Незавершённых загрузок одновременно: больше — это уже не работа, а запас. */
@@ -51,25 +37,12 @@ export class ProjectsService {
     private readonly db: Database,
     private readonly audit: AuditRepository,
     private readonly s3: S3Service,
-    private readonly applications: ApplicationsService,
     private readonly uploads: MaterialUploadsService,
   ) {}
 
   async create(ctx: RequestContext, input: CreateProjectRequest): Promise<ProjectFull> {
     const id = uuidv7();
     return this.db.transaction(ctx, async (tx) => {
-      // Лимит проектов аккаунта — одна проверка под локом аккаунта (план 0.2
-      // §0г.2 п.1): 0 — безлимит; источник — политика заявок, точка расширения
-      // под будущую подписку. Два параллельных создания не обойдут лимит.
-      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-        `account-projects:${ctx.userId}`,
-      ]);
-      const limits = await this.projectLimitsInTx(tx, ctx);
-      if (limits.projects.remaining !== null && limits.projects.remaining <= 0) {
-        throw errors.limitExceeded(
-          `Достигнут предел проектов аккаунта: ${limits.projects.used} из ${limits.projects.limit}`,
-        );
-      }
       // RETURNING здесь недопустим, и это не стилистика: возврат строки требует
       // прав на SELECT, а видимость проекта даёт запись в founders_projects,
       // которой в этот момент ещё нет. INSERT ... RETURNING упал бы на RLS —
@@ -121,33 +94,6 @@ export class ProjectsService {
         ]);
       }
 
-      // С M071 у проекта с первой секунды есть заявка — как у перенесённых:
-      // схема 0, поля из проекта. Кабинет v1 её не видит, но подача через
-      // старый маршрут и список заявок v2 работают одинаково для старых и
-      // новых проектов.
-      const applicationId = uuidv7();
-      await tx.query(
-        // Старая форма (схема 0) не различает предмет финансирования — заявка
-        // проекта всегда «на проект в целом»; с M078 это пишется явно.
-        `INSERT INTO lab.investment_applications
-           (id, project_id, stage, investment_ask, ask_currency, schema_version,
-            answers_jsonb, created_by, funding_scope)
-         VALUES ($1, $2, $3, $4::numeric, $5, 0, $6::jsonb, $7, 'project')`,
-        [
-          applicationId,
-          id,
-          input.stage,
-          input.investmentAsk,
-          input.askCurrency,
-          JSON.stringify(input.description ? { description: input.description } : {}),
-          ctx.userId,
-        ],
-      );
-      await tx.query(`UPDATE lab.projects SET current_application_id = $2 WHERE id = $1`, [
-        id,
-        applicationId,
-      ]);
-
       await this.audit.emit(tx, {
         verb: 'lab.project.created',
         actorId: ctx.userId,
@@ -164,35 +110,14 @@ export class ProjectsService {
   }
 
   /** Проекты, к которым пользователь причастен. RLS отдаёт только свои. */
-  /** Лимит проектов аккаунта и его происхождение — до создания проекта. */
-  async projectLimits(ctx: RequestContext): Promise<ProjectLimits> {
-    return this.db.readOnly(ctx, (tx) => this.projectLimitsInTx(tx, ctx));
-  }
-
-  private async projectLimitsInTx(tx: Tx, ctx: RequestContext): Promise<ProjectLimits> {
-    const policy = await loadActivePolicy(tx);
-    // Единица подсчёта конечного лимита — вопрос реестра решений 2026-09-18;
-    // до него считаются все неудалённые проекты, где аккаунт — владелец.
-    const { rows } = await tx.query<{ count: string }>(
-      `SELECT count(*)::text AS count
-         FROM lab.founders_projects fp
-         JOIN lab.projects p ON p.id = fp.project_id
-        WHERE fp.user_id = $1 AND fp.role = 'owner' AND p.deleted_at IS NULL`,
-      [ctx.userId],
-    );
-    return computeProjectLimits(policy.version, policy.config, Number(rows[0]?.count ?? '0'));
-  }
-
   async listMine(ctx: RequestContext): Promise<ProjectSummary[]> {
     return this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<ProjectSummaryRow>(
         `SELECT p.id, p.title, p.stage, p.status, p.listing_status,
-                p.ask_currency,
-                rv.raising, rv.target::text AS round_target, rv.currency AS round_currency,
+                p.investment_ask::text AS investment_ask, p.ask_currency,
                 fp.role, p.created_at
            FROM lab.founders_projects fp
            JOIN lab.projects p ON p.id = fp.project_id
-           LEFT JOIN LATERAL lab.round_view(p.id) rv ON true
           WHERE fp.user_id = $1 AND p.deleted_at IS NULL
           ORDER BY p.created_at DESC
           LIMIT 100`,
@@ -204,9 +129,8 @@ export class ProjectsService {
         stage: row.stage,
         status: row.status,
         listingStatus: row.listing_status,
-        investmentAsk: row.round_target ?? null,
-        askCurrency: (row.round_currency?.trim() ?? row.ask_currency) as 'RUB',
-        raising: row.raising ?? 'undisclosed',
+        investmentAsk: row.investment_ask,
+        askCurrency: row.ask_currency as 'RUB',
         role: row.role,
         createdAt: row.created_at.toISOString(),
       }));
@@ -274,21 +198,6 @@ export class ProjectsService {
         const row = rows[0];
         if (!row) throw errors.notFound({ subject: 'project' });
 
-        // Кабинет v1 правит сумму и стадию на проекте; с M071 они живут в
-        // текущей заявке, а проект — производный кеш. Чтобы v1 не расходился с
-        // заявкой (следующая проекция вернула бы старое значение), правка
-        // переносится в текущую незаархивированную заявку схемы 0.
-        if (input.investmentAsk !== undefined || input.stage !== undefined) {
-          await tx.query(
-            `UPDATE lab.investment_applications
-                SET investment_ask = COALESCE($2::numeric, investment_ask),
-                    stage          = COALESCE($3, stage)
-              WHERE id = (SELECT current_application_id FROM lab.projects WHERE id = $1)
-                AND status <> 'archived' AND schema_version = 0`,
-            [projectId, input.investmentAsk ?? null, input.stage ?? null],
-          );
-        }
-
         await this.audit.emit(tx, {
           verb: 'lab.project.updated',
           actorId: ctx.userId,
@@ -302,131 +211,6 @@ export class ProjectsService {
         return mapProject(row);
       }),
     );
-  }
-
-  /**
-   * Подача проекта в сезон — старый маршрут, теперь обёртка над подачей
-   * заявки (план 0.2 §2.14, коммит 2.3).
-   *
-   * Поведение для кабинета v1 не меняется: требуется открытый сезон, проект
-   * должен быть в `draft` или `submitted`, снимок неизменяем, проект получает
-   * `season_id`. Что изменилось внутри: снимок делает сервис заявок по
-   * ТЕКУЩЕЙ заявке проекта (после переноса M071 она есть у каждого), а
-   * политика ограничений здесь не проверяется — v1 работает как прежде до
-   * переключения на v2.
-   */
-  async submit(ctx: RequestContext, projectId: string): Promise<ProjectVersion> {
-    return this.db.transaction(ctx, async (tx) => {
-      // Лок на проект: два параллельных submit считали ОДИН и тот же
-      // version_no, второй падал на UNIQUE и наружу уходил 500 вместо
-      // доменного отказа (LOW внешнего аудита №2). Тот же ключ, что у
-      // остальных путей, меняющих материалы и версии проекта.
-      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-        `project-write:${projectId}`,
-      ]);
-      const { rows: projectRows } = await tx.query<ProjectRow>(
-        `SELECT ${PROJECT_COLUMNS} FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
-        [projectId],
-      );
-      const project = projectRows[0];
-      if (!project) throw errors.notFound({ subject: 'project' });
-      if (project.status !== 'draft' && project.status !== 'submitted') {
-        throw errors.stateTransition('Проект уже в работе: подача новой версии недоступна');
-      }
-
-      // Сезоны отложены (M088): подача «в сезон» (кабинет v1) закрыта;
-      // профиль подаётся мастером v2 без сезона (`POST /applications/:id/submit`).
-      if (!(await seasonsEnabled(tx))) throw errors.featureDisabled(SEASONS_FLAG);
-      const season = await tx.query<{ id: string }>(
-        `SELECT id FROM seasons.seasons
-          WHERE status = 'applications_open'
-          ORDER BY number DESC LIMIT 1`,
-      );
-      const seasonId = season.rows[0]?.id;
-      if (!seasonId) {
-        throw errors.stateTransition('Приём заявок в сезон сейчас закрыт');
-      }
-
-      // Текущая заявка проекта; если её нет (проект создан мимо переноса) —
-      // последняя незаархивированная, иначе заявка из полей проекта, как её
-      // создал бы перенос M071.
-      let applicationId = project.current_application_id;
-      if (!applicationId) {
-        const { rows } = await tx.query<{ id: string }>(
-          `SELECT id FROM lab.investment_applications
-            WHERE project_id = $1 AND status <> 'archived'
-            ORDER BY created_at DESC LIMIT 1`,
-          [projectId],
-        );
-        applicationId = rows[0]?.id ?? null;
-      }
-      if (!applicationId) {
-        applicationId = uuidv7();
-        await tx.query(
-          `INSERT INTO lab.investment_applications
-             (id, project_id, stage, investment_ask, ask_currency, schema_version,
-              answers_jsonb, created_by, funding_scope)
-           VALUES ($1, $2, $3, $4::numeric, $5, 0, $6::jsonb, $7, 'project')`,
-          [
-            applicationId,
-            projectId,
-            project.stage,
-            project.investment_ask,
-            project.ask_currency,
-            JSON.stringify(project.description ? { description: project.description } : {}),
-            ctx.userId,
-          ],
-        );
-      }
-
-      const version = await this.applications.submitInTx(tx, ctx, applicationId, {
-        seasonId,
-        enforcePolicy: false,
-      });
-
-      // Событие проекта сохраняется ради потребителей старого пути; версия
-      // агрегата — по счётчику, а не по номеру версии: у двух заявок одного
-      // проекта номера версий совпадают.
-      await this.audit.record(tx, {
-        verb: 'lab.project.submitted',
-        actorId: ctx.userId,
-        actorRole: 'founder',
-        aggregateType: 'project',
-        aggregateId: projectId,
-        aggregateVersion: await this.audit.nextAggregateVersion(
-          tx,
-          'project',
-          projectId,
-          'lab.project.submitted',
-        ),
-        payload: { projectId, seasonId, versionNo: version.versionNo, applicationId },
-        traceId: ctx.traceId,
-      });
-
-      return version;
-    });
-  }
-
-  /**
-   * История поданных версий заявки.
-   *
-   * Отдаются только метаданные: сам снимок (`snapshot_jsonb`) — это заявка
-   * целиком, и её содержимое читается через карточку проекта, где действуют
-   * собственные правила видимости. Кто увидит список, решает RLS: владелец,
-   * админ, организатор и назначенный рецензент (M025).
-   */
-  async listVersions(ctx: RequestContext, projectId: string): Promise<ProjectVersion[]> {
-    return this.db.readOnly(ctx, async (tx) => {
-      const { rows } = await tx.query<VersionRow>(
-        `SELECT ${VERSION_COLUMNS}
-           FROM lab.project_versions
-          WHERE project_id = $1
-          ORDER BY submitted_at DESC, version_no DESC
-          LIMIT 100`,
-        [projectId],
-      );
-      return rows.map(mapVersion);
-    });
   }
 
   /**
@@ -511,7 +295,7 @@ export class ProjectsService {
     if (outcome.state === 'ready') {
       material = await this.db.readOnly(ctx, async (tx) => {
         const { rows } = await tx.query<MaterialRow>(
-          `SELECT id, project_id, type, version, url, parse_status, created_at, visibility
+          `SELECT id, project_id, type, version, url, created_at, visibility
              FROM lab.project_materials WHERE id = $1 AND project_id = $2`,
           [materialId, projectId],
         );
@@ -537,7 +321,7 @@ export class ProjectsService {
         // Только подтверждённые: выданный и брошенный билет не материал, и
         // показывать его как материал значит вводить в заблуждение и
         // основателя, и рецензента.
-        `SELECT id, project_id, type, version, url, parse_status, created_at, visibility
+        `SELECT id, project_id, type, version, url, created_at, visibility
            FROM lab.project_materials
           WHERE project_id = $1 AND uploaded_at IS NOT NULL
           ORDER BY created_at DESC
@@ -624,9 +408,9 @@ export class ProjectsService {
           // владельцу, ни рецензенту (M037/M040). То же правило продублировано
           // триггером БД — сервисный слой здесь не единственная защита.
           `INSERT INTO lab.project_materials
-             (id, project_id, type, version, url, parse_status, uploaded_by, uploaded_at)
-           VALUES ($1, $2, 'product_link', $3, $4, 'not_required', $5, now())
-           RETURNING id, project_id, type, version, url, parse_status, created_at, visibility`,
+             (id, project_id, type, version, url, uploaded_by, uploaded_at)
+           VALUES ($1, $2, 'product_link', $3, $4, $5, now())
+           RETURNING id, project_id, type, version, url, created_at, visibility`,
           [id, input.projectId, version, input.url, ctx.userId],
         );
 
@@ -683,9 +467,8 @@ export class ProjectsService {
         await tx.query(
           `INSERT INTO lab.project_materials
              (id, project_id, type, version, upload_key, upload_expires_at,
-              upload_content_type, upload_max_bytes, next_check_at,
-              parse_status, uploaded_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + interval '1 minute', 'queued', $9)`,
+              upload_content_type, upload_max_bytes, next_check_at, uploaded_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + interval '1 minute', $9)`,
           [
             materialId,
             input.projectId,
@@ -802,27 +585,6 @@ export class ProjectsService {
         );
         if (!kyc.rows[0]?.valid) throw errors.kycRequired();
 
-        // Флаги комплаенса в действующем паспорте останавливают публикацию до
-        // решения человека (ADR-008 §4). Обещание гарантированной доходности —
-        // это не минус балл, а признак, требующий остановки: и по обязанностям
-        // оператора, и по признакам финансовой пирамиды, и по требованиям к
-        // рекламе финансовых услуг. Решение принимается в очереди комплаенса.
-        const compliance = await tx.query<{ status: string | null; flags: string[] | null }>(
-          `SELECT jsonb_data->'complianceReview'->>'status' AS status,
-                  ARRAY(SELECT jsonb_array_elements_text(COALESCE(jsonb_data->'complianceFlags', '[]'::jsonb))) AS flags
-             FROM scoring.investment_passports
-            WHERE project_id = $1 AND superseded_at IS NULL`,
-          [projectId],
-        );
-        const held = compliance.rows[0];
-        if (held && (held.flags?.length ?? 0) > 0 && held.status !== 'allowed') {
-          throw errors.stateTransition(
-            held.status === 'blocked'
-              ? 'Публикация закрыта решением комплаенса по признакам, найденным при оценке'
-              : 'Публикация приостановлена до решения комплаенса: оценка выявила признаки, требующие проверки человеком',
-          );
-        }
-
         // Доступ наружу решает режим видимости (lab.project_audience, M087),
         // листинг — его следствие и кеш для v1 и Integration API.
         await tx.query(
@@ -927,105 +689,6 @@ export class ProjectsService {
   }
 
   /**
-   * «Применить новые условия раскрытия» (5.7.3, план заявка-04 §3.4):
-   * согласие владельца переводится на активную версию конфигурации — только
-   * на ту, которую он видел в предпросмотре (`formVersion`); иначе 409 и
-   * повторный просмотр. Тем же действием расширяются условия незавершённого
-   * раунда (`roundId`) — без нового раунда. Сужение администратором
-   * действует и без этого действия (эффективная видимость — строже из двух).
-   */
-  async applyDisclosure(
-    ctx: RequestContext,
-    projectId: string,
-    input: { formVersion: number; roundId?: string; contentDigest: string },
-  ): Promise<ApplyDisclosureResult> {
-    return this.db.transaction(ctx, async (tx) => {
-      // Лок проекта: проверка отпечатка и запись — одно целое; параллельная
-      // правка раунда или режима ждёт, а не проскакивает между ними (5.7.5).
-      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
-        `project-write:${projectId}`,
-      ]);
-      const { rows } = await tx.query<{
-        disclosed_version_id: string | null;
-        disclosure_form_version: number | null;
-      }>(
-        `SELECT disclosed_version_id, disclosure_form_version
-           FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
-        [projectId],
-      );
-      const project = rows[0];
-      if (!project) throw errors.notFound({ subject: 'project' });
-      const active = await activeSchemaVersion(tx);
-      if (input.formVersion !== active) {
-        throw errors.conflict(
-          'Условия раскрытия изменились после предпросмотра: откройте предпросмотр заново',
-          { seen: input.formVersion, active },
-        );
-      }
-      if (input.contentDigest !== (await currentDisclosureDigest(tx, projectId))) {
-        // Снимок, режим или параметры раунда изменились после предпросмотра
-        // (в том числе из другой вкладки): расширять раскрытие молча нельзя.
-        throw errors.conflict(
-          'Содержимое изменилось после предпросмотра: обновите предпросмотр и примените снова',
-          { reason: 'content_changed' },
-        );
-      }
-      if (!project.disclosed_version_id && !input.roundId) {
-        throw errors.stateTransition(
-          'Согласия на показ ответов ещё нет: подайте профиль через мастер, подача с предпросмотром и есть согласие',
-        );
-      }
-
-      let formVersion = project.disclosure_form_version;
-      if (project.disclosed_version_id) {
-        await tx.query(
-          `UPDATE lab.projects
-              SET disclosure_form_version = $2, disclosed_at = now(), disclosed_by = $3,
-                  updated_at = now()
-            WHERE id = $1`,
-          [projectId, active, ctx.userId],
-        );
-        formVersion = active;
-      }
-
-      let roundDisclosureVersion: number | null = null;
-      if (input.roundId) {
-        const round = await tx.query<{ id: string }>(
-          `UPDATE lab.funding_rounds
-              SET disclosure_version = $3, updated_at = now()
-            WHERE id = $2 AND project_id = $1 AND status IN ('open', 'paused')
-            RETURNING id`,
-          [projectId, input.roundId, active],
-        );
-        if (!round.rows[0]) {
-          throw errors.notFound({ subject: 'funding_round' });
-        }
-        roundDisclosureVersion = active;
-      }
-
-      await this.audit.emit(tx, {
-        verb: 'lab.project.disclosure_applied',
-        actorId: ctx.userId,
-        actorRole: ctx.roles.includes('admin') ? 'admin' : 'founder',
-        subjectType: 'project',
-        subjectId: projectId,
-        context: {
-          formVersion: active,
-          previousFormVersion: project.disclosure_form_version,
-          roundId: input.roundId ?? null,
-        },
-        traceId: ctx.traceId,
-      });
-      return {
-        projectId,
-        formVersion,
-        roundId: input.roundId ?? null,
-        roundDisclosureVersion,
-      };
-    });
-  }
-
-  /**
    * Отметка материала (5.7.3): показывать допущенным инвесторам или только
    * команде. Привязка материала как подтверждения к ответу сама по себе его
    * не открывает — только эта отметка.
@@ -1041,7 +704,7 @@ export class ProjectsService {
         `UPDATE lab.project_materials
             SET visibility = $3
           WHERE id = $2 AND project_id = $1 AND uploaded_at IS NOT NULL
-          RETURNING id, project_id, type, version, url, parse_status, created_at, visibility`,
+          RETURNING id, project_id, type, version, url, created_at, visibility`,
         [projectId, materialId, visibility],
       );
       const row = rows[0];
@@ -1113,40 +776,10 @@ export class ProjectsService {
 
 // -------------------------------------------------------------------- helpers
 
-/** Остаток проектов аккаунта: 0 в политике — безлимит (`remaining: null`). */
-export function computeProjectLimits(
-  policyVersion: number,
-  policy: Pick<ApplicationPolicy, 'maxProjectsPerAccount'>,
-  used: number,
-): ProjectLimits {
-  const limit = policy.maxProjectsPerAccount;
-  return {
-    policyVersion,
-    source: 'application_policy',
-    projects: {
-      limit,
-      used,
-      remaining: limit === 0 ? null : Math.max(0, limit - used),
-    },
-  };
-}
-
 const PROJECT_COLUMNS = `
   id, taxonomy_id, title, tagline, description, stage, geo_country, geo_region,
   investment_ask::text AS investment_ask, ask_currency,
-  -- Текущее привлечение — проекция раунда по зрителю (M085): член команды и
-  -- админ видят всё, инвестор — по настройке видимости и аудитории сессии.
-  (SELECT v.raising FROM lab.round_view(lab.projects.id) v) AS raising,
-  (SELECT v.target::text FROM lab.round_view(lab.projects.id) v) AS round_target,
-  (SELECT v.currency FROM lab.round_view(lab.projects.id) v) AS round_currency,
-  listing_status, listed_at, status, season_id, current_version_id, current_application_id,
-  visibility, disclosed_version_id, disclosure_form_version,
-  created_at, updated_at,
-  (SELECT s.value::text
-     FROM scoring.irs_scores s
-    WHERE s.project_id = lab.projects.id
-    ORDER BY s.computed_at DESC
-    LIMIT 1) AS irs
+  listing_status, listed_at, status, visibility, created_at, updated_at
 `;
 
 interface ProjectRow {
@@ -1160,22 +793,12 @@ interface ProjectRow {
   geo_region: string | null;
   investment_ask: string;
   ask_currency: string;
-  raising: 'open' | 'paused' | 'none' | 'undisclosed' | null;
-  round_target: string | null;
-  round_currency: string | null;
   listing_status: ProjectFull['listingStatus'];
   listed_at: Date | null;
   status: ProjectFull['status'];
-  season_id: string | null;
-  current_version_id: string | null;
-  current_application_id: string | null;
   visibility: ProjectFull['visibility'];
-  disclosed_version_id: string | null;
-  disclosure_form_version: number | null;
   created_at: Date;
   updated_at: Date;
-  /** Последний IRS проекта; NUMERIC приходит строкой, чтобы не терять точность. */
-  irs: string | null;
 }
 
 interface ProjectSummaryRow {
@@ -1184,9 +807,7 @@ interface ProjectSummaryRow {
   stage: ProjectSummary['stage'];
   status: ProjectSummary['status'];
   listing_status: ProjectSummary['listingStatus'];
-  raising: 'open' | 'paused' | null;
-  round_target: string | null;
-  round_currency: string | null;
+  investment_ask: string;
   ask_currency: string;
   role: 'owner' | 'cofounder';
   created_at: Date;
@@ -1198,7 +819,6 @@ interface MaterialRow {
   type: ProjectMaterial['type'];
   version: number;
   url: string | null;
-  parse_status: ProjectMaterial['parseStatus'];
   created_at: Date;
   visibility: ProjectMaterial['visibility'];
 }
@@ -1214,25 +834,14 @@ function mapProject(row: ProjectRow): ProjectFull {
     logoUrl: null,
     taxonomyId: row.taxonomy_id,
     geoCountry: row.geo_country,
-    investmentAsk: row.round_target ?? null,
-    askCurrency: (row.round_currency?.trim() ?? row.ask_currency) as 'RUB',
-    raising: row.raising ?? 'none',
+    investmentAsk: row.investment_ask,
+    askCurrency: row.ask_currency.trim() as 'RUB',
     listedAt: row.listed_at?.toISOString() ?? null,
     description: row.description,
     geoRegion: row.geo_region,
     status: row.status,
     listingStatus: row.listing_status,
-    seasonId: row.season_id,
-    currentVersionId: row.current_version_id,
-    currentApplicationId: row.current_application_id,
     visibility: row.visibility,
-    disclosedVersionId: row.disclosed_version_id,
-    disclosureFormVersion: row.disclosure_form_version,
-    // Последний рассчитанный IRS проекта. Раньше здесь стоял жёсткий `null` с
-    // припиской «скоринга в этой фазе нет» — скоринг появился, а строка
-    // осталась, и кабинет показывал «IRS ещё не рассчитан» рядом с посчитанным
-    // паспортом. `null` по-прежнему честнее нуля: ноль читается как оценка.
-    irs: row.irs === null || row.irs === undefined ? null : Number(row.irs),
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
   };
@@ -1246,7 +855,6 @@ function mapMaterial(row: MaterialRow): ProjectMaterial {
     type: row.type,
     version: row.version,
     url: row.url,
-    parseStatus: row.parse_status,
     visibility: row.visibility,
     createdAt: row.created_at.toISOString(),
   };

@@ -98,16 +98,17 @@ export class FavoritesService {
     if (marks.length === 0) return [];
 
     const ids = marks.map((mark) => mark.project_id);
-    // Тизеры — публичной ролью, но с сессией инвестора: проекция раунда (M085)
-    // отдаёт поля по аудитории зрителя, а не всегда анонимную.
+    // Тизеры — публичной ролью, но с сессией инвестора: каталог отбирает
+    // проекты по предикату аудитории зрителя, а не всегда анонимного.
     const teasers = await this.db.asPublicRole(
       ctx.traceId,
       async (tx) => {
         const { rows } = await tx.query<TeaserRow>(
-          `SELECT id, taxonomy_id, title, tagline, stage, geo_country, listed_at,
-                  raising, round_target::text AS round_target, round_currency
-             FROM lab.v_public_catalog
-            WHERE id = ANY($1::uuid[])`,
+          `SELECT c.id, c.taxonomy_id, c.title, c.tagline, c.stage, c.geo_country, c.listed_at,
+                  EXISTS (SELECT 1 FROM lab.project_media m
+                           WHERE m.project_id = c.id AND m.kind = 'logo') AS has_logo
+             FROM lab.v_public_catalog c
+            WHERE c.id = ANY($1::uuid[])`,
           [ids],
         );
         return rows;
@@ -131,10 +132,8 @@ export class FavoritesService {
           stage: row.stage,
           taxonomyId: row.taxonomy_id,
           geoCountry: row.geo_country,
-          investmentAsk: row.round_target,
-          askCurrency: (row.round_currency?.trim() ?? 'RUB') as 'RUB',
-          raising: row.raising,
           listedAt: row.listed_at ? row.listed_at.toISOString() : null,
+          logoUrl: row.has_logo ? `/v1/projects/${row.id}/media/logo/card` : null,
           favoritedAt: mark.created_at.toISOString(),
         };
       })
@@ -171,8 +170,6 @@ interface TeaserRow {
   tagline: string | null;
   stage: FavoriteProject['stage'];
   geo_country: string | null;
-  raising: 'open' | 'paused' | 'none' | 'undisclosed';
-  round_target: string | null;
-  round_currency: string | null;
   listed_at: Date | null;
+  has_logo: boolean;
 }

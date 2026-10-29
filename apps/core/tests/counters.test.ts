@@ -44,9 +44,7 @@ const BASE_ENV = {
   KEK_SEARCH_INDEX: Buffer.alloc(32, 7).toString('base64'),
   KEK_PASSPORT_SENSITIVE: Buffer.alloc(32, 8).toString('base64'),
   KEK_KYB_DOCUMENTS: Buffer.alloc(32, 9).toString('base64'),
-  KEK_INVESTMENT_DOCUMENTS: Buffer.alloc(32, 10).toString('base64'),
   KEK_WEBHOOK_SECRETS: Buffer.alloc(32, 11).toString('base64'),
-  KEK_AI_PROVIDER_SECRETS: Buffer.alloc(32, 12).toString('base64'),
 };
 
 let app: FastifyInstance | null = null;

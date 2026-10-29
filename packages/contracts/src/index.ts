@@ -18,76 +18,45 @@ export * from './common/pagination';
 
 export * from './domain/identity';
 export * from './domain/lab';
-export * from './domain/application';
-export * from './domain/application-form';
-export * from './domain/application-form.v1';
-export * from './domain/application-readiness';
-export * from './domain/application-views';
+export * from './domain/platform';
 export * from './domain/project-views';
 export * from './domain/project-access';
-export * from './domain/funding-round';
 export * from './domain/visibility';
 export * from './domain/service-country';
 export * from './domain/content';
-export * from './domain/billing';
-export * from './domain/round-packages';
-export * from './domain/round-pricing';
-export * from './domain/payments';
-export * from './domain/service-runs';
-export * from './domain/analysis-input';
 export * from './domain/project-media';
-export * from './domain/commission';
 export * from './domain/staff-capabilities';
 export * from './domain/admin-users';
 export * from './domain/profile';
 export * from './domain/testing-sessions';
-export * from './domain/investments';
 export * from './domain/integration';
 export * from './domain/support';
 export * from './domain/misc';
-export * from './domain/scoring-llm';
 
 export * from './events';
 
 /** Версия контракта API. Меняется вместе с несовместимыми изменениями. */
 export const API_VERSION = 'v1' as const;
 
-/** Скоупы Integration API (service-to-service). Строгий allowlist. */
-export const INTEGRATION_SCOPES = [
-  'graduates:read',
-  'passport:read',
-  'listing:create',
-  'deals:read',
-  'show:read',
-  'webhooks:manage',
-  'seasons:read',
-] as const;
+/**
+ * Скоупы Integration API (service-to-service). Строгий allowlist.
+ *
+ * С 2.1-W05 остался только общий механизм — управление подписками на события.
+ * Выдачи выпускников, паспорта, листингов, сделок, шоу и сезона удалены вместе
+ * с процессами, на которых держались.
+ */
+export const INTEGRATION_SCOPES = ['webhooks:manage'] as const;
 export type IntegrationScope = (typeof INTEGRATION_SCOPES)[number];
 
 /**
  * Какие события доступны какому скоупу (префиксы глаголов).
  *
- * Раньше подписка на вебхук проверяла только СУЩЕСТВОВАНИЕ глагола: аккаунт с
- * одним `webhooks:manage` подписывался на что угодно, включая
- * `investment.agreement.created` с суммой договора в payload. Модель скоупов,
- * выстроенная для REST, обходилась через push-канал (MEDIUM внешнего аудита №2).
- *
  * `webhooks:manage` в карте НЕТ намеренно: он даёт право УПРАВЛЯТЬ подписками,
- * а не читать данные. На какие события можно подписаться, решают остальные
- * скоупы аккаунта — ровно те же, что открывают эти данные по REST.
- *
- * Событий `identity.*`, `security.*`, `kyc.*`, `admin.*`, `comms.*`,
- * `content.*` в карте нет вовсе: наружу они не отдаются ни одним скоупом.
+ * а не читать данные. На какие события можно подписаться, решают скоупы,
+ * открывающие эти данные по REST; сейчас таких нет — подписаться не на что,
+ * пока новые выдачи не спроектированы заново.
  */
-export const SCOPE_EVENT_PREFIXES: Record<string, readonly string[]> = {
-  'graduates:read': ['lab.project.graduated', 'lab.project.stage_changed'],
-  'passport:read': ['lab.project.scored', 'lab.irs.'],
-  'listing:create': ['lab.listing.', 'integration.listing.'],
-  // Денежный контур: договоры, транши, вознаграждение.
-  'deals:read': ['investment.', 'billing.commission.'],
-  'show:read': ['lab.golden_ticket.', 'lab.consensus.'],
-  'seasons:read': ['lab.season.', 'lab.rating.'],
-};
+export const SCOPE_EVENT_PREFIXES: Record<string, readonly string[]> = {};
 
 /** Разрешён ли глагол хотя бы одним из скоупов аккаунта. */
 export function verbAllowedByScopes(verb: string, scopes: readonly string[]): boolean {
@@ -101,10 +70,5 @@ export function verbAllowedByScopes(verb: string, scopes: readonly string[]): bo
  * Сервер проверяет `acr` токена; список продублирован здесь, чтобы фронтенд
  * мог заранее инициировать повышение уровня, а не ловить 403.
  */
-export const STEP_UP_OPERATIONS = [
-  'investments.acceptOffer',
-  'investments.signAgreement',
-  'billing.updatePaymentDetails',
-  'identity.changeMfa',
-] as const;
+export const STEP_UP_OPERATIONS = ['identity.changeMfa'] as const;
 export type StepUpOperation = (typeof STEP_UP_OPERATIONS)[number];

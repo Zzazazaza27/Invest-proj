@@ -2,15 +2,11 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Res } from '@ne
 import type { FastifyReply } from 'fastify';
 import {
   AddProductLinkSchema,
-  ApplyDisclosureRequestSchema,
-  ApplyDisclosureResultSchema,
   CreateProjectRequestSchema,
   ProjectFullSchema,
-  ProjectLimitsSchema,
   ProjectMaterialSchema,
   MaterialUploadResultSchema,
   ProjectSummarySchema,
-  ProjectVersionSchema,
   RequestUploadSchema,
   SetMaterialVisibilityRequestSchema,
   SetProjectVisibilityRequestSchema,
@@ -50,13 +46,7 @@ export class ProjectsController {
     return { items: items.map((p) => ProjectSummarySchema.parse(p)) };
   }
 
-  /** Лимит проектов аккаунта и его источник — до `:id`, иначе перехватит маршрут проекта. */
-  @Get('limits')
-  async limits(@Ctx() ctx: RequestContext) {
-    return ProjectLimitsSchema.parse(await this.projects.projectLimits(ctx));
-  }
-
-  @Roles('founder', 'admin', 'expert')
+  @Roles('founder', 'admin')
   @Get(':id')
   async getOne(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
@@ -71,25 +61,9 @@ export class ProjectsController {
     return ProjectFullSchema.parse(await this.projects.update(ctx, id, input));
   }
 
-  @Roles('founder', 'admin')
-  @Post(':id/submit')
-  async submit(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
-    const id = parseOrThrow(UuidSchema, rawId);
-    return ProjectVersionSchema.parse(await this.projects.submit(ctx, id));
-  }
-
-  /** История подач. Видимость определяет RLS, не роль в декораторе. */
-  @Roles('founder', 'admin', 'expert')
-  @Get(':id/versions')
-  async listVersions(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
-    const id = parseOrThrow(UuidSchema, rawId);
-    const items = await this.projects.listVersions(ctx, id);
-    return { items: items.map((v) => ProjectVersionSchema.parse(v)) };
-  }
-
   // ------------------------------------------------------------------ материалы
 
-  @Roles('founder', 'admin', 'expert')
+  @Roles('founder', 'admin')
   @Get(':id/materials')
   async listMaterials(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
@@ -215,19 +189,6 @@ export class ProjectsController {
     const id = parseOrThrow(UuidSchema, rawId);
     const input = parseOrThrow(SetProjectVisibilityRequestSchema, rawBody);
     return ProjectFullSchema.parse(await this.projects.setVisibility(ctx, id, input.visibility));
-  }
-
-  /** «Применить новые условия раскрытия» — к профилю и (по желанию) незавершённому раунду. */
-  @Roles('founder', 'admin')
-  @Post(':id/disclosure/apply')
-  async applyDisclosure(
-    @Param('id') rawId: string,
-    @Body() rawBody: unknown,
-    @Ctx() ctx: RequestContext,
-  ) {
-    const id = parseOrThrow(UuidSchema, rawId);
-    const input = parseOrThrow(ApplyDisclosureRequestSchema, rawBody);
-    return ApplyDisclosureResultSchema.parse(await this.projects.applyDisclosure(ctx, id, input));
   }
 
   /** Отметка материала: показывать допущенным инвесторам или только команде. */

@@ -29,7 +29,6 @@ export const ErrorCode = {
   CONSENTS_REQUIRED: 'consents_required',
   REACCEPT_REQUIRED: 'reaccept_required',
   KYC_REQUIRED: 'kyc_required',
-  SUBSCRIPTION_REQUIRED: 'subscription_required',
 
   // 404 / 409 / 422
   NOT_FOUND: 'not_found',
@@ -37,7 +36,6 @@ export const ErrorCode = {
   IDEMPOTENCY_KEY_REUSED: 'idempotency_key_reused',
   STATE_TRANSITION_NOT_ALLOWED: 'state_transition_not_allowed',
   LIMIT_EXCEEDED: 'limit_exceeded',
-  SELF_DEAL_FORBIDDEN: 'self_deal_forbidden',
   /**
    * Операция потребовала бы передачи ограниченных данных за пределы
    * разрешённых юрисдикций (152-ФЗ, ADR-007). Отдельный код нужен, чтобы
@@ -111,13 +109,11 @@ export const ERROR_STATUS: Record<ErrorCodeValue, number> = {
   [ErrorCode.CONSENTS_REQUIRED]: 403,
   [ErrorCode.REACCEPT_REQUIRED]: 403,
   [ErrorCode.KYC_REQUIRED]: 403,
-  [ErrorCode.SUBSCRIPTION_REQUIRED]: 403,
   [ErrorCode.NOT_FOUND]: 404,
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 409,
   [ErrorCode.STATE_TRANSITION_NOT_ALLOWED]: 409,
   [ErrorCode.LIMIT_EXCEEDED]: 422,
-  [ErrorCode.SELF_DEAL_FORBIDDEN]: 422,
   [ErrorCode.RESIDENCY_VIOLATION]: 403,
   [ErrorCode.RATE_LIMITED]: 429,
   [ErrorCode.INTERNAL_ERROR]: 500,

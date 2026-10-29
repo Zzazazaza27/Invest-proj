@@ -67,11 +67,6 @@ export const errors = {
       publicDetail: 'Условия обновились. Примите новую версию, чтобы продолжить платные операции',
     }),
 
-  subscriptionRequired: () =>
-    new AppError(ErrorCode.SUBSCRIPTION_REQUIRED, {
-      publicDetail: 'Доступ открывается активной подпиской',
-    }),
-
   kycRequired: () =>
     new AppError(ErrorCode.KYC_REQUIRED, { publicDetail: 'Требуется пройти верификацию' }),
 
@@ -97,11 +92,6 @@ export const errors = {
     }),
 
   limitExceeded: (publicDetail: string) => new AppError(ErrorCode.LIMIT_EXCEEDED, { publicDetail }),
-
-  selfDeal: () =>
-    new AppError(ErrorCode.SELF_DEAL_FORBIDDEN, {
-      publicDetail: 'Нельзя инвестировать в проект, к которому вы имеете отношение',
-    }),
 
   stateTransition: (publicDetail: string) =>
     new AppError(ErrorCode.STATE_TRANSITION_NOT_ALLOWED, { publicDetail }),

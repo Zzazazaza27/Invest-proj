@@ -1,81 +1,20 @@
 import { describe, expect, it } from 'vitest';
-import {
-  PROJECT_TRANSITIONS,
-  SeasonFunnelConfigSchema,
-  UpsertNotificationTemplateSchema,
-  type ProjectStatus,
-} from '@unicorn/contracts';
+import { PROJECT_TRANSITIONS, UpsertNotificationTemplateSchema } from '@unicorn/contracts';
 import { assertNoPersonalPlaceholders } from '../src/admin/templates.service';
 import { collectRoutes, routesToPaths } from '../src/health/openapi.routes';
 import { Public, Roles } from '../src/auth/guards';
 import { Controller, Get, Post } from '@nestjs/common';
 
-describe('воронка проекта', () => {
-  it('движется вперёд ровно на один этап', () => {
-    // Порядок этапов дублируется здесь намеренно: если таблица переходов
-    // изменится, тест обязан упасть, а не подстроиться под неё.
-    const forward: [ProjectStatus, ProjectStatus][] = [
-      ['submitted', 'ai_review'],
-      ['ai_review', 'expert_review'],
-      ['expert_review', 'bootcamp'],
-      ['bootcamp', 'finalist'],
-      ['finalist', 'graduated'],
-    ];
-    for (const [from, to] of forward) {
-      expect(PROJECT_TRANSITIONS[from]).toContain(to);
-    }
-  });
-
-  it('не позволяет перепрыгнуть этап', () => {
-    expect(PROJECT_TRANSITIONS.submitted).not.toContain('bootcamp');
-    expect(PROJECT_TRANSITIONS.expert_review).not.toContain('graduated');
-    expect(PROJECT_TRANSITIONS.draft).not.toContain('expert_review');
-  });
-
-  it('не имеет обратного хода', () => {
-    const order: ProjectStatus[] = [
-      'draft',
-      'submitted',
-      'ai_review',
-      'expert_review',
-      'bootcamp',
-      'finalist',
-      'graduated',
-    ];
-    for (const [index, status] of order.entries()) {
-      for (const target of PROJECT_TRANSITIONS[status]) {
-        const targetIndex = order.indexOf(target);
-        // Выход из воронки (rejected/archived) в порядке отсутствует и проверке
-        // на движение назад не подлежит: это не шаг по воронке.
-        if (targetIndex >= 0) expect(targetIndex).toBeGreaterThan(index);
-      }
-    }
-  });
-
-  it('отказ доступен с рабочих этапов, но не из терминальных', () => {
-    expect(PROJECT_TRANSITIONS.expert_review).toContain('rejected');
-    expect(PROJECT_TRANSITIONS.graduated).not.toContain('rejected');
-    expect(PROJECT_TRANSITIONS.archived).toHaveLength(0);
-  });
-});
-
-describe('конфигурация воронки сезона', () => {
-  it('принимает пустую конфигурацию как «без ограничений»', () => {
-    const parsed = SeasonFunnelConfigSchema.parse({});
-    expect(parsed.quotas).toEqual({});
-    expect(parsed.schedule).toEqual({});
-  });
-
-  it('отвергает нулевую и отрицательную квоту', () => {
-    // Квота 0 закрыла бы этап навсегда через настройку, а не решением.
-    expect(SeasonFunnelConfigSchema.safeParse({ quotas: { bootcamp: 0 } }).success).toBe(false);
-    expect(SeasonFunnelConfigSchema.safeParse({ quotas: { bootcamp: -1 } }).success).toBe(false);
-    expect(SeasonFunnelConfigSchema.safeParse({ quotas: { bootcamp: 12 } }).success).toBe(true);
-  });
-
-  it('не принимает произвольные этапы', () => {
-    const parsed = SeasonFunnelConfigSchema.parse({ quotas: { unknown_stage: 5 } });
-    expect(parsed.quotas).not.toHaveProperty('unknown_stage');
+describe('статусы проекта', () => {
+  it('воронки этапов нет: черновик и отказ ведут только в архив, архив конечен', () => {
+    // Сезонная воронка (заявка, разбор ИИ, экспертиза, буткемп, финал,
+    // выпуск) удалена в 2.1-W05. Если переход появится снова, тест обязан
+    // упасть, а не подстроиться под таблицу.
+    expect(PROJECT_TRANSITIONS).toEqual({
+      draft: ['archived'],
+      rejected: ['archived'],
+      archived: [],
+    });
   });
 });
 
@@ -83,8 +22,8 @@ describe('шаблоны уведомлений', () => {
   it('пропускает доменные плейсхолдеры', () => {
     expect(() =>
       assertNoPersonalPlaceholders({
-        titleTemplate: 'Этап сезона {{season_number}}',
-        bodyTemplate: 'Проект «{{project_title}}» переведён на {{stage_title}}.',
+        titleTemplate: 'Проект {{project_title}}',
+        bodyTemplate: 'Проект «{{project_title}}» опубликован {{date}}.',
       }),
     ).not.toThrow();
   });

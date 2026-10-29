@@ -198,23 +198,6 @@ export class AdminUsersService {
         [userId],
       );
 
-      const assignments = await tx.query<{
-        id: string;
-        project_id: string;
-        project_title: string;
-        purpose: string;
-        status: string;
-        access_revoked_at: Date | null;
-      }>(
-        `SELECT a.id, a.project_id, p.title AS project_title, a.purpose, a.status,
-                a.access_revoked_at
-           FROM experts.expert_assignments a
-           JOIN lab.projects p ON p.id = a.project_id
-          WHERE a.expert_id = $1
-          ORDER BY a.created_at DESC LIMIT 50`,
-        [userId],
-      );
-
       const tickets = await tx.query<{ count: string }>(
         `SELECT count(*)::text AS count FROM comms.support_tickets WHERE user_id = $1`,
         [userId],
@@ -294,14 +277,6 @@ export class AdminUsersService {
           title: row.title,
           reason: row.reason,
           grantedAt: row.granted_at.toISOString(),
-        })),
-        assignments: assignments.rows.map((row) => ({
-          id: row.id,
-          projectId: row.project_id,
-          projectTitle: row.project_title,
-          purpose: row.purpose,
-          status: row.status,
-          accessRevokedAt: row.access_revoked_at ? row.access_revoked_at.toISOString() : null,
         })),
         supportTickets: Number(tickets.rows[0]?.count ?? '0'),
         history: history.rows.map((row) => ({

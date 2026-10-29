@@ -183,15 +183,6 @@ export const AdminUserCapabilitySchema = z.object({
   grantedAt: IsoDateTimeSchema,
 });
 
-export const AdminUserAssignmentSchema = z.object({
-  id: UuidSchema,
-  projectId: UuidSchema,
-  projectTitle: z.string(),
-  purpose: z.string(),
-  status: z.string(),
-  accessRevokedAt: IsoDateTimeSchema.nullable(),
-});
-
 /**
  * Строка истории административных действий.
  *
@@ -236,7 +227,6 @@ export const AdminUserCardSchema = z.object({
   projects: z.array(AdminUserProjectSchema),
   entities: z.array(AdminUserEntitySchema),
   capabilities: z.array(AdminUserCapabilitySchema),
-  assignments: z.array(AdminUserAssignmentSchema),
   supportTickets: z.number().int().min(0),
   history: z.array(AdminUserHistoryEntrySchema),
   /** Может ли смотрящий раскрыть контакты (полномочие M122). */

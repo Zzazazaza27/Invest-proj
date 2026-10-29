@@ -1,21 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
-  AcceptOfferRequestSchema,
   AddProductLinkSchema,
-  CreateSubscriptionRequestSchema,
   ERROR_STATUS,
   ErrorCode,
   MATERIAL_UPLOAD_RULES,
   MoneyAmountSchema,
   NotificationPreferenceSchema,
-  EVENT_PAYLOAD_SCHEMAS,
-  EventVerb,
-  PublicationConsentRequestSchema,
   RegisterRequestSchema,
   RequestUploadSchema,
   REQUIRED_CONSENT_KINDS,
   verbAllowedByScopes,
-  ScoreSchema,
   fromMinorUnits,
   problemTypeUri,
   toMinorUnits,
@@ -119,55 +113,6 @@ describe('Регистрация: блокирующие акцепты', () => 
   });
 });
 
-describe('Инвестиционное предложение', () => {
-  const valid = {
-    offerId: '019feb5f-43fe-77e7-b3c3-f0fa999cf06f',
-    contractAmount: '1000000.00',
-    currency: 'RUB' as const,
-    idempotencyKey: 'idem-test-fixture-000000',
-    acknowledgedFeeDisclosure: true as const,
-    acknowledgedRulesVersion: 'platform_rules_v1',
-  };
-
-  it('проходит при явном подтверждении раскрытия условий', () => {
-    expect(AcceptOfferRequestSchema.safeParse(valid).success).toBe(true);
-  });
-
-  it('НЕ проходит без подтверждения раскрытия условий вознаграждения', () => {
-    expect(
-      AcceptOfferRequestSchema.safeParse({ ...valid, acknowledgedFeeDisclosure: false }).success,
-    ).toBe(false);
-  });
-
-  it('требует ключ идемпотентности', () => {
-    const { idempotencyKey: _k, ...withoutKey } = valid;
-    expect(AcceptOfferRequestSchema.safeParse(withoutKey).success).toBe(false);
-  });
-});
-
-describe('Подписка: тариф резолвит сервер', () => {
-  it('основатель передаёт проект, а не план', () => {
-    const ok = CreateSubscriptionRequestSchema.safeParse({
-      audience: 'founder',
-      projectId: '019feb5f-43fe-77e7-b3c3-f0fa999cf06f',
-      idempotencyKey: 'idem-test-fixture-000000',
-    });
-    expect(ok.success).toBe(true);
-    // planId в контракте отсутствует — подставить чужой тариф нельзя.
-    expect(Object.keys(ok.success ? ok.data : {})).not.toContain('planId');
-  });
-
-  it('инвестор не передаёт проект', () => {
-    expect(
-      CreateSubscriptionRequestSchema.safeParse({
-        audience: 'investor',
-        projectId: '019feb5f-43fe-77e7-b3c3-f0fa999cf06f',
-        idempotencyKey: 'idem-test-fixture-000000',
-      }).success,
-    ).toBe(true); // лишнее поле игнорируется, но и не влияет на резолв
-  });
-});
-
 describe('SSRF-фильтр внешних ссылок', () => {
   it.each([
     'http://example.com/x',
@@ -210,28 +155,6 @@ describe('Уведомления', () => {
         topic: 'marketing',
         enabled: false,
       }).success,
-    ).toBe(true);
-  });
-});
-
-describe('Оценка требует источников', () => {
-  const base = {
-    axis: 'market' as const,
-    value: 70,
-    confidenceLow: 60,
-    confidenceHigh: 80,
-    explanation: 'обоснование',
-    modelVersion: 'v0.1-heuristic',
-    computedAt: '2026-08-10T10:00:00.000Z',
-  };
-
-  it('без источников не проходит', () => {
-    expect(ScoreSchema.safeParse({ ...base, sources: [] }).success).toBe(false);
-  });
-
-  it('с источником проходит', () => {
-    expect(
-      ScoreSchema.safeParse({ ...base, sources: [{ type: 'deck', ref: 'p.12' }] }).success,
     ).toBe(true);
   });
 });
@@ -299,51 +222,6 @@ describe('RequestUploadSchema — матрица тип ↔ MIME ↔ разме�
   });
 });
 
-describe('Скоупы вебхуков: событие доступно только своему скоупу (Ф42)', () => {
-  it('webhooks:manage сам по себе НЕ даёт подписку на денежные события', () => {
-    // Ровно находка аудита: аккаунт с одним webhooks:manage подписывался на
-    // investment.agreement.created — с суммой договора в payload.
-    expect(verbAllowedByScopes('investment.agreement.created', ['webhooks:manage'])).toBe(false);
-    expect(verbAllowedByScopes('billing.commission.accrued', ['webhooks:manage'])).toBe(false);
-  });
-
-  it('deals:read открывает инвестиционные события', () => {
-    expect(verbAllowedByScopes('investment.agreement.created', ['deals:read'])).toBe(true);
-    expect(verbAllowedByScopes('investment.first_tranche.confirmed', ['deals:read'])).toBe(true);
-  });
-
-  it('graduates:read не открывает деньги, а deals:read — выпускников', () => {
-    expect(verbAllowedByScopes('investment.agreement.created', ['graduates:read'])).toBe(false);
-    expect(verbAllowedByScopes('lab.project.graduated', ['deals:read'])).toBe(false);
-    expect(verbAllowedByScopes('lab.project.graduated', ['graduates:read'])).toBe(true);
-  });
-
-  it('внутренние события не открывает ни один скоуп', () => {
-    const all = [
-      'graduates:read',
-      'passport:read',
-      'listing:create',
-      'deals:read',
-      'show:read',
-      'seasons:read',
-      'webhooks:manage',
-    ];
-    for (const verb of [
-      'identity.user.registered',
-      'identity.login.failed',
-      'security.new_login',
-      'kyc.verification.decided',
-      'admin.feature_flag.changed',
-    ]) {
-      expect(verbAllowedByScopes(verb, all), verb).toBe(false);
-    }
-  });
-
-  it('пустой набор скоупов не открывает ничего', () => {
-    expect(verbAllowedByScopes('lab.project.graduated', [])).toBe(false);
-  });
-});
-
 /**
  * Согласие на публичный контур.
  *
@@ -351,51 +229,16 @@ describe('Скоупы вебхуков: событие доступно тол�
  * 64 символа. Его читает медиаконтур и исполняет — значит он обязан быть
  * словарём, а не пересказом.
  */
-describe('согласие на публикацию', () => {
-  const base = {
-    projectId: uuidv7(),
-    scope: 'final_live' as const,
-    documentVersion: 'v1',
-  };
 
-  it('поле вне словаря раскрытия не принимается', () => {
-    const parsed = PublicationConsentRequestSchema.safeParse({
-      ...base,
-      disclosedFields: ['passport_scan'],
-    });
-    expect(parsed.success).toBe(false);
+describe('Скоупы вебхуков после 2.1-W05', () => {
+  it('webhooks:manage сам по себе не даёт подписку ни на какие события', () => {
+    expect(verbAllowedByScopes('lab.listing.published', ['webhooks:manage'])).toBe(false);
+    expect(verbAllowedByScopes('investment.agreement.signed', ['webhooks:manage'])).toBe(false);
   });
 
-  it('известные поля принимаются, пустой список — тоже', () => {
-    // Позитивный контроль: отказ выше означает «слово не из словаря», а не
-    // «схема отвергает любой список».
-    expect(
-      PublicationConsentRequestSchema.safeParse({
-        ...base,
-        disclosedFields: ['project_title', 'founder_photo'],
-      }).success,
-    ).toBe(true);
-    // Пустой список — законное «снимать можно, данные проекта не раскрывать».
-    expect(
-      PublicationConsentRequestSchema.safeParse({ ...base, disclosedFields: [] }).success,
-    ).toBe(true);
-  });
-
-  it('неизвестная область согласия отвергается', () => {
-    expect(
-      PublicationConsentRequestSchema.safeParse({
-        ...base,
-        scope: 'everywhere',
-        disclosedFields: [],
-      }).success,
-    ).toBe(false);
-  });
-
-  it('у обоих событий согласия есть схема полезной нагрузки', () => {
-    // Реестр объявляет: verb без схемы не публикуется. Выдача согласия жила в
-    // перечислении verb'ов без схемы — то есть по собственному правилу реестра
-    // публикации не подлежала.
-    expect(EVENT_PAYLOAD_SCHEMAS[EventVerb.CONSENT_PUBLICATION_GRANTED]).toBeDefined();
-    expect(EVENT_PAYLOAD_SCHEMAS[EventVerb.CONSENT_PUBLICATION_REVOKED]).toBeDefined();
+  it('удалённые скоупы ничего не открывают', () => {
+    for (const scope of ['deals:read', 'graduates:read', 'passport:read', 'show:read']) {
+      expect(verbAllowedByScopes('lab.listing.published', [scope])).toBe(false);
+    }
   });
 });

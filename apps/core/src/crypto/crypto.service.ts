@@ -20,29 +20,14 @@ import { getEnv } from '../config/env';
  */
 
 export type KekDomain =
-  | 'kyc_documents'
-  | 'kyb_documents'
-  | 'passport_sensitive'
-  | 'investment_documents'
-  | 'nominal_account_evidence'
-  | 'billing_documents'
-  | 'search_index'
-  | 'webhook_secrets'
-  // Ключи LLM-провайдеров, заданные из панели (ADR-008 §2). Свой домен, а не
-  // webhook_secrets: компрометация или ротация ключа провайдера не должна
-  // затрагивать подписи вебхуков, и наоборот.
-  | 'ai_provider_secrets';
+  'kyc_documents' | 'kyb_documents' | 'passport_sensitive' | 'search_index' | 'webhook_secrets';
 
 const ENV_BY_DOMAIN: Record<KekDomain, string> = {
   kyc_documents: 'KEK_KYC_DOCUMENTS',
   kyb_documents: 'KEK_KYB_DOCUMENTS',
   passport_sensitive: 'KEK_PASSPORT_SENSITIVE',
-  investment_documents: 'KEK_INVESTMENT_DOCUMENTS',
-  nominal_account_evidence: 'KEK_NOMINAL_ACCOUNT_EVIDENCE',
-  billing_documents: 'KEK_BILLING_DOCUMENTS',
   search_index: 'KEK_SEARCH_INDEX',
   webhook_secrets: 'KEK_WEBHOOK_SECRETS',
-  ai_provider_secrets: 'KEK_AI_PROVIDER_SECRETS',
 };
 
 const IV_BYTES = 12; // рекомендованный размер nonce для GCM
@@ -152,22 +137,6 @@ export class CryptoService {
   /** Сравнение секретов — только constant-time. */
   static equals(a: Buffer, b: Buffer): boolean {
     return a.length === b.length && timingSafeEqual(a, b);
-  }
-
-  /**
-   * Nonce маркеров слота данных для прогона анализа — детерминированный по входу.
-   *
-   * Случайный nonce на каждый прогон менял промпт побайтно, и модель на один
-   * и тот же вход отвечала с разбросом IRS 4+ (зонд 2026-08-26: фиксированный
-   * nonce — 1,0, случайный — 4,2). HMAC с серверным ключом даёт то же свойство,
-   * ради которого nonce вводился (заявитель не может предсказать маркер и
-   * закрыть слот сам), и при этом одинаковый вход → одинаковый промпт.
-   */
-  analysisNonce(input: string): string {
-    return createHmac('sha256', this.kek('ai_provider_secrets'))
-      .update(`analysis-nonce:${input}`, 'utf8')
-      .digest('hex')
-      .slice(0, 32);
   }
 
   /** Хеш IP и User-Agent для записи акцепта: сам адрес не сохраняется. */

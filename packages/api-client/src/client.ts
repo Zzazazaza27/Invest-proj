@@ -67,8 +67,8 @@ export class ApiError extends Error {
     return this.code === ErrorCode.CONSENTS_REQUIRED || this.code === ErrorCode.REACCEPT_REQUIRED;
   }
 
-  get needsSubscription(): boolean {
-    return this.code === ErrorCode.SUBSCRIPTION_REQUIRED;
+  get needsKyc(): boolean {
+    return this.code === ErrorCode.KYC_REQUIRED;
   }
 }
 
@@ -367,7 +367,6 @@ function defaultMessage(code: ErrorCodeValue): string {
     [ErrorCode.STEP_UP_REQUIRED]: 'Требуется подтверждение вторым фактором',
     [ErrorCode.CONSENTS_REQUIRED]: 'Нужно принять условия платформы',
     [ErrorCode.REACCEPT_REQUIRED]: 'Условия обновились — требуется повторное принятие',
-    [ErrorCode.SUBSCRIPTION_REQUIRED]: 'Нужна активная подписка',
     [ErrorCode.KYC_REQUIRED]: 'Требуется пройти верификацию',
     [ErrorCode.NOT_FOUND]: 'Не найдено',
     [ErrorCode.CONFLICT]: 'Конфликт состояния — обновите данные и повторите',

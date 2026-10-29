@@ -15,7 +15,7 @@ import { DirectoryService } from './directory.service';
  * свои фильтры, страницы и права, и держать две разные выдачи по одной
  * таблице в одном контроллере стало неправдой про назначение файла.
  */
-@Roles('admin', 'organizer')
+@Roles('admin')
 @Controller('admin')
 export class DirectoryController {
   constructor(private readonly directory: DirectoryService) {}

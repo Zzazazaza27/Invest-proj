@@ -1,25 +1,17 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import {
-  CreateListingRefRequestSchema,
   CreateWebhookRequestSchema,
-  ExternalRefSchema,
-  GraduateSchema,
-  INTEGRATION_DATA_VERSION,
-  IntegrationDealSchema,
   IntegrationTokenRequestSchema,
   IntegrationTokenResponseSchema,
-  IrsHistoryEntrySchema,
-  PublicProfileSchema,
   UuidSchema,
   WebhookCreatedSchema,
   WebhookEndpointSchema,
 } from '@unicorn/contracts';
 import type { FastifyRequest } from 'fastify';
-import { z } from 'zod';
 import { Public, ServiceAuth } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import { WebhooksService } from '../events/webhooks.service';
-import { IntegrationService, decodeIntegrationCursor } from './integration.service';
+import { IntegrationService } from './integration.service';
 import {
   clientCertFingerprint,
   IntegrationCtx,
@@ -39,6 +31,10 @@ import {
  *
  * Прямой доступ к чужой БД не предусмотрен ни в каком виде: только эти
  * маршруты и события (Architect_Launch §6).
+ *
+ * С 2.1-W05 здесь только общий механизм: токен сервисного клиента и вебхуки.
+ * Выдачи выпускников, паспорта, IRS, листингов, сделок и сезона удалены
+ * вместе с процессами, на которых держались.
  */
 @ServiceAuth()
 @UseGuards(IntegrationGuard)
@@ -48,91 +44,6 @@ export class IntegrationController {
     private readonly integration: IntegrationService,
     private readonly webhooks: WebhooksService,
   ) {}
-
-  @Scope('graduates:read')
-  @Get('graduates')
-  async graduates(
-    @Query('season_id') rawSeason: string | undefined,
-    @Query('cursor') rawCursor: string | undefined,
-    @Query('limit') rawLimit: string | undefined,
-    @IntegrationCtx() ctx: IntegrationContext,
-  ) {
-    const seasonId = rawSeason ? parseOrThrow(UuidSchema, rawSeason) : undefined;
-    const limit = parseOrThrow(z.coerce.number().int().min(1).max(100).default(50), rawLimit ?? 50);
-    const cursor = rawCursor ? decodeIntegrationCursor(rawCursor) : undefined;
-
-    const result = await this.integration.graduates(ctx, { seasonId, cursor, limit });
-    return {
-      items: result.items.map((item) => GraduateSchema.parse(item)),
-      nextCursor: result.nextCursor,
-      dataVersion: INTEGRATION_DATA_VERSION,
-    };
-  }
-
-  @Scope('passport:read')
-  @Get('projects/:id/passport')
-  async passport(
-    @Param('id') rawId: string,
-    @Query('tier') rawTier: string | undefined,
-    @IntegrationCtx() ctx: IntegrationContext,
-  ) {
-    const id = parseOrThrow(UuidSchema, rawId);
-    // Уровень dataroom во внешний контур не выдаётся: он существует для
-    // проверенного инвестора внутри платформы, а не для чужой системы.
-    const tier = parseOrThrow(z.enum(['teaser', 'full']).default('teaser'), rawTier ?? 'teaser');
-    return this.integration.passport(ctx, id, tier);
-  }
-
-  @Scope('passport:read')
-  @Get('projects/:id/irs-history')
-  async irsHistory(@Param('id') rawId: string, @IntegrationCtx() ctx: IntegrationContext) {
-    const id = parseOrThrow(UuidSchema, rawId);
-    const items = await this.integration.irsHistory(ctx, id);
-    return {
-      items: items.map((item) => IrsHistoryEntrySchema.parse(item)),
-      dataVersion: INTEGRATION_DATA_VERSION,
-    };
-  }
-
-  @Scope('listing:create')
-  @Post('listings')
-  async createListing(@Body() rawBody: unknown, @IntegrationCtx() ctx: IntegrationContext) {
-    const input = parseOrThrow(CreateListingRefRequestSchema, rawBody);
-    return ExternalRefSchema.parse(await this.integration.createListingRef(ctx, input));
-  }
-
-  @Scope('deals:read')
-  @Get('deals')
-  async deals(
-    @Query('cursor') rawCursor: string | undefined,
-    @Query('limit') rawLimit: string | undefined,
-    @IntegrationCtx() ctx: IntegrationContext,
-  ) {
-    const limit = parseOrThrow(z.coerce.number().int().min(1).max(100).default(50), rawLimit ?? 50);
-    const cursor = rawCursor ? decodeIntegrationCursor(rawCursor) : undefined;
-    const result = await this.integration.deals(ctx, { cursor, limit });
-    return {
-      items: result.items.map((item) => IntegrationDealSchema.parse(item)),
-      nextCursor: result.nextCursor,
-      dataVersion: INTEGRATION_DATA_VERSION,
-    };
-  }
-
-  @Scope('show:read')
-  @Get('projects/:id/public-profile')
-  async publicProfile(@Param('id') rawId: string, @IntegrationCtx() ctx: IntegrationContext) {
-    const id = parseOrThrow(UuidSchema, rawId);
-    return PublicProfileSchema.parse(await this.integration.publicProfile(ctx, id));
-  }
-
-  @Scope('seasons:read')
-  @Get('seasons/current')
-  async currentSeason(@IntegrationCtx() ctx: IntegrationContext) {
-    return {
-      season: await this.integration.currentSeason(ctx),
-      dataVersion: INTEGRATION_DATA_VERSION,
-    };
-  }
 
   /**
    * Подписка на события. Секрет подписи возвращается один раз — им получатель

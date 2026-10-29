@@ -34,7 +34,7 @@ import { AdminUsersService } from './users.service';
 export class AdminUsersController {
   constructor(private readonly users: AdminUsersService) {}
 
-  @Roles('admin', 'organizer')
+  @Roles('admin')
   @Get()
   async list(@Query() rawQuery: unknown, @Ctx() ctx: RequestContext) {
     const query = parseOrThrow(AdminUserListQuerySchema, rawQuery ?? {});

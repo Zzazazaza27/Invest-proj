@@ -31,14 +31,6 @@ export function stricterVisibility(a: Audience, b: Audience): Audience {
 }
 
 /**
- * Состояние привлечения для зрителя. `undisclosed` — группа «текущий запрос»
- * (состояние, сумма, валюта) закрыта для этой аудитории настройкой видимости
- * вопроса `investment_ask`: зритель не узнаёт даже того, идёт ли привлечение.
- */
-export const RaisingStateSchema = z.enum(['open', 'paused', 'none', 'undisclosed']);
-export type RaisingState = z.infer<typeof RaisingStateSchema>;
-
-/**
  * Режим видимости проекта — решение владельца, кому в принципе виден проект
  * (этап 5.7, план `заявка-04` §3.1; колонка `lab.projects.visibility`, M087).
  * `selected_investors` в интерфейсе 5.7 не предлагается (grant — 5.8).
@@ -57,22 +49,9 @@ export type ProjectVisibility = z.infer<typeof ProjectVisibilitySchema>;
  * получателя — НАБОР этих разрешений (без `teaser`, он подразумевается), не
  * уровень: `{materials}` даёт материалы и тизер, но не ответы анкеты.
  */
-export const AccessPermissionSchema = z.enum([
-  'teaser',
-  'profile',
-  'round',
-  'materials',
-  'passport',
-  'extended',
-]);
+export const AccessPermissionSchema = z.enum(['teaser', 'profile', 'materials', 'extended']);
 export type AccessPermission = z.infer<typeof AccessPermissionSchema>;
-export const GrantPermissionSchema = z.enum([
-  'profile',
-  'round',
-  'materials',
-  'passport',
-  'extended',
-]);
+export const GrantPermissionSchema = z.enum(['profile', 'materials', 'extended']);
 export type GrantPermission = z.infer<typeof GrantPermissionSchema>;
 
 /** Кто смотрит — то, что предикат узнаёт из сессии и таблиц. */
@@ -83,10 +62,6 @@ export interface ProjectViewer {
   roles: readonly string[];
   /** Член команды проекта (`lab.is_project_member`). */
   member?: boolean;
-  /** Назначенный рецензент проекта. */
-  assignedReviewer?: boolean;
-  /** Коммерческий допуск инвестора (`lab.investor_gate`): роль investor и барьер/членство. */
-  investorGate?: boolean;
   /** Действующее исключение для пользователя или его организации. */
   excluded?: boolean;
   /**
@@ -111,8 +86,7 @@ export interface ProjectAccessState {
  * Порядок проверок тот же, что в SQL (план `заявка-04` §3.3); паритет
  * проверяет `database/tests/project-access.test.ts`. Разрешение любого вида
  * не поднимает аудиторию выше `investors`: поля `platform` и `private`
- * наружу не попадают. Роль `organizer` прав не даёт: сезонный контур отложен
- * (M088), в БД роль признаётся только при включённом флаге `seasons.enabled`.
+ * наружу не попадают.
  */
 export function projectAudience(
   project: ProjectAccessState,
@@ -122,28 +96,18 @@ export function projectAudience(
   const has = (role: string): boolean => viewer.roles.includes(role);
   if (viewer.userId !== null && (viewer.member || has('admin'))) return 'private';
   if (project.deleted) return null;
-  if (viewer.userId !== null && permission !== 'extended' && viewer.assignedReviewer) {
-    return 'platform';
-  }
   if (project.blocked) return null;
   if (viewer.userId !== null && viewer.excluded) return null;
   if (project.visibility === 'private') return null;
 
-  const gate = viewer.userId !== null && viewer.investorGate === true;
+  // Допуска инвестора по роли нет: он держался на подписке, а подписки
+  // удалены в 2.1-W05. Открытые режимы дают внешнему зрителю только то, что
+  // видно всем; «зарегистрированным инвесторам» сейчас не открыто ничего.
   if (project.visibility === 'public') {
-    if (permission === 'teaser' || permission === 'profile' || permission === 'round') {
-      return gate ? 'investors' : 'public';
-    }
-    if (permission === 'materials' || permission === 'passport') {
-      return gate ? 'investors' : null;
-    }
-    return null;
+    return permission === 'teaser' || permission === 'profile' ? 'public' : null;
   }
-  if (project.visibility === 'registered_investors') {
-    if (permission === 'extended') return null;
-    return gate ? 'investors' : null;
-  }
-  // selected_investors: набор разрешений grant; допуск личный, investorGate не нужен.
+  if (project.visibility === 'registered_investors') return null;
+  // selected_investors: набор разрешений grant; допуск личный.
   if (viewer.userId === null || !viewer.grant || viewer.grant.length === 0) return null;
   if (permission === 'teaser') return 'investors';
   if (permission === 'extended') {

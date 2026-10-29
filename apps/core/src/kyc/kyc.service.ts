@@ -14,7 +14,7 @@ import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
-import { encodeIntegrationCursor } from '../integration/integration.service';
+import { encodeIntegrationCursor } from '../common/keyset-cursor';
 
 /**
  * KYC физлиц и KYB юрлиц.

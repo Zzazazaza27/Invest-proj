@@ -60,9 +60,7 @@ export class CatalogController {
     @Ctx() ctx: RequestContext,
   ) {
     const id = parseOrThrow(UuidSchema, rawId);
-    return PublicViewSchema.parse(
-      await this.views.publicView(ctx.traceId, id, viewerOf(ctx), locale ?? 'ru-RU'),
-    );
+    return PublicViewSchema.parse(await this.views.publicView(ctx.traceId, id, viewerOf(ctx)));
   }
 }
 

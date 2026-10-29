@@ -2,16 +2,11 @@ import { z } from 'zod';
 import { boundedString, IsoDateTimeSchema, LocaleSchema, UuidSchema } from '../common/primitives';
 import { ServiceCountryCodeSchema } from './service-country';
 
-/** Роли. `corporate` и `showrunner` зарезервированы под Capital и медиаконтур. */
-export const RoleSchema = z.enum([
-  'founder',
-  'investor',
-  'expert',
-  'corporate',
-  'organizer',
-  'admin',
-  'showrunner',
-]);
+/**
+ * Роли. `corporate` зарезервирована под Capital. Роли эксперта, организатора
+ * сезона и шоураннера удалены вместе с их функциями (2.1-W05).
+ */
+export const RoleSchema = z.enum(['founder', 'investor', 'corporate', 'admin']);
 export type Role = z.infer<typeof RoleSchema>;
 
 /** Роли, которые пользователь может выбрать сам при регистрации. */
@@ -207,83 +202,3 @@ export const CurrentUserSchema = z.object({
   createdAt: IsoDateTimeSchema,
 });
 export type CurrentUser = z.infer<typeof CurrentUserSchema>;
-
-export const InvestorProfileSchema = z.object({
-  about: boundedString(0, 4000).nullable(),
-  focusTaxonomyIds: z.array(UuidSchema).max(20),
-  checkSizeMin: z.string().nullable(),
-  checkSizeMax: z.string().nullable(),
-  kycStatus: z.enum(['none', 'pending', 'approved', 'rejected']),
-  entityId: UuidSchema.nullable(),
-});
-export type InvestorProfile = z.infer<typeof InvestorProfileSchema>;
-
-/** Согласие на публичный контур (шов к медиаконтуру Шоу). */
-export const PublicationScopeSchema = z.enum([
-  'episode_selection',
-  'episode_bootcamp',
-  'final_live',
-  'top100_public',
-]);
-
-/**
- * Что именно раскрывается в публичный контур.
- *
- * Перечисление, а не свободная строка. Прежний контракт принимал любые 50 строк
- * по 64 символа — а этот список читает медиаконтур и решает по нему, что можно
- * показать. Свободный текст означал бы, что согласие описывает раскрытие
- * словами, которые никто не сверяет: `founder_photo` и `фото основателя` — для
- * потребителя разные значения, а `passport_scan` он не поймёт вовсе и может
- * счесть разрешением. Закрытый словарь — единственная форма, в которой такой
- * список можно исполнить, а не пересказать.
- */
-export const PublicationDisclosableFieldSchema = z.enum([
-  'project_title',
-  'project_tagline',
-  'project_description',
-  'project_stage',
-  'project_geo',
-  'investment_ask',
-  'founder_display_name',
-  'founder_photo',
-  'founder_video',
-  'team_members',
-  'metrics',
-  'pitch_deck',
-]);
-export type PublicationDisclosableField = z.infer<typeof PublicationDisclosableFieldSchema>;
-
-export const PublicationConsentRequestSchema = z.object({
-  projectId: UuidSchema,
-  scope: PublicationScopeSchema,
-  /** Пустой список — законное согласие «снимать можно, данные проекта не раскрывать». */
-  disclosedFields: z.array(PublicationDisclosableFieldSchema).max(12),
-  /**
-   * Версия документа, который человек принял.
-   *
-   * Сверяется с действующим шаблоном `pdn_biometric` на сервере: отпечаток
-   * текста берётся оттуда же и в тело запроса не принимается. Клиент, который
-   * прислал бы и версию, и хеш, доказывал бы этим только сам себя.
-   */
-  documentVersion: boundedString(1, 32),
-});
-export type PublicationConsentRequest = z.infer<typeof PublicationConsentRequestSchema>;
-
-/** Выданное согласие в том виде, в каком его возвращает API. */
-export const PublicationConsentSchema = z.object({
-  id: UuidSchema,
-  projectId: UuidSchema,
-  scope: PublicationScopeSchema,
-  disclosedFields: z.array(PublicationDisclosableFieldSchema),
-  documentVersion: z.string(),
-  /** hex sha256 текста документа — доказательство, ЧТО именно было принято. */
-  documentSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  acceptedAt: IsoDateTimeSchema,
-  revokedAt: IsoDateTimeSchema.nullable(),
-  /**
-   * Крайний срок удаления публичной проекции. Не null только у отозванного
-   * согласия: пока согласие действует, удалять нечего.
-   */
-  deletionDeadline: IsoDateTimeSchema.nullable(),
-});
-export type PublicationConsent = z.infer<typeof PublicationConsentSchema>;

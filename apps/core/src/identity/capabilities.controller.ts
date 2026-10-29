@@ -1,10 +1,6 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post } from '@nestjs/common';
 import {
-  AssignDealSupportRequestSchema,
-  DealSupportAssignmentRowSchema,
-  DealSupportAssignmentSchema,
   GrantCapabilityRequestSchema,
-  RevokeDealSupportRequestSchema,
   RevokeCapabilityRequestSchema,
   StaffCapabilityGrantSchema,
   StaffCapabilitySchema,
@@ -43,42 +39,10 @@ export class AdminCapabilitiesController {
     return { items: items.map((g) => StaffCapabilityGrantSchema.parse(g)) };
   }
 
-  /** Действующие назначения на сопровождение: кого и на какой проект. */
-  @Get('deal-support')
-  async dealSupport(
-    @Query('projectId') rawProject: string | undefined,
-    @Query('userId') rawUser: string | undefined,
-    @Ctx() ctx: RequestContext,
-  ) {
-    const filter = {
-      ...(rawProject ? { projectId: parseOrThrow(UuidSchema, rawProject) } : {}),
-      ...(rawUser ? { userId: parseOrThrow(UuidSchema, rawUser) } : {}),
-    };
-    const items = await this.capabilities.listDealSupport(ctx, filter);
-    return { items: items.map((a) => DealSupportAssignmentRowSchema.parse(a)) };
-  }
-
   @Post('grant')
   async grant(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
     const input = parseOrThrow(GrantCapabilityRequestSchema, rawBody);
     return StaffCapabilityGrantSchema.parse(await this.capabilities.grant(ctx, input));
-  }
-
-  /**
-   * Назначение на сопровождение сделок проекта — ОБЛАСТЬ работы, не права.
-   * Рецензентом от этого не становятся: данные проекта не открываются.
-   */
-  @Post('deal-support')
-  async assignDealSupport(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
-    const input = parseOrThrow(AssignDealSupportRequestSchema, rawBody);
-    return DealSupportAssignmentSchema.parse(await this.capabilities.assignDealSupport(ctx, input));
-  }
-
-  @Post('deal-support/revoke')
-  async revokeDealSupport(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
-    const input = parseOrThrow(RevokeDealSupportRequestSchema, rawBody);
-    await this.capabilities.revokeDealSupport(ctx, input);
-    return { revoked: true };
   }
 
   /** Отзыв закрывает доступ на следующем запросе. */
@@ -91,7 +55,7 @@ export class AdminCapabilitiesController {
 }
 
 /** Свои полномочия видит сам сотрудник: кабинет прячет недоступные действия. */
-@Roles('admin', 'expert', 'organizer')
+@Roles('admin')
 @Controller('me')
 export class MyCapabilitiesController {
   constructor(private readonly capabilities: CapabilitiesService) {}

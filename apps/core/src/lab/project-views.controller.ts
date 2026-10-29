@@ -1,7 +1,6 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
 import {
   InvestorViewSchema,
-  RoundOpenPreviewSchema,
   UuidSchema,
   ViewPreviewQuerySchema,
   ViewPreviewSchema,
@@ -22,19 +21,10 @@ export class ProjectViewsController {
   constructor(private readonly views: ProjectViewsService) {}
 
   @Get('projects/:id/investor-view')
-  async investorView(
-    @Param('id') rawId: string,
-    @Query('locale') locale: string | undefined,
-    @Ctx() ctx: RequestContext,
-  ) {
+  async investorView(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
     const id = parseOrThrow(UuidSchema, rawId);
     return InvestorViewSchema.parse(
-      await this.views.investorView(
-        ctx.traceId,
-        id,
-        { userId: ctx.userId, roles: ctx.roles },
-        locale ?? 'ru-RU',
-      ),
+      await this.views.investorView(ctx.traceId, id, { userId: ctx.userId, roles: ctx.roles }),
     );
   }
 
@@ -48,14 +38,7 @@ export class ProjectViewsController {
     const id = parseOrThrow(UuidSchema, rawId);
     const query = parseOrThrow(ViewPreviewQuerySchema, rawQuery ?? {});
     return ViewPreviewSchema.parse(
-      await this.views.viewPreview(ctx, id, query.audience ?? 'investors', query.locale ?? 'ru-RU'),
+      await this.views.viewPreview(ctx, id, query.audience ?? 'investors'),
     );
-  }
-
-  @Roles('founder', 'admin')
-  @Get('rounds/:id/open-preview')
-  async roundOpenPreview(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
-    const id = parseOrThrow(UuidSchema, rawId);
-    return RoundOpenPreviewSchema.parse(await this.views.roundOpenPreview(ctx, id));
   }
 }

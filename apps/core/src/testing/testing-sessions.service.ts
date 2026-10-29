@@ -69,7 +69,6 @@ export interface SessionRow {
 /** Состав стандартного сценария: с кем владелец проходит платформу. */
 const STANDARD_CAST = [
   { role: 'founder' as const, label: 'Основатель' },
-  { role: 'expert' as const, label: 'Эксперт' },
   { role: 'investor' as const, label: 'Инвестор' },
 ];
 
@@ -189,7 +188,7 @@ export class TestingSessionsService {
     tx: Tx,
     ctx: RequestContext,
     sessionId: string,
-    role: 'founder' | 'investor' | 'expert' | 'organizer' | 'corporate' | 'showrunner',
+    role: 'founder' | 'investor' | 'corporate',
     label: string,
   ): Promise<string> {
     const userId = randomUUID();

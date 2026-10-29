@@ -257,9 +257,9 @@ export class Database implements OnModuleDestroy {
    */
   /**
    * Публичная роль: таблицы — только allowlist тизера. `viewer` — проверенная
-   * сессия зрителя (если есть): роль БД остаётся публичной, но функции
-   * проекции (`lab.round_view`, M085) определяют по ней аудиторию —
-   * инвестор с членством получает поля уровня `investors`, аноним — `public`.
+   * сессия зрителя (если есть): роль БД остаётся публичной, но предикат
+   * аудитории проекта (`lab.project_audience`) решает по ней, что зрителю
+   * открыто: допущенному инвестору — его проекты, анониму — публичные.
    */
   async asPublicRole<T>(
     traceId: string,
@@ -316,8 +316,6 @@ export class Database implements OnModuleDestroy {
 }
 
 export const SERVICE_ROLES = new Set([
-  'app_investments',
-  'app_billing',
   'app_notifications',
   'app_integration',
   'app_maintenance',
@@ -325,8 +323,6 @@ export const SERVICE_ROLES = new Set([
 ] as const);
 
 export type ServiceRole =
-  | 'app_investments'
-  | 'app_billing'
   | 'app_notifications'
   | 'app_integration'
   /** Плановое обслуживание: уборка реестра отзывов и брошенных билетов (M039). */
@@ -352,8 +348,6 @@ const SERVICE_POOL_MAX = 4;
  * после настройки — оно про отсутствующую конфигурацию, а не про фазу проекта.
  */
 const SERVICE_ROLE_URLS: Record<ServiceRole, (env: ReturnType<typeof getEnv>) => string> = {
-  app_investments: (env) => env.DATABASE_URL_APP_INVESTMENTS,
-  app_billing: (env) => env.DATABASE_URL_APP_BILLING,
   app_notifications: (env) => env.DATABASE_URL_APP_NOTIFICATIONS,
   app_integration: (env) => env.DATABASE_URL_APP_INTEGRATION,
   app_maintenance: (env) => env.DATABASE_URL_APP_MAINTENANCE,
@@ -361,8 +355,6 @@ const SERVICE_ROLE_URLS: Record<ServiceRole, (env: ReturnType<typeof getEnv>) =>
 };
 
 const SERVICE_ROLE_ENV_KEYS: Record<ServiceRole, string> = {
-  app_investments: 'DATABASE_URL_APP_INVESTMENTS',
-  app_billing: 'DATABASE_URL_APP_BILLING',
   app_notifications: 'DATABASE_URL_APP_NOTIFICATIONS',
   app_integration: 'DATABASE_URL_APP_INTEGRATION',
   app_maintenance: 'DATABASE_URL_APP_MAINTENANCE',

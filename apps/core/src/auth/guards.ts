@@ -8,11 +8,10 @@ import {
 import { Reflector } from '@nestjs/core';
 import { timingSafeEqual } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
-import type { Role } from '@unicorn/contracts';
+import { RoleSchema, type Role } from '@unicorn/contracts';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
-import { seasonsEnabled } from '../common/seasons-gate';
-import { Database, type RequestContext } from '../db/unit-of-work';
+import type { RequestContext } from '../db/unit-of-work';
 import { TokenVerifier } from './token.verifier';
 import { SessionEpochService } from './session-epoch.service';
 import { TokenRevocationService } from './token-revocation.service';
@@ -29,6 +28,19 @@ import { AccessContextService, type ResolvedContext } from './access-context.ser
 
 /** Методы, которые сами по себе ничего не меняют. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/** Роли, известные платформе; прочие роли из токена прав не дают (2.1-W05). */
+const KNOWN_ROLES: ReadonlySet<string> = new Set(RoleSchema.options);
+
+/**
+ * Роли запроса — только известные платформе. Токен, выданный до удаления
+ * ролей `organizer`, `showrunner` и `expert` (2.1-W05), может ещё нести их;
+ * здесь они вырезаются. Фильтр — по перечню ролей, а не по списку удалённых:
+ * будущая удалённая роль отсечётся так же.
+ */
+export function knownRoles(roles: readonly string[]): string[] {
+  return roles.filter((role) => KNOWN_ROLES.has(role));
+}
 
 export const IS_PUBLIC = 'auth:public';
 export const REQUIRED_ROLES = 'auth:roles';
@@ -130,23 +142,8 @@ export class AuthGuard implements CanActivate {
     private readonly verifier: TokenVerifier,
     private readonly epochs: SessionEpochService,
     private readonly revocations: TokenRevocationService,
-    private readonly db: Database,
     private readonly contexts: AccessContextService,
   ) {}
-
-  /**
-   * Сезоны отложены (M088): роль organizer не даёт прав, пока флаг
-   * `seasons.enabled` выключен. Вырезается из сессии здесь — единственная
-   * точка, где роли токена становятся ролями запроса (`@Roles` и GUC для RLS).
-   * Запрос к флагу идёт только для токенов с этой ролью.
-   */
-  private async effectiveRoles(roles: string[], traceId: string): Promise<string[]> {
-    if (!roles.includes('organizer')) return roles;
-    const enabled = await this.db.readOnly({ userId: null, roles: [], traceId }, (tx) =>
-      seasonsEnabled(tx),
-    );
-    return enabled ? roles : roles.filter((role) => role !== 'organizer');
-  }
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
@@ -205,7 +202,9 @@ export class AuthGuard implements CanActivate {
       return true;
     }
 
-    const roles = await this.effectiveRoles(verified.roles, traceId);
+    // Единственная точка, где роли токена становятся ролями запроса (`@Roles`
+    // и GUC для RLS): неизвестные роли отсекаются здесь.
+    const roles = knownRoles(verified.roles);
     request.auth = {
       subject: verified.subject,
       roles,

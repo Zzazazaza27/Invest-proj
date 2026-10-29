@@ -24,7 +24,7 @@ import { MailTransport } from '../comms/mail.transport';
  * (перечень задан в M038). Список нужен здесь, чтобы не отправлять в журнал
  * роль, которую реестр глаголов отвергнет ошибкой прав уже внутри транзакции.
  */
-const AUDITABLE_ACTOR_ROLES = new Set(['founder', 'investor', 'expert', 'organizer', 'admin']);
+const AUDITABLE_ACTOR_ROLES = new Set(['founder', 'investor', 'admin']);
 
 /**
  * Регистрация, вход и согласия.

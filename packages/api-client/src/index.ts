@@ -1,14 +1,5 @@
 import {
   AcceptedSchema,
-  AnalysisRunSchema,
-  ApplicationDetailSchema,
-  type ChangeFundingRoundBasisRequestSchema,
-  type CloseFundingRoundRequestSchema,
-  type CreateFundingRoundRequestSchema,
-  FundingRoundBasisHistoryEntrySchema,
-  FundingRoundDetailSchema,
-  FundingRoundSchema,
-  PaymentViewSchema,
   MediaUploadTicketSchema,
   MyProfileSchema,
   TestingSessionListSchema,
@@ -20,54 +11,27 @@ import {
   ChangePasswordResultSchema,
   type MyProfile,
   ProjectMediaSchema,
-  ServiceRunAvailabilitySchema,
-  ServiceRunViewSchema,
-  RoundPurchaseViewSchema,
-  RoundQuoteSchema,
-  ServiceCountryPolicyVersionSchema,
   ServiceCountrySchema,
-  type UpdateFundingRoundRequestSchema,
   type UpdateServiceCountryRequestSchema,
-  type ActivateServiceCountryPolicyRequestSchema,
-  ApplicationFormVersionSchema,
-  ApplicationFormVersionsSchema,
-  ApplicationFormViewSchema,
-  ApplicationListSchema,
-  ProjectLimitsSchema,
-  ApplicationPreviewSchema,
-  ReadinessConfigVersionSchema,
   TextsResponseSchema,
   AuthSessionSchema,
   FeaturesSchema,
-  InvestmentApplicationSchema,
   BusinessEntitySchema,
-  CommissionAccrualSchema,
   ConsentTemplateSchema,
   CurrentUserSchema,
   EmailVerificationStatusSchema,
   EntityMemberSchema,
-  ExpertAssignmentSchema,
-  ExpertHistoryEntrySchema,
-  ExpertNoteSchema,
   FavoriteProjectSchema,
   HealthSchema,
-  InvestmentAgreementSchema,
-  InvestmentOfferSchema,
-  InvestmentPassportSchema,
-  InvoiceSchema,
   KybVerificationSchema,
   KycVerificationSchema,
   LogoutResultSchema,
   NotificationPreferenceSchema,
   NotificationSchema,
-  PaymentSchema,
-  PricingSchema,
   ProjectFullSchema,
   ProjectMaterialSchema,
   MaterialUploadResultSchema,
-  ProjectStageChangeSchema,
   ProjectSummarySchema,
-  ProjectVersionSchema,
   ProjectTeaserSchema,
   PublicViewSchema,
   InvestorViewSchema,
@@ -76,23 +40,10 @@ import {
   type ExcludeAccessRequest,
   type GrantAccessRequest,
   ViewPreviewSchema,
-  RoundOpenPreviewSchema,
-  ApplyDisclosureResultSchema,
-  type ApplyDisclosureRequest,
-  type OpenFundingRoundRequest,
   type PreviewAudience,
   type SetMaterialVisibilityRequest,
   type SetProjectVisibilityRequest,
-  type SubmitApplicationRequest,
-  PublicationConsentSchema,
-  RatingEntrySchema,
-  ReadinessEntrySchema,
-  RoadmapSchema,
-  SeasonFunnelConfigSchema,
   LandingContentSchema,
-  SeasonSchema,
-  SeasonStageOccupancySchema,
-  SubscriptionSchema,
   SupportMessageSchema,
   SupportTicketDetailSchema,
   SupportTicketSchema,
@@ -101,37 +52,23 @@ import {
   UserDeviceSchema,
   pageResponseSchema,
   uuidv7,
-  type AcceptOfferRequest,
-  type AdvanceProjectStageRequest,
   type AddProductLink,
   type CatalogFilter,
-  type CreateApplicationRequest,
-  type UpdateApplicationRequest,
-  type ApplicationFormConfig,
-  type ProjectStage,
-  type ReadinessConfig,
   type TextNamespace,
   type AddEntityMemberRequest,
   type CreateEntityRequest,
   type StartKybRequest,
-  type CreateOfferRequest,
-  type CreatePaymentRequest,
   type CreateProjectRequest,
-  type CreateSubscriptionRequest,
   type CreateSupportTicketRequest,
   type LoginRequest,
   type NotificationPreference,
-  type PublicationConsentRequest,
   type RegisterDeviceRequest,
   type RegisterRequest,
   type FinalizeMedia,
   type RequestMediaUpload,
   type RequestUpload,
   type UpdateSupportTicketRequest,
-  type SeasonFunnelConfig,
-  type SignAgreementRequest,
   type StartKycRequest,
-  type SubmitReviewRequest,
   type UpdateProjectRequest,
 } from '@unicorn/contracts';
 import { z } from 'zod';
@@ -159,9 +96,6 @@ export class UnicornApi {
 
   // ------------------------------------------------------------- публичное
   readonly health = () => this.http.request({ path: '/health', schema: HealthSchema });
-
-  /** Тарифы и условия вознаграждения — без авторизации (радикальная прозрачность). */
-  readonly pricing = () => this.http.request({ path: '/pricing', schema: PricingSchema });
 
   /**
    * Справочник направлений.
@@ -191,54 +125,7 @@ export class UnicornApi {
       })
       .then((response) => response.blocks);
 
-  /** Текущий сезон. `null` — активного сезона нет, и это законный ответ. */
-  readonly currentSeason = () =>
-    this.http
-      .request({
-        path: '/seasons/current',
-        schema: z.object({ season: SeasonSchema.nullable() }),
-      })
-      .then((response) => response.season);
-
-  readonly rating = (seasonId: string) =>
-    this.http
-      .request({
-        path: `/seasons/${seasonId}/rating`,
-        schema: z.object({ items: z.array(RatingEntrySchema) }),
-      })
-      .then((response) => response.items);
-
-  /**
-   * Отбор внутри сезона — действия организатора: конфигурация воронки и
-   * перевод проектов по этапам.
-   */
-  readonly seasons = {
-    funnel: (seasonId: string) =>
-      this.http
-        .request({
-          path: `/seasons/${seasonId}/funnel`,
-          schema: z.object({ items: z.array(SeasonStageOccupancySchema) }),
-        })
-        .then((response) => response.items),
-
-    setFunnel: (seasonId: string, body: SeasonFunnelConfig) =>
-      this.http.request({
-        method: 'POST',
-        path: `/seasons/${seasonId}/funnel`,
-        body,
-        schema: SeasonFunnelConfigSchema,
-      }),
-
-    advanceStage: (seasonId: string, projectId: string, body: AdvanceProjectStageRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: `/seasons/${seasonId}/projects/${projectId}/stage`,
-        body,
-        schema: ProjectStageChangeSchema,
-      }),
-  };
-
-  /** Публичный каталог тизеров. Полные карточки — только по подписке. */
+  /** Публичный каталог тизеров. */
   readonly catalog = (filter: CatalogFilter & { cursor?: string; limit?: number } = {}) =>
     this.http.request({
       path: '/catalog',
@@ -259,12 +146,8 @@ export class UnicornApi {
       schema: z.object({ items: z.array(ProjectMediaSchema) }),
     });
 
-  readonly catalogItem = (id: string, locale?: string) =>
-    this.http.request({
-      path: `/catalog/${id}`,
-      query: { locale },
-      schema: PublicViewSchema,
-    });
+  readonly catalogItem = (id: string) =>
+    this.http.request({ path: `/catalog/${id}`, schema: PublicViewSchema });
 
   // ------------------------------------------------------------- аутентификация
   readonly auth = {
@@ -444,15 +327,11 @@ export class UnicornApi {
     get: (id: string) => this.http.request({ path: `/projects/${id}`, schema: ProjectFullSchema }),
 
     /** Investor View (5.7.2): блоки по разрешениям зрителя — предикат решает состав. */
-    investorView: (id: string, locale?: string) =>
-      this.http.request({
-        path: `/projects/${id}/investor-view`,
-        query: { locale },
-        schema: InvestorViewSchema,
-      }),
+    investorView: (id: string) =>
+      this.http.request({ path: `/projects/${id}/investor-view`, schema: InvestorViewSchema }),
 
-    /** Предпросмотр владельца: что увидит аудитория, кто это увидит, что станет видно после «Применить». */
-    viewPreview: (id: string, params: { audience?: PreviewAudience; locale?: string } = {}) =>
+    /** Предпросмотр владельца: что увидит аудитория и кто это увидит. */
+    viewPreview: (id: string, params: { audience?: PreviewAudience } = {}) =>
       this.http.request({
         path: `/projects/${id}/view-preview`,
         query: params,
@@ -466,16 +345,6 @@ export class UnicornApi {
         path: `/projects/${id}/visibility`,
         body,
         schema: ProjectFullSchema,
-        idempotencyKey: uuidv7(),
-      }),
-
-    /** «Применить новые условия раскрытия» к профилю и (по желанию) незавершённому раунду. */
-    applyDisclosure: (id: string, body: ApplyDisclosureRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: `/projects/${id}/disclosure/apply`,
-        body,
-        schema: ApplyDisclosureResultSchema,
         idempotencyKey: uuidv7(),
       }),
 
@@ -544,7 +413,7 @@ export class UnicornApi {
         schema: ProjectFullSchema,
       }),
 
-    /** Публикация листинга. Сервер проверит подписку и соответствие тарифа. */
+    /** Публикация листинга. Сервер проверит условия публикации (проверку личности). */
     publish: (id: string) =>
       this.http.request({
         method: 'POST',
@@ -562,15 +431,6 @@ export class UnicornApi {
         .request({
           path: `/projects/${id}/materials`,
           schema: z.object({ items: z.array(ProjectMaterialSchema) }),
-        })
-        .then((response) => response.items),
-
-    /** История подач заявки — версии-снимки, на которые ссылается экспертиза. */
-    versions: (id: string) =>
-      this.http
-        .request({
-          path: `/projects/${id}/versions`,
-          schema: z.object({ items: z.array(ProjectVersionSchema) }),
         })
         .then((response) => response.items),
 
@@ -641,195 +501,9 @@ export class UnicornApi {
         schema: ProjectMaterialSchema,
       }),
 
-    /**
-     * Подача заявки в сезон. Создаёт неизменяемый снимок версии: именно он, а
-     * не текущее состояние проекта, идёт на экспертизу.
-     */
-    submit: (id: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/projects/${id}/submit`,
-        // Возвращается сам снимок версии, а не `{ version }`: поле называется
-        // versionNo, и придуманная форма ответа падала бы на разборе.
-        schema: ProjectVersionSchema,
-        idempotencyKey: uuidv7(),
-      }),
-
-    /** Прогон анализа. Возвращает результат вместе с признаком, считала ли его модель. */
-    runAnalysis: (id: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/projects/${id}/analysis`,
-        schema: AnalysisRunSchema,
-      }),
-
-    readiness: (id: string) =>
-      this.http
-        .request({
-          path: `/projects/${id}/readiness`,
-          schema: z.object({ items: z.array(ReadinessEntrySchema) }),
-        })
-        .then((response) => response.items),
-
-    roadmap: (id: string) =>
-      this.http.request({ path: `/projects/${id}/roadmap`, schema: RoadmapSchema.nullable() }),
-
-    passport: (id: string) =>
-      this.http.request({
-        path: `/projects/${id}/passport`,
-        schema: InvestmentPassportSchema,
-      }),
-
     // askMentor удалён: маршрута `/projects/mentor` на сервере нет. AI Mentor
     // выключен до появления eval-гейта (TODO.md), а метод, компилирующийся, но
     // падающий при вызове, обещает контракт, которого не существует.
-  };
-
-  // -------------------------------------------------------------- биллинг
-  // -------------------------------------------------------------- заявки
-  /**
-   * Инвестиционные заявки проекта (M071). Заявка отделена от проекта: у
-   * проекта их может быть несколько, у каждой — свои версии и свой архив.
-   * Черновик свободен; что мешает подаче — в `submission.missing`.
-   */
-  /** Лимит проектов аккаунта (0 — безлимит) и его происхождение. */
-  readonly projectLimits = () =>
-    this.http.request({ path: '/projects/limits', schema: ProjectLimitsSchema });
-
-  readonly applications = {
-    list: (projectId: string) =>
-      this.http.request({
-        path: `/projects/${projectId}/applications`,
-        schema: ApplicationListSchema,
-      }),
-
-    create: (projectId: string, body: CreateApplicationRequest = {}) =>
-      this.http.request({
-        method: 'POST',
-        path: `/projects/${projectId}/applications`,
-        body,
-        schema: InvestmentApplicationSchema,
-        idempotencyKey: uuidv7(),
-      }),
-
-    /** Заявка с условиями подачи и готовностью (процент, разделы, недостающее). */
-    get: (id: string) =>
-      this.http.request({ path: `/applications/${id}`, schema: ApplicationDetailSchema }),
-
-    /** Автосохранение: частичное тело, `null` очищает поле; ответы проверяются по форме версии. */
-    update: (id: string, body: UpdateApplicationRequest, opts: { keepalive?: boolean } = {}) =>
-      this.http.request({
-        method: 'PATCH',
-        path: `/applications/${id}`,
-        body,
-        schema: ApplicationDetailSchema,
-        keepalive: opts.keepalive,
-      }),
-
-    archive: (id: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/applications/${id}/archive`,
-        schema: InvestmentApplicationSchema,
-      }),
-
-    /**
-     * Подача без сезона: неизменяемый снимок версии заявки и согласие владельца
-     * показывать его (5.7.3). `activeFormVersion` — версия из предпросмотра;
-     * смена условий между предпросмотром и подачей — 409.
-     */
-    submit: (id: string, body: SubmitApplicationRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: `/applications/${id}/submit`,
-        body,
-        schema: ProjectVersionSchema,
-        idempotencyKey: uuidv7(),
-      }),
-
-    /**
-     * Форма заявки по ЕЁ версии конфигурации и стадии: разделы, вопросы с
-     * состояниями и текстами (fallback — ru-RU). Черновик живёт на своей
-     * версии, поэтому форма не меняется после публикации новой.
-     */
-    form: (id: string, locale?: string) =>
-      this.http.request({
-        path: `/applications/${id}/form${locale ? `?locale=${encodeURIComponent(locale)}` : ''}`,
-        schema: ApplicationFormViewSchema,
-      }),
-
-    /** Сводка «как увидит инвестор»: только public / investors, только заполненное. */
-    /** Предпросмотр для аудитории: `public` — аноним, `investors` — инвестор с доступом. */
-    preview: (id: string, opts: { locale?: string; audience?: 'public' | 'investors' } = {}) => {
-      const params = new URLSearchParams();
-      if (opts.locale) params.set('locale', opts.locale);
-      if (opts.audience) params.set('audience', opts.audience);
-      const qs = params.toString();
-      return this.http.request({
-        path: `/applications/${id}/preview${qs ? `?${qs}` : ''}`,
-        schema: ApplicationPreviewSchema,
-      });
-    },
-  };
-
-  /**
-   * Конфигурация вопросов заявки — админка (план 0.2 §0в.4): черновик,
-   * предпросмотр, публикация, история, откат.
-   */
-  readonly applicationForms = {
-    list: () =>
-      this.http.request({
-        path: '/admin/application-forms',
-        schema: ApplicationFormVersionsSchema,
-      }),
-
-    draft: () =>
-      this.http.request({
-        path: '/admin/application-forms/draft',
-        schema: ApplicationFormVersionSchema,
-      }),
-
-    version: (version: number) =>
-      this.http.request({
-        path: `/admin/application-forms/${version}`,
-        schema: ApplicationFormVersionSchema,
-      }),
-
-    /** Сохранить черновик целиком; сервер проверяет схему и правила эволюции. */
-    saveDraft: (config: ApplicationFormConfig) =>
-      this.http.request({
-        method: 'PUT',
-        path: '/admin/application-forms/draft',
-        body: { config },
-        schema: ApplicationFormVersionSchema,
-      }),
-
-    preview: (stage: ProjectStage, locale?: string) =>
-      this.http.request({
-        path:
-          `/admin/application-forms/draft/preview?stage=${stage}` +
-          (locale ? `&locale=${encodeURIComponent(locale)}` : ''),
-        schema: ApplicationFormViewSchema,
-      }),
-
-    publish: (reason: string) =>
-      this.http.request({
-        method: 'POST',
-        path: '/admin/application-forms/draft/publish',
-        body: { reason },
-        schema: ApplicationFormVersionSchema,
-        idempotencyKey: uuidv7(),
-      }),
-
-    /** Откат или возврат: активировать ранее опубликованную версию. */
-    activate: (version: number, reason: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/admin/application-forms/${version}/activate`,
-        body: { reason },
-        schema: ApplicationFormVersionSchema,
-        idempotencyKey: uuidv7(),
-      }),
   };
 
   /** Словарь и ЧАВО на языке — публично, с fallback на ru-RU (план 0.2 §2.6). */
@@ -839,186 +513,12 @@ export class UnicornApi {
       schema: TextsResponseSchema,
     });
 
-  /** Веса готовности — отдельная версия и активация (план 0.2 §2.7). */
-  /** Раунды привлечения (план 0.2 §0г): черновик, изменение, переходы, основание. */
-  readonly rounds = {
-    list: (projectId: string) =>
-      this.http.request({
-        path: `/projects/${projectId}/rounds`,
-        schema: z.object({ items: z.array(FundingRoundSchema) }),
-      }),
-    /** Черновик раунда; повторный вызов возвращает существующий. */
-    create: (projectId: string, body: z.input<typeof CreateFundingRoundRequestSchema> = {}) =>
-      this.http.request({
-        method: 'POST',
-        path: `/projects/${projectId}/rounds`,
-        body,
-        schema: FundingRoundDetailSchema,
-        idempotencyKey: uuidv7(),
-      }),
-    get: (id: string) =>
-      this.http.request({ path: `/rounds/${id}`, schema: FundingRoundDetailSchema }),
-    update: (
-      id: string,
-      body: z.input<typeof UpdateFundingRoundRequestSchema>,
-      opts: { keepalive?: boolean } = {},
-    ) =>
-      this.http.request({
-        method: 'PATCH',
-        path: `/rounds/${id}`,
-        body,
-        schema: FundingRoundDetailSchema,
-        keepalive: opts.keepalive,
-      }),
-    /** Открытие с подтверждением версии условий раскрытия из `openPreview` (5.7.3). */
-    open: (id: string, body: OpenFundingRoundRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: `/rounds/${id}/open`,
-        body,
-        schema: FundingRoundDetailSchema,
-        idempotencyKey: uuidv7(),
-      }),
-    pause: (id: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/rounds/${id}/pause`,
-        schema: FundingRoundDetailSchema,
-        idempotencyKey: uuidv7(),
-      }),
-    resume: (id: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/rounds/${id}/resume`,
-        schema: FundingRoundDetailSchema,
-        idempotencyKey: uuidv7(),
-      }),
-    close: (id: string, body: z.input<typeof CloseFundingRoundRequestSchema>) =>
-      this.http.request({
-        method: 'POST',
-        path: `/rounds/${id}/close`,
-        body,
-        schema: FundingRoundDetailSchema,
-        idempotencyKey: uuidv7(),
-      }),
-    cancel: (id: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/rounds/${id}/cancel`,
-        schema: FundingRoundDetailSchema,
-        idempotencyKey: uuidv7(),
-      }),
-    changeBasis: (id: string, body: z.input<typeof ChangeFundingRoundBasisRequestSchema>) =>
-      this.http.request({
-        method: 'PUT',
-        path: `/rounds/${id}/basis`,
-        body,
-        schema: FundingRoundDetailSchema,
-      }),
-    basisHistory: (id: string) =>
-      this.http.request({
-        path: `/rounds/${id}/basis-history`,
-        schema: z.object({ items: z.array(FundingRoundBasisHistoryEntrySchema) }),
-      }),
-
-    /** Предпросмотр перед открытием: что увидят аноним и инвестор по активной версии условий. */
-    openPreview: (id: string) =>
-      this.http.request({ path: `/rounds/${id}/open-preview`, schema: RoundOpenPreviewSchema }),
-
-    /**
-     * Во что обойдётся запуск (5.9.2). Только чтение: ничего не покупается.
-     * Выбор основателя — более полный пакет и докупаемые услуги — передаётся
-     * параметрами, потому что хранить незавершённый выбор пока негде.
-     */
-    /** Сохранить выбор пакета и услуг: черновик намерения, не покупка. */
-    saveSelection: (id: string, selection: { packageCode?: string; serviceCodes?: string[] }) =>
-      this.http.request({
-        method: 'PUT',
-        path: `/rounds/${id}/package-selection`,
-        body: { packageCode: selection.packageCode, serviceCodes: selection.serviceCodes ?? [] },
-        schema: z.object({
-          packageCode: z.string().optional(),
-          serviceCodes: z.array(z.string()),
-        }),
-      }),
-
-    /** Оформить покупку по сохранённому выбору. Сумма берётся из расчёта. */
-    createPurchase: (id: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/rounds/${id}/purchase`,
-        schema: RoundPurchaseViewSchema,
-        idempotencyKey: uuidv7(),
-      }),
-
-    purchase: (id: string) =>
-      this.http.request({
-        path: `/rounds/${id}/purchase`,
-        schema: z.union([RoundPurchaseViewSchema, z.object({ purchase: z.null() })]),
-      }),
-
-    /**
-     * Начать оплату покупки у оператора платежей.
-     *
-     * Суммы в запросе нет: её назначает сервер по покупке. Ответ содержит
-     * адрес страницы оплаты — переход по нему оплату НЕ подтверждает.
-     */
-    startPayment: (purchaseId: string, returnUrl?: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/billing/purchases/${purchaseId}/payment`,
-        body: returnUrl ? { returnUrl } : {},
-        schema: PaymentViewSchema,
-        idempotencyKey: uuidv7(),
-      }),
-
-    /** Состояние платежа. Чтение: возврат со страницы оплаты ничего не меняет. */
-    payment: (purchaseId: string) =>
-      this.http.request({
-        path: `/billing/purchases/${purchaseId}/payment`,
-        schema: z.object({ payment: PaymentViewSchema.nullable() }),
-      }),
-
-    /** Что по покупке можно запустить и что мешает (услуги платформы). */
-    serviceRuns: (purchaseId: string) =>
-      this.http.request({
-        path: `/billing/purchases/${purchaseId}/service-runs`,
-        schema: z.object({ items: z.array(ServiceRunAvailabilitySchema) }),
-      }),
-
-    /** Запустить разбор по позиции. Повтор не создаёт второго исполнения. */
-    startServiceRun: (itemId: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/billing/purchases/items/${itemId}/run`,
-        schema: ServiceRunViewSchema,
-        idempotencyKey: uuidv7(),
-      }),
-
-    quote: (id: string, selection: { packageCode?: string; serviceCodes?: string[] } = {}) => {
-      const query = new URLSearchParams();
-      if (selection.packageCode) query.set('packageCode', selection.packageCode);
-      if (selection.serviceCodes?.length)
-        query.set('serviceCodes', selection.serviceCodes.join(','));
-      const suffix = query.toString();
-      return this.http.request({
-        path: `/rounds/${id}/quote${suffix ? `?${suffix}` : ''}`,
-        schema: RoundQuoteSchema,
-      });
-    },
-  };
-
   /** Страны обслуживания: список публичен, условия — вошедшему; выбор — за аккаунтом. */
   readonly serviceCountries = {
     list: () =>
       this.http.request({
         path: '/service-countries',
         schema: z.object({ items: z.array(ServiceCountrySchema) }),
-      }),
-    policy: (code: string) =>
-      this.http.request({
-        path: `/service-countries/${encodeURIComponent(code)}/policy`,
-        schema: ServiceCountryPolicyVersionSchema,
       }),
     setMine: (code: string) =>
       this.http.request({
@@ -1048,220 +548,11 @@ export class UnicornApi {
           body,
           schema: ServiceCountrySchema,
         }),
-      policies: (code: string) =>
-        this.http.request({
-          path: `/admin/service-countries/${encodeURIComponent(code)}/policies`,
-          schema: z.object({ items: z.array(ServiceCountryPolicyVersionSchema) }),
-        }),
-      activatePolicy: (
-        code: string,
-        body: z.input<typeof ActivateServiceCountryPolicyRequestSchema>,
-      ) =>
-        this.http.request({
-          method: 'POST',
-          path: `/admin/service-countries/${encodeURIComponent(code)}/policies`,
-          body,
-          schema: ServiceCountryPolicyVersionSchema,
-          idempotencyKey: uuidv7(),
-        }),
     },
   };
 
-  readonly readinessConfigs = {
-    list: () =>
-      this.http
-        .request({
-          path: '/admin/readiness-configs',
-          schema: z.object({ items: z.array(ReadinessConfigVersionSchema) }),
-        })
-        .then((response) => response.items),
-
-    activate: (config: ReadinessConfig, reason: string) =>
-      this.http.request({
-        method: 'POST',
-        path: '/admin/readiness-configs',
-        body: { config, reason },
-        schema: ReadinessConfigVersionSchema,
-        idempotencyKey: uuidv7(),
-      }),
-  };
-
-  /** Публичные флаги интерфейса: барьер подписки, версия кабинета основателя. */
+  /** Публичные флаги интерфейса. */
   readonly features = () => this.http.request({ path: '/features', schema: FeaturesSchema });
-
-  readonly billing = {
-    /** Свои подписки. Сервер отдаёт конверт `{ items }`, а не голый массив. */
-    subscriptions: () =>
-      this.http
-        .request({
-          path: '/billing/subscriptions',
-          schema: z.object({ items: z.array(SubscriptionSchema) }),
-        })
-        .then((response) => response.items),
-
-    subscribe: (body: CreateSubscriptionRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: '/billing/subscriptions',
-        body,
-        schema: SubscriptionSchema,
-        idempotencyKey: body.idempotencyKey,
-      }),
-
-    cancel: (id: string) =>
-      this.http.request({ method: 'POST', path: `/billing/subscriptions/${id}/cancel` }),
-
-    /**
-     * Свои счета. Пустой список законен: счета выставляются вместе с PDF, а
-     * генератора PDF пока нет — маршрут при этом настоящий, не 404.
-     */
-    invoices: () =>
-      this.http
-        .request({ path: '/billing/invoices', schema: z.object({ items: z.array(InvoiceSchema) }) })
-        .then((response) => response.items),
-
-    /** Начисления вознаграждения по своим сделкам. */
-    accruals: () =>
-      this.http
-        .request({
-          path: '/billing/accruals',
-          schema: z.object({ items: z.array(CommissionAccrualSchema) }),
-        })
-        .then((response) => response.items),
-
-    pay: (body: CreatePaymentRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: '/billing/payments',
-        body,
-        schema: PaymentSchema,
-        idempotencyKey: body.idempotencyKey,
-      }),
-  };
-
-  // ---------------------------------------------------- регулируемые сделки
-  readonly investments = {
-    offers: (query: { cursor?: string; limit?: number } = {}) =>
-      this.http.request({
-        path: '/investments/offers',
-        query,
-        schema: pageResponseSchema(InvestmentOfferSchema),
-      }),
-
-    createOffer: (body: CreateOfferRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: '/investments/offers',
-        body,
-        schema: InvestmentOfferSchema,
-        idempotencyKey: body.idempotencyKey,
-      }),
-
-    /** Требует step-up MFA. При 403 STEP_UP_REQUIRED — поднять уровень и повторить. */
-    acceptOffer: (body: AcceptOfferRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: '/investments/agreements',
-        body,
-        schema: InvestmentAgreementSchema,
-        idempotencyKey: body.idempotencyKey,
-      }),
-
-    /** Тоже step-up MFA. */
-    signAgreement: (body: SignAgreementRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: `/investments/agreements/${body.agreementId}/signature`,
-        body,
-        schema: InvestmentAgreementSchema,
-        idempotencyKey: body.idempotencyKey,
-      }),
-
-    agreements: (query: { cursor?: string; limit?: number } = {}) =>
-      this.http.request({
-        path: '/investments/agreements',
-        query,
-        schema: pageResponseSchema(InvestmentAgreementSchema),
-      }),
-
-    agreement: (id: string) =>
-      this.http.request({
-        path: `/investments/agreements/${id}`,
-        schema: InvestmentAgreementSchema,
-      }),
-  };
-
-  // -------------------------------------------------------------- эксперты
-  readonly experts = {
-    /** Свои назначения. Конверт `{ items }`, как и у остальных списков. */
-    assignments: () =>
-      this.http
-        .request({
-          path: '/experts/assignments',
-          schema: z.object({ items: z.array(ExpertAssignmentSchema) }),
-        })
-        .then((response) => response.items),
-
-    /**
-     * Ответ на назначение. Эксперт принимает его или отказывается — отказ
-     * законный исход: рецензент, который не может оценить проект честно,
-     * обязан иметь способ это сказать.
-     */
-    decideAssignment: (assignmentId: string, decision: 'accepted' | 'declined') =>
-      this.http.request({
-        method: 'POST',
-        path: `/experts/assignments/${assignmentId}/decision`,
-        body: { decision },
-        schema: ExpertAssignmentSchema,
-      }),
-
-    /**
-     * Рецензия. Маршрут — `POST /experts/reviews` с идентификатором назначения
-     * в теле; прежний путь `/assignments/:id/review` на сервере не
-     * существовал, и метод падал бы при первом же вызове.
-     */
-    submitReview: (body: SubmitReviewRequest) =>
-      this.http.request({ method: 'POST', path: '/experts/reviews', body }),
-
-    declareConflict: (body: { projectId: string; description: string }) =>
-      this.http.request({ method: 'POST', path: '/experts/conflicts', body }),
-
-    /**
-     * Пересмотр уже поданной рецензии. Идентификатор назначения — в пути, а
-     * не в теле: два источника правды об одном не нужны.
-     */
-    reviseReview: (assignmentId: string, body: Omit<SubmitReviewRequest, 'assignmentId'>) =>
-      this.http.request({
-        method: 'PATCH',
-        path: `/experts/assignments/${encodeURIComponent(assignmentId)}/review`,
-        body,
-      }),
-
-    notes: (assignmentId: string) =>
-      this.http
-        .request({
-          path: `/experts/assignments/${encodeURIComponent(assignmentId)}/notes`,
-          schema: z.object({ items: z.array(ExpertNoteSchema) }),
-        })
-        .then((response) => response.items),
-
-    addNote: (assignmentId: string, body: string) =>
-      this.http.request({
-        method: 'POST',
-        path: `/experts/assignments/${encodeURIComponent(assignmentId)}/notes`,
-        body: { body },
-        schema: ExpertNoteSchema,
-      }),
-
-    /** История рассмотрения из журнала событий. */
-    history: (assignmentId: string) =>
-      this.http
-        .request({
-          path: `/experts/assignments/${encodeURIComponent(assignmentId)}/history`,
-          schema: z.object({ items: z.array(ExpertHistoryEntrySchema) }),
-        })
-        .then((response) => response.items),
-  };
 
   // ----------------------------------------------------------- уведомления
   readonly notifications = {
@@ -1404,42 +695,6 @@ export class UnicornApi {
         path: `/support/tickets/${encodeURIComponent(id)}`,
         body,
         schema: SupportTicketDetailSchema,
-      }),
-  };
-
-  // ------------------------------------------------------------- согласия
-  /**
-   * Согласия на публичный контур.
-   *
-   * До Ф50 этих маршрутов в ядре не существовало: клиент их звал, сервер
-   * отвечал 404. Расхождение нашёл прогон консоли, а не чтение кода — поэтому
-   * ответы здесь разбираются схемой, а не остаются `unknown`.
-   */
-  readonly publication = {
-    list: (projectId?: string) =>
-      this.http
-        .request({
-          path: projectId
-            ? `/publication-consents?projectId=${encodeURIComponent(projectId)}`
-            : '/publication-consents',
-          schema: z.object({ items: z.array(PublicationConsentSchema) }),
-        })
-        .then((response) => response.items),
-
-    grant: (body: PublicationConsentRequest) =>
-      this.http.request({
-        method: 'POST',
-        path: '/publication-consents',
-        body,
-        schema: PublicationConsentSchema,
-      }),
-
-    /** Отзыв. Строка согласия остаётся — отменяется разрешение, не факт акцепта. */
-    revoke: (id: string) =>
-      this.http.request({
-        method: 'DELETE',
-        path: `/publication-consents/${encodeURIComponent(id)}`,
-        schema: PublicationConsentSchema,
       }),
   };
 

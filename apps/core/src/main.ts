@@ -222,8 +222,6 @@ async function bootstrap(): Promise<void> {
       // правилом, иначе они расходятся молча.
       const cls = rateLimitClass(normalizedPath(request.url), request.method);
       if (cls === 'auth') return env.RATE_LIMIT_AUTH_PER_MIN;
-      if (cls === 'money') return env.RATE_LIMIT_MONEY_PER_MIN;
-      if (cls === 'provider') return env.RATE_LIMIT_PROVIDER_PER_MIN;
       if (cls === 'admin') return env.RATE_LIMIT_ADMIN_PER_MIN;
       return env.RATE_LIMIT_DEFAULT_PER_MIN;
     },
@@ -266,8 +264,8 @@ async function bootstrap(): Promise<void> {
       // украшение. Плагин держит один счётчик на ключ, а порог считает на
       // каждый запрос: пока класс в ключ не входил, обычные чтения кабинета
       // набивали тот же счётчик, с которым потом сравнивался денежный порог 10.
-      // Воспроизведено: одиннадцать `GET /v1/billing/subscriptions`, затем
-      // ПЕРВОЕ оформление подписки — 429. «Денежный класс 10/мин» означал на
+      // Воспроизведено: одиннадцать обычных чтений, затем ПЕРВОЕ оформление
+      // подписки — 429. «Денежный класс 10/мин» означал на
       // деле «любые десять запросов, и деньги закрыты на минуту».
       return `${cls}|${identity}`;
     },

@@ -3,7 +3,6 @@ import {
   CatalogQuerySchema,
   CreateProjectRequestSchema,
   RequestUploadSchema,
-  SEASON_TRANSITIONS,
 } from '@unicorn/contracts';
 import { loadEnv, resetEnvCache } from '../src/config/env';
 import { parseOrThrow } from '../src/common/validation';
@@ -36,9 +35,7 @@ const BASE_ENV: NodeJS.ProcessEnv = {
   // ронять запуск, а не всплывать на пользовательском запросе.
   KEK_PASSPORT_SENSITIVE: Buffer.alloc(32, 8).toString('base64'),
   KEK_KYB_DOCUMENTS: Buffer.alloc(32, 9).toString('base64'),
-  KEK_INVESTMENT_DOCUMENTS: Buffer.alloc(32, 10).toString('base64'),
   KEK_WEBHOOK_SECRETS: Buffer.alloc(32, 11).toString('base64'),
-  KEK_AI_PROVIDER_SECRETS: Buffer.alloc(32, 12).toString('base64'),
 };
 
 const S3_ENV: NodeJS.ProcessEnv = {
@@ -255,8 +252,8 @@ describe('Валидация на границе', () => {
   });
 
   it('неизвестное поле отвергается, а не отбрасывается молча', () => {
-    // Клиент, пытающийся назначить тариф сам, обязан получить отказ: тариф
-    // резолвит сервер из investment_ask.
+    // Поле, которого нет в контракте, — отказ, а не молчаливый пропуск: так
+    // клиент не может протащить в проект служебный параметр.
     expect(() =>
       parseOrThrow(CreateProjectRequestSchema, {
         ...valid,
@@ -269,16 +266,5 @@ describe('Валидация на границе', () => {
     expect(() =>
       parseOrThrow(CreateProjectRequestSchema, { ...valid, tagLine: 'опечатка' }),
     ).toThrow();
-  });
-});
-
-describe('Статусная машина сезона', () => {
-  it('назад в приём заявок вернуться нельзя', () => {
-    expect(SEASON_TRANSITIONS.review).not.toContain('applications_open');
-    expect(SEASON_TRANSITIONS.closed).toHaveLength(0);
-  });
-
-  it('из черновика открывается только приём заявок', () => {
-    expect(SEASON_TRANSITIONS.draft).toEqual(['applications_open']);
   });
 });

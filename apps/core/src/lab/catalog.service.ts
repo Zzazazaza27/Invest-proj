@@ -65,9 +65,6 @@ export class CatalogService {
         { path: 'sort', message: 'сортировка по релевантности требует поискового запроса' },
       ]);
     }
-    if (query.askMin && query.askMax && Number(query.askMin) > Number(query.askMax)) {
-      throw errors.validation([{ path: 'askMin', message: 'нижняя граница больше верхней' }]);
-    }
 
     const cursor = query.cursor ? decodeCursor(query.cursor) : null;
     const params: unknown[] = [];
@@ -89,23 +86,6 @@ export class CatalogService {
       params.push(query.geoCountry);
       where.push(`p.geo_country = $${params.length}`);
     }
-    // Фильтры и сортировки по сумме — по незавершённому раунду (M084) и по
-    // настройке видимости для аудитории зрителя (M085): проект без раунда или
-    // с закрытой для зрителя суммой под фильтр суммы не попадает и в
-    // сортировке по сумме не участвует. Скрытую сумму нельзя определить ни
-    // фильтром, ни сортировкой: для зрителя её нет (NULL), а не «есть, но не
-    // показана».
-    if (query.askMin) {
-      params.push(query.askMin);
-      where.push(`r.target >= $${params.length}::numeric`);
-    }
-    if (query.askMax) {
-      params.push(query.askMax);
-      where.push(`r.target <= $${params.length}::numeric`);
-    }
-    if (query.sort === 'ask_asc' || query.sort === 'ask_desc') {
-      where.push('r.target IS NOT NULL');
-    }
 
     // Выражение сортировки — из фиксированной таблицы, а не из строки запроса.
     const order = ORDERINGS[query.sort];
@@ -122,12 +102,9 @@ export class CatalogService {
 
     const sql = `
       SELECT p.id, p.taxonomy_id, p.title, p.tagline, p.stage, p.geo_country, p.listed_at,
-             COALESCE(r.raising, 'undisclosed') AS raising,
-             r.target::text AS round_target, r.currency AS round_currency,
              (m.project_id IS NOT NULL) AS has_logo,
              (${order.expression})::text AS sort_value
         FROM lab.projects p
-        LEFT JOIN LATERAL lab.round_view(p.id) r ON true
         -- Логотип виден тем же, кому виден проект: политика чтения
         -- lab.project_media стоит на том же предикате аудитории.
         LEFT JOIN lab.project_media m ON m.project_id = p.id AND m.kind = 'logo'
@@ -162,7 +139,6 @@ export class CatalogService {
       async (tx) => {
         const { rows } = await tx.query<TeaserRow>(
           `SELECT id, taxonomy_id, title, tagline, stage, geo_country, listed_at,
-                  raising, round_target::text AS round_target, round_currency,
                   ''::text AS sort_value
              FROM lab.v_public_catalog
             WHERE id = $1`,
@@ -177,7 +153,7 @@ export class CatalogService {
   }
 }
 
-/** Проверенная сессия зрителя — для аудитории проекции раунда (M085); null — аноним. */
+/** Проверенная сессия зрителя — для предиката аудитории проекта; null — аноним. */
 export type Viewer = { userId: string | null; roles: readonly string[] } | null;
 
 /**
@@ -197,8 +173,6 @@ const ORDERINGS: Record<
     comparator: '<',
     cast: '::timestamptz',
   },
-  ask_asc: { expression: 'r.target', direction: 'ASC', comparator: '>', cast: '::numeric' },
-  ask_desc: { expression: 'r.target', direction: 'DESC', comparator: '<', cast: '::numeric' },
   relevance: {
     expression: "ts_rank(p.public_search_tsv, plainto_tsquery('russian', $1))",
     direction: 'DESC',
@@ -214,9 +188,6 @@ interface TeaserRow {
   tagline: string | null;
   stage: ProjectTeaser['stage'];
   geo_country: string | null;
-  raising: 'open' | 'paused' | 'none' | 'undisclosed';
-  round_target: string | null;
-  round_currency: string | null;
   listed_at: Date | null;
   has_logo: boolean | null;
   sort_value: string;
@@ -230,11 +201,8 @@ function mapTeaser(row: TeaserRow): ProjectTeaser {
     stage: row.stage,
     taxonomyId: row.taxonomy_id,
     geoCountry: row.geo_country,
-    investmentAsk: row.round_target,
-    askCurrency: (row.round_currency?.trim() ?? 'RUB') as 'RUB',
     listedAt: row.listed_at?.toISOString() ?? null,
     logoUrl: row.has_logo ? `/v1/projects/${row.id}/media/logo/card` : null,
-    raising: row.raising,
   };
 }
 

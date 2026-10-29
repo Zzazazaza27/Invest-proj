@@ -29,9 +29,8 @@ export class DirectoryService {
         title: string;
         status: string;
         listing_status: string;
-        season_id: string | null;
       }>(
-        `SELECT id, title, status, listing_status, season_id
+        `SELECT id, title, status, listing_status
            FROM lab.projects
           WHERE deleted_at IS NULL
             AND ($1 = '' OR title ILIKE '%' || $1 || '%')
@@ -44,7 +43,6 @@ export class DirectoryService {
         title: row.title,
         status: row.status,
         listingStatus: row.listing_status,
-        seasonId: row.season_id,
       }));
     });
   }

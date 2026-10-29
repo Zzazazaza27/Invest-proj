@@ -3,6 +3,7 @@ import { loadEnv, resetEnvCache } from '../src/config/env';
 import { CryptoService } from '../src/crypto/crypto.service';
 import { TokenVerifier } from '../src/auth/token.verifier';
 import { TokenRevocationService } from '../src/auth/token-revocation.service';
+import { knownRoles } from '../src/auth/guards';
 import { createHmac } from 'node:crypto';
 import { OpenApiController } from '../src/health/openapi.controller';
 import { normalizedPath, rateLimitClass } from '../src/common/request-path';
@@ -35,9 +36,7 @@ const BASE_ENV: NodeJS.ProcessEnv = {
   // ронять запуск, а не всплывать на пользовательском запросе.
   KEK_PASSPORT_SENSITIVE: Buffer.alloc(32, 8).toString('base64'),
   KEK_KYB_DOCUMENTS: Buffer.alloc(32, 9).toString('base64'),
-  KEK_INVESTMENT_DOCUMENTS: Buffer.alloc(32, 10).toString('base64'),
   KEK_WEBHOOK_SECRETS: Buffer.alloc(32, 11).toString('base64'),
-  KEK_AI_PROVIDER_SECRETS: Buffer.alloc(32, 12).toString('base64'),
 };
 
 describe('Конфигурация: fail-closed в production', () => {
@@ -100,27 +99,6 @@ describe('Конфигурация: fail-closed в production', () => {
     );
   });
 
-  it('раздутый суточный предел анализа не запускается в production', () => {
-    expect(() =>
-      loadEnv({
-        ...BASE_ENV,
-        NODE_ENV: 'production',
-        AUTH_MODE: 'oidc',
-        OIDC_ISSUER: 'https://id.unicorn.vc',
-        OIDC_AUDIENCE: 'core',
-        KMS_MODE: 'kms',
-        CORE_PUBLIC_URL: 'https://api.unicorn.vc',
-        CORS_ALLOWED_ORIGINS: 'https://app.unicorn.vc',
-        AI_ANALYSIS_DAILY_LIMIT: '1000',
-      }),
-    ).toThrow(/AI_ANALYSIS_DAILY_LIMIT/);
-  });
-
-  it('стендовый предел 1000 вне production принимается: пересчёт каталога не ломается', () => {
-    const env = loadEnv({ ...BASE_ENV, AI_ANALYSIS_DAILY_LIMIT: '1000' });
-    expect(env.AI_ANALYSIS_DAILY_LIMIT).toBe(1000);
-  });
-
   it('корректная dev-конфигурация загружается', () => {
     const env = loadEnv({ ...BASE_ENV, CORS_ALLOWED_ORIGINS: 'http://localhost:5173' });
     expect(env.isProduction).toBe(false);
@@ -148,20 +126,6 @@ describe('Envelope encryption', () => {
       resetEnvCache();
     }
   }
-
-  it('nonce анализа детерминирован по входу и непредсказуем без ключа', () => {
-    withKeys(() => {
-      const a = crypto.analysisNonce('id|2026-08-26T00:00:00.000Z|Заголовок|Текст');
-      const again = crypto.analysisNonce('id|2026-08-26T00:00:00.000Z|Заголовок|Текст');
-      const other = crypto.analysisNonce('id|2026-08-26T00:00:00.000Z|Заголовок|Текст.');
-      expect(a).toMatch(/^[0-9a-f]{32}$/);
-      expect(again).toBe(a);
-      expect(other).not.toBe(a);
-      // Без серверного ключа маркер не воспроизвести: это не хеш входа.
-      const plainHash = createHmac('sha256', '').update(a).digest('hex').slice(0, 32);
-      expect(plainHash).not.toBe(a);
-    });
-  });
 
   it('значение расшифровывается обратно', () => {
     withKeys(() => {
@@ -707,9 +671,8 @@ describe('Классификация rate-limit по нормализованн�
     expect(normalizedPath('/v1/%2561uth/login')).toBe('/v1/auth/login');
   });
 
-  it('денежные маршруты не уводятся кодировкой', () => {
-    expect(normalizedPath('/v1/billing/%70ayments')).toBe('/v1/billing/payments');
-    expect(normalizedPath('/v1/investments/%61greements')).toBe('/v1/investments/agreements');
+  it('административные маршруты не уводятся кодировкой', () => {
+    expect(normalizedPath('/v1/%61dmin/feature-flags')).toBe('/v1/admin/feature-flags');
   });
 
   it('строка запроса отбрасывается', () => {
@@ -733,10 +696,22 @@ describe('Классификация rate-limit по нормализованн�
  *
  * Плагин ограничения частоты держит один счётчик на ключ и сравнивает его с
  * порогом текущего запроса. Пока класс в ключ не входил, обычные чтения
- * кабинета набивали тот же счётчик, с которым потом сравнивался денежный порог
- * 10: одиннадцать безобидных `GET /v1/billing/subscriptions` — и ПЕРВОЕ
- * оформление подписки отвечало 429.
+ * кабинета набивали тот же счётчик, с которым потом сравнивался более жёсткий
+ * порог, — и первая же операция этого класса отвечала 429. Денежный класс
+ * удалён в 2.1-W05 вместе с платежами; правило «класс — часть ключа» осталось.
  */
+describe('Роли из токена после 2.1-W05', () => {
+  it('удалённые роли полномочий не дают: из токена остаются только известные', () => {
+    expect(knownRoles(['founder', 'organizer', 'expert', 'showrunner'])).toEqual(['founder']);
+    expect(knownRoles(['expert'])).toEqual([]);
+    expect(knownRoles(['investor', 'corporate', 'admin'])).toEqual([
+      'investor',
+      'corporate',
+      'admin',
+    ]);
+  });
+});
+
 describe('Классы ограничения частоты (Ф52)', () => {
   it('вход и выдача сервисного токена — класс auth', () => {
     expect(rateLimitClass('/v1/auth/login', 'POST')).toBe('auth');
@@ -772,28 +747,22 @@ describe('Классы ограничения частоты (Ф52)', () => {
     expect(rateLimitClass(normalizedPath('/v1/%61uth/login'), 'POST')).toBe('auth');
   });
 
-  it('денежный класс — только мутации', () => {
-    expect(rateLimitClass('/v1/billing/subscriptions', 'POST')).toBe('money');
-    expect(rateLimitClass('/v1/billing/payments', 'POST')).toBe('money');
-    expect(rateLimitClass('/v1/investments/agreements', 'POST')).toBe('money');
-    expect(rateLimitClass('/v1/investments/tranches/confirm', 'POST')).toBe('money');
-    // Чтение своих счетов и подписок в денежный класс НЕ попадает: иначе
-    // пользователь упирался бы в 429 на обычном просмотре кабинета.
-    expect(rateLimitClass('/v1/billing/subscriptions', 'GET')).toBe('default');
-    expect(rateLimitClass('/v1/billing/invoices', 'GET')).toBe('default');
+  it('удалённые денежные маршруты особого класса не получают', () => {
+    // После 2.1-W05 таких маршрутов нет; если путь вернётся, он попадёт в
+    // общий класс, пока для него не принято отдельное решение.
+    expect(rateLimitClass('/v1/billing/payments', 'POST')).toBe('default');
+    expect(rateLimitClass('/v1/investments/agreements', 'POST')).toBe('default');
   });
 
   it('административный и общий классы различаются', () => {
-    expect(rateLimitClass('/v1/admin/plans', 'GET')).toBe('admin');
+    expect(rateLimitClass('/v1/admin/feature-flags', 'GET')).toBe('admin');
     expect(rateLimitClass('/v1/projects', 'GET')).toBe('default');
   });
 
-  it('класс денег и класс чтения — РАЗНЫЕ, поэтому и вёдра разные', () => {
-    // Это и есть суть исправления: пока оба класса совпадали бы, чтения и
-    // мутации делили бы один счётчик.
-    expect(rateLimitClass('/v1/billing/subscriptions', 'GET')).not.toBe(
-      rateLimitClass('/v1/billing/subscriptions', 'POST'),
-    );
+  it('класс входа и класс чтения сессии — РАЗНЫЕ, поэтому и вёдра разные', () => {
+    // Это и есть суть исправления: пока классы совпадали бы, чтения и
+    // попытки входа делили бы один счётчик.
+    expect(rateLimitClass('/v1/auth/me', 'GET')).not.toBe(rateLimitClass('/v1/auth/login', 'POST'));
   });
 });
 

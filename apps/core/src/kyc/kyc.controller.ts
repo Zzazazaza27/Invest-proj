@@ -16,7 +16,7 @@ import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';
 import { KycService } from './kyc.service';
-import { decodeIntegrationCursor } from '../integration/integration.service';
+import { decodeIntegrationCursor } from '../common/keyset-cursor';
 
 /**
  * Верификация участников.

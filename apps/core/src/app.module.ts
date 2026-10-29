@@ -9,8 +9,6 @@ import { AdminUsersController } from './admin/users.controller';
 import { AdminUsersService } from './admin/users.service';
 import { ProfileController, UserAvatarController } from './identity/profile.controller';
 import { ProfileService } from './identity/profile.service';
-import { ProviderCredentialsService } from './ai/provider-credentials.service';
-import { LocalizationService } from './ai/localization.service';
 import { RolesController } from './admin/roles.controller';
 import { RolesService } from './admin/roles.service';
 import { SessionEpochService } from './auth/session-epoch.service';
@@ -25,12 +23,7 @@ import { IntelligenceController } from './intelligence/intelligence.controller';
 import { IntelligenceService } from './intelligence/intelligence.service';
 import { TestingSessionsService } from './testing/testing-sessions.service';
 import { TokenVerifier } from './auth/token.verifier';
-import { AiGatewayClient } from './ai/ai-gateway.client';
-import { AnalysisController } from './ai/analysis.controller';
-import { AnalysisService } from './ai/analysis.service';
 import { AuditRepository } from './audit/audit.repository';
-import { BillingController } from './billing/billing.controller';
-import { BillingService } from './billing/billing.service';
 import {
   AdminServiceCountriesController,
   MeServiceCountryController,
@@ -38,48 +31,16 @@ import {
 } from './billing/service-countries.controller';
 import { ServiceCountriesService } from './billing/service-countries.service';
 import {
-  AdminRoundPackagesController,
-  AdminRoundServiceOffersController,
-  AdminRoundServicesController,
-} from './billing/round-packages.controller';
-import { RoundPackagesService } from './billing/round-packages.service';
-import { RoundPricingService } from './billing/round-pricing.service';
-import {
-  AdminPaymentsController,
-  PaymentNotificationsController,
-  PurchasePaymentsController,
-  ServiceExecutionController,
-} from './billing/payments.controller';
-import { PaymentsService } from './billing/payments.service';
-import { ServiceExecutionService } from './billing/service-execution.service';
-import {
-  AdminRoundPurchasesController,
-  RoundPurchaseController,
-} from './billing/round-purchase.controller';
-import { RoundPurchaseService } from './billing/round-purchase.service';
-import {
-  AdminFeeOffsetRulesController,
-  AdminFeeTermsController,
-  AdminPlanCapabilitiesController,
-  MyPlanCapabilitiesController,
-} from './billing/commission.controller';
-import { CommissionService, PlanCapabilitiesService } from './billing/commission.service';
-import {
   AdminCapabilitiesController,
   MyCapabilitiesController,
 } from './identity/capabilities.controller';
 import { CapabilitiesService } from './identity/capabilities.service';
-import { DealLedgerController } from './investments/deal-ledger.controller';
-import { DealLedgerService } from './investments/deal-ledger.service';
-import { FundingRoundsController } from './lab/funding-rounds.controller';
-import { FundingRoundsService } from './lab/funding-rounds.service';
 import { NotificationsController } from './comms/notifications.controller';
 import { FavoritesController } from './lab/favorites.controller';
 import { FavoritesService } from './lab/favorites.service';
 import { SupportController } from './comms/support.controller';
 import { SupportService } from './comms/support.service';
 import { NotificationsService } from './comms/notifications.service';
-import { OperatorNotificationsService } from './comms/operator-notifications.service';
 import { CryptoService } from './crypto/crypto.service';
 import { Database } from './db/unit-of-work';
 import { NatsClient } from './events/nats.client';
@@ -87,14 +48,10 @@ import { BackgroundJobsService } from './background/background-jobs.service';
 import { OutboxPublisherService } from './events/publisher.service';
 import { WebhookDeliveryService } from './events/webhook-delivery.service';
 import { WebhooksService } from './events/webhooks.service';
-import { ExpertsController } from './experts/experts.controller';
-import { ExpertsService } from './experts/experts.service';
 import { HealthController } from './health/health.controller';
 import { OpenApiController } from './health/openapi.controller';
 import { IdentityController } from './identity/identity.controller';
 import { IdentityService } from './identity/identity.service';
-import { PublicationConsentsController } from './identity/publication-consents.controller';
-import { PublicationConsentsService } from './identity/publication-consents.service';
 import { VerificationController } from './identity/verification.controller';
 import { VerificationService } from './identity/verification.service';
 import { MailThrottleService } from './auth/mail-throttle.service';
@@ -113,8 +70,6 @@ import {
 import { TextsService } from './content/texts.service';
 import { ServiceAccountStateService } from './integration/service-account-state.service';
 import { ServiceAccountsController } from './integration/service-accounts.controller';
-import { InvestmentsController } from './investments/investments.controller';
-import { InvestmentsService } from './investments/investments.service';
 import { KycController } from './kyc/kyc.controller';
 import { KycService } from './kyc/kyc.service';
 import { CatalogController } from './lab/catalog.controller';
@@ -128,22 +83,8 @@ import { ProjectsService } from './lab/projects.service';
 import { MaterialUploadsService } from './lab/material-uploads.service';
 import { ProjectMediaController } from './lab/project-media.controller';
 import { ProjectMediaService } from './lab/project-media.service';
-import {
-  AdminApplicationPoliciesController,
-  AdminReadinessConfigsController,
-  ApplicationsController,
-} from './lab/applications.controller';
-import { ApplicationsService } from './lab/applications.service';
-import {
-  AdminApplicationFormsController,
-  ApplicationFormController,
-} from './lab/application-forms.controller';
-import { ApplicationFormsService } from './lab/application-forms.service';
 import { FeaturesController } from './health/features.controller';
 import { PartitionMaintenanceService } from './maintenance/partitions.service';
-import { PricingController } from './pricing/pricing.controller';
-import { SeasonsController } from './seasons/seasons.controller';
-import { SeasonsService } from './seasons/seasons.service';
 import { S3Service } from './storage/s3.service';
 
 /**
@@ -162,51 +103,24 @@ import { S3Service } from './storage/s3.service';
     HealthController,
     TestingController,
     IntelligenceController,
-    PricingController,
     ContentController,
     AdminContentController,
     AdminTextsController,
     IdentityController,
-    PublicationConsentsController,
     VerificationController,
     KycController,
     ProjectsController,
-    ApplicationsController,
-    AdminApplicationPoliciesController,
-    ApplicationFormController,
-    AdminApplicationFormsController,
-    AdminReadinessConfigsController,
     FeaturesController,
     CatalogController,
     ProjectAccessController,
     ProjectViewsController,
-    SeasonsController,
-    BillingController,
     ServiceCountriesController,
     MeServiceCountryController,
     AdminServiceCountriesController,
-    AdminRoundServicesController,
-    AdminRoundPackagesController,
-    AdminRoundServiceOffersController,
-    RoundPurchaseController,
-    AdminRoundPurchasesController,
-    AdminPaymentsController,
-    PaymentNotificationsController,
-    PurchasePaymentsController,
-    ServiceExecutionController,
     ProjectMediaController,
-    AdminFeeTermsController,
-    AdminFeeOffsetRulesController,
-    AdminPlanCapabilitiesController,
-    MyPlanCapabilitiesController,
     AdminCapabilitiesController,
     MyCapabilitiesController,
-    DealLedgerController,
-    FundingRoundsController,
     AdminController,
-    InvestmentsController,
-    AnalysisController,
-    ExpertsController,
     NotificationsController,
     SupportController,
     FavoritesController,
@@ -234,7 +148,6 @@ import { S3Service } from './storage/s3.service';
     LoginThrottleService,
     S3Service,
     IdentityService,
-    PublicationConsentsService,
     VerificationService,
     MailThrottleService,
     // Реализация выбирается по MAIL_TRANSPORT: почтового сервера у платформы
@@ -244,39 +157,19 @@ import { S3Service } from './storage/s3.service';
     KycService,
     ProjectsService,
     MaterialUploadsService,
-    ApplicationsService,
-    ApplicationFormsService,
     CatalogService,
     ProjectAccessService,
     ProjectViewsService,
-    SeasonsService,
-    BillingService,
     ServiceCountriesService,
-    RoundPackagesService,
-    RoundPricingService,
-    RoundPurchaseService,
-    PaymentsService,
-    ServiceExecutionService,
     ProjectMediaService,
-    CommissionService,
-    PlanCapabilitiesService,
     CapabilitiesService,
-    DealLedgerService,
-    FundingRoundsService,
     AdminService,
     DirectoryService,
     AdminUsersService,
     ProfileService,
-    ProviderCredentialsService,
-    LocalizationService,
     RolesService,
     TemplatesService,
-    InvestmentsService,
-    AiGatewayClient,
-    AnalysisService,
-    ExpertsService,
     NotificationsService,
-    OperatorNotificationsService,
     SupportService,
     FavoritesService,
     IntegrationService,
