@@ -6,22 +6,19 @@ import { ApiError, api } from '../api';
 import { S } from '../strings';
 
 /**
- * «Кто может видеть проект» (5.7.4, план заявка-04 §3.1, §3.4).
+ * «Кто может видеть проект» (5.7.4).
  *
- * Карточка показывает три вещи, которые владелец должен видеть вместе:
- * режим (кому в принципе виден проект), согласие (по условиям какой версии
- * показываются ответы) и разницу — что станет видно дополнительно, если
- * применить активную версию. «Применить» несёт версию и отпечаток
- * содержимого из показанного предпросмотра: изменится что-то после
- * просмотра — сервер ответит 409, карточка перечитает предпросмотр.
- * Запрет кнопки серверную проверку не заменяет.
+ * Карточка показывает вместе режим (кому в принципе виден проект) и
+ * предпросмотр — что увидит выбранная аудитория. Согласия на показ ответов
+ * анкеты и «применение новых условий раскрытия» удалены в 2.1-W05 вместе с
+ * заявками: в карточке проекта остались только его собственные данные.
  */
 export function VisibilityCard({
   project,
   onChanged,
 }: {
   project: ProjectFull;
-  /** После смены режима или применения условий — перечитать проект. */
+  /** После смены режима — перечитать проект. */
   onChanged: () => Promise<void> | void;
 }) {
   const [mode, setMode] = useState<ProjectFull['visibility']>(project.visibility);
@@ -31,7 +28,7 @@ export function VisibilityCard({
     | { status: 'ready'; preview: ViewPreview }
     | { status: 'error'; message: string }
   >({ status: 'loading' });
-  const [busy, setBusy] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
 
   useEffect(() => setMode(project.visibility), [project.visibility]);
@@ -53,39 +50,27 @@ export function VisibilityCard({
 
   useEffect(() => {
     void load();
-  }, [load, project.visibility, project.disclosureFormVersion, project.disclosedVersionId]);
+  }, [load, project.visibility]);
 
-  const run = async (key: string, action: () => Promise<unknown>, okText: string) => {
-    setBusy(key);
+  const saveMode = async () => {
+    setBusy(true);
     setNotice(null);
     try {
-      await action();
-      setNotice({ tone: 'ok', text: okText });
+      await api.projects.setVisibility(project.id, { visibility: mode });
+      setNotice({ tone: 'ok', text: S.visibility.saved });
       await onChanged();
       await load();
     } catch (e) {
-      const stale = e instanceof ApiError && e.status === 409;
       setNotice({
         tone: 'error',
-        text:
-          (e instanceof ApiError ? (e.problem?.detail ?? e.message) : 'Сервис недоступен') +
-          (stale ? ` ${S.visibility.stale}` : ''),
+        text: e instanceof ApiError ? (e.problem?.detail ?? e.message) : 'Сервис недоступен',
       });
-      if (stale) await load();
     } finally {
-      setBusy(null);
+      setBusy(false);
     }
   };
 
   const ready = preview.status === 'ready' ? preview.preview : null;
-  const pendingCount = ready ? ready.pending.profile.length + ready.pending.round.length : 0;
-  const canApply =
-    ready !== null &&
-    ready.consent.activeFormVersion !== null &&
-    (ready.consent.formVersion !== null || ready.consent.roundId !== null) &&
-    (ready.consent.formVersion !== ready.consent.activeFormVersion ||
-      (ready.consent.roundId !== null &&
-        ready.consent.roundDisclosureVersion !== ready.consent.activeFormVersion));
 
   return (
     <Card data-visibility-card data-visibility-mode={project.visibility}>
@@ -112,15 +97,9 @@ export function VisibilityCard({
           </Select>
           <Button
             data-visibility-save
-            loading={busy === 'mode'}
+            loading={busy}
             disabled={mode === project.visibility}
-            onClick={() =>
-              void run(
-                'mode',
-                () => api.projects.setVisibility(project.id, { visibility: mode }),
-                S.visibility.saved,
-              )
-            }
+            onClick={() => void saveMode()}
           >
             {S.visibility.save}
           </Button>
@@ -135,56 +114,6 @@ export function VisibilityCard({
               <Badge tone={ready.audienceSummary.investors === 'never' ? 'neutral' : 'success'}>
                 {S.visibility.summary.investors[ready.audienceSummary.investors]}
               </Badge>
-            </div>
-            <p style={{ margin: 0, fontSize: 'var(--u-text-sm)' }} data-visibility-consent>
-              {ready.consent.formVersion === null
-                ? S.visibility.consent.none
-                : S.visibility.consent.current(ready.consent.formVersion)}{' '}
-              {ready.consent.roundId !== null && ready.consent.roundDisclosureVersion !== null
-                ? S.visibility.consent.round(ready.consent.roundDisclosureVersion)
-                : null}{' '}
-              {canApply && ready.consent.activeFormVersion !== null
-                ? S.visibility.consent.newer(ready.consent.activeFormVersion)
-                : ready.consent.formVersion !== null
-                  ? S.visibility.consent.upToDate
-                  : null}
-            </p>
-            {pendingCount > 0 ? (
-              <div data-visibility-pending>
-                {ready.pending.profile.length > 0 ? (
-                  <PendingList title={S.visibility.pending.profile} items={ready.pending.profile} />
-                ) : null}
-                {ready.pending.round.length > 0 ? (
-                  <PendingList title={S.visibility.pending.round} items={ready.pending.round} />
-                ) : null}
-              </div>
-            ) : null}
-            {ready.evidenceConflicts.length > 0 ? (
-              <p style={{ margin: 0, fontSize: 'var(--u-text-sm)', color: 'var(--u-warning)' }}>
-                {S.visibility.conflicts} {ready.evidenceConflicts.map((c) => c.label).join(', ')}
-              </p>
-            ) : null}
-            <div style={{ display: 'flex', gap: 'var(--u-space-3)', flexWrap: 'wrap' }}>
-              <Button
-                data-visibility-apply
-                variant="secondary"
-                loading={busy === 'apply'}
-                disabled={!canApply}
-                onClick={() =>
-                  void run(
-                    'apply',
-                    () =>
-                      api.projects.applyDisclosure(project.id, {
-                        formVersion: ready.consent.activeFormVersion ?? 0,
-                        roundId: ready.consent.roundId ?? undefined,
-                        contentDigest: ready.contentDigest,
-                      }),
-                    S.visibility.applied,
-                  )
-                }
-              >
-                {S.visibility.apply}
-              </Button>
             </div>
 
             <div style={{ display: 'flex', gap: 'var(--u-space-2)', alignItems: 'center' }}>
@@ -203,32 +132,24 @@ export function VisibilityCard({
                 </Button>
               ))}
             </div>
-            <p
-              style={{ margin: 0, fontSize: 'var(--u-text-sm)' }}
-              data-visibility-preview={ready.view === null ? 'nothing' : 'view'}
-            >
-              {ready.view === null
-                ? S.visibility.preview.nothing
-                : S.visibility.preview.sections(
-                    ready.view.sections.reduce((n, s) => n + s.questions.length, 0),
-                    ready.view.withheld,
-                  )}
-            </p>
-            {/*
-              Сама карточка, а не только счётчик (7.3). Это тот же компонент,
-              которым показывают проект витрина и кабинет инвестора, и данные
-              те же — серверная проекция для ВЫБРАННОЙ аудитории. Иначе
-              «предпросмотр» обещал проверить глазами то, чего не показывал.
-
-              Читалка документов здесь не открывается: предпросмотр отвечает на
-              вопрос «что увидит аудитория», а не заменяет владельцу его
-              собственный список материалов.
-            */}
-            {ready.view !== null ? (
-              <div data-visibility-preview-card={audience}>
+            {ready.view === null ? (
+              <p
+                style={{ margin: 0, fontSize: 'var(--u-text-sm)' }}
+                data-visibility-preview="nothing"
+              >
+                {S.visibility.preview.nothing}
+              </p>
+            ) : (
+              /*
+                Сама карточка — тот же компонент, которым показывают проект
+                витрина и кабинет, и данные те же: серверная проекция для
+                ВЫБРАННОЙ аудитории. Читалка документов здесь не открывается:
+                предпросмотр отвечает на вопрос «что увидит аудитория».
+              */
+              <div data-visibility-preview="view" data-visibility-preview-card={audience}>
                 <ProjectCard surface="preview" source={{ kind: 'investor', view: ready.view }} />
               </div>
-            ) : null}
+            )}
           </Stack>
         ) : null}
         {preview.status === 'loading' ? <LoadingState label="Считаем, кто что увидит" /> : null}
@@ -246,26 +167,5 @@ export function VisibilityCard({
         ) : null}
       </Stack>
     </Card>
-  );
-}
-
-function PendingList({
-  title,
-  items,
-}: {
-  title: string;
-  items: ViewPreview['pending']['profile'];
-}) {
-  return (
-    <div>
-      <strong style={{ fontSize: 'var(--u-text-sm)' }}>{title}</strong>
-      <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)', fontSize: 'var(--u-text-sm)' }}>
-        {items.map((item) => (
-          <li key={item.key}>
-            {item.label} — {S.visibility.pending.audience[item.active] ?? item.active}
-          </li>
-        ))}
-      </ul>
-    </div>
   );
 }

@@ -11,23 +11,14 @@ import {
 } from '@unicorn/cabinet';
 import { api } from './api';
 import { LoginPage } from './pages/LoginPage';
-import { PlansPage } from './pages/PlansPage';
-import { SubscriptionsPage } from './pages/SubscriptionsPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';
 import { FlagsPage } from './pages/FlagsPage';
 import { CompliancePage } from './pages/CompliancePage';
-import { SeasonPage } from './pages/SeasonPage';
 import { AccessPage } from './pages/AccessPage';
-import { FunnelPage } from './pages/FunnelPage';
 import { TemplatesPage } from './pages/TemplatesPage';
 import { SupportPage } from './pages/SupportPage';
-import { QuestionsPage } from './pages/QuestionsPage';
-import { ApplicationSettingsPage } from './pages/ApplicationSettingsPage';
 import { TextsPage } from './pages/TextsPage';
 import { ServiceCountriesPage } from './pages/ServiceCountriesPage';
-import { RoundPackagesPage } from './pages/RoundPackagesPage';
-import { CommissionPage } from './pages/CommissionPage';
-import { DealsPage } from './pages/DealsPage';
 import { UsersPage } from './pages/UsersPage';
 import { TestingSessionsPage } from './pages/TestingSessionsPage';
 import { UiCatalogPage } from './pages/UiCatalogPage';
@@ -110,13 +101,6 @@ export function App() {
   // с той прокрутки, на которой человек бросил предыдущий.
   useScrollToTopOnChange(useLocation().pathname);
   const [me, setMe] = useState<Me | null>(null);
-  /**
-   * Сезоны отложены (M088): пункты сезона показываются только при включённом
-   * `seasons.enabled`. Экраны и маршруты остаются — контур отключён, а не
-   * удалён; администратор увидит их сразу, как флаг вернут.
-   */
-  const [seasonsEnabled, setSeasonsEnabled] = useState(false);
-
   // Форма входа показывается только по подтверждённому 401. Раньше сюда
   // приводила ЛЮБАЯ неудача запроса профиля: ответ 429 от ограничителя
   // частоты выглядел как выход из аккаунта, и человек начинал вводить пароль
@@ -124,14 +108,6 @@ export function App() {
   const { checking, failure, retry } = useSessionCheck(() => api.me(), {
     onReady: (user) => {
       setMe(user);
-      // Отказ здесь не должен ломать кабинет: без ответа пункты остаются
-      // скрытыми — это безопасная сторона.
-      void api
-        .featureFlags()
-        .then((flags) =>
-          setSeasonsEnabled(flags.some((f) => f.key === 'seasons.enabled' && f.enabled)),
-        )
-        .catch(() => setSeasonsEnabled(false));
       return true;
     },
     onAbsent: () => setMe(null),
@@ -210,30 +186,17 @@ export function App() {
         <nav className="sidebar" aria-label="Разделы кабинета">
           {/*
             Меню разбито на группы по ответственности, а не по алфавиту и не по
-            порядку появления. Плоский список из шестнадцати пунктов заставлял
-            читать его целиком каждый раз: «Комиссии» между «Пакетами раунда» и
-            «Сделками» ищутся глазами, а не узнаются.
+            порядку появления: плоский длинный список приходится читать
+            целиком каждый раз.
 
             Группа — это ответ на вопрос «чем я сейчас занят»: разбираю людей,
-            считаю деньги, веду заявки, пишу тексты, настраиваю платформу.
+            пишу тексты, настраиваю платформу. Коммерция, заявки, сделки и
+            сезон удалены в 2.1-W05 вместе с их контурами.
           */}
           <NavGroup title="Пользователи и контроль">
             <NavItem to="/users" label="Пользователи" />
             <NavItem to="/compliance" label="Комплаенс" />
             <NavItem to="/access" label="Доступ" />
-          </NavGroup>
-
-          <NavGroup title="Коммерция">
-            <NavItem to="/plans" label="Тарифы" />
-            <NavItem to="/subscriptions" label="Подписки" />
-            <NavItem to="/commission" label="Комиссии" />
-          </NavGroup>
-
-          <NavGroup title="Заявки и сделки">
-            <NavItem to="/deals" label="Сделки" />
-            <NavItem to="/questions" label="Вопросы заявки" />
-            <NavItem to="/application-settings" label="Настройки заявки" />
-            <NavItem to="/round-packages" label="Пакеты раунда" />
           </NavGroup>
 
           {/*
@@ -250,18 +213,6 @@ export function App() {
             <NavItem to="/templates" label="Уведомления" />
             <NavItem to="/support" label="Поддержка" />
           </NavGroup>
-
-          {/*
-            Сезоны отложены (M088). Группа появляется целиком вместе с флагом —
-            и исчезает целиком: пункт сезона среди настроек платформы выглядел
-            бы настройкой, а это отдельное направление работы.
-          */}
-          {seasonsEnabled ? (
-            <NavGroup title="Сезон">
-              <NavItem to="/season" label="Сезон" />
-              <NavItem to="/funnel" label="Воронка сезона" />
-            </NavGroup>
-          ) : null}
 
           {/*
             Проверка — не настройка и не работа с людьми: это инструмент,
@@ -301,7 +252,7 @@ export function App() {
             </div>
           )}
           <Routes>
-            <Route path="/" element={<Navigate to="/plans" replace />} />
+            <Route path="/" element={<Navigate to="/users" replace />} />
             <Route
               path="/profile"
               element={
@@ -331,22 +282,13 @@ export function App() {
             />
             <Route path="/users" element={<UsersPage />} />
             <Route path="/users/:id" element={<UserCardPage />} />
-            <Route path="/plans" element={<PlansPage />} />
-            <Route path="/subscriptions" element={<SubscriptionsPage />} />
             <Route path="/compliance" element={<CompliancePage />} />
-            <Route path="/season" element={<SeasonPage />} />
-            <Route path="/funnel" element={<FunnelPage />} />
             <Route path="/templates" element={<TemplatesPage />} />
             <Route path="/support" element={<SupportPage />} />
             <Route path="/support/:id" element={<SupportPage />} />
             <Route path="/integrations" element={<IntegrationsPage />} />
-            <Route path="/questions" element={<QuestionsPage />} />
-            <Route path="/application-settings" element={<ApplicationSettingsPage />} />
             <Route path="/texts" element={<TextsPage />} />
             <Route path="/service-countries" element={<ServiceCountriesPage />} />
-            <Route path="/round-packages" element={<RoundPackagesPage />} />
-            <Route path="/commission" element={<CommissionPage />} />
-            <Route path="/deals" element={<DealsPage />} />
             <Route path="/flags" element={<FlagsPage />} />
             <Route path="/testing" element={<TestingSessionsPage />} />
             <Route path="/ui" element={<UiCatalogPage />} />

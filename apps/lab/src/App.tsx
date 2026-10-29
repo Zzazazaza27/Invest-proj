@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   Badge,
@@ -44,7 +44,6 @@ import type {
 } from '@unicorn/contracts';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectPage } from './pages/ProjectPage';
-import { WizardPage } from './wizard/WizardPage';
 import { GlossaryPage } from './pages/GlossaryPage';
 
 /**
@@ -55,10 +54,8 @@ import { GlossaryPage } from './pages/GlossaryPage';
  * политикой БД на бэкенде, поэтому здесь нет ни одной проверки прав «на
  * всякий случай».
  *
- * Мастер заявки (этап 4) включается флагом `lab.ui.application_v2` из
- * публичного `GET /features`: при выключенном флаге кабинет v1 работает как
- * прежде, при включённом на странице проекта появляются заявки и мастер.
- * Обе ветки бьют в одно ядро (план 0.2 §2.15).
+ * Мастер заявки, раунды и анализ удалены в 2.1-W05 вместе с инвестиционным
+ * процессом: кабинет ведёт проект, его видимость, доступ и материалы.
  */
 /**
  * Транспорт для общих блоков кабинета.
@@ -163,7 +160,6 @@ const profilePort: ProfilePort = {
 
 export default function App() {
   const [me, setMe] = useState<CurrentUser | null>(null);
-  const [applicationV2, setApplicationV2] = useState(false);
   const navigate = useNavigate();
   useScrollToTopOnChange(useLocation().pathname);
 
@@ -193,15 +189,6 @@ export default function App() {
       return false;
     },
   });
-
-  useEffect(() => {
-    // Флаг интерфейса читается один раз при старте: переключение — без релиза,
-    // но с перезагрузкой страницы, а не посреди заполнения.
-    api
-      .features()
-      .then((features) => setApplicationV2(features.flags['lab.ui.application_v2'] === true))
-      .catch(() => setApplicationV2(false));
-  }, []);
 
   return (
     <>
@@ -257,11 +244,7 @@ export default function App() {
                   </Stack>
                 }
               />
-              <Route
-                path="/projects/:id"
-                element={<ProjectRoute applicationV2={applicationV2} />}
-              />
-              <Route path="/applications/:id/*" element={<WizardPage />} />
+              <Route path="/projects/:id" element={<ProjectRoute />} />
               <Route
                 path="/profile"
                 element={
@@ -314,18 +297,10 @@ export default function App() {
   );
 }
 
-function ProjectRoute({ applicationV2 }: { applicationV2: boolean }) {
+function ProjectRoute() {
   const { id = '' } = useParams();
   const navigate = useNavigate();
-  return (
-    <ProjectPage
-      projectId={id}
-      onBack={() => navigate('/')}
-      applicationV2={applicationV2}
-      onOpenApplication={(applicationId) => navigate(`/applications/${applicationId}`)}
-      onOpenRound={(applicationId) => navigate(`/applications/${applicationId}/round`)}
-    />
-  );
+  return <ProjectPage projectId={id} onBack={() => navigate('/')} />;
 }
 
 function Header({
@@ -377,11 +352,6 @@ function Header({
  */
 const TRUST_ITEMS = [
   {
-    icon: 'shield' as const,
-    title: 'Проверенные эксперты',
-    description: 'Оценку дают эксперты с подтверждённой квалификацией',
-  },
-  {
     icon: 'lock' as const,
     title: 'Документы под шифрованием',
     description: 'Реквизиты и файлы компании доступны только вам и комплаенсу',
@@ -389,19 +359,13 @@ const TRUST_ITEMS = [
   {
     icon: 'chat' as const,
     title: 'Ответ на обращение',
-    description: 'Вопрос по заявке — через уведомления кабинета',
+    description: 'Вопрос по проекту — через поддержку в кабинете',
   },
 ];
 
 /** Общие ярлыки статусов: они одинаковы во всех экранах кабинета. */
 export const PROJECT_STATUS_LABEL: Record<string, string> = {
   draft: 'Черновик',
-  submitted: 'Подан',
-  ai_review: 'AI-анализ',
-  expert_review: 'Экспертиза',
-  bootcamp: 'Буткемп',
-  finalist: 'Финалист',
-  graduated: 'Выпускник',
   rejected: 'Отклонён',
   archived: 'В архиве',
 };
@@ -409,13 +373,12 @@ export const PROJECT_STATUS_LABEL: Record<string, string> = {
 export const LISTING_STATUS_LABEL: Record<string, string> = {
   not_listed: 'Не опубликован',
   listed: 'Опубликован',
-  suspended_billing: 'Приостановлен по подписке',
   unlisted: 'Снят',
 };
 
 export function statusTone(status: string): 'neutral' | 'accent' | 'success' | 'warning' {
-  if (status === 'graduated' || status === 'listed') return 'success';
-  if (status === 'rejected' || status === 'suspended_billing') return 'warning';
+  if (status === 'listed') return 'success';
+  if (status === 'rejected') return 'warning';
   if (status === 'draft' || status === 'not_listed') return 'neutral';
   return 'accent';
 }

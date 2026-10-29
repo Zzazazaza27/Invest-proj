@@ -1,5 +1,5 @@
 import type { OperationGroup } from '../types';
-import { idField, jsonValue, num, optionalNum, optionalStr, str } from './shared';
+import { idField, optionalNum, optionalStr, str } from './shared';
 
 export const notificationsGroup: OperationGroup = {
   id: 'notifications',

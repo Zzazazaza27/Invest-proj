@@ -1,15 +1,6 @@
 import { useState } from 'react';
 import { ContextualImage } from './test-context';
-import {
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  Stack,
-  describeRaising,
-  formatMoney,
-  formatScore10,
-} from '@unicorn/ui';
+import { Badge, Button, Card, EmptyState, Stack } from '@unicorn/ui';
 import type { InvestorView, PublicView } from '@unicorn/contracts';
 
 /**
@@ -30,9 +21,13 @@ import type { InvestorView, PublicView } from '@unicorn/contracts';
  *
  * **Различия аудиторий сохранены, а не стёрты.** Public View и Investor View —
  * РАЗНЫЕ проекции с разным составом, и компонент принимает их как разные
- * варианты, а не догадывается по наличию полей. Описание, материалы, оценка
- * платформы и состав раунда существуют только в инвесторской проекции;
- * анониму их не показывает не компонент, а сервер, который их не присылает.
+ * варианты, а не догадывается по наличию полей. Описание и материалы
+ * существуют только в инвесторской проекции; анониму их не показывает не
+ * компонент, а сервер, который их не присылает.
+ *
+ * С 2.1-W05 карточка собирается только из данных самого проекта: ответы
+ * анкеты заявки, раунд и оценка платформы удалены вместе с инвестиционным
+ * процессом и анализом ИИ.
  */
 
 const STAGE_TITLES: Record<string, string> = {
@@ -49,23 +44,6 @@ const MATERIAL_TYPE_TITLES: Record<string, string> = {
   product_link: 'ссылка на продукт',
 };
 
-const SCORE_AXIS_TITLES: Record<string, string> = {
-  market: 'рынок',
-  demand: 'спрос',
-  competitive_edge: 'преимущество перед конкурентами',
-  uniqueness: 'уникальность',
-  profitability: 'прибыльность',
-  presentation_quality: 'качество подачи',
-  scalability: 'масштабируемость',
-  investment_readiness: 'готовность к инвестициям',
-  product_readiness: 'готовность продукта',
-};
-
-const FUNDING_SCOPE_TITLES: Record<string, string> = {
-  project: 'проект в целом',
-  direction: 'отдельное направление',
-};
-
 /**
  * Ссылка материала с проверкой схемы: `javascript:` в `href` — выполнение
  * чужого кода у смотрящего, поэтому схема проверяется там, где происходит
@@ -79,21 +57,6 @@ function safeHref(raw: string | null | undefined): string {
     return SAFE_LINK_SCHEMES.has(parsed.protocol) ? parsed.toString() : '#';
   } catch {
     return '#';
-  }
-}
-
-function pluralAnswers(count: number): string {
-  const tail = count % 100;
-  if (tail >= 11 && tail <= 14) return 'ответов';
-  switch (count % 10) {
-    case 1:
-      return 'ответ';
-    case 2:
-    case 3:
-    case 4:
-      return 'ответа';
-    default:
-      return 'ответов';
   }
 }
 
@@ -132,25 +95,16 @@ export interface ProjectCardProps {
 
 /**
  * Строка «Доступ»: разрешение смотреть и фактическое наличие данных — разные
- * вещи. Прежнее перечисление разрешений читалось как обещание: «оценка
- * платформы» в списке выглядела готовой оценкой, хотя паспорт мог быть не
- * рассчитан, а материалы — не добавлены (замечание ручного прохода 5.7).
- * Поэтому каждый открытый блок называется вместе с его состоянием, а сам
- * список по-прежнему строится по ответу сервера, а не по догадке страницы.
+ * вещи. Поэтому каждый открытый блок называется вместе с его состоянием, а
+ * сам список строится по ответу сервера, а не по догадке страницы.
  */
-function describeAccess(view: InvestorView, questionCount: number): string {
+function describeAccess(view: InvestorView): string {
   if (view.access.profile === null) {
-    return 'Доступ: только тизер — ответы анкеты, материалы и оценка закрыты режимом проекта или вашим допуском.';
+    return 'Доступ: только тизер — описание и материалы закрыты режимом проекта или вашим допуском.';
   }
-  const parts = [questionCount > 0 ? 'профиль' : 'профиль (ответов пока нет)'];
-  if (view.access.round !== null) {
-    parts.push(view.round.raising === 'none' ? 'раунд (не открыт)' : 'раунд');
-  }
+  const parts = [view.description ? 'описание' : 'описание (пока не добавлено)'];
   if (view.access.materials !== null) {
     parts.push((view.materials?.length ?? 0) > 0 ? 'материалы' : 'материалы (не добавлены)');
-  }
-  if (view.access.passport !== null) {
-    parts.push(view.passport ? 'оценка платформы' : 'оценка платформы (ещё не рассчитана)');
   }
   return `Доступ открыт: ${parts.join(', ')}.`;
 }
@@ -167,8 +121,6 @@ export function ProjectCard({
   const view = source.view;
   const investor = source.kind === 'investor' ? source.view : null;
 
-  const sections = view.sections.filter((section) => section.questions.length > 0);
-  const questionCount = view.sections.reduce((n, s) => n + s.questions.length, 0);
   const materials = investor?.materials ?? [];
   const links = materials.filter((m) => m.url !== null);
   const files = materials.filter((m) => m.url === null);
@@ -208,35 +160,11 @@ export function ProjectCard({
           <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
             <Badge tone="accent">{STAGE_TITLES[view.stage] ?? view.stage}</Badge>
             {view.geoCountry ? <Badge>{view.geoCountry}</Badge> : null}
-            {investor?.passport && investor.passport.irs !== null ? (
-              <Badge tone="success">оценка {formatScore10(investor.passport.irs)}/10</Badge>
-            ) : null}
+            {investor?.geoRegion ? <Badge>{investor.geoRegion}</Badge> : null}
           </div>
           <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>{view.title}</h1>
           {view.tagline ? (
             <span style={{ color: 'var(--u-text-muted)' }}>{view.tagline}</span>
-          ) : null}
-          {/*
-            Состояние привлечения берётся из инвесторской проекции раунда, если
-            она пришла, иначе из тизера. Обе — ответ сервера; выбирать «что
-            показать понаряднее» тут нечего.
-          */}
-          <strong
-            style={{ fontSize: 'var(--u-text-lg)' }}
-            data-project-raising={investor ? investor.round.raising : view.raising}
-          >
-            {investor
-              ? describeRaising({
-                  ...investor.round,
-                  askCurrency: investor.round.askCurrency ?? undefined,
-                })
-              : describeRaising(view)}
-          </strong>
-          {investor?.round.fundingScope ? (
-            <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-              Предмет финансирования: {FUNDING_SCOPE_TITLES[investor.round.fundingScope]}
-              {investor.round.fundingScopeNote ? ` — ${investor.round.fundingScopeNote}` : ''}
-            </span>
           ) : null}
           {/*
             Выбранному получателю сказано, что доступ открыл владелец: иначе
@@ -258,7 +186,7 @@ export function ProjectCard({
               role="status"
               style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}
             >
-              {describeAccess(investor, questionCount)}
+              {describeAccess(investor)}
             </span>
           ) : null}
         </Stack>
@@ -284,93 +212,6 @@ export function ProjectCard({
         </Card>
       ) : null}
 
-      <Card>
-        <Stack>
-          <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Анкета</h2>
-          {view.profileAudience === null ? (
-            <EmptyState
-              title="Ответы закрыты"
-              description="Основатель открыл проект не для этой аудитории или ещё не согласовал показ ответов."
-            />
-          ) : questionCount === 0 ? (
-            <EmptyState
-              title="Ответов пока нет"
-              description="Основатель ещё не подал профиль через мастер заявки."
-            />
-          ) : (
-            <Stack gap="var(--u-space-3)">
-              {sections.map((section) => (
-                <div key={section.key} data-project-section={section.key}>
-                  <h3 style={{ margin: '0 0 var(--u-space-2)', fontSize: 'var(--u-text-md)' }}>
-                    {section.title}
-                  </h3>
-                  <dl style={{ display: 'grid', gap: 'var(--u-space-2)', margin: 0 }}>
-                    {section.questions.map((q) => (
-                      <div key={q.key} data-project-answer={q.key}>
-                        <dt style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-                          {q.label}
-                        </dt>
-                        <dd style={{ margin: 0, whiteSpace: 'pre-line' }}>
-                          {q.type === 'money' && typeof q.value === 'string'
-                            ? formatMoney(q.value, 'RUB')
-                            : q.display}
-                        </dd>
-                      </div>
-                    ))}
-                  </dl>
-                </div>
-              ))}
-            </Stack>
-          )}
-          {/* Скрытое названо числом: «показано не всё» — часть правды о заявке. */}
-          <span
-            data-project-withheld={view.withheld}
-            style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}
-          >
-            {view.withheld > 0
-              ? `Ещё ${view.withheld} ${pluralAnswers(view.withheld)} автор открыл не для всех.`
-              : 'Автор открыл все заполненные ответы.'}
-          </span>
-        </Stack>
-      </Card>
-
-      {investor ? (
-        <Card>
-          <Stack>
-            <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Оценка платформы</h2>
-            {investor.passport ? (
-              <>
-                <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-                  Паспорт версии {investor.passport.version}, уровень раскрытия{' '}
-                  {investor.passport.disclosureTier}
-                  {investor.passport.publishedAt
-                    ? `, опубликован ${new Date(investor.passport.publishedAt).toLocaleDateString('ru-RU')}`
-                    : ''}
-                  . Оценка — мнение алгоритма платформы о качестве заявки, не совет о вложении.
-                </span>
-                {investor.passport.irs !== null ? (
-                  <strong>Итог: {formatScore10(investor.passport.irs)}/10</strong>
-                ) : null}
-                <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)', lineHeight: 1.6 }}>
-                  {investor.passport.axes.map((score) => (
-                    <li key={score.axis}>
-                      <strong>{SCORE_AXIS_TITLES[score.axis] ?? score.axis}</strong>:{' '}
-                      {formatScore10(score.value)}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            ) : (
-              <span style={{ color: 'var(--u-text-muted)' }}>
-                {investor.access.passport === null
-                  ? 'Оценка закрыта для этой аудитории.'
-                  : 'Оценка ещё не рассчитана: проект не проходил анализ платформы.'}
-              </span>
-            )}
-          </Stack>
-        </Card>
-      ) : null}
-
       {investor ? (
         <Card>
           <Stack>
@@ -384,7 +225,7 @@ export function ProjectCard({
             {investor.materials === null ? (
               <EmptyState
                 title="Материалы закрыты"
-                description="Материалы открываются допущенным инвесторам по отметке основателя."
+                description="Материалы открывает владелец проекта — личным разрешением и отметкой материала."
               />
             ) : null}
             {investor.materials !== null && materials.length === 0 ? (

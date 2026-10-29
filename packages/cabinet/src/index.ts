@@ -17,12 +17,6 @@ export { SupportCard, type SupportPort } from './SupportCard';
 export { VerificationCard, type VerificationPort, type VerificationKind } from './VerificationCard';
 export { BugReportWidget, BUG_REPORT_HOTKEY_LABEL, type BugReportPort } from './BugReportWidget';
 export {
-  ScoreProvenance,
-  SCORE_DISCLAIMER,
-  publishedScore10,
-  translationPending,
-} from './ScoreProvenance';
-export {
   decideAccess,
   cabinetsForRoles,
   hrefFor,

@@ -252,29 +252,6 @@ export function UserCardPage() {
             </tbody>
           </table>
         )}
-        {card.assignments.length > 0 ? (
-          <table style={{ marginTop: 14 }}>
-            <thead>
-              <tr>
-                <th>Назначение</th>
-                <th>Цель</th>
-                <th>Состояние</th>
-              </tr>
-            </thead>
-            <tbody>
-              {card.assignments.map((item) => (
-                <tr key={item.id}>
-                  <td>{item.projectTitle}</td>
-                  <td className="small">{PURPOSE_LABEL[item.purpose] ?? item.purpose}</td>
-                  <td className="small">
-                    {item.status}
-                    {item.accessRevokedAt ? ' · доступ прекращён' : ''}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : null}
       </section>
 
       <section className="card" data-block="kyc">
@@ -561,7 +538,7 @@ function RolesSection({
   busy: boolean;
   run: (action: () => Promise<AdminUserCard | void>, okText: string) => Promise<void>;
 }) {
-  const [role, setRole] = useState('expert');
+  const [role, setRole] = useState('investor');
   const active = card.roles.filter((item) => item.revokedAt === null);
 
   return (
@@ -650,12 +627,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
   );
 }
 
-const GRANTABLE_ROLES = ['expert', 'organizer', 'admin', 'investor', 'founder'];
-
-const PURPOSE_LABEL: Record<string, string> = {
-  review: 'оценка проекта',
-  deal_support: 'сопровождение сделки',
-};
+const GRANTABLE_ROLES = ['admin', 'investor', 'founder'];
 
 const VERB_LABEL: Record<string, string> = {
   'identity.role.granted': 'выдана роль',

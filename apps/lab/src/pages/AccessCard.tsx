@@ -14,7 +14,7 @@ import type { GrantPermission, ProjectAccessEntry, ProjectAccessList } from '@un
 import { ApiError, api } from '../api';
 import { S } from '../strings';
 
-const PERMISSIONS: GrantPermission[] = ['profile', 'round', 'materials', 'passport', 'extended'];
+const PERMISSIONS: GrantPermission[] = ['profile', 'materials', 'extended'];
 
 /**
  * «Кому открыт доступ» — выдача и отзыв разрешений, исключения (5.8.2).
@@ -22,7 +22,7 @@ const PERMISSIONS: GrantPermission[] = ['profile', 'round', 'materials', 'passpo
  * Карточка говорит владельцу три вещи, которые легко перепутать:
  *
  *  1. разрешение — НАБОР частей, а не уровень: отмечены материалы — открыты
- *     материалы, ответы анкеты при этом закрыты;
+ *     материалы, описание при этом закрыто;
  *  2. тизер открывается вместе с любым разрешением — иначе получатель не
  *     нашёл бы проект и не понял, о чём речь;
  *  3. выданное действует в режиме «Выбранные инвесторы»; при другом режиме

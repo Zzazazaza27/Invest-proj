@@ -80,7 +80,7 @@ export const identityGroup: OperationGroup = {
             { value: 'founder', label: 'founder — основатель' },
             { value: 'investor', label: 'investor — инвестор' },
           ],
-          help: 'Самостоятельно выдаются только эти две роли: эксперта и администратора назначает платформа.',
+          help: 'Самостоятельно выдаются только эти две роли: администратора назначает платформа.',
         },
         {
           name: 'locale',
@@ -289,7 +289,7 @@ export const identityGroup: OperationGroup = {
 export const kycGroup: OperationGroup = {
   id: 'kyc',
   title: 'Проверка личности и юрлица',
-  note: 'Без пройденной проверки закрыты сделки и часть действий основателя.',
+  note: 'Без пройденной проверки закрыта часть действий основателя.',
   operations: [
     {
       id: 'kyc-start',

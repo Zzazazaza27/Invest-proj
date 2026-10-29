@@ -39,10 +39,6 @@ const CHANNEL_TITLES: Record<string, string> = {
 const TOPIC_TITLES: Record<string, string> = {
   all: 'Все',
   projects: 'Проекты',
-  deals: 'Сделки',
-  billing: 'Счета и платежи',
-  experts: 'Экспертиза',
-  seasons: 'Сезоны',
   messages: 'Сообщения',
   security: 'Безопасность',
   marketing: 'Рассылки',
@@ -50,11 +46,11 @@ const TOPIC_TITLES: Record<string, string> = {
 
 /**
  * Темы, которые отключить НЕЛЬЗЯ, и это не каприз интерфейса: ограничение
- * стоит в самой схеме (`CHECK (topic NOT IN ('security','billing') OR enabled
- * = true)`, M008). Показать переключатель, который сервер отвергнет, значило бы
- * обещать управление, которого нет.
+ * стоит в самой схеме (CHECK по теме `security`; `billing` снята в 2.1-W05
+ * вместе с платежами). Показать переключатель, который сервер отвергнет,
+ * значило бы обещать управление, которого нет.
  */
-const MANDATORY_TOPICS = new Set(['security', 'billing']);
+const MANDATORY_TOPICS = new Set(['security']);
 
 const STATUS_TITLES: Record<string, string> = {
   queued: 'в очереди',
@@ -137,7 +133,7 @@ export function NotificationsCard({
           {state.items.length === 0 ? (
             <EmptyState
               title="Уведомлений нет"
-              description="Здесь появятся сообщения о проекте, сделках и счетах — по тем каналам, которые включены ниже."
+              description="Здесь появятся сообщения о проекте и аккаунте — по тем каналам, которые включены ниже."
             />
           ) : (
             <ul style={LIST_STYLE}>

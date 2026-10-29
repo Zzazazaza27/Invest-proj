@@ -11,18 +11,17 @@ import {
   LoadingState,
   PageHeading,
   Stack,
-  describeRaising,
+  formatMoney,
 } from '@unicorn/ui';
 import type { ProjectFull, ProjectSummary, TaxonomyNode } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
 
 /**
- * Список проектов основателя и подача новой заявки.
+ * Список проектов основателя и создание нового проекта.
  *
  * Форма отправляет ровно то, что принимает контракт: сумму запроса, стадию и
- * направление. Тариф по сумме резолвит СЕРВЕР — здесь его нет и быть не
- * должно, иначе клиент мог бы «выбрать себе» тариф дешевле.
+ * направление.
  */
 export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
   const [state, setState] = useState<
@@ -56,14 +55,14 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
     <Stack gap="var(--u-space-5)">
       <PageHeading
         title="Мои проекты"
-        description="Заявка, материалы и раунды привлечения"
+        description="Проекты, их видимость и материалы"
         aside={
           <Button
             variant={creating ? 'secondary' : 'brand'}
             onClick={() => setCreating((value) => !value)}
           >
             {creating ? null : <Icon name="plus" size={16} />}
-            {creating ? 'Отмена' : 'Новая заявка'}
+            {creating ? 'Отмена' : 'Новый проект'}
           </Button>
         }
       />
@@ -97,10 +96,10 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
         <HeroBanner
           icon="rocket"
           title="Проектов пока нет"
-          description="Подайте заявку: после подачи проект получает неизменяемый снимок версии и уходит на анализ."
+          description="Создайте проект: затем добавьте материалы и выберите, кто может его видеть."
           action={
             <Button variant="secondary" onClick={() => setCreating(true)}>
-              Новая заявка
+              Новый проект
             </Button>
           }
         />
@@ -157,7 +156,7 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
                     {project.title}
                   </span>
                   <span style={{ fontSize: 'var(--u-text-sm)', color: 'var(--u-text-muted)' }}>
-                    {describeRaising(project)}
+                    {formatMoney(project.investmentAsk, project.askCurrency)}
                   </span>
                 </span>
                 <Icon
@@ -236,7 +235,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
         }}
       >
         <Stack>
-          <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Новая заявка</h2>
+          <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Новый проект</h2>
 
           <Field label="Название" htmlFor="title" error={fieldErrors.title}>
             <Input
@@ -294,7 +293,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
             label="Запрос инвестиций, ₽"
             htmlFor="investmentAsk"
             error={fieldErrors.investmentAsk}
-            hint="От суммы зависит тариф подписки — его определяет сервер"
+            hint="Сколько проект хочет привлечь — видно в карточке проекта"
           >
             <Input
               id="investmentAsk"
@@ -325,7 +324,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
           </Button>
           {taxonomy.length === 0 && !error ? (
             <div style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-              Загружается справочник направлений — без него заявку принять нельзя.
+              Загружается справочник направлений — без него проект создать нельзя.
             </div>
           ) : null}
         </Stack>

@@ -76,16 +76,6 @@ export function FlagsPage() {
                 <tr key={flag.key}>
                   <td>
                     <div>{flag.key}</div>
-                    {flag.key.startsWith('investments.') && (
-                      <div className="small muted">регулируемый контур — гейт A</div>
-                    )}
-                    {flag.key === 'seasons.enabled' && (
-                      <div className="small muted" data-flag-warning="seasons">
-                        Сезоны отложены. Включение до переработки прав организатора не
-                        поддерживается: оно возвращает старые широкие полномочия роли organizer
-                        (TODO «Направление «Сезоны»»).
-                      </div>
-                    )}
                     {flag.key === 'access.entity_grants.enabled' && (
                       <div className="small muted" data-flag-warning="entity-grants">
                         Доступ по организации отложен. Включение до реализации корректного членства
@@ -123,13 +113,9 @@ export function FlagsPage() {
         open={changing !== null}
         title={changing ? `Флаг «${changing.key}»` : 'Флаг'}
         description={
-          changing?.key.startsWith('investments.')
-            ? 'Регулируемый контур: включение допустимо только после внесения оператора в реестр Банка России и согласования Правил платформы.'
-            : changing?.key === 'seasons.enabled' && !changing.enabled
-              ? 'Не поддерживаемое действие: включение возвращает старые широкие полномочия роли organizer во всех политиках доступа. Сначала переработка сезонных прав (TODO «Направление «Сезоны»»).'
-              : changing?.key === 'access.entity_grants.enabled' && !changing.enabled
-                ? 'Не поддерживаемое действие: управления составом организации нет, и выданное ей разрешение нельзя будет закрыть при выходе человека из организации. Сначала членство (TODO «Организации и участники»).'
-                : 'Изменение попадёт в неизменяемый журнал вместе с автором.'
+          changing?.key === 'access.entity_grants.enabled' && !changing.enabled
+            ? 'Не поддерживаемое действие: управления составом организации нет, и выданное ей разрешение нельзя будет закрыть при выходе человека из организации. Сначала членство (TODO «Организации и участники»).'
+            : 'Изменение попадёт в неизменяемый журнал вместе с автором.'
         }
         label="Основание"
         confirmText={changing?.enabled ? 'Выключить' : 'Включить'}

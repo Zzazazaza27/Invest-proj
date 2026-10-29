@@ -13,18 +13,17 @@ import {
   Skeleton,
   Stack,
   UI_KEYFRAMES,
-  describeRaising,
 } from '@unicorn/ui';
 import { ProjectCard } from '@unicorn/cabinet';
-import type { LandingBlock, Pricing, ProjectTeaser, Season } from '@unicorn/contracts';
+import type { LandingBlock, ProjectTeaser } from '@unicorn/contracts';
 import { api, mediaUrl } from './api';
 import { useAsync } from './useAsync';
 
 /**
  * Публичная витрина.
  *
- * Показывает ТОЛЬКО то, что платформа отдаёт анониму: тизеры листингов, тарифы
- * и метроном сезона. Ни одной выдуманной цифры и ни одного демонстрационного
+ * Показывает ТОЛЬКО то, что платформа отдаёт анониму: тексты витрины и тизеры
+ * листингов. Ни одной выдуманной цифры и ни одного демонстрационного
  * проекта здесь нет — витрина с нарисованными «стартапами» вводит в
  * заблуждение ровно тех, ради кого она сделана.
  *
@@ -52,9 +51,7 @@ export default function App() {
         ) : (
           <>
             <Hero />
-            <SeasonStrip />
             <CatalogSection />
-            <PricingSection />
           </>
         )}
       </main>
@@ -113,9 +110,6 @@ function Header() {
           <a href="#catalog" style={linkStyle}>
             Каталог
           </a>
-          <a href="#pricing" style={linkStyle}>
-            Тарифы
-          </a>
           {/*
             Вход — ССЫЛКА на отдельное приложение, а не форма здесь. Витрина
             анонимна по построению (`auth: { kind: 'none' }` в api.ts):
@@ -171,18 +165,14 @@ const primaryStyle: React.CSSProperties = {
  * Держать их здесь — сознательный дубликат, и он единственный.
  */
 const FALLBACK: Record<string, { title?: string; body: string }> = {
-  hero_title: { body: 'Инвестиционная платформа для проектов, прошедших проверку' },
+  hero_title: { body: 'Платформа проектов и людей вокруг них' },
   hero_subtitle: {
     body:
-      'Основатели проходят экспертизу и получают инвестиционный паспорт. ' +
-      'Верифицированные инвесторы видят полные карточки и заключают договоры ' +
-      'средствами платформы — движение средств учитывается через номинальный ' +
-      'счёт оператора.',
+      'Основатели рассказывают о своих проектах и сами решают, кому их открыть. ' +
+      'Возможности для инвесторов прорабатываются заново.',
   },
   disclaimer: {
-    body:
-      '«Пятый элемент» — оператор инвестиционной платформы. Инвестиционный контур ' +
-      'включается после включения оператора в реестр Банка России.',
+    body: '«Пятый элемент» не проводит инвестиционных сделок и не принимает платежей.',
   },
 };
 
@@ -193,8 +183,8 @@ function blockText(blocks: LandingBlock[] | null, key: string): string {
 
 function Hero() {
   // Ошибка загрузки контента НЕ ломает витрину и не показывается посетителю:
-  // он пришёл читать про платформу, а не про состояние нашего API. Каталог,
-  // цены и сезон ведут себя иначе — там пустой экран означал бы неверные
+  // он пришёл читать про платформу, а не про состояние нашего API. Каталог
+  // ведёт себя иначе — там пустой экран означал бы неверные
   // сведения, а здесь достаточно запасного текста.
   const { state } = useAsync<LandingBlock[]>(() => api.landingContent(), []);
   const blocks = state.status === 'ready' ? state.data : null;
@@ -222,60 +212,6 @@ function Hero() {
   );
 }
 
-/** Метроном сезона: по нему основатель понимает, открыт ли приём заявок. */
-function SeasonStrip() {
-  // Никакого `.catch(() => null)`: недоступный сервер и «сезона нет» — разные
-  // ответы, и показывать первый как второй значит врать пользователю. `null`
-  // приходит от сервера как законное значение, ошибка идёт в состояние ошибки.
-  const { state, reload } = useAsync<Season | null>(() => api.currentSeason(), []);
-
-  return (
-    <Container style={{ padding: 'var(--u-space-5) 0' }}>
-      {state.status === 'loading' ? <Skeleton height={44} radius="var(--u-radius-md)" /> : null}
-      {state.status === 'error' ? (
-        <ErrorState
-          title="Статус сезона недоступен"
-          description={state.message}
-          traceId={state.traceId}
-          onRetry={reload}
-        />
-      ) : null}
-      {/* Сезона нет (в том числе пока сезонный контур отложен, M088) —
-          полоса не показывается: обещать «следующий сезон» витрина не может. */}
-      {state.status === 'ready' && state.data !== null ? (
-        <Card
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 'var(--u-space-4)',
-            flexWrap: 'wrap',
-          }}
-        >
-          <Badge tone={state.data.status === 'applications_open' ? 'success' : 'neutral'}>
-            {SEASON_STATUS_LABEL[state.data.status] ?? state.data.status}
-          </Badge>
-          <strong>Сезон {state.data.number}</strong>
-          {state.data.title ? (
-            <span style={{ color: 'var(--u-text-muted)' }}>{state.data.title}</span>
-          ) : null}
-          <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-            до {formatDate(state.data.endsAt)}
-          </span>
-        </Card>
-      ) : null}
-    </Container>
-  );
-}
-
-const SEASON_STATUS_LABEL: Record<string, string> = {
-  draft: 'Готовится',
-  applications_open: 'Приём заявок открыт',
-  review: 'Идёт экспертиза',
-  bootcamp: 'Буткемп',
-  final: 'Финал',
-  closed: 'Завершён',
-};
-
 function CatalogSection() {
   const [query, setQuery] = useState('');
   const [applied, setApplied] = useState('');
@@ -290,8 +226,7 @@ function CatalogSection() {
           <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
             <h2 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Проекты в каталоге</h2>
             <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
-              Тизеры доступны всем. Полная карточка — в кабинете инвестора, по режиму, который
-              выбрал основатель.
+              Тизеры доступны всем. Что открыто сверх тизера, решает основатель проекта.
             </span>
           </div>
 
@@ -400,18 +335,12 @@ function TeaserCard({ teaser }: { teaser: ProjectTeaser }) {
           {teaser.tagline}
         </span>
       ) : null}
-      <span style={{ fontWeight: 600 }}>{describeRaising(teaser)}</span>
       <a href={`/p/${teaser.id}`} data-teaser-link={teaser.id} style={{ fontWeight: 600 }}>
         Открыть проект
       </a>
     </Card>
   );
 }
-
-const BILLING_PERIOD_LABEL: Record<string, string> = {
-  monthly: 'мес.',
-  yearly: 'год',
-};
 
 const STAGE_LABEL: Record<string, string> = {
   idea: 'Идея',
@@ -447,116 +376,6 @@ function CatalogSkeleton() {
   );
 }
 
-/**
- * Тарифы и вознаграждение оператора.
- *
- * Показываются полностью и без регистрации: условие, которое человек узнаёт
- * только после оплаты, — не условие, а ловушка.
- */
-function PricingSection() {
-  const { state, reload } = useAsync<Pricing>(() => api.pricing(), []);
-
-  return (
-    <section id="pricing" style={{ padding: 'var(--u-space-7) 0', background: 'var(--u-bg-subtle)' }}>
-      <Container>
-        <Stack gap="var(--u-space-5)">
-          <h2 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Тарифы и вознаграждение</h2>
-
-          {state.status === 'loading' ? <LoadingState label="Загружаем тарифы" /> : null}
-          {state.status === 'error' ? (
-            <ErrorState description={state.message} traceId={state.traceId} onRetry={reload} />
-          ) : null}
-
-          {state.status === 'ready' ? (
-            <>
-              {state.data.plans.length === 0 ? (
-                <EmptyState
-                  title="Тарифы не опубликованы"
-                  description="Как только оператор опубликует тарифную сетку, она появится здесь."
-                />
-              ) : (
-                <ul
-                  style={{
-                    listStyle: 'none',
-                    margin: 0,
-                    padding: 0,
-                    display: 'grid',
-                    gap: 'var(--u-space-4)',
-                    gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))',
-                  }}
-                >
-                  {state.data.plans.map((plan) => (
-                    <li key={plan.id}>
-                      <Card style={{ height: '100%', display: 'grid', gap: 'var(--u-space-2)' }}>
-                        <strong>{plan.name}</strong>
-                        <span style={{ fontSize: 'var(--u-text-lg)', fontWeight: 700 }}>
-                          {`${formatMoney(plan.price)} / ${BILLING_PERIOD_LABEL[plan.billingPeriod]}`}
-                        </span>
-                        <span
-                          style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}
-                        >
-                          {/*
-                            Тарифы — только для инвестора: основатель платит
-                            разово за запуск конкретного раунда (5.9), а не
-                            ежемесячно по сумме привлечения.
-                          */}
-                          Доступ инвестора к полным карточкам
-                        </span>
-                      </Card>
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              {/*
-                Объявленные изменения цен показываются ДО их вступления в силу:
-                цена, о которой пользователь узнаёт в момент списания,
-                противоречит заявленной прозрачности (Architect_Launch §5.4).
-              */}
-              {state.data.announcedPlans.length > 0 ? (
-                <Card style={{ borderColor: 'var(--u-warning)' }}>
-                  <Stack gap="var(--u-space-2)">
-                    <strong>Объявленные изменения тарифов</strong>
-                    <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
-                      {state.data.announcedPlans.map((plan) => (
-                        <li key={plan.id} style={{ color: 'var(--u-text-muted)' }}>
-                          {plan.name}:{' '}
-                          {plan.price === null ? 'индивидуально' : formatMoney(plan.price)} — с{' '}
-                          {formatDate(plan.validFrom)}
-                        </li>
-                      ))}
-                    </ul>
-                  </Stack>
-                </Card>
-              ) : null}
-
-              <Card>
-                <Stack gap="var(--u-space-2)">
-                  <strong>Вознаграждение оператора за сделку</strong>
-                  <span style={{ color: 'var(--u-text-muted)' }}>
-                    Инвестор — {state.data.feeSchedule.investorFeePct}%, эмитент —{' '}
-                    {state.data.feeSchedule.issuerFeePct}%. Начисляется после подтверждения
-                    первого транша по договору.
-                  </span>
-                  {/*
-                    Обязательное раскрытие: база вознаграждения — ПОЛНАЯ сумма
-                    договора, начисление разовое. Показывается до регистрации,
-                    а не в момент списания.
-                  */}
-                  <span style={{ fontSize: 'var(--u-text-sm)' }}>
-                    База — полная сумма договора, начисление однократное.{' '}
-                    {state.data.feeDisclosure.triggerDescription}
-                  </span>
-                </Stack>
-              </Card>
-            </>
-          ) : null}
-        </Stack>
-      </Container>
-    </section>
-  );
-}
-
 function Footer() {
   const { state } = useAsync<LandingBlock[]>(() => api.landingContent(), []);
   const blocks = state.status === 'ready' ? state.data : null;
@@ -572,33 +391,14 @@ function Footer() {
   );
 }
 
-/** Деньги приходят строкой и остаются строкой: приведение к number теряет копейки. */
-function formatMoney(value: string): string {
-  const [whole, fraction] = value.split('.');
-  const grouped = (whole ?? '0').replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
-  return fraction && fraction !== '00' ? `${grouped},${fraction} ₽` : `${grouped} ₽`;
-}
-
-function formatDate(iso: string): string {
-  return new Date(iso).toLocaleDateString('ru-RU', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
-}
-
 /**
  * Страница проекта на витрине.
  *
  * Показывает ровно ту проекцию, которую отдал сервер (`GET /catalog/:id`,
  * Public View). Второй модели раскрытия здесь нет и быть не должно: что
- * увидит зритель, решает предикат аудитории в базе — режим проекта, согласие
- * владельца на снимок, адресные разрешения и исключения. Витрина эти правила
- * НЕ повторяет и не угадывает.
- *
- * Отсюда следствие, которое важнее вёрстки: страница обязана честно
- * показывать и то, чего НЕ видно. Скрытые ответы не исчезают молча — их
- * количество названо, иначе неполная заявка выглядит как полная.
+ * увидит зритель, решает предикат аудитории в базе — режим проекта,
+ * адресные разрешения и исключения. Витрина эти правила НЕ повторяет и не
+ * угадывает.
  */
 function ProjectPage({ id }: { id: string }) {
   const { state, reload } = useAsync(() => api.catalogItem(id), [id]);

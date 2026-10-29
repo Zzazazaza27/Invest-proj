@@ -12,11 +12,7 @@ import {
 } from '@unicorn/ui';
 import type { AdminUserSummary } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
-import {
-  CapabilitiesSection,
-  DealSupportSection,
-  ReviewAssignmentsSection,
-} from './StaffAccessSections';
+import { CapabilitiesSection } from './StaffAccessSections';
 
 /**
  * Управление доступом: роли пользователей и сервисные клиенты внешних систем.
@@ -33,14 +29,11 @@ export function AccessPage() {
       <h1 style={{ margin: 0, fontSize: 'var(--u-text-xl)' }}>Доступ</h1>
       <RolesSection />
       {/*
-        Дальше — второе и третье условия доступа. Роль отвечает на вопрос «кто
-        он», полномочие — «что вправе делать», назначение — «с какими
-        объектами». Раньше два последних жили только в API; экранов не было, и
-        оператор не мог ни выдать, ни увидеть, ни снять.
+        Дальше — второе условие доступа. Роль отвечает на вопрос «кто он»,
+        полномочие — «что вправе делать». Назначения на объект (оценка проекта,
+        сопровождение сделки) удалены в 2.1-W05 вместе с экспертизой и сделками.
       */}
       <CapabilitiesSection />
-      <ReviewAssignmentsSection />
-      <DealSupportSection />
       {/* Клиенты Integration API переехали в «Интеграции»: там всё внешнее в одном месте. */}
     </Stack>
   );
@@ -50,7 +43,7 @@ function RolesSection() {
   const [userId, setUserId] = useState('');
   const [search, setSearch] = useState('');
   const [found, setFound] = useState<AdminUserSummary[] | null>(null);
-  const [role, setRole] = useState('expert');
+  const [role, setRole] = useState('investor');
   const [items, setItems] = useState<
     { role: string; grantedAt: string; revokedAt: string | null }[]
   >([]);
@@ -180,8 +173,6 @@ function RolesSection() {
             onChange={(event) => setRole(event.target.value)}
             style={SELECT_STYLE}
           >
-            <option value="expert">эксперт</option>
-            <option value="organizer">организатор</option>
             <option value="admin">администратор</option>
             <option value="investor">инвестор</option>
             <option value="founder">основатель</option>

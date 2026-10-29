@@ -1,4 +1,4 @@
-import { ApiError, UnicornApi } from '@unicorn/api-client';
+import { UnicornApi } from '@unicorn/api-client';
 import {
   adoptTestContextFromUrl,
   setContextFileResolver,
@@ -112,15 +112,6 @@ export function setCsrf(token: string | null): void {
 }
 
 /**
- * Базовый адрес API для случаев, когда запрос делает не клиент, а браузер сам.
- *
- * Нужен просмотру документов: `<iframe src=...>` идёт в ядро напрямую, минуя
- * наш HTTP-клиент, и адрес ему приходится собирать вручную. Сессионная cookie
- * при этом отправляется браузером, поэтому доступ проверяется как обычно.
- */
-export const apiBaseUrl = BASE_URL;
-
-/**
  * Контекст тестовой вкладки (M129).
  *
  * Читается ОДИН раз при загрузке модуля — до первого запроса: иначе первые
@@ -157,5 +148,3 @@ export const testContextPort: TestContextPort = {
   },
   adminUrl: '/admin/',
 };
-
-export { ApiError };

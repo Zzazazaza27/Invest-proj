@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Кабинет инвестора: каталог, паспорта проектов, подписка, предложения",
+  "description": "Кабинет инвестора: пустая оболочка до новой проработки (2.1-W05)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && node ../../scripts/vite-build.mjs",

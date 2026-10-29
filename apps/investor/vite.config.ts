@@ -79,7 +79,6 @@ export default defineConfig(({ mode }) => {
           : {
               lab: Number(env.LAB_PORT || 5175),
               investor: Number(env.INVESTOR_PORT || 5176),
-              expert: Number(env.EXPERT_PORT || 5177),
               admin: Number(env.ADMIN_PORT || 5174),
               login: Number(env.AUTH_PORT || 5179),
             },

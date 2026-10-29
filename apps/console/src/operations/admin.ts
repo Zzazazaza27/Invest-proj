@@ -1,5 +1,5 @@
 import type { OperationGroup } from '../types';
-import { idField, jsonValue, optionalMoney, optionalStr, str, LOCALE_OPTIONS } from './shared';
+import { idField, optionalStr, str, LOCALE_OPTIONS } from './shared';
 
 /** Список через запятую → массив. Пустые элементы отбрасываются. */
 function list(values: Parameters<typeof str>[0], name: string): string[] {
@@ -121,7 +121,7 @@ export const adminGroup: OperationGroup = {
           kind: 'text',
           required: true,
           defaultValue: 'expert',
-          help: 'Например: expert, organizer, admin, compliance.',
+          help: 'Например: founder, investor, admin.',
         },
       ],
       run: (values, { api }) =>
@@ -397,7 +397,7 @@ export const integrationGroup: OperationGroup = {
           label: 'Скоупы',
           kind: 'text',
           required: true,
-          defaultValue: 'graduates.read',
+          defaultValue: 'webhooks:manage',
           help: 'Через запятую, 1–20 значений.',
         },
         {
@@ -508,7 +508,7 @@ export const integrationGroup: OperationGroup = {
           label: 'События',
           kind: 'text',
           required: true,
-          defaultValue: 'project.graduated',
+          defaultValue: 'lab.listing.published',
           help: 'Через запятую, 1–50 значений.',
         },
       ],

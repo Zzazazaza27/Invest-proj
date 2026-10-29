@@ -8,7 +8,7 @@
 
 declare const __CABINET_PORTS__: Record<CabinetKey, number>;
 
-export type CabinetKey = 'lab' | 'investor' | 'expert' | 'admin';
+export type CabinetKey = 'lab' | 'investor' | 'admin';
 
 export interface Cabinet {
   key: CabinetKey;
@@ -23,41 +23,33 @@ export const CABINETS: Record<CabinetKey, Cabinet> = {
     key: 'lab',
     path: '/lab',
     title: 'Кабинет основателя',
-    description: 'Заявка, материалы, инвестиционный паспорт проекта',
+    description: 'Проекты, их видимость и материалы',
   },
   investor: {
     key: 'investor',
     path: '/investor',
     title: 'Кабинет инвестора',
-    description: 'Каталог проектов, верификация, подписка, предложения',
-  },
-  expert: {
-    key: 'expert',
-    path: '/expert',
-    title: 'Кабинет эксперта',
-    description: 'Назначения на рецензию и оценка проектов',
+    description: 'В разработке',
   },
   admin: {
     key: 'admin',
     path: '/admin',
     title: 'Административный кабинет',
-    description: 'Тарифы, подписки, комплаенс, воронка сезона',
+    description: 'Пользователи, комплаенс, тексты, настройки платформы',
   },
 };
 
 /**
  * Роль → кабинет.
  *
- * Организатор и комплаенс работают в административном кабинете: отдельных
- * приложений у них нет, а объём прав внутри решает сервер — организатору
- * воронка доступна на чтение, и кабинет говорит об этом прямо.
+ * Комплаенс работает в административном кабинете: отдельного приложения у
+ * него нет, а объём прав внутри решает сервер. Роли эксперта и организатора
+ * удалены в 2.1-W05.
  */
 const ROLE_TO_CABINET: Record<string, CabinetKey> = {
   founder: 'lab',
   investor: 'investor',
-  expert: 'expert',
   admin: 'admin',
-  organizer: 'admin',
   compliance: 'admin',
 };
 
@@ -66,7 +58,7 @@ const ROLE_TO_CABINET: Record<string, CabinetKey> = {
  * служебным, чтобы у человека с несколькими ролями список не «прыгал».
  */
 export function cabinetsForRoles(roles: string[]): Cabinet[] {
-  const order: CabinetKey[] = ['lab', 'investor', 'expert', 'admin'];
+  const order: CabinetKey[] = ['lab', 'investor', 'admin'];
   const available = new Set<CabinetKey>();
   for (const role of roles) {
     const key = ROLE_TO_CABINET[role];

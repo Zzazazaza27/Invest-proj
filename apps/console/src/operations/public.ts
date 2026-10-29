@@ -1,12 +1,5 @@
 import type { OperationGroup } from '../types';
-import {
-  optionalMoney,
-  optionalNum,
-  optionalStr,
-  str,
-  LOCALE_OPTIONS,
-  PROJECT_STAGE_OPTIONS,
-} from './shared';
+import { optionalNum, optionalStr, str, LOCALE_OPTIONS, PROJECT_STAGE_OPTIONS } from './shared';
 
 /**
  * Публичный контур: то, что доступно без входа.

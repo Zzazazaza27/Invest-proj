@@ -3,7 +3,7 @@
  *
  * История. Форму входа однажды уже вынесли в отдельное приложение (`apps/auth`,
  * Ф49) — но убрали её только из админки и консоли. В кабинетах основателя,
- * инвестора и эксперта собственная форма осталась, и вместе с ней осталось
+ * инвестора и эксперта (кабинет эксперта удалён в 2.1-W05) собственная форма осталась, и вместе с ней осталось
  * поведение: человек выходит, кабинет показывает СВОЙ вход, принимает любые
  * учётные данные и остаётся на месте. Инвестор, вышедший из кабинета
  * основателя, снова оказывался в кабинете основателя — с формой создания
@@ -17,13 +17,12 @@
  * приложение: пакет намеренно не знает ни про сеть, ни про `window`.
  */
 
-export type CabinetKey = 'lab' | 'investor' | 'expert' | 'admin';
+export type CabinetKey = 'lab' | 'investor' | 'admin';
 
 /** Путь кабинета под единой точкой входа. */
 export const CABINET_PATH: Record<CabinetKey, string> = {
   lab: '/lab/',
   investor: '/investor/',
-  expert: '/expert/',
   admin: '/admin/',
 };
 
@@ -31,8 +30,9 @@ export const CABINET_PATH: Record<CabinetKey, string> = {
 export const LOGIN_PATH = '/login/';
 
 /**
- * Роль → кабинет. Организатор и комплаенс работают в административном:
- * отдельных приложений у них нет, а объём прав внутри решает сервер.
+ * Роль → кабинет. Комплаенс работает в административном: отдельного
+ * приложения у него нет, а объём прав внутри решает сервер. Роли эксперта и
+ * организатора удалены в 2.1-W05 — кабинета для них нет.
  *
  * Зеркало `apps/auth/src/routing.ts`: там тот же список нужен до входа, когда
  * пакеты кабинета ещё не загружены.
@@ -40,9 +40,7 @@ export const LOGIN_PATH = '/login/';
 export const ROLE_TO_CABINET: Record<string, CabinetKey> = {
   founder: 'lab',
   investor: 'investor',
-  expert: 'expert',
   admin: 'admin',
-  organizer: 'admin',
   compliance: 'admin',
 };
 
@@ -51,7 +49,7 @@ export const ROLE_TO_CABINET: Record<string, CabinetKey> = {
  * служебным, чтобы у человека с несколькими ролями выбор не «прыгал».
  */
 export function cabinetsForRoles(roles: readonly string[]): CabinetKey[] {
-  const order: CabinetKey[] = ['lab', 'investor', 'expert', 'admin'];
+  const order: CabinetKey[] = ['lab', 'investor', 'admin'];
   const available = new Set<CabinetKey>();
   for (const role of roles) {
     const key = ROLE_TO_CABINET[role];

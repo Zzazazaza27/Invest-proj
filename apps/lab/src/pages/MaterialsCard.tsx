@@ -14,7 +14,6 @@ import {
   MATERIAL_UPLOAD_RULES,
   type MaterialUploadResult,
   type ProjectMaterial,
-  type ProjectVersion,
 } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
 import { S } from '../strings';
@@ -38,14 +37,6 @@ const TYPE_TITLES: Record<string, string> = {
  * Сырое `not_required` в списке читалось как поломка: человек видит английский
  * код там, где ждёт понятного слова, и не может отличить норму от ошибки.
  */
-const PARSE_STATUS_TITLES: Record<string, string> = {
-  not_required: 'разбор не нужен',
-  pending: 'ждёт разбора',
-  in_progress: 'разбирается',
-  done: 'разобран',
-  failed: 'разбор не удался',
-};
-
 /**
  * Материалы проекта и ссылка на продукт.
  *
@@ -217,7 +208,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
         {state.status === 'ready' && state.items.length === 0 ? (
           <EmptyState
             title="Материалов пока нет"
-            description="Добавьте презентацию и ссылку на работающий продукт — по ним работают эксперты."
+            description="Добавьте презентацию и ссылку на работающий продукт — по ним о проекте судят те, кому вы его откроете."
           />
         ) : null}
         {state.status === 'ready' && state.items.length > 0 ? (
@@ -247,9 +238,6 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
                 <span style={{ flex: '1 1 160px', minWidth: 0, wordBreak: 'break-all' }}>
                   {material.url ?? `версия ${material.version}`}
                 </span>
-                <Badge tone={material.parseStatus === 'failed' ? 'warning' : 'neutral'}>
-                  {PARSE_STATUS_TITLES[material.parseStatus] ?? material.parseStatus}
-                </Badge>
                 {/* Маркер на обёртке: Badge не пробрасывает произвольные
                     атрибуты, а проверкам нужна отметка материала. */}
                 <span data-material-visibility={material.visibility}>
@@ -324,58 +312,6 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
         <Button variant="secondary" onClick={() => void upload()} loading={busy} disabled={!file}>
           Загрузить презентацию
         </Button>
-      </Stack>
-    </Card>
-  );
-}
-
-/**
- * История подач заявки.
- *
- * Раньше жила внутри карточки «Путь по сезону» и исчезла вместе с ней, когда
- * сезоны отложили (M088): владелец перестал видеть, какие версии поданы, хотя
- * к сезонам это не относится — снимок создаётся подачей и идёт на экспертизу
- * независимо от сезонного контура. Поэтому вынесена отдельной карточкой.
- */
-export function SubmissionsCard({ projectId }: { projectId: string }) {
-  const [versions, setVersions] = useState<ProjectVersion[] | 'loading' | 'error'>('loading');
-
-  useEffect(() => {
-    let cancelled = false;
-    api.projects
-      .versions(projectId)
-      .then((value) => {
-        if (!cancelled) setVersions(value);
-      })
-      .catch(() => {
-        if (!cancelled) setVersions('error');
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId]);
-
-  return (
-    <Card data-submissions-card>
-      <Stack>
-        <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>История подач</h2>
-        {versions === 'loading' ? <LoadingState label="Загружаем историю" /> : null}
-        {versions === 'error' ? <ErrorState description="История подач недоступна" /> : null}
-        {Array.isArray(versions) && versions.length === 0 ? (
-          <span style={{ color: 'var(--u-text-muted)' }}>
-            Заявка ещё не подавалась. Подача создаёт неизменяемый снимок — именно он идёт на
-            экспертизу.
-          </span>
-        ) : null}
-        {Array.isArray(versions) && versions.length > 0 ? (
-          <ul style={{ margin: 0, paddingLeft: 'var(--u-space-5)' }}>
-            {versions.map((version) => (
-              <li key={version.id}>
-                версия {version.versionNo} — {new Date(version.submittedAt).toLocaleString('ru-RU')}
-              </li>
-            ))}
-          </ul>
-        ) : null}
       </Stack>
     </Card>
   );
