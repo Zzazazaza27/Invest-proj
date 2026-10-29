@@ -1036,6 +1036,30 @@ checks:
     purpose: 'Зонд версионирования хранилища (Ф29, остаток SEC-04). Угроза: подписанная форма загрузки действует до истечения срока и указывает на постоянный ключ — повторная отправка перезаписывает объект ПОСЛЕ подтверждения. Отпечат'
     confirmation: reviewed-in-code
 
+  - id: PRB-BACKGROUND-JOBS
+    file: scripts/probe-background-jobs.mjs
+    command: node scripts/probe-background-jobs.mjs
+    kind: probe
+    level: интеграционный
+    runner: manual
+    asserts: 34
+    needs: [db, core]
+    effects:
+      [
+        'временная таблица в своей сессии',
+        'поднимает четыре своих процесса core на портах 4311–4314 и 4411–4414 и останавливает их',
+      ]
+    studied: code
+    studiedOn: 2026-10-29
+    note: >-
+      Блок 1 (общие фоновые процессы ядра), 1.4. Аренда с id захвата —
+      полный сценарий потери; advisory-блокировка и её обрыв; выключенный фон
+      и роль http без стартовых проходов; два worker. Штатную остановку по
+      SIGTERM на Windows не проверить — она в юнит-тестах и в блоке 4.
+    purpose: 'Общий механизм фоновой работы ядра — проверка фактом на PostgreSQL и процессах core: аренда, advisory-блокировка, выключатель, роли запуска.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
+
   - id: PRB-OUTBOX-LEASE
     file: scripts/probe-outbox-lease.mjs
     command: node scripts/probe-outbox-lease.mjs
@@ -3053,6 +3077,25 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
 
+  - id: UNIT-CORE-BACKGROUND
+    file: apps/core/tests/background.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 14
+    studied: code
+    studiedOn: 2026-10-29
+    needs: []
+    effects: ['таймеры в памяти процесса — побочных действий нет']
+    note: >-
+      Блок 1: запрет наложения, явный результат и ошибки прохода, выключатель
+      и роли, остановка с прерыванием, общий предел завершения при зависшем
+      закрытии, advisory на подменённых блокировках.
+    purpose: 'Юнит-тесты оболочки фоновых задач ядра: поведение, которое на живом процессе не воспроизвести детерминированно.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
+
   - id: UNIT-CORE-EVENTS
     file: apps/core/tests/events.test.ts
     command: npm run test -w apps/core
@@ -4290,6 +4333,8 @@ blocks:
     members:
       [
         PRB-OUTBOX-LEASE,
+        PRB-BACKGROUND-JOBS,
+        UNIT-CORE-BACKGROUND,
         UNIT-CORE-EVENTS,
         CHK-DB-RECONNECT,
         CHK-DB-RESILIENCE,

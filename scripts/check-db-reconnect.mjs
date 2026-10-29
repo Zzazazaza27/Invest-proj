@@ -21,10 +21,10 @@
  *    только если обрыв пришёлся на открытую транзакцию фонового прохода, а
  *    это гонка по времени. Одиночный обрыв её не воспроизводил вовсе.
  *
- * 2. УСТРОЙСТВО. Поэтому рядом стоит проверка кода: фоновый таймер не
- *    должен запускать обещание без перехвата. Именно это и стоило процесса
- *    — `void this.runFanOutOnce()` без `.catch()`. Она детерминированна и
- *    ловит возврат дефекта, а не его следствие.
+ * 2. УСТРОЙСТВО. Поэтому рядом стоит проверка кода. Процесс стоило
+ *    `void this.runFanOutOnce()` без `.catch()` в таймере службы. С блока 1
+ *    таймеры заводит только общая оболочка фона, которая перехватывает отказ
+ *    прохода; проверка ловит службу, снова заведшую свой таймер.
  *
  * Запуск: node scripts/check-db-reconnect.mjs (нужны БД и ядро)
  */
@@ -146,27 +146,24 @@ try {
   check('повторный обрыв тоже пережит', third === 200, `оборвано ${second}, HTTP ${third}`);
   // ---------------------------------------------------- устройство фоновых задач
   //
-  // Ищем в теле каждого `setInterval` вызовы вида `void this.чтоНибудь(` без
-  // `.catch(` — то есть обещание, чей отказ уронит процесс.
-  const timerFiles = [
+  // С блока 1 фоновые проходы запускает только общая оболочка
+  // (`background/background-jobs.service.ts`): она перехватывает отказ прохода
+  // и записывает его в состояние задачи — это проверено юнит-тестом
+  // `apps/core/tests/background.test.ts`. Здесь детерминированно ловится
+  // возврат дефекта: служба снова завела собственный таймер мимо оболочки.
+  const serviceFiles = [
     'apps/core/src/events/publisher.service.ts',
     'apps/core/src/events/webhook-delivery.service.ts',
     'apps/core/src/maintenance/partitions.service.ts',
+    'apps/core/src/maintenance/storage-janitor.service.ts',
   ];
-  const unguarded = [];
-  for (const file of timerFiles) {
-    const source = readFileSync(join(ROOT, file), 'utf8');
-    const timers = source.match(/setInterval\(\(\) => \{[\s\S]*?\}, /g) ?? [];
-    for (const body of timers) {
-      for (const call of body.match(/void this\.[a-zA-Z]+\([^)]*\)[^;]*;/g) ?? []) {
-        if (!call.includes('.catch(')) unguarded.push(`${file}: ${call.trim().slice(0, 60)}`);
-      }
-    }
-  }
+  const ownTimers = serviceFiles.filter((file) =>
+    /\bset(Interval|Timeout)\(/.test(readFileSync(join(ROOT, file), 'utf8')),
+  );
   check(
-    'фоновые таймеры не запускают обещаний без перехвата',
-    unguarded.length === 0,
-    unguarded.length === 0 ? `${timerFiles.length} службы` : unguarded.join(' | '),
+    'фоновые службы не заводят таймеров мимо общей оболочки',
+    ownTimers.length === 0,
+    ownTimers.length === 0 ? `${serviceFiles.length} службы` : ownTimers.join(' | '),
   );
 } catch (error) {
   check('прогон выполнен', false, error instanceof Error ? error.message : String(error));

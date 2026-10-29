@@ -31,8 +31,13 @@ export class StorageJanitorService {
     private readonly s3: S3Service,
   ) {}
 
-  /** Возвращает число убранных билетов. */
-  async purgeAbandonedUploads(): Promise<number> {
+  /**
+   * Возвращает число убранных билетов.
+   *
+   * @param signal прерывание остановкой или потерей блокировки обслуживания:
+   *   следующий билет не берём, начатое удаление доводим.
+   */
+  async purgeAbandonedUploads(signal?: AbortSignal): Promise<number> {
     const env = getEnv();
     if (!env.DATABASE_URL_APP_MAINTENANCE) {
       this.logger.warn(
@@ -62,6 +67,7 @@ export class StorageJanitorService {
 
     let removed = 0;
     for (const candidate of candidates) {
+      if (signal?.aborted) break;
       try {
         const deleted = await this.db.asServiceRole(
           'app_maintenance',

@@ -1,6 +1,8 @@
-import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { uuidv7 } from '@unicorn/contracts';
+import { BackgroundJobsService } from '../background/background-jobs.service';
+import { resultOf } from '../background/job';
 import { getEnv } from '../config/env';
 import { Database, type Tx } from '../db/unit-of-work';
 import { NatsClient } from './nats.client';
@@ -24,19 +26,18 @@ import { NatsClient } from './nats.client';
  *    превращает публикатор в источник нагрузки на самого себя.
  */
 @Injectable()
-export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
+export class OutboxPublisherService implements OnModuleInit {
   private readonly logger = new Logger(OutboxPublisherService.name);
   /**
    * Кто держит аренду. Записывается в строку: по нему видно, какой экземпляр
    * завис, а не просто «строка кем-то занята».
    */
   private readonly instanceId = `${process.pid}-${randomUUID().slice(0, 8)}`;
-  private timer: NodeJS.Timeout | null = null;
-  private running = false;
 
   constructor(
     private readonly db: Database,
     private readonly nats: NatsClient,
+    private readonly jobs: BackgroundJobsService,
   ) {}
 
   onModuleInit(): void {
@@ -64,101 +65,70 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
       }
     });
 
-    this.timer = setInterval(() => {
-      // Ограждение на каждом фоновом вызове.
-      //
-      // 2026-09-22: машина ушла в гибернацию, соединения с Postgres
-      // разорвались, и `runFanOutOnce` отклонился без перехвата — Node уронил
-      // ВЕСЬ процесс ядра. Утром это выглядело как «сервер недоступен, код
-      // 502», хотя контейнеры работали и база была цела.
-      //
-      // Перехват стоит и здесь, и внутри каждой задачи: внутренний отвечает
-      // за смысл («проход не удался, попробуем на следующем такте»), внешний
-      // — за то, что НИКАКОЙ фоновый вызов не роняет процесс, даже если
-      // завтра кто-то добавит задачу и забудет про try/catch.
-      this.safely('публикация outbox', () => this.runOnce());
-      // Повторная постановка доставок идёт тем же тактом: событие, у которого
-      // рассылка не удалась, иначе никем не подхватывается (M033).
-      this.safely('повторная постановка доставок', () => this.runFanOutOnce());
-    }, env.OUTBOX_POLL_INTERVAL_MS);
-    this.timer.unref();
-  }
-
-  onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-  }
-
-  /**
-   * Запустить фоновую задачу так, чтобы её отказ остался её отказом.
-   *
-   * Обрыв соединения с базой — обычное событие: перезапуск СУБД, сетевой
-   * сбой, гибернация машины. Фоновый цикл обязан его пережить и повторить
-   * на следующем такте; падение процесса ядра из-за него — отказ всей
-   * платформы вместо пропущенного прохода.
-   */
-  private safely(what: string, run: () => Promise<unknown>): void {
-    void run().catch((error: unknown) => {
-      this.logger.error({
-        msg: 'фоновый проход не выполнен',
-        what,
-        error: error instanceof Error ? error.message : String(error),
-      });
+    // Запуск, выключатель, остановку и перехват ошибок даёт общая оболочка
+    // (блок 1). Падение ядра от неперехваченного фонового прохода (2026-09-22,
+    // гибернация) там закрыто для всех задач сразу. Аренда строк — своя,
+    // прежняя; на общую с id захвата переходит при доработке (1.3.6).
+    this.jobs.register({
+      name: 'outbox.publish',
+      intervalMs: env.OUTBOX_POLL_INTERVAL_MS,
+      coordination: 'local',
+      run: async ({ signal }) => resultOf(await this.runOnce(signal)),
+    });
+    // Повторная постановка доставок: событие, у которого рассылка не удалась,
+    // иначе никем не подхватывается (M033).
+    this.jobs.register({
+      name: 'outbox.fanout',
+      intervalMs: env.OUTBOX_POLL_INTERVAL_MS,
+      coordination: 'local',
+      run: async ({ signal }) => resultOf(await this.runFanOutOnce(signal)),
     });
   }
 
   /**
    * Один проход по очереди.
    *
+   * Отказ прохода целиком (БД, захват пачки) бросается наружу: оболочка
+   * записывает его как неудачу. Отказ одной записи — её отложенный повтор.
+   *
+   * @param signal прерывание остановкой: следующую запись пачки не берём, уже
+   *   начатую доводим. Оставшиеся строки освободятся по сроку аренды.
    * @returns сколько событий опубликовано.
    */
-  async runOnce(): Promise<number> {
-    // Перекрытие проходов ничего не ломает (SKIP LOCKED), но множит соединения
-    // на медленном брокере без всякой пользы.
-    if (this.running) return 0;
-    this.running = true;
+  async runOnce(signal?: AbortSignal): Promise<number> {
     const env = getEnv();
     const traceId = `outbox-${randomUUID()}`;
 
-    try {
-      const batch = await this.db.transaction(
-        { userId: null, roles: ['system'], traceId },
-        async (tx) => this.lockBatch(tx, env.OUTBOX_BATCH_SIZE),
-      );
-      if (batch.length === 0) return 0;
+    const batch = await this.db.transaction(
+      { userId: null, roles: ['system'], traceId },
+      async (tx) => this.lockBatch(tx, env.OUTBOX_BATCH_SIZE),
+    );
+    if (batch.length === 0) return 0;
 
-      let published = 0;
-      for (const event of batch) {
-        try {
-          const seq = await this.nats.publish(event.nats_subject, buildEnvelope(event), {
-            messageId: event.id,
-            messageKey: event.message_key,
-          });
-          await this.markPublished(traceId, event.id, seq);
-          // Постановка доставок — отдельный факт с отдельной отметкой. Её
-          // неудача больше не теряет задачу: строка останется в очереди
-          // повторной рассылки (M033).
-          if (await this.fanOutToWebhooks(traceId, event)) {
-            await this.markFanOutDone(traceId, event.id);
-          }
-          published += 1;
-        } catch (error) {
-          await this.markFailed(traceId, event, error);
+    let published = 0;
+    for (const event of batch) {
+      if (signal?.aborted) break;
+      try {
+        const seq = await this.nats.publish(event.nats_subject, buildEnvelope(event), {
+          messageId: event.id,
+          messageKey: event.message_key,
+        });
+        await this.markPublished(traceId, event.id, seq);
+        // Постановка доставок — отдельный факт с отдельной отметкой. Её
+        // неудача больше не теряет задачу: строка останется в очереди
+        // повторной рассылки (M033).
+        if (await this.fanOutToWebhooks(traceId, event)) {
+          await this.markFanOutDone(traceId, event.id);
         }
+        published += 1;
+      } catch (error) {
+        await this.markFailed(traceId, event, error);
       }
-      if (published > 0) {
-        this.logger.log({ msg: 'события опубликованы', count: published });
-      }
-      return published;
-    } catch (error) {
-      this.logger.error({
-        msg: 'проход публикатора не выполнен',
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return 0;
-    } finally {
-      this.running = false;
     }
+    if (published > 0) {
+      this.logger.log({ msg: 'события опубликованы', count: published });
+    }
+    return published;
   }
 
   /**
@@ -201,24 +171,14 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
    * Очередь, которой раньше не существовало: событие, опубликованное в брокер,
    * но не разосланное подписчикам, прежде не выбиралось ничем и терялось молча.
    */
-  async runFanOutOnce(): Promise<number> {
+  async runFanOutOnce(signal?: AbortSignal): Promise<number> {
     if (!getEnv().DATABASE_URL_APP_INTEGRATION) return 0;
-    const traceId = `fanout-${randomUUID()}`;
-
-    try {
-      return await this.fanOutPass(traceId);
-    } catch (error) {
-      // Тот же разбор, что и у публикации: проход не удался, события
-      // остались в очереди, следующий такт попробует снова.
-      this.logger.error({
-        msg: 'проход повторной постановки доставок не выполнен',
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return 0;
-    }
+    // Отказ прохода бросается наружу: события остаются в очереди, оболочка
+    // записывает неудачу, следующий проход пробует снова.
+    return this.fanOutPass(`fanout-${randomUUID()}`, signal);
   }
 
-  private async fanOutPass(traceId: string): Promise<number> {
+  private async fanOutPass(traceId: string, signal?: AbortSignal): Promise<number> {
     const pending = await this.db.transaction(
       { userId: null, roles: ['system'], traceId },
       async (tx) => {
@@ -237,6 +197,7 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
 
     let done = 0;
     for (const event of pending) {
+      if (signal?.aborted) break;
       if (await this.fanOutToWebhooks(traceId, event)) {
         await this.markFanOutDone(traceId, event.id);
         done += 1;

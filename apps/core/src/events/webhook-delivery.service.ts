@@ -1,5 +1,7 @@
-import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
+import { BackgroundJobsService } from '../background/background-jobs.service';
+import { resultOf } from '../background/job';
 import { getEnv } from '../config/env';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type Tx } from '../db/unit-of-work';
@@ -25,16 +27,15 @@ import {
  * собственной инфраструктуры, а не забота о доставке.
  */
 @Injectable()
-export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
+export class WebhookDeliveryService implements OnModuleInit {
   private readonly logger = new Logger(WebhookDeliveryService.name);
   /** Кто держит аренду: по нему видно, какой экземпляр завис. */
   private readonly instanceId = `${process.pid}-${randomUUID().slice(0, 8)}`;
-  private timer: NodeJS.Timeout | null = null;
-  private running = false;
 
   constructor(
     private readonly db: Database,
     private readonly crypto: CryptoService,
+    private readonly jobs: BackgroundJobsService,
   ) {}
 
   onModuleInit(): void {
@@ -43,68 +44,54 @@ export class WebhookDeliveryService implements OnModuleInit, OnModuleDestroy {
       this.logger.warn({ msg: 'доставка вебхуков выключена: интеграционный контур не настроен' });
       return;
     }
-    this.timer = setInterval(() => {
-      // Перехват внешний, хотя внутри прохода он тоже есть: фоновая задача
-      // не должна ронять процесс ни при каком повороте (см. 2026-09-22,
-      // падение ядра после гибернации).
-      void this.runOnce().catch((error: unknown) => {
-        this.logger.error({
-          msg: 'проход доставки вебхуков не выполнен',
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    }, env.WEBHOOK_POLL_INTERVAL_MS);
-    this.timer.unref();
+    // Запуск, остановку и перехват ошибок даёт общая оболочка (блок 1);
+    // аренда доставок — своя, прежняя, до доработки по 1.3.6.
+    this.jobs.register({
+      name: 'webhooks.deliver',
+      intervalMs: env.WEBHOOK_POLL_INTERVAL_MS,
+      coordination: 'local',
+      run: async ({ signal }) => resultOf(await this.runOnce(signal)),
+    });
   }
 
-  onModuleDestroy(): void {
-    if (this.timer) clearInterval(this.timer);
-    this.timer = null;
-  }
-
-  /** Один проход очереди доставок. Возвращает число доставленных. */
-  async runOnce(): Promise<number> {
-    if (this.running) return 0;
-    this.running = true;
+  /**
+   * Один проход очереди доставок. Возвращает число доставленных.
+   *
+   * Отказ прохода целиком бросается наружу — его записывает оболочка. После
+   * прерывания (`signal`) следующая доставка не начинается: внешний запрос —
+   * самостоятельное действие с настоящим побочным эффектом у получателя.
+   */
+  async runOnce(signal?: AbortSignal): Promise<number> {
     const traceId = `webhooks-${randomUUID()}`;
 
-    try {
-      const batch = await this.db.asServiceRole('app_integration', { traceId }, async (tx) =>
-        this.lockBatch(tx),
-      );
-      if (batch.length === 0) return 0;
+    const batch = await this.db.asServiceRole('app_integration', { traceId }, async (tx) =>
+      this.lockBatch(tx),
+    );
+    if (batch.length === 0) return 0;
 
-      let delivered = 0;
-      for (const item of batch) {
-        // Аренда продлевается ПЕРЕД каждой доставкой, а не берётся одна на всю
-        // пачку. Прежняя схема была арифметически несостоятельна: до
-        // OUTBOX_BATCH_SIZE строк (по умолчанию 50) получали общую аренду в
-        // DELIVERY_LEASE_SECONDS, а отправлялись последовательно, каждая до
-        // нескольких секунд. К концу пачки аренда давно истекала, другой
-        // экземпляр забирал те же строки и слал вебхук ВТОРОЙ раз — а побочный
-        // эффект у получателя настоящий: списание, сделка, запись в CRM
-        // (SEC-06).
-        if (!(await this.renewLease(traceId, item.id))) {
-          this.logger.warn({
-            msg: 'аренда доставки потеряна, отправка пропущена',
-            deliveryId: item.id,
-            eventType: item.event_type,
-          });
-          continue;
-        }
-        const ok = await this.deliverOne(traceId, item);
-        if (ok) delivered += 1;
+    let delivered = 0;
+    for (const item of batch) {
+      if (signal?.aborted) break;
+      // Аренда продлевается ПЕРЕД каждой доставкой, а не берётся одна на всю
+      // пачку. Прежняя схема была арифметически несостоятельна: до
+      // OUTBOX_BATCH_SIZE строк (по умолчанию 50) получали общую аренду в
+      // DELIVERY_LEASE_SECONDS, а отправлялись последовательно, каждая до
+      // нескольких секунд. К концу пачки аренда давно истекала, другой
+      // экземпляр забирал те же строки и слал вебхук ВТОРОЙ раз — а побочный
+      // эффект у получателя настоящий: списание, сделка, запись в CRM
+      // (SEC-06).
+      if (!(await this.renewLease(traceId, item.id))) {
+        this.logger.warn({
+          msg: 'аренда доставки потеряна, отправка пропущена',
+          deliveryId: item.id,
+          eventType: item.event_type,
+        });
+        continue;
       }
-      return delivered;
-    } catch (error) {
-      this.logger.error({
-        msg: 'проход доставки вебхуков не выполнен',
-        error: error instanceof Error ? error.message : String(error),
-      });
-      return 0;
-    } finally {
-      this.running = false;
+      const ok = await this.deliverOne(traceId, item);
+      if (ok) delivered += 1;
     }
+    return delivered;
   }
 
   /**

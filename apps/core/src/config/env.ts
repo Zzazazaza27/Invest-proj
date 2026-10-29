@@ -27,6 +27,22 @@ const RawEnvSchema = z.object({
   // изоляции служит сама сеть контейнера, а не адрес привязки (RULES.md §3.2).
   CORE_BIND_HOST: z.string().default('127.0.0.1'),
   CORE_PUBLIC_URL: z.url().default('http://localhost:4300'),
+
+  // --- Фоновая работа (блок 1) ---------------------------------------------
+  // Роль запуска: `all` — HTTP и фон в одном процессе (как было), `http` —
+  // только запросы, `worker` — только фон, без публичного порта.
+  CORE_ROLE: z.enum(['all', 'http', 'worker']).default('all'),
+  // Общий выключатель. Строка, а не coerce.boolean: тот превращает «false» в true.
+  BACKGROUND_JOBS_ENABLED: z.enum(['true', 'false']).default('true'),
+  // Отдельные задачи, выключенные по имени: `outbox.publish,webhooks.deliver`.
+  BACKGROUND_JOBS_DISABLED: z.string().default(''),
+  // Общий предел штатного завершения процесса — от сигнала до выхода.
+  BACKGROUND_STOP_GRACE_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
+  // Служебный порт живости и состояния задач. Не задан — CORE_PORT + 100.
+  CORE_INTERNAL_PORT: z.coerce.number().int().min(1).max(65535).optional(),
+  CORE_INTERNAL_BIND_HOST: z.string().default('127.0.0.1'),
+  BACKGROUND_TICK_MS: z.coerce.number().int().min(500).max(60_000).default(5_000),
+  BACKGROUND_LIVE_STALE_MS: z.coerce.number().int().min(2_000).max(600_000).default(30_000),
   CORS_ALLOWED_ORIGINS: z.string().default(''),
   /**
    * Адреса прокси, чьим заголовкам `X-Forwarded-*` разрешено верить.

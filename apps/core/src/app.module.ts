@@ -83,6 +83,7 @@ import { OperatorNotificationsService } from './comms/operator-notifications.ser
 import { CryptoService } from './crypto/crypto.service';
 import { Database } from './db/unit-of-work';
 import { NatsClient } from './events/nats.client';
+import { BackgroundJobsService } from './background/background-jobs.service';
 import { OutboxPublisherService } from './events/publisher.service';
 import { WebhookDeliveryService } from './events/webhook-delivery.service';
 import { WebhooksService } from './events/webhooks.service';
@@ -283,6 +284,7 @@ import { S3Service } from './storage/s3.service';
     TextsService,
     NatsClient,
     WebhooksService,
+    BackgroundJobsService,
     OutboxPublisherService,
     WebhookDeliveryService,
     StorageJanitorService,

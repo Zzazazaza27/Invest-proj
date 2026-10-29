@@ -8,6 +8,9 @@ import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { randomUUID } from 'node:crypto';
 import { AppModule } from './app.module';
+import { BackgroundJobsService } from './background/background-jobs.service';
+import { startInternalServer } from './background/internal-server';
+import { createShutdown } from './background/shutdown';
 import { getEnv } from './config/env';
 import { ProblemDetailsFilter } from './common/problem.filter';
 import { MAX_BODY_BYTES } from './common/validation';
@@ -318,19 +321,42 @@ async function bootstrap(): Promise<void> {
       return payload;
     });
 
-  await app.listen(env.CORE_PORT, env.CORE_BIND_HOST);
-  logger.log(
-    `core слушает ${env.CORE_BIND_HOST}:${env.CORE_PORT} (${env.NODE_ENV}, auth=${env.AUTH_MODE})`,
-  );
+  // Роль `worker` публичного порта не открывает: только фон и служебный порт.
+  if (env.CORE_ROLE === 'worker') {
+    await app.init();
+    logger.log(`core запущен в роли worker (${env.NODE_ENV}), публичный порт закрыт`);
+  } else {
+    await app.listen(env.CORE_PORT, env.CORE_BIND_HOST);
+    logger.log(
+      `core слушает ${env.CORE_BIND_HOST}:${env.CORE_PORT} (${env.NODE_ENV}, auth=${env.AUTH_MODE}, role=${env.CORE_ROLE})`,
+    );
+  }
 
-  const shutdown = async (signal: string): Promise<void> => {
-    logger.log(`получен ${signal}, завершаем приём запросов`);
-    await app.close();
-    // Соединение со счётчиком закрывается явно: иначе процесс держится живым
-    // из-за открытого сокета и завершение выглядит зависанием.
-    if (rateLimitRedis) await rateLimitRedis.quit().catch(() => undefined);
-    process.exit(0);
-  };
+  const jobs = app.get(BackgroundJobsService);
+  const internal = await startInternalServer(jobs);
+  logger.log(`служебный порт ${env.CORE_INTERNAL_BIND_HOST}:${internal.port} (/live, /jobs)`);
+  // Фон запускается здесь, а не при инициализации модулей: решение о роли и
+  // выключателе принимается до первого прохода, включая стартовые уборки.
+  const background = BackgroundJobsService.allowedByConfig();
+  if (background.allowed) jobs.start();
+  else logger.warn(`фоновые задачи не запускаются: ${background.reason}`);
+
+  // Общий предел на всё завершение, включая закрытие приложения и пулов.
+  const shutdown = createShutdown({
+    jobs,
+    closers: [
+      () => app.close(),
+      () => internal.close(),
+      // Соединение со счётчиком закрывается явно: иначе процесс держится живым
+      // из-за открытого сокета и завершение выглядит зависанием.
+      async () => {
+        if (rateLimitRedis) await rateLimitRedis.quit();
+      },
+    ],
+    graceMs: env.BACKGROUND_STOP_GRACE_MS,
+    exit: (code) => process.exit(code),
+    log: (message) => logger.log(message),
+  });
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));
 }
