@@ -123,13 +123,18 @@ const suffix = `${Date.now() % 1e9}`;
  * (`rotate-kek --domain webhook_secrets`) и доставку, которая секрет открывает.
  */
 function sealWebhookSecret(secret) {
+  // Правило SAST срабатывает на ИМЯ переменной: `secret` — параметр, значение
+  // генерирует прогон, литерала в исходниках нет.
+  // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
   const kek = Buffer.from(process.env.KEK_WEBHOOK_SECRETS ?? '', 'base64');
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', kek, iv, { authTagLength: 16 });
   cipher.setAAD(Buffer.from('webhook:signing', 'utf8'));
+  // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
   const body = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
   return {
     ciphertext: Buffer.concat([iv, cipher.getAuthTag(), body]),
+    // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
     fingerprint: createHash('sha256').update(secret, 'utf8').digest(),
   };
 }

@@ -72,7 +72,7 @@ async function claim(instance, size) {
          FOR UPDATE SKIP LOCKED
          LIMIT $1)
     RETURNING o.id`,
-    [size, 10, LEASE_SECONDS, instance, 'lab.season.opened'],
+    [size, 10, LEASE_SECONDS, instance, 'lab.listing.published'],
   );
 }
 
@@ -90,7 +90,7 @@ try {
          (id, aggregate_type, aggregate_id, aggregate_version, event_type,
           payload_jsonb, nats_subject, message_key)
        VALUES (public.uuid_generate_v7(), 'probe', public.uuid_generate_v7(), $1,
-               'lab.season.opened', $2::jsonb, 'probe.subject', $3)
+               'lab.listing.published', $2::jsonb, 'probe.subject', $3)
        RETURNING id`,
       [i + 1, JSON.stringify({ mark: MARK }), `${MARK}-${i}`],
     );
@@ -181,7 +181,7 @@ try {
          (id, service_account_id, url, subscribed_verbs, secret_ciphertext,
           secret_kms_key_id, secret_fingerprint, status)
        VALUES (public.uuid_generate_v7(), $1, 'https://probe.example.org/hook',
-               ARRAY['lab.season.opened'], $2, 'probe', $3, 'active')
+               ARRAY['lab.listing.published'], $2, 'probe', $3, 'active')
        RETURNING id`,
       // Байты передаются параметром, а не литералом: экранированный литерал
       // превратился в настоящий нулевой байт внутри текста запроса и сломал

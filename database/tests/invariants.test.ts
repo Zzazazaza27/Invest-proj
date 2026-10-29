@@ -89,12 +89,12 @@ describe('Журнал событий: append-only и hash-chain', () => {
   it('событие нельзя изменить', async () => {
     await inRollbackTx(async (c) => {
       await c.query(
-        `SELECT audit.app_emit_event('lab.season.opened', NULL, 'admin', 'season', NULL,
+        `SELECT audit.app_emit_event('lab.project.blocked', NULL, 'admin', 'project', NULL,
                                      '{}'::jsonb, 'trace-inv')`,
       );
-      await expect(c.query(`UPDATE audit.events SET verb = 'lab.season.closed'`)).rejects.toThrow(
-        /append-only/i,
-      );
+      await expect(
+        c.query(`UPDATE audit.events SET verb = 'lab.listing.published'`),
+      ).rejects.toThrow(/append-only/i);
     });
   });
 
@@ -104,7 +104,7 @@ describe('Журнал событий: append-only и hash-chain', () => {
   it('событие нельзя удалить', async () => {
     await inRollbackTx(async (c) => {
       await c.query(
-        `SELECT audit.app_emit_event('lab.season.opened', NULL, 'admin', 'season', NULL,
+        `SELECT audit.app_emit_event('lab.project.blocked', NULL, 'admin', 'project', NULL,
                                      '{}'::jsonb, 'trace-inv-2')`,
       );
       await expect(c.query(`DELETE FROM audit.events`)).rejects.toThrow(/append-only/i);
