@@ -91,10 +91,7 @@ if (names.length === 0) {
 
 // -------------------------------------------------------- процессы хоста
 step('Процессы на хосте');
-for (const [port, name, expect] of [
-  [PORTS.core, 'ядро', 'main.js'],
-  [PORTS.aiGateway, 'AI-шлюз', 'uvicorn'],
-]) {
+for (const [port, name, expect] of [[PORTS.core, 'ядро', 'main.js']]) {
   const pid = portOwner(port);
   if (!pid) {
     bad(`${name} не слушает :${port}`);
@@ -114,7 +111,6 @@ const strays = [
   [PORTS.admin, 'админка'],
   [PORTS.lab, 'кабинет основателя'],
   [PORTS.investor, 'кабинет инвестора'],
-  [PORTS.expert, 'кабинет эксперта'],
   [PORTS.auth, 'вход'],
 ]
   .map(([port, name]) => ({ port, name, pid: portOwner(port) }))
@@ -128,7 +124,7 @@ if (strays.length > 0) {
 
 // ---------------------------------------------------------- собранная статика
 step('Собранная статика');
-const APPS = ['web-public', 'lab', 'investor', 'expert', 'admin', 'staff', 'auth', 'console'];
+const APPS = ['web-public', 'lab', 'investor', 'admin', 'auth', 'console'];
 for (const app of APPS) {
   const dir = resolve(ROOT, 'apps', app, 'dist');
   if (!existsSync(dir)) {
@@ -156,9 +152,7 @@ const ROUTES = [
   ['/login/', 200, 'вход'],
   ['/lab/', 200, 'кабинет основателя'],
   ['/investor/', 200, 'кабинет инвестора'],
-  ['/expert/', 200, 'кабинет эксперта'],
   ['/admin/', 200, 'админка'],
-  ['/staff/', 200, 'кабинет сотрудника'],
   ['/console/', 404, 'консоль (анониму 404 — так и надо)'],
   ['/v1/health', 200, 'API ядра'],
 ];

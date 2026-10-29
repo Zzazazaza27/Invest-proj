@@ -9,30 +9,25 @@
  *
  * Что делает:
  *
- *   • заводит (или приводит к известному состоянию) пять учётных записей
- *     приёмки — администратор, основатель, эксперт, второй эксперт с
- *     заявленным конфликтом интересов, инвестор;
- *   • создаёт два проекта: по одному рецензия уже сдана, по второму ещё нет —
- *     чтобы оба исхода «прекратить доступ» можно было посмотреть сразу;
+ *   • заводит (или приводит к известному состоянию) три учётные записи
+ *     приёмки — администратор, основатель, инвестор;
+ *   • создаёт проект основателя, опубликованный в режиме «все»;
  *   • пишет маршрут с адресами и паролями в `.local/приёмка.md`.
  *
  * **Пароли генерируются и в репозиторий не попадают.** Каталог `.local/`
  * закрыт `.gitignore`: пароль в коде — это секрет в коде, даже если он
  * тестовый (RULES.md §4).
  *
- * Функциональное полномочие эксперту НЕ выдаётся намеренно: выдать его
- * галочкой — часть того, что принимается.
- *
  * Запуск: node scripts/seed-acceptance.mjs
  */
 import pg from 'pg';
 import argon2 from 'argon2';
-import { createCipheriv, createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { createCipheriv, createHmac, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { publicUrl, PORTS } from './lib/ports.mjs';
+import { publicUrl } from './lib/ports.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -156,9 +151,12 @@ async function upsertProject(title, ownerId) {
   if (found) return found.id;
   const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
   const [project] = await sql(
-    `INSERT INTO lab.projects (id, taxonomy_id, title, stage, status, investment_ask, origin)
-     VALUES (public.uuid_generate_v7(), $1, $2, 'growth', 'expert_review', 5000000,
-             'seed_acceptance')
+    `INSERT INTO lab.projects
+       (id, taxonomy_id, title, tagline, description, stage, status, investment_ask, origin,
+        listing_status, listed_at, visibility, visibility_changed_at)
+     VALUES (public.uuid_generate_v7(), $1, $2, 'Проект для проверки после 2.1-W05',
+             'Описание видно всем, пока проект в режиме «все».', 'growth', 'draft', 5000000,
+             'seed_acceptance', 'listed', now(), 'public', now())
      RETURNING id`,
     [taxonomy?.id ?? null, title],
   );
@@ -168,36 +166,6 @@ async function upsertProject(title, ownerId) {
     [project.id, ownerId],
   );
   return project.id;
-}
-
-async function ensureAssignment(projectId, expertId, { withReview }) {
-  const [live] = await sql(
-    `SELECT id FROM experts.expert_assignments
-      WHERE project_id = $1 AND expert_id = $2 AND purpose = 'review'
-        AND access_revoked_at IS NULL`,
-    [projectId, expertId],
-  );
-  if (live) return live.id;
-
-  const id = randomUUID();
-  await sql(
-    `INSERT INTO experts.expert_assignments
-       (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
-     VALUES ($1, $2, $3, 'manual', 'review', $4, now() + interval '30 days')`,
-    [id, projectId, expertId, withReview ? 'completed' : 'accepted'],
-  );
-  if (withReview) {
-    await sql(
-      `INSERT INTO experts.expert_reviews
-         (id, assignment_id, rubric_scores_jsonb, comment, recommendation)
-       VALUES (public.uuid_generate_v7(), $1,
-               '{"team":7,"product":6,"strategy":6,"legal":8,"finmodel":5,"scalability":7}'::jsonb,
-               'Рецензия обстановки приёмки: она должна пережить прекращение доступа.',
-               'needs_review')`,
-      [id],
-    );
-  }
-  return id;
 }
 
 console.warn('\n=== ОБСТАНОВКА ПРИЁМКИ ===\n');
@@ -214,18 +182,6 @@ const founder = await upsertUser({
   roles: ['founder'],
   primaryRole: 'founder',
 });
-const expert = await upsertUser({
-  login: 'priem-expert',
-  displayName: 'Приёмка · эксперт',
-  roles: ['expert'],
-  primaryRole: 'founder',
-});
-const conflicted = await upsertUser({
-  login: 'priem-conflict',
-  displayName: 'Приёмка · эксперт с конфликтом',
-  roles: ['expert'],
-  primaryRole: 'founder',
-});
 const investor = await upsertUser({
   login: 'priem-investor',
   displayName: 'Приёмка · инвестор',
@@ -233,31 +189,10 @@ const investor = await upsertUser({
   primaryRole: 'investor',
 });
 
-for (const who of [expert, conflicted]) {
-  await sql(
-    `INSERT INTO experts.experts (user_id, expertise_tags) VALUES ($1, ARRAY['fintech'])
-     ON CONFLICT (user_id) DO NOTHING`,
-    [who.userId],
-  );
-}
-
-const withReview = await upsertProject('Приёмка · рецензия сдана', founder.userId);
-const withoutReview = await upsertProject('Приёмка · рецензии ещё нет', founder.userId);
-await ensureAssignment(withReview, expert.userId, { withReview: true });
-await ensureAssignment(withoutReview, expert.userId, { withReview: false });
-
-// Конфликт интересов по проекту без рецензии: его увидит форма назначения.
-await sql(
-  `INSERT INTO experts.expert_conflict_declarations (id, expert_id, project_id, description)
-   SELECT public.uuid_generate_v7(), $1, $2, $3
-    WHERE NOT EXISTS (
-      SELECT 1 FROM experts.expert_conflict_declarations
-       WHERE expert_id = $1 AND project_id = $2)`,
-  [conflicted.userId, withoutReview, 'Доля в конкурирующем проекте (обстановка приёмки).'],
-);
+await upsertProject('Приёмка · проект', founder.userId);
 
 /**
- * Демонстрационный комплект — девять учётных записей `demo-*` и пять проектов
+ * Демонстрационный комплект — учётные записи `demo-*` и пять проектов
  * (`fixtures/demo`). Их заводит отдельный скрипт, пароль у них общий и берётся
  * из `.env`. Здесь они только ПЕРЕЧИСЛЯЮТСЯ: владелец пользуется стендом по
  * ним, а список «где и под кем входить» должен быть один, а не два.
@@ -284,14 +219,14 @@ async function demoPeople() {
 
 const demo = await demoPeople();
 
-const people = [admin, founder, expert, conflicted, investor];
+const people = [admin, founder, investor];
 for (const who of people) console.warn(`  ·  ${who.login} — ${who.displayName}`);
 
 const routeDir = join(ROOT, '.local');
 mkdirSync(routeDir, { recursive: true });
 const routeFile = join(routeDir, 'приёмка.md');
 
-const route = `# Маршрут приёмки — управление экспертами
+const route = `# Маршрут приёмки — удаление инвестпроцесса, сезонов, экспертизы и ИИ (2.1-W05)
 
 Собран ${new Date().toLocaleString('ru-RU')} командой \`node scripts/seed-acceptance.mjs\`.
 Файл лежит вне Git (\`.local/\` закрыт \`.gitignore\`): в нём пароли.
@@ -310,7 +245,6 @@ const route = `# Маршрут приёмки — управление эксп
 | Вход               | ${publicUrl('auth')}         |
 | Кабинет основателя | ${publicUrl('lab')}          |
 | Кабинет инвестора  | ${publicUrl('investor')}     |
-| Кабинет эксперта   | ${publicUrl('expert')}       |
 | Админка            | ${publicUrl('admin')}        |
 | Служебная консоль  | ${publicUrl('console')}      |
 
@@ -330,11 +264,11 @@ npm run stand:up
 \`\`\`
 
 Одна команда: собирает приложения, поднимает контейнеры, накатывает миграции,
-запускает ядро и шлюз анализа, включает единый адрес и проверяет маршруты.
+запускает ядро, включает единый адрес и проверяет маршруты.
 Повторный запуск на работающем стенде безопасен.
 
 Контейнеры Docker поднимаются сами вместе с Docker Desktop
-(\`restart: unless-stopped\`); ядро и шлюз — процессы на хосте, их поднимает эта
+(\`restart: unless-stopped\`); ядро — процесс на хосте, его поднимает эта
 команда.
 
 | Команда | Что делает |
@@ -366,7 +300,7 @@ ${
         'Комплект НЕ загружен: учётных записей `demo-*` в базе нет,',
         'и вход под ними не сработает. Загрузить: `node scripts/seed-demo.mjs load`.',
       ].join(' ')
-    : `Пять проектов и девять ролей для ручного прохода. Пароль общий: \`${demo.password ?? '(не задан в .env)'}\`
+    : `Пять проектов для ручного прохода. Пароль общий: \`${demo.password ?? '(не задан в .env)'}\`
 
 | Логин | Кто |
 | ----- | --- |
@@ -378,84 +312,57 @@ ${demo.rows.map((d) => `| \`${d.login}\` | ${d.displayName} (${d.roles.join(', '
 
 ---
 
-## Что смотреть — восемь шагов, минут пятнадцать
+## Что смотреть — шесть шагов, минут десять
 
-### 1. Каталог полномочий и его границы
+### 1. Витрина без сезона и тарифов
 
-Админка → **Доступ** → раздел «Полномочия сотрудника». Найти
-\`Приёмка · эксперт\`, выбрать.
+${publicUrl('webPublic')}
 
-Ожидается: один раздел «Финансы» и четыре строки с описанием обычными словами.
-Это ВЕСЬ каталог, а не первая порция: остальные разделы платформы работают по
-ролевой модели. Рядом с каждым правом — значок «нужно назначение на объект».
+Ожидается: тексты витрины и каталог. Полосы сезона, раздела «Тарифы» и строки
+«Раунд открыт / не привлекает» на карточках нет.
 
-### 2. Выдача полномочия галочкой
+### 2. Кабинет основателя
 
-Заполнить «Основание», поставить галочку «Фиксировать возврат транша».
+Войти под \`priem-founder\`, открыть **Приёмка · проект**.
 
-Ожидается: «Полномочие выдано». Без основания — отказ с объяснением.
+Ожидается: карточка проекта с запросом инвестиций, режим видимости, доступ,
+изображения, материалы. Ни заявок, ни раунда, ни анализа, ни паспорта, ни
+согласий на публичный контур. Кнопка «Новый проект» вместо «Новой заявки».
 
-### 3. Конфликт интересов виден до попытки работы
+### 3. Предпросмотр «Как видит инвестор»
 
-Раздел «Назначение на оценку проекта» → проект **Приёмка · рецензии ещё нет**
-→ «Кого назначить»: \`Приёмка · эксперт с конфликтом\`.
+На той же странице → «Кто может видеть проект» → «Как видит инвестор».
 
-Ожидается: красное объяснение с датой и текстом заявления, кнопка «Назначить
-на оценку» недоступна. Решает по-прежнему сервер — экран лишь показывает то,
-чем он ответит.
+Ожидается: то же, что видит аноним, — допуска по роли больше нет. В режиме
+«Только допущенные инвесторы» — «Эта аудитория проект не видит».
 
-### 4. Прекращение доступа ПОСЛЕ сданной рецензии
+### 4. Кабинет инвестора
 
-Тот же раздел → проект **Приёмка · рецензия сдана**.
+Войти под \`priem-investor\`.
 
-Ожидается в строке назначения: «работа выполнена», «рецензия подана».
-Заполнить «Основание прекращения доступа», нажать **Прекратить доступ**.
+Ожидается: пустая оболочка «Кабинет в разработке» и кнопка выхода.
 
-Ожидается сообщение: «Доступ прекращён. Поданная рецензия осталась —
-прекращение доступа работу не отменяет». В строке появляется отметка «доступ
-прекращён», а состояние работы остаётся прежним.
+### 5. Админка без удалённых разделов
 
-### 5. Проверка глазами эксперта
+Войти под \`priem-admin\`.
 
-Кабинет эксперта под \`priem-expert\` (через приложение входа).
+Ожидается в меню: нет групп «Коммерция», «Заявки и сделки», «Сезон»; в
+«Интеграциях» только клиенты Integration API; в «Доступе» нет назначений на
+оценку и сопровождение. В выдаче ролей — только администратор, инвестор,
+основатель.
 
-Ожидается: проекта **Приёмка · рецензия сдана** в списке назначений НЕТ —
-доступ закрыт. Проект **Приёмка · рецензии ещё нет** на месте.
+### 6. Кабинета эксперта и сотрудника больше нет
 
-### 6. Прекращение доступа ДО рецензии
+Открыть ${publicUrl('webPublic')}expert/ и ${publicUrl('webPublic')}staff/.
 
-Вернуться в админку, тот же раздел, проект **Приёмка · рецензии ещё нет** →
-**Прекратить доступ**.
-
-Ожидается: назначение закрывается целиком — ждать рецензию больше не от кого.
-В кабинете эксперта список назначений пустеет.
-
-### 7. Возврат доступа — только новым назначением
-
-Попробовать назначить того же эксперта на тот же проект заново: срок в
-будущем, «Назначить на оценку».
-
-Ожидается: новое назначение создаётся и доступ возвращается. Старая запись о
-прекращении остаётся на месте — история не переписывается.
-
-### 8. Ответ 429 не выглядит как выход из аккаунта
-
-Руками это воспроизводится плохо: нужно исчерпать лимит частоты. Смотреть по
-снимку автоматического прохода — \`out/render-staff-access/\`, файл с
-\`rate-limited-session\` в имени, и рядом \`session-restored\`.
-
-Ожидается на снимке: «Слишком много запросов», прямая фраза «Из аккаунта вы не
-вышли», срок повтора и кнопка «Проверить ещё раз». Из аккаунта не выбрасывает,
-введённое не стирает.
+Ожидается: адреса не раздаются (витрина вместо кабинета).
 
 ---
 
 ## Чего в этом маршруте нет
 
-- **Денег.** Проверка денежного действия (запись о возврате транша) есть в
-  автоматическом проходе: \`node scripts/render-check-staff-access.mjs\`.
-  Реальных перечислений платформа не делает вовсе.
-- **Внешних отправок.** Почта локальная, платёжный оператор не подключён.
+- **Денег и сделок.** Удалены целиком; настоящих перечислений не было и нет.
+- **Внешних отправок.** Почта локальная.
 - **Удалённого стенда.** Всё локально.
 
 ---
@@ -463,7 +370,7 @@ ${demo.rows.map((d) => `| \`${d.login}\` | ${d.displayName} (${d.roles.join(', '
 ## Если что-то не открывается
 
 1. \`npm run stand:status\` — покажет, что именно не работает: контейнеры,
-   ядро, шлюз анализа (:${PORTS.aiGateway}), собранная статика или маршруты.
+   ядро, собранная статика или маршруты.
 2. \`npm run stand:up\` — поднимет недостающее. Повторный запуск на
    работающем стенде безопасен.
 3. Учётка не пускает — перезапустить \`node scripts/seed-acceptance.mjs\`:

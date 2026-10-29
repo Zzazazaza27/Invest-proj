@@ -23,32 +23,6 @@
       "about": "Администратор платформы: тарифы, комплаенс, поддержка"
     },
     {
-      "key": "organizer",
-      "login": "demo-organizer",
-      "displayName": "Павел Ерохин",
-      "primaryRole": "founder",
-      "roles": ["organizer"],
-      "about": "Организатор сезона: воронка отбора и состав рецензентов"
-    },
-    {
-      "key": "expert-fintech",
-      "login": "demo-expert-fin",
-      "displayName": "Марина Голубева",
-      "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["fintech", "saas"],
-      "about": "Эксперт по финтеху, 11 лет в платёжных сервисах"
-    },
-    {
-      "key": "expert-industry",
-      "login": "demo-expert-ind",
-      "displayName": "Артём Валиев",
-      "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["industrial", "hardware"],
-      "about": "Эксперт по промышленным решениям и приборостроению"
-    },
-    {
       "key": "founder-aeroseed",
       "login": "demo-founder-aero",
       "displayName": "Дмитрий Крюков",

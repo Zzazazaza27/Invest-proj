@@ -211,11 +211,9 @@ const TABLES = [
   'identity.users',
   'identity.consents',
   'lab.projects',
-  'lab.project_versions',
-  'experts.expert_reviews',
-  'experts.review_consensus',
-  'investments.investment_agreements',
-  'billing.subscriptions',
+  'lab.project_materials',
+  'lab.project_access_grants',
+  'billing.service_countries',
   'audit.events',
   'audit.outbox_events',
   'comms.notifications',
@@ -251,8 +249,7 @@ check('расхождений по таблицам нет', mismatches === 0, `
   const { rows } = await restored.query(
     `SELECT count(*)::int AS n FROM pg_class c
        JOIN pg_namespace nsp ON nsp.oid = c.relnamespace
-      WHERE nsp.nspname IN ('identity','kyc','lab','investments','scoring','experts',
-                            'seasons','comms','billing','audit','integration')
+      WHERE nsp.nspname IN ('identity','kyc','lab','comms','billing','audit','integration')
         AND c.relkind IN ('r','p') AND c.relispartition = false
         AND NOT c.relrowsecurity`,
   );

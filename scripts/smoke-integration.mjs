@@ -2,16 +2,17 @@
 /**
  * Живой прогон Ф9: Integration API.
  *
- * Проверяется главное: наружу не уходит ничего сверх заявленного скоупа;
- * персональных данных нет ни в одном ответе; обезличенная проекция исчезает в
- * тот же момент, когда отозвано согласие; проект, не ставший выпускником, для
- * внешней системы не существует; секрет клиента возвращается ровно один раз и
- * перестаёт работать сразу после ротации.
+ * С 2.1-W05 в Integration API остался общий механизм: токен сервисного клиента
+ * и подписки на события. Проверяется главное: скоуп вне allowlist не выдаётся;
+ * токен не получить без верного секрета и при приостановленном аккаунте;
+ * удалённых выдач нет; адрес вебхука во внутренней сети и подписка без права
+ * на событие отклоняются; чужую подписку не видно и не отключить; секрет
+ * клиента возвращается ровно один раз и перестаёт работать после ротации.
  *
  * Запуск: node scripts/smoke-integration.mjs (нужны поднятая БД и core на 4300)
  */
 import pg from 'pg';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createCipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -114,6 +115,25 @@ const CONSENTS = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind)
 }));
 const suffix = `${Date.now() % 1e9}`;
 
+/**
+ * Секрет подписи вебхука так, как его кладёт ядро (`sealDirect` домена
+ * webhook_secrets): AES-256-GCM на KEK, IV(12) + TAG(16) + шифртекст, AAD
+ * `webhook:signing`. Подписка заводится прямо в БД, но строка обязана быть
+ * настоящей: заглушка вместо шифртекста роняла бы ротацию ключа
+ * (`rotate-kek --domain webhook_secrets`) и доставку, которая секрет открывает.
+ */
+function sealWebhookSecret(secret) {
+  const kek = Buffer.from(process.env.KEK_WEBHOOK_SECRETS ?? '', 'base64');
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', kek, iv, { authTagLength: 16 });
+  cipher.setAAD(Buffer.from('webhook:signing', 'utf8'));
+  const body = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
+  return {
+    ciphertext: Buffer.concat([iv, cipher.getAuthTag(), body]),
+    fingerprint: createHash('sha256').update(secret, 'utf8').digest(),
+  };
+}
+
 function blindIndex(email) {
   return createHmac('sha256', Buffer.from(process.env.KEK_SEARCH_INDEX ?? '', 'base64'))
     .update(`email:${email.trim().toLowerCase()}`, 'utf8')
@@ -154,57 +174,31 @@ console.warn('\n=== ЖИВОЙ ПРОГОН: INTEGRATION API ===\n');
 const founder = await register('f');
 const admin = await register('a', 'admin');
 
-// Предусловия: выпускник с паспортом и IRS, и обычный проект-невыпускник.
-const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'fintech'`);
-const [season] = await sql(`SELECT id FROM seasons.seasons ORDER BY number DESC LIMIT 1`);
-
-async function makeProject(title, status) {
-  // 5.7.5 (M090): партнёрская выдача не обходит видимость — выпускник попадает
-  // в неё только в режиме public (листинг — следствие режима).
-  const [row] = await sql(
-    `INSERT INTO lab.projects (id, taxonomy_id, season_id, title, stage, status, investment_ask,
-                               listing_status, listed_at, visibility)
-     VALUES (public.uuid_generate_v7(), $1, $2, $3, 'growth', $4, 5000000,
-             CASE WHEN $4 = 'graduated' THEN 'listed' ELSE 'not_listed' END,
-             CASE WHEN $4 = 'graduated' THEN now() END,
-             CASE WHEN $4 = 'graduated' THEN 'public' ELSE 'private' END)
-     RETURNING id`,
-    [taxonomy.id, season.id, title, status],
-  );
-  await sql(
-    `INSERT INTO lab.founders_projects (project_id, user_id, role) VALUES ($1, $2, 'owner')`,
-    [row.id, founder.userId],
-  );
-  return row.id;
+/** Сервисный аккаунт через админку; возвращает id и одноразовый секрет. */
+async function createAccount(name, id, fingerprintChar) {
+  const { response, json } = await admin.client.call('/v1/admin/service-accounts', {
+    method: 'POST',
+    body: {
+      name,
+      clientId: id,
+      scopes: ['webhooks:manage'],
+      mtlsCertFingerprint: fingerprintChar.repeat(64),
+    },
+  });
+  return { response, accountId: json?.id, secret: json?.clientSecret };
 }
 
-const graduate = await makeProject(`Выпускник ${suffix}`, 'graduated');
-const draft = await makeProject(`Черновик ${suffix}`, 'submitted');
-
-await sql(
-  `INSERT INTO scoring.irs_scores (id, project_id, value) VALUES (public.uuid_generate_v7(), $1, 83.25)`,
-  [graduate],
-);
-await sql(
-  `INSERT INTO scoring.investment_passports (id, project_id, version, jsonb_data, disclosure_tier,
-                                             published_at)
-   VALUES (public.uuid_generate_v7(), $1, 1, '{"summary":"тизер выпускника"}'::jsonb, 'teaser', now())`,
-  [graduate],
-);
-// Второй проект — с паспортом уровня full: проверяем, что запрос teaser НЕ
-// получит более раскрытую версию. Инвариант passports_one_current не даёт
-// держать два опубликованных паспорта на одном проекте.
-const graduateFull = await makeProject(`Выпускник с full ${suffix}`, 'graduated');
-await sql(
-  `INSERT INTO scoring.investment_passports (id, project_id, version, jsonb_data, disclosure_tier,
-                                             published_at)
-   VALUES (public.uuid_generate_v7(), $1, 1, '{"detail":"полное раскрытие"}'::jsonb, 'full', now())`,
-  [graduateFull],
-);
+async function issueToken(id, secret) {
+  return raw('/v1/integration/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientId: id, clientSecret: secret }),
+  });
+}
 
 // ---------------------------------------------------------- сервисный аккаунт
 console.warn('\n[1] Сервисный аккаунт и токен');
-let clientId = `capital-${suffix}`;
+const clientId = `capital-${suffix}`;
 let clientSecret;
 let accountId;
 {
@@ -213,7 +207,7 @@ let accountId;
     body: {
       name: 'Чужой',
       clientId: `evil-${suffix}`,
-      scopes: ['deals:read'],
+      scopes: ['webhooks:manage'],
       mtlsCertFingerprint: 'a'.repeat(64),
     },
   });
@@ -229,7 +223,7 @@ let accountId;
     body: {
       name: 'Capital',
       clientId,
-      scopes: ['graduates:read', 'passport:read', 'deals:read', 'listing:create', 'seasons:read'],
+      scopes: ['webhooks:manage'],
       mtlsCertFingerprint: 'not-a-fingerprint',
     },
   });
@@ -240,18 +234,28 @@ let accountId;
   );
 }
 {
-  const { response, json } = await admin.client.call('/v1/admin/service-accounts', {
+  // Скоупы удалённых выдач (выпускники, паспорт, сделки, сезон) — вне
+  // allowlist: аккаунт с ними не заводится, а не заводится «с частью прав».
+  const { response } = await admin.client.call('/v1/admin/service-accounts', {
     method: 'POST',
     body: {
       name: 'Capital',
       clientId,
-      scopes: ['graduates:read', 'passport:read', 'deals:read', 'listing:create', 'seasons:read'],
+      scopes: ['webhooks:manage', 'graduates:read'],
       mtlsCertFingerprint: 'b'.repeat(64),
     },
   });
-  check('админ заводит сервисный аккаунт', response.status < 400, `HTTP ${response.status}`);
-  clientSecret = json?.clientSecret;
-  accountId = json?.id;
+  check('скоуп вне allowlist отклоняется', response.status === 400, `HTTP ${response.status}`);
+}
+{
+  const created = await createAccount('Capital', clientId, 'b');
+  check(
+    'админ заводит сервисный аккаунт',
+    created.response.status < 400,
+    `HTTP ${created.response.status}`,
+  );
+  clientSecret = created.secret;
+  accountId = created.accountId;
   check(
     'секрет выдан один раз в ответе',
     typeof clientSecret === 'string' && clientSecret.length >= 32,
@@ -270,19 +274,11 @@ let accountId;
   check('в БД лежит argon2id-хеш, а не секрет', row.client_secret_hash.startsWith('$argon2id$'));
 }
 {
-  const { response } = await raw('/v1/integration/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId, clientSecret: 'x'.repeat(48) }),
-  });
+  const { response } = await issueToken(clientId, 'x'.repeat(48));
   check('неверный секрет — отказ', response.status === 401, `HTTP ${response.status}`);
 }
 {
-  const { response } = await raw('/v1/integration/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId: `нет-такого-${suffix}`, clientSecret: 'x'.repeat(48) }),
-  });
+  const { response } = await issueToken(`нет-такого-${suffix}`, 'x'.repeat(48));
   check(
     'неизвестный клиент отвечает так же, как неверный секрет',
     response.status === 401,
@@ -305,11 +301,7 @@ let accountId;
   );
 }
 {
-  const { response } = await raw('/v1/integration/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId, clientSecret }),
-  });
+  const { response } = await issueToken(clientId, clientSecret);
   check(
     'приостановленный аккаунт токен НЕ получает',
     response.status === 401,
@@ -330,11 +322,7 @@ let accountId;
 
 let token;
 {
-  const { response, json } = await raw('/v1/integration/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId, clientSecret }),
-  });
+  const { response, json } = await issueToken(clientId, clientSecret);
   check('токен выдан по client_credentials', response.status < 400, `HTTP ${response.status}`);
   token = json?.accessToken;
   check(
@@ -344,24 +332,25 @@ let token;
   );
   check(
     'скоупы возвращены клиенту',
-    Array.isArray(json?.scopes) && json.scopes.includes('graduates:read'),
+    Array.isArray(json?.scopes) && json.scopes.length === 1 && json.scopes[0] === 'webhooks:manage',
+    JSON.stringify(json?.scopes),
   );
 }
 
 // -------------------------------------------------------------------- доступ
-console.warn('\n[2] Скоупы и границы доступа');
+console.warn('\n[2] Границы доступа');
 {
-  const { response } = await api('/v1/integration/graduates', null);
+  const { response } = await api('/v1/integration/webhooks', null);
   check('без токена доступа нет', response.status === 401, `HTTP ${response.status}`);
 }
 {
-  const { response } = await api('/v1/integration/graduates', `${token}x`);
+  const { response } = await api('/v1/integration/webhooks', `${token}x`);
   check('подделанная подпись токена отклонена', response.status === 401, `HTTP ${response.status}`);
 }
 {
   // Пользовательская сессия — не пропуск в интеграционный контур: у него свой
   // субъект и свой формат токена.
-  const { response } = await admin.client.call('/v1/integration/graduates');
+  const { response } = await admin.client.call('/v1/integration/webhooks');
   check(
     'сессия администратора не открывает Integration API',
     response.status === 401,
@@ -369,226 +358,112 @@ console.warn('\n[2] Скоупы и границы доступа');
   );
 }
 {
-  const { response } = await api(`/v1/integration/projects/${graduate}/public-profile`, token);
-  check('скоупа show:read нет — отказ', response.status === 403, `HTTP ${response.status}`);
+  // Выдачи удалены вместе с процессами (2.1-W05): маршрутов нет вовсе, а не
+  // «есть, но без скоупа». 404 — и с валидным токеном.
+  for (const path of [
+    '/v1/integration/graduates',
+    '/v1/integration/deals',
+    '/v1/integration/seasons/current',
+  ]) {
+    const { response } = await api(path, token);
+    check(`удалённой выдачи ${path} нет`, response.status === 404, `HTTP ${response.status}`);
+  }
 }
 
-// ---------------------------------------------------------------- проекции
-console.warn('\n[3] Проекции');
+// ------------------------------------------------------------------ вебхуки
+console.warn('\n[3] Подписки на события');
 {
-  const { response, json } = await api('/v1/integration/graduates', token);
-  check('выпускники отдаются', response.status === 200, `HTTP ${response.status}`);
-  const item = (json?.items ?? []).find((g) => g.projectId === graduate);
-  check('выпускник в выдаче с фактическим IRS', item?.irs === 83.25, `irs=${item?.irs}`);
-  // С 5.6.4 сумма запроса — только из незавершённого раунда; у фикстуры
-  // раунда нет, кеш `investment_ask` проекта наружу не отдаётся.
+  const { response, json } = await api('/v1/integration/webhooks', token);
   check(
-    'сумма запроса без открытого раунда — null (кеш проекта не отдаётся)',
-    item !== undefined && item.investmentAsk === null,
-    `${item?.investmentAsk}`,
-  );
-  check('момент выпуска проставлен триггером', typeof item?.graduatedAt === 'string');
-  check(
-    'невыпускник в выдачу не попадает',
-    !(json?.items ?? []).some((g) => g.projectId === draft),
-  );
-  check('версия данных объявлена', json?.dataVersion === 1);
-  const leaked = JSON.stringify(json).match(/email|phone|passport|inn|userId|founder/i);
-  check(
-    'в выдаче нет ПДн и идентификаторов людей',
-    leaked === null,
-    `найдено: ${leaked?.[0] ?? 'нет'}`,
+    'список подписок отдаётся',
+    response.status === 200 && Array.isArray(json?.items),
+    `HTTP ${response.status}`,
   );
 }
 {
-  const { response, json } = await api(
-    `/v1/integration/projects/${graduate}/passport?tier=teaser`,
-    token,
-  );
-  check('паспорт уровня teaser отдаётся', response.status === 200, `HTTP ${response.status}`);
-  check('данные паспорта на месте', json?.data?.summary === 'тизер выпускника');
-}
-{
-  const { response } = await api(
-    `/v1/integration/projects/${graduate}/passport?tier=dataroom`,
-    token,
-  );
+  const { response } = await api('/v1/integration/webhooks', token, {
+    method: 'POST',
+    body: { url: 'https://127.0.0.1/hook', subscribedVerbs: ['lab.listing.published'] },
+  });
   check(
-    'уровень dataroom маршрут не принимает вовсе',
+    'адрес во внутренней сети не регистрируется',
     response.status === 400,
     `HTTP ${response.status}`,
   );
 }
 {
-  const { response } = await api(
-    `/v1/integration/projects/${graduateFull}/passport?tier=teaser`,
-    token,
-  );
+  const { response } = await api('/v1/integration/webhooks', token, {
+    method: 'POST',
+    body: { url: 'https://93.184.215.14/hook', subscribedVerbs: ['lab.project.graduated'] },
+  });
   check(
-    'паспорт уровня full не выдаётся под видом teaser',
-    response.status === 404,
+    'подписка на несуществующее событие отклоняется',
+    response.status === 400,
     `HTTP ${response.status}`,
   );
 }
 {
-  const { response, json } = await api(
-    `/v1/integration/projects/${graduateFull}/passport?tier=full`,
-    token,
-  );
-  check(
-    'запрошенный уровень full отдаётся',
-    response.status === 200 && json?.data?.detail === 'полное раскрытие',
-    `HTTP ${response.status}`,
-  );
-}
-{
-  const { response } = await api(`/v1/integration/projects/${draft}/passport`, token);
-  check(
-    'паспорт невыпускника не существует для внешней системы',
-    response.status === 404,
-    `HTTP ${response.status}`,
-  );
-}
-{
-  const { response, json } = await api(`/v1/integration/projects/${graduate}/irs-history`, token);
-  check(
-    'история IRS отдаётся',
-    response.status === 200 && json?.items?.length >= 1,
-    `HTTP ${response.status}, строк: ${json?.items?.length}`,
-  );
-}
-{
-  const { response, json } = await api('/v1/integration/deals', token);
-  check('агрегаты договоров отдаются', response.status === 200, `HTTP ${response.status}`);
-  const leaked = JSON.stringify(json).match(/investorId|issuerId|email|phone|inn/i);
-  check(
-    'в агрегатах договоров нет сторон сделки',
-    leaked === null,
-    `найдено: ${leaked?.[0] ?? 'нет'}`,
-  );
-}
-{
-  const { response, json } = await api('/v1/integration/seasons/current', token);
-  check(
-    'метроном сезона отдаётся',
-    response.status === 200 && json?.season !== undefined,
-    `HTTP ${response.status}`,
-  );
-}
-
-// ------------------------------------------------------------ внешний листинг
-console.warn('\n[4] Регистрация внешнего листинга');
-const remoteId = `capital-listing-${suffix}`;
-let refId;
-{
-  const { response, json } = await api('/v1/integration/listings', token, {
+  // `webhooks:manage` даёт право управлять подписками, а не читать данные;
+  // скоупов, открывающих события, сейчас нет — подписаться не на что.
+  const { response } = await api('/v1/integration/webhooks', token, {
     method: 'POST',
-    body: { projectId: draft, remoteSystem: 'unicorn-capital', remoteType: 'listing', remoteId },
+    body: { url: 'https://93.184.215.14/hook', subscribedVerbs: ['lab.listing.published'] },
   });
   check(
-    'листинг невыпускника не регистрируется',
-    response.status === 404,
-    `HTTP ${response.status} ${json?.detail ?? ''}`,
-  );
-}
-{
-  const { response, json } = await api('/v1/integration/listings', token, {
-    method: 'POST',
-    body: { projectId: graduate, remoteSystem: 'unicorn-capital', remoteType: 'listing', remoteId },
-  });
-  check('листинг выпускника зарегистрирован', response.status < 400, `HTTP ${response.status}`);
-  refId = json?.id;
-}
-{
-  const { response, json } = await api('/v1/integration/listings', token, {
-    method: 'POST',
-    body: { projectId: graduate, remoteSystem: 'unicorn-capital', remoteType: 'listing', remoteId },
-  });
-  check(
-    'повтор идемпотентен и возвращает ту же ссылку',
-    response.status < 400 && json?.id === refId,
-    `HTTP ${response.status}`,
-  );
-}
-{
-  const other = await makeProject(`Второй выпускник ${suffix}`, 'graduated');
-  const { response } = await api('/v1/integration/listings', token, {
-    method: 'POST',
-    body: { projectId: other, remoteSystem: 'unicorn-capital', remoteType: 'listing', remoteId },
-  });
-  check(
-    'чужой внешний идентификатор не переприсваивается',
-    response.status === 409,
-    `HTTP ${response.status}`,
-  );
-}
-
-// ------------------------------------------------------------------ согласие
-console.warn('\n[5] Обезличенная проекция и согласие');
-const showClientId = `show-${suffix}`;
-let showToken;
-{
-  const { json } = await admin.client.call('/v1/admin/service-accounts', {
-    method: 'POST',
-    body: {
-      name: 'Шоу',
-      clientId: showClientId,
-      scopes: ['show:read'],
-      mtlsCertFingerprint: 'c'.repeat(64),
-    },
-  });
-  const { json: tokenJson } = await raw('/v1/integration/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId: showClientId, clientSecret: json.clientSecret }),
-  });
-  showToken = tokenJson?.accessToken;
-  check('клиент медиаконтура получил токен', typeof showToken === 'string');
-}
-{
-  const { response } = await api(`/v1/integration/projects/${graduate}/public-profile`, showToken);
-  check('без согласия проекции не существует', response.status === 404, `HTTP ${response.status}`);
-}
-let consentId;
-{
-  const [row] = await sql(
-    `INSERT INTO identity.publication_consents
-       (id, user_id, project_id, scope, document_version, document_sha256)
-     VALUES (public.uuid_generate_v7(), $1, $2, 'top100_public', 'v1', digest('doc','sha256'))
-     RETURNING id`,
-    [founder.userId, graduate],
-  );
-  consentId = row.id;
-  const { response, json } = await api(
-    `/v1/integration/projects/${graduate}/public-profile`,
-    showToken,
-  );
-  check('с согласием проекция отдаётся', response.status === 200, `HTTP ${response.status}`);
-  check('проекция обезличена', JSON.stringify(json ?? {}).match(/email|phone|userId/i) === null);
-  check('scope согласия указан в ответе', json?.consentScope === 'top100_public');
-}
-{
-  const { response } = await api(`/v1/integration/projects/${graduate}/passport`, showToken);
-  check(
-    'клиент медиаконтура не читает паспорт',
+    'без скоупа данных подписка на событие запрещена',
     response.status === 403,
     `HTTP ${response.status}`,
   );
 }
+
+// Своя подписка и чужая: вторую заводим напрямую в БД, раз через API
+// подписаться сейчас не на что. Важна граница владельца, а не способ создания.
+const other = await createAccount('Чужой клиент', `other-${suffix}`, 'd');
+const otherToken = (await issueToken(`other-${suffix}`, other.secret)).json?.accessToken;
+check('второй клиент получил токен', typeof otherToken === 'string');
+const sealed = sealWebhookSecret(randomBytes(32).toString('base64url'));
+const [endpoint] = await sql(
+  `INSERT INTO integration.webhook_endpoints
+     (id, service_account_id, url, subscribed_verbs, secret_ciphertext, secret_kms_key_id,
+      secret_fingerprint)
+   VALUES (public.uuid_generate_v7(), $1, 'https://93.184.215.14/hook', ARRAY['lab.listing.published'],
+           $2, 'local/webhook_secrets/v1', $3)
+   RETURNING id`,
+  [accountId, sealed.ciphertext, sealed.fingerprint],
+);
 {
-  await sql('UPDATE identity.publication_consents SET revoked_at = now() WHERE id = $1', [
-    consentId,
-  ]);
-  const { response } = await api(`/v1/integration/projects/${graduate}/public-profile`, showToken);
+  const { json } = await api('/v1/integration/webhooks', token);
   check(
-    'отзыв согласия убирает проекцию немедленно, тем же токеном',
-    response.status === 404,
-    `HTTP ${response.status}`,
+    'своя подписка видна владельцу',
+    (json?.items ?? []).some((item) => item.id === endpoint.id),
   );
+  const leaked = JSON.stringify(json ?? {}).match(/secret/i);
+  check('в списке подписок нет секрета', leaked === null, `найдено: ${leaked?.[0] ?? 'нет'}`);
+}
+{
+  const { json } = await api('/v1/integration/webhooks', otherToken);
+  check(
+    'чужой клиент подписку не видит',
+    !(json?.items ?? []).some((item) => item.id === endpoint.id),
+  );
+  const { response } = await api(`/v1/integration/webhooks/${endpoint.id}`, otherToken, {
+    method: 'DELETE',
+  });
+  check('чужой клиент подписку не отключает', response.status === 404, `HTTP ${response.status}`);
+}
+{
+  const { response } = await api(`/v1/integration/webhooks/${endpoint.id}`, token, {
+    method: 'DELETE',
+  });
+  check('владелец отключает подписку', response.status === 200, `HTTP ${response.status}`);
+  const [row] = await sql('SELECT status FROM integration.webhook_endpoints WHERE id = $1', [
+    endpoint.id,
+  ]);
+  check('строка подписки осталась, статус disabled', row?.status === 'disabled', row?.status);
 }
 
 // -------------------------------------------------------------------- ротация
-console.warn('\n[6] Ротация секрета');
+console.warn('\n[4] Ротация секрета');
 {
   const { response, json } = await admin.client.call(
     `/v1/admin/service-accounts/${accountId}/rotation`,
@@ -603,27 +478,19 @@ console.warn('\n[6] Ротация секрета');
   );
   const rotated = json?.clientSecret;
 
-  const old = await raw('/v1/integration/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId, clientSecret }),
-  });
+  const old = await issueToken(clientId, clientSecret);
   check(
     'старый секрет больше не выдаёт токен',
     old.response.status === 401,
     `HTTP ${old.response.status}`,
   );
 
-  const fresh = await raw('/v1/integration/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clientId, clientSecret: rotated }),
-  });
+  const fresh = await issueToken(clientId, rotated);
   check('новый секрет работает', fresh.response.status < 400, `HTTP ${fresh.response.status}`);
 }
 
 // -------------------------------------------------------------------- аудит
-console.warn('\n[7] Журнал');
+console.warn('\n[5] Журнал');
 {
   const [row] = await sql(
     `SELECT count(*)::int AS n FROM audit.events
@@ -631,12 +498,6 @@ console.warn('\n[7] Журнал');
     [accountId],
   );
   check('создание аккаунта записано в журнал', row.n === 1, `строк: ${row.n}`);
-  const [listing] = await sql(
-    `SELECT count(*)::int AS n FROM audit.events
-      WHERE verb = 'integration.listing.created' AND subject_id = $1`,
-    [graduate],
-  );
-  check('регистрация внешнего листинга записана', listing.n >= 1, `строк: ${listing.n}`);
   const [tokens] = await sql(
     `SELECT count(*)::int AS n FROM audit.events WHERE verb = 'integration.token.issued'`,
   );

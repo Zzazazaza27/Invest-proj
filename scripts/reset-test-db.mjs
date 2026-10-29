@@ -21,7 +21,7 @@
  * Затем:
  *   NODE_ENV=test npm run db:migrate   (для unicorn_test)
  *   npm run db:migrate                 (для unicorn_launch)
- *   node scripts/seed-application-form.mjs ; npm run demo:load
+ *   npm run demo:load
  */
 import pg from 'pg';
 import { existsSync, readFileSync } from 'node:fs';
@@ -39,6 +39,10 @@ const ALLOWED_DBS = { unicorn_launch: 'DATABASE_URL_OWNER', unicorn_test: 'DATAB
  * реестр миграций — нет: следующий накат падает на «relation already
  * exists», и выглядит это как поломка миграции, а не как недочёт уборки.
  * Проверка `data-classes.test.ts` заметит новую ТАБЛИЦУ, но не новую СХЕМУ.
+ *
+ * `investments`, `scoring`, `experts`, `seasons` удалены миграцией M150
+ * (2.1-W05), но остаются в списке: их создают ранние миграции, и база,
+ * накатанная не до конца, держит их. Отсутствующая схема просто пропускается.
  */
 const APP_SCHEMAS = [
   'identity',

@@ -39,7 +39,7 @@ const KEY = resolve(homedir(), '.ssh', 'launchbridge_ed25519');
 const APP_DIR = '/opt/unicorn-launch';
 // Адрес стенда — из окружения: смена домена не требует правки скрипта.
 const PUBLIC_URL = process.env.STAND_PUBLIC_URL ?? 'https://5espace.com';
-const ROUTES = ['/', '/login/', '/lab/', '/investor/', '/expert/', '/admin/', '/v1/health'];
+const ROUTES = ['/', '/login/', '/lab/', '/investor/', '/admin/', '/v1/health'];
 
 const step = (text) => console.warn(`\n▸ ${text}`);
 const ok = (text) => console.warn(`  ok    ${text}`);
@@ -212,7 +212,7 @@ try {
   ok('миграции и роли применены');
 
   step('Перезапуск');
-  remote('systemctl restart unicorn-core unicorn-ai-gateway');
+  remote('systemctl restart unicorn-core');
 
   // Ядру нужно время подняться: сразу после restart оно ещё не слушает порт,
   // а следом идёт проверка конфигурации nginx, которая ходит именно в него.
@@ -270,7 +270,7 @@ try {
     remote('npm ci --no-audit --no-fund', { show: true });
     remote('npm run build', { show: true });
     remote('npm run build:console', { show: true });
-    remote('systemctl restart unicorn-core unicorn-ai-gateway');
+    remote('systemctl restart unicorn-core');
     remote('npm run web:up', { show: true });
     const back = ROUTES.filter((r) => probe(`${PUBLIC_URL}${r}`) !== 200);
     if (back.length === 0) ok(`откатились на ${before}, стенд отвечает`);

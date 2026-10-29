@@ -65,23 +65,6 @@ async function mustFail(client, name, sql, expectedCodes = ['42501', '3F000']) {
 
 const ROLES = [
   {
-    role: 'app_billing',
-    urlKey: 'DATABASE_URL_APP_BILLING',
-    login: 'app_billing_user',
-    allowed: [
-      ['читает начисления', 'SELECT count(*) FROM billing.commission_accruals'],
-      ['читает счета', 'SELECT count(*) FROM billing.invoices'],
-    ],
-    // Плательщика и договор биллинг читать обязан — без них не выставить счёт
-    // (политики users_system_read и agreements_billing_read, M002/M005).
-    // Границей является другое: персональные данные проверки личности и
-    // содержимое заявок к деньгам отношения не имеют.
-    forbidden: [
-      ['не читает проверки личности', 'SELECT count(*) FROM kyc.kyc_verifications'],
-      ['не читает материалы проектов', 'SELECT count(*) FROM lab.project_materials'],
-    ],
-  },
-  {
     role: 'app_notifications',
     urlKey: 'DATABASE_URL_APP_NOTIFICATIONS',
     login: 'app_notifications_user',
@@ -91,7 +74,7 @@ const ROLES = [
     ],
     forbidden: [
       ['не читает проекты', 'SELECT count(*) FROM lab.projects'],
-      ['не читает деньги', 'SELECT count(*) FROM billing.invoices'],
+      ['не читает проверки личности', 'SELECT count(*) FROM kyc.kyc_verifications'],
     ],
   },
   {
@@ -107,7 +90,7 @@ const ROLES = [
     forbidden: [
       ['не читает проекты', 'SELECT count(*) FROM lab.projects'],
       ['не читает пользователей', 'SELECT count(*) FROM identity.users'],
-      ['не читает деньги', 'SELECT count(*) FROM billing.invoices'],
+      ['не читает проверки личности', 'SELECT count(*) FROM kyc.kyc_verifications'],
     ],
   },
   {
@@ -138,33 +121,12 @@ const ROLES = [
     urlKey: 'DATABASE_URL_APP_INTEGRATION',
     login: 'app_integration_user',
     allowed: [
-      ['читает проекцию вознаграждения', 'SELECT count(*) FROM integration.deal_commissions'],
+      ['читает подписки вебхуков', 'SELECT count(*) FROM integration.webhook_endpoints'],
+      ['читает очередь доставки', 'SELECT count(*) FROM integration.webhook_deliveries'],
     ],
     forbidden: [
-      ['не читает начисления биллинга', 'SELECT count(*) FROM billing.commission_accruals'],
+      ['не читает страны обслуживания', 'SELECT count(*) FROM billing.service_countries'],
       ['не читает identity.users', 'SELECT count(*) FROM identity.users'],
-    ],
-  },
-  {
-    // Регулируемый контур — самая «денежная» роль, и в гейте границ её не
-    // было вовсе (INFO внешнего аудита №2): расширение её прав проходило бы
-    // незамеченным.
-    role: 'app_investments',
-    urlKey: 'DATABASE_URL_APP_INVESTMENTS',
-    login: 'app_investments_user',
-    allowed: [
-      ['читает предложения', 'SELECT count(*) FROM investments.investment_offers'],
-      ['читает договоры', 'SELECT count(*) FROM investments.investment_agreements'],
-    ],
-    forbidden: [
-      // Поколоночный GRANT после M056: хеш пароля и контакты роли не видны.
-      ['не читает password_hash', 'SELECT password_hash FROM identity.users LIMIT 1'],
-      ['не читает шифртекст контакта', 'SELECT email_ciphertext FROM identity.users LIMIT 1'],
-      ['не пишет в журнал', "INSERT INTO audit.events (verb) VALUES ('x')"],
-      [
-        'не читает секреты интеграций',
-        'SELECT client_secret_hash FROM integration.service_accounts LIMIT 1',
-      ],
     ],
   },
   {
@@ -256,6 +218,41 @@ for (const spec of ROLES) {
   } finally {
     await client.end().catch(() => {});
   }
+}
+
+// Роли биллинга и регулируемого контура (2.1-W05) остались в кластере только
+// формально: их контур удалён, права отозваны, логины bootstrap больше не
+// заводит. Проверяется, что права не вернулись — ни на таблицы, ни на схемы
+// приложения. Подключение под ними не проверяется: логина может не быть.
+console.warn('--- лишённые роли (app_billing, app_investments) ---');
+if (env.DATABASE_URL_OWNER) {
+  const owner = new pg.Client({ connectionString: env.DATABASE_URL_OWNER });
+  try {
+    await owner.connect();
+    for (const role of ['app_billing', 'app_investments']) {
+      const { rows } = await owner.query(
+        `SELECT
+           (SELECT count(*) FROM information_schema.role_table_grants
+             WHERE grantee = $1)::int AS tables,
+           (SELECT count(*) FROM pg_namespace n
+             WHERE has_schema_privilege($1, n.oid, 'USAGE')
+               AND n.nspname NOT IN ('public', 'information_schema')
+               AND n.nspname NOT LIKE 'pg\\_%')::int AS schemas`,
+        [role],
+      );
+      check(
+        `${role} без прав на таблицы и схемы`,
+        rows[0].tables === 0 && rows[0].schemas === 0,
+        `таблиц ${rows[0].tables}, схем ${rows[0].schemas}`,
+      );
+    }
+  } catch (error) {
+    check('проверка лишённых ролей', false, error.message.slice(0, 90));
+  } finally {
+    await owner.end().catch(() => {});
+  }
+} else {
+  check('DATABASE_URL_OWNER задан', false, 'переменная пуста');
 }
 
 console.warn(`\n=== ИТОГ: ${passed} проверок пройдено, ${failed} провалено ===\n`);

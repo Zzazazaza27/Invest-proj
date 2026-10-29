@@ -8,7 +8,7 @@ import globals from 'globals';
  *
  * Ключевой архитектурный инвариант, который проверяется здесь:
  * ФРОНТЕНД НЕ ИМПОРТИРУЕТ БЭКЕНД. Приложения из apps/{web-public,lab,investor,
- * expert,admin} могут зависеть только от packages/* (contracts, api-client, ui).
+ * admin} могут зависеть только от packages/* (contracts, api-client, ui).
  * Любой импорт из apps/core или database — ошибка сборки, а не замечание в ревью.
  * Это то, что делает фронтенд заменяемым по частям.
  */
@@ -21,7 +21,6 @@ export default tseslint.config(
       '**/.vite/**',
       '**/coverage/**',
       '**/playwright-report/**',
-      'apps/ai-gateway/**',
       'apps/ai-workers/**',
       'graphify-out/**',
     ],
@@ -67,7 +66,6 @@ export default tseslint.config(
       'apps/web-public/**/*.{js,jsx,ts,tsx}',
       'apps/lab/**/*.{js,jsx,ts,tsx}',
       'apps/investor/**/*.{js,jsx,ts,tsx}',
-      'apps/expert/**/*.{js,jsx,ts,tsx}',
       'apps/admin/**/*.{js,jsx,ts,tsx}',
       // Консоль разработки — тоже фронтенд: она ходит в то же публичное API и
       // прямого доступа к БД, очередям и хранилищу иметь не должна. Пропуск её
@@ -114,7 +112,6 @@ export default tseslint.config(
                 '**/apps/web-public/**',
                 '**/apps/lab/**',
                 '**/apps/investor/**',
-                '**/apps/expert/**',
                 '**/apps/admin/**',
                 '**/apps/console/**',
                 '**/apps/auth/**',

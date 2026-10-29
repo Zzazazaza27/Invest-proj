@@ -44,7 +44,6 @@ const ROUTES = [
   ['/login/', 200],
   ['/lab/', 200],
   ['/investor/', 200],
-  ['/expert/', 200],
   ['/admin/', 200],
   ['/console/', 404],
   ['/v1/health', 200],
@@ -220,7 +219,6 @@ function stopDevServers() {
     PORTS.admin,
     PORTS.lab,
     PORTS.investor,
-    PORTS.expert,
     PORTS.auth,
     PORTS.console,
   ];
@@ -376,52 +374,6 @@ function core() {
   return true;
 }
 
-/**
- * Шлюз анализа. Без него разбор заявки падает, и падает невнятно: маршрут
- * анализа отвечает «сервис недоступен», а причина — что процесс не запущен.
- *
- * Не блокирует подъём стенда: витрина, кабинеты и покупка работают и без
- * него. Поэтому предупреждение, а не отказ.
- */
-function gateway() {
-  step('Шлюз анализа');
-  if (probe(`http://127.0.0.1:${PORTS.aiGateway}/healthz`).code === 200) {
-    ok(`уже работает на :${PORTS.aiGateway}`);
-    return true;
-  }
-  const venv =
-    existsSync(resolve(ROOT, 'apps/ai-gateway/.venv/Scripts/python.exe')) ||
-    existsSync(resolve(ROOT, 'apps/ai-gateway/.venv/bin/python'));
-  if (!venv) {
-    warn('венв не создан — разбор заявки работать не будет');
-    warn('  python -m venv apps/ai-gateway/.venv');
-    warn(
-      '  apps/ai-gateway/.venv/Scripts/python -m pip install -r apps/ai-gateway/requirements.txt',
-    );
-    return true;
-  }
-  if (process.platform === 'win32') {
-    const healthy = launchOutsideSession(
-      'start-ai-gateway.cmd',
-      `http://127.0.0.1:${PORTS.aiGateway}/healthz`,
-    );
-    if (!healthy) {
-      warn('не ответил за минуту — смотрите ai-gateway.log; разбор заявки будет недоступен');
-      return true;
-    }
-    ok('запущен вне сессии, лог ai-gateway.log');
-    return true;
-  }
-  const out = run('node scripts/dev-ai-gateway.mjs --detached');
-  if (out === null) {
-    warn('не запустился — смотрите ai-gateway.log; разбор заявки будет недоступен');
-    return true;
-  }
-  const pid = /pid (\d+)/.exec(out)?.[1];
-  ok(`запущен${pid ? `, pid ${pid}` : ''}, лог ai-gateway.log`);
-  return true;
-}
-
 function web() {
   step('Единая точка входа');
   if (run('node scripts/infra.mjs web-up') === null) {
@@ -475,7 +427,6 @@ const steps = [
   migrateTestDb,
   nats,
   core,
-  gateway,
   stopDevServers,
   web,
   check,
@@ -495,7 +446,6 @@ console.warn(`
   http://127.0.0.1/login/    вход
   http://127.0.0.1/lab/      кабинет основателя
   http://127.0.0.1/investor/ кабинет инвестора
-  http://127.0.0.1/expert/   кабинет эксперта
   http://127.0.0.1/admin/    админка
   http://127.0.0.1/console/  служебная консоль (только администратору)
 

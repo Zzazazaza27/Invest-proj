@@ -6,8 +6,8 @@
  *
  *   1. режим «выбранные инвесторы» сам по себе ничего не открывает — без
  *      разрешения проект не виден даже по прямому адресу;
- *   2. разрешение — НАБОР частей: {round} даёт тизер и раунд, но не ответы
- *      анкеты и не материалы;
+ *   2. разрешение — НАБОР частей: {profile} даёт тизер и описание, но не
+ *      материалы;
  *   3. повторная выдача ЗАМЕНЯЕТ набор, а не добавляет вторую запись;
  *   4. исключение перекрывает действующее разрешение, снятие исключения
  *      возвращает ровно то, что было выдано;
@@ -165,6 +165,7 @@ const project = await owner.client.call('/v1/projects', {
   body: {
     title: `Выбранные инвесторы ${suffix}`,
     tagline: 'Проверка выдачи разрешений',
+    description: 'Описание проекта прогона доступа',
     stage: 'idea',
     taxonomyId: taxonomy.id,
     investmentAsk: '3000000.00',
@@ -173,54 +174,6 @@ const project = await owner.client.call('/v1/projects', {
 });
 const projectId = project.json?.id;
 check('проект создан', Boolean(projectId), `статус ${project.response.status}`);
-
-// Профиль подан: без согласия владельца ответы анкеты закрыты всем, и
-// разрешение `profile` нечем было бы проверить.
-const app = await owner.client.call(`/v1/projects/${projectId}/applications`, {
-  method: 'POST',
-  body: {},
-});
-const appId = app.json?.id;
-const form = await owner.client.call(`/v1/applications/${appId}/form`);
-const answers = {};
-for (const section of form.json?.sections ?? []) {
-  for (const q of section.questions) {
-    if (q.state !== 'mandatory' || q.coreField) continue;
-    answers[q.key] =
-      q.type === 'number'
-        ? 1
-        : q.type === 'money'
-          ? '100.00'
-          : q.type === 'select'
-            ? q.options?.[0]?.code
-            : q.type === 'multiselect'
-              ? [q.options?.[0]?.code]
-              : q.type === 'boolean'
-                ? true
-                : q.type === 'url'
-                  ? 'https://example.com'
-                  : q.type === 'date'
-                    ? '2026-01-01'
-                    : 'Ответ прогона доступа';
-  }
-}
-await owner.client.call(`/v1/applications/${appId}`, {
-  method: 'PATCH',
-  body: { stage: 'idea', answers },
-});
-const preview = await owner.client.call(`/v1/applications/${appId}/preview?audience=investors`);
-const submitted = await owner.client.call(`/v1/applications/${appId}/submit`, {
-  method: 'POST',
-  body: {
-    activeFormVersion: preview.json?.activeFormVersion,
-    contentDigest: preview.json?.contentDigest,
-  },
-});
-check(
-  'профиль подан (согласие владельца на снимок)',
-  submitted.response.status === 201 || submitted.response.status === 200,
-  `статус ${submitted.response.status}`,
-);
 
 // ------------------------------------------------------------------ материал
 // Файл нужен настоящий: «доступ к материалам» проверяется выдачей БАЙТОВ, а не
@@ -297,11 +250,11 @@ let grantId;
 {
   const { response, json } = await owner.client.call(`/v1/projects/${projectId}/access/grants`, {
     method: 'POST',
-    body: { email: investor.email, permissions: ['round'], reason: 'переговоры по раунду' },
+    body: { email: investor.email, permissions: ['profile'], reason: 'переговоры с инвестором' },
   });
   grantId = json?.id ?? null;
   check(
-    'разрешение {round} выдано по адресу почты',
+    'разрешение {profile} выдано по адресу почты',
     response.status === 201 || response.status === 200,
     `статус ${response.status} ${json?.code ?? ''}`,
   );
@@ -314,16 +267,12 @@ let grantId;
     `статус ${view.response.status}`,
   );
   check(
-    'разрешение {round} не открывает ответы анкеты и материалы',
-    view.json?.access?.round === 'investors' &&
-      view.json?.access?.profile === null &&
+    'разрешение {profile} открывает описание, но не материалы',
+    view.json?.access?.profile === 'investors' &&
       view.json?.access?.materials === null &&
-      view.json?.access?.passport === null,
+      view.json?.description === 'Описание проекта прогона доступа' &&
+      view.json?.materials === null,
     JSON.stringify(view.json?.access ?? {}),
-  );
-  check(
-    'коммерческий допуск для выбранного получателя не требуется (членства нет)',
-    view.response.status === 200,
   );
 }
 
@@ -331,7 +280,7 @@ let grantId;
 {
   const { response, json } = await owner.client.call(`/v1/projects/${projectId}/access/grants`, {
     method: 'POST',
-    body: { email: investor.email, permissions: ['profile', 'materials'] },
+    body: { email: investor.email, permissions: ['materials'] },
   });
   check('повторная выдача принята', response.status === 201 || response.status === 200);
   check('идентификатор записи не изменился — это та же запись', json?.id === grantId);
@@ -345,15 +294,15 @@ let grantId;
 
   const view = await investor.client.call(`/v1/projects/${projectId}/investor-view`);
   check(
-    'набор заменён: ответы и материалы открыты, раунд закрыт',
-    view.json?.access?.profile === 'investors' &&
-      view.json?.access?.materials === 'investors' &&
-      view.json?.access?.round === null,
+    'набор заменён, а не дополнен: материалы открыты, описание закрыто',
+    view.json?.access?.materials === 'investors' &&
+      view.json?.access?.profile === null &&
+      view.json?.description === null,
     JSON.stringify(view.json?.access ?? {}),
   );
   check(
-    'ответы анкеты действительно пришли',
-    (view.json?.sections ?? []).some((s) => s.questions.length > 0),
+    'материал действительно перечислен',
+    (view.json?.materials ?? []).some((m) => m.id === materialId),
   );
   const file = await investor.client.call(
     `/v1/projects/${projectId}/materials/${materialId}/content`,
@@ -370,7 +319,7 @@ let grantId;
   );
   check(
     'причина выдачи получателю не показывается',
-    !JSON.stringify(view.json ?? {}).includes('переговоры по раунду'),
+    !JSON.stringify(view.json ?? {}).includes('переговоры с инвестором'),
   );
 }
 
@@ -440,7 +389,7 @@ let exclusionId;
     'после снятия исключения вернулось ровно выданное',
     view.response.status === 200 &&
       view.json?.access?.profile === 'investors' &&
-      view.json?.access?.round === null,
+      view.json?.access?.materials === 'investors',
     `статус ${view.response.status} ${JSON.stringify(view.json?.access ?? {})}`,
   );
 }

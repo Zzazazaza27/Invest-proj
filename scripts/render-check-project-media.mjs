@@ -25,10 +25,10 @@ import { startProbeRun } from './lib/probe-run.mjs';
 import {
   CONSENTS,
   blindIndex,
-  createProjectWithDraftRound,
+  createProject,
   loadDotEnv,
   makePool,
-} from './lib/round-pricing-fixture.mjs';
+} from './lib/project-fixture.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -185,7 +185,7 @@ const browser = await chromium.launch();
 const consoleErrors = [];
 
 try {
-  const { project } = await createProjectWithDraftRound(founder.client, sql, suffix);
+  const { project } = await createProject(founder.client, sql, suffix);
 
   // Телефон: узкий экран и касания, а не мышь.
   const context = await browser.newContext({

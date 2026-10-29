@@ -180,16 +180,6 @@ jobs:
             npm audit 2>&1 | tail -20 || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      # AI-контур появляется в фазе Ф7. Пока файла нет — шаг пропускается явно
-      # и с сообщением, а не «зеленеет» молча.
-      - name: Python-зависимости AI-контура
-        run: |
-          if [ -f apps/ai-gateway/requirements.txt ]; then
-            python -m pip install --quiet pip-audit==2.9.0
-            pip-audit -r apps/ai-gateway/requirements.txt --strict
-          else
-            echo "::notice::apps/ai-gateway/requirements.txt отсутствует — AI-контур ещё не реализован (фаза Ф7). Проверка НЕ выполнялась."
-          fi
 
   # ---------------------------------------------------------------- гейт 5
   database:
@@ -235,8 +225,6 @@ jobs:
         env:
           DB_ROLE_PASSWORD_APP_BACKEND: ci_only_role_password_backend_00
           DB_ROLE_PASSWORD_APP_PUBLIC_READ: ci_only_role_password_public_00
-          DB_ROLE_PASSWORD_APP_INVESTMENTS: ci_only_role_password_invest_00
-          DB_ROLE_PASSWORD_APP_BILLING: ci_only_role_password_billing_00
           DB_ROLE_PASSWORD_APP_NOTIFICATIONS: ci_only_role_password_notify_00
           DB_ROLE_PASSWORD_APP_INTEGRATION: ci_only_role_password_integr_00
           DB_ROLE_PASSWORD_APP_READONLY: ci_only_role_password_readonly_0
@@ -254,8 +242,6 @@ jobs:
         run: |
           host="localhost:5432/unicorn_test"
           export DATABASE_URL="postgres://app_backend_user:${PW_BACKEND}@${host}"
-          export DATABASE_URL_APP_INVESTMENTS="postgres://app_investments_user:${PW_INVEST}@${host}"
-          export DATABASE_URL_APP_BILLING="postgres://app_billing_user:${PW_BILLING}@${host}"
           export DATABASE_URL_APP_NOTIFICATIONS="postgres://app_notifications_user:${PW_NOTIFY}@${host}"
           export DATABASE_URL_APP_INTEGRATION="postgres://app_integration_user:${PW_INTEGR}@${host}"
           export DATABASE_URL_APP_MAINTENANCE="postgres://app_maintenance_user:${PW_MAINTEN}@${host}"
@@ -265,12 +251,10 @@ jobs:
         env:
           PW_AUTH: ci_only_role_password_authstate_0
           PW_BACKEND: ci_only_role_password_backend_00
-          PW_BILLING: ci_only_role_password_billing_00
           PW_NOTIFY: ci_only_role_password_notify_00
           PW_INTEGR: ci_only_role_password_integr_00
           PW_MAINTEN: ci_only_role_password_mainten_0
           PW_ARCHIVE: ci_only_role_password_archive_00
-          PW_INVEST: ci_only_role_password_invest_00
 
   # ---------------------------------------------------------------- гейт 6
   unit:
@@ -346,21 +330,5 @@ jobs:
       # и админку, поэтому поломка трёх кабинетов или пакета ui проходила
       # зелёный CI (CODE-03).
       - run: npm run build
-
-      # Версия Python закреплена той же, что у шлюза на сервере (3.14). Системный
-      # Python образа ubuntu-latest однажды уже сменился без правки этого файла
-      # (3.12 → 3.14), и pydantic-core перестал собираться (2026-10-29).
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: '3.14'
-
-      - name: Тесты AI-шлюза (Python)
-        run: |
-          # Версии закреплены: незакреплённый инструмент в цепочке сборки — это
-          # чужой код, который меняется без правки этого файла (SEC-18).
-          # pip тоже закреплён (SEC-MED-07): «--upgrade pip» без версии менял
-          # бутстрап-инструмент без правки коммита; набор пакетов — тот же
-          # requirements-dev.txt, что и локально, а не отдельный список.
-          python -m pip install pip==24.3.1
-          pip install -r apps/ai-gateway/requirements-dev.txt
-          cd apps/ai-gateway && python -m pytest tests/ -q
+      # AI-шлюз (Python) удалён в 2.1-W05 вместе с анализом ИИ — его тестов и
+      # аудита зависимостей в CI больше нет.

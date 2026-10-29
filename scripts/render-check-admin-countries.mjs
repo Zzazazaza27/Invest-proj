@@ -3,13 +3,12 @@
  * Рендер-проверка экрана «Страны обслуживания» в админке (этап 5.6.5).
  *
  * Что проверяется: раздел в меню; справочник стран строками; новая страна
- * заводится выключенной и включается кнопкой; условия страны показаны с
- * активной версией; включённая бесплатная граница и платные пакеты
- * предупреждают о недоступности открытия раунда (fail-closed); активация
- * новой версии условий с основанием даёт следующий номер и не трогает
- * прежнюю; версия читается основателем как действующие условия; регистрация
- * основателя при одной активной стране предлагает её для подтверждения и
- * записывает в аккаунт.
+ * заводится выключенной и включается кнопкой; регистрация основателя при одной
+ * активной стране предлагает её для подтверждения и записывает в аккаунт.
+ *
+ * Условия страны (версии service_country_policies) удалены в 2.1-W05 вместе с
+ * биллингом: от раздела остался справочник стран. Прежний адрес условий
+ * проверяется на отсутствие — он не должен отвечать ничем.
  *
  * Снимки — `out/render-admin-countries/`. Тестовые страны получают коды из
  * диапазона, который ISO не занимает (`x?`) и выключаются в конце.
@@ -25,7 +24,6 @@ import { fileURLToPath } from 'node:url';
 
 import { CORE_URL as DEFAULT_CORE_URL, frontendUrl } from './lib/ports.mjs';
 import { startProbeRun } from './lib/probe-run.mjs';
-import { activePolicyConfig, restoreCountryPolicy } from './lib/country-policy.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -119,24 +117,9 @@ async function register(tag) {
 /** Код тестовой страны: `x` + буква — ISO 3166-1 такие коды не назначает. */
 const TEST_CODE = `x${String.fromCharCode(97 + (Number(suffix) % 26))}`;
 
-console.warn('\n=== РЕНДЕР-ПРОВЕРКА: СТРАНЫ ОБСЛУЖИВАНИЯ (ЭТАП 5.6.5) ===\n');
+console.warn('\n=== РЕНДЕР-ПРОВЕРКА: СТРАНЫ ОБСЛУЖИВАНИЯ ===\n');
 const admin = await register('admin');
 await sql(`INSERT INTO identity.user_roles (user_id, role) VALUES ($1, 'admin')`, [admin.userId]);
-const [activeRu] = await sql(
-  `SELECT version FROM billing.service_country_policies WHERE country_code = 'ru' AND is_active`,
-);
-const [maxRu] = await sql(
-  `SELECT MAX(version) AS max FROM billing.service_country_policies WHERE country_code = 'ru'`,
-);
-const NEXT = Number(maxRu.max) + 1;
-console.warn(`  ·     активная версия условий RU: ${activeRu?.version ?? '—'}`);
-
-// Проверка активирует версии условий RU и возвращает прежнее значение шагом
-// сценария. Если она упадёт между этими шагами, условия остались бы
-// изменёнными — поэтому исходное значение запоминается здесь и
-// восстанавливается в `finally` независимо от исхода.
-const originalPolicy = await activePolicyConfig(sql, 'ru');
-
 const browser = await chromium.launch();
 const page = await (await browser.newContext({ viewport: { width: 1280, height: 900 } })).newPage();
 const consoleErrors = [];
@@ -161,26 +144,16 @@ try {
   await page.fill('#email', admin.email);
   await page.fill('#password', admin.password);
   await page.getByRole('button', { name: /Войти/i }).click();
-  await page.waitForSelector('text=Тарифы', { timeout: 15_000 });
+  await page.waitForSelector('text=Комплаенс', { timeout: 15_000 });
   check(
     'раздел «Страны обслуживания» есть в меню',
     (await page.getByRole('link', { name: 'Страны обслуживания', exact: true }).count()) === 1,
   );
   await page.getByRole('link', { name: 'Страны обслуживания', exact: true }).click();
   await page.waitForSelector('[data-country-row="ru"]', { timeout: 20_000 });
-  await page.waitForSelector('[data-policy-form="ru"]', { timeout: 20_000 });
   check(
     'страна RU в справочнике включена',
     (await page.locator('[data-country-row="ru"]').getAttribute('data-country-active')) === 'true',
-  );
-  check(
-    'условия RU показаны с активной версией',
-    (await page.locator('[data-policy-form="ru"]').getAttribute('data-policy-version')) ===
-      String(activeRu?.version ?? ''),
-  );
-  check(
-    'база учёта бесплатной границы помечена «не согласовано»',
-    (await page.locator('[data-policy-form="ru"]').innerText()).includes('не согласовано'),
   );
   await screenshot('countries');
 
@@ -220,49 +193,7 @@ try {
   });
   await screenshot('country-toggled');
 
-  console.warn('\n[3] Условия RU: предупреждения и активация новой версии');
-  await page.locator('[data-country-row="ru"] button').first().click();
-  await page.waitForSelector('[data-policy-form="ru"]', { timeout: 15_000 });
-  await page.locator('[data-policy-free]').check();
-  check(
-    'включённая бесплатная граница предупреждает о недоступности открытия раунда',
-    (await page.locator('[data-policy-warning="free"]').count()) === 1,
-  );
-  await page.locator('[data-policy-free]').uncheck();
-  await page.locator('[data-policy-paid]').check();
-  check(
-    'включённые платные пакеты предупреждают о fail-closed до 5.9',
-    (await page.locator('[data-policy-warning="paid"]').count()) === 1,
-  );
-  await page.locator('[data-policy-paid]').uncheck();
-  const reviewWas = await page.locator('[data-policy-review]').isChecked();
-  await page.locator('[data-policy-review]').setChecked(!reviewWas);
-  await page.getByRole('button', { name: 'Активировать новой версией' }).click();
-  await page.waitForSelector('dialog[open], [role="dialog"]', { timeout: 10_000 });
-  await page
-    .locator('dialog[open] input, [role="dialog"] input')
-    .first()
-    .fill('рендер-проверка: участие оператора переключено');
-  await page
-    .locator('dialog[open], [role="dialog"]')
-    .getByRole('button', { name: 'Активировать' })
-    .click();
-  await page.waitForSelector(`[data-policy-form="ru"][data-policy-version="${NEXT}"]`, {
-    timeout: 15_000,
-  });
-  check(`активирована версия ${NEXT} условий RU`, true);
-  const rows = await sql(
-    `SELECT version, is_active, config_jsonb->'operator'->>'manualReviewRequired' AS review
-       FROM billing.service_country_policies WHERE country_code = 'ru' ORDER BY version DESC LIMIT 2`,
-  );
-  check(
-    'новая версия активна, прежняя сохранена неактивной',
-    rows[0]?.version === NEXT &&
-      rows[0]?.is_active === true &&
-      rows[1]?.is_active === false &&
-      rows[0]?.review === String(!reviewWas),
-    JSON.stringify(rows),
-  );
+  console.warn('\n[3] Условий страны больше нет');
   const founder = await register('founder');
   const login = await fetch(`${CORE_URL}/v1/auth/login`, {
     method: 'POST',
@@ -274,30 +205,8 @@ try {
   const policy = await fetch(`${CORE_URL}/v1/service-countries/ru/policy`, {
     headers: { cookie },
     signal: AbortSignal.timeout(30_000),
-  }).then((r) => r.json());
-  check(
-    'основатель читает новую версию как действующие условия',
-    policy?.version === NEXT && policy?.config?.operator?.manualReviewRequired === !reviewWas,
-    `версия ${policy?.version}`,
-  );
-  await screenshot('policy-activated');
-
-  // Вернуть прежнее значение — следующей версией, как и положено.
-  await page.locator('[data-policy-review]').setChecked(reviewWas);
-  await page.getByRole('button', { name: 'Активировать новой версией' }).click();
-  await page.waitForSelector('dialog[open], [role="dialog"]', { timeout: 10_000 });
-  await page
-    .locator('dialog[open] input, [role="dialog"] input')
-    .first()
-    .fill('рендер-проверка: возврат прежнего значения');
-  await page
-    .locator('dialog[open], [role="dialog"]')
-    .getByRole('button', { name: 'Активировать' })
-    .click();
-  await page.waitForSelector(`[data-policy-form="ru"][data-policy-version="${NEXT + 1}"]`, {
-    timeout: 15_000,
   });
-  check('возврат прежнего значения — новой версией, история сохранена', true);
+  check('адрес условий страны больше не отвечает', policy.status === 404, `HTTP ${policy.status}`);
 
   console.warn('\n[4] Регистрация: одна активная страна предлагается для подтверждения');
   const regPage = await (
@@ -360,19 +269,9 @@ try {
    * Скрытая строка всё равно остаётся в базе, и проверка переноса содержимого
    * честно показывала расхождение с комплектом: «+2 страны». Справочник — это
    * подготовленное содержимое, и лишних записей в нём быть не должно.
-   * Политики этой страны уходят вместе с ней по внешнему ключу; политики
-   * настоящих стран не трогаются — отбор строго по коду прогона.
+   * Настоящие страны не трогаются — отбор строго по коду прогона.
    */
-  await sql(`DELETE FROM billing.service_country_policies WHERE country_code = $1`, [TEST_CODE]);
   await sql(`DELETE FROM billing.service_countries WHERE code = $1`, [TEST_CODE]);
-  // Возврат — новой версией: переписывать версии нельзя. Ничего не делает,
-  // если сценарий уже вернул прежнее значение своим шагом.
-  await restoreCountryPolicy(
-    sql,
-    'ru',
-    originalPolicy,
-    'рендер-проверка: возврат исходных условий после прогона',
-  );
   await pool.end();
 }
 

@@ -1,26 +1,19 @@
 #!/usr/bin/env node
 /**
- * Рендер-проверка страницы проекта для ТРЁХ зрителей (этап 7.3).
+ * Рендер-проверка страницы проекта (этап 7.3, состав после 2.1-W05).
  *
- * Один проект, один серверный предикат аудитории — и три поверхности, каждая
- * из которых уже существует:
+ * Один проект, один серверный предикат аудитории и две поверхности:
  *
- *   • аноним        — витрина, `/p/<id>`, проекция Public View;
- *   • инвестор      — кабинет инвестора, проекция Investor View;
- *   • владелец      — кабинет основателя, предпросмотр своей заявки.
+ *   • аноним   — витрина, `/p/<id>`, проекция Public View (тизер);
+ *   • владелец — кабинет основателя, предпросмотр «как видит аудитория».
  *
- * Проверяется не «страница нарисовалась», а два свойства сразу:
+ * Карточка собирается из данных самого проекта: ответы анкеты, раунд и
+ * оценка платформы удалены в 2.1-W05. Допуска инвестора по роли больше нет,
+ * поэтому инвестор без личного разрешения видит то же, что аноним, — это
+ * проверяется на сервере и в предпросмотре. Кабинет инвестора — пустая
+ * оболочка, его страница проекта не открывается.
  *
- *   1. зрители видят РАЗНОЕ, и разницу определяет сервер, а не клиент;
- *   2. показывает это разное ОДИН компонент (7.3) — витрина, кабинет
- *      инвестора и предпросмотр владельца перестали быть тремя разметками
- *      на одних данных.
- *
- * Витрина никаких правил видимости не повторяет — она показывает то, что ей
- * отдали, и честно называет число скрытых ответов.
- *
- * Требуется поднятое: ядро, витрина (5173), кабинет инвестора (5176),
- * кабинет основателя (5175), приложение входа (5179).
+ * Требуется поднятое: ядро, витрина, кабинет основателя, приложение входа.
  *
  * Снимки — `out/render-project-page/`.
  */
@@ -34,10 +27,10 @@ import { startProbeRun } from './lib/probe-run.mjs';
 import {
   CONSENTS,
   blindIndex,
-  createProjectWithDraftRound,
+  createProject,
   loadDotEnv,
   makePool,
-} from './lib/round-pricing-fixture.mjs';
+} from './lib/project-fixture.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -58,7 +51,6 @@ const run = await startProbeRun('RND-PROJECT-PAGE');
 const toSite = (url) => url.replace('127.0.0.1', 'localhost');
 
 const PUBLIC_URL = toSite(process.env.WEB_PUBLIC_URL ?? frontendUrl('webPublic'));
-const INVESTOR_URL = toSite(process.env.INVESTOR_URL ?? frontendUrl('investor'));
 const LAB_URL = toSite(process.env.LAB_URL ?? frontendUrl('lab'));
 const CORE_URL = toSite(process.env.CORE_URL ?? DEFAULT_CORE_URL);
 const OUT = join(ROOT, 'out', 'render-project-page');
@@ -149,7 +141,7 @@ async function register(role, tag) {
   return { client, email, password, userId: row?.id ?? null };
 }
 
-console.warn('\n=== РЕНДЕР-ПРОВЕРКА: СТРАНИЦА ПРОЕКТА ДЛЯ ТРЁХ ЗРИТЕЛЕЙ (7.3) ===\n');
+console.warn('\n=== РЕНДЕР-ПРОВЕРКА: СТРАНИЦА ПРОЕКТА (7.3, после 2.1-W05) ===\n');
 
 const founder = await register('founder', 'f');
 const investor = await register('investor', 'i');
@@ -192,32 +184,34 @@ function watch(page, who) {
 }
 
 try {
-  const { project } = await createProjectWithDraftRound(founder.client, sql, suffix);
-  // Публичный режим: аноним видит публичную аудиторию ответов, вошедший
-  // инвестор — свою. Решает предикат в базе, не клиент.
+  const { project } = await createProject(founder.client, sql, suffix);
+  // Публичный режим: тизер и описание открыты всем. Решает предикат в базе,
+  // не клиент.
   await founder.client.json(`/v1/projects/${project.id}/visibility`, {
     method: 'PUT',
     body: { visibility: 'public' },
   });
-  // Публикация листинга: без неё проект не появляется в каталоге инвестора.
-  // Это отдельное действие владельца, а не следствие режима видимости.
+  // Публикация листинга: без неё проект не появляется в каталоге.
   await founder.client.json(`/v1/projects/${project.id}/listing`, { method: 'POST' });
 
-  // Серверные проекции: три ответа одного предиката. Сравниваются до
-  // браузера — чтобы отличить «страница не нарисовала» от «сервер не отдал».
+  // Серверные проекции до браузера — чтобы отличить «страница не нарисовала»
+  // от «сервер не отдал».
   const anonView = await fetch(`${CORE_URL}/v1/catalog/${project.id}`, {
     signal: AbortSignal.timeout(20_000),
   }).then((r) => r.json());
   const investorView = await investor.client.json(`/v1/projects/${project.id}/investor-view`);
+  check('аноним получает публичную проекцию', anonView?.id === project.id);
   check(
-    'аноним получает публичную проекцию',
-    anonView?.id === project.id,
-    `скрыто ${anonView?.withheld}`,
+    'инвестору без разрешения открыто то же, что всем (допуска по роли нет)',
+    investorView.access?.profile === 'public' && investorView.access?.materials === null,
+    JSON.stringify(investorView.access),
   );
   check(
-    'инвестору сервер отдаёт не меньше, чем анониму',
-    investorView.withheld <= anonView.withheld,
-    `инвестор ${investorView.withheld} против ${anonView.withheld}`,
+    'в проекциях нет раунда, ответов и оценки',
+    !('round' in investorView) &&
+      !('sections' in investorView) &&
+      !('passport' in investorView) &&
+      !('raising' in anonView),
   );
 
   // ------------------------------------------------------------- аноним
@@ -237,24 +231,14 @@ try {
     await anonPage.locator('h1').innerText(),
   );
   check(
-    'состояние привлечения названо',
-    (await anonPage.locator('[data-project-raising]').count()) === 1,
-  );
-  const withheld = await anonPage.locator('[data-project-withheld]').innerText();
-  check('скрытые ответы названы числом, а не спрятаны', withheld.length > 0, withheld.slice(0, 80));
-  check(
     'витрина показывает общую карточку проекта',
     (await anonPage.locator('[data-project-card="public"]').count()) === 1,
   );
-  // Блоки инвесторской проекции анониму не приходят с сервера — и потому их
-  // нет на странице. Проверяем именно отсутствие, а не «скрытость».
   const anonBody = await anonPage.locator('[data-project-card]').innerText();
   check(
     'анониму не показаны блоки инвесторской проекции',
-    !anonBody.includes('Оценка платформы') &&
-      !anonBody.includes('Материалы') &&
-      !anonBody.includes('О проекте'),
-    'описание, оценка и материалы отсутствуют',
+    !anonBody.includes('Материалы') && !anonBody.includes('О проекте'),
+    'описание и материалы отсутствуют',
   );
   check(
     'на публичной странице нет сессии',
@@ -267,40 +251,8 @@ try {
   const link = anonPage.locator(`[data-teaser-link]`).first();
   check('в каталоге есть ссылка на страницу проекта', (await link.count()) > 0);
 
-  // ---------------------------------------------------------- инвестор
-  console.warn('\n[2] Инвестор — кабинет');
-  const investorCtx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
-  const investorPage = await investorCtx.newPage();
-  watch(investorPage, 'инвестор');
-  await investorPage.goto(INVESTOR_URL, { waitUntil: 'networkidle', timeout: 30_000 });
-  await investorPage.fill('#email', investor.email);
-  await investorPage.fill('#password', investor.password);
-  await investorPage.getByRole('button', { name: /Войти/i }).click();
-  await investorPage.waitForSelector('text=Каталог', { timeout: 20_000 });
-  await investorPage.getByRole('button', { name: 'Подробнее' }).first().click();
-  await investorPage.waitForSelector('[data-investor-view]', { timeout: 20_000 });
-  const investorText = await investorPage.locator('[data-investor-view]').innerText();
-  check('инвестору открылась карточка проекта', investorText.length > 0);
-  check(
-    'кабинет инвестора показывает ту же общую карточку',
-    (await investorPage.locator('[data-project-card="investor"]').count()) === 1,
-  );
-  check(
-    'инвестору показаны блоки его проекции',
-    investorText.includes('Оценка платформы') &&
-      investorText.includes('Материалы') &&
-      investorText.includes('О проекте'),
-    'описание, оценка и материалы на месте',
-  );
-  check(
-    'состав ответов у инвестора не беднее, чем у анонима',
-    (await investorPage.locator('[data-project-answer]').count()) >=
-      (await anonPage.locator('[data-project-answer]').count()),
-  );
-  await investorPage.screenshot({ path: join(OUT, '02-investor.png'), fullPage: true });
-
   // ---------------------------------------------------------- владелец
-  console.warn('\n[3] Владелец — предпросмотр в кабинете');
+  console.warn('\n[2] Владелец — предпросмотр в кабинете');
   const ownerCtx = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
   const ownerPage = await ownerCtx.newPage();
   watch(ownerPage, 'владелец');
@@ -309,14 +261,6 @@ try {
   await ownerPage.fill('#password', founder.password);
   await ownerPage.getByRole('button', { name: /Войти/i }).click();
   await ownerPage.waitForSelector('text=Проекты', { timeout: 20_000 });
-  const ownerPreview = await founder.client.json(`/v1/projects/${project.id}/view-preview`);
-  check(
-    'владельцу сервер отдаёт предпросмотр своей заявки',
-    ownerPreview !== null && typeof ownerPreview === 'object',
-  );
-
-  // Главное в 7.3: предпросмотр показывает КАРТОЧКУ, а не строку «показано N,
-  // скрыто M». Раньше проверить глазами, что увидит инвестор, было нечем.
   await ownerPage.goto(`${LAB_URL.replace(/\/$/, '')}/projects/${project.id}`, {
     waitUntil: 'networkidle',
     timeout: 30_000,
@@ -329,26 +273,21 @@ try {
     'предпросмотр владельца показывает ту же общую карточку',
     (await previewCard.count()) === 1,
   );
-  const previewText = (await previewCard.count()) > 0 ? await previewCard.innerText() : '';
+  const investorPreview = (await previewCard.count()) > 0 ? await previewCard.innerText() : '';
   check(
     'в предпросмотре видно название проекта',
-    previewText.includes(project.title.slice(0, 12)),
+    investorPreview.includes(project.title.slice(0, 12)),
     project.title.slice(0, 20),
   );
-  const investorAnswers = await ownerPage.locator('[data-project-answer]').count();
-
-  // Переключение аудитории меняет состав — потому что сервер отдаёт другую
-  // проекцию, а не потому что карточка что-то прячет.
+  // Допуска по роли нет: «как видит инвестор» совпадает с «как видит аноним»
+  // по составу блоков. Решает предикат на сервере, не карточка.
   await ownerPage.locator('[data-visibility-audience="public"]').click();
   await ownerPage.waitForTimeout(2000);
-  const publicAnswers = await ownerPage.locator('[data-project-answer]').count();
+  const publicPreview = (await previewCard.count()) > 0 ? await previewCard.innerText() : '';
   check(
-    'смена аудитории в предпросмотре меняет состав карточки',
-    publicAnswers <= investorAnswers,
-    `инвестору ${investorAnswers} ответов, анониму ${publicAnswers}`,
+    'аудитории «инвестор» и «аноним» видят одинаковый состав',
+    investorPreview.includes('Материалы закрыты') === publicPreview.includes('Материалы закрыты'),
   );
-  // Предпросмотр отвечает на вопрос «что увидит аудитория», а не заменяет
-  // владельцу его список материалов: читалка документов здесь не открывается.
   check(
     'в предпросмотре нет читалки документов',
     (await ownerPage
@@ -356,10 +295,10 @@ try {
       .getByRole('button', { name: 'Смотреть' })
       .count()) === 0,
   );
-  await ownerPage.screenshot({ path: join(OUT, '03-owner.png'), fullPage: true });
+  await ownerPage.screenshot({ path: join(OUT, '02-owner.png'), fullPage: true });
 
   // ------------------------------------------- закрытый проект и аноним
-  console.warn('\n[4] Закрытый проект анониму не показывается');
+  console.warn('\n[3] Закрытый проект анониму не показывается');
   await founder.client.json(`/v1/projects/${project.id}/visibility`, {
     method: 'PUT',
     body: { visibility: 'private' },
@@ -374,7 +313,7 @@ try {
     closed === 1,
     `блоков объяснения: ${closed}`,
   );
-  await anonPage.screenshot({ path: join(OUT, '04-anon-closed.png'), fullPage: true });
+  await anonPage.screenshot({ path: join(OUT, '03-anon-closed.png'), fullPage: true });
 
   check(
     'ошибок в консоли нет',

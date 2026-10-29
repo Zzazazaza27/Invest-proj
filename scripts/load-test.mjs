@@ -54,7 +54,7 @@ const TARGETS = [
   { name: 'health', path: '/v1/health' },
   { name: 'каталог (первая страница)', path: '/v1/catalog?limit=20' },
   { name: 'каталог (поиск)', path: '/v1/catalog?limit=20&q=платформа' },
-  { name: 'тарифы', path: '/v1/pricing' },
+  { name: 'страны обслуживания', path: '/v1/service-countries' },
 ];
 
 function startInstance() {

@@ -23,9 +23,11 @@
  *
  * Домены, зарезервированные схемой БД, но не реализованные в коде
  * (решение Ф27 по вопросу Ф25): удалять их значило бы контракт-миграцию
- * CHECK-ограничений M010/M023 и реестра M011 ради экономии трёх строк .env;
+ * CHECK-ограничений M010/M023 и реестра M011 ради экономии строки .env;
  * назначение колонок под них уже описано в M003. Остаются объявленными,
- * значения в .env опциональны (env-схема даёт '').
+ * значения в .env опциональны (env-схема даёт ''). После 2.1-W05 таким
+ * остался один kyc_documents: домены сделок и биллинга ушли вместе со
+ * своими схемами.
  */
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
@@ -33,7 +35,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const RESERVED = new Set(['kyc_documents', 'nominal_account_evidence', 'billing_documents']);
+const RESERVED = new Set(['kyc_documents']);
 
 /**
  * Колонки, объявленные миграциями «на вырост»: код в них ещё не пишет, поэтому
@@ -47,8 +49,6 @@ const RESERVED_DEK_COLUMNS = new Set([
   'kyc.kyb_verifications.evidence_wrapped_dek',
   'kyc.kyb_verifications.beneficial_owners_wrapped_dek',
   'kyc.business_entities.registry_payload_wrapped_dek',
-  'investments.investment_tranches.evidence_wrapped_dek', // nominal_account_evidence
-  'billing.invoices.pdf_wrapped_dek', // billing_documents; таблица пуста до генератора PDF
   'audit.encryption_keys_registry.wrapped_dek', // реестр ключей, а не данных: хранит обёртку самого ключа
 ]);
 
@@ -107,8 +107,28 @@ const mappedDekColumns = new Set(
 // --- 4. Колонки *_wrapped_dek в миграциях ---------------------------------------
 const migrationsDir = join(ROOT, 'database', 'migrations');
 const dekColumns = new Set();
-for (const f of readdirSync(migrationsDir).filter((f) => f.endsWith('.sql'))) {
-  const sql = readFileSync(join(migrationsDir, f), 'utf8');
+// Миграции forward-only: удалённая таблица остаётся в старом файле. Поэтому
+// файлы читаются по порядку, и удаление (DROP TABLE / DROP SCHEMA / DROP
+// COLUMN) снимает колонку с учёта — иначе гейт требовал бы карту ротации для
+// таблиц, которых нет (2.1-W05 убрал схемы investments, scoring и биллинг).
+for (const f of readdirSync(migrationsDir)
+  .filter((f) => f.endsWith('.sql'))
+  .sort()) {
+  const sql = readFileSync(join(migrationsDir, f), 'utf8').replace(/--[^\n]*/g, '');
+  for (const m of sql.matchAll(/DROP SCHEMA\s+(?:IF EXISTS\s+)?([a-z_]+)/g)) {
+    for (const col of [...dekColumns]) if (col.startsWith(`${m[1]}.`)) dekColumns.delete(col);
+  }
+  for (const m of sql.matchAll(/DROP TABLE\s+(?:IF EXISTS\s+)?([^;]+);/g)) {
+    const dropped = new Set(m[1].split(',').map((name) => name.trim()));
+    for (const col of [...dekColumns]) {
+      if (dropped.has(col.slice(0, col.lastIndexOf('.')))) dekColumns.delete(col);
+    }
+  }
+  for (const m of sql.matchAll(/ALTER TABLE ([a-z_]+\.[a-z_]+)([^;]*);/g)) {
+    for (const d of m[2].matchAll(/DROP COLUMN\s+(?:IF EXISTS\s+)?([a-z_]+)/g)) {
+      dekColumns.delete(`${m[1]}.${d[1]}`);
+    }
+  }
   // CREATE TABLE schema.table (... col_wrapped_dek ...)
   for (const tbl of sql.matchAll(/CREATE TABLE ([a-z_]+\.[a-z_]+)\s*\(([\s\S]*?)\n\);/g)) {
     for (const col of tbl[2].matchAll(/^\s*([a-z_]*wrapped_dek)\s/gm)) {

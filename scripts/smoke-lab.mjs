@@ -3,14 +3,15 @@
  * Живой прогон фазы «KYC и проекты».
  *
  * Проверяет ФАКТИЧЕСКОЕ поведение запущенного core: изоляцию чужих проектов,
- * условия публикации листинга, границу публичного каталога, подписанную
- * загрузку в реальное хранилище и барьеры комплаенса. Это доказательство фазы;
+ * условия публикации листинга, границу публичного каталога, режимы видимости
+ * и личный допуск, подписанную загрузку в реальное хранилище и барьеры
+ * комплаенса. Это доказательство фазы;
  * без вывода этого скрипта «работает» говорить нельзя (RULES.md §2).
  *
  * Часть предусловий создаётся напрямую в БД — и только та, для которой ещё нет
- * API: роль администратора (её выдаёт не приложение, а оператор) и подписки
- * (биллинг — следующая фаза). Всё остальное идёт строго через HTTP, как ходил
- * бы настоящий клиент.
+ * API: роль администратора (её выдаёт не приложение, а оператор) и вторая
+ * роль постороннего основателя. Всё остальное идёт строго через HTTP, как
+ * ходил бы настоящий клиент.
  *
  * Запуск: node scripts/smoke-lab.mjs [--api http://127.0.0.1:4300]
  */
@@ -69,27 +70,6 @@ const pool = new pg.Pool({
   max: 4,
   application_name: 'unicorn-smoke-lab',
 });
-
-/** Активная версия конфигурации — подтверждение «я видел предпросмотр по этим условиям» (5.7.3). */
-const activeForm = async () =>
-  (await sql('SELECT version FROM lab.application_form_versions WHERE is_active'))[0]?.version ?? 0;
-const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-/** Подтверждение подачи: версия условий и отпечаток черновика из предпросмотра (5.7.4). */
-const confirmSubmit = async (client, appId) => {
-  const { json } = await client.call(`/v1/applications/${appId}/preview?audience=investors`);
-  return { activeFormVersion: json?.activeFormVersion, contentDigest: json?.contentDigest };
-};
-/** Подтверждение открытия раунда: версия условий и отпечаток параметров из предпросмотра. */
-const confirmOpen = async (client, roundId) => {
-  const { json } = await client.call(`/v1/rounds/${roundId}/open-preview`);
-  return { confirmDisclosureVersion: json?.activeFormVersion, contentDigest: json?.contentDigest };
-};
-/** Подтверждение «Применить»: активная версия и отпечаток из предпросмотра владельца. */
-const confirmApply = async (client, projectId) => {
-  const { json } = await client.call(`/v1/projects/${projectId}/view-preview?audience=investors`);
-  return { formVersion: json?.consent?.activeFormVersion, contentDigest: json?.contentDigest };
-};
 
 async function sql(text, params = []) {
   const { rows } = await pool.query(text, params);
@@ -282,28 +262,6 @@ let projectId = null;
     'проект создан как черновик',
     json?.status === 'draft' && json?.listingStatus === 'not_listed',
   );
-
-  // Тариф основателя отменён (M094): проект больше не несёт ни тарифа, ни
-  // его кеша — запуск раунда оплачивается разово (5.9).
-  check('проект не несёт тарифа основателя', !('requiredPlanId' in (json ?? {})));
-}
-{
-  const { response, json } = await founderA.client.call('/v1/projects', {
-    method: 'POST',
-    body: {
-      title: 'Попытка назначить тариф',
-      stage: 'idea',
-      taxonomyId: (await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'ai'`))[0].id,
-      investmentAsk: '900000000.00',
-      askCurrency: 'RUB',
-      requiredPlanId: '00000000-0000-7000-8000-000000000000',
-    },
-  });
-  check(
-    'поле отменённой модели (тариф) отвергается, а не игнорируется',
-    response.status === 400 && json?.code === 'validation_failed',
-    `статус ${response.status}`,
-  );
 }
 
 // --------------------------------------------------------------------- IDOR
@@ -320,161 +278,14 @@ let projectId = null;
   check('чужой проект не изменяется', response.status === 404, `статус ${response.status}`);
 }
 {
-  // 5.7.5: старый маршрут строки проекта инвестору закрыт ролью (403); карточка
-  // — только Investor View по предикату (непубличный проект — 404).
+  // Строка проекта инвестору закрыта ролью (403); карточка — только Investor
+  // View по предикату (непубличный проект — 404).
   const { response } = await investor.client.call(`/v1/projects/${projectId}`);
   const view = await investor.client.call(`/v1/projects/${projectId}/investor-view`);
   check(
-    'инвестор без подписки не видит непубличную карточку: старый маршрут 403, Investor View 404',
+    'инвестор не видит непубличную карточку: строка проекта 403, Investor View 404',
     response.status === 403 && view.response.status === 404,
     `статусы ${response.status} ${view.response.status}`,
-  );
-}
-
-// -------------------------------------------------------------------- сезон
-// Предусловие: прогон заводит СВОЙ сезон в статусе draft и делает его текущим.
-//
-// Раньше здесь сбрасывался в draft любой открытый сезон и бралcя тот, что
-// вернёт `/seasons/current`. Это ставило прогон в зависимость от состояния,
-// оставленного другими прогонами: сезон в статусе `review` (его создаёт
-// прогон экспертизы) становится текущим, а открыть приём заявок из `review`
-// статусная машина не даёт — и семь проверок падали не потому, что сломан
-// код. Свой сезон убирает эту связь: односторонность машины по-прежнему
-// проверяется, но на предсказуемом входе.
-// Чужие открытые сезоны гасятся временно и ВОЗВРАЩАЮТСЯ в конце прогона.
-//
-// Без возврата прогон ломал стенд: сезон `Стенд · сезон` оставался в `draft`,
-// подача заявки из кабинета основателя отвечала 409 «Приём заявок закрыт», а
-// прежний сид стенда заводил ещё один сезон — по одному на каждый прогон. Прогон обязан оставлять окружение таким, каким его застал.
-const suspendedSeasons = await sql(
-  `SELECT id FROM seasons.seasons WHERE status = 'applications_open'`,
-);
-await sql(`UPDATE seasons.seasons SET status = 'draft' WHERE status = 'applications_open'`);
-
-/**
- * Возврат чужих сезонов в приём.
- *
- * Вызывается в конце прогона. Если прогон упал раньше — сезоны останутся в
- * `draft`; вернуть их в `applications_open` руками. Оборачивать весь
- * скрипт в try/finally ради этого не стали: упавший прогон и так требует
- * разбора, а тихое восстановление скрыло бы, на чём он упал.
- */
-async function restoreSuspendedSeasons() {
-  if (suspendedSeasons.length === 0) return;
-  await sql(`UPDATE seasons.seasons SET status = 'applications_open' WHERE id = ANY($1::uuid[])`, [
-    suspendedSeasons.map((row) => row.id),
-  ]);
-}
-
-// Положение сезонного контура читается тем же публичным маршрутом, что и
-// кабинеты: подача «в сезон» и публичные сезонные выдачи есть только при
-// включённом флаге (M088).
-const seasonsOn = (await raw('/v1/features')).json?.flags?.['seasons.enabled'] === true;
-
-let seasonId;
-{
-  const [row] = await sql(
-    `INSERT INTO seasons.seasons (id, number, title, starts_at, ends_at, status)
-     VALUES (public.uuid_generate_v7(),
-             (SELECT coalesce(max(number), 0) + 1 FROM seasons.seasons),
-             'Сезон прогона lab', now() - interval '1 day', now() + interval '60 days', 'draft')
-     RETURNING id`,
-  );
-  seasonId = row.id;
-  const { response, json } = await raw('/v1/seasons/current');
-  // Сезоны отложены (M088): метроном отвечает анониму пустым сезоном при
-  // любом состоянии воронки; при включённом флаге — текущим сезоном.
-  check(
-    seasonsOn
-      ? 'текущий сезон публичен'
-      : 'сезоны отложены: метроном отвечает анониму пустым сезоном',
-    response.status === 200 && (seasonsOn ? Boolean(json?.season?.id) : json?.season === null),
-    `статус ${response.status} ${json?.season?.status ?? 'нет сезона'}`,
-  );
-}
-{
-  const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
-    method: 'POST',
-  });
-  check(
-    seasonsOn ? 'подача при закрытом приёме отвергнута' : 'сезоны отложены: подача в сезон закрыта',
-    seasonsOn
-      ? response.status === 409 && json?.code === 'state_transition_not_allowed'
-      : response.status === 503 && json?.code === 'feature_disabled',
-    `статус ${response.status} ${json?.code ?? ''}`,
-  );
-}
-{
-  const { response } = await founderA.client.call(`/v1/seasons/${seasonId}/status`, {
-    method: 'POST',
-    body: { status: 'applications_open' },
-  });
-  check('основатель не может открыть сезон', response.status === 403, `статус ${response.status}`);
-}
-{
-  const { response, json } = await adminClient.call(`/v1/seasons/${seasonId}/status`, {
-    method: 'POST',
-    body: { status: 'applications_open' },
-  });
-  check(
-    'администратор открыл приём заявок',
-    response.status === 201 || response.status === 200,
-    `статус ${response.status} ${json?.status ?? ''}`,
-  );
-}
-{
-  const { response, json } = await adminClient.call(`/v1/seasons/${seasonId}/status`, {
-    method: 'POST',
-    body: { status: 'draft' },
-  });
-  check(
-    'возврат сезона в черновик запрещён статусной машиной',
-    response.status === 409,
-    `статус ${response.status} ${json?.code ?? ''}`,
-  );
-}
-if (seasonsOn) {
-  const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
-    method: 'POST',
-  });
-  check(
-    'заявка подана',
-    response.status === 201 || response.status === 200,
-    `статус ${response.status}`,
-  );
-  check('создана первая версия', json?.versionNo === 1, `версия ${json?.versionNo}`);
-  const again = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
-    method: 'POST',
-  });
-  check(
-    'повторная подача создаёт новую версию',
-    again.json?.versionNo === 2,
-    `версия ${again.json?.versionNo}`,
-  );
-
-  const versions = await sql('SELECT id FROM lab.project_versions WHERE project_id = $1', [
-    projectId,
-  ]);
-  check('снимки заявок накапливаются', versions.length === 2, `версий ${versions.length}`);
-  const failedUpdate = await pool
-    .query('UPDATE lab.project_versions SET version_no = 99 WHERE project_id = $1', [projectId])
-    .then(() => null)
-    .catch((error) => error);
-  check(
-    'снимок заявки неизменяем',
-    failedUpdate !== null,
-    failedUpdate?.message?.slice(0, 60) ?? '',
-  );
-} else {
-  // Подача «в сезон» закрыта и при открытом приёме: путь основателя — мастер
-  // заявки без сезона (проверяется ниже, в блоке v2).
-  const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/submit`, {
-    method: 'POST',
-  });
-  check(
-    'сезоны отложены: подача в сезон закрыта и при открытом приёме',
-    response.status === 503 && json?.code === 'feature_disabled',
-    `статус ${response.status} ${json?.code ?? ''}`,
   );
 }
 
@@ -713,9 +524,9 @@ let kybId;
 }
 
 // ------------------------------------------------------------------ листинг
-// Публикация бесплатна: подписка основателя отменена (M094), а запуск раунда
-// оплачивается разово (5.9). Проверяется, что листинг открывается без денег и
-// что рост суммы у опубликованного проекта ничего не ломает.
+// Публикация бесплатна: денежного контура нет (2.1-W05). Проверяется, что
+// листинг открывается после KYC и что рост суммы у опубликованного проекта
+// ничего не ломает.
 {
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/listing`, {
     method: 'POST',
@@ -774,10 +585,6 @@ let kybId;
   );
 }
 {
-  const { json } = await raw('/v1/catalog?askMin=100000000');
-  check('фильтр по сумме отсекает листинг', !(json?.items ?? []).some((i) => i.id === projectId));
-}
-{
   const { response, json } = await raw(`/v1/catalog/${projectId}`);
   check('карточка тизера доступна анонимно', response.status === 200, `статус ${response.status}`);
   check('тизер не содержит описания', !('description' in (json ?? {})));
@@ -817,32 +624,30 @@ let secondProjectId;
   );
 }
 
-// ---------------------------------------------------- инвестор с подпиской
+// ------------------------------------------- инвестор без личного разрешения
+// Допуска инвестора по роли нет (2.1-W05): он держался на подписке, а подписки
+// удалены. В режиме public инвестор без разрешения видит ровно то же, что
+// аноним: тизер и описание, без материалов.
 {
-  await sql(
-    `INSERT INTO billing.subscriptions
-       (id, user_id, plan_id, price_snapshot, terms_version, status, current_period_end)
-     SELECT public.uuid_generate_v7(), $1, sp.id, sp.price, 'v1', 'active', now() + interval '30 days'
-       FROM billing.subscription_plans sp
-      WHERE sp.code = 'investor_membership'`,
-    [investor.userId],
-  );
   const { response, json } = await investor.client.call(`/v1/projects/${projectId}/investor-view`);
   check(
-    'инвестор с подпиской видит карточку через Investor View',
-    response.status === 200 && json?.access?.profile === 'investors',
+    'инвестор без разрешения в режиме public видит карточку на уровне анонима',
+    response.status === 200 &&
+      json?.access?.profile === 'public' &&
+      json?.access?.materials === null &&
+      json?.grant === null,
     `статус ${response.status} ${JSON.stringify(json?.access ?? null)}`,
   );
-  check('карточка содержит описание (поле есть)', json?.description !== undefined);
-  check('оценка честно отсутствует до скоринга', json?.passport === null);
-  // Старые пути закрыты (5.7.5): полная строка, версии, паспорт, материалы — 403.
+  check(
+    'карточка содержит описание, материалов нет',
+    typeof json?.description === 'string' && json?.materials === null,
+  );
+  // Кабинетные маршруты проекта — только команде (роль founder или admin).
   const old = await Promise.all(
-    ['', '/versions', '/passport', '/readiness', '/roadmap', '/materials'].map((p) =>
-      investor.client.call(`/v1/projects/${projectId}${p}`),
-    ),
+    ['', '/materials'].map((p) => investor.client.call(`/v1/projects/${projectId}${p}`)),
   );
   check(
-    'старые маршруты инвестору закрыты: строка, версии, паспорт, готовность, дорожная карта, материалы — 403',
+    'кабинетные маршруты инвестору закрыты: строка проекта и материалы — 403',
     old.every((r) => r.response.status === 403),
     old.map((r) => r.response.status).join(' '),
   );
@@ -961,384 +766,6 @@ let ticket;
   );
 }
 
-// ------------------------------------------------- заявки v2 (M071, этап 2)
-// Заявка отдельно от проекта: несколько заявок, черновик без суммы, подача
-// без сезона, лимиты по политике, проекция максимума в проект, архив
-// освобождает место. Старый путь выше уже подал текущую заявку проекта.
-{
-  const before = await founderA.client.call(`/v1/projects/${projectId}/applications`);
-  check(
-    'список заявок проекта отвечает',
-    before.response.status === 200,
-    `статус ${before.response.status}`,
-  );
-  check('у проекта есть заявка из переноса', (before.json?.items?.length ?? 0) >= 1);
-  const remainingBefore = before.json?.limits?.applications?.remaining;
-  check('остаток по политике отдаётся до создания', typeof remainingBefore === 'number');
-
-  const created = await founderA.client.call(`/v1/projects/${projectId}/applications`, {
-    method: 'POST',
-    body: { title: 'Запуск Taxi', fundingScope: 'direction' },
-  });
-  check(
-    'черновик заявки создан без суммы',
-    created.response.status === 201 && created.json?.investmentAsk === null,
-    `статус ${created.response.status} ${created.json?.code ?? ''}`,
-  );
-  const appId = created.json?.id;
-
-  const got = await founderA.client.call(`/v1/applications/${appId}`);
-  const missing = (got.json?.submission?.missing ?? []).map((m) => m.path);
-  // С 5.6.3 сумма и предмет финансирования — у раунда: подаче профиля они
-  // не мешают; мешают только обязательные вопросы разделов профиля.
-  check(
-    'подача без обязательных вопросов профиля невозможна; сумма и предмет подаче не мешают',
-    got.json?.submission?.canSubmit === false &&
-      !missing.includes('investmentAsk') &&
-      !missing.includes('fundingScope') &&
-      !missing.includes('fundingScopeNote') &&
-      missing.some((m) => m.startsWith('answers.')),
-    missing.join(','),
-  );
-
-  const early = await founderA.client.call(`/v1/applications/${appId}/submit`, {
-    method: 'POST',
-    body: await confirmSubmit(founderA.client, appId),
-  });
-  check(
-    'преждевременная подача отвергнута валидацией',
-    early.response.status === 422 || early.response.status === 400,
-    `статус ${early.response.status} ${early.json?.code ?? ''}`,
-  );
-
-  const patched = await founderA.client.call(`/v1/applications/${appId}`, {
-    method: 'PATCH',
-    body: {
-      investmentAsk: '800000.00',
-      fundingScopeNote: 'Такси в Казани',
-      answers: { problem_statement: 'Долгое ожидание машины' },
-    },
-  });
-  check(
-    'автосохранение принимает частичное тело и отдаёт готовность',
-    patched.response.status === 200 && typeof patched.json?.readiness?.percent === 'number',
-    `статус ${patched.response.status} ${patched.json?.code ?? ''}`,
-  );
-  const stillMissing = (patched.json?.submission?.missing ?? []).map((m) => m.path);
-  check(
-    'без обязательных вопросов формы подача закрыта, ключи названы',
-    patched.json?.submission?.canSubmit === false &&
-      stillMissing.includes('answers.founders') &&
-      !stillMissing.includes('answers.problem_statement'),
-    stillMissing.join(','),
-  );
-  const badAnswer = await founderA.client.call(`/v1/applications/${appId}`, {
-    method: 'PATCH',
-    body: { answers: { founded_year: 'в прошлом году' } },
-  });
-  check(
-    'ответ неверного типа отвергается по форме версии',
-    badAnswer.response.status === 400 || badAnswer.response.status === 422,
-    `статус ${badAnswer.response.status}`,
-  );
-
-  // 5.6.0: подтверждение чужим или несуществующим материалом — ошибка у поля.
-  const foreignEvidence = await founderA.client.call(`/v1/applications/${appId}`, {
-    method: 'PATCH',
-    body: { evidence: { problem_statement: ['01a0a50c-0000-7000-8000-00000000ffff'] } },
-  });
-  check(
-    'подтверждение чужим материалом отвергается с адресом поля',
-    (foreignEvidence.response.status === 400 || foreignEvidence.response.status === 422) &&
-      JSON.stringify(foreignEvidence.json ?? '').includes('evidence.problem_statement'),
-    `статус ${foreignEvidence.response.status}`,
-  );
-
-  const overCap = await founderA.client.call(`/v1/applications/${appId}`, {
-    method: 'PATCH',
-    body: { investmentAsk: '5000000.01' },
-  });
-  check(
-    'сумма выше прежнего потолка политики сохраняется и подаче профиля не мешает (сумма — у раунда)',
-    overCap.response.status === 200 &&
-      !(overCap.json?.submission?.missing ?? []).some((m) => m.path === 'investmentAsk'),
-  );
-  await founderA.client.call(`/v1/applications/${appId}`, {
-    method: 'PATCH',
-    body: { investmentAsk: '800000.00' },
-  });
-
-  const premature = await founderA.client.call(`/v1/applications/${appId}/submit`, {
-    method: 'POST',
-    body: await confirmSubmit(founderA.client, appId),
-  });
-  check(
-    'подача без обязательных вопросов отвергается с перечнем',
-    (premature.response.status === 400 || premature.response.status === 422) &&
-      JSON.stringify(premature.json ?? '').includes('answers.'),
-    `статус ${premature.response.status}`,
-  );
-  const formForFill = await founderA.client.call(`/v1/applications/${appId}/form`);
-  const answers = {};
-  for (const section of formForFill.json?.sections ?? []) {
-    for (const q of section.questions) {
-      if (q.state !== 'mandatory' || q.coreField) continue;
-      answers[q.key] =
-        q.type === 'number'
-          ? 1
-          : q.type === 'money'
-            ? '100.00'
-            : q.type === 'select'
-              ? q.options?.[0]?.code
-              : q.type === 'multiselect'
-                ? [q.options?.[0]?.code]
-                : q.type === 'boolean'
-                  ? true
-                  : q.type === 'url'
-                    ? 'https://example.com'
-                    : q.type === 'date'
-                      ? '2026-01-01'
-                      : q.type === 'material_ref'
-                        ? []
-                        : 'Ответ для дымового прогона';
-    }
-  }
-  const filled = await founderA.client.call(`/v1/applications/${appId}`, {
-    method: 'PATCH',
-    body: { answers },
-  });
-  check(
-    'после заполнения обязательных вопросов подача открыта',
-    filled.response.status === 200 &&
-      filled.json?.submission?.canSubmit === true &&
-      filled.json?.readiness?.canSubmit === true &&
-      filled.json?.readiness?.percent > 0,
-    `статус ${filled.response.status} готовность ${filled.json?.readiness?.percent}% ${JSON.stringify(filled.json?.submission?.missing ?? '').slice(0, 200)}`,
-  );
-
-  const submitted = await founderA.client.call(`/v1/applications/${appId}/submit`, {
-    method: 'POST',
-    body: await confirmSubmit(founderA.client, appId),
-  });
-  check(
-    'снимок версии хранит версию весов и процент готовности',
-    submitted.json?.readinessConfigVersion >= 1 &&
-      typeof submitted.json?.completenessPct === 'number' &&
-      submitted.json?.completenessPct === filled.json?.readiness?.percent,
-    `весов v${submitted.json?.readinessConfigVersion} ${submitted.json?.completenessPct}%`,
-  );
-  check(
-    'подача заявки без сезона создаёт версию',
-    submitted.response.status === 201 &&
-      submitted.json?.seasonId === null &&
-      submitted.json?.applicationId === appId,
-    `статус ${submitted.response.status} ${submitted.json?.code ?? ''}`,
-  );
-
-  const [proj] = await sql(
-    'SELECT investment_ask::text AS ask, current_application_id FROM lab.projects WHERE id = $1',
-    [projectId],
-  );
-  check(
-    'проекция: сумма проекта = максимум по открытым заявкам',
-    proj?.ask === '5000000.00',
-    proj?.ask ?? '',
-  );
-  check('проекция: текущая заявка — последняя поданная', proj?.current_application_id === appId);
-
-  const after = await founderA.client.call(`/v1/projects/${projectId}/applications`);
-  check(
-    'остаток уменьшился на одну заявку',
-    after.json?.limits?.applications?.remaining === remainingBefore - 1,
-    `${after.json?.limits?.applications?.remaining}`,
-  );
-  // При отложенных сезонах подача v1 закрыта, поэтому поданных заявок одна
-  // (мастер v2); при включённых — две.
-  check(
-    seasonsOn ? 'в списке две открытые заявки' : 'в списке поданная заявка мастера',
-    (after.json?.items ?? []).filter((a) => a.status === 'submitted').length >= (seasonsOn ? 2 : 1),
-  );
-
-  const archived = await founderA.client.call(`/v1/applications/${appId}/archive`, {
-    method: 'POST',
-  });
-  check(
-    'заявка архивирована',
-    archived.response.status === 201 && archived.json?.status === 'archived',
-    `статус ${archived.response.status}`,
-  );
-  const final = await founderA.client.call(`/v1/projects/${projectId}/applications`);
-  check(
-    'архив освобождает место',
-    final.json?.limits?.applications?.remaining === remainingBefore,
-    `${final.json?.limits?.applications?.remaining}`,
-  );
-  const [proj2] = await sql('SELECT current_application_id FROM lab.projects WHERE id = $1', [
-    projectId,
-  ]);
-  check(
-    'проекция после архива указывает на другую заявку',
-    Boolean(proj2?.current_application_id) && proj2?.current_application_id !== appId,
-  );
-}
-
-// ------------------------------------------- форма и версии (M073, этап 3)
-// Форма заявки собирается из версии, записанной в самой заявке; админка
-// правит единственный черновик, публикует версии и откатывает активацией
-// прежней. Прогон оставляет в истории одну новую опубликованную версию и
-// возвращает активной прежнюю — история версий на стенде растёт на одну
-// строку за прогон, это ожидаемо.
-{
-  const forForm = await founderA.client.call(`/v1/projects/${projectId}/applications`, {
-    method: 'POST',
-    body: { title: 'Форма по версии' },
-  });
-  const appId = forForm.json?.id;
-  check(
-    'заявка для проверки формы создана',
-    forForm.response.status === 201 && Boolean(appId),
-    `статус ${forForm.response.status}`,
-  );
-  const form = await founderA.client.call(`/v1/applications/${appId}/form`);
-  check(
-    'форма заявки отвечает по её версии',
-    form.response.status === 200 && (form.json?.schemaVersion ?? 0) >= 1,
-    `статус ${form.response.status} v${form.json?.schemaVersion}`,
-  );
-  const keys = (form.json?.sections ?? []).flatMap((s) => s.questions.map((q) => q.key));
-  check(
-    'форма содержит разделы, системные и содержательные вопросы',
-    (form.json?.sections?.length ?? 0) >= 2 &&
-      keys.includes('investment_ask') &&
-      keys.includes('problem_statement'),
-    `разделов ${form.json?.sections?.length ?? 0}`,
-  );
-  check('скрытые для всех стадий вопросы не показываются', !keys.includes('mrr'));
-  const english = await founderA.client.call(`/v1/applications/${appId}/form?locale=en-US`);
-  check(
-    'на языке без переводов берётся запасной текст, пропуски перечислены',
-    english.response.status === 200 && (english.json?.missing?.length ?? 0) > 0,
-    `статус ${english.response.status}`,
-  );
-  const stranger = await founderB.client.call(`/v1/applications/${appId}/form`);
-  check(
-    'форму чужой заявки не видно',
-    stranger.response.status === 404,
-    `статус ${stranger.response.status}`,
-  );
-
-  const versions = await adminClient.call('/v1/admin/application-forms');
-  const activeBefore = versions.json?.activeVersion;
-  check(
-    'админка видит активную версию конфигурации',
-    versions.response.status === 200 && typeof activeBefore === 'number',
-    `статус ${versions.response.status}`,
-  );
-  const draft = await adminClient.call('/v1/admin/application-forms/draft');
-  check(
-    'черновик создаётся из активной версии',
-    draft.response.status === 200 && draft.json?.status === 'draft',
-    `статус ${draft.response.status} ${draft.json?.code ?? ''}`,
-  );
-
-  const config = draft.json?.config ?? { questions: [] };
-  const website = config.questions.find((q) => q.key === 'website_url');
-  if (website) website.stages.idea = 'hidden';
-  const saved = await adminClient.call('/v1/admin/application-forms/draft', {
-    method: 'PUT',
-    body: { config },
-  });
-  check(
-    'черновик сохраняется с изменённым состоянием вопроса',
-    saved.response.status === 200,
-    `статус ${saved.response.status} ${saved.json?.code ?? ''} ${JSON.stringify(saved.json?.fieldErrors ?? '').slice(0, 300)}`,
-  );
-
-  const preview = await adminClient.call('/v1/admin/application-forms/draft/preview?stage=idea');
-  const previewKeys = (preview.json?.sections ?? []).flatMap((s) => s.questions.map((q) => q.key));
-  check(
-    'предпросмотр черновика показывает изменение до публикации',
-    preview.response.status === 200 &&
-      previewKeys.length > 0 &&
-      !previewKeys.includes('website_url'),
-    `статус ${preview.response.status}`,
-  );
-
-  const broken = structuredClone(config);
-  broken.questions = broken.questions.filter((q) => q.key !== 'why_now');
-  const rejected = await adminClient.call('/v1/admin/application-forms/draft', {
-    method: 'PUT',
-    body: { config: broken },
-  });
-  check(
-    'удаление опубликованного ключа отвергается с перечнем',
-    (rejected.response.status === 422 || rejected.response.status === 400) &&
-      JSON.stringify(rejected.json ?? '').includes('why_now'),
-    `статус ${rejected.response.status}`,
-  );
-
-  const published = await adminClient.call('/v1/admin/application-forms/draft/publish', {
-    method: 'POST',
-    body: { reason: 'дымовой прогон: скрыт website_url на стадии идеи' },
-  });
-  const newVersion = published.json?.version;
-  check(
-    'публикация даёт следующий номер и активирует версию',
-    published.response.status === 201 &&
-      newVersion > activeBefore &&
-      published.json?.isActive === true,
-    `статус ${published.response.status} ${published.json?.code ?? ''}`,
-  );
-
-  const formAfter = await founderA.client.call(`/v1/applications/${appId}/form`);
-  check(
-    'существующая заявка осталась на своей версии после публикации',
-    formAfter.json?.schemaVersion === form.json?.schemaVersion,
-    `v${formAfter.json?.schemaVersion}`,
-  );
-
-  const fresh = await founderA.client.call(`/v1/projects/${projectId}/applications`, {
-    method: 'POST',
-    body: { title: 'Проверка версии конфигурации' },
-  });
-  check(
-    'новая заявка создаётся на новой версии',
-    fresh.response.status === 201 && fresh.json?.schemaVersion === newVersion,
-    `статус ${fresh.response.status} v${fresh.json?.schemaVersion}`,
-  );
-  if (fresh.json?.id) {
-    await founderA.client.call(`/v1/applications/${fresh.json.id}/archive`, { method: 'POST' });
-  }
-
-  const rolledBack = await adminClient.call(
-    `/v1/admin/application-forms/${activeBefore}/activate`,
-    { method: 'POST', body: { reason: 'дымовой прогон: откат к прежней версии' } },
-  );
-  check(
-    'откат активирует прежнюю версию',
-    rolledBack.response.status === 201 &&
-      rolledBack.json?.version === activeBefore &&
-      rolledBack.json?.isActive === true,
-    `статус ${rolledBack.response.status} ${rolledBack.json?.code ?? ''}`,
-  );
-  const again = await adminClient.call(`/v1/admin/application-forms/${activeBefore}/activate`, {
-    method: 'POST',
-    body: { reason: 'повторная активация' },
-  });
-  check(
-    'повторная активация активной версии — конфликт',
-    again.response.status === 409,
-    `статус ${again.response.status}`,
-  );
-  await founderA.client.call(`/v1/applications/${appId}/archive`, { method: 'POST' });
-  const founderForbidden = await founderA.client.call('/v1/admin/application-forms/draft');
-  check(
-    'основателю черновик конфигурации недоступен',
-    founderForbidden.response.status === 403,
-    `статус ${founderForbidden.response.status}`,
-  );
-}
-
 // ------------------------------------------------------------- снятие листинга
 {
   const { response, json } = await founderA.client.call(`/v1/projects/${projectId}/listing`, {
@@ -1366,19 +793,6 @@ let ticket;
   );
   const verbs = rows.map((r) => r.verb);
   check('создание проекта попало в журнал', verbs.includes('lab.project.created'));
-  // Подача v1 («в сезон») закрыта при отложенных сезонах — в журнале тогда
-  // подача мастера v2 (subject — заявка, не проект): проверяется отдельно.
-  if (seasonsOn) {
-    check('подача заявки попала в журнал', verbs.includes('lab.project.submitted'));
-  } else {
-    const appSubmits = await sql(
-      `SELECT count(*)::int AS n FROM audit.events e
-        JOIN lab.investment_applications a ON a.id = e.subject_id
-       WHERE a.project_id = $1 AND e.verb = 'lab.application.submitted'`,
-      [projectId],
-    );
-    check('подача заявки мастером попала в журнал', (appSubmits[0]?.n ?? 0) >= 1);
-  }
   check('публикация листинга попала в журнал', verbs.includes('lab.listing.published'));
   check('снятие листинга попало в журнал', verbs.includes('lab.listing.unpublished'));
 }
@@ -1413,345 +827,349 @@ let ticket;
   );
 }
 
-// ------------------------------------------- согласия на публичный контур (Ф50)
-//
-// До Ф50 этих маршрутов не существовало: клиент их звал, ядро отвечало 404.
-// Здесь проверяется не «ручка отвечает 200», а четыре свойства, ради которых
-// она написана: чужой проект недоступен, документ берётся с сервера, повтор не
-// переписывает прежнее согласие, отзыв называет срок удаления проекции.
-let consentId = null;
-const activeDoc = (
-  await sql(
-    `SELECT version, encode(body_sha256, 'hex') AS sha
-       FROM identity.consent_templates
-      WHERE kind = 'pdn_biometric' AND locale = 'ru-RU' AND superseded_at IS NULL`,
-  )
-)[0];
-check(
-  'документ согласия на публичность опубликован',
-  Boolean(activeDoc),
-  activeDoc?.version ?? 'нет',
-);
-
+// ------------------------------------------------- режимы видимости и допуск
+// Доступ наружу решает режим проекта и личные разрешения владельца
+// (`lab.project_audience`). Допуска по роли нет (2.1-W05): public открывает
+// внешнему зрителю тизер и описание, registered_investors вне команды не
+// открывает ничего, selected_investors — только по личному разрешению.
+// Подробно выдачу и отзыв разрешений проверяет scripts/smoke-project-access.mjs;
+// здесь — сквозной путь на одном проекте.
+console.warn('\n[видимость] режимы проекта, личное разрешение, материалы, исключения');
 {
-  const { response } = await founderB.client.call('/v1/publication-consents', {
+  const projectC = await founderA.client.call('/v1/projects', {
     method: 'POST',
     body: {
-      projectId,
-      scope: 'episode_selection',
-      disclosedFields: ['project_title'],
-      documentVersion: activeDoc?.version ?? 'v1',
-    },
-  });
-  // 404, а не 403: иначе ответ подтверждает существование чужого проекта.
-  check('чужой проект: согласие не выдаётся', response.status === 404, `статус ${response.status}`);
-}
-
-{
-  const { response, json } = await founderA.client.call('/v1/publication-consents', {
-    method: 'POST',
-    body: {
-      projectId,
-      scope: 'episode_selection',
-      disclosedFields: ['project_title'],
-      documentVersion: '1.0.0',
-    },
-  });
-  check(
-    'недействующая версия документа: 400, а не 500',
-    response.status === 400,
-    `статус ${response.status}`,
-  );
-  // Проверяется именно поле ошибки, а не всё тело: 'v1' встречается в ответе и
-  // по другим поводам, и совпадение по всему JSON зеленело бы по неверной
-  // причине. Клиенту нужна ПОДСКАЗКА, что подставить вместо неверной версии.
-  // Поле ответа называется `errors`: наружу уходит problem+json (RFC 9457), а
-  // не внутренняя форма ошибки.
-  const versionError = (json?.errors ?? []).find((e) => e.path === 'documentVersion');
-  check(
-    'ответ называет действующую версию в поле documentVersion',
-    Boolean(versionError?.message?.includes(`действует ${activeDoc?.version}`)),
-    versionError?.message ?? JSON.stringify(json ?? {}).slice(0, 160),
-  );
-}
-
-{
-  const { response } = await founderA.client.call('/v1/publication-consents', {
-    method: 'POST',
-    body: {
-      projectId,
-      scope: 'episode_selection',
-      disclosedFields: ['passport_scan'],
-      documentVersion: activeDoc?.version ?? 'v1',
-    },
-  });
-  check(
-    'поле вне словаря раскрытия отвергнуто',
-    response.status === 400,
-    `статус ${response.status}`,
-  );
-}
-
-{
-  const { response, json } = await founderA.client.call('/v1/publication-consents', {
-    method: 'POST',
-    body: {
-      projectId,
-      scope: 'episode_selection',
-      disclosedFields: ['project_title', 'founder_photo'],
-      documentVersion: activeDoc?.version ?? 'v1',
-    },
-  });
-  consentId = json?.id ?? null;
-  check(
-    'согласие на публикацию выдано',
-    response.status === 201 || response.status === 200,
-    `статус ${response.status}`,
-  );
-  check(
-    'отпечаток документа взят с сервера, а не из тела запроса',
-    json?.documentSha256 === activeDoc?.sha,
-    `${String(json?.documentSha256).slice(0, 16)}… против ${String(activeDoc?.sha).slice(0, 16)}…`,
-  );
-  check(
-    'раскрываемые поля сохранены как переданы',
-    JSON.stringify(json?.disclosedFields) === JSON.stringify(['project_title', 'founder_photo']),
-    JSON.stringify(json?.disclosedFields),
-  );
-  check('действующее согласие без даты отзыва', json?.revokedAt === null, String(json?.revokedAt));
-}
-
-{
-  const { response } = await founderA.client.call('/v1/publication-consents', {
-    method: 'POST',
-    body: {
-      projectId,
-      scope: 'episode_selection',
-      disclosedFields: ['project_title'],
-      documentVersion: activeDoc?.version ?? 'v1',
-    },
-  });
-  // Повтор не переписывает прежнее согласие: у него своя дата и своя версия
-  // документа, и подмена стёрла бы доказательство принятого.
-  check(
-    'повторное согласие на ту же область — 409',
-    response.status === 409,
-    `статус ${response.status}`,
-  );
-}
-
-{
-  const rows = await sql(
-    `SELECT scope, granted_at FROM integration.active_publication_consent($1, 'episode_selection')`,
-    [projectId],
-  );
-  check('медиаконтур видит действующее согласие', rows.length === 1, `строк ${rows.length}`);
-}
-
-{
-  const { response, json } = await founderA.client.call('/v1/publication-consents');
-  check('список согласий доступен автору', response.status === 200, `статус ${response.status}`);
-  check(
-    'выданное согласие есть в списке',
-    (json?.items ?? []).some((item) => item.id === consentId),
-    `записей ${json?.items?.length ?? 0}`,
-  );
-}
-
-{
-  const { response, json } = await founderA.client.call(`/v1/publication-consents/${consentId}`, {
-    method: 'DELETE',
-  });
-  check('согласие отозвано', response.status === 200, `статус ${response.status}`);
-  const deadlineGap =
-    json?.revokedAt && json?.deletionDeadline
-      ? (Date.parse(json.deletionDeadline) - Date.parse(json.revokedAt)) / 60000
-      : null;
-  check(
-    'крайний срок удаления проекции — 15 минут от отзыва',
-    deadlineGap === 15,
-    `${deadlineGap} мин`,
-  );
-}
-
-{
-  const rows = await sql(
-    `SELECT scope FROM integration.active_publication_consent($1, 'episode_selection')`,
-    [projectId],
-  );
-  check('после отзыва медиаконтур не видит согласия', rows.length === 0, `строк ${rows.length}`);
-}
-
-{
-  const { response } = await founderA.client.call(`/v1/publication-consents/${consentId}`, {
-    method: 'DELETE',
-  });
-  check(
-    'повторный отзыв не является ошибкой',
-    response.status === 200,
-    `статус ${response.status}`,
-  );
-  const events = await sql(
-    `SELECT event_type, count(*)::int AS n FROM audit.outbox_events
-      WHERE aggregate_id = $1 GROUP BY event_type ORDER BY event_type`,
-    [consentId],
-  );
-  const revoked = events.find((e) => e.event_type === 'lab.consent.publication_revoked');
-  const granted = events.find((e) => e.event_type === 'lab.consent.publication_granted');
-  check('выдача попала в outbox', granted?.n === 1, `записей ${granted?.n ?? 0}`);
-  // Второе событие отзыва запустило бы у потребителя новый пятнадцатиминутный
-  // срок удаления того, что он уже удалил.
-  check(
-    'повтор отзыва не публикует второе событие',
-    revoked?.n === 1,
-    `записей ${revoked?.n ?? 0}`,
-  );
-}
-
-// Свой сезон прогон оставляет как есть — он одноразовый; а вот чужие
-// возвращает в то состояние, в котором застал.
-await restoreSuspendedSeasons();
-
-// ------------------------------------------------------------ раунды (5.6.3)
-console.warn('\n[раунды] профиль без раунда, черновик, открытие, пауза, основание');
-{
-  const project = await founderA.client.call('/v1/projects', {
-    method: 'POST',
-    body: {
-      title: `Раунд ${suffix}`,
-      tagline: 'Проверка раундов',
+      title: `Режимы видимости ${suffix}`,
+      tagline: 'Проверка режимов',
+      description: 'Описание для проверки режимов видимости.',
       stage: 'idea',
       taxonomyId: (await sql("SELECT id FROM lab.project_taxonomy WHERE slug = 'ai'"))[0].id,
       investmentAsk: '1000000.00',
       askCurrency: 'RUB',
     },
   });
-  const projectId = project.json?.id;
+  const projectCId = projectC.json?.id;
   check(
-    'проект для раундов создан',
-    project.response.status === 201,
-    `статус ${project.response.status}`,
+    'проект для режимов создан',
+    projectC.response.status === 201,
+    `статус ${projectC.response.status}`,
   );
-
-  const limits = await founderA.client.call('/v1/projects/limits');
-  check(
-    'лимит проектов аккаунта отдаётся с источником; 0 — безлимит',
-    limits.response.status === 200 &&
-      limits.json?.source === 'application_policy' &&
-      (limits.json?.projects?.limit === 0 ? limits.json?.projects?.remaining === null : true),
-    JSON.stringify(limits.json?.projects),
-  );
-
-  const apps = await founderA.client.call(`/v1/projects/${projectId}/applications`);
-  check(
-    'анкета старой формы не занимает место в лимите анкет',
-    apps.json?.limits?.applications?.used === 0,
-    `used=${apps.json?.limits?.applications?.used}`,
-  );
-
-  const app = await founderA.client.call(`/v1/projects/${projectId}/applications`, {
-    method: 'POST',
-    body: {},
-  });
-  const appId = app.json?.id;
-  const form = await founderA.client.call(`/v1/applications/${appId}/form`);
-  const profileMandatory = (form.json?.sections ?? [])
-    .filter((s) => s.scope !== 'round')
-    .flatMap((s) => s.questions.filter((q) => q.state === 'mandatory' && !q.coreField));
-  const answers = {};
-  for (const q of profileMandatory) {
-    answers[q.key] =
-      q.type === 'select'
-        ? q.options?.[0]?.code
-        : q.type === 'number'
-          ? 1
-          : q.type === 'multiselect'
-            ? [q.options?.[0]?.code]
-            : 'ответ для проверки';
+  {
+    const anonBefore = await raw(`/v1/catalog/${projectCId}`);
+    check(
+      'неопубликованный проект: тизера нет',
+      anonBefore.response.status === 404,
+      `статус ${anonBefore.response.status}`,
+    );
   }
-  await founderA.client.call(`/v1/applications/${appId}`, { method: 'PATCH', body: { answers } });
-  const submitted = await founderA.client.call(`/v1/applications/${appId}/submit`, {
+  const listed = await founderA.client.call(`/v1/projects/${projectCId}/listing`, {
     method: 'POST',
-    body: await confirmSubmit(founderA.client, appId),
   });
   check(
-    'профиль подан без суммы и предмета финансирования',
-    submitted.response.status === 201 || submitted.response.status === 200,
-    `статус ${submitted.response.status} ${JSON.stringify(submitted.json?.errors ?? submitted.json?.detail ?? '')}`,
-  );
-  const versionId = submitted.json?.id;
-
-  const draft = await founderA.client.call(`/v1/projects/${projectId}/rounds`, {
-    method: 'POST',
-    body: {},
-  });
-  const roundId = draft.json?.round?.id;
-  check(
-    'черновик раунда создан с готовностью',
-    draft.response.status === 201 && draft.json?.readiness?.canOpen === false,
-    `статус ${draft.response.status}`,
-  );
-  const again = await founderA.client.call(`/v1/projects/${projectId}/rounds`, {
-    method: 'POST',
-    body: {},
-  });
-  check('повторный вызов возвращает тот же черновик', again.json?.round?.id === roundId);
-
-  const tooEarly = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
-    method: 'POST',
-    body: await confirmOpen(founderA.client, roundId),
-  });
-  check(
-    'открыть незаполненный раунд нельзя, перечень назван',
-    tooEarly.response.status === 400 || tooEarly.response.status === 422,
-    `статус ${tooEarly.response.status}`,
+    'публикация ставит режим public',
+    listed.response.status === 201 && listed.json?.visibility === 'public',
+    `статус ${listed.response.status} ${listed.json?.visibility ?? ''}`,
   );
 
-  const roundForm = (form.json?.sections ?? []).filter((s) => s.scope === 'round');
-  const roundAnswers = {};
-  for (const q of roundForm.flatMap((s) =>
-    s.questions.filter((x) => x.state === 'mandatory' && !x.coreField),
-  )) {
-    roundAnswers[q.key] = 'ответ раунда';
+  // ------------------------------------------------ public: Public View
+  {
+    const anonView = await raw(`/v1/catalog/${projectCId}`);
+    check(
+      'Public View анониму: тизер без описания',
+      anonView.response.status === 200 &&
+        anonView.json?.id === projectCId &&
+        typeof anonView.json?.title === 'string' &&
+        !('description' in (anonView.json ?? {})),
+      `статус ${anonView.response.status}`,
+    );
+    const stranger = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
+    check(
+      'Investor View чужому основателю: профиль публичный, материалы закрыты',
+      stranger.response.status === 200 &&
+        stranger.json?.access?.profile === 'public' &&
+        stranger.json?.access?.materials === null &&
+        stranger.json?.materials === null,
+      `статус ${stranger.response.status} ${JSON.stringify(stranger.json?.access ?? null)}`,
+    );
+
+    const previewPublic = await founderA.client.call(
+      `/v1/projects/${projectCId}/view-preview?audience=public`,
+    );
+    check(
+      'предпросмотр владельца для анонима: режим и аудитория названы явно',
+      previewPublic.response.status === 200 &&
+        previewPublic.json?.audienceSummary?.mode === 'public' &&
+        previewPublic.json?.audienceSummary?.anonymous === true &&
+        previewPublic.json?.audienceSummary?.investors === 'never' &&
+        previewPublic.json?.view?.access?.materials === null,
+      `статус ${previewPublic.response.status} ${JSON.stringify(previewPublic.json?.audienceSummary ?? null)}`,
+    );
+    const previewInvestors = await founderA.client.call(
+      `/v1/projects/${projectCId}/view-preview?audience=investors`,
+    );
+    check(
+      'предпросмотр для инвестора без разрешения совпадает с анонимом: профиль public, материалов нет',
+      previewInvestors.response.status === 200 &&
+        previewInvestors.json?.view?.access?.profile === 'public' &&
+        previewInvestors.json?.view?.access?.materials === null &&
+        previewInvestors.json?.view?.materials === null,
+      `статус ${previewInvestors.response.status} ${JSON.stringify(previewInvestors.json?.view?.access ?? null)}`,
+    );
+    const previewByStranger = await founderB.client.call(
+      `/v1/projects/${projectCId}/view-preview?audience=public`,
+    );
+    check(
+      'предпросмотр чужого проекта запрещён',
+      previewByStranger.response.status === 403,
+      `статус ${previewByStranger.response.status}`,
+    );
   }
-  const filled = await founderA.client.call(`/v1/rounds/${roundId}`, {
-    method: 'PATCH',
-    body: {
-      target: '3000000.00',
-      currency: 'RUB',
-      fundingScope: 'project',
-      investorMode: 'multiple',
-      answers: roundAnswers,
-    },
-  });
-  check(
-    'раунд заполнен',
-    filled.response.status === 200,
-    `статус ${filled.response.status} ${JSON.stringify(filled.json?.errors ?? '')}`,
-  );
-  const badCurrency = await founderA.client.call(`/v1/rounds/${roundId}`, {
-    method: 'PATCH',
-    body: { currency: 'KZT' },
-  });
-  const basis = await founderA.client.call(`/v1/rounds/${roundId}/basis`, {
-    method: 'PUT',
-    body: { applicationVersionId: versionId, reason: 'основание — поданная версия' },
-  });
-  check(
-    'основание — поданная версия профиля',
-    basis.response.status === 200,
-    `статус ${basis.response.status}`,
-  );
-  // Страна обслуживания — явный выбор аккаунта: без неё раунд не открывается.
-  const noCountry = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
+
+  // ------------------------------------------------------- материалы
+  // Материал закрыт по умолчанию; отметка «инвесторам» в режиме public его
+  // наружу не открывает — материалы видит только получатель разрешения.
+  const link = await founderA.client.call(`/v1/projects/${projectCId}/materials/link`, {
     method: 'POST',
-    body: await confirmOpen(founderA.client, roundId),
+    body: { url: 'https://example.com/product-modes' },
   });
+  const materialId = link.json?.id;
+  const marked = await founderA.client.call(
+    `/v1/projects/${projectCId}/materials/${materialId}/visibility`,
+    { method: 'PUT', body: { visibility: 'investors' } },
+  );
   check(
-    'без страны обслуживания раунд не открывается, поле названо',
-    (noCountry.response.status === 400 || noCountry.response.status === 422) &&
-      JSON.stringify(noCountry.json ?? '').includes('serviceCountry'),
-    `статус ${noCountry.response.status}`,
+    'материал закрыт по умолчанию, отметка «инвесторам» ставится владельцем',
+    link.response.status === 201 &&
+      link.json?.visibility === 'private' &&
+      marked.response.status === 200 &&
+      marked.json?.visibility === 'investors',
+    `${link.response.status} ${link.json?.visibility} ${marked.response.status}`,
+  );
+  const publicMark = await founderA.client.call(
+    `/v1/projects/${projectCId}/materials/${materialId}/visibility`,
+    { method: 'PUT', body: { visibility: 'public' } },
+  );
+  check(
+    'отметка public для материала не принимается',
+    publicMark.response.status === 400,
+    `${publicMark.response.status}`,
+  );
+  {
+    const afterMark = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+    check(
+      'отмеченный материал инвестору без разрешения не открыт',
+      afterMark.response.status === 200 &&
+        afterMark.json?.access?.materials === null &&
+        afterMark.json?.materials === null,
+      `${afterMark.response.status} ${JSON.stringify(afterMark.json?.access ?? null)}`,
+    );
+  }
+
+  // ------------------------------------------- registered_investors
+  {
+    const registered = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+      method: 'PUT',
+      body: { visibility: 'registered_investors' },
+    });
+    const anonRegistered = await raw(`/v1/catalog/${projectCId}`);
+    const investorRegistered = await investor.client.call(
+      `/v1/projects/${projectCId}/investor-view`,
+    );
+    const previewRegistered = await founderA.client.call(
+      `/v1/projects/${projectCId}/view-preview?audience=investors`,
+    );
+    check(
+      'режим registered_investors: листинг остаётся, анониму и инвестору — 404',
+      registered.response.status === 200 &&
+        registered.json?.visibility === 'registered_investors' &&
+        registered.json?.listingStatus === 'listed' &&
+        anonRegistered.response.status === 404 &&
+        investorRegistered.response.status === 404,
+      `${registered.response.status} ${registered.json?.visibility} ${anonRegistered.response.status} ${investorRegistered.response.status}`,
+    );
+    check(
+      'предпросмотр registered_investors: инвестор не видит ничего',
+      previewRegistered.response.status === 200 &&
+        previewRegistered.json?.view === null &&
+        previewRegistered.json?.audienceSummary?.investors === 'never',
+      `${previewRegistered.response.status} ${previewRegistered.json?.audienceSummary?.investors}`,
+    );
+  }
+
+  // --------------------------------------------- selected_investors
+  {
+    const selected = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+      method: 'PUT',
+      body: { visibility: 'selected_investors' },
+    });
+    check(
+      'режим «выбранные инвесторы» ставится действием владельца',
+      selected.response.status === 200 && selected.json?.visibility === 'selected_investors',
+      `статус ${selected.response.status} ${selected.json?.visibility ?? ''}`,
+    );
+    // Посторонний без разрешения не узнаёт даже о существовании проекта:
+    // ни названия, ни 403 — только 404.
+    const strangerSelected = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
+    const investorSelected = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+    const anonSelected = await raw(`/v1/catalog/${projectCId}`);
+    check(
+      'selected_investors без разрешения: посторонний, инвестор и аноним получают 404 без названия',
+      strangerSelected.response.status === 404 &&
+        investorSelected.response.status === 404 &&
+        anonSelected.response.status === 404 &&
+        !JSON.stringify(strangerSelected.json ?? '').includes('Режимы видимости'),
+      `${strangerSelected.response.status} ${investorSelected.response.status} ${anonSelected.response.status}`,
+    );
+    const preview = await founderA.client.call(
+      `/v1/projects/${projectCId}/view-preview?audience=investors`,
+    );
+    check(
+      'предпросмотр selected_investors: инвесторы — только выбранные, вида «вообще» нет',
+      preview.response.status === 200 &&
+        preview.json?.view === null &&
+        preview.json?.audienceSummary?.investors === 'selected',
+      `${preview.response.status} ${preview.json?.audienceSummary?.investors}`,
+    );
+
+    const granted = await founderA.client.call(`/v1/projects/${projectCId}/access/grants`, {
+      method: 'POST',
+      body: { email: investor.email, permissions: ['profile', 'materials'] },
+    });
+    const grantedView = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+    check(
+      'личное разрешение открывает проект получателю: профиль и отмеченные материалы',
+      (granted.response.status === 201 || granted.response.status === 200) &&
+        grantedView.response.status === 200 &&
+        grantedView.json?.grant !== null &&
+        grantedView.json?.access?.profile === 'investors' &&
+        grantedView.json?.access?.materials === 'investors' &&
+        (grantedView.json?.materials ?? []).some((m) => m.id === materialId),
+      `${granted.response.status} ${grantedView.response.status} ${JSON.stringify(grantedView.json?.access ?? null)}`,
+    );
+    const otherInvestor = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
+    check(
+      'разрешение одному не открывает проект другим',
+      otherInvestor.response.status === 404,
+      `${otherInvestor.response.status}`,
+    );
+    const revoked = await founderA.client.call(
+      `/v1/projects/${projectCId}/access/grants/${granted.json?.id}`,
+      { method: 'DELETE' },
+    );
+    const afterRevoke = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+    check(
+      'отзыв разрешения снова закрывает проект',
+      revoked.response.status === 204 && afterRevoke.response.status === 404,
+      `${revoked.response.status} ${afterRevoke.response.status}`,
+    );
+  }
+
+  // ------------------------------------------------------ исключения
+  // Исключённый зритель не видит проект и в режиме public: ни Investor View,
+  // ни карточки в каталоге, ни строки в списке.
+  {
+    await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+      method: 'PUT',
+      body: { visibility: 'public' },
+    });
+    const excluded = await founderA.client.call(`/v1/projects/${projectCId}/access/exclusions`, {
+      method: 'POST',
+      body: { email: investor.email },
+    });
+    const excludedView = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+    const excludedItem = await investor.client.call(`/v1/catalog/${projectCId}`);
+    const excludedList = await investor.client.call('/v1/catalog?limit=50');
+    check(
+      'исключённый инвестор: Investor View 404, карточка каталога 404, в списке нет',
+      (excluded.response.status === 201 || excluded.response.status === 200) &&
+        excludedView.response.status === 404 &&
+        excludedItem.response.status === 404 &&
+        !(excludedList.json?.items ?? []).some((i) => i.id === projectCId),
+      `${excluded.response.status} ${excludedView.response.status} ${excludedItem.response.status}`,
+    );
+    const lifted = await founderA.client.call(
+      `/v1/projects/${projectCId}/access/exclusions/${excluded.json?.id}`,
+      { method: 'DELETE' },
+    );
+    const restoredView = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+    check(
+      'снятое исключение возвращает доступ режима',
+      lifted.response.status === 204 && restoredView.response.status === 200,
+      `${lifted.response.status} ${restoredView.response.status}`,
+    );
+  }
+
+  // ------------------------------------------------ несколько ролей
+  // Чужой основатель с ролью инвестора на закрытом проекте не проходит ни
+  // карточкой, ни кабинетными маршрутами (роль пропускает, RLS — нет).
+  {
+    await sql(
+      `INSERT INTO identity.user_roles (user_id, role) VALUES ($1, 'investor')
+       ON CONFLICT DO NOTHING`,
+      [founderB.userId],
+    );
+    await founderB.client.call('/v1/auth/login', {
+      method: 'POST',
+      body: { email: founderB.email, password: founderB.password },
+    });
+    await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+      method: 'PUT',
+      body: { visibility: 'private' },
+    });
+    const dualNew = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
+    const dualOld = await founderB.client.call(`/v1/projects/${projectCId}`);
+    const dualMaterials = await founderB.client.call(`/v1/projects/${projectCId}/materials`);
+    check(
+      'founder+investor на чужом private: Investor View 404, строка 404, материалы 404',
+      dualNew.response.status === 404 &&
+        dualOld.response.status === 404 &&
+        dualMaterials.response.status === 404,
+      `${dualNew.response.status} ${dualOld.response.status} ${dualMaterials.response.status}`,
+    );
+    await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
+      method: 'PUT',
+      body: { visibility: 'public' },
+    });
+    const dualPublicOld = await founderB.client.call(`/v1/projects/${projectCId}/materials`);
+    const dualPublicNew = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
+    check(
+      'founder+investor на чужом public: список материалов — 404 (маршрут только команде), Investor View — как у анонима',
+      dualPublicOld.response.status === 404 &&
+        dualPublicNew.response.status === 200 &&
+        dualPublicNew.json?.access?.profile === 'public' &&
+        dualPublicNew.json?.access?.materials === null,
+      `${dualPublicOld.response.status} ${dualPublicNew.response.status} ${JSON.stringify(dualPublicNew.json?.access ?? null)}`,
+    );
+  }
+
+  // Снятие листинга = режим private: анониму 404, инвестору 404, владельцу —
+  // предпросмотр «никто не увидит».
+  {
+    await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'DELETE' });
+    const hidden = await raw(`/v1/catalog/${projectCId}`);
+    const hiddenInv = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
+    const previewPrivate = await founderA.client.call(
+      `/v1/projects/${projectCId}/view-preview?audience=investors`,
+    );
+    check(
+      'режим private: Public View и Investor View — 404, предпросмотр владельцу — «никто»',
+      hidden.response.status === 404 &&
+        hiddenInv.response.status === 404 &&
+        previewPrivate.response.status === 200 &&
+        previewPrivate.json?.view === null &&
+        previewPrivate.json?.audienceSummary?.investors === 'never',
+      `${hidden.response.status} ${hiddenInv.response.status} ${previewPrivate.response.status} ${previewPrivate.json?.audienceSummary?.investors}`,
+    );
+  }
+}
+
+// ------------------------------------------------------ страна обслуживания
+console.warn('\n[страна обслуживания] выбор, выключенная страна, смена');
+{
+  const countries = await raw('/v1/service-countries');
+  check(
+    'список стран обслуживания публичен',
+    countries.response.status === 200 && (countries.json?.items ?? []).some((c) => c.code === 'ru'),
   );
   const setCountry = await founderA.client.call('/v1/me/service-country', {
     method: 'PUT',
@@ -1764,731 +1182,6 @@ console.warn('\n[раунды] профиль без раунда, чернов�
   );
   const me = await founderA.client.call('/v1/auth/me');
   check('страна видна в профиле', me.json?.serviceCountry === 'ru');
-  const openKzt = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
-    method: 'POST',
-    body: await confirmOpen(founderA.client, roundId),
-  });
-  check(
-    'валюта вне условий страны не даёт открыть раунд',
-    badCurrency.response.status === 200 &&
-      (openKzt.response.status === 400 || openKzt.response.status === 422) &&
-      JSON.stringify(openKzt.json ?? '').includes('currency'),
-    `статус ${openKzt.response.status}`,
-  );
-  await founderA.client.call(`/v1/rounds/${roundId}`, {
-    method: 'PATCH',
-    body: { currency: 'RUB' },
-  });
-  const opened = await founderA.client.call(`/v1/rounds/${roundId}/open`, {
-    method: 'POST',
-    body: await confirmOpen(founderA.client, roundId),
-  });
-  check(
-    'раунд открыт: страна и версия условий зафиксированы',
-    opened.response.status === 201 &&
-      opened.json?.round?.status === 'open' &&
-      opened.json?.round?.serviceCountry === 'ru' &&
-      opened.json?.round?.policyVersion >= 1,
-    `статус ${opened.response.status} ${JSON.stringify(opened.json?.errors ?? opened.json?.round?.status ?? '')}`,
-  );
-  const projectAfter = await founderA.client.call(`/v1/projects/${projectId}`);
-  check(
-    'сумма проекта — из открытого раунда (кеш)',
-    projectAfter.json?.investmentAsk === '3000000.00',
-    `${projectAfter.json?.investmentAsk}`,
-  );
-
-  // ---------------------------------------- видимость суммы раунда (M085)
-  console.warn('\n[видимость раунда] настройка поля × доступ к объекту × аудитория');
-  // До листинга проект закрыт для анонима и инвестора при любой настройке.
-  {
-    const anonBefore = await raw(`/v1/catalog/${projectId}`);
-    check(
-      'неопубликованный проект: тизера нет, настройка поля доступ не расширяет',
-      anonBefore.response.status === 404,
-      `статус ${anonBefore.response.status}`,
-    );
-  }
-  await founderA.client.call(`/v1/projects/${projectId}/listing`, { method: 'POST' });
-  {
-    const anon = await raw(`/v1/catalog/${projectId}`);
-    check(
-      'стартовая настройка: анониму сумма и состояние раунда не раскрываются',
-      anon.response.status === 200 &&
-        anon.json?.raising === 'undisclosed' &&
-        anon.json?.investmentAsk === null,
-      `${anon.json?.raising} ${anon.json?.investmentAsk}`,
-    );
-    const filtered = await raw('/v1/catalog?askMin=2999999&askMax=3000001');
-    const sorted = await raw('/v1/catalog?sort=ask_desc&limit=100');
-    check(
-      'скрытую сумму нельзя определить фильтром или сортировкой по сумме',
-      !(filtered.json?.items ?? []).some((i) => i.id === projectId) &&
-        !(sorted.json?.items ?? []).some((i) => i.id === projectId),
-    );
-    const asInvestor = await investor.client.call(`/v1/catalog/${projectId}`);
-    check(
-      'инвестор с членством видит состояние и сумму (уровень investors)',
-      asInvestor.json?.raising === 'open' && asInvestor.json?.investmentAsk === '3000000.00',
-      `${asInvestor.json?.raising} ${asInvestor.json?.investmentAsk}`,
-    );
-    const card = await investor.client.call(`/v1/projects/${projectId}/investor-view`);
-    check(
-      'карточка инвестору (Investor View) — та же проекция раунда',
-      card.json?.round?.raising === 'open' && card.json?.round?.investmentAsk === '3000000.00',
-      `${card.json?.round?.raising} ${card.json?.round?.investmentAsk}`,
-    );
-    const asPublic = await founderA.client.call(
-      `/v1/applications/${appId}/preview?audience=public`,
-    );
-    const asInvestors = await founderA.client.call(
-      `/v1/applications/${appId}/preview?audience=investors`,
-    );
-    check(
-      'предпросмотр владельцу: аноним — закрыто, инвестор — сумма; по тем же правилам',
-      asPublic.json?.audience === 'public' &&
-        asPublic.json?.round?.raising === 'undisclosed' &&
-        asPublic.json?.round?.investmentAsk === null &&
-        asInvestors.json?.round?.raising === 'open' &&
-        asInvestors.json?.round?.investmentAsk === '3000000.00' &&
-        asInvestors.json?.round?.askCurrency === 'RUB',
-      `${asPublic.json?.round?.raising} / ${asInvestors.json?.round?.raising}`,
-    );
-    const foreignPreview = await founderB.client.call(
-      `/v1/applications/${appId}/preview?audience=investors`,
-    );
-    check(
-      'чужой предпросмотр недоступен',
-      foreignPreview.response.status === 403 || foreignPreview.response.status === 404,
-      `статус ${foreignPreview.response.status}`,
-    );
-  }
-  // Администратор открывает группу публично — конфигурацией, не кодом.
-  const setRoundVisibility = async (visibility, reason, statusVisibility = visibility) => {
-    const draft = await adminClient.call('/v1/admin/application-forms/draft');
-    const config = draft.json?.config;
-    for (const q of config?.questions ?? []) {
-      if (['investment_ask', 'funding_scope', 'funding_scope_note'].includes(q.key)) {
-        q.visibility = visibility;
-      }
-    }
-    config.disclosure = { ...(config.disclosure ?? {}), raising_status: statusVisibility };
-    await adminClient.call('/v1/admin/application-forms/draft', {
-      method: 'PUT',
-      body: { config },
-    });
-    return adminClient.call('/v1/admin/application-forms/draft/publish', {
-      method: 'POST',
-      body: { reason },
-    });
-  };
-  {
-    const published = await setRoundVisibility('public', 'дымовой прогон: сумма раунда публично');
-    check(
-      'публикация версии с public — обычная публикация конфигурации',
-      published.response.status === 201 && published.json?.isActive === true,
-      `статус ${published.response.status}`,
-    );
-    // Раунд открыт на прежней версии условий: расширение публичности его не
-    // касается (M086) — ни в каталоге, ни в предпросмотре.
-    const anon = await raw(`/v1/catalog/${projectId}`);
-    check(
-      'расширение investors → public не раскрывает уже открытый раунд',
-      anon.json?.raising === 'undisclosed' && anon.json?.investmentAsk === null,
-      `${anon.json?.raising} ${anon.json?.investmentAsk}`,
-    );
-    const asPublic = await founderA.client.call(
-      `/v1/applications/${appId}/preview?audience=public`,
-    );
-    check(
-      'предпросмотр для анонима у открытого раунда остаётся закрытым',
-      asPublic.json?.round?.raising === 'undisclosed',
-    );
-    // Раунд, открытый ПОСЛЕ публикации, — по новой версии: публичен.
-    const projectC = await founderA.client.call('/v1/projects', {
-      method: 'POST',
-      body: {
-        title: `Раунд после публикации ${suffix}`,
-        tagline: 'Проверка версии условий',
-        stage: 'idea',
-        taxonomyId: (await sql("SELECT id FROM lab.project_taxonomy WHERE slug = 'ai'"))[0].id,
-        investmentAsk: '1000000.00',
-        askCurrency: 'RUB',
-      },
-    });
-    const projectCId = projectC.json?.id;
-    const appC = await founderA.client.call(`/v1/projects/${projectCId}/applications`, {
-      method: 'POST',
-      body: {},
-    });
-    await founderA.client.call(`/v1/applications/${appC.json?.id}`, {
-      method: 'PATCH',
-      body: { stage: 'idea', answers },
-    });
-    const submittedC = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
-      method: 'POST',
-      body: await confirmSubmit(founderA.client, appC.json?.id),
-    });
-    const roundC = await founderA.client.call(`/v1/projects/${projectCId}/rounds`, {
-      method: 'POST',
-      body: { applicationVersionId: submittedC.json?.id },
-    });
-    await founderA.client.call(`/v1/rounds/${roundC.json?.round?.id}`, {
-      method: 'PATCH',
-      body: {
-        target: '2500000.00',
-        currency: 'RUB',
-        fundingScope: 'project',
-        answers: roundAnswers,
-      },
-    });
-    const openedC = await founderA.client.call(`/v1/rounds/${roundC.json?.round?.id}/open`, {
-      method: 'POST',
-      body: await confirmOpen(founderA.client, roundC.json?.round?.id),
-    });
-    await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'POST' });
-    const anonC = await raw(`/v1/catalog/${projectCId}`);
-    check(
-      'раунд, открытый после публикации public, виден анониму с суммой',
-      openedC.response.status === 201 &&
-        anonC.json?.raising === 'open' &&
-        anonC.json?.investmentAsk === '2500000.00',
-      `${openedC.response.status} ${anonC.json?.raising} ${anonC.json?.investmentAsk}`,
-    );
-    const filtered = await raw('/v1/catalog?askMin=2499999&askMax=2500001');
-    check(
-      'публичная сумма участвует в фильтре по сумме',
-      (filtered.json?.items ?? []).some((i) => i.id === projectCId),
-    );
-    // Статус отдельно от суммы: ограничение суммы действует сразу, статус остаётся.
-    const statusOnly = await setRoundVisibility(
-      'investors',
-      'дымовой прогон: сумма инвесторам, состояние публично',
-      'public',
-    );
-    const anonStatus = await raw(`/v1/catalog/${projectCId}`);
-    check(
-      'состояние показывается публично при скрытой сумме; ограничение суммы — сразу',
-      statusOnly.response.status === 201 &&
-        anonStatus.json?.raising === 'open' &&
-        anonStatus.json?.investmentAsk === null,
-      `${anonStatus.json?.raising} ${anonStatus.json?.investmentAsk}`,
-    );
-    const investorC = await investor.client.call(`/v1/catalog/${projectCId}`);
-    check(
-      'инвестору при этом сумма видна',
-      investorC.json?.raising === 'open' && investorC.json?.investmentAsk === '2500000.00',
-    );
-    const restored = await setRoundVisibility(
-      'investors',
-      'дымовой прогон: откат видимости суммы к investors',
-    );
-    const anonAfter = await raw(`/v1/catalog/${projectCId}`);
-    check(
-      'откат настройки снова закрывает состояние анониму',
-      restored.response.status === 201 && anonAfter.json?.raising === 'undisclosed',
-      `статус ${restored.response.status} ${anonAfter.json?.raising}`,
-    );
-
-    // ------------------------------------------- 5.7.2: Public View, Investor View
-    // Согласие владельца на снимок пока ставится напрямую (действия владельца —
-    // 5.7.3): снимок — версия, поданная выше мастером; условия — её версия формы.
-    {
-      const [disclosed] = await sql(
-        `UPDATE lab.projects p
-          SET disclosed_version_id = v.id, disclosure_form_version = v.schema_version,
-              disclosed_at = now(), disclosed_by = $2
-         FROM lab.project_versions v
-        WHERE p.id = $1 AND v.id = $3
-        RETURNING v.schema_version`,
-        [projectCId, founderA.userId, submittedC.json?.id],
-      );
-      const anonView = await raw(`/v1/catalog/${projectCId}`);
-      const anonQuestions = (anonView.json?.sections ?? []).flatMap((s) => s.questions);
-      check(
-        'Public View: анониму — только ответы с эффективной видимостью public',
-        anonView.response.status === 200 &&
-          anonView.json?.profileAudience === 'public' &&
-          anonView.json?.schemaVersion === disclosed?.schema_version &&
-          anonQuestions.length > 0 &&
-          anonQuestions.every((q) => q.visibility === 'public'),
-        `статус ${anonView.response.status}, вопросов ${anonQuestions.length}, аудитория ${anonView.json?.profileAudience}`,
-      );
-      check(
-        'Public View совместим с тизером: id, название, состояние привлечения на месте',
-        anonView.json?.id === projectCId &&
-          typeof anonView.json?.title === 'string' &&
-          typeof anonView.json?.raising === 'string',
-      );
-      const investorView = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
-      const investorQuestions = (investorView.json?.sections ?? []).flatMap((s) => s.questions);
-      check(
-        'Investor View: допущенному инвестору — профиль уровня investors, блоки по разрешениям',
-        investorView.response.status === 200 &&
-          investorView.json?.access?.profile === 'investors' &&
-          investorView.json?.access?.round === 'investors' &&
-          investorView.json?.access?.materials === 'investors' &&
-          investorQuestions.length >= anonQuestions.length &&
-          investorView.json?.withheld <= anonView.json?.withheld &&
-          Array.isArray(investorView.json?.materials) &&
-          investorView.json?.passport === null,
-        `статус ${investorView.response.status}, вопросов ${investorQuestions.length}/${anonQuestions.length}, скрыто ${investorView.json?.withheld}/${anonView.json?.withheld}`,
-      );
-      check(
-        'Investor View: поле описания на месте (у проекта прогона пустое) и раунд с суммой инвестору',
-        investorView.json?.description !== undefined &&
-          investorView.json?.round?.raising === 'open' &&
-          investorView.json?.round?.investmentAsk === '2500000.00',
-        `${investorView.json?.round?.raising} ${investorView.json?.round?.investmentAsk}`,
-      );
-      const stranger = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
-      check(
-        'Investor View чужому основателю без допуска: тизер есть, профиль и материалы закрыты',
-        stranger.response.status === 200 &&
-          stranger.json?.access?.profile === 'public' &&
-          stranger.json?.access?.materials === null &&
-          stranger.json?.materials === null,
-        `статус ${stranger.response.status} ${JSON.stringify(stranger.json?.access ?? null)}`,
-      );
-
-      const previewPublic = await founderA.client.call(
-        `/v1/projects/${projectCId}/view-preview?audience=public`,
-      );
-      check(
-        'предпросмотр владельца: аудитория, режим и согласие названы явно',
-        previewPublic.response.status === 200 &&
-          previewPublic.json?.audienceSummary?.mode === 'public' &&
-          previewPublic.json?.audienceSummary?.anonymous === true &&
-          previewPublic.json?.consent?.formVersion === disclosed?.schema_version &&
-          typeof previewPublic.json?.consent?.activeFormVersion === 'number' &&
-          Array.isArray(previewPublic.json?.pending?.profile) &&
-          Array.isArray(previewPublic.json?.pending?.round) &&
-          (previewPublic.json?.view?.sections ?? [])
-            .flatMap((s) => s.questions)
-            .every((q) => q.visibility === 'public'),
-        `статус ${previewPublic.response.status} ${JSON.stringify(previewPublic.json?.audienceSummary ?? null)}`,
-      );
-      const previewByStranger = await founderB.client.call(
-        `/v1/projects/${projectCId}/view-preview?audience=public`,
-      );
-      check(
-        'предпросмотр чужого проекта запрещён',
-        previewByStranger.response.status === 403,
-        `статус ${previewByStranger.response.status}`,
-      );
-      const openPreview = await founderA.client.call(
-        `/v1/rounds/${roundC.json?.round?.id}/open-preview`,
-      );
-      check(
-        'предпросмотр раунда: проекции для обеих аудиторий по активной версии',
-        openPreview.response.status === 200 &&
-          typeof openPreview.json?.activeFormVersion === 'number' &&
-          openPreview.json?.investors?.raising === 'open' &&
-          openPreview.json?.investors?.investmentAsk === '2500000.00' &&
-          ['open', 'undisclosed'].includes(openPreview.json?.public?.raising) &&
-          Array.isArray(openPreview.json?.warnings) &&
-          !openPreview.json.warnings.includes('private_project'),
-        `статус ${openPreview.response.status} ${JSON.stringify(openPreview.json?.public ?? null)}`,
-      );
-
-      // Снятие листинга = режим private: анониму 404, инвестору 404, владельцу —
-      // предпросмотр с предупреждением «никто не увидит».
-      await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'DELETE' });
-      const hidden = await raw(`/v1/catalog/${projectCId}`);
-      const hiddenInv = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
-      const previewPrivate = await founderA.client.call(
-        `/v1/projects/${projectCId}/view-preview?audience=investors`,
-      );
-      check(
-        'режим private: Public View и Investor View — 404, предпросмотр владельцу — «никто»',
-        hidden.response.status === 404 &&
-          hiddenInv.response.status === 404 &&
-          previewPrivate.response.status === 200 &&
-          previewPrivate.json?.view === null &&
-          previewPrivate.json?.audienceSummary?.investors === 'never',
-        `${hidden.response.status} ${hiddenInv.response.status} ${previewPrivate.response.status} ${previewPrivate.json?.audienceSummary?.investors}`,
-      );
-      await founderA.client.call(`/v1/projects/${projectCId}/listing`, { method: 'POST' });
-    }
-
-    // ---------------------------------------------- 5.7.3: действия владельца
-    // Каждое подтверждение (подача, открытие, «Применить») — отдельный запрос
-    // предпросмотра; блоки 5.7.2–5.7.4 подряд упираются в потолок частоты
-    // основателя (120/мин). Пауза — как в рендер-проверках.
-    await pause(61_000);
-    {
-      // Посторонний без допуска не узнаёт даже о существовании проекта в
-      // закрытых режимах: ни названия, ни 403 — только 404.
-      await sql(`UPDATE lab.projects SET visibility = 'selected_investors' WHERE id = $1`, [
-        projectCId,
-      ]);
-      const strangerSelected = await founderB.client.call(
-        `/v1/projects/${projectCId}/investor-view`,
-      );
-      const investorSelected = await investor.client.call(
-        `/v1/projects/${projectCId}/investor-view`,
-      );
-      const anonSelected = await raw(`/v1/catalog/${projectCId}`);
-      check(
-        'selected_investors без разрешения: посторонний, инвестор с членством и аноним получают 404 без названия',
-        strangerSelected.response.status === 404 &&
-          investorSelected.response.status === 404 &&
-          anonSelected.response.status === 404 &&
-          !JSON.stringify(strangerSelected.json ?? '').includes('Раунд после публикации'),
-        `${strangerSelected.response.status} ${investorSelected.response.status} ${anonSelected.response.status}`,
-      );
-      // С 5.8 режим ставится действием владельца; сам по себе он ничего не
-      // открывает — проверка выше это и показывает. Выдача разрешений
-      // проверяется отдельным прогоном (scripts/smoke-project-access.mjs).
-      const selectedByApi = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
-        method: 'PUT',
-        body: { visibility: 'selected_investors' },
-      });
-      check(
-        'режим «выбранные инвесторы» ставится действием владельца (5.8)',
-        selectedByApi.response.status === 200 &&
-          selectedByApi.json?.visibility === 'selected_investors',
-        `статус ${selectedByApi.response.status} ${selectedByApi.json?.visibility ?? ''}`,
-      );
-      const registered = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
-        method: 'PUT',
-        body: { visibility: 'registered_investors' },
-      });
-      const anonRegistered = await raw(`/v1/catalog/${projectCId}`);
-      const investorRegistered = await investor.client.call(
-        `/v1/projects/${projectCId}/investor-view`,
-      );
-      check(
-        'режим registered_investors: анониму 404, допущенному инвестору — Investor View',
-        registered.response.status === 200 &&
-          registered.json?.visibility === 'registered_investors' &&
-          registered.json?.listingStatus === 'listed' &&
-          anonRegistered.response.status === 404 &&
-          investorRegistered.response.status === 200,
-        `${registered.response.status} ${registered.json?.visibility} ${anonRegistered.response.status} ${investorRegistered.response.status}`,
-      );
-      const backPublic = await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
-        method: 'PUT',
-        body: { visibility: 'public' },
-      });
-      check(
-        'режим public: анониму снова Public View',
-        backPublic.response.status === 200 &&
-          backPublic.json?.visibility === 'public' &&
-          (await raw(`/v1/catalog/${projectCId}`)).response.status === 200,
-      );
-
-      // Применение новых условий: только той версии, что видел владелец.
-      const consentBefore = await founderA.client.call(
-        `/v1/projects/${projectCId}/view-preview?audience=investors`,
-      );
-      const published = await setRoundVisibility(
-        'investors',
-        'дымовой прогон 5.7.3: новая версия условий для «Применить»',
-      );
-      const active = await activeForm();
-      const staleApply = await founderA.client.call(`/v1/projects/${projectCId}/disclosure/apply`, {
-        method: 'POST',
-        body: {
-          formVersion: consentBefore.json?.consent?.formVersion,
-          contentDigest: consentBefore.json?.contentDigest,
-        },
-      });
-      check(
-        'применение устаревшей версии условий отклонено — повторный просмотр',
-        published.response.status === 201 &&
-          staleApply.response.status === 409 &&
-          consentBefore.json?.consent?.formVersion !== active,
-        `${staleApply.response.status} ${consentBefore.json?.consent?.formVersion} → ${active}`,
-      );
-      const applied = await founderA.client.call(`/v1/projects/${projectCId}/disclosure/apply`, {
-        method: 'POST',
-        body: {
-          ...(await confirmApply(founderA.client, projectCId)),
-          roundId: roundC.json?.round?.id,
-        },
-      });
-      const consentAfter = await founderA.client.call(
-        `/v1/projects/${projectCId}/view-preview?audience=investors`,
-      );
-      check(
-        '«Применить» переводит согласие профиля и существующего раунда на активную версию без нового раунда',
-        applied.response.status === 201 &&
-          applied.json?.formVersion === active &&
-          applied.json?.roundDisclosureVersion === active &&
-          consentAfter.json?.consent?.formVersion === active &&
-          consentAfter.json?.consent?.roundDisclosureVersion === active &&
-          consentAfter.json?.consent?.roundId === roundC.json?.round?.id,
-        `${applied.response.status} ${JSON.stringify(applied.json ?? null)}`,
-      );
-
-      // Материал: закрыт по умолчанию, открывается только отметкой владельца.
-      const link = await founderA.client.call(`/v1/projects/${projectCId}/materials/link`, {
-        method: 'POST',
-        body: { url: 'https://example.com/product-573' },
-      });
-      const materialId = link.json?.id;
-      const beforeMark = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
-      const marked = await founderA.client.call(
-        `/v1/projects/${projectCId}/materials/${materialId}/visibility`,
-        { method: 'PUT', body: { visibility: 'investors' } },
-      );
-      const afterMark = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
-      check(
-        'материал закрыт по умолчанию и виден инвестору только после отметки владельца',
-        link.response.status === 201 &&
-          link.json?.visibility === 'private' &&
-          !(beforeMark.json?.materials ?? []).some((m) => m.id === materialId) &&
-          marked.response.status === 200 &&
-          marked.json?.visibility === 'investors' &&
-          (afterMark.json?.materials ?? []).some((m) => m.id === materialId),
-        `${link.response.status} ${marked.response.status} до ${(beforeMark.json?.materials ?? []).length} после ${(afterMark.json?.materials ?? []).length}`,
-      );
-      const publicMark = await founderA.client.call(
-        `/v1/projects/${projectCId}/materials/${materialId}/visibility`,
-        { method: 'PUT', body: { visibility: 'public' } },
-      );
-      check(
-        'отметка public для материала не принимается',
-        publicMark.response.status === 400,
-        `${publicMark.response.status}`,
-      );
-
-      // Подача = согласие на конкретный снимок; смена условий — повторный просмотр.
-      const staleSubmit = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
-        method: 'POST',
-        body: {
-          ...(await confirmSubmit(founderA.client, appC.json?.id)),
-          activeFormVersion: active + 1,
-        },
-      });
-      // Содержимое изменилось после предпросмотра (другая вкладка): подать по
-      // старому отпечатку нельзя — 409, а не молчаливая подача изменённых данных.
-      const seenDraft = await confirmSubmit(founderA.client, appC.json?.id);
-      await founderA.client.call(`/v1/applications/${appC.json?.id}`, {
-        method: 'PATCH',
-        body: { title: 'Изменено из другой вкладки' },
-      });
-      const changedSubmit = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
-        method: 'POST',
-        body: seenDraft,
-      });
-      check(
-        'ответы изменились после предпросмотра — подача по старому отпечатку отклонена (409)',
-        changedSubmit.response.status === 409,
-        `${changedSubmit.response.status} ${changedSubmit.json?.detail ?? ''}`,
-      );
-      const resubmitted = await founderA.client.call(`/v1/applications/${appC.json?.id}/submit`, {
-        method: 'POST',
-        body: await confirmSubmit(founderA.client, appC.json?.id),
-      });
-      const projectAfter = await founderA.client.call(`/v1/projects/${projectCId}`);
-      check(
-        'подача с устаревшей версией — 409; подача с активной переключает согласие на новый снимок',
-        staleSubmit.response.status === 409 &&
-          resubmitted.response.status === 201 &&
-          projectAfter.json?.disclosedVersionId === resubmitted.json?.id &&
-          projectAfter.json?.disclosureFormVersion === resubmitted.json?.schemaVersion,
-        `${staleSubmit.response.status} ${resubmitted.response.status} ${projectAfter.json?.disclosedVersionId === resubmitted.json?.id}`,
-      );
-
-      // Открытие раунда — только с подтверждением активной версии.
-      const draftRound = await founderA.client.call(`/v1/projects/${projectCId}/rounds`, {
-        method: 'POST',
-        body: {},
-      });
-      const staleOpen = await founderA.client.call(
-        `/v1/rounds/${draftRound.json?.round?.id}/open`,
-        {
-          method: 'POST',
-          body: {
-            ...(await confirmOpen(founderA.client, draftRound.json?.round?.id)),
-            confirmDisclosureVersion: active + 1,
-          },
-        },
-      );
-      const noBodyOpen = await founderA.client.call(
-        `/v1/rounds/${draftRound.json?.round?.id}/open`,
-        {
-          method: 'POST',
-        },
-      );
-      // Параметры раунда изменились после предпросмотра открытия — 409.
-      const seenRound = await confirmOpen(founderA.client, draftRound.json?.round?.id);
-      await founderA.client.call(`/v1/rounds/${draftRound.json?.round?.id}`, {
-        method: 'PATCH',
-        body: { target: '1500000.00', currency: 'RUB', fundingScope: 'project' },
-      });
-      const changedOpen = await founderA.client.call(
-        `/v1/rounds/${draftRound.json?.round?.id}/open`,
-        { method: 'POST', body: seenRound },
-      );
-      check(
-        'параметры раунда изменились после предпросмотра — открытие по старому отпечатку отклонено (409)',
-        changedOpen.response.status === 409,
-        `${changedOpen.response.status} ${changedOpen.json?.detail ?? ''}`,
-      );
-      // «Применить» по устаревшему отпечатку (раунд изменён из другой вкладки) — 409.
-      const seenApply = await confirmApply(founderA.client, projectCId);
-      await founderA.client.call(`/v1/rounds/${roundC.json?.round?.id}`, {
-        method: 'PATCH',
-        body: { investorMode: 'multiple' },
-      });
-      const changedApply = await founderA.client.call(
-        `/v1/projects/${projectCId}/disclosure/apply`,
-        { method: 'POST', body: { ...seenApply, roundId: roundC.json?.round?.id } },
-      );
-      check(
-        'раунд изменился после предпросмотра владельца — «Применить» по старому отпечатку отклонено (409)',
-        changedApply.response.status === 409,
-        `${changedApply.response.status} ${changedApply.json?.detail ?? ''}`,
-      );
-      check(
-        'открытие раунда без подтверждения версии — 400, с устаревшей — 409',
-        noBodyOpen.response.status === 400 && staleOpen.response.status === 409,
-        `${noBodyOpen.response.status} ${staleOpen.response.status}`,
-      );
-      await founderA.client.call(`/v1/rounds/${draftRound.json?.round?.id}/cancel`, {
-        method: 'POST',
-      });
-
-      // ------------------------------------ 5.7.5: прямые обращения и исключения
-      // Исключённый инвестор с членством: ни Investor View, ни карточки в
-      // каталоге, ни строки в списке — режим public его не спасает.
-      await sql(
-        `INSERT INTO lab.project_access_exclusions (id, project_id, excluded_user_id, created_by)
-         VALUES (public.uuid_generate_v7(), $1, $2, $3)`,
-        [projectCId, investor.userId, founderA.userId],
-      );
-      const excludedView = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
-      const excludedItem = await investor.client.call(`/v1/catalog/${projectCId}`);
-      const excludedList = await investor.client.call('/v1/catalog?limit=100');
-      check(
-        'исключённый инвестор: Investor View 404, карточка каталога 404, в списке нет',
-        excludedView.response.status === 404 &&
-          excludedItem.response.status === 404 &&
-          !(excludedList.json?.items ?? []).some((i) => i.id === projectCId),
-        `${excludedView.response.status} ${excludedItem.response.status}`,
-      );
-      await sql(
-        `UPDATE lab.project_access_exclusions SET revoked_at = now()
-          WHERE project_id = $1 AND excluded_user_id = $2 AND revoked_at IS NULL`,
-        [projectCId, investor.userId],
-      );
-      const restoredView = await investor.client.call(`/v1/projects/${projectCId}/investor-view`);
-      check(
-        'снятое исключение возвращает доступ',
-        restoredView.response.status === 200,
-        `${restoredView.response.status}`,
-      );
-
-      // Несколько ролей: чужой основатель с ролью инвестора на закрытом проекте
-      // не проходит ни новым, ни старым путём (старый пропускает роль, RLS — нет).
-      await sql(
-        `INSERT INTO identity.user_roles (user_id, role) VALUES ($1, 'investor')
-         ON CONFLICT DO NOTHING`,
-        [founderB.userId],
-      );
-      await founderB.client.call('/v1/auth/login', {
-        method: 'POST',
-        body: { email: founderB.email, password: founderB.password },
-      });
-      await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
-        method: 'PUT',
-        body: { visibility: 'private' },
-      });
-      const dualNew = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
-      const dualOld = await founderB.client.call(`/v1/projects/${projectCId}`);
-      const dualMaterials = await founderB.client.call(`/v1/projects/${projectCId}/materials`);
-      check(
-        'founder+investor на чужом private: Investor View 404, старая строка 404, материалы 404',
-        dualNew.response.status === 404 &&
-          dualOld.response.status === 404 &&
-          dualMaterials.response.status === 404,
-        `${dualNew.response.status} ${dualOld.response.status} ${dualMaterials.response.status}`,
-      );
-      await founderA.client.call(`/v1/projects/${projectCId}/visibility`, {
-        method: 'PUT',
-        body: { visibility: 'public' },
-      });
-      const dualPublicOld = await founderB.client.call(`/v1/projects/${projectCId}/materials`);
-      const dualPublicNew = await founderB.client.call(`/v1/projects/${projectCId}/investor-view`);
-      check(
-        'founder+investor на чужом public: старый список материалов — 404 (маршрут только команде), Investor View — по допуску',
-        dualPublicOld.response.status === 404 &&
-          dualPublicNew.response.status === 200 &&
-          dualPublicNew.json?.access?.materials === null,
-        `${dualPublicOld.response.status} ${dualPublicNew.response.status} ${JSON.stringify(dualPublicNew.json?.access ?? null)}`,
-      );
-    }
-  }
-
-  // Блоки 5.7.2–5.7.3 добавили основателю десятки запросов: потолок частоты
-  // (120/мин) успевает сработать на следующих проверках. Пауза — как в
-  // рендер-проверках, а не ослабление потолка ради прогона.
-  await pause(61_000);
-
-  const second = await founderA.client.call(`/v1/projects/${projectId}/rounds`, {
-    method: 'POST',
-    body: {},
-  });
-  const secondId = second.json?.round?.id;
-  await founderA.client.call(`/v1/rounds/${secondId}`, {
-    method: 'PATCH',
-    body: { target: '1000000.00', currency: 'RUB', fundingScope: 'project', answers: roundAnswers },
-  });
-  await founderA.client.call(`/v1/rounds/${secondId}/basis`, {
-    method: 'PUT',
-    body: { applicationVersionId: versionId, reason: 'второй' },
-  });
-  const secondOpen = await founderA.client.call(`/v1/rounds/${secondId}/open`, {
-    method: 'POST',
-    body: await confirmOpen(founderA.client, secondId),
-  });
-  check(
-    'второй незавершённый раунд на проект невозможен',
-    secondOpen.response.status === 409,
-    `статус ${secondOpen.response.status}`,
-  );
-
-  const paused = await founderA.client.call(`/v1/rounds/${roundId}/pause`, { method: 'POST' });
-  check('пауза: привлечение приостановлено', paused.json?.round?.status === 'paused');
-  const stillBlocked = await founderA.client.call(`/v1/rounds/${secondId}/open`, {
-    method: 'POST',
-    body: await confirmOpen(founderA.client, secondId),
-  });
-  check(
-    'пауза место не освобождает',
-    stillBlocked.response.status === 409,
-    `статус ${stillBlocked.response.status}`,
-  );
-  const resumed = await founderA.client.call(`/v1/rounds/${roundId}/resume`, { method: 'POST' });
-  check(
-    'возобновление тем же раундом',
-    resumed.json?.round?.id === roundId && resumed.json?.round?.status === 'open',
-  );
-
-  const history = await founderA.client.call(`/v1/rounds/${roundId}/basis-history`);
-  check('история оснований ведётся', (history.json?.items ?? []).length >= 1);
-
-  const closed = await founderA.client.call(`/v1/rounds/${roundId}/close`, {
-    method: 'POST',
-    body: { closeReason: 'withdrawn' },
-  });
-  check(
-    'закрытие с причиной',
-    closed.json?.round?.status === 'closed' && closed.json?.round?.closeReason === 'withdrawn',
-  );
-  const cancelSecond = await founderA.client.call(`/v1/rounds/${secondId}/cancel`, {
-    method: 'POST',
-  });
-  check('черновик отменён', cancelSecond.json?.round?.status === 'cancelled');
-
-  const countries = await raw('/v1/service-countries');
-  check(
-    'список стран обслуживания публичен',
-    countries.response.status === 200 && (countries.json?.items ?? []).some((c) => c.code === 'ru'),
-  );
   // Повторный выбор той же страны идемпотентен; смена уже установленной —
   // другая операция, переключения нет (реестр: контролируемая смена).
   const sameAgain = await founderA.client.call('/v1/me/service-country', {
@@ -2504,6 +1197,15 @@ console.warn('\n[раунды] профиль без раунда, чернов�
     'администратор заводит страну выключенной',
     (kz.response.status === 201 && kz.json?.isActive === false) || kz.response.status === 409,
     `статус ${kz.response.status}`,
+  );
+  const founderAdd = await founderA.client.call('/v1/admin/service-countries', {
+    method: 'POST',
+    body: { code: 'by' },
+  });
+  check(
+    'основатель не управляет странами обслуживания',
+    founderAdd.response.status === 403,
+    `статус ${founderAdd.response.status}`,
   );
   const toInactive = await founderA.client.call('/v1/me/service-country', {
     method: 'PUT',
@@ -2534,38 +1236,30 @@ console.warn('\n[раунды] профиль без раунда, чернов�
 
   // Регистрация со страной (5.6.5): активная — принимается и видна в профиле;
   // выключенная — отказ с полем serviceCountry.
-  {
-    const withCountry = await register('founder', 'country', { serviceCountry: 'ru' });
-    const me = await withCountry.client.call('/v1/auth/me');
-    check(
-      'регистрация со страной обслуживания: страна в профиле',
-      me.json?.serviceCountry === 'ru',
-      `${me.json?.serviceCountry}`,
-    );
-    const inactive = await makeClient().call('/v1/auth/register', {
-      method: 'POST',
-      body: {
-        email: `lab-inactive-${suffix}@test.local`,
-        password: `Pw-${crypto.randomUUID()}`,
-        displayName: 'Тест выключенной страны',
-        role: 'founder',
-        locale: 'ru-RU',
-        consents: CONSENTS,
-        serviceCountry: 'kz',
-      },
-    });
-    check(
-      'регистрация с выключенной страной отклонена с указанием поля',
-      (inactive.response.status === 400 || inactive.response.status === 422) &&
-        JSON.stringify(inactive.json ?? '').includes('serviceCountry'),
-      `статус ${inactive.response.status}`,
-    );
-  }
-
-  const policy = await founderA.client.call('/v1/service-countries/ru/policy');
+  const withCountry = await register('founder', 'country', { serviceCountry: 'ru' });
+  const meCountry = await withCountry.client.call('/v1/auth/me');
   check(
-    'условия страны читает вошедший; бесплатная граница выключена',
-    policy.response.status === 200 && policy.json?.config?.freeAttraction?.enabled === false,
+    'регистрация со страной обслуживания: страна в профиле',
+    meCountry.json?.serviceCountry === 'ru',
+    `${meCountry.json?.serviceCountry}`,
+  );
+  const inactive = await makeClient().call('/v1/auth/register', {
+    method: 'POST',
+    body: {
+      email: `lab-inactive-${suffix}@test.local`,
+      password: `Pw-${crypto.randomUUID()}`,
+      displayName: 'Тест выключенной страны',
+      role: 'founder',
+      locale: 'ru-RU',
+      consents: CONSENTS,
+      serviceCountry: 'kz',
+    },
+  });
+  check(
+    'регистрация с выключенной страной отклонена с указанием поля',
+    (inactive.response.status === 400 || inactive.response.status === 422) &&
+      JSON.stringify(inactive.json ?? '').includes('serviceCountry'),
+    `статус ${inactive.response.status}`,
   );
 }
 

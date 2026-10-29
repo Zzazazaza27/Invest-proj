@@ -5,7 +5,8 @@
  * Пакет существует ровно для одного: расхождение сервера с контрактом должно
  * обнаруживаться сразу, а не превращаться в `undefined` в глубине интерфейса.
  * Но сам пакет до Ф10 ни разу не вызывался против запущенного API — и три его
- * метода (`taxonomy`, `currentSeason`, `rating`) не работали вовсе: сервер
+ * метода (`taxonomy` и удалённые с сезонами в 2.1-W05 `currentSeason`,
+ * `rating`) не работали вовсе: сервер
  * отдаёт конверт, а клиент ждал голые данные. Нашлось это рендер-проверкой
  * витрины, то есть случайно.
  *
@@ -63,11 +64,6 @@ await probe(
   (r) => r.service === 'unicorn-launch-core',
 );
 await probe(
-  'pricing',
-  () => api.pricing(),
-  (r) => Array.isArray(r.plans) && Boolean(r.feeSchedule),
-);
-await probe(
   'taxonomy',
   () => api.taxonomy(),
   (r) => Array.isArray(r),
@@ -77,28 +73,6 @@ await probe(
   () => api.catalog({ limit: 3 }),
   (r) => Array.isArray(r.items),
 );
-
-let seasonId = null;
-await probe(
-  'currentSeason',
-  async () => {
-    const season = await api.currentSeason();
-    seasonId = season?.id ?? null;
-    return season;
-  },
-  // null — законный ответ: активного сезона может не быть.
-  (r) => r === null || typeof r.number === 'number',
-);
-
-if (seasonId) {
-  await probe(
-    'rating',
-    () => api.rating(seasonId),
-    (r) => Array.isArray(r),
-  );
-} else {
-  check('rating пропущен: активного сезона нет', true, 'нечего проверять');
-}
 
 // --------------------------------------------------- методы под сессией
 console.warn('\n[2] Методы, требующие сессии');
@@ -169,11 +143,6 @@ console.warn('\n[2] Методы, требующие сессии');
     (r) => Array.isArray(r),
   );
   await probe(
-    'billing.subscriptions',
-    () => authed.billing.subscriptions(),
-    (r) => Array.isArray(r),
-  );
-  await probe(
     'notifications.list',
     () => authed.notifications.list(),
     (r) => r !== undefined,
@@ -233,7 +202,7 @@ await probe(
   // не сработает вовсе — иначе прогон повиснет вместо того, чтобы упасть.
   const outcome = await Promise.race([
     hanging
-      .pricing()
+      .health()
       .then(() => 'ответ пришёл — прерывания не было')
       .catch((error) => `прервано за ${Date.now() - started} мс (${error.code ?? error.name})`),
     new Promise((resolve) => setTimeout(() => resolve('ЗАВИСЛО: прерывания не произошло'), 5_000)),

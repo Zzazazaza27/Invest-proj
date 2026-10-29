@@ -16,7 +16,7 @@
  */
 import pg from 'pg';
 import { connect, StringCodec } from 'nats';
-import { createHmac, createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createHash, createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -107,6 +107,25 @@ const CONSENTS = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind)
   locale: 'ru-RU',
 }));
 const suffix = `${Date.now() % 1e9}`;
+
+/**
+ * Секрет подписи вебхука так, как его кладёт ядро (`sealDirect` домена
+ * webhook_secrets): AES-256-GCM на KEK, IV(12) + TAG(16) + шифртекст, AAD
+ * `webhook:signing`. Подписка заводится прямо в БД, но строка обязана быть
+ * настоящей: заглушка вместо шифртекста роняла бы ротацию ключа
+ * (`rotate-kek --domain webhook_secrets`) и доставку, которая секрет открывает.
+ */
+function sealWebhookSecret(secret) {
+  const kek = Buffer.from(process.env.KEK_WEBHOOK_SECRETS ?? '', 'base64');
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', kek, iv, { authTagLength: 16 });
+  cipher.setAAD(Buffer.from('webhook:signing', 'utf8'));
+  const body = Buffer.concat([cipher.update(secret, 'utf8'), cipher.final()]);
+  return {
+    ciphertext: Buffer.concat([iv, cipher.getAuthTag(), body]),
+    fingerprint: createHash('sha256').update(secret, 'utf8').digest(),
+  };
+}
 
 function blindIndex(email) {
   return createHmac('sha256', Buffer.from(process.env.KEK_SEARCH_INDEX ?? '', 'base64'))
@@ -216,7 +235,7 @@ const eventId = (
        (id, aggregate_type, aggregate_id, event_type, payload_jsonb, nats_subject,
         aggregate_version, message_key)
      VALUES (public.uuid_generate_v7(), 'project', public.uuid_generate_v7(),
-             'lab.project.graduated', '{"projectId":"smoke"}'::jsonb, $1, 1, 'smoke')
+             'lab.listing.published', '{"projectId":"smoke"}'::jsonb, $1, 1, 'smoke')
      RETURNING id`,
     [subject],
   )
@@ -253,7 +272,7 @@ const eventId = (
   const envelope = received[0];
   check(
     'конверт содержит verb и версию схемы',
-    envelope?.verb === 'lab.project.graduated' && envelope?.schemaVersion === 1,
+    envelope?.verb === 'lab.listing.published' && envelope?.schemaVersion === 1,
   );
   check(
     'конверт содержит агрегат и его версию',
@@ -298,9 +317,9 @@ let token;
     body: {
       name: 'Подписчик',
       clientId,
-      // graduates:read нужен для подписки на lab.project.graduated: с Ф42
-      // право подписки определяют скоупы данных, а не один webhooks:manage.
-      scopes: ['webhooks:manage', 'seasons:read', 'graduates:read'],
+      // С 2.1-W05 других скоупов нет: webhooks:manage даёт право управлять
+      // подписками, но ни одно событие им не покрыто (см. ниже).
+      scopes: ['webhooks:manage'],
       mtlsCertFingerprint: 'd'.repeat(64),
     },
   });
@@ -334,7 +353,7 @@ for (const [label, url] of [
 ]) {
   const { response } = await api('/v1/integration/webhooks', {
     method: 'POST',
-    body: { url, subscribedVerbs: ['lab.project.graduated'] },
+    body: { url, subscribedVerbs: ['lab.listing.published'] },
   });
   check(`адрес отвергнут: ${label}`, response.status === 400, `HTTP ${response.status}`);
 }
@@ -351,13 +370,14 @@ for (const [label, url] of [
 }
 
 {
-  // Подписка на денежное событие скоупами этого аккаунта НЕ покрыта: до Ф42
-  // хватало одного webhooks:manage, и сумма договора уходила в чужой вебхук.
+  // Право подписки определяют скоупы данных, а не один webhooks:manage (Ф42):
+  // иначе сумма договора уходила в чужой вебхук. С 2.1-W05 скоупов данных нет,
+  // и подписка на любое существующее событие отвергается как «нет права».
   const { response } = await api('/v1/integration/webhooks', {
     method: 'POST',
     body: {
-      url: 'https://example.org/unicorn-money-hook',
-      subscribedVerbs: ['investment.agreement.created'],
+      url: 'https://example.org/unicorn-hook',
+      subscribedVerbs: ['lab.listing.published'],
     },
   });
   check(
@@ -367,45 +387,33 @@ for (const [label, url] of [
   );
 }
 
+// Подписку для проверки очереди доставки заводим напрямую в БД: через API
+// подписаться сейчас не на что (см. выше). Шифрование секрета подписи при
+// регистрации поэтому здесь не проверяется — пути регистрации, который дошёл
+// бы до записи, нет. Секрет подписи — свой, для проверки формы подписи.
+const signingSecret = randomBytes(32).toString('base64url');
 let webhookId;
-let signingSecret;
 {
-  const { response, json } = await api('/v1/integration/webhooks', {
-    method: 'POST',
-    body: {
-      url: 'https://example.org/unicorn-hook',
-      subscribedVerbs: ['lab.project.graduated', 'lab.rating.published'],
-    },
-  });
-  check('подписка зарегистрирована', response.status < 400, `HTTP ${response.status}`);
-  webhookId = json?.id;
-  signingSecret = json?.signingSecret;
-  check(
-    'секрет подписи выдан один раз',
-    typeof signingSecret === 'string' && signingSecret.length >= 32,
+  const [accountRow] = await sql(
+    'SELECT id FROM integration.service_accounts WHERE client_id = $1',
+    [clientId],
   );
-}
-{
+  const sealed = sealWebhookSecret(signingSecret);
+  const [row] = await sql(
+    `INSERT INTO integration.webhook_endpoints
+       (id, service_account_id, url, subscribed_verbs, secret_ciphertext, secret_kms_key_id,
+        secret_fingerprint)
+     VALUES (public.uuid_generate_v7(), $1, 'https://example.org/unicorn-hook',
+             ARRAY['lab.listing.published', 'lab.listing.unpublished'], $2,
+             'local/webhook_secrets/v1', $3)
+     RETURNING id`,
+    [accountRow.id, sealed.ciphertext, sealed.fingerprint],
+  );
+  webhookId = row.id;
   const { json } = await api('/v1/integration/webhooks');
   const listed = (json?.items ?? []).find((w) => w.id === webhookId);
+  check('подписка видна владельцу', listed !== undefined);
   check('в списке подписок секрета нет', listed !== undefined && !('signingSecret' in listed));
-
-  const [row] = await sql(
-    'SELECT secret_ciphertext, secret_fingerprint FROM integration.webhook_endpoints WHERE id = $1',
-    [webhookId],
-  );
-  // Значение получено из ответа API минуту назад, в исходниках его нет:
-  // правило SAST реагирует на имя переменной.
-  // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
-  const plain = Buffer.from(signingSecret, 'utf8');
-  check('секрет в БД зашифрован', !row.secret_ciphertext.includes(plain));
-  // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
-  const expected = createHash('sha256').update(signingSecret, 'utf8').digest();
-  check(
-    'отпечаток секрета совпадает',
-    row.secret_fingerprint.length === expected.length &&
-      timingSafeEqual(row.secret_fingerprint, expected),
-  );
 }
 
 // -------------------------------------------------------------- доставка
@@ -417,7 +425,7 @@ console.warn('\n[3] Очередь доставки');
          (id, aggregate_type, aggregate_id, event_type, payload_jsonb, nats_subject,
           aggregate_version, message_key)
        VALUES (public.uuid_generate_v7(), 'project', public.uuid_generate_v7(),
-               'lab.project.graduated', '{"projectId":"hook"}'::jsonb, $1, 2, 'hook')
+               'lab.listing.published', '{"projectId":"hook"}'::jsonb, $1, 2, 'hook')
        RETURNING id`,
       [subject],
     )
@@ -449,8 +457,8 @@ console.warn('\n[3] Очередь доставки');
       `INSERT INTO audit.outbox_events
          (id, aggregate_type, aggregate_id, event_type, payload_jsonb, nats_subject,
           aggregate_version, message_key)
-       VALUES (public.uuid_generate_v7(), 'season', public.uuid_generate_v7(),
-               'lab.season.opened', '{}'::jsonb, $1, 1, 'season')
+       VALUES (public.uuid_generate_v7(), 'project', public.uuid_generate_v7(),
+               'lab.project.updated', '{}'::jsonb, $1, 1, 'other')
        RETURNING id`,
       [subject],
     )
@@ -498,7 +506,7 @@ console.warn('\n[4] Форма подписи доставки');
 {
   // Подпись считается тем же способом, что и в ядре: t=<unix>,v1=<hmac hex>
   // от строки `${timestamp}.${body}`. Проверяем совместимость формулы.
-  const body = JSON.stringify({ eventId: 'x', verb: 'lab.project.graduated' });
+  const body = JSON.stringify({ eventId: 'x', verb: 'lab.listing.published' });
   const timestamp = Math.floor(Date.now() / 1000);
   const mac = createHmac('sha256', signingSecret)
     .update(`${timestamp}.${body}`, 'utf8')

@@ -199,11 +199,11 @@ try {
 
   // ----------------------------------------------------------- [3] фильтры
   console.warn('\n[3] Фильтры, сортировка, страницы');
-  const experts = await admin.call(q({ role: 'expert', perPage: '100' }));
+  const admins = await admin.call(q({ role: 'admin', perPage: '100' }));
   check(
     'Фильтр по роли отбирает только её носителей',
-    experts.json?.items?.length > 0 && experts.json.items.every((u) => u.roles.includes('expert')),
-    `экспертов ${experts.json?.total}`,
+    admins.json?.items?.length > 0 && admins.json.items.every((u) => u.roles.includes('admin')),
+    `администраторов ${admins.json?.total}`,
   );
 
   const active = await admin.call(q({ status: 'active', perPage: '100' }));
@@ -272,7 +272,7 @@ try {
   check('Карточка открывается', card.status === 200, `HTTP ${card.status}`);
   check(
     'В карточке собраны разделы, а не одна строка',
-    ['roles', 'kyc', 'projects', 'entities', 'capabilities', 'assignments', 'history'].every(
+    ['roles', 'kyc', 'projects', 'entities', 'capabilities', 'history'].every(
       (k) => k in (card.json ?? {}),
     ),
     Object.keys(card.json ?? {}).length + ' полей',
@@ -367,16 +367,12 @@ try {
     `HTTP ${founderReveal.status}`,
   );
 
-  // Роль организатора при выключенных сезонах срезается на guard'е (M088):
-  // это не ошибка проверки, а действующее решение — и раздел ему закрыт.
-  const organizer = makeClient();
-  await organizer.login('demo-organizer@unicorn.local', DEMO_PASSWORD);
-  const organizerList = await organizer.call('/v1/admin/users');
-  check(
-    'Организатору при выключенных сезонах раздел закрыт',
-    organizerList.status === 403,
-    `HTTP ${organizerList.status}`,
-  );
+  // Роль организатора удалена в 2.1-W05; вторая неадминская роль — инвестор,
+  // и раздел ему закрыт так же, как основателю.
+  const investor = makeClient();
+  await investor.login('demo-investor@unicorn.local', DEMO_PASSWORD);
+  const investorList = await investor.call('/v1/admin/users');
+  check('Инвестору закрыт список', investorList.status === 403, `HTTP ${investorList.status}`);
 
   // ------------------------------------------------- [8] блокировка аккаунта
   console.warn('\n[8] Блокировка и снятие блокировки');

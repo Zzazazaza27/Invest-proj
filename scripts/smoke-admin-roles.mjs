@@ -159,7 +159,7 @@ console.warn('\n[1] Кто может раздавать права');
 {
   const { response } = await admin.client.call(`/v1/admin/users/${admin.userId}/roles`, {
     method: 'POST',
-    body: { role: 'organizer' },
+    body: { role: 'investor' },
   });
   check(
     'администратор не выдаёт роль сам себе',
@@ -173,18 +173,18 @@ console.warn('\n[2] Выдача и снятие');
 {
   const { response, json } = await admin.client.call(`/v1/admin/users/${target.userId}/roles`, {
     method: 'POST',
-    body: { role: 'expert' },
+    body: { role: 'investor' },
   });
   check('роль выдана', response.status < 400, `HTTP ${response.status}`);
   check(
     'роль видна в ответе',
-    (json?.items ?? []).some((r) => r.role === 'expert' && r.revokedAt === null),
+    (json?.items ?? []).some((r) => r.role === 'investor' && r.revokedAt === null),
   );
 }
 {
   const { response } = await admin.client.call(`/v1/admin/users/${target.userId}/roles`, {
     method: 'POST',
-    body: { role: 'expert' },
+    body: { role: 'investor' },
   });
   check(
     'повторная выдача той же роли отклонена',
@@ -200,10 +200,28 @@ console.warn('\n[2] Выдача и снятие');
   check('роль вне списка не принимается', response.status === 400, `HTTP ${response.status}`);
 }
 {
+  // Роли эксперта, организатора и шоураннера удалены в 2.1-W05. Выдать их
+  // нельзя ни под каким видом: иначе в токене снова появится роль, под которую
+  // ядро больше ничего не проверяет.
+  const statuses = [];
+  for (const role of ['expert', 'organizer', 'showrunner']) {
+    const { response } = await admin.client.call(`/v1/admin/users/${target.userId}/roles`, {
+      method: 'POST',
+      body: { role },
+    });
+    statuses.push(`${role} ${response.status}`);
+  }
+  check(
+    'удалённые роли не выдаются',
+    statuses.every((item) => item.endsWith(' 400')),
+    statuses.join(', '),
+  );
+}
+{
   const missing = '00000000-0000-7000-8000-000000000000';
   const { response } = await admin.client.call(`/v1/admin/users/${missing}/roles`, {
     method: 'POST',
-    body: { role: 'expert' },
+    body: { role: 'investor' },
   });
   check(
     'роль несуществующему пользователю не выдаётся',
@@ -213,19 +231,19 @@ console.warn('\n[2] Выдача и снятие');
 }
 {
   const { response, json } = await admin.client.call(
-    `/v1/admin/users/${target.userId}/roles/expert`,
+    `/v1/admin/users/${target.userId}/roles/investor`,
     { method: 'DELETE' },
   );
   check('роль снята', response.status < 400, `HTTP ${response.status}`);
-  const active = (json?.items ?? []).filter((r) => r.role === 'expert' && r.revokedAt === null);
+  const active = (json?.items ?? []).filter((r) => r.role === 'investor' && r.revokedAt === null);
   check('снятая роль больше не действует', active.length === 0);
   check(
     'история выдачи сохранена',
-    (json?.items ?? []).some((r) => r.role === 'expert' && r.revokedAt !== null),
+    (json?.items ?? []).some((r) => r.role === 'investor' && r.revokedAt !== null),
   );
 }
 {
-  const { response } = await admin.client.call(`/v1/admin/users/${target.userId}/roles/expert`, {
+  const { response } = await admin.client.call(`/v1/admin/users/${target.userId}/roles/investor`, {
     method: 'DELETE',
   });
   check(
@@ -317,9 +335,15 @@ console.warn('\n[5] Машиночитаемое описание API');
   check('схемы выведены из контрактов', schemas.length > 50, `схем: ${schemas.length}`);
   check(
     'ключевые схемы на месте',
-    ['Season', 'Graduate', 'Notification', 'ExpertAssignment'].every((n) => schemas.includes(n)),
+    ['ProjectSummary', 'Notification', 'WebhookEndpoint', 'ServiceCountry'].every((n) =>
+      schemas.includes(n),
+    ),
     schemas.slice(0, 3).join(', '),
   );
+  // Контракты сезонов, выпускников и экспертизы удалены в 2.1-W05: их схема в
+  // описании была бы обещанием API, которого нет.
+  const stale = ['Season', 'Graduate', 'ExpertAssignment'].filter((n) => schemas.includes(n));
+  check('схем удалённых контуров нет', stale.length === 0, stale.join(', ') || 'нет');
   check(
     'пропущенные схемы объявлены честно',
     Array.isArray(json?.['x-schemas-skipped']),
@@ -327,7 +351,7 @@ console.warn('\n[5] Машиночитаемое описание API');
   );
   check(
     'скоупы интеграции перечислены',
-    (json?.['x-integration-scopes'] ?? []).includes('graduates:read'),
+    (json?.['x-integration-scopes'] ?? []).includes('webhooks:manage'),
   );
 
   const text = JSON.stringify(json);

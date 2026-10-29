@@ -1,5 +1,7 @@
 # Чистое локальное развёртывание: сброс данных и восстановление
 
+> **Статус после 2.1-W05 (29.10.2026):** заявки, анкеты, раунды, пакеты, подписки, платежи и начисления удалены из кода и базы (миграция M150), часть перечисленных ниже прогонов удалена вместе с ними. Порядок сохранён как история процедуры 2026-09-19; текущий состав прогонов — `docs/testing/registry.md`.
+
 Порядок, по которому локальные базы и хранилище приводятся к чистому
 состоянию, а стенд — к рабочему. Проверен 2026-09-19 (обе базы пересозданы с
 нуля, все проверки зелёные).
@@ -124,7 +126,6 @@ node scripts/smoke-round-packages.mjs   # 40
 node scripts/smoke-round-pricing.mjs    # 26
 node scripts/smoke-commission.mjs       # 35
 node scripts/smoke-operator-notifications.mjs  # 11
-node scripts/smoke-staff-capabilities.mjs  # 39
 LAB_URL=http://127.0.0.1/lab/ node scripts/render-check-lab-v2.mjs   # 68
 LAB_URL=http://127.0.0.1/lab/ node scripts/render-check-lab.mjs      # 41
 ADMIN_URL=http://127.0.0.1/admin/ LOGIN_URL=http://127.0.0.1/login/   node scripts/render-check-admin-countries.mjs                      # 19

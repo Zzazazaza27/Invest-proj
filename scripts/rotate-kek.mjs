@@ -11,7 +11,7 @@
 // wrapped_dek перестанут открываться. Правильная ротация данные не трогает.
 //
 // Не все домены одинаковы — у каждого класса свой режим (Ф30):
-//   • конвертные (passport_sensitive, kyb_documents, investment_documents)
+//   • конвертные (passport_sensitive, kyb_documents)
 //     — переобёртка DEK, дёшево, данные не читаются;
 //   • прямой (webhook_secrets) — sealDirect шифрует секрет самим KEK:
 //     ПЕРЕШИФРОВКА каждого secret_ciphertext с контролем на строке;
@@ -60,27 +60,12 @@ const ENVELOPE = {
       dek: 'contact_wrapped_dek',
       probe: { column: 'email_ciphertext', aad: 'field:email' },
     },
-    // Факты паспорта категорий finance/legal (Э14, ADR-008): шифртекст лежит в
-    // value_jsonb->>'enc' (base64), поэтому пробной колонки для расшифровки нет.
-    { table: 'scoring.passport_facts', dek: 'value_wrapped_dek', probe: null },
   ],
   kyb_documents: [
     {
       table: 'kyc.business_entities',
       dek: 'entity_wrapped_dek',
       probe: { column: 'inn_ciphertext', aad: 'field:inn' },
-    },
-  ],
-  investment_documents: [
-    { table: 'investments.investment_offers', dek: 'document_wrapped_dek', probe: null },
-    { table: 'investments.investment_agreements', dek: 'document_wrapped_dek', probe: null },
-  ],
-  // Ключи LLM-провайдеров из панели (ADR-008 §2, M066).
-  ai_provider_secrets: [
-    {
-      table: 'scoring.ai_provider_credentials',
-      dek: 'wrapped_dek',
-      probe: { column: 'api_key_ciphertext', aad: 'field:api_key' },
     },
   ],
 };
@@ -128,12 +113,8 @@ const ENV_BY_DOMAIN = {
   kyc_documents: 'KEK_KYC_DOCUMENTS',
   kyb_documents: 'KEK_KYB_DOCUMENTS',
   passport_sensitive: 'KEK_PASSPORT_SENSITIVE',
-  investment_documents: 'KEK_INVESTMENT_DOCUMENTS',
-  nominal_account_evidence: 'KEK_NOMINAL_ACCOUNT_EVIDENCE',
-  billing_documents: 'KEK_BILLING_DOCUMENTS',
   search_index: 'KEK_SEARCH_INDEX',
   webhook_secrets: 'KEK_WEBHOOK_SECRETS',
-  ai_provider_secrets: 'KEK_AI_PROVIDER_SECRETS',
 };
 
 function encrypt(key, plaintext, aad) {
@@ -438,7 +419,7 @@ async function rotateSearchIndex() {
   let outOfPipeline = 0;
 
   // Валидная конвертная обёртка — ровно IV(12) + TAG(16) + DEK(32) байта.
-  // Фикстуры смоуков (`smoke-investments`: '\x00' вместо шифртекста, digest
+  // Фикстуры прогонов (удалённого `smoke-investments`: '\x00' вместо шифртекста, digest
   // вместо HMAC) в конвейере не участвуют: их blind index не зависит от KEK,
   // и смена ключа их не трогает. Они считаются ОТДЕЛЬНО и печатаются — но не
   // валят ротацию. Повреждённая строка с валидной обёрткой — по-прежнему стоп.

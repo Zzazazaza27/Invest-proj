@@ -34,9 +34,7 @@ services:
       - ../apps/web-public/dist:/srv/web-public:ro
       - ../apps/lab/dist:/srv/lab:ro
       - ../apps/investor/dist:/srv/investor:ro
-      - ../apps/expert/dist:/srv/expert:ro
       - ../apps/admin/dist:/srv/admin:ro
-      - ../apps/staff/dist:/srv/staff:ro
       - ../apps/auth/dist:/srv/auth:ro
       # Служебная консоль монтируется наравне с остальными. Прежде её прятали
       # от боевого контура тремя рубежами (отдельная сборка, отдельный
@@ -85,9 +83,7 @@ services:
       - ../apps/web-public/dist:/srv/web-public:ro
       - ../apps/lab/dist:/srv/lab:ro
       - ../apps/investor/dist:/srv/investor:ro
-      - ../apps/expert/dist:/srv/expert:ro
       - ../apps/admin/dist:/srv/admin:ro
-      - ../apps/staff/dist:/srv/staff:ro
       - ../apps/auth/dist:/srv/auth:ro
       - ../apps/console/dist:/srv/console:ro
     extra_hosts:

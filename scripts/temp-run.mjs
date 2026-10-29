@@ -12,7 +12,7 @@
  * Поэтому переменные подставляются здесь, все сразу, и помнить их не нужно.
  *
  * Запуск:
- *   node scripts/temp-run.mjs scripts/render-check-admin-questions.mjs
+ *   node scripts/temp-run.mjs scripts/render-check-admin-countries.mjs
  *   npm run temp:run -- scripts/render-check-admin-countries.mjs
  */
 import pg from 'pg';

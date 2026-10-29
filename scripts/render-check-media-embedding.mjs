@@ -31,10 +31,10 @@ import { startProbeRun } from './lib/probe-run.mjs';
 import {
   CONSENTS,
   blindIndex,
-  createProjectWithDraftRound,
+  createProject,
   loadDotEnv,
   makePool,
-} from './lib/round-pricing-fixture.mjs';
+} from './lib/project-fixture.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -209,12 +209,12 @@ let foreignServer = null;
 
 try {
   // Закрытый проект (режим по умолчанию — только команда) с логотипом.
-  const closed = await createProjectWithDraftRound(founder.client, sql, suffix);
+  const closed = await createProject(founder.client, sql, suffix);
   await uploadLogo(founder.client, closed.project.id);
   const closedUrl = `${CORE_URL}/v1/projects/${closed.project.id}/media/logo/card`;
 
   // Публичный проект с логотипом.
-  const open = await createProjectWithDraftRound(founder.client, sql, `${suffix}b`);
+  const open = await createProject(founder.client, sql, `${suffix}b`);
   await uploadLogo(founder.client, open.project.id);
   await founder.client.json(`/v1/projects/${open.project.id}/visibility`, {
     method: 'PUT',

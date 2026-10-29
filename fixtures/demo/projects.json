@@ -31,12 +31,23 @@
       "geoCountry": "RU",
       "geoRegion": "Красноярский край",
       "investmentAsk": "45000000.00",
-      "status": "graduated",
+      "status": "draft",
       "listingStatus": "listed",
       "materials": [
-        { "type": "deck", "file": "aeroseed-deck.pdf", "contentType": "application/pdf" },
-        { "type": "doc", "file": "aeroseed-unit-economics.pdf", "contentType": "application/pdf" },
-        { "type": "product_link", "url": "https://aeroseed.example.ru/season-2025" }
+        {
+          "type": "deck",
+          "file": "aeroseed-deck.pdf",
+          "contentType": "application/pdf"
+        },
+        {
+          "type": "doc",
+          "file": "aeroseed-unit-economics.pdf",
+          "contentType": "application/pdf"
+        },
+        {
+          "type": "product_link",
+          "url": "https://aeroseed.example.ru/season-2025"
+        }
       ]
     },
     {
@@ -50,12 +61,23 @@
       "geoCountry": "RU",
       "geoRegion": "Республика Татарстан",
       "investmentAsk": "120000000.00",
-      "status": "finalist",
+      "status": "draft",
       "listingStatus": "listed",
       "materials": [
-        { "type": "deck", "file": "tochka-deck.pdf", "contentType": "application/pdf" },
-        { "type": "doc", "file": "tochka-screen.png", "contentType": "image/png" },
-        { "type": "product_link", "url": "https://tochka-sborki.example.ru" }
+        {
+          "type": "deck",
+          "file": "tochka-deck.pdf",
+          "contentType": "application/pdf"
+        },
+        {
+          "type": "doc",
+          "file": "tochka-screen.png",
+          "contentType": "image/png"
+        },
+        {
+          "type": "product_link",
+          "url": "https://tochka-sborki.example.ru"
+        }
       ]
     },
     {
@@ -69,11 +91,19 @@
       "geoCountry": "RU",
       "geoRegion": "Санкт-Петербург",
       "investmentAsk": "18000000.00",
-      "status": "expert_review",
+      "status": "draft",
       "listingStatus": "listed",
       "materials": [
-        { "type": "deck", "file": "ritm-deck.pdf", "contentType": "application/pdf" },
-        { "type": "doc", "file": "ritm-clinical-summary.pdf", "contentType": "application/pdf" }
+        {
+          "type": "deck",
+          "file": "ritm-deck.pdf",
+          "contentType": "application/pdf"
+        },
+        {
+          "type": "doc",
+          "file": "ritm-clinical-summary.pdf",
+          "contentType": "application/pdf"
+        }
       ]
     },
     {
@@ -87,9 +117,14 @@
       "geoCountry": "RU",
       "geoRegion": "Ставропольский край",
       "investmentAsk": "3500000.00",
-      "status": "submitted",
+      "status": "draft",
       "listingStatus": "not_listed",
-      "materials": [{ "type": "product_link", "url": "https://polevoy-zhurnal.example.ru/pilot" }]
+      "materials": [
+        {
+          "type": "product_link",
+          "url": "https://polevoy-zhurnal.example.ru/pilot"
+        }
+      ]
     },
     {
       "key": "kolba",
@@ -105,7 +140,11 @@
       "status": "draft",
       "listingStatus": "unlisted",
       "materials": [
-        { "type": "doc", "file": "kolba-lesson-plan.pdf", "contentType": "application/pdf" }
+        {
+          "type": "doc",
+          "file": "kolba-lesson-plan.pdf",
+          "contentType": "application/pdf"
+        }
       ]
     }
   ],

@@ -11,7 +11,7 @@
  * работающая защита, а не сбой, и обходить её нельзя.
  *
  * Запуск: node scripts/security-audit-full.mjs
- * Требуется: БД, NATS, core на 4300, ai-gateway на 8100, фронтенды на 5173–5177.
+ * Требуется: БД, NATS, core на 4300, фронтенды на 5173–5177.
  */
 import { spawnSync } from 'node:child_process';
 import { dirname, join } from 'node:path';
@@ -144,7 +144,6 @@ run('целостность SAST-конфига', 'node', ['scripts/check-sast-c
 run('SAST: правила проекта', 'semgrep', ['--error', '--config', '.semgrep/guardian.yml', '.']);
 run('SAST: OWASP Top-10', 'semgrep', ['--error', '--config', 'p/owasp-top-ten', '.']);
 run('аудит зависимостей npm', 'npm', ['audit', '--audit-level=high']);
-run('аудит зависимостей python', 'node', ['scripts/gate-ai-gateway.mjs']);
 run(
   'секрет-скан',
   'gitleaks',
@@ -188,15 +187,9 @@ console.warn('\n--- Живые прогоны контуров ---');
 const LIVE = [
   ['периметр core', 'scripts/smoke-core.mjs'],
   ['KYC, проекты, каталог', 'scripts/smoke-lab.mjs'],
-  ['биллинг и админский контур', 'scripts/smoke-billing.mjs'],
-  ['регулируемый контур ОИП', 'scripts/smoke-investments.mjs'],
-  ['экспертиза, сезон, уведомления', 'scripts/smoke-experts.mjs'],
   ['Integration API', 'scripts/smoke-integration.mjs'],
   ['события и вебхуки', 'scripts/smoke-events.mjs'],
   ['роли и описание API', 'scripts/smoke-admin-roles.mjs'],
-  ['закрытый техдолг', 'scripts/smoke-techdebt.mjs'],
-  ['AI-контур', 'scripts/smoke-ai.mjs'],
-  ['сквозной сценарий платформы', 'scripts/e2e-full-cycle.mjs'],
 ];
 // Пауза ПЕРЕД каждым прогоном, включая первый: лимит мог быть израсходован
 // тем, кто запускал проверки вручную до аудита, и тогда первый же прогон
@@ -214,8 +207,6 @@ pause(62, 'лимит класса auth');
 run('рендер: кабинет основателя', 'node', ['scripts/render-check-lab.mjs']);
 pause(62, 'лимит класса auth');
 run('рендер: кабинет инвестора', 'node', ['scripts/render-check-investor.mjs']);
-pause(62, 'лимит класса auth');
-run('рендер: кабинет эксперта', 'node', ['scripts/render-check-expert.mjs']);
 pause(62, 'лимит класса auth');
 run('рендер: админский кабинет', 'node', ['scripts/render-check-admin.mjs']);
 

@@ -52,7 +52,7 @@ if (!PASSWORD) {
   );
   process.exit(1);
 }
-const ROLES = ['founder', 'investor', 'expert', 'organizer', 'admin'];
+const ROLES = ['founder', 'investor', 'admin'];
 
 function loadDotEnv() {
   const envFile = join(ROOT, '.env');

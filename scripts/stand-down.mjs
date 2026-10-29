@@ -39,12 +39,10 @@ const step = (text) => console.warn(`\n▸ ${text}`);
  */
 const HOST_SERVICES = [
   { port: PORTS.core, name: 'ядро', expect: 'main.js' },
-  { port: PORTS.aiGateway, name: 'AI-шлюз', expect: 'uvicorn' },
   { port: PORTS.webPublic, name: 'dev-сервер витрины', expect: 'vite' },
   { port: PORTS.admin, name: 'dev-сервер админки', expect: 'vite' },
   { port: PORTS.lab, name: 'dev-сервер кабинета основателя', expect: 'vite' },
   { port: PORTS.investor, name: 'dev-сервер кабинета инвестора', expect: 'vite' },
-  { port: PORTS.expert, name: 'dev-сервер кабинета эксперта', expect: 'vite' },
   { port: PORTS.console, name: 'dev-сервер консоли', expect: 'vite' },
   { port: PORTS.auth, name: 'dev-сервер входа', expect: 'vite' },
 ];

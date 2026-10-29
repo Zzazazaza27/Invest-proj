@@ -30,46 +30,41 @@ npm run suite:block block:доступ
 Три области ломают не себя, а всех, кто ими пользуется. Здесь **не бывает**
 «поправил одно место — проверил один экран»:
 
-| Что задето                                                                                                   | Почему широко                                                             | Что обязательно                                                                                                                                                                                      |
-| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Авторизация, сессия, гвард, CSRF (`apps/core/src/auth/**`) — блоки `доступ`, `вход`                          | Одно правило решает доступ во всех кабинетах сразу                        | `CHK-TESTING-SESSIONS`, `SMK-CORE`, `SMK-ADMIN-ROLES`, `SMK-PROJECT-ACCESS`, `RND-AUTH`, `RND-LAB`, `RND-INVESTOR`, `RND-EXPERT`, `RND-ADMIN`, `RND-PROFILE`, `RND-STAFF-ACCESS`, `SCN-ROUND-REVIEW` |
-| Работа с базой: соединения, транзакции, контекст запроса, миграции — блок `надёжность`                       | Отказ проявляется не там, где правка, а в первом же запросе под нагрузкой | `DBT-ALL`, `CHK-DB-RECONNECT`, `npm run suite:isolated`, `SMK-CORE`                                                                                                                                  |
-| Общие пакеты `packages/ui`, `packages/cabinet`, `packages/api-client`, `packages/contracts` — блок `граница` | Компонент виден во всех кабинетах; договор ломает и клиента, и сервер     | `CHK-FRONT-BUILDS`, `SMK-API-CLIENT`, и браузерные проходы **каждого** кабинета: `RND-LAB`, `RND-INVESTOR`, `RND-EXPERT`, `RND-ADMIN`, `RND-CONSOLE`, `RND-WEB-PUBLIC`, `RND-PROFILE`                |
+| Что задето                                                                                                   | Почему широко                                                             | Что обязательно                                                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Авторизация, сессия, гвард, CSRF (`apps/core/src/auth/**`) — блоки `доступ`, `вход`                          | Одно правило решает доступ во всех кабинетах сразу                        | `CHK-TESTING-SESSIONS`, `SMK-CORE`, `SMK-ADMIN-ROLES`, `SMK-PROJECT-ACCESS`, `RND-AUTH`, `RND-LAB`, `RND-INVESTOR`, `RND-ADMIN`, `RND-PROFILE`                          |
+| Работа с базой: соединения, транзакции, контекст запроса, миграции — блок `надёжность`                       | Отказ проявляется не там, где правка, а в первом же запросе под нагрузкой | `DBT-ALL`, `CHK-DB-RECONNECT`, `npm run suite:isolated`, `SMK-CORE`                                                                                                     |
+| Общие пакеты `packages/ui`, `packages/cabinet`, `packages/api-client`, `packages/contracts` — блок `граница` | Компонент виден во всех кабинетах; договор ломает и клиента, и сервер     | `CHK-FRONT-BUILDS`, `SMK-API-CLIENT`, и браузерные проходы **каждого** кабинета: `RND-LAB`, `RND-INVESTOR`, `RND-ADMIN`, `RND-CONSOLE`, `RND-WEB-PUBLIC`, `RND-PROFILE` |
 
 Правка в этих трёх областях — повод предупредить владельца до начала работы,
 а не после: она задевает больше, чем один экран.
 
 ## Кабинеты и разделы
 
-| Область правки                                           | Что запустить                                                                                    |
-| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| Админка, раздел «Пользователи» и карточка человека       | `CHK-ADMIN-USERS-API`, `RND-ADMIN-USERS`                                                         |
-| Тестовые сессии, «Посмотреть кабинет», контексты доступа | `CHK-TESTING-SESSIONS`, `RND-TESTING-SESSIONS`, `SCN-ROUND-REVIEW`                               |
-| «Мой профиль» в любом кабинете                           | `CHK-PROFILE-API`, `RND-PROFILE`                                                                 |
-| Кабинет основателя: заявка, проект, материалы            | `SMK-LAB`, `RND-LAB`, `RND-LAB-V2`, `RND-PROJECT-PAGE`, `RND-PROJECT-MEDIA`, `SMK-PROJECT-MEDIA` |
-| Кабинет инвестора: каталог, избранное, сделки            | `SMK-INVESTMENTS`, `SMK-FAVORITES`, `RND-INVESTOR`, `RND-FAVORITES`, `RND-ADMIN-DEALS`           |
-| Кабинет эксперта: назначения, разбор                     | `SMK-EXPERTS`, `RND-EXPERT`                                                                      |
-| Кабинет сотрудника (`apps/staff`), полномочия            | `SMK-STAFF-CAPABILITIES`, `RND-STAFF-ACCESS`                                                     |
-| Витрина и публичные страницы                             | `RND-WEB-PUBLIC`, `RND-FIRST-TIER`, `RND-MEDIA-EMBEDDING`                                        |
-| Консоль API                                              | `CHK-CONSOLE-PRIVATE`, `RND-CONSOLE`                                                             |
-| Вход, восстановление доступа                             | `SMK-AUTH-RECOVERY`, `RND-AUTH`                                                                  |
-| Поддержка и обращения                                    | `SMK-SUPPORT`, `RND-SUPPORT`                                                                     |
+| Область правки                                           | Что запустить                                                                      |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Админка, раздел «Пользователи» и карточка человека       | `CHK-ADMIN-USERS-API`, `RND-ADMIN-USERS`                                           |
+| Тестовые сессии, «Посмотреть кабинет», контексты доступа | `CHK-TESTING-SESSIONS`, `RND-TESTING-SESSIONS`                                     |
+| «Мой профиль» в любом кабинете                           | `CHK-PROFILE-API`, `RND-PROFILE`                                                   |
+| Кабинет основателя: проект, видимость, материалы         | `SMK-LAB`, `RND-LAB`, `RND-PROJECT-PAGE`, `RND-PROJECT-MEDIA`, `SMK-PROJECT-MEDIA` |
+| Кабинет инвестора (оболочка), каталог, избранное         | `SMK-FAVORITES`, `RND-INVESTOR`, `RND-FAVORITES`                                   |
+| Витрина и публичные страницы                             | `RND-WEB-PUBLIC`, `RND-MEDIA-EMBEDDING`                                            |
+| Консоль API                                              | `CHK-CONSOLE-PRIVATE`, `RND-CONSOLE`                                               |
+| Вход, восстановление доступа                             | `SMK-AUTH-RECOVERY`, `RND-AUTH`                                                    |
+| Поддержка и обращения                                    | `SMK-SUPPORT`, `RND-SUPPORT`                                                       |
 
 ## Сквозные механизмы
 
-| Область правки                                                   | Что запустить                                                                                                                              |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
-| Деньги: тарифы, подписки, комиссии, оплата                       | `SMK-BILLING`, `SMK-PAYMENTS`, `SMK-COMMISSION`, `RND-ADMIN-COMMISSION`                                                                    |
-| Раунды: пакеты, стоимость, покупка                               | `SMK-ROUND-PACKAGES`, `SMK-ROUND-PRICING`, `SMK-ROUND-PURCHASE`, `RND-ADMIN-ROUND-PACKAGES`, `RND-LAB-ROUND-COST`, `RND-ROUND-PURCHASE`    |
-| Файлы: хранилище, загрузка, выдача байтов, изображения проекта   | `CHK-FILE-ACCESS`, `SMK-PROJECT-ACCESS`, `SMK-PROJECT-MEDIA`, `RND-PROJECT-MEDIA`, `RND-MEDIA-EMBEDDING`                                   |
-| События: outbox, NATS, вебхуки, интеграции                       | `SMK-EVENTS`, `SMK-INTEGRATION`, `CHK-OUTBOUND-BOUNDARIES`, `npm run suite:isolated`                                                       |
-| Подготовленное содержимое: ЧАВО, словарь, страны, вопросы заявки | `CHK-CONTENT-TRANSFER`, `SMK-CONTENT`, `RND-ADMIN-QUESTIONS`, `RND-ADMIN-COUNTRIES`                                                        |
-| Почта и уведомления                                              | `SMK-MAIL-SMTP`, `SMK-OPERATOR-NOTIFICATIONS`                                                                                              |
-| Разбор заявки языковой моделью (шлюз)                            | `GAT-AI-GATEWAY`, `SMK-AI`                                                                                                                 |
-| Роли и права в базе, шифрование, секреты                         | `CHK-SERVICE-ROLES`, `CHK-DEFINER-PRIVILEGES`, `CHK-KEK-DOMAINS`, `CHK-SECRET-REUSE`, `CHK-CHECKPOINT-SECRETS`, `CHK-ROLE-ENV-CONSISTENCY` |
-| Порты, nginx, docker-compose, развёртывание стенда               | `CHK-PORTS-CONSISTENCY`, `CHK-STAND`, `CHK-FRONT-BUILDS`, `CHK-STAND-LOGINS`                                                               |
-| Выкат на сервер, ключи доступа                                   | `CHK-SSH-KEYS`, `CHK-UPSTREAM-OWNER`                                                                                                       |
-| Сам реестр проверок, наборы, эта матрица                         | `npm run check:registry`, `npm run docs:registry`                                                                                          |
+| Область правки                                                 | Что запустить                                                                                                                              |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Файлы: хранилище, загрузка, выдача байтов, изображения проекта | `CHK-FILE-ACCESS`, `SMK-PROJECT-ACCESS`, `SMK-PROJECT-MEDIA`, `RND-PROJECT-MEDIA`, `RND-MEDIA-EMBEDDING`                                   |
+| События: outbox, NATS, вебхуки, интеграции                     | `SMK-EVENTS`, `SMK-INTEGRATION`, `CHK-OUTBOUND-BOUNDARIES`, `npm run suite:isolated`                                                       |
+| Подготовленное содержимое: ЧАВО, словарь, страны               | `CHK-CONTENT-TRANSFER`, `SMK-CONTENT`, `RND-ADMIN-COUNTRIES`                                                                               |
+| Почта и уведомления                                            | `SMK-MAIL-SMTP`                                                                                                                            |
+| Роли и права в базе, шифрование, секреты                       | `CHK-SERVICE-ROLES`, `CHK-DEFINER-PRIVILEGES`, `CHK-KEK-DOMAINS`, `CHK-SECRET-REUSE`, `CHK-CHECKPOINT-SECRETS`, `CHK-ROLE-ENV-CONSISTENCY` |
+| Порты, nginx, docker-compose, развёртывание стенда             | `CHK-PORTS-CONSISTENCY`, `CHK-STAND`, `CHK-FRONT-BUILDS`                                                                                   |
+| Выкат на сервер, ключи доступа                                 | `CHK-SSH-KEYS`, `CHK-UPSTREAM-OWNER`                                                                                                       |
+| Сам реестр проверок, наборы, эта матрица                       | `npm run check:registry`, `npm run docs:registry`                                                                                          |
 
 ## Чего матрица не обещает
 

@@ -64,20 +64,22 @@ const browser = await chromium.launch();
     heading?.slice(0, 40),
   );
 
-  check(
-    'каталог и тарифы присутствуют на странице',
-    (await page.locator('#catalog').count()) === 1 &&
-      (await page.locator('#pricing').count()) === 1,
-  );
+  check('каталог присутствует на странице', (await page.locator('#catalog').count()) === 1);
+  // Тарифы удалены вместе с подписками (2.1-W05): блок не должен вернуться
+  // пустым или с ошибкой загрузки несуществующего прайса.
+  check('блока тарифов на витрине нет', (await page.locator('#pricing').count()) === 0);
 
-  // Тарифы приходят из API: если блок отрисовал карточки — данные реальные.
+  // Каталог приходит из API: карточки, пустое состояние или явная ошибка —
+  // но не пустое место.
   await page.waitForTimeout(1500);
-  const planCards = await page.locator('#pricing li').count();
-  const pricingError = await page.locator('#pricing [role="alert"]').count();
+  const teaserCards = await page.locator('#catalog li').count();
+  const catalogText = await page.locator('#catalog').innerText();
   check(
-    'тарифы получены из API либо ошибка показана явно',
-    planCards > 0 || pricingError > 0,
-    `карточек: ${planCards}, блоков ошибки: ${pricingError}`,
+    'каталог получен из API либо состояние названо явно',
+    teaserCards > 0 ||
+      /пока пусто|Ничего не найдено/.test(catalogText) ||
+      (await page.locator('#catalog [role="alert"]').count()) > 0,
+    `карточек: ${teaserCards}`,
   );
 
   // Захардкоженных проектов из прежнего макета быть не должно.

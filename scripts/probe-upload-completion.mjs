@@ -670,8 +670,8 @@ try {
   };
   const oldCreate = await asBackend((c) =>
     c.query(
-      `INSERT INTO lab.project_materials (id, project_id, type, version, s3_key, parse_status, uploaded_by)
-       VALUES ($1, $2, 'deck', 900, 'old-style-key', 'queued', $3)`,
+      `INSERT INTO lab.project_materials (id, project_id, type, version, s3_key, uploaded_by)
+       VALUES ($1, $2, 'deck', 900, 'old-style-key', $3)`,
       [randomUUID(), projectId, owner.userId],
     ),
   );
@@ -761,8 +761,6 @@ try {
       [projectId],
     );
     await sql('DELETE FROM lab.project_materials WHERE project_id = $1', [projectId]);
-    await sql('UPDATE lab.projects SET current_application_id = NULL WHERE id = $1', [projectId]);
-    await sql('DELETE FROM lab.investment_applications WHERE project_id = $1', [projectId]);
     await sql('DELETE FROM lab.founders_projects WHERE project_id = $1', [projectId]);
     await sql('DELETE FROM lab.projects WHERE id = $1', [projectId]);
   }

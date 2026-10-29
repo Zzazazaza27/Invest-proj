@@ -22,10 +22,10 @@ import { CORE_URL } from './lib/ports.mjs';
 import {
   CONSENTS,
   blindIndex,
-  createProjectWithDraftRound,
+  createProject,
   loadDotEnv,
   makePool,
-} from './lib/round-pricing-fixture.mjs';
+} from './lib/project-fixture.mjs';
 
 loadDotEnv();
 
@@ -181,7 +181,7 @@ await admin.json('/v1/auth/login', {
 }
 
 try {
-  const { project } = await createProjectWithDraftRound(founder.client, sql, suffix);
+  const { project } = await createProject(founder.client, sql, suffix);
 
   // ------------------------------------------------- отказ по размерам
   {

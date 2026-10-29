@@ -115,7 +115,6 @@ if (failed === 0) ok(`${dbKeys.length} строк DATABASE_URL* → порт ${P
     ['админка', PORTS.admin],
     ['кабинет основателя', PORTS.lab],
     ['кабинет инвестора', PORTS.investor],
-    ['кабинет эксперта', PORTS.expert],
     ['консоль', PORTS.console],
     ['вход и регистрация', PORTS.auth],
   ];

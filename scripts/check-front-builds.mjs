@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const ALL = ['web-public', 'admin', 'lab', 'investor', 'expert', 'auth', 'console'];
+const ALL = ['web-public', 'admin', 'lab', 'investor', 'auth', 'console'];
 const apps = process.argv.slice(2).length > 0 ? process.argv.slice(2) : ALL;
 
 let failed = 0;

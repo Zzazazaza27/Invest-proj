@@ -11,7 +11,7 @@
  *   3. аватар загружается, показывается и удаляется;
  *   4. контакт показан маской и не редактируется;
  *   5. смена пароля предупреждает о закрытии сессий и требует текущий;
- *   6. тот же экран открывается у инвестора, эксперта и администратора.
+ *   6. тот же экран открывается у администратора.
  *
  * Имя и аватар меняются у СВОЕГО временного основателя; у демонстрационных
  * учётных записей только открывается экран.
@@ -44,8 +44,6 @@ const run = await startProbeRun('RND-PROFILE');
 const toSite = (url) => url.replace('127.0.0.1', 'localhost');
 const strip = (url) => url.replace(/\/+$/, '');
 const LAB_URL = strip(toSite(process.env.LAB_URL ?? frontendUrl('lab')));
-const INVESTOR_URL = strip(toSite(process.env.INVESTOR_URL ?? frontendUrl('investor')));
-const EXPERT_URL = strip(toSite(process.env.EXPERT_URL ?? frontendUrl('expert')));
 const ADMIN_URL = strip(toSite(process.env.ADMIN_URL ?? frontendUrl('admin')));
 const CORE_URL = toSite(process.env.CORE_URL ?? DEFAULT_CORE_URL);
 
@@ -281,9 +279,9 @@ try {
 
   // ------------------------------------------- [6] тот же экран в других
   console.warn('\n[6] Тот же профиль в остальных кабинетах');
+  // Кабинет инвестора после 2.1-W05 — оболочка «в разработке» без шапки с
+  // профилем: проверять в нём профиль нечего, пока кабинет не вернётся.
   for (const [name, url, who] of [
-    ['инвестора', INVESTOR_URL, { email: 'demo-investor@unicorn.local', password: DEMO_PASSWORD }],
-    ['эксперта', EXPERT_URL, { email: 'demo-expert-fin@unicorn.local', password: DEMO_PASSWORD }],
     ['администратора', ADMIN_URL, { email: 'demo-admin@unicorn.local', password: DEMO_PASSWORD }],
   ]) {
     const tab = await browser.newContext({ viewport: { width: 1280, height: 1000 } });

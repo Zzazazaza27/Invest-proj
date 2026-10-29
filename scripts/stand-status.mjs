@@ -50,7 +50,7 @@ const serverSubject = online ? onServer(`cd ${APP_DIR} && git log -1 --pretty=%s
 const serverDate = online ? onServer(`cd ${APP_DIR} && git log -1 --date=short --pretty=%ad`) : '';
 const serverDirty = online ? onServer(`cd ${APP_DIR} && git status --porcelain | head -20`) : '';
 const services = online
-  ? onServer("systemctl is-active unicorn-core unicorn-ai-gateway caddy 2>/dev/null | paste -sd' '")
+  ? onServer("systemctl is-active unicorn-core caddy 2>/dev/null | paste -sd' '")
   : '';
 const containers = online ? onServer("docker ps --format '{{.Names}} {{.Status}}' | head -8") : '';
 const health = online ? onServer(`curl -s -m 10 ${PUBLIC_URL}/v1/health`) : '';

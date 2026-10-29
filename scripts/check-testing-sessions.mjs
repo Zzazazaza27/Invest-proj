@@ -154,8 +154,8 @@ try {
   const card = await admin.call(`/v1/admin/testing/sessions/${sessionId}`);
   const participants = card.json?.participants ?? [];
   check(
-    'подготовлены три участника',
-    participants.length === 3,
+    'подготовлены два участника',
+    participants.length === 2,
     participants.map((p) => p.role).join(', '),
   );
 
@@ -254,9 +254,10 @@ try {
     `HTTP ${fromOtherSession.status}`,
   );
 
-  // Чужой администратор — другой человек.
+  // Другой человек: чужой контекст ему не открывается. Демо-организатор удалён
+  // в 2.1-W05 — берётся инвестор комплекта.
   const stranger = makeClient();
-  await stranger.login('demo-organizer@unicorn.local', DEMO_PASSWORD);
+  await stranger.login('demo-investor@unicorn.local', DEMO_PASSWORD);
   const fromStranger = await stranger.call('/v1/auth/me', { context: contextId });
   check(
     'чужой контекст не открывается',
@@ -535,7 +536,12 @@ try {
     `SELECT id FROM identity.users
       WHERE origin = 'render_check' AND deleted_at IS NULL AND created_at < (
         SELECT created_at FROM testing.sessions WHERE id = $1
-      ) ORDER BY created_at LIMIT 1`,
+      )
+      -- Ничей объект: числящийся за другим запуском отвергается раньше (409),
+      -- и правило «старше запуска» тогда не проверялось бы вовсе.
+        AND NOT EXISTS (SELECT 1 FROM testing.session_objects o
+                         WHERE o.table_name = 'identity.users' AND o.row_id = identity.users.id)
+      ORDER BY created_at LIMIT 1`,
     [sessionId],
   );
   if (oldProbe) {

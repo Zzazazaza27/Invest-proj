@@ -191,7 +191,6 @@ console.warn('[1] Добавление и список');
     'investmentAsk',
     'askCurrency',
     'listedAt',
-    'raising',
     'favoritedAt',
   ]);
   const extra = Object.keys(item ?? {}).filter((key) => !teaserKeys.has(key));

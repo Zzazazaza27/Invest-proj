@@ -81,8 +81,6 @@ export const PORTS = {
   web: port('WEB_PORT', 80),
   /** Ядро API (NestJS). */
   core: port('CORE_PORT', 4300),
-  /** AI-шлюз (FastAPI). */
-  aiGateway: port('AI_GATEWAY_PORT', 8100),
 
   /** Публичная витрина. */
   webPublic: port('WEB_PUBLIC_PORT', 5173),
@@ -92,14 +90,10 @@ export const PORTS = {
   lab: port('LAB_PORT', 5175),
   /** Кабинет инвестора. */
   investor: port('INVESTOR_PORT', 5176),
-  /** Кабинет эксперта. */
-  expert: port('EXPERT_PORT', 5177),
   /** Служебная консоль разработки и тестирования (в production не публикуется). */
   console: port('CONSOLE_PORT', 5178),
   /** Вход и регистрация — общий экран для всех ролей. */
   auth: port('AUTH_PORT', 5179),
-  /** Кабинет сотрудника: личное пространство администратора, не админка. */
-  staff: port('STAFF_PORT', 5180),
 
   /** PostgreSQL — порт НА ХОСТЕ (внутри сети контейнеров всегда 5432). */
   postgres: port('POSTGRES_PORT', 5433),
@@ -131,10 +125,8 @@ export const FRONTENDS = {
   admin: { name: 'админка', port: PORTS.admin, basePath: '/admin/' },
   lab: { name: 'кабинет основателя', port: PORTS.lab, basePath: '/lab/' },
   investor: { name: 'кабинет инвестора', port: PORTS.investor, basePath: '/investor/' },
-  expert: { name: 'кабинет эксперта', port: PORTS.expert, basePath: '/expert/' },
   console: { name: 'консоль разработки', port: PORTS.console, basePath: '/console/' },
   auth: { name: 'вход и регистрация', port: PORTS.auth, basePath: '/login/' },
-  staff: { name: 'кабинет сотрудника', port: PORTS.staff, basePath: '/staff/' },
 };
 
 /**

@@ -230,15 +230,15 @@ try {
   const allTotal = Number(
     (await page.locator('[data-users-total]').innerText()).replace(/\D/g, ''),
   );
-  await page.selectOption('[data-filter-role]', 'expert');
+  await page.selectOption('[data-filter-role]', 'admin');
   await page.waitForTimeout(1500);
-  const expertTotal = Number(
+  const adminTotal = Number(
     (await page.locator('[data-users-total]').innerText()).replace(/\D/g, ''),
   );
   expect(
     'Фильтр по роли меняет выборку, а не только страницу',
-    expertTotal > 0 && expertTotal < allTotal,
-    `экспертов ${expertTotal} из ${allTotal}`,
+    adminTotal > 0 && adminTotal < allTotal,
+    `администраторов ${adminTotal} из ${allTotal}`,
   );
 
   // Постраничная навигация проверяется, только если страниц действительно
@@ -255,13 +255,13 @@ try {
     expect('Вторая страница показывает других людей', firstBefore !== firstAfter, 'списки разные');
     expect(
       'Отбор сохраняется в адресе страницы',
-      page.url().includes('role=expert') && page.url().includes('page=2'),
+      page.url().includes('role=admin') && page.url().includes('page=2'),
       page.url().split('?')[1] ?? '',
     );
   } else {
     expect(
       'Отбор сохраняется в адресе страницы',
-      page.url().includes('role=expert'),
+      page.url().includes('role=admin'),
       'страниц одна — навигации нет, отбор в адресе есть',
     );
   }
@@ -305,19 +305,19 @@ try {
 
   // ------------------------------------------------------------ [6] роль
   console.warn('\n[6] Роль выдаётся и снимается из карточки');
-  await page.selectOption('[data-grant-role]', 'expert');
+  await page.selectOption('[data-grant-role]', 'investor');
   await page.locator('[data-grant-confirm]').click();
   await page.waitForTimeout(2000);
   expect(
     'Роль выдана и видна в карточке',
-    (await page.locator('[data-role-row="expert"]').count()) === 1,
-    'эксперт',
+    (await page.locator('[data-role-row="investor"]').count()) === 1,
+    'инвестор',
   );
-  await page.locator('[data-revoke-role="expert"]').click();
+  await page.locator('[data-revoke-role="investor"]').click();
   await page.waitForTimeout(2000);
   expect(
     'Роль снята',
-    (await page.locator('[data-role-row="expert"]').count()) === 0,
+    (await page.locator('[data-role-row="investor"]').count()) === 0,
     'строки роли больше нет',
   );
 
@@ -397,8 +397,8 @@ try {
   await page.waitForTimeout(1200);
   const notFound = await page.locator('[data-page="not-found"]').count();
   expect(
-    'Неизвестный раздел не подменяется «Тарифами»',
-    notFound === 1 && !page.url().includes('/plans'),
+    'Неизвестный раздел не подменяется стартовым «Пользователями»',
+    notFound === 1 && !page.url().includes('/users'),
     page.url(),
   );
   await screenshot(page, 'not-found');
@@ -430,13 +430,9 @@ try {
   const groups = await page.locator('.nav-group__title').allInnerTexts();
   expect(
     'Группы названы',
-    [
-      'ПОЛЬЗОВАТЕЛИ И КОНТРОЛЬ',
-      'КОММЕРЦИЯ',
-      'ЗАЯВКИ И СДЕЛКИ',
-      'КОММУНИКАЦИИ',
-      'НАСТРОЙКИ ПЛАТФОРМЫ',
-    ].every((title) => groups.some((item) => item.toUpperCase().includes(title))),
+    ['ПОЛЬЗОВАТЕЛИ И КОНТРОЛЬ', 'КОММУНИКАЦИИ', 'ПРОВЕРКА', 'НАСТРОЙКИ ПЛАТФОРМЫ'].every((title) =>
+      groups.some((item) => item.toUpperCase().includes(title)),
+    ),
     groups.join(' · '),
   );
   const links = await page.locator('.sidebar a').allInnerTexts();
@@ -444,15 +440,10 @@ try {
     'Пользователи',
     'Комплаенс',
     'Доступ',
-    'Тарифы',
-    'Подписки',
-    'Комиссии',
-    'Сделки',
-    'Вопросы заявки',
-    'Настройки заявки',
-    'Пакеты раунда',
     'Уведомления',
     'Поддержка',
+    'Тестовые сессии',
+    'Элементы интерфейса',
     'Интеграции',
     'Словарь и ЧАВО',
     'Страны обслуживания',
@@ -465,6 +456,11 @@ try {
     missing.length === 0,
     missing.join(', ') || 'все на месте',
   );
+  // Коммерция, заявки, сделки и сезон удалены в 2.1-W05 вместе с контурами:
+  // пункт меню без сервера за ним — тупик, а не раздел.
+  const removed = ['Тарифы', 'Подписки', 'Комиссии', 'Сделки', 'Вопросы заявки', 'Пакеты раунда'];
+  const leftovers = removed.filter((label) => links.some((link) => link.trim() === label));
+  expect('Удалённых разделов в меню нет', leftovers.length === 0, leftovers.join(', ') || 'нет');
   expect(
     'Текущий раздел выделен',
     (await page.locator('.navlink--active').innerText()).trim() === 'Пользователи',
@@ -478,7 +474,7 @@ try {
     window.scrollTo(0, 900);
   });
   await page.waitForTimeout(400);
-  await page.getByRole('link', { name: 'Тарифы' }).click();
+  await page.getByRole('link', { name: 'Страны обслуживания' }).click();
   await page.waitForTimeout(1500);
   const scrollAfter = await page.evaluate(() => {
     // eslint-disable-next-line no-undef -- исполняется в браузере
@@ -486,7 +482,7 @@ try {
   });
   expect(
     'Новый раздел открывается с начала страницы',
-    scrollAfter === 0 && page.url().includes('/plans'),
+    scrollAfter === 0 && page.url().includes('/service-countries'),
     `прокрутка ${scrollAfter}px на ${page.url().split('/admin')[1]}`,
   );
   await page.goto(`${ADMIN_URL}/users`, { waitUntil: 'networkidle' });

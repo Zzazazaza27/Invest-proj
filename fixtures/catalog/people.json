@@ -539,8 +539,7 @@
       "login": "cat-exp-01",
       "displayName": "Марина Голубева",
       "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["fintech", "saas"],
+      "roles": ["founder"],
       "about": "финтех и платёжные сервисы, 11 лет"
     },
     {
@@ -548,8 +547,7 @@
       "login": "cat-exp-02",
       "displayName": "Кирилл Ефимов",
       "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["ai", "deeptech"],
+      "roles": ["founder"],
       "about": "машинное обучение в проде, 9 лет"
     },
     {
@@ -557,8 +555,7 @@
       "login": "cat-exp-03",
       "displayName": "Дарья Шульга",
       "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["saas", "marketplace"],
+      "roles": ["founder"],
       "about": "продуктовая аналитика и маркетплейсы"
     },
     {
@@ -566,8 +563,7 @@
       "login": "cat-exp-04",
       "displayName": "Тимур Асланов",
       "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["healthtech"],
+      "roles": ["founder"],
       "about": "цифровое здравоохранение и регуляторика"
     },
     {
@@ -575,8 +571,7 @@
       "login": "cat-exp-05",
       "displayName": "Елена Бортникова",
       "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["edtech", "mobile"],
+      "roles": ["founder"],
       "about": "образовательные продукты, 8 лет"
     },
     {
@@ -584,8 +579,7 @@
       "login": "cat-exp-06",
       "displayName": "Павел Драгунов",
       "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["web3", "fintech"],
+      "roles": ["founder"],
       "about": "блокчейн-инфраструктура и комплаенс"
     },
     {
@@ -593,8 +587,7 @@
       "login": "cat-exp-07",
       "displayName": "Светлана Реброва",
       "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["gaming", "mobile"],
+      "roles": ["founder"],
       "about": "игровые продукты и монетизация"
     },
     {
@@ -602,8 +595,7 @@
       "login": "cat-exp-08",
       "displayName": "Никита Заозёрский",
       "primaryRole": "founder",
-      "roles": ["expert"],
-      "expertiseTags": ["deeptech", "ai"],
+      "roles": ["founder"],
       "about": "промышленный софт и интеграции"
     },
     {
@@ -611,7 +603,7 @@
       "login": "cat-organizer",
       "displayName": "Павел Ерохин",
       "primaryRole": "founder",
-      "roles": ["organizer"],
+      "roles": ["founder"],
       "about": "организатор сезона: воронка отбора и состав рецензентов"
     },
     {

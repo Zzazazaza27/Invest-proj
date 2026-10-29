@@ -103,7 +103,7 @@ async function issueToken(clientId, secret) {
 }
 
 async function callWithToken(token) {
-  const response = await fetch(`${BASE}/v1/integration/graduates?limit=1`, {
+  const response = await fetch(`${BASE}/v1/integration/webhooks`, {
     headers: { Authorization: `Bearer ${token}` },
     signal: AbortSignal.timeout(15_000),
   });
@@ -136,7 +136,7 @@ if (!owner?.id) {
 await sql(
   `INSERT INTO integration.service_accounts
      (id, client_id, name, client_secret_hash, mtls_cert_fingerprint, scopes, created_by)
-   VALUES ($1, $2, $3, $4, '', ARRAY['graduates:read'], $5)`,
+   VALUES ($1, $2, $3, $4, '', ARRAY['webhooks:manage'], $5)`,
   [accountId, clientId, 'прогон рубежа', await argon2.hash(secret), owner.id],
 );
 check('аккаунт создан', (await epochOf(accountId)) === 1, 'рубеж 1');

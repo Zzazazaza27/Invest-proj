@@ -6,40 +6,40 @@
   пересборку, — пишите её в раздел «Заметки» в конце.
 -->
 
-Снято: **2026-09-19 07:31** (автоматически)
+Снято: **2026-10-29 14:13** (автоматически)
 
 ## Боевой стенд
 
-| Что                  | Значение                                                                                     |
-| -------------------- | -------------------------------------------------------------------------------------------- |
-| Адрес                | https://vgorkakh.ru/ (по IP не открывается — сертификат только на домен)                     |
-| Хост                 | 193.233.217.210, `unicorn.ptr.network`                                                       |
-| Доступность          | отвечает                                                                                     |
-| Развёрнутый коммит   | `9d63281` от 2026-09-14                                                                      |
-| Тег                  | `stand-2026-09-13`                                                                           |
-| Что это за коммит    | feat(деплой): выкат на боевой стенд одной командой, с откатом                                |
-| Отставание от `main` | **82 коммит(ов)**                                                                            |
-| Аптайм               | up 3 weeks, 3 days, 22 hours, 30 minutes                                                     |
-| Службы               | active active active                                                                         |
-| Health               | {"service":"unicorn-launch-core","status":"ok","version":"0.1.0","checks":{"database":"ok"}} |
+| Что | Значение |
+| --- | --- |
+| Адрес | https://5espace.com/ (по IP не открывается — сертификат только на домен) |
+| Хост | 193.233.217.210, `unicorn.ptr.network` |
+| Доступность | отвечает |
+| Развёрнутый коммит | `f9a9869` от 2026-10-29 |
+| Тег | `stand-2026-10-29` |
+| Что это за коммит | chore: .claude/settings.local.json в .gitignore |
+| Отставание от `main` | **2 коммит(ов)** |
+| Аптайм | up 7 hours, 28 minutes |
+| Службы | active active active |
+| Health | {"service":"unicorn-launch-core","status":"ok","version":"0.1.0","checks":{"database":"ok"}} |
 
 ### Контейнеры
 
 ```
-unicorn-web Up 3 weeks (healthy)
-unicorn-redis Up 3 weeks (healthy)
-unicorn-postgres Up 3 weeks (healthy)
-unicorn-nats Up 3 weeks (healthy)
-unicorn-minio Up 3 weeks (healthy)
+unicorn-web Up 7 hours (healthy)
+unicorn-redis Up 7 hours (healthy)
+unicorn-postgres Up 7 hours (healthy)
+unicorn-nats Up 7 hours (healthy)
+unicorn-minio Up 7 hours (healthy)
 ```
 
 ## Локальная копия
 
-| Что               | Значение                                                               |
-| ----------------- | ---------------------------------------------------------------------- |
-| Коммит            | `528ed70`                                                              |
-| Что это за коммит | docs(продукт): запись о ручной проверке 5.7 и вопросы владельцу в TODO |
-| Адрес             | http://127.0.0.1/                                                      |
+| Что | Значение |
+| --- | --- |
+| Коммит | `34ed011` |
+| Что это за коммит | fix(core/background): задача не запускается после остановки во время получения блокировки (2.1-W01) |
+| Адрес | http://127.0.0.1/ |
 
 ## Как обновить этот файл
 

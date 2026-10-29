@@ -93,31 +93,16 @@ console.warn('\n=== ДЫМОВАЯ ПРОВЕРКА CORE ===\n');
   check('стек не раскрывается', !response.headers.get('x-powered-by'));
 }
 
-// ----------------------------------------------------------------- pricing
+// ------------------------------------------------------- удалённые деньги
 {
-  const { response, json } = await req('/v1/pricing');
-  check('тарифы доступны без авторизации', response.status === 200);
-  // Тарифы остались только инвесторскими: подписка основателя отменена и
-  // удалена (M094), запуск раунда оплачивается разово.
+  // Тарифы, подписки и вознаграждение удалены вместе с инвестиционным
+  // процессом (2.1-W05). Маршрут обязан исчезнуть, а не отвечать пустым
+  // прайсом: пустой ответ читался бы как «тарифов пока нет».
+  const { response } = await req('/v1/pricing');
   check(
-    'тарифы только инвесторские',
-    (json?.plans ?? []).length > 0 &&
-      (json?.plans ?? []).every((p) => p.code.startsWith('investor')),
-    `получено ${json?.plans?.length}`,
-  );
-  check(
-    'вознаграждение: общая ставка и доли, складывающиеся в неё',
-    Number(json?.feeSchedule?.investorFeePct) + Number(json?.feeSchedule?.issuerFeePct) ===
-      Number(json?.feeSchedule?.totalPct),
-    `${json?.feeSchedule?.investorFeePct} + ${json?.feeSchedule?.issuerFeePct} = ${json?.feeSchedule?.totalPct}`,
-  );
-  check(
-    'раскрыто: база — сумма подтверждённого транша',
-    json?.feeDisclosure?.baseIsConfirmedTranche === true,
-  );
-  check(
-    'раскрыто: начисление по каждому подтверждённому траншу',
-    json?.feeDisclosure?.accrualPerTranche === true,
+    'тарифов больше нет — маршрут не отвечает',
+    response.status === 404,
+    `получено ${response.status}`,
   );
 }
 
@@ -133,17 +118,21 @@ console.warn('\n=== ДЫМОВАЯ ПРОВЕРКА CORE ===\n');
   check('ответ несёт traceId', typeof json?.traceId === 'string');
 }
 
-// -------------------------------------------- деньги закрыты по умолчанию
+// -------------------------------------------- запись закрыта по умолчанию
 {
-  // Маршрут появился в Ф52: прежде клиент звал его и получал 404, то есть
-  // «оплата не удалась» вместо «сервер о такой операции не знает».
-  const { response, json } = await req('/v1/billing/payments', {
+  // Прежде здесь проверялась оплата счёта; биллинг удалён (2.1-W05), и
+  // граница проверяется на записи, которая осталась, — создании проекта.
+  const { response, json } = await req('/v1/projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   });
-  check('оплата счёта закрыта без токена', response.status === 401, `получено ${response.status}`);
-  check('отказ оплаты в формате problem+json', json?.code === 'unauthenticated');
+  check(
+    'создание проекта закрыто без токена',
+    response.status === 401,
+    `получено ${response.status}`,
+  );
+  check('отказ записи в формате problem+json', json?.code === 'unauthenticated');
 }
 
 // ------------------------------------------------------------------- CORS

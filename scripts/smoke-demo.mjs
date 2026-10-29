@@ -216,20 +216,13 @@ console.warn('\n[4] Связи и обязательные поля соблюд
   );
   check('опубликованные проекты не закрыты режимом', hidden.n === 0, `закрытых: ${hidden.n}`);
 
-  const [version] = await sql(
-    `SELECT count(*)::int AS n FROM lab.projects
-      WHERE id = ANY($1::uuid[]) AND current_version_id IS NULL`,
-    [projectIds],
-  );
-  check('у каждого проекта есть версия заявки', version.n === 0, `без версии: ${version.n}`);
-
   const [asks] = await sql(
     `SELECT count(DISTINCT investment_ask)::int AS n FROM lab.projects
       WHERE id = ANY($1::uuid[])`,
     [projectIds],
   );
-  // Разные суммы запроса — не украшение: на одинаковых суммах не видно ни
-  // сортировок, ни будущей сетки пакетов раунда (5.9).
+  // Разные суммы запроса — не украшение: на одинаковых суммах карточки
+  // каталога неотличимы, и витрина выглядит выдуманной.
   check('суммы запроса различаются', asks.n >= 3, `разных сумм: ${asks.n}`);
 }
 
@@ -239,15 +232,18 @@ console.warn('\n[5] Роли и статусы разнообразны');
     `SELECT count(DISTINCT role)::int AS n FROM identity.user_roles WHERE user_id = ANY($1::uuid[])`,
     [userIds],
   );
-  check('в комплекте несколько ролей', roles.n >= 4, `ролей: ${roles.n}`);
+  // Ролей в продукте после 2.1-W05 три: администратор, основатель, инвестор.
+  check('в комплекте все три роли', roles.n === 3, `ролей: ${roles.n}`);
 
+  // Сезонной воронки статусов больше нет (2.1-W05): проект — черновик,
+  // отклонён или в архиве. Комплект показывает живые проекты — черновики.
   const [statuses] = await sql(
-    `SELECT count(DISTINCT status)::int AS s, count(DISTINCT listing_status)::int AS l,
-            count(DISTINCT stage)::int AS g
+    `SELECT count(DISTINCT listing_status)::int AS l, count(DISTINCT stage)::int AS g,
+            count(*) FILTER (WHERE status <> 'draft')::int AS other
        FROM lab.projects WHERE id = ANY($1::uuid[])`,
     [projectIds],
   );
-  check('разные статусы в воронке', statuses.s >= 4, `статусов: ${statuses.s}`);
+  check('проекты комплекта — черновики', statuses.other === 0, `иных: ${statuses.other}`);
   check('разные состояния листинга', statuses.l >= 3, `состояний: ${statuses.l}`);
   check('разные стадии проекта', statuses.g >= 3, `стадий: ${statuses.g}`);
 }
@@ -358,7 +354,7 @@ console.warn('\n[7] Каталог, поиск и фильтры на этих �
   check('другой запрос находит другой проект', found2.includes('Точка сборки'), found2.join(', '));
 
   // Публичный поиск идёт ТОЛЬКО по тизеру (title + tagline): описание
-  // открывается подпиской, и его лексемы анонимному каталогу не отдаются
+  // открывает владелец проекта, и его лексемы анонимному каталогу не отдаются
   // (M013). Слово «прораб» есть только в описании — значит, находиться оно не
   // должно. Первая версия прогона ждала обратного и покраснела по делу.
   const hidden = await raw(`/v1/catalog?q=${encodeURIComponent('прораб')}&limit=20`);
@@ -368,15 +364,10 @@ console.warn('\n[7] Каталог, поиск и фильтры на этих �
     (hidden.json?.items ?? []).map((i) => i.title).join(', ') || 'ничего',
   );
 
+  // Сортировка по сумме держалась на раундах и удалена вместе с ними
+  // (2.1-W05): каталог обязан её отвергнуть, а не молча вернуть пустую выдачу.
   const sorted = await raw('/v1/catalog?sort=ask_asc&limit=50');
-  // С M084 в сортировке по сумме участвуют только проекты с незавершённым
-  // раундом; у демо-проектов раундов нет — выдача пуста, и это правильно.
-  const asks = (sorted.json?.items ?? []).map((item) => Number(item.investmentAsk));
-  check(
-    'сортировка по сумме возрастает (только проекты с раундом)',
-    asks.every((value, i) => i === 0 || value >= asks[i - 1]),
-    asks.slice(0, 4).join(' ≤ '),
-  );
+  check('сортировка по сумме отвергнута', sorted.status === 400, `HTTP ${sorted.status}`);
 
   const [taxonomy] = await sql(`SELECT id FROM lab.project_taxonomy WHERE slug = 'healthtech'`);
   const filtered = await raw(`/v1/catalog?taxonomyId=${taxonomy.id}&limit=50`);

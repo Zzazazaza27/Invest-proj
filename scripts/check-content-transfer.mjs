@@ -143,11 +143,9 @@ try {
   check(
     'секретных таблиц в комплекте нет',
     !files.some((f) =>
-      [
-        'scoring.ai_provider_credentials',
-        'integration.service_accounts',
-        'integration.webhook_endpoints',
-      ].some((secret) => f.startsWith(secret)),
+      ['integration.service_accounts', 'integration.webhook_endpoints'].some((secret) =>
+        f.startsWith(secret),
+      ),
     ),
   );
   check(

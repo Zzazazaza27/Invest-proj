@@ -130,48 +130,43 @@ check('незалогиненному показан вход', (await page.loca
 await page.fill('#email', admin.email);
 await page.fill('#password', admin.password);
 await page.getByRole('button', { name: /Войти/i }).click();
-await page.waitForSelector('text=Тарифы', { timeout: 15_000 });
+await page.waitForSelector('text=Комплаенс', { timeout: 15_000 });
 check('вход выполнен, кабинет открыт', true);
 
 console.warn('\n[2] Разделы кабинета');
-// Сезоны отложены (M088): пункты сезона показываются только при включённом
-// `seasons.enabled`. Проверка идёт по фактическому положению флага — так она
-// остаётся честной и до, и после его возврата.
-const [seasonsFlag] = await sql(
-  `SELECT enabled FROM audit.feature_flags WHERE key = 'seasons.enabled'`,
-);
-const seasonsOn = seasonsFlag?.enabled === true;
 for (const label of [
-  'Тарифы',
-  'Подписки',
+  'Пользователи',
   'Комплаенс',
-  'Уведомления',
-  'Функции платформы',
   'Доступ',
+  'Уведомления',
+  'Интеграции',
+  'Страны обслуживания',
+  'Функции платформы',
 ]) {
   check(
     `раздел «${label}» присутствует`,
-    (await page.getByText(label, { exact: true }).count()) > 0,
+    (await page.getByRole('link', { name: label, exact: true }).count()) > 0,
   );
 }
-for (const label of ['Сезон', 'Воронка сезона']) {
-  const present = (await page.getByText(label, { exact: true }).count()) > 0;
+// Инвестиционный процесс, биллинг и сезоны удалены (2.1-W05): пункт меню под
+// них вёл бы на экран, у которого больше нет сервера.
+for (const label of ['Тарифы', 'Подписки', 'Комиссии', 'Сделки', 'Сезон', 'Воронка сезона']) {
   check(
-    seasonsOn
-      ? `раздел «${label}» присутствует при включённых сезонах`
-      : `раздел «${label}» скрыт при отложенных сезонах`,
-    present === seasonsOn,
+    `раздела «${label}» нет`,
+    (await page.getByRole('link', { name: label, exact: true }).count()) === 0,
   );
 }
 
 console.warn('\n[3] Управление ролями');
-await page.getByText('Доступ', { exact: true }).click();
+// Ссылка бокового меню: стартовый экран «Пользователи» сам ссылается на
+// «Доступ» в тексте, и любой текст «Доступ» уже не однозначен.
+await page.getByRole('link', { name: 'Доступ', exact: true }).first().click();
 await page.waitForSelector('#role-user', { timeout: 15_000 });
 
 // Выдать роль СЕБЕ нельзя — это правило сервера, и кабинет обязан показать
 // отказ, а не обойти его.
 await page.fill('#role-user', admin.userId);
-await page.selectOption('#role-name', 'organizer');
+await page.selectOption('#role-name', 'investor');
 await page.getByRole('button', { name: 'Выдать' }).click();
 await page.waitForTimeout(2000);
 const selfText = await page.locator('main').innerText();
@@ -182,7 +177,7 @@ check(
 );
 
 await page.fill('#role-user', target.userId);
-await page.selectOption('#role-name', 'expert');
+await page.selectOption('#role-name', 'investor');
 await page.getByRole('button', { name: 'Выдать' }).click();
 await page.waitForTimeout(2500);
 const grantText = await page.locator('main').innerText();
@@ -193,7 +188,7 @@ check(
 );
 
 const [granted] = await sql(
-  `SELECT role FROM identity.user_roles WHERE user_id = $1 AND role = 'expert' AND revoked_at IS NULL`,
+  `SELECT role FROM identity.user_roles WHERE user_id = $1 AND role = 'investor' AND revoked_at IS NULL`,
   [target.userId],
 );
 check('роль записана в БД', granted !== undefined);
@@ -205,27 +200,7 @@ const [journal] = await sql(
 );
 check('выдача попала в журнал', journal.n === 1, `записей: ${journal.n}`);
 
-console.warn('\n[3b] Воронка сезона и тексты уведомлений');
-if (seasonsOn) {
-  await page.getByRole('link', { name: 'Воронка сезона', exact: true }).click();
-  await page.getByRole('heading', { name: 'Воронка сезона' }).waitFor({ timeout: 15_000 });
-  await page.waitForTimeout(1500);
-  const funnelText = await page.locator('main').innerText();
-  check(
-    'экран воронки открылся',
-    funnelText.includes('Воронка сезона'),
-    funnelText.replace(/\s+/g, ' ').slice(0, 110),
-  );
-  check(
-    'состояние воронки объяснено словами: либо этапы, либо отсутствие сезона',
-    funnelText.includes('Буткемп') || funnelText.includes('Активного сезона нет'),
-  );
-} else {
-  // Экран воронки жив и открывается по прямому адресу — сезоны отключены, а не
-  // удалены; из меню он убран, поэтому и кликать по нему здесь нечего.
-  console.warn('  ·     сезоны отложены: экран воронки из меню убран, проверка пропущена');
-}
-
+console.warn('\n[3b] Тексты уведомлений');
 // Ссылка в боковом меню, а не любой текст «Уведомления» на странице: клик по
 // произвольному совпадению никуда не ведёт, а проверка потом читает прежний
 // экран и краснеет по своей же вине.
@@ -241,7 +216,7 @@ await page
 const templatesText = await page.locator('main').innerText();
 check(
   'список шаблонов загружен, а не пуст молча',
-  templatesText.includes('season.stage.advanced') || templatesText.includes('Шаблонов нет'),
+  templatesText.includes('security.new_login') || templatesText.includes('Шаблонов нет'),
   templatesText.replace(/\s+/g, ' ').slice(0, 110),
 );
 check(
@@ -250,11 +225,9 @@ check(
 );
 
 console.warn('\n[4] Клиенты Integration API');
-// Раздел переехал с экрана «Доступ» в «Интеграции», на вкладку: всё внешнее
-// собрано в одном месте. Проверка, искавшая его на прежнем экране, краснела не
-// по делу.
+// Раздел живёт в «Интеграциях». Вкладок там больше нет (ключи LLM и ИИ-скоринг
+// удалены в 2.1-W05) — клиенты Integration API и есть весь экран.
 await page.getByRole('link', { name: 'Интеграции', exact: true }).click();
-await page.getByRole('tab', { name: 'Клиенты Integration API' }).click();
 await page.waitForSelector('#sa-name', { timeout: 15_000 });
 check(
   'раздел клиентов отрисован',
@@ -266,7 +239,7 @@ check(
 const saSuffix = `${Date.now() % 1e8}`;
 await page.fill('#sa-name', `Прогон ${saSuffix}`);
 await page.fill('#sa-client-id', `probe-${saSuffix}`);
-await page.fill('#sa-scopes', 'graduates:read');
+await page.fill('#sa-scopes', 'webhooks:manage');
 // Отпечаток сертификата — 64 hex-символа. Неверный обязан отвергаться сервером,
 // а не «подставляться как есть»: без mTLS клиент к Integration API не допускается.
 await page.fill('#sa-fingerprint', 'zz');

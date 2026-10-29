@@ -2,11 +2,11 @@
 /**
  * Проверка кабинета инвестора в РЕАЛЬНОМ рендере (`RULES.md` §2).
  *
- * Главное здесь — не «страница открылась», а честность двух состояний:
- * выключенный регулируемый контур должен быть НАЗВАН выключенным, а не показан
- * пустым списком (из пустого списка читается «предложений нет», то есть
- * неправда о доступности функции); полная карточка проекта не должна
- * открываться без подписки.
+ * После 2.1-W05 кабинет — пустая оболочка: каталог с подпиской, счета,
+ * предложения и сделки удалены вместе с инвестиционным процессом. Проверяется
+ * честность этого состояния: вход по роли работает, человеку прямо сказано
+ * «в разработке», прежних разделов, за которыми нет функций, на экране нет,
+ * выход работает, ошибок в консоли нет.
  *
  * Запуск: node scripts/render-check-investor.mjs
  * Требуется: core и кабинет подняты (порты — из .env).
@@ -103,155 +103,44 @@ const consoleErrors = [];
 page.on('console', (message) => {
   if (message.type() !== 'error') return;
   const text = message.text();
-  // Доменные отказы вызываются сценарием намеренно: 401 на проверке сессии,
-  // 403 на полной карточке без подписки, 503 на выключенном контуре. Это
-  // правильное поведение сервера, а не дефект интерфейса.
-  if (/\b(401|403|404|503) \(/.test(text)) return;
+  // 401 на проверке сессии до входа — правильный ответ сервера, а не дефект
+  // интерфейса.
+  if (/\b401 \(/.test(text)) return;
   consoleErrors.push(text);
 });
 page.on('pageerror', (error) => consoleErrors.push(String(error)));
 
 console.warn('[1] Вход');
 await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: 30_000 });
-check(
-  'незалогиненному показан вход',
-  (await page.getByRole('heading', { name: 'Вход' }).count()) === 1,
-);
+check('незалогиненного кабинет отправляет на вход', /\/login/.test(page.url()), page.url());
 
 await page.fill('#email', email);
 await page.fill('#password', password);
-await page.getByRole('button', { name: 'Войти' }).click();
-await page.waitForSelector('text=Каталог проектов', { timeout: 15_000 });
-check('вход выполнен, открыт каталог', true);
+await page.getByRole('button', { name: 'Войти' }).first().click();
+await page.waitForSelector('[data-investor-shell]', { timeout: 15_000 });
+await page.waitForSelector('text=Кабинет в разработке', { timeout: 15_000 });
+check('после входа открыт кабинет инвестора', /\/investor/.test(page.url()), page.url());
 
-console.warn('\n[2] Каталог и доступ к полной карточке');
-await page.waitForTimeout(1500);
-const catalogText = await page.locator('main').innerText();
+console.warn('\n[2] Оболочка «в разработке»');
+const shell = page.locator('[data-investor-shell]');
+check('оболочка кабинета ровно одна', (await shell.count()) === 1);
+const shellText = await shell.innerText();
 check(
-  'каталог отрисован без выдуманных данных',
-  !/NeuroMind|CourseAI|DesignHub/i.test(catalogText),
+  'состояние названо прямо',
+  shellText.includes('Кабинет в разработке'),
+  shellText.replace(/\s+/g, ' ').slice(0, 100),
 );
-
-const detailsButtons = await page.getByRole('button', { name: 'Подробнее' }).count();
-if (detailsButtons > 0) {
-  await page.getByRole('button', { name: 'Подробнее' }).first().click();
-  await page.waitForTimeout(2000);
-  const detailText = await page.locator('[role="status"]').first().innerText();
+// Прежние разделы не должны вернуться пустыми кнопками: за ними нет функций.
+for (const name of ['Каталог', 'Подписка', 'Счета', 'Предложения', 'Сделки']) {
   check(
-    'доступ к полной карточке решает сервер, ответ показан',
-    detailText.trim().length > 5,
-    detailText.slice(0, 70),
+    `раздела «${name}» нет`,
+    (await page.getByRole('button', { name, exact: true }).count()) === 0 &&
+      (await page.getByRole('link', { name, exact: true }).count()) === 0,
   );
-} else {
-  check('каталог пуст — карточку открывать не на чем', true, 'проверка доступа пропущена честно');
 }
+check('кнопка выхода на месте', (await page.getByRole('button', { name: 'Выйти' }).count()) === 1);
 
-console.warn('\n[3] Подписка');
-await page.getByRole('button', { name: 'Подписка' }).click();
-await page.waitForSelector('h1:text("Подписка")', { timeout: 15_000 });
-await page.waitForTimeout(1500);
-const subText = await page.locator('main').innerText();
-check(
-  'состояние подписки объяснено словами',
-  /Подписки нет|Действует до|Период не начат/.test(subText),
-  subText.replace(/\s+/g, ' ').slice(0, 90),
-);
-check('условие активации названо честно', subText.includes('Активацию подтверждает оператор'));
-
-console.warn('\n[3b] Счета и вознаграждение');
-await page.getByRole('button', { name: 'Счета' }).click();
-await page.waitForSelector('h1:text("Счета и вознаграждение")', { timeout: 15_000 });
-await page.waitForTimeout(1500);
-const billingText = await page.locator('main').innerText();
-check(
-  'пустые счета объяснены словами, а не пустым местом',
-  billingText.includes('Счетов нет'),
-  billingText.replace(/\s+/g, ' ').slice(0, 90),
-);
-check(
-  'сказано, откуда берётся счёт',
-  billingText.includes('подписки') && billingText.includes('вознаграждения'),
-);
-check('начисление объяснено как однократное', billingText.includes('один раз'));
-// Оплата картой не подключена — интерфейс обязан сказать это, а не показывать
-// кнопку, ведущую в отказ.
-check('неподключённая оплата названа прямо', billingText.includes('не подключён'));
-
-// Юрлицо инвестора: сделка от компании требует проверенной организации, и это
-// часть той же верификации, а не отдельный раздел.
-console.warn('\n[4c] Юрлицо инвестора');
-await page.getByRole('button', { name: 'Верификация' }).click();
-await page.waitForTimeout(1500);
-const entityText = await page.locator('main').innerText();
-check('карточка юрлиц есть в верификации', entityText.includes('Юрлица и проверка KYB'));
-check(
-  'зачем нужно юрлицо — объяснено',
-  entityText.includes('сделок от организации') || entityText.includes('сделок от компании'),
-  entityText.replace(/\s+/g, ' ').slice(0, 90),
-);
-
-console.warn('\n[3c] Уведомления');
-await page.getByRole('button', { name: 'Уведомления' }).click();
-await page.waitForTimeout(1500);
-const notifyText = await page.locator('main').innerText();
-check(
-  'лента уведомлений открывается',
-  notifyText.includes('Уведомлений нет') || notifyText.includes('Показаны последние'),
-  notifyText.replace(/\s+/g, ' ').slice(0, 90),
-);
-check('неотключаемые темы названы прямо', notifyText.includes('отключить нельзя'));
-
-console.warn('\n[4] Выключенный регулируемый контур');
-await page.getByRole('button', { name: 'Предложения' }).click();
-await page.waitForSelector('h1:text("Инвестиционные предложения")', { timeout: 15_000 });
-await page.waitForTimeout(2000);
-const offersText = await page.locator('main').innerText();
-check(
-  'выключенный контур НАЗВАН выключенным, а не показан пустым списком',
-  offersText.includes('Инвестиционный контур пока не работает'),
-  offersText.replace(/\s+/g, ' ').slice(0, 100),
-);
-check(
-  'причина объяснена регуляторно, а не «ошибкой»',
-  offersText.includes('реестр инвестиционных платформ'),
-);
-check(
-  'пустого «предложений нет» при выключенном контуре не показано',
-  !offersText.includes('Открытых предложений нет'),
-);
-
-console.warn('\n[4b] Верификация');
-await page.getByRole('button', { name: 'Верификация' }).click();
-await page.waitForTimeout(1500);
-const verificationText = await page.locator('main').innerText();
-check(
-  'экран верификации открылся и объясняет назначение',
-  verificationText.includes('Верификация') && verificationText.includes('Открыть проверку'),
-  verificationText.replace(/\s+/g, ' ').slice(0, 110),
-);
-check('отсутствие проверок объяснено словами', verificationText.includes('Проверок ещё не было'));
-check(
-  'ограничение второго фактора названо прямо, а не скрыто',
-  verificationText.includes('step_up_required'),
-);
-
-// Проверка открывается настоящим запросом: нажатая кнопка без результата
-// ничего не доказывает.
-await page.getByRole('button', { name: 'Открыть проверку' }).click();
-await page.waitForTimeout(2500);
-const afterStart = await page.locator('main').innerText();
-check(
-  'открытая проверка появилась в списке со статусом',
-  afterStart.includes('Личность') && !afterStart.includes('Проверок ещё не было'),
-  afterStart.replace(/\s+/g, ' ').slice(0, 110),
-);
-
-console.warn('\n[5] Доступность и раскладка');
-check('ровно один h1', (await page.locator('h1').count()) === 1);
-check(
-  'текущий раздел объявлен ассистивным технологиям',
-  (await page.locator('[aria-current="page"]').count()) === 1,
-);
+console.warn('\n[3] Раскладка');
 await page.setViewportSize({ width: 390, height: 844 });
 await page.waitForTimeout(300);
 const overflow = await page.evaluate(
@@ -259,6 +148,12 @@ const overflow = await page.evaluate(
   () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
 );
 check('горизонтальной прокрутки нет на 390px', overflow <= 1, `переполнение: ${overflow}px`);
+
+console.warn('\n[4] Выход');
+await page.getByRole('button', { name: 'Выйти' }).click();
+await page.waitForURL(/\/login/, { timeout: 15_000 }).catch(() => undefined);
+check('выход ведёт на вход', /\/login/.test(page.url()), page.url());
+
 check(
   'ошибок в консоли нет',
   consoleErrors.length === 0,

@@ -136,8 +136,11 @@ try {
     [sessionId],
   );
   expect(
-    'Подготовлены основатель, эксперт и инвестор',
-    cast.length === 3 && cast.every((row) => row.origin === 'test_session'),
+    // Эксперта в стандартном сценарии нет с 2.1-W05: экспертиза удалена.
+    'Подготовлены основатель и инвестор',
+    cast.length === 2 &&
+      ['founder', 'investor'].every((role) => cast.some((row) => row.role === role)) &&
+      cast.every((row) => row.origin === 'test_session'),
     cast.map((row) => row.role).join(', '),
   );
   await screenshot(page, 'session-card');

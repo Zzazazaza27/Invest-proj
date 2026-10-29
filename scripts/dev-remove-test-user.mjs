@@ -48,23 +48,19 @@ const args = process.argv.slice(2);
 const APPLY = args.includes('--yes');
 const LOGIN = valueOf('--login') ?? 'ssurgut';
 /**
- * Куда передать строки, где ссылка на пользователя объявлена NOT NULL и
- * удаление означало бы потерю рабочего объекта. Такая строка сейчас одна:
- * `scoring.ai_provider_credentials.set_by` — это ключ живого LLM-провайдера,
- * и снести его вместе с учёткой значит выключить скоринг. Правда о том, кто
- * ключ поставил, остаётся в журнале аудита: он не переписывается.
+ * Кому передать рабочие объекты, которые нельзя удалить вместе с учёткой:
+ * проекты, где она — единственный основатель. Правда о прежнем владельце
+ * остаётся в журнале аудита: он не переписывается.
  */
 const REASSIGN_TO = valueOf('--reassign-to');
 const EMAIL = LOGIN.includes('@') ? LOGIN : `${LOGIN}@unicorn.local`;
 
 /**
- * Что не удаляется никогда. Только `audit.events`: она связана hash-chain, и
- * вырезанная строка ломает проверку целостности на всей истории. Остальные
- * таблицы схемы `audit` (`agent_runs`, `node_checkpoints`) — обычные записи
- * прогонов под RLS, без цепочки и без append-only триггера; их строки уходят
- * вместе с учёткой штатным порядком.
+ * Что не удаляется никогда: `audit.events` связана hash-chain, и вырезанная
+ * строка ломает проверку целостности на всей истории; `identity.consents` —
+ * юридически значимый след согласий.
  */
-const PROTECTED_TABLES = new Set(['audit.events', 'identity.consents', 'scoring.irs_scores']);
+const PROTECTED_TABLES = new Set(['audit.events', 'identity.consents']);
 
 function valueOf(flag) {
   const i = args.indexOf(flag);
@@ -175,29 +171,14 @@ if (projects.rowCount > 0) {
   }
 }
 
-const creds = await pool.query(
-  `SELECT provider, model_name, key_fingerprint, is_active, set_at
-     FROM scoring.ai_provider_credentials WHERE set_by = $1`,
-  [user.id],
-);
-if (creds.rowCount > 0) {
-  console.log('');
-  console.log('=== Ключи провайдеров, поставленные этой учёткой ===');
-  for (const c of creds.rows) {
-    console.log(
-      `  ${c.provider.padEnd(12)}  ${(c.model_name ?? '—').padEnd(24)}  ` +
-        `отпечаток ${c.key_fingerprint}  ${c.is_active ? 'ДЕЙСТВУЮЩИЙ' : 'отозван'}`,
-    );
-  }
-  console.log('  Удаление учётки снесёт их вместе с ней — используй --reassign-to <логин>.');
-}
-
 const blocked = withRows.filter((r) => PROTECTED_TABLES.has(r.table_name));
 const removable = withRows.filter((r) => !PROTECTED_TABLES.has(r.table_name));
 
 // Ссылки, объявленные NOT NULL: их нельзя ни удалить по отдельности, ни
-// обнулить — только передать другой учётке.
-const MUST_REASSIGN = new Set(['scoring.ai_provider_credentials.set_by']);
+// обнулить — только передать другой учётке. После 2.1-W05 (ключи провайдеров
+// ИИ удалены вместе со схемой scoring) таких колонок нет; перечень оставлен,
+// чтобы новая такая ссылка добавлялась строкой, а не новой логикой.
+const MUST_REASSIGN = new Set();
 const needReassign = removable.filter((r) => MUST_REASSIGN.has(`${r.table_name}.${r.column_name}`));
 // Проект без второго основателя тоже требует наследника — иначе он повиснет
 // в каталоге без владельца.
@@ -233,7 +214,7 @@ if ((needReassign.length > 0 || soleFounderProjects > 0) && !heirId) {
   console.error(`
 Есть обязательные ссылки: ${what}.`);
   console.error('Удаление остановлено: укажи --reassign-to <логин администратора>,');
-  console.error('иначе вместе с учёткой уедет рабочий объект (например, ключ провайдера).');
+  console.error('иначе вместе с учёткой уедет рабочий объект (например, проект).');
   await pool.end();
   process.exit(1);
 }
@@ -251,24 +232,10 @@ let removedRows = 0;
 try {
   await client.query('BEGIN');
 
-  // Второй уровень зависимостей. Эти строки ссылаются не на пользователя, а на
-  // объекты, которые уходят вместе с ним, — прямого внешнего ключа на users у
-  // них нет, и каталожный обход выше их не видит.
-  const checkpoints = await client.query(
-    `DELETE FROM audit.node_checkpoints
-      WHERE run_id IN (SELECT id FROM audit.agent_runs WHERE user_id = $1)`,
-    [user.id],
-  );
-  if (checkpoints.rowCount > 0) {
-    console.log(`  удалено ${String(checkpoints.rowCount).padStart(6)}  audit.node_checkpoints`);
-    removedRows += checkpoints.rowCount;
-  }
-
   // Проекты, где учётка — единственный основатель, ПЕРЕДАЮТСЯ наследнику.
-  // Удалить их целиком не выйдет и не нужно: на проекте висит рейтинг
-  // (`scoring.irs_scores`), а он защищён триггером append-only — «rating is
-  // not for sale». Защита правильная, обходить её ради уборки нельзя. Просто
-  // порвать связь тоже нельзя: проект остался бы в каталоге без владельца.
+  // Удалять их вместе с учёткой не нужно: проект с материалами и листингом —
+  // рабочий объект, а не след учётки. Просто порвать связь тоже нельзя:
+  // проект остался бы в каталоге без владельца.
   const orphans = projects.rows.filter((p) => p.founders === 1).map((p) => p.id);
   if (orphans.length > 0) {
     const res = await client.query(

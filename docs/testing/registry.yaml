@@ -48,7 +48,7 @@ automation:
     jobs: [push, static, secrets-scan, sast, deps, database, unit, build]
     covers:
       - линтер, формат, типы, сборка всех приложений
-      - миграции и их линтер, тесты схемы БД (18 файлов, 291 проверка)
+      - миграции и их линтер, тесты схемы БД (9 файлов, 112 проверок)
       - 'девять статических проверок и гейтов (см. runner: ci ниже)'
     note: >-
       Браузерные прогоны, smoke и probe в CI не запускаются: им нужен
@@ -87,17 +87,6 @@ checks:
     purpose: 'Дозаполнение `lab.project_materials.size_bytes` (Ф28). 25 исторических строк подтверждены до M044: размер объекта тогда не собирался, и ограничение `project_materials_confirmed_has_size` (M047, NOT VALID) нельзя провалид'
     confirmation: reviewed-in-code
 
-  - id: TOOL-BUILD-APPLICATION-FORM-V1
-    file: scripts/build-application-form-v1.mjs
-    command: node scripts/build-application-form-v1.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    studied: header
-    purpose: 'Стартовая конфигурация вопросов заявки (версия 1) — из банка вопросов. Источник — `docs/product/application-questions-catalog.md` (версия 2): таблицы разделов дают ключ, тип, состояния по стадиям, видимость и подтверждение; ка'
-    confirmation: reviewed-in-code
-
   - id: TOOL-BUILD-TEST-REGISTRY-DOC
     file: scripts/build-test-registry-doc.mjs
     command: npm run docs:registry
@@ -127,12 +116,12 @@ checks:
     kind: check
     level: интеграционный
     runner: manual
-    asserts: 47
+    asserts: 46
     needs: [db, core]
     studied: code
     purpose: 'Раздел «Пользователи» административного кабинета — проверка API. Браузерный проход показывает, что экран работает. Здесь проверяется то, чего с экрана не видно и что дороже всего стоит при ошибке: границы доступа — кому '
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: CHK-CHECKPOINT-SECRETS
     file: scripts/check-checkpoint-secrets.mjs
@@ -272,7 +261,7 @@ checks:
     kind: check
     level: интеграционный
     runner: manual
-    asserts: 19
+    asserts: 18
     needs: [db, core, s3]
     effects: ['пишет в БД', 'кладёт объект в хранилище', 'убирает за собой через сессию']
     cooldownSeconds: 20
@@ -285,9 +274,9 @@ checks:
       идентификаторы, неотличимость закрытого от несуществующего для
       ДОКУМЕНТА, билет на загрузку в чужой проект и посторонние без всяких
       отношений с проектом.
-    purpose: 'Граница доступа к ФАЙЛАМ, а не к строкам в базе. RLS защищает строки, документ лежит в объектном хранилище — там нет ни политик, ни ролей приложения. Проверяется: хранилище не отдаёт объект мимо ядра, ядро не выдаёт ссылок на чтение, посторонние (другой основатель, эксперт без назначения, инвестор без разрешения, гость) байтов не получают, перекрёстные идентификаторы двери не открывают, закрытое неотличимо от несуществующего, изображения закрыты как документы, билет на загрузку в чужой проект не выдаётся.'
+    purpose: 'Граница доступа к ФАЙЛАМ, а не к строкам в базе. RLS защищает строки, документ лежит в объектном хранилище — там нет ни политик, ни ролей приложения. Проверяется: хранилище не отдаёт объект мимо ядра, ядро не выдаёт ссылок на чтение, посторонние (другой основатель, инвестор без разрешения, гость) байтов не получают, перекрёстные идентификаторы двери не открывают, закрытое неотличимо от несуществующего, изображения закрыты как документы, билет на загрузку в чужой проект не выдаётся.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: CHK-FRONT-BUILDS
     file: scripts/check-front-builds.mjs
@@ -453,7 +442,7 @@ checks:
     kind: check
     level: интеграционный
     runner: ci
-    asserts: 9
+    asserts: 40
     needs: [db]
     effects: ['только читает каталог базы — ничего не пишет и не убирает']
     studied: code
@@ -503,7 +492,7 @@ checks:
     kind: check
     level: интеграционный
     runner: manual
-    asserts: 50
+    asserts: 49
     needs: [db, core]
     effects: ['пишет в БД']
     studied: code
@@ -517,7 +506,7 @@ checks:
       старше запуска ему не принадлежит.
     purpose: 'Тестовые сессии и контексты доступа — проверка границ доверия. Здесь проверяется не «работает ли переключение», а то, чего с экрана не видно и что дороже всего стоит при ошибке: подстановка личности внутри стража доступа'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: CHK-UPSTREAM-OWNER
     file: scripts/check-upstream-owner.mjs
@@ -606,18 +595,6 @@ checks:
     purpose: 'Выкатить текущий `main` на боевой стенд. До этого скрипта обновление сервера было набором команд по памяти: подтянуть, поставить зависимости, собрать, накатить миграции, перезапустить два сервиса, пересоздать прокси. Люб'
     confirmation: reviewed-in-code
 
-  - id: TOOL-DEV-AI-GATEWAY
-    file: scripts/dev-ai-gateway.mjs
-    command: node scripts/dev-ai-gateway.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [core]
-    studied: header
-    purpose: 'Запуск AI-шлюза с переменными из .env. Как и `dev-core.mjs`: переменные читает скрипт, а не приложение. Сам шлюз в production получает окружение от платформы и `.env` читать не умеет — это принципиально, потому что именн'
-    confirmation: reviewed-in-code
-
   - id: TOOL-DEV-CORE
     file: scripts/dev-core.mjs
     command: node scripts/dev-core.mjs
@@ -680,46 +657,11 @@ checks:
     kind: tool
     level: инструмент
     runner: manual-tool
-    asserts: 10
+    asserts: 17
     needs: [db, docker]
     effects: ['удаляет данные']
     studied: header
     purpose: 'Проверка восстановления из резервной копии (`docs/architecture/Architect_Launch.md` §7, гейт A). «Бэкапы настроены» — не доказательство. Доказательство — восстановленная база, в которой данные на месте, а инварианты живы'
-    confirmation: reviewed-in-code
-
-  - id: TOOL-E2E-FULL-CYCLE
-    file: scripts/e2e-full-cycle.mjs
-    command: node scripts/e2e-full-cycle.mjs
-    kind: scenario
-    level: сквозной
-    runner: manual-tool
-    asserts: 33
-    needs: [db, core]
-    effects: ['создаёт данные всех ролей', 'за собой не убирает']
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      ОШИБКА КЛАССИФИКАЦИИ, исправлена 2026-09-22: числился инструментом, а
-      это сквозной сценарий на 33 утверждения — путь проекта через все роли.
-      ЗАБЛОКИРОВАН и зелёным быть не может: начинается с подачи заявки В
-      СЕЗОН, а сезоны отложены (этап 8, флаг seasons.enabled выключен), и
-      маршрут честно отвечает 503. Прогон написан до этого решения. Чинить —
-      переписывать начало сценария под работу без сезона; решение за
-      владельцем, поэтому пока помечен blocked, а не «падает».
-    purpose: 'Сквозной сценарий платформы: путь проекта через все роли. Каждая фаза проверяла свой кусок; здесь проверяется, что куски складываются в одну работающую цепочку и что данные ОДНОЙ роли доходят до другой ровно так, как зад'
-    confirmation: blocked
-
-  - id: TOOL-EVAL-AI-SCORING
-    file: scripts/eval-ai-scoring.mjs
-    command: node scripts/eval-ai-scoring.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 15
-    needs: [db, core]
-    effects: ['пишет в БД']
-    studied: header
-    purpose: 'Eval-гейт LLM-скоринга (promt_aiscoring.md, раздел 9; ADR-008 §6). Гейт — условие включения провайдера, а не отчёт после. Пока он не зелёный, `ai.scoring.llm.enabled` сервер включить не даст: результат пишется в `scoring'
     confirmation: reviewed-in-code
 
   - id: TOOL-FIX-DOCKER-SOCKET
@@ -731,26 +673,6 @@ checks:
     asserts: 0
     studied: header
     purpose: 'Убрать залипший сокет секрет-движка Docker Desktop, иначе он не стартует. Симптом. Docker Desktop падает окном «An unexpected error occurred» с текстом: starting services: initializing Secrets Engine: listening on unix:/'
-    confirmation: reviewed-in-code
-
-  - id: GAT-AI-GATEWAY
-    file: scripts/gate-ai-gateway.mjs
-    command: npm run gate:ai
-    kind: gate
-    level: статический
-    runner: manual
-    asserts: 0
-    studied: code
-    studiedOn: 2026-09-22
-    needs: [python]
-    effects: ['запускает pytest шлюза и аудит зависимостей — данных не трогает']
-    note: >-
-      Вынесен в скрипт, а не в строку package.json, намеренно: путь к
-      интерпретатору различается на Windows и Linux, а захардкоженный путь
-      означал бы, что в одной из сред гейт молча не запускается — то есть
-      зелёный без проверки. Пять файлов pytest: анализатор, предел тела,
-      граница HTTP, работа с моделью, политика.
-    purpose: 'Гейт AI-шлюза: тесты политики и анализатора + аудит зависимостей. Вынесен в скрипт, а не в строку package.json, по одной причине: путь к интерпретатору различается на Windows и Linux, а гейт обязан выполняться одинаково '
     confirmation: reviewed-in-code
 
   - id: TOOL-INFRA
@@ -775,45 +697,6 @@ checks:
     asserts: 0
     studied: header
     purpose: 'Нагрузочный прогон под ПАРАЛЛЕЛЬНОЙ нагрузкой. Что он закрывает: замеры Ф-ТД снимались по одному запросу за раз (`perf-measure.mjs`) и говорили о стоимости запроса, но ничего — о поведении под конкуренцией. Здесь измеряе'
-    confirmation: reviewed-in-code
-
-  - id: TOOL-MIGRATE-FORM-ROUND-DISCLOSURE
-    file: scripts/migrate-form-round-disclosure.mjs
-    command: node scripts/migrate-form-round-disclosure.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [db]
-    effects: ['пишет в БД']
-    studied: header
-    purpose: 'Блок `disclosure` в конфигурации формы: настройка статуса привлечения отдельно от суммы (владелец, 2026-09-18, после 5.6.4д; M086). Работает по ЖИВОЙ активной версии: если у неё нет `disclosure.raising_status`, публикует'
-    confirmation: reviewed-in-code
-
-  - id: TOOL-MIGRATE-FORM-ROUND-SCOPE
-    file: scripts/migrate-form-round-scope.mjs
-    command: node scripts/migrate-form-round-scope.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [db]
-    effects: ['пишет в БД']
-    studied: header
-    purpose: 'Перевод живой конфигурации вопросов на разделение «профиль / раунд» (план 0.2 §0г, заявка-03 §2.4, §2.7; этап 5.6.2). Работает с тем, что фактически опубликовано и правится администратором, а не с исходным seed: берёт ак'
-    confirmation: reviewed-in-code
-
-  - id: TOOL-MIGRATE-FORM-ROUND-VISIBILITY
-    file: scripts/migrate-form-round-visibility.mjs
-    command: node scripts/migrate-form-round-visibility.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [db]
-    effects: ['пишет в БД']
-    studied: header
-    purpose: 'Стартовая видимость группы «текущий запрос» и предмета финансирования — `investors` (владелец, 2026-09-18, уточнение к 5.6.4): сумма раунда по умолчанию скрыта от анонимного посетителя, публичность — явная настройка в ад'
     confirmation: reviewed-in-code
 
   - id: TOOL-NATS-INIT-STREAM
@@ -850,19 +733,6 @@ checks:
     purpose: 'Гейт сетевой безопасности (RULES.md §3.2). Прогоняется по завершении КАЖДОЙ фазы. Проверяет фактическое состояние, а не намерение в конфиге: реальные привязки портов контейнеров, реальные заголовки ответа API, реальное п'
     confirmation: reviewed-in-code
 
-  - id: TOOL-PERF-MEASURE
-    file: scripts/perf-measure.mjs
-    command: node scripts/perf-measure.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [db]
-    effects: ['пишет в БД', 'удаляет данные']
-    studied: header
-    purpose: 'Замеры на синтетическом объёме сезона. Существует потому, что «индексы созданы по спецификации» и «запрос быстрый» — разные утверждения. На единичных данных планировщик выбирает последовательное чтение и укладывается в д'
-    confirmation: reviewed-in-code
-
   - id: PRB-UPLOAD-COMPLETION
     file: scripts/probe-upload-completion.mjs
     command: node scripts/probe-upload-completion.mjs
@@ -889,22 +759,6 @@ checks:
     purpose: 'Приёмка завершения загрузок материалов на общем механизме: аренда, попытки, сверка, отказы и режим отката.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
-
-  - id: PRB-AI-DETERMINISM
-    file: scripts/probe-ai-determinism.mjs
-    command: node scripts/probe-ai-determinism.mjs
-    kind: probe
-    level: интеграционный
-    runner: manual
-    asserts: 0
-    needs: [core]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      откуда разброс IRS между прогонами. Проверяется фактом, а не чтением кода.
-    effects: ['наблюдает поведение запущенного контура — своих записей не создаёт']
-    purpose: 'Зонд детерминизма LLM-скоринга: откуда разброс IRS между прогонами. Один и тот же вход гоняется через шлюз двумя сериями: с фиксированным nonce (промпт побайтно одинаков) и со случайным (как в бою). Если разброс есть тол'
-    confirmation: reviewed-in-code
 
   - id: PRB-CSRF-BINDING
     file: scripts/probe-csrf-binding.mjs
@@ -1169,7 +1023,7 @@ checks:
     kind: probe
     level: интеграционный
     runner: manual
-    asserts: 10
+    asserts: 9
     needs: [db, core]
     effects: ['пишет служебные строки напрямую в БД', 'убирает созданное']
     studied: code
@@ -1235,59 +1089,10 @@ checks:
     purpose: 'Проверка квот и подтверждения загрузки материалов. Находка внешнего аудита (SEC-14/CODE-10): запись материала создавалась вместе с выдачей билета — до того, как файл появился в хранилище. Отменённая загрузка навсегда ост'
     confirmation: reviewed-in-code
 
-  - id: TOOL-REANALYZE-PROJECTS
-    file: scripts/reanalyze-projects.mjs
-    command: node scripts/reanalyze-projects.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [db, core]
-    studied: header
-    purpose: 'Переанализ проектов действующей моделью скоринга. Зачем: после включения LLM-провайдера (или смены промпта) паспорта на платформе остаются от прежней модели. Здесь каждый проект прогоняется через обычный маршрут `POST /v'
-    confirmation: reviewed-in-code
-
-  - id: RND-ADMIN-COMMISSION
-    circuit: temp
-    file: scripts/render-check-admin-commission.mjs
-    command: node scripts/render-check-admin-commission.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 16
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Рендер-проверка экрана «Комиссии» в админке (этап 5.9.3). Что проверяется: раздел в меню; версии условий показаны с общей ставкой и долями; несходящиеся доли названы ДО отправки, а не ошибкой после неё; публикация даёт н'
-    confirmation: reviewed-in-code
-
   - id: RND-ADMIN-COUNTRIES
     circuit: temp
     file: scripts/render-check-admin-countries.mjs
     command: node scripts/render-check-admin-countries.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 26
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Рендер-проверка экрана «Страны обслуживания» в админке (этап 5.6.5). Что проверяется: раздел в меню; справочник стран строками; новая страна заводится выключенной и включается кнопкой; условия страны показаны с активной '
-    confirmation: reviewed-in-code
-
-  - id: RND-ADMIN-DEALS
-    file: scripts/render-check-admin-deals.mjs
-    command: node scripts/render-check-admin-deals.mjs
     kind: render
     level: сквозной
     runner: manual
@@ -1300,7 +1105,7 @@ checks:
       ]
     studied: code
     studiedOn: 2026-09-22
-    purpose: 'Рендер-проверка экрана «Сделки» в админке (M097). Что проверяется: раздел в меню; сделка открывается и показывает транши, возвраты и начисления; «Зафиксировать возврат» записывает событие и пересчитывает возвращённую сум'
+    purpose: 'Рендер-проверка экрана «Страны обслуживания» в админке (этап 5.6.5). Что проверяется: раздел в меню; справочник стран строками; новая страна заводится выключенной и включается кнопкой; условия страны показаны с активной '
     confirmation: reviewed-in-code
 
   - id: RND-ADMIN-INTELLIGENCE
@@ -1320,44 +1125,6 @@ checks:
     studied: code
     studiedOn: 2026-09-23
     purpose: 'Рендер-проверка раздела Market Intelligence (M137–M143). Что проверяется: адрес из формы — факт-кандидат, источник-сайт не разобран; подтверждённый факт с организацией и датой, точность без сдвига дня, роль в «Ролях»; вес считается только после разметки площадки профильной и подтверждённой, кандидат в вес не идёт, сомнительная площадка веса не даёт, а факт на ней остаётся подтверждённым; «Связи» у организации; дубль «Фонд «X»» = «X» и объединение с переносом фактов; поиск и фильтры; вкладка «Профильные площадки» — только профильные; адрес внутренней сети не загружается.'
-    confirmation: reviewed-in-code
-
-  - id: RND-ADMIN-QUESTIONS
-    circuit: temp
-    file: scripts/render-check-admin-questions.mjs
-    command: node scripts/render-check-admin-questions.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 51
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Рендер-проверка этапа 5: управление вопросами заявки из админки. Сценарий владельца (2026-09-15): изменить обязательность вопроса для стадии → опубликовать новую версию → создать новую заявку → убедиться, что старый черн'
-    confirmation: reviewed-in-code
-
-  - id: RND-ADMIN-ROUND-PACKAGES
-    circuit: temp
-    file: scripts/render-check-admin-round-packages.mjs
-    command: node scripts/render-check-admin-round-packages.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 25
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Рендер-проверка экрана «Пакеты раунда» в админке (этап 5.9.1). Что проверяется: раздел в меню; экран честно говорит, что продажи выключены; услуга заводится нереализованной и не предлагается ни в состав пакета, ни для до'
     confirmation: reviewed-in-code
 
   - id: RND-ADMIN-USERS
@@ -1393,7 +1160,7 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 24
+    asserts: 32
     needs: [db, core, web]
     effects:
       [
@@ -1446,34 +1213,12 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 14
+    asserts: 8
     needs: [db, core, web]
     studied: code
     studiedOn: 2026-09-22
     effects: ['работает под существующими учётными записями стенда — своих не заводит']
     purpose: 'Комплект демонстрационных данных в РЕАЛЬНОМ рендере (`RULES.md` §2). Живой прогон `smoke-demo.mjs` доказывает, что данные загружены, связаны и отдаются API. Этот прогон отвечает на другой вопрос: ВИДНО ли их человеку — т'
-    confirmation: reviewed-in-code
-
-  - id: RND-EXPERT
-    file: scripts/render-check-expert.mjs
-    command: node scripts/render-check-expert.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 33
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      Рецензент имеет ДВЕ роли — основатель и эксперт, — и платформа
-      показывает таким людям выбор кабинета. Прогон знал старый путь и падал
-      по таймауту на этом экране; научен проходить выбор так же, как человек.
-    purpose: 'Проверка кабинета эксперта в РЕАЛЬНОМ рендере (`RULES.md` §2). Проверяется путь рецензента целиком на настоящих данных: назначение, принятие, подача рецензии и невозможность подать её повторно. Отдельно — что рецензию не'
     confirmation: reviewed-in-code
 
   - id: RND-FAVORITES
@@ -1493,31 +1238,13 @@ checks:
     purpose: 'Избранное инвестора в РЕАЛЬНОМ рендере (`RULES.md` §2). ТЗ требовало проверить сценарий end-to-end. Проверяется путь человека: 1. в каталоге у карточки есть отметка, и её состояние объявлено не только цветом (`aria-press'
     confirmation: reviewed-in-code
 
-  - id: RND-FIRST-TIER
-    file: scripts/render-check-first-tier.mjs
-    command: node scripts/render-check-first-tier.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 0
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Проход 7.4: первая очередь целиком, в браузере. Это не проверка одной функции, а связный путь продукта: основатель доводит проект до открытого раунда, платформа принимает оплату и выполняет услугу, а затем на тот же прое'
-    confirmation: reviewed-in-code
-
   - id: RND-INVESTOR
     file: scripts/render-check-investor.mjs
     command: node scripts/render-check-investor.mjs
     kind: render
     level: сквозной
     runner: manual
-    asserts: 27
+    asserts: 13
     needs: [db, core, web]
     effects:
       [
@@ -1533,55 +1260,13 @@ checks:
     purpose: 'Проверка кабинета инвестора в РЕАЛЬНОМ рендере (`RULES.md` §2). Главное здесь — не «страница открылась», а честность двух состояний: выключенный регулируемый контур должен быть НАЗВАН выключенным, а не показан пустым спи'
     confirmation: reviewed-in-code
 
-  - id: RND-LAB-ROUND-COST
-    file: scripts/render-check-lab-round-cost.mjs
-    command: node scripts/render-check-lab-round-cost.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 12
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Рендер-проверка «стоимость запуска раунда» в кабинете основателя (5.9.2). Что проверяется: пока запуск бесплатен, раздела про деньги в кабинете нет (иначе висел бы разговор об оплате, которой не существует); при включённ'
-    confirmation: reviewed-in-code
-
-  - id: RND-LAB-V2
-    circuit: temp
-    file: scripts/render-check-lab-v2.mjs
-    command: node scripts/render-check-lab-v2.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 71
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      Самый крупный браузерный проход — 71 утверждение. Проверяет мастер
-      заявки по списку владельца при приёмке: понятность навигации, возврат
-      к черновику, статус разделов, неизменность версии анкеты после
-      публикации новой.
-    purpose: 'Проверка мастера заявки v2 в РЕАЛЬНОМ рендере (этап 4, план 0.2 §0в). Что проверяется — список владельца при приёмке этапа: понятность пошаговой навигации, сохранение и возврат к черновику, статус каждого раздела, неизме'
-    confirmation: reviewed-in-code
-
   - id: RND-LAB
     file: scripts/render-check-lab.mjs
     command: node scripts/render-check-lab.mjs
     kind: render
     level: сквозной
     runner: manual
-    asserts: 43
+    asserts: 33
     needs: [db, core, web]
     effects:
       [
@@ -1590,7 +1275,7 @@ checks:
       ]
     studied: code
     studiedOn: 2026-09-22
-    purpose: 'Проверка кабинета основателя в РЕАЛЬНОМ рендере (`RULES.md` §2). Проверяется не «страница открылась», а рабочий путь целиком: вход настоящей учётной записью, создание заявки, отображение своих проектов и отказ сервера та'
+    purpose: 'Проверка кабинета основателя в РЕАЛЬНОМ рендере (`RULES.md` §2): вход настоящей учётной записью, создание проекта, отображение своих проектов, страница проекта без заявок, раундов, паспорта и согласий (удалены в 2.1-W05) и отказ сервера там, где он должен быть.'
     confirmation: reviewed-in-code
 
   - id: RND-MEDIA-EMBEDDING
@@ -1599,7 +1284,7 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 13
+    asserts: 12
     needs: [db, core, web]
     effects:
       [
@@ -1617,7 +1302,7 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 18
+    asserts: 17
     needs: [db, core, web]
     effects:
       [
@@ -1628,7 +1313,7 @@ checks:
     studiedOn: 2026-09-22
     purpose: 'Браузерный проход: «Мой профиль» во всех кабинетах (этап 6.7). Проверяется то, ради чего экран общий: человек попадает в него одинаково отовсюду и видит одно и то же. И то, чего на нём быть не должно: полей для подтвержд'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: RND-PROJECT-MEDIA
     file: scripts/render-check-project-media.mjs
@@ -1636,7 +1321,7 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 17
+    asserts: 16
     needs: [db, core, web]
     effects:
       [
@@ -1654,7 +1339,7 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 22
+    asserts: 15
     needs: [db, core, web]
     effects:
       [
@@ -1665,47 +1350,6 @@ checks:
     studiedOn: 2026-09-22
     purpose: 'Рендер-проверка страницы проекта для ТРЁХ зрителей (этап 7.3). Один проект, один серверный предикат аудитории — и три поверхности, каждая из которых уже существует: • аноним — витрина, `/p/<id>`, проекция Public View; • '
     confirmation: reviewed-in-code
-
-  - id: RND-ROUND-PURCHASE
-    file: scripts/render-check-round-purchase.mjs
-    command: node scripts/render-check-round-purchase.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 13
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Рендер-проверка сквозного сценария покупки (5.9.7). Проходит путь в браузере под ДВУМЯ ролями: основатель выбирает пакет и оформляет покупку, администратор подтверждает тестовую оплату и отмечает выполнение услуг, основа'
-    confirmation: reviewed-in-code
-
-  - id: RND-STAFF-ACCESS
-    file: scripts/render-check-staff-access.mjs
-    command: node scripts/render-check-staff-access.mjs
-    kind: render
-    level: сквозной
-    runner: manual
-    asserts: 45
-    needs: [db, core, web]
-    effects:
-      [
-        'открывает тестовую сессию на время работы: созданные люди числятся за ЗАПУСКОМ, а не просто помечены',
-        'успешный прогон убирает за собой, упавший оставляет данные с принадлежностью',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      Заводит сотрудников и ищет их в интерфейсе — в поле выдачи полномочия.
-      Поиск по умолчанию прячет записи проверок, поэтому прогон ставит
-      галочку «Включая тестовых пользователей», как поступил бы оператор.
-    purpose: 'Браузерный проход: управление сотрудниками через интерфейс. Проверяется завершённый сценарий администратора и эксперта — тот, ради которого экраны и делались: 1. выдать функциональное полномочие галочкой; 2. назначить эк'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
 
   - id: RND-SUPPORT
     file: scripts/render-check-support.mjs
@@ -1734,7 +1378,7 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 29
+    asserts: 27
     needs: [db, core, web]
     studied: code
     studiedOn: 2026-09-22
@@ -1744,7 +1388,7 @@ checks:
       ]
     purpose: 'Браузерный проход: тестовые сессии и просмотр кабинета (этап 6.5). Проверяется то, чего не видно из API-прогона, — поведение ВКЛАДКИ: 1. администратор заводит сессию и открывает кабинет участника; 2. идентификатор контек'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: RND-WEB-PUBLIC
     file: scripts/render-check-web-public.mjs
@@ -1880,18 +1524,6 @@ checks:
     purpose: 'Политика жизненного цикла бакета материалов. Вторая половина уборки за брошенными загрузками (остаток SEC-14). Фоновая уборка в ядре снимает объекты, у которых есть строка материала. Она НЕ видит двух видов мусора: 1. **'
     confirmation: reviewed-in-code
 
-  - id: SCN-ROUND-REVIEW
-    file: scripts/scenario-round-review.mjs
-    command: node scripts/scenario-round-review.mjs
-    kind: scenario
-    level: сквозной
-    runner: manual
-    asserts: 0
-    studied: code
-    purpose: 'Связанный сценарий на механизме тестовых сессий. Это ОБРАЗЕЦ того, как теперь пишется сценарная проверка: без своих учётных записей, без паролей и без уборки вручную. Всё, что прогон создал, числится за сессией; шаги и и'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
   - id: TOOL-SECURITY-AUDIT-FULL
     file: scripts/security-audit-full.mjs
     command: node scripts/security-audit-full.mjs
@@ -1924,22 +1556,6 @@ checks:
     note: >-
       обстановка приёмки и маршрут к ней; пересоздаётся после каждого сброса стенда
     purpose: 'Обстановка для приёмки владельцем и маршрут к ней. Зачем скрипт, а не «создал руками и записал». Стенд пересоздаётся: базы сбрасываются, демо-данные перезаливаются. Маршрут приёмки, который живёт только в голове, после п'
-    confirmation: reviewed-in-code
-
-  - id: TOOL-SEED-APPLICATION-FORM
-    file: scripts/seed-application-form.mjs
-    command: node scripts/seed-application-form.mjs
-    kind: tool
-    level: инструмент
-    runner: manual-tool
-    asserts: 0
-    needs: [db]
-    effects: ['пишет в БД']
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      стартовая версия анкеты заявки
-    purpose: 'Стартовая конфигурация вопросов заявки — публикация версии 1. Документ версии 1 живёт в коде контрактов (`application-form.v1.ts`, сгенерирован из банка вопросов). Миграция M073 создаёт таблицу версий, но не вписывает в '
     confirmation: reviewed-in-code
 
   - id: TOOL-RUN-SUITE
@@ -2040,36 +1656,13 @@ checks:
     purpose: 'Живой прогон Ф9c: управление ролями и машиночитаемое описание API. Проверяется главное: роли раздаёт только администратор и только другим; последнего администратора нельзя разжаловать; каждая выдача и снятие попадают в ж'
     confirmation: reviewed-in-code
 
-  - id: SMK-AI
-    file: scripts/smoke-ai.mjs
-    command: node scripts/smoke-ai.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 44
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      Проверяет ГРАНИЦУ ПРОДУКТА, а не качество разбора: оценку считает
-      помеченный не-LLM провайдер внутри РФ, результат воспроизводим,
-      история сохраняется. Пока языковая модель не подключена, это и есть
-      единственное живое подтверждение контура.
-    purpose: 'Живой прогон AI-контура. Проверяется то, ради чего контур устроен именно так: оценку считает помеченный не-LLM провайдер внутри РФ, результат воспроизводим, история паспортов не переписывается, а недоступность шлюза оста'
-    confirmation: reviewed-in-code
-
   - id: SMK-API-CLIENT
     file: scripts/smoke-api-client.mjs
     command: node scripts/smoke-api-client.mjs
     kind: smoke
     level: интеграционный
     runner: manual
-    asserts: 6
+    asserts: 12
     needs: [core]
     studied: code
     studiedOn: 2026-09-22
@@ -2093,42 +1686,6 @@ checks:
     studied: code
     studiedOn: 2026-09-22
     purpose: 'Живой прогон восстановления пароля и подтверждения адреса (Ф51). Проверяется не «маршрут отвечает 200», а свойства, ради которых он написан: ответ одинаков для существующего и несуществующего адреса — иначе форма «забыли'
-    confirmation: reviewed-in-code
-
-  - id: SMK-BILLING
-    file: scripts/smoke-billing.mjs
-    command: node scripts/smoke-billing.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 39
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает: в finally только закрытие пула',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Живой прогон фазы «биллинг и админский кабинет». Проверяется фактическое поведение запущенного core: публикация новой версии тарифа с будущей датой, неизменяемость действующей версии, отмена объявления, оформление и акти'
-    confirmation: reviewed-in-code
-
-  - id: SMK-COMMISSION
-    file: scripts/smoke-commission.mjs
-    command: node scripts/smoke-commission.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 36
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает: в finally только закрытие пула',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Живой прогон «условия вознаграждения и зачёт услуг» (этап 5.9.3). Проверяется фактическое поведение запущенного core: ставка одна и доли обязаны в неё складываться; изменение — новая версия, прежняя закрывается; витрина '
     confirmation: reviewed-in-code
 
   - id: SMK-CONTENT
@@ -2214,29 +1771,6 @@ checks:
     purpose: 'Живой прогон Ф9b: публикация событий и доставка вебхуков. Проверяется главное: событие уходит в NATS ровно один раз и помечается опубликованным только после подтверждения брокером; подписчик получает доставку с подписью,'
     confirmation: reviewed-in-code
 
-  - id: SMK-EXPERTS
-    file: scripts/smoke-experts.mjs
-    command: node scripts/smoke-experts.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 84
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      83 утверждения — второй по величине прогон после SMK-PAYMENTS.
-      Покрывает не только назначения и рецензии, но и разрешение конфликта
-      (эксперт не разрешает его сам), подпись решения человеком из контекста
-      запроса и постановку уведомлений в очередь.
-    purpose: 'Живой прогон Ф8: экспертный совет, сезонный рейтинг, уведомления. Проверяется главное: рецензию пишет только назначенный эксперт и только по принятому назначению; заявленный конфликт интересов физически блокирует назначе'
-    confirmation: reviewed-in-code
-
   - id: SMK-FAVORITES
     file: scripts/smoke-favorites.mjs
     command: node scripts/smoke-favorites.mjs
@@ -2265,7 +1799,7 @@ checks:
     kind: smoke
     level: интеграционный
     runner: manual
-    asserts: 54
+    asserts: 38
     needs: [db, core]
     effects:
       [
@@ -2281,31 +1815,13 @@ checks:
     purpose: 'Живой прогон Ф9: Integration API. Проверяется главное: наружу не уходит ничего сверх заявленного скоупа; персональных данных нет ни в одном ответе; обезличенная проекция исчезает в тот же момент, когда отозвано согласие;'
     confirmation: reviewed-in-code
 
-  - id: SMK-INVESTMENTS
-    file: scripts/smoke-investments.mjs
-    command: node scripts/smoke-investments.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 38
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Живой прогон регулируемого контура. Проверяется главное: контур выключен по умолчанию; предложение размещает только владелец проекта от проверенного юрлица; приём предложения требует второго фактора; вознаграждение начис'
-    confirmation: reviewed-in-code
-
   - id: SMK-LAB
     file: scripts/smoke-lab.mjs
     command: node scripts/smoke-lab.mjs
     kind: smoke
     level: интеграционный
     runner: manual
-    asserts: 225
+    asserts: 112
     needs: [db, core]
     effects:
       [
@@ -2340,54 +1856,13 @@ checks:
     purpose: 'Живой прогон SMTP-транспорта почты. До этой фазы всё, что касалось писем, проверялось файловым транспортом: сценарий проходил целиком, но ни одного SMTP-диалога не было. Здесь письмо действительно уходит по протоколу — в'
     confirmation: reviewed-in-code
 
-  - id: SMK-OPERATOR-NOTIFICATIONS
-    file: scripts/smoke-operator-notifications.mjs
-    command: node scripts/smoke-operator-notifications.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 13
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Живой прогон «уведомления команде по порогу» (этап 5.9.5). Проверяется фактическое поведение запущенного core: • раунд выше порога создаёт ОДНУ запись уведомления с тестовым получателем; повторная обработка события второ'
-    confirmation: reviewed-in-code
-
-  - id: SMK-PAYMENTS
-    file: scripts/smoke-payments.mjs
-    command: node scripts/smoke-payments.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 65
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает: в finally только закрытие пула',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      64 утверждения, самый крупный денежный прогон. Кроме оформления
-      покупки проверяет границу подписи уведомлений оператора: без подписи,
-      с чужой подписью и с подменой суммы после подписи — отказ, и такие
-      уведомления в журнал не попадают.
-    purpose: 'Живой прогон оплаты услуг платформы через оператора платежей (5.9.9). Проверяется то, из-за чего оплату вообще можно назвать безопасной: • сумму платежа назначает СЕРВЕР по покупке — клиент её не присылает; • повторное н'
-    confirmation: reviewed-in-code
-
   - id: SMK-PROJECT-ACCESS
     file: scripts/smoke-project-access.mjs
     command: node scripts/smoke-project-access.mjs
     kind: smoke
     level: интеграционный
     runner: manual
-    asserts: 45
+    asserts: 41
     needs: [db, core]
     effects:
       [
@@ -2410,7 +1885,7 @@ checks:
     kind: smoke
     level: интеграционный
     runner: manual
-    asserts: 33
+    asserts: 32
     needs: [db, core, s3]
     effects: ['создаёт пользователей', 'пишет в БД']
     studied: code
@@ -2420,101 +1895,6 @@ checks:
       ЗАКРЫТОГО проекта не отдаётся (404 в обоих случаях), удалённое не
       отдаётся, EXIF и координаты съёмки в вариант не переезжают.
     purpose: 'Живой прогон логотипа и обложки проекта (7.2). Проверяется то, из-за чего загрузка пользовательских файлов вообще опасна: • формат определяется РАЗБОРОМ файла, а не заголовком клиента: «PNG» с произвольным содержимым отв'
-    confirmation: reviewed-in-code
-
-  - id: SMK-ROUND-PACKAGES
-    file: scripts/smoke-round-packages.mjs
-    command: node scripts/smoke-round-packages.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 40
-    needs: [db, core]
-    effects:
-      ['создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin', 'за собой не убирает']
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Живой прогон «пакеты запуска раунда» (этап 5.9.1). Проверяется фактическое поведение запущенного core: каталог услуг, отказ продавать нереализованную услугу, публикация версии пакета, запрет пересечения диапазонов и пере'
-    confirmation: reviewed-in-code
-
-  - id: SMK-ROUND-PRICING
-    file: scripts/smoke-round-pricing.mjs
-    command: node scripts/smoke-round-pricing.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 27
-    needs: [db, core]
-    effects:
-      ['создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin', 'за собой не убирает']
-    studied: code
-    studiedOn: 2026-09-22
-    purpose: 'Живой прогон «расчёт стоимости запуска раунда» (этап 5.9.2). Проверяется фактическое поведение запущенного core: расчёт объясняет, какой пакет требуется по сумме, что выбрано сверх, сколько итого и в какой валюте; более '
-    confirmation: reviewed-in-code
-
-  - id: SMK-ROUND-PURCHASE
-    file: scripts/smoke-round-purchase.mjs
-    command: node scripts/smoke-round-purchase.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 36
-    needs: [db, core]
-    effects:
-      ['создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin', 'за собой не убирает']
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      Сквозной путь целиком: выбор пакета, оформление покупки, тестовое
-      подтверждение оплаты. Единственный живой прогон, проходящий денежный
-      контур от начала до конца.
-    purpose: 'Живой прогон сквозного сценария покупки запуска раунда (5.9.7). Проходит путь целиком: выбор пакета → оформление покупки → тестовое подтверждение оплаты → выполнение услуг → открытие раунда. И проверяет ровно те места, г'
-    confirmation: reviewed-in-code
-
-  - id: SMK-SERVICE-EXECUTION
-    file: scripts/smoke-service-execution.mjs
-    command: node scripts/smoke-service-execution.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 48
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      Проверяет происхождение результата разбора: отпечаток входа, версия
-      заявки, пометка «сделано по ответам», запрет ручной отметки услуги
-      платформы В ТОМ ЧИСЛЕ напрямую в базе, идемпотентность повторного
-      запуска. Поэтому входит и в блок «разбор-моделью».
-    purpose: 'Живой прогон исполнения услуги ИИ-разбора по позиции покупки (6.1). Проверяется то, ради чего услуга вообще продаётся: что её действительно выполняют, а не закрывают галочкой. • услугу платформы НЕЛЬЗЯ отметить выполненн'
-    confirmation: reviewed-in-code
-
-  - id: SMK-STAFF-CAPABILITIES
-    file: scripts/smoke-staff-capabilities.mjs
-    command: node scripts/smoke-staff-capabilities.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 40
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      Как и DBT-STAFF-CAPABILITIES, больше чем наполовину про ДЕНЬГИ:
-      фиксация возврата, идемпотентность повторной отправки, аннулирование
-      вместо удаления, уменьшение начисления, корректировка комиссии и запись
-      каждого такого действия в аудит. Поэтому входит и в блок «деньги».
-    purpose: 'Живой прогон «полномочия сотрудника и ручные денежные записи» (M097). Проверяется фактическое поведение запущенного core: • роль `expert` сама по себе не даёт ни полномочия, ни доступа к сделке; • полномочие без назначен'
     confirmation: reviewed-in-code
 
   - id: SMK-SUPPORT
@@ -2533,28 +1913,6 @@ checks:
     studied: code
     studiedOn: 2026-09-22
     purpose: 'Живой прогон: поддержка пользователей и сообщения об ошибках (M062). Одна сущность закрывает две задачи — их различает `kind`. Проверяется фактом, а не чтением кода: 1. обращение создаётся и сразу видно автору с его перв'
-    confirmation: reviewed-in-code
-
-  - id: SMK-TECHDEBT
-    file: scripts/smoke-techdebt.mjs
-    command: node scripts/smoke-techdebt.mjs
-    kind: smoke
-    level: интеграционный
-    runner: manual
-    asserts: 31
-    needs: [db, core]
-    effects:
-      [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
-        'за собой не убирает',
-      ]
-    studied: code
-    studiedOn: 2026-09-22
-    note: >-
-      Необычный прогон: проверяет НЕ область продукта, а список того, что
-      было объявлено закрытым, и проверяет на границах. Поэтому он в блоке
-      «порядок», а не в тематическом.
-    purpose: 'Живой прогон закрытого техдолга. Проверяется ровно то, что было объявлено закрытым, и на границах, а не «в среднем»: рецензент видит материалы НАЗНАЧЕННОГО проекта и не видит чужие; этап проекта двигается на один шаг и н'
     confirmation: reviewed-in-code
 
   - id: TOOL-STAND-CHECK
@@ -2680,66 +2038,11 @@ checks:
     asserts: 4
     needs: [db]
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
-    purpose: 'M090 (5.7.5): старые пути закрыты — RLS и вью на предикате доступа. - инвестор (даже с членством) не читает строки проектов, паспортов, оценок и IRS напрямую; данные — только через проекции по предика'
+    purpose: 'M090 (5.7.5): старые пути закрыты — RLS и вью на предикате доступа. Инвестор не читает строки проектов напрямую, только проекции по предикату; допуска по роли нет с 2.1-W05 — в режиме «все» инвестор видит то же, что аноним, «зарегистрированные инвесторы» вне команды не открыты никому; материалы — по личному разрешению и отметке владельца; каталог и избранное — по сессии зрителя.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: DBT-APPLICATION-FORMS
-    file: database/tests/application-forms.test.ts
-    command: npm run test -w database
-    kind: db-test
-    level: интеграционный
-    runner: ci
-    asserts: 10
-    needs: [db]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['транзакция с ROLLBACK — следов не оставляет']
-    purpose: 'Версии конфигурации вопросов заявки (M073/M074, план 0.2 §0в). Проверяется то, что обещает решение владельца: черновик один и никогда не активен; активная опубликованная одна; опубликованный документ '
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: DBT-APPLICATIONS
-    file: database/tests/applications.test.ts
-    command: npm run test -w database
-    kind: db-test
-    level: интеграционный
-    runner: ci
-    asserts: 15
-    needs: [db]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['транзакция с ROLLBACK — следов не оставляет']
-    note: >-
-      Несколько утверждений фиксируют СНЯТЫЕ ограничения (M081, M094): сумма
-      и предмет финансирования переехали к раунду, флага платёжного барьера
-      основателя больше нет. Это проверки того, что старое правило не
-      вернётся, а не действующего поведения.
-    purpose: 'Инвестиционная заявка как отдельная сущность (M071/M072). Проверяется ровно то, что обещает план 0.2: черновик свободен, обязательность — при подаче; заявку видят члены проекта и администратор, инвест'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: DBT-COMMISSION
-    file: database/tests/commission.test.ts
-    command: npm run test -w database
-    kind: db-test
-    level: интеграционный
-    runner: ci
-    asserts: 11
-    needs: [db]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['транзакция с ROLLBACK — следов не оставляет']
-    note: >-
-      Кроме долей и версий условий проверяет ДОСТУПНОСТЬ ВОЗМОЖНОСТЕЙ:
-      барьер подписки учитывается раньше тарифа, а пока ограничения
-      выключены — реализованное доступно всем инвесторам. Поэтому входит и в
-      блок «инвестор».
-    purpose: 'M096 (5.9.3): условия вознаграждения и зачёт услуг. Проверяется то, из-за чего модель менялась: - ставка одна, доли складываются в неё. Версия, где доли не сходятся с общей ставкой, не записывается — '
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: DBT-CONCURRENCY
     file: database/tests/concurrency.test.ts
@@ -2747,24 +2050,24 @@ checks:
     kind: db-test
     level: интеграционный
     runner: ci
-    asserts: 8
+    asserts: 1
     needs: [db]
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     effects:
       [
         'коммитит в СВОЕЙ одноразовой базе unicorn_test_concurrency_<pid>',
         'база создаётся миграциями в beforeAll и удаляется целиком в afterAll — следов не остаётся',
       ]
     note: >-
-      Коммит необходим: параллельные доставки, гонка траншей и цепочка хешей
-      проверяются настоящими блокировками, откат уничтожил бы предмет
-      проверки. Но «нужен коммит» не значит «пусть остаётся»: с 2026-09-22 у
-      файла своя одноразовая база, которая удаляется вместе со всем, что в
-      ней появилось.
+      Коммит необходим: цепочка хешей проверяется настоящими блокировками,
+      откат уничтожил бы предмет проверки. У файла своя одноразовая база,
+      которая удаляется вместе со всем, что в ней появилось. Гонки траншей,
+      договоров и золотых билетов ушли вместе со сделками и сезонами
+      (2.1-W05); заодно файл прогоняет всю цепочку миграций на чистой базе.
     purpose: 'Конкурентные инварианты. Обязательный гейт (docs/architecture/Database_Launch.md §16). Проверяется то, что нельзя проверить последовательным тестом: поведение под реальными параллельными транзакциями '
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: DBT-DATA-CLASSES
     file: database/tests/data-classes.test.ts
@@ -2786,84 +2089,27 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
 
-  - id: DBT-FUNDING-ROUNDS
-    file: database/tests/funding-rounds.test.ts
-    command: npm run test -w database
-    kind: db-test
-    level: интеграционный
-    runner: ci
-    asserts: 12
-    needs: [db]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['транзакция с ROLLBACK — следов не оставляет']
-    note: >-
-      Кроме раундов покрывает СТРАНЫ ОБСЛУЖИВАНИЯ: стартовая политика ru,
-      запрет второй активной политики той же страны, чтение списка анонимной
-      ролью и запись только администратором. Это справочное содержимое,
-      поэтому запись входит и в блок «содержимое».
-    purpose: 'Раунды привлечения и страны обслуживания (M081/M082, план 0.2 §0г). Проверяется то, что обещают решения владельца 2026-09-18: одна незавершённая кампания на проект (open ИЛИ paused занимают место); ос'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
   - id: DBT-INVARIANTS
     file: database/tests/invariants.test.ts
     command: npm run test -w database
     kind: db-test
     level: интеграционный
     runner: ci
-    asserts: 50
+    asserts: 28
     needs: [db]
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     effects: ['транзакция с ROLLBACK — следов не оставляет']
     note: >-
-      СКВОЗНАЯ проверка, самая широкая в реестре: 50 утверждений про
-      согласия, неизменяемость журнала событий и целость цепочки хешей,
-      реестр глаголов аудита, IRS, тарифы и подписки, договоры, транши, KYC и
-      KYB, SSRF в вебхуках, обязательные уведомления, верификацию, allowlist
-      колонок каталога, журнал миграций и восстановление пароля. Поэтому
-      входит в блоки доступ, вход, события, деньги и инвестор — числить её
-      только за заявкой было ошибкой группировки.
+      СКВОЗНАЯ проверка: согласия, неизменяемость журнала событий и целость
+      цепочки хешей, реестр глаголов аудита, KYC и KYB, SSRF в вебхуках,
+      allowlist скоупов (включая удалённые в 2.1-W05), обязательные
+      уведомления безопасности, allowlist колонок каталога, журнал миграций и
+      восстановление пароля. IRS, тарифы, подписки, договоры и транши удалены
+      вместе с их данными. Поэтому входит в блоки доступ, вход и события.
     purpose: 'Инварианты схемы: то, что БД обязана не дать сломать даже при ошибке в сервисном слое. Каждый тест — про конкретное правило из спецификации.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: DBT-OPERATOR-NOTIFICATIONS
-    file: database/tests/operator-notifications.test.ts
-    command: npm run test -w database
-    kind: db-test
-    level: интеграционный
-    runner: ci
-    asserts: 4
-    needs: [db]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['транзакция с ROLLBACK — следов не оставляет']
-    purpose: 'M102 (5.9.5): уведомления команде по порогу суммы раунда. Проверяется то, из-за чего порог вообще отделён от остального: - повторная обработка одного события не создаёт второй записи; - запись — факт:'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: DBT-PAYMENTS
-    file: database/tests/payments.test.ts
-    command: npm run test -w database
-    kind: db-test
-    level: интеграционный
-    runner: ci
-    asserts: 18
-    needs: [db]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['транзакция с ROLLBACK — следов не оставляет']
-    note: >-
-      Шире названия: пять последних утверждений — про ИСПОЛНЕНИЕ УСЛУГ, а не
-      про оплату. В том числе граница продукта: услугу с обещанием
-      ИИ-анализа нельзя пометить реализованной без модели и ключа, а разбор
-      по правилам её не закрывает. Поэтому входит и в блок
-      «разбор-моделью».
-    purpose: 'M108/M109: точка подключения оператора онлайн-платежей. Проверяются правила, без которых «подключим провайдера позже» означало бы дыру уже сейчас: - у платежа ровно один предмет оплаты: счёт ИЛИ покуп'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: DBT-PROJECT-ACCESS-DIRECTORY
     file: database/tests/project-access-directory.test.ts
@@ -2886,14 +2132,14 @@ checks:
     kind: db-test
     level: интеграционный
     runner: ci
-    asserts: 14
+    asserts: 11
     needs: [db]
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
-    purpose: 'M087 (5.7.1): режим видимости проекта, предикат аудитории, согласие владельца, барьер подписки как настройка. - матрица предикат × режим × зритель совпадает с `projectAudience()` в @unicorn/contracts '
+    purpose: 'M087 (5.7.1): режим видимости проекта и предикат аудитории. Матрица предикат × режим × зритель совпадает с `projectAudience()` в @unicorn/contracts; grant — набор разрешений (profile, materials, extended); исключение сильнее режима и grant; допуска по роли нет (2.1-W05); удалённые роли и удалённые части разрешения (раунд, паспорт) не принимаются.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: DBT-PROJECT-VIEWS
     file: database/tests/project-views.test.ts
@@ -2901,14 +2147,14 @@ checks:
     kind: db-test
     level: интеграционный
     runner: ci
-    asserts: 4
+    asserts: 2
     needs: [db]
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
-    purpose: 'M089 (5.7.2): проекции для Public View и Investor View. - `lab.disclosed_profile`: без согласия владельца — пусто; с согласием — снимок и эффективная видимость = строже(активная, версия согласия); дос'
+    purpose: 'M089 (5.7.2): проекции для Public View и Investor View — `lab.visible_materials` (доступ по предикату materials, состав по отметке владельца) и `lab.project_view_base` (пусто без тизера, описание только с profile). Снимок согласия, анкета, паспорт и раунд удалены в 2.1-W05.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: DBT-RLS
     file: database/tests/rls.test.ts
@@ -2916,64 +2162,21 @@ checks:
     kind: db-test
     level: интеграционный
     runner: ci
-    asserts: 77
+    asserts: 47
     needs: [db]
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
     note: >-
-      Покрывает шире своего названия: кроме проектов и договоров — обращения
-      поддержки, уведомления и устройства, согласия на публичность,
-      интеграционную роль и отсутствие BYPASSRLS у ролей приложения. Поэтому
-      входит и в блоки «содержимое» и «события».
-    purpose: 'Негативные тесты RLS — обязательный гейт CI (docs/architecture/Database_Launch.md §15). Каждый тест отвечает на вопрос «может ли роль X добраться до данных, к которым не должна?». Зелёный тест здесь о'
+      Покрывает шире своего названия: кроме проектов — обращения поддержки,
+      уведомления и устройства, интеграционную роль, выдачу ролей и
+      отсутствие BYPASSRLS у ролей приложения. С 2.1-W05 отдельно проверяет,
+      что удалённые роли (organizer, expert, showrunner), даже дойдя до
+      сессии, не дают ни строк, ни проекций. Поэтому входит и в блоки
+      «содержимое» и «события».
+    purpose: 'Негативные тесты RLS — обязательный гейт CI. Каждый тест отвечает на вопрос «может ли роль X добраться до данных, к которым не должна?». Проверки договоров, рецензий, паспорта, подписок и согласий на публичность удалены вместе с этими данными в 2.1-W05; манифест покрытия — 9 схем и 50 таблиц.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: DBT-ROUND-DISCLOSURE
-    file: database/tests/round-disclosure.test.ts
-    command: npm run test -w database
-    kind: db-test
-    level: интеграционный
-    runner: ci
-    asserts: 6
-    needs: [db]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
-    purpose: 'M086: статус привлечения — отдельная настройка; версия условий у раунда. - `disclosure.raising_status` показывает статус, скрывая сумму; - расширение публичности (investors → public) не касается раунд'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: DBT-ROUND-PACKAGES
-    file: database/tests/round-packages.test.ts
-    command: npm run test -w database
-    kind: db-test
-    level: интеграционный
-    runner: ci
-    asserts: 13
-    needs: [db]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['транзакция с ROLLBACK — следов не оставляет']
-    purpose: 'M095 (5.9.1): структуры разовой оплаты запуска раунда. Проверяется не «таблицы созданы», а правила, без которых расчёт был бы произволом: - в пакет и в докупку попадает только РЕАЛИЗОВАННАЯ услуга; - '
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: DBT-ROUND-VISIBILITY
-    file: database/tests/round-visibility.test.ts
-    command: npm run test -w database
-    kind: db-test
-    level: интеграционный
-    runner: ci
-    asserts: 5
-    needs: [db]
-    studied: code
-    studiedOn: 2026-09-22
-    effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
-    purpose: 'M085: раскрытие полей раунда по настройке видимости и аудитории зрителя. - `lab.visible_to` — то же правило, что `visibleTo()` в контрактах (паритет по всем 16 сочетаниям); - настройка поля не расширя'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: DBT-STAFF-CAPABILITIES
     file: database/tests/staff-capabilities.test.ts
@@ -2981,19 +2184,20 @@ checks:
     kind: db-test
     level: интеграционный
     runner: ci
-    asserts: 19
+    asserts: 4
     needs: [db]
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
     note: >-
-      Больше половины утверждений — про ДЕНЬГИ: частичные возвраты в пределах
-      транша, неизменяемость записи о возврате, идемпотентность по ключу,
-      разделение уменьшения начисления и возврата уплаченного. Поэтому входит
-      и в блок «деньги», а не только в права.
-    purpose: 'M097 (полномочия и ручные денежные записи). Проверяется то, ради чего слои разделены: - роль `expert` сама по себе не даёт ни полномочия, ни области работы; - полномочие без назначения не открывает чу'
+      После 2.1-W05 — только механизм функциональных полномочий: роль сама
+      по себе полномочия не даёт, отзыв действует сразу, себе выдать нельзя,
+      денежных полномочий finance.* нет ни в каталоге, ни у кого. Денежные
+      записи и назначения на объект удалены вместе со сделками и
+      экспертизой.
+    purpose: 'M097: функциональные полномочия сотрудников — роль не даёт полномочия, выданное действует, отозванное нет, сотрудник не выдаёт себе сам; каталог без finance.* (2.1-W05).'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: CI-LINT
     file: .github/workflows/ci.yml
@@ -3116,65 +2320,20 @@ checks:
   #   low      — оформление.
   # ---------------------------------------------------------------------------
 
-  - id: UNIT-CORE-AI
-    file: apps/core/tests/ai.test.ts
+  - id: UNIT-CORE-PLATFORM-FLAGS
+    file: apps/core/tests/platform-flags.test.ts
     command: npm run test -w apps/core
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 15
+    asserts: 1
     studied: code
     studiedOn: 2026-09-22
     needs: []
     effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Boundary-схема ответа AI-шлюза (Ф33, CODE-HIGH-06). Схема на границе доверия обязана быть НЕ слабее публичного контракта: пустые оценки, свободные оси, дубли и внутренне противоречивые интервалы раньше проходили разбор и публиковались как инвестиционный паспорт. Каждый негативный тест здесь — конкретный вариант отравленного ответа.'
+    purpose: 'Переключение функции платформы требует основания — отказ ещё до обращения к базе. Тарифы и подписки, которые проверялись здесь раньше, удалены в 2.1-W05.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-CORE-APPLICATION-SUBMIT
-    file: apps/core/tests/application-submit.test.ts
-    command: npm run test -w apps/core
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 3
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Снимок версии заявки (план 0.2 §5.1): что в него входит и что — нет. Чистая функция; сама подача и проекция проверяются живьём (smoke-lab).'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-CORE-APPLICATIONS
-    file: apps/core/tests/applications.test.ts
-    command: npm run test -w apps/core
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 17
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Заявка: правила подсчёта лимитов и условия подачи (план 0.2 §2.8, §2.2). Чистые функции — без БД; интеграция с RLS и CHECK — в database/tests.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-CORE-BILLING
-    file: apps/core/tests/billing.test.ts
-    command: npm run test -w apps/core
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 8
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Контракты административного управления тарифами ИНВЕСТОРА. Подписка основателя по сумме привлечения отменена (M094): тарифы остались только у инвестора, индивидуальной цены и лимита запроса больше нет. Проверяется то, что должно отсекаться ещё до обращения к базе: тариф без цены, кривой код, изменение условий без основания. Неизменяемость истории цен проверяется отдельно — против реального Postgre'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: UNIT-CORE-BACKGROUND
     file: apps/core/tests/background.test.ts
@@ -3256,37 +2415,15 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
 
-  - id: UNIT-CORE-EXPERTS
-    file: apps/core/tests/experts.test.ts
-    command: npm run test -w apps/core
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 26
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    note: >-
-      Шире названия: кроме расхождения рецензий и рубрики покрывает
-      УВЕДОМЛЕНИЯ (темы security и billing отключить нельзя, запасной канал
-      не получает своей строки в очереди, циклическая конфигурация не
-      оставляет очередь пустой) и РЕДАКТОРЫ ПЕРЕД ОТПРАВКОЙ стороннему
-      провайдеру — персональные данные и секреты в нагрузку не кладутся.
-      Поэтому входит в блоки «события» и «безопасность».
-    purpose: 'Юнит-тесты фазы экспертизы, сезонного рейтинга и уведомлений. Проверяется то, что живой прогон показать не может или показывает недостоверно: арифметика расхождения оценок на крайних случаях, выбор канала доставки по конфигурации шаблонов и барьер против ПДн в полезной нагрузке уведомления. Поведение маршрутов проверяется отдельно, прогоном по запущенному серверу.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
   - id: UNIT-CORE-INTEGRATION
     file: apps/core/tests/integration.test.ts
     command: npm run test -w apps/core
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 16
+    asserts: 15
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     needs: []
     effects: ['чистые функции и схемы — побочных действий нет']
     note: >-
@@ -3295,7 +2432,7 @@ checks:
       него неоднозначен). Это та же защита выдачи, что в UNIT-CORE-LAB.
     purpose: 'Юнит-тесты Integration API. Здесь проверяется то, чего живой прогон не покажет: устойчивость токена к подделке отдельных частей, поведение курсора на испорченном входе и границы схем запроса. Поведение маршрутов и изоляция ролей БД проверяются прогоном по запущенному серверу и негативными тестами RLS.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: UNIT-CORE-LAB
     file: apps/core/tests/lab.test.ts
@@ -3303,9 +2440,9 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 23
+    asserts: 21
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     needs: []
     effects: ['чистые функции и схемы — побочных действий нет']
     note: >-
@@ -3316,44 +2453,7 @@ checks:
       allowlist). Поэтому входит и в блок «безопасность».
     purpose: 'Юнит-тесты фазы проектов и каталога. Здесь проверяется то, что дымовой прогон показать не может: форма подписи загрузки, устойчивость курсора к подделке и границы схем запроса. Живое поведение API проверяется отдельно, прогоном по запущенному серверу.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-CORE-PUBLICATION-CONSENTS
-    file: apps/core/tests/publication-consents.test.ts
-    command: npm run test -w apps/core
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 2
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Срок удаления публичной проекции после отзыва согласия. Пятнадцать минут — обязательство перед субъектом ПДн, а не пожелание медиаконтуру. Значение приходит из контрактов, а не зашито здесь числом: тест, повторяющий константу своей копией, остаётся зелёным ровно тогда, когда константу поменяли, а код за ней не последовал.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-CORE-SCORING-RULES
-    file: apps/core/tests/scoring-rules.test.ts
-    command: npm run test -w apps/core
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 26
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    note: >-
-      Правила разбора целиком: схема паспорта, сетка IRS и монотонность
-      балла, потолок по стадии, штрафы, тринадцать обязательных измерений и
-      вырезание маркеров. Отдельно — запрет ссылок, картинок, невидимых
-      символов, телефонов, почты и ИНН в объяснении: это защита от
-      вставленного моделью содержимого. Поэтому входит и в
-      «разбор-моделью».
-    purpose: 'Правила скоринга — то, что код считает вместо модели (ADR-008 §3). Проверяется не «функция возвращает число», а свойства, ради которых она вынесена из промпта: таблица без дыр, потолки из таблицы, а не из модели, фильтр выхода — отказом, маркеры вырезаются с любым nonce.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: UNIT-CORE-SECURITY
     file: apps/core/tests/security.test.ts
@@ -3361,9 +2461,9 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 65
+    asserts: 64
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     note: >-
       Двенадцать групп, шире названия: fail-closed конфигурации, envelope
       encryption, blind index, разбор и точечный отзыв токена, ключ CSRF,
@@ -3372,7 +2472,7 @@ checks:
       Поэтому входит и в блок «вход».
     purpose: 'Юнит-тесты периметра безопасности. Проверяют то, что нельзя увидеть в дымовом прогоне: комбинации конфигурации, которые обязаны ронять старт, и криптографические инварианты.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: UNIT-CORE-TECHDEBT
     file: apps/core/tests/techdebt.test.ts
@@ -3380,18 +2480,18 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 14
+    asserts: 8
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     needs: []
     effects: ['чистые функции и схемы — побочных действий нет']
     note: >-
-      Проверяет машину состояний этапов: движение ровно на один шаг, запрет
-      прыжка и обратного хода, терминальные состояния. Плюс квоты и
-      плейсхолдеры доменов.
+      Статусы проекта без воронки (draft, rejected → archived; archived
+      конечен), запрет персональных плейсхолдеров в шаблонах уведомлений и
+      объявленные маршруты API. Сезонная воронка удалена в 2.1-W05.
     purpose: 'Модульные проверки: apps/core/tests/techdebt.test.ts'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: UNIT-CORE-VERIFICATION
     file: apps/core/tests/verification.test.ts
@@ -3433,135 +2533,20 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
 
-  - id: UNIT-PKG-CONTRACTS-ANALYSIS-INPUT
-    file: packages/contracts/tests/analysis-input.test.ts
-    command: npm run test -w packages/contracts
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 9
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Единый вход разбора (6.1). Проверяется не «функция собирает объект», а три обещания, которые она даёт читателю отчёта: ответы идут с формулировками вопросов; поля, которых нет в снимке, не выдумываются; источник каждого значения назван, и значения из меняющейся карточки не выдаются за содержание поданной версии.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-PKG-CONTRACTS-APPLICATION-FORM
-    file: packages/contracts/tests/application-form.test.ts
-    command: npm run test -w packages/contracts
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 22
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Глубокая копия стартовой конфигурации — тесты её мутируют.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-PKG-CONTRACTS-APPLICATION-READINESS
-    file: packages/contracts/tests/application-readiness.test.ts
-    command: npm run test -w packages/contracts
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 11
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Готовность заявки (план 0.2 §4): чистая формула на стартовой конфигурации. Свойства, которые обещает план: неприменимое не снижает процент; при смене стадии набор меняется, а ответы не теряются; веса нормализуются; результат детерминирован; подача — только при заполненных обязательных.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-PKG-CONTRACTS-APPLICATION-VIEWS-EFFECTIVE
-    file: packages/contracts/tests/application-views-effective.test.ts
-    command: npm run test -w packages/contracts
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 3
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    note: >-
-      Три утверждения, но существенные: карта видимости строже формы
-      закрывает поле сразу, ключ вне карты — private (fail-closed), а мягче
-      формы — открывает только после согласия владельца.
-    purpose: 'Эффективная видимость (5.7.2): представление строится по карте «ключ → видимость» (строже из активной конфигурации и версии согласия), а не по видимости вопроса в переданной форме. Ключ без карты — `private`.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-PKG-CONTRACTS-APPLICATION-VIEWS
-    file: packages/contracts/tests/application-views.test.ts
-    command: npm run test -w packages/contracts
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 6
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Инвесторское представление по правилам видимости (план 0.2 §2.11). Проверяется критерий этапа 4.4: в сводке нет ни одного поля `private` / `platform`, и из одних и тех же данных (черновик, снимок) получается одно и то же представление.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
   - id: UNIT-PKG-CONTRACTS-CONTRACTS
     file: packages/contracts/tests/contracts.test.ts
     command: npm run test -w packages/contracts
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 37
+    asserts: 25
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     needs: []
     effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Согласие на публичный контур. Список раскрываемых полей до Ф50 был свободным текстом: пятьдесят строк по 64 символа. Его читает медиаконтур и исполняет — значит он обязан быть словарём, а не пересказом.'
+    purpose: 'Контракты API: схемы запросов и ответов, словари и границы значений. Согласия на публичный контур, инвестпредложения, подписки и оценки удалены в 2.1-W05; скоупы Integration API — только webhooks:manage.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-PKG-CONTRACTS-FUNDING-ROUND
-    file: packages/contracts/tests/funding-round.test.ts
-    command: npm run test -w packages/contracts
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 11
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    purpose: 'Контракты раунда и условий страны обслуживания (этап 5.6.2, план 0.2 §0г).'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-
-  - id: UNIT-PKG-CONTRACTS-ROUND-PRICING
-    file: packages/contracts/tests/round-pricing.test.ts
-    command: npm run test -w packages/contracts
-    kind: unit-test
-    level: модульный
-    runner: ci
-    asserts: 14
-    studied: code
-    studiedOn: 2026-09-22
-    needs: []
-    effects: ['чистые функции и схемы — побочных действий нет']
-    note: >-
-      Самая плотная денежная проверка из модульных: сетка диапазонов
-      [от, до), объяснение счёта, назначенные замены пакетов, докупка без
-      потери копеек, отказ вместо молчаливого нуля при отсутствии диапазона,
-      совпадение валют. Всё это чистые функции — запускается мгновенно и не
-      требует ни базы, ни ядра.
-    purpose: 'Расчёт стоимости запуска раунда (5.9.2). Проверяется то, из-за чего расчёт вообще вынесен в одно место: подбор пакета по диапазону, право выбрать более полный пакет и докупить услугу, отказ вместо догадки, когда правило не задано или сетка не покрывает сумму, и арифметика без плавающей точки.'
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: UNIT-PKG-CONTRACTS-VISIBILITY
     file: packages/contracts/tests/visibility.test.ts
@@ -3571,7 +2556,7 @@ checks:
     runner: ci
     asserts: 10
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     needs: []
     effects: ['чистые функции и схемы — побочных действий нет']
     note: >-
@@ -3579,9 +2564,9 @@ checks:
       но со стороны контрактов. Пара нужна целиком: расхождение между
       правилом в базе и правилом в клиенте — как раз тот случай, когда
       правда записана дважды.
-    purpose: 'Предикат аудитории (этап 5.7.1, план `заявка-04` §3.3) — зеркало `lab.project_audience`. Паритет с SQL по той же матрице — `database/tests/project-access.test.ts`.'
+    purpose: 'Предикат аудитории — зеркало `lab.project_audience`. Паритет с SQL по той же матрице — `database/tests/project-access.test.ts`. Допуска по роли нет (2.1-W05): инвестор без разрешения видит то же, что аноним; удалённые роли прав не дают.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
+    confirmedOn: 2026-10-29
 
   - id: UNIT-PKG-UI-MARKDOWN
     file: packages/ui/tests/markdown.test.ts
@@ -3625,7 +2610,7 @@ requirements:
     runPolicy: ci
 
   - id: ACC-RLS-002
-    title: Основатель, инвестор и эксперт не видят чужих проектов, договоров и рецензий
+    title: Основатель и инвестор не видят чужих проектов; удалённые роли прав не дают
     area: доступ
     severity: critical
     rationale: Изоляция участников — основное обещание платформы инвесторам и основателям.
@@ -3640,7 +2625,7 @@ requirements:
     area: доступ
     severity: critical
     rationale: Раздел «Пользователи» раскрывает контакты и позволяет блокировать людей.
-    checks: [CHK-ADMIN-USERS-API, RND-STAFF-ACCESS]
+    checks: [CHK-ADMIN-USERS-API]
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
     sensitivity: { status: not-verified }
@@ -3654,7 +2639,7 @@ requirements:
       Модель M097: администратор проходит все полномочия. Полномочие
       ограничивает сотрудника с частичными правами — и это должно оставаться
       правдой при каждом новом полномочии.
-    checks: [DBT-STAFF-CAPABILITIES, RND-STAFF-ACCESS]
+    checks: [DBT-STAFF-CAPABILITIES]
     confirmation: reviewed-in-code
     sensitivity: { status: not-verified }
     runPolicy: handoff
@@ -3950,48 +2935,22 @@ requirements:
     runPolicy: handoff
 
   # -------------------------------------------------------- процессы ролей
-  - id: FLOW-001
-    title: Связанная цепочка основатель → эксперт → инвестор → гость проходит целиком
-    area: процессы
-    severity: high
-    rationale: >-
-      Отдельные экраны могут работать, а цепочка — нет. Это главный
-      пользовательский сценарий платформы.
-    checks: [SCN-ROUND-REVIEW]
-    confirmation: confirmed-by-run
-    confirmedOn: 2026-09-22
-    sensitivity: { status: not-verified }
-    runPolicy: handoff
-
   - id: FLOW-LAB-001
-    title: 'Кабинет основателя: заявка, материалы, раунд'
+    title: 'Кабинет основателя: проект, видимость, доступ, материалы'
     area: процессы
     severity: high
     rationale: Основной путь основателя.
-    checks: [RND-LAB, RND-LAB-V2, SMK-LAB]
+    checks: [RND-LAB, SMK-LAB]
     confirmation: reviewed-in-code
     sensitivity: { status: not-verified }
     runPolicy: matrix
 
-  - id: FLOW-EXPERT-001
-    title: 'Кабинет эксперта: назначения, рецензии, конфликт интересов'
-    area: процессы
-    severity: high
-    rationale: Основной путь эксперта.
-    checks: [RND-EXPERT, SMK-EXPERTS]
-    confirmation: needs-study
-    sensitivity: { status: not-verified }
-    runPolicy: matrix
-    limits: >-
-      RND-EXPERT ранее не работал за единой точкой входа (запись в TODO);
-      требует проверки перед включением в набор.
-
   - id: FLOW-INVESTOR-001
-    title: 'Кабинет инвестора: каталог, избранное, подписка, сделки'
+    title: 'Кабинет инвестора: оболочка «в разработке»; каталог и избранное по API'
     area: процессы
     severity: high
     rationale: Основной путь инвестора.
-    checks: [RND-INVESTOR, SMK-FAVORITES, SMK-INVESTMENTS]
+    checks: [RND-INVESTOR, SMK-FAVORITES]
     confirmation: reviewed-in-code
     sensitivity: { status: not-verified }
     runPolicy: matrix
@@ -4019,27 +2978,6 @@ requirements:
     runPolicy: matrix
 
   # ------------------------------------------------------- деньги и договоры
-  - id: FIN-001
-    title: Комиссия начисляется по версии условий и не переписывается задним числом
-    area: деньги
-    severity: critical
-    rationale: Денежная запись, на которую ссылаются обязательства сторон.
-    checks: [SMK-COMMISSION, RND-ADMIN-COMMISSION, DBT-COMMISSION]
-    confirmation: reviewed-in-code
-    sensitivity: { status: not-verified }
-    runPolicy: matrix
-
-  - id: FIN-002
-    title: Тестовое подтверждение оплаты невозможно в production
-    area: деньги
-    severity: critical
-    rationale: Допуск M107; ослабление означает подтверждение платежей без денег.
-    checks: [DBT-PAYMENTS, SMK-PAYMENTS]
-    confirmation: reviewed-in-code
-    sensitivity: { status: not-verified }
-    runPolicy: matrix
-
-  # --------------------------------------------------------- схема и миграции
   - id: MIG-001
     title: Миграции применяются на пустую базу и не правятся задним числом
     area: миграции
@@ -4147,7 +3085,6 @@ requirements:
       [
         UNIT-PKG-CONTRACTS-CONTRACTS,
         UNIT-PKG-CONTRACTS-VISIBILITY,
-        UNIT-PKG-CONTRACTS-ROUND-PRICING,
         UNIT-PKG-UI-MARKDOWN,
         UNIT-PKG-API-CLIENT-CLIENT,
       ]
@@ -4222,7 +3159,7 @@ requirements:
       кабинетов эксперта и инвестора; счётчики и пагинация как канал утечки
       (число найденного при пустой выдаче).
   - id: CNC-001
-    title: Конкурентные действия в денежном контуре не нарушают инвариантов
+    title: Конкурентная запись журнала не рвёт цепочку хешей
     area: целостность
     severity: critical
     rationale: >-
@@ -4266,11 +3203,8 @@ requirements:
         UNIT-CORE-SECURITY,
         UNIT-CORE-LAB,
         UNIT-CORE-EVENTS,
-        UNIT-CORE-EXPERTS,
-        UNIT-CORE-SCORING-RULES,
         UNIT-PKG-CONTRACTS-CONTRACTS,
         UNIT-PKG-CONTRACTS-VISIBILITY,
-        UNIT-PKG-CONTRACTS-ROUND-PRICING,
       ]
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
@@ -4309,19 +3243,13 @@ blocks:
         DBT-PROJECT-ACCESS,
         DBT-PROJECT-ACCESS-DIRECTORY,
         DBT-STAFF-CAPABILITIES,
-        DBT-ROUND-VISIBILITY,
-        DBT-ROUND-DISCLOSURE,
         DBT-PROJECT-VIEWS,
         UNIT-CORE-SECURITY,
         UNIT-PKG-CONTRACTS-VISIBILITY,
-        UNIT-PKG-CONTRACTS-APPLICATION-VIEWS,
-        UNIT-PKG-CONTRACTS-APPLICATION-VIEWS-EFFECTIVE,
         CHK-FILE-ACCESS,
         CHK-TESTING-SESSIONS,
         SMK-PROJECT-ACCESS,
         SMK-ADMIN-ROLES,
-        SMK-STAFF-CAPABILITIES,
-        SCN-ROUND-REVIEW,
       ]
 
   вход:
@@ -4341,88 +3269,38 @@ blocks:
         RND-PROFILE,
       ]
 
-  заявка:
-    title: Заявка, проект и материалы (кабинет основателя)
+  проект:
+    title: Проект, видимость и материалы (кабинет основателя)
     members:
       [
         PRB-UPLOAD-QUOTA,
         PRB-OBJECT-VERSIONING,
         PRB-UPLOAD-COMPLETION,
         UNIT-CORE-UPLOAD-COMPLETION,
-        UNIT-PKG-CONTRACTS-APPLICATION-VIEWS-EFFECTIVE,
-        DBT-APPLICATIONS,
-        DBT-APPLICATION-FORMS,
         DBT-INVARIANTS,
         UNIT-CORE-LAB,
-        UNIT-CORE-APPLICATIONS,
-        UNIT-CORE-APPLICATION-SUBMIT,
-        UNIT-CORE-PUBLICATION-CONSENTS,
-        UNIT-PKG-CONTRACTS-APPLICATION-FORM,
-        UNIT-PKG-CONTRACTS-APPLICATION-READINESS,
         SMK-LAB,
         SMK-PROJECT-MEDIA,
         CHK-FILE-ACCESS,
         RND-LAB,
-        RND-LAB-V2,
         RND-PROJECT-PAGE,
         RND-PROJECT-MEDIA,
       ]
 
   инвестор:
-    title: Каталог, избранное, сделки
-    members:
-      [
-        DBT-INVARIANTS,
-        DBT-COMMISSION,
-        SMK-INVESTMENTS,
-        SMK-FAVORITES,
-        RND-INVESTOR,
-        RND-FAVORITES,
-        RND-ADMIN-DEALS,
-        RND-FIRST-TIER,
-      ]
-
-  эксперт:
-    title: Назначения и разбор
-    members:
-      [UNIT-CORE-EXPERTS, UNIT-CORE-SCORING-RULES, SMK-EXPERTS, SMK-SERVICE-EXECUTION, RND-EXPERT]
-
-  деньги:
-    title: Тарифы, подписки, комиссии, оплата, раунды
-    members:
-      [
-        DBT-INVARIANTS,
-        DBT-STAFF-CAPABILITIES,
-        SMK-STAFF-CAPABILITIES,
-        DBT-PAYMENTS,
-        DBT-COMMISSION,
-        DBT-FUNDING-ROUNDS,
-        DBT-ROUND-PACKAGES,
-        UNIT-CORE-BILLING,
-        UNIT-PKG-CONTRACTS-FUNDING-ROUND,
-        UNIT-PKG-CONTRACTS-ROUND-PRICING,
-        SMK-BILLING,
-        SMK-PAYMENTS,
-        SMK-COMMISSION,
-        SMK-ROUND-PACKAGES,
-        SMK-ROUND-PRICING,
-        SMK-ROUND-PURCHASE,
-        RND-ADMIN-COMMISSION,
-        RND-ADMIN-ROUND-PACKAGES,
-        RND-LAB-ROUND-COST,
-        RND-ROUND-PURCHASE,
-      ]
+    title: Каталог, избранное
+    members: [DBT-INVARIANTS, SMK-FAVORITES, RND-INVESTOR, RND-FAVORITES]
 
   администрирование:
     title: Пользователи, сотрудники, полномочия, админка
     members:
       [
         CHK-ADMIN-USERS-API,
+        UNIT-CORE-PLATFORM-FLAGS,
+        DBT-STAFF-CAPABILITIES,
         SMK-ADMIN-ROLES,
-        SMK-STAFF-CAPABILITIES,
         RND-ADMIN,
         RND-ADMIN-USERS,
-        RND-STAFF-ACCESS,
         RND-TESTING-SESSIONS,
         CHK-TESTING-SESSIONS,
         RND-ADMIN-INTELLIGENCE,
@@ -4433,7 +3311,6 @@ blocks:
     members:
       [
         CHK-CONTENT-FRESHNESS,
-        DBT-FUNDING-ROUNDS,
         DBT-RLS,
         CHK-CONTENT-TRANSFER,
         DBT-DATA-CLASSES,
@@ -4441,7 +3318,6 @@ blocks:
         SMK-SUPPORT,
         UNIT-PKG-UI-MARKDOWN,
         RND-WEB-PUBLIC,
-        RND-ADMIN-QUESTIONS,
         RND-ADMIN-COUNTRIES,
         RND-SUPPORT,
         RND-MEDIA-EMBEDDING,
@@ -4455,16 +3331,13 @@ blocks:
         PRB-EVENT-VERSIONS,
         PRB-EVENT-ARCHIVE,
         PRB-DNS-REBINDING,
-        UNIT-CORE-EXPERTS,
         DBT-INVARIANTS,
         DBT-RLS,
-        DBT-OPERATOR-NOTIFICATIONS,
         UNIT-CORE-EVENTS,
         UNIT-CORE-INTEGRATION,
         SMK-EVENTS,
         SMK-INTEGRATION,
         SMK-MAIL-SMTP,
-        SMK-OPERATOR-NOTIFICATIONS,
         CHK-OUTBOUND-BOUNDARIES,
       ]
 
@@ -4509,7 +3382,6 @@ blocks:
         PRB-VALKEY-COUNTERS,
         UNIT-CORE-COUNTERS,
         UNIT-PKG-UI-MARKDOWN,
-        UNIT-CORE-EXPERTS,
         UNIT-CORE-LAB,
         CHK-SERVICE-ROLES,
         CHK-DEFINER-PRIVILEGES,
@@ -4529,23 +3401,9 @@ blocks:
     title: Порты, развёртывание, консоль
     members: [CHK-PORTS-CONSISTENCY, CHK-FRONT-BUILDS, RND-CONSOLE, RND-DEMO, SMK-DEMO]
 
-  разбор-моделью:
-    title: Шлюз языковой модели
-    members:
-      [
-        PRB-AI-DETERMINISM,
-        SMK-SERVICE-EXECUTION,
-        UNIT-CORE-SCORING-RULES,
-        DBT-PAYMENTS,
-        GAT-AI-GATEWAY,
-        SMK-AI,
-        UNIT-CORE-AI,
-        UNIT-PKG-CONTRACTS-ANALYSIS-INPUT,
-      ]
-
   порядок:
     title: Сам реестр проверок и учёт техдолга
-    members: [CHK-TEST-REGISTRY, SMK-TECHDEBT, UNIT-CORE-TECHDEBT]
+    members: [CHK-TEST-REGISTRY, UNIT-CORE-TECHDEBT]
 
 suites:
   handoff:
@@ -4561,7 +3419,6 @@ suites:
       - CHK-CONTENT-FRESHNESS
       - CHK-OUTBOUND-BOUNDARIES
       - CHK-FILE-ACCESS
-      - SCN-ROUND-REVIEW
     note: >-
       Ядро набора фиксировано. Прогоны затронутого кабинета добавляются
       сверх него по матрице изменений (docs/testing/change-matrix.md);
@@ -4581,11 +3438,9 @@ suites:
       - CHK-OUTBOUND-BOUNDARIES
       - CHK-DB-RECONNECT
       - CHK-FILE-ACCESS
-      - SCN-ROUND-REVIEW
       - RND-ADMIN-USERS
       - RND-TESTING-SESSIONS
       - RND-PROFILE
-      - RND-STAFF-ACCESS
     note: >-
       Браузерные прогоны требуют поднятого стенда (`npm run stand:up`) и
       переменной `UNICORN_ENTRY=web`.
@@ -4610,11 +3465,6 @@ suites:
 # ---------------------------------------------------------------------------
 
 manualByDesign:
-  - id: TOOL-E2E-FULL-CYCLE
-    reason: >-
-      Сквозной сценарий, начинающийся с подачи заявки в СЕЗОН. Сезоны
-      отложены (этап 8), маршрут отвечает 503, и зелёным прогон быть не
-      может. В блоке он краснел бы на отложенной функции, а не на дефекте.
   - id: PRB-MAIL-DELIVERY
     reason: >-
       Отправляет НАСТОЯЩЕЕ письмо через реальный релей живому получателю.
