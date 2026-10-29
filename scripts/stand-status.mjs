@@ -25,6 +25,7 @@ const DRY = process.argv.includes('--dry-run');
 const HOST = 'root@193.233.217.210';
 const KEY = resolve(homedir(), '.ssh', 'launchbridge_ed25519');
 const APP_DIR = '/opt/unicorn-launch';
+const PUBLIC_URL = process.env.STAND_PUBLIC_URL ?? 'https://5espace.com';
 
 /** Команда на сервере. Пустая строка вместо падения: недоступный стенд — тоже факт. */
 function onServer(cmd) {
@@ -52,7 +53,7 @@ const services = online
   ? onServer("systemctl is-active unicorn-core unicorn-ai-gateway caddy 2>/dev/null | paste -sd' '")
   : '';
 const containers = online ? onServer("docker ps --format '{{.Names}} {{.Status}}' | head -8") : '';
-const health = online ? onServer('curl -s -m 10 https://vgorkakh.ru/v1/health') : '';
+const health = online ? onServer(`curl -s -m 10 ${PUBLIC_URL}/v1/health`) : '';
 const uptime = online ? onServer('uptime -p 2>/dev/null || uptime') : '';
 
 /**
@@ -102,7 +103,7 @@ const body = `# Состояние стендов
 
 | Что | Значение |
 | --- | --- |
-| Адрес | https://vgorkakh.ru/ (по IP не открывается — сертификат только на домен) |
+| Адрес | ${PUBLIC_URL}/ (по IP не открывается — сертификат только на домен) |
 | Хост | 193.233.217.210, \`unicorn.ptr.network\` |
 | Доступность | ${online ? 'отвечает' : '**НЕ ОТВЕЧАЕТ** — SSH не прошёл'} |
 | Развёрнутый коммит | ${online ? `\`${serverSha}\` от ${serverDate}` : '—'} |

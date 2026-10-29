@@ -37,7 +37,8 @@ const NO_VERIFY = process.argv.includes('--no-verify');
 const HOST = 'root@193.233.217.210';
 const KEY = resolve(homedir(), '.ssh', 'launchbridge_ed25519');
 const APP_DIR = '/opt/unicorn-launch';
-const PUBLIC_URL = 'https://vgorkakh.ru';
+// Адрес стенда — из окружения: смена домена не требует правки скрипта.
+const PUBLIC_URL = process.env.STAND_PUBLIC_URL ?? 'https://5espace.com';
 const ROUTES = ['/', '/login/', '/lab/', '/investor/', '/expert/', '/admin/', '/v1/health'];
 
 const step = (text) => console.warn(`\n▸ ${text}`);
