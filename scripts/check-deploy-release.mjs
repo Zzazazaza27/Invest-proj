@@ -25,7 +25,14 @@
  *      останавливается до миграции, код откатывается;
  *   7. база новее кода (выкат старого коммита) — выкат отменён до миграции;
  *   8. реестр миграций после сбоя не читается — откат запрещён (осторожно);
- *   9. на сервере нет юнита шлюза — шаг пропускается.
+ *   9. на сервере нет юнита шлюза — шаг пропускается;
+ *  10. M150 применена прошлым выпуском, шлюз остался отключённым юнитом,
+ *      следующий выпуск падает — откат кода, шлюз НЕ включается (замечание
+ *      Тэнка при приёмке W05);
+ *  11. то же, но шлюз кто-то запустил руками — выпуск его гасит, откат не
+ *      поднимает;
+ *  12. до M150 шлюз был включён, но не запущен — откат возвращает именно это
+ *      состояние, а не «включён и запущен».
  *
  * Запуск: npm run check:deploy-release
  */
@@ -57,7 +64,9 @@ function check(name, condition, detail = '') {
  * @param {Record<string, string[]>} o.files    миграции в коде каждого коммита
  * @param {string[]} o.contract                 какие из них помечены contract
  * @param {string[]} o.applied                  применены в базе до выпуска
- * @param {boolean} [o.gateway]                 есть ли юнит шлюза
+ * @param {false | { active: boolean, enabled: boolean }} [o.gateway]
+ *                                             юнит шлюза: нет / его состояние
+ *                                             (по умолчанию запущен и включён)
  * @param {string} [o.failMigration]            эта миграция падает
  * @param {boolean} [o.coreDown]                ядро на новом коде не отвечает
  * @param {boolean} [o.routesDown]              маршруты снаружи не отвечают
@@ -71,7 +80,14 @@ function makeServer(o) {
       'unicorn-core': { active: true, enabled: true, runsCommit: OLD },
       ...(o.gateway === false
         ? {}
-        : { 'unicorn-ai-gateway': { active: true, enabled: true, runsCommit: OLD } }),
+        : {
+            'unicorn-ai-gateway': {
+              active: true,
+              enabled: true,
+              ...o.gateway,
+              runsCommit: OLD,
+            },
+          }),
     },
     applied: [...o.applied],
     migrated: false,
@@ -151,12 +167,12 @@ function makeServer(o) {
       Object.assign(state.units[m[1]], { active: false, enabled: false });
       return '';
     }
-    if ((m = /systemctl enable ([\w-]+) --quiet && systemctl start ([\w-]+)/.exec(cmd))) {
-      Object.assign(state.units[m[1]], {
-        active: true,
-        enabled: true,
-        runsCommit: state.builtCommit,
-      });
+    if ((m = /^systemctl enable ([\w-]+) --quiet$/.exec(cmd))) {
+      state.units[m[1]].enabled = true;
+      return '';
+    }
+    if ((m = /^systemctl start ([\w-]+)$/.exec(cmd))) {
+      Object.assign(state.units[m[1]], { active: true, runsCommit: state.builtCommit });
       return '';
     }
     if ((m = /^systemctl stop ([\w-]+)$/.exec(cmd))) {
@@ -382,6 +398,70 @@ console.warn('\n▸ разбор migrate:status');
     'шлюз не трогали',
     !s.events.some((e) => /systemctl (stop|disable|enable) unicorn-ai-gateway/.test(e)),
   );
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
+}
+
+const W05_DONE = { [OLD]: [...BASE, M150], [NEW]: [...BASE, M150, M151] };
+
+// --- 10 -------------------------------------------------------------------------
+{
+  const s = run('10. M150 применена раньше, шлюз отключён, следующий выпуск упал', {
+    files: W05_DONE,
+    contract: [M150],
+    applied: [...BASE, M150],
+    gateway: { active: false, enabled: false },
+    coreDown: true,
+  });
+  check('код откатан', s.result.outcome === 'rolled-back', s.result.outcome);
+  const gw = s.state.units['unicorn-ai-gateway'];
+  check('шлюз не запущен', !gw.active);
+  check('шлюз не включён', !gw.enabled);
+  check(
+    'шлюзу не отдавали команд enable/start',
+    !s.events.some((e) => /systemctl (enable|start) unicorn-ai-gateway/.test(e)),
+  );
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
+}
+
+// --- 11 -------------------------------------------------------------------------
+{
+  const s = run('11. M150 применена раньше, шлюз запущен руками, выпуск упал', {
+    files: W05_DONE,
+    contract: [M150],
+    applied: [...BASE, M150],
+    gateway: { active: true, enabled: true },
+    coreDown: true,
+  });
+  check('код откатан', s.result.outcome === 'rolled-back', s.result.outcome);
+  const gw = s.state.units['unicorn-ai-gateway'];
+  check('шлюз остановлен и остаётся отключён', !gw.active && !gw.enabled);
+  // Шлюз работал над M150 ещё ДО выпуска — это состояние, которое выпуск
+  // застал, а не создал. Важно, что после остановки его никто не поднимает.
+  const stopped = s.events.findIndex((e) =>
+    /systemctl stop unicorn-ai-gateway && systemctl disable/.test(e),
+  );
+  check(
+    'после остановки шлюзу не отдавали enable/start',
+    stopped >= 0 &&
+      !s.events
+        .slice(stopped + 1)
+        .some((e) => /systemctl (enable|start) unicorn-ai-gateway/.test(e)),
+  );
+}
+
+// --- 12 -------------------------------------------------------------------------
+{
+  const s = run('12. до M150 шлюз включён, но не запущен; выпуск упал', {
+    files: W05,
+    contract: [M150],
+    applied: BASE,
+    gateway: { active: false, enabled: true },
+    failMigration: M150,
+  });
+  check('код откатан', s.result.outcome === 'rolled-back', s.result.outcome);
+  const gw = s.state.units['unicorn-ai-gateway'];
+  check('шлюз снова включён, как был', gw.enabled);
+  check('шлюз не запущен, как был', !gw.active);
   check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
 }
 

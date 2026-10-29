@@ -20,11 +20,20 @@
  *
  * Сервисы, удалённые из кода (AI-шлюз), останавливаются и отключаются до
  * миграции: оставленный включённым, он поднялся бы после перезагрузки сервера
- * над схемой, которой у него больше нет.
+ * над схемой, которой у него больше нет. При откате сервис возвращается в то
+ * состояние, в котором был до выпуска, и только если база ещё совместима с
+ * ним: после миграции, удалившей его схему, он не включается никогда — ни в
+ * этом выпуске, ни при сбое любого следующего.
  */
 
-/** systemd-сервисы, которых больше нет в коде. Останавливаются и отключаются. */
-export const RETIRED_UNITS = ['unicorn-ai-gateway'];
+/**
+ * systemd-сервисы, которых больше нет в коде, и миграция, после которой им
+ * не с чем работать. Останавливаются и отключаются; после этой миграции не
+ * восстанавливаются.
+ */
+export const RETIRED_UNITS = {
+  'unicorn-ai-gateway': 'M150_remove_investment_seasons_expertise_ai',
+};
 
 const CORE_UNIT = 'unicorn-core';
 const CONTRACT_MARKER_GREP = "'^[[:space:]]*--[[:space:]]*migrate:contract[[:space:]]*$'";
@@ -126,12 +135,22 @@ export function runRelease({ ops, before, head, publicUrl, routes }) {
         (pendingContract.length ? `, из них contract: ${pendingContract.join(', ')}` : ''),
     );
 
-    for (const unit of RETIRED_UNITS) {
-      if (unitExists(ops, unit)) retired.push(unit);
+    // Исходное состояние запоминается до любых действий: откат возвращает
+    // именно его, а не «включено и запущено».
+    for (const [unit, retiredBy] of Object.entries(RETIRED_UNITS)) {
+      if (!unitExists(ops, unit)) continue;
+      const state = unitState(ops, unit);
+      const entry = {
+        unit,
+        retiredBy,
+        wasActive: state.active === 'active',
+        wasEnabled: state.enabled === 'enabled',
+      };
+      if (entry.wasActive || entry.wasEnabled) retired.push(entry);
     }
     if (retired.length) {
       log.step('Удалённые сервисы');
-      for (const unit of retired) {
+      for (const { unit } of retired) {
         remote(`systemctl stop ${unit} && systemctl disable ${unit} --quiet`);
         const state = unitState(ops, unit);
         if (state.active === 'active' || state.enabled === 'enabled') {
@@ -217,15 +236,19 @@ function recover({ ops, before, routes, publicUrl, pendingContract, retired }) {
   // Применена ли contract-миграция — спрашиваем базу. Не смогли спросить —
   // считаем применённой: ошибочный запрет отката стоит простоя, ошибочный
   // откат — работы старого кода над удалённой схемой.
-  let contractApplied = pendingContract;
-  if (pendingContract.length) {
-    try {
-      const now = readStatus(ops);
-      contractApplied = pendingContract.filter((id) => now.applied.includes(id));
-    } catch {
-      log.fail('состояние миграций прочитать не удалось — считаю contract-миграцию применённой');
-    }
+  //
+  // Реестр читается ОДИН раз и до сброса кода: раннер перечисляет только
+  // миграции, файлы которых есть в коде, и после `git reset` на прежний коммит
+  // применённая M150 из списка пропала бы.
+  let now = null;
+  try {
+    now = readStatus(ops);
+  } catch {
+    log.fail('состояние миграций прочитать не удалось — считаю contract-миграцию применённой');
   }
+  const contractApplied = now
+    ? pendingContract.filter((id) => now.applied.includes(id))
+    : pendingContract;
 
   if (contractApplied.length) {
     log.step('Откат кода запрещён');
@@ -246,12 +269,7 @@ function recover({ ops, before, routes, publicUrl, pendingContract, retired }) {
     remote('npm run build', { show: true });
     remote('npm run build:console', { show: true });
     remote(`systemctl restart ${CORE_UNIT}`);
-    // Прежний код работал вместе с этими сервисами: схема не менялась
-    // contract-миграцией, значит, им есть с чем работать.
-    for (const unit of retired) {
-      remote(`systemctl enable ${unit} --quiet && systemctl start ${unit}`);
-      log.info(`${unit} включён обратно вместе с прежним кодом`);
-    }
+    restoreRetired(ops, retired, now);
     remote('npm run web:up', { show: true });
     const back = routes.filter((r) => probe(`${publicUrl}${r}`) !== 200);
     if (back.length === 0) log.ok(`откатились на ${before}, стенд отвечает`);
@@ -260,5 +278,26 @@ function recover({ ops, before, routes, publicUrl, pendingContract, retired }) {
   } catch {
     log.fail('ОТКАТ НЕ УДАЛСЯ — стенд требует ручного вмешательства');
     return { outcome: 'rollback-failed', contractApplied: [] };
+  }
+}
+
+/**
+ * Вернуть удалённые сервисы в состояние до выпуска — только те, которые этот
+ * выпуск сам остановил, и только пока база не прошла миграцию, удалившую их
+ * схему. Реестр не прочитан или в базе есть миграции, неизвестные коду, —
+ * не восстанавливаем: отключённый шлюз стоит функции, включённый над чужой
+ * схемой — ошибок в работающей системе.
+ */
+function restoreRetired(ops, retired, status) {
+  if (!retired.length) return;
+  const { remote, log } = ops;
+  for (const { unit, retiredBy, wasActive, wasEnabled } of retired) {
+    if (!status || status.unknownApplied > 0 || status.applied.includes(retiredBy)) {
+      log.info(`${unit} остаётся отключён: ${retiredBy} применена или это не установить`);
+      continue;
+    }
+    if (wasEnabled) remote(`systemctl enable ${unit} --quiet`);
+    if (wasActive) remote(`systemctl start ${unit}`);
+    log.info(`${unit} возвращён в прежнее состояние вместе с прежним кодом`);
   }
 }

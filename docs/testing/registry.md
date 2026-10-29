@@ -316,7 +316,7 @@
 | CHK-SAST-CONFIG | `npm run gate:sast-config` | 0 | CI | CI |
 | CHK-SECRET-REUSE | `npm run gate:secret-reuse` | 0 | CI | CI |
 | CHK-SERVICE-ROLES | `node scripts/check-service-roles.mjs` | 40 | CI | CI |
-| CHK-DEPLOY-RELEASE | `npm run check:deploy-release` | 43 | CI | CI |
+| CHK-DEPLOY-RELEASE | `npm run check:deploy-release` | 55 | CI | CI |
 | CHK-SSH-KEYS | `npm run gate:ssh-keys` | 0 | CI | CI |
 | CHK-TEST-REGISTRY | `npm run check:registry` | 12 | CI | CI |
 | CHK-TESTING-SESSIONS | `npm run check:testing-sessions` | 49 | вручную | `suite:handoff`, `suite:regression` |
