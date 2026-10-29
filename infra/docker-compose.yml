@@ -147,12 +147,16 @@ services:
       timeout: 5s
       retries: 20
 
-  redis:
-    image: redis:7.4-alpine
-    container_name: unicorn-redis
+  # Общие счётчики ограничений (4.8, D-008). Valkey вместо Redis 7.4 с
+  # 29.10.2026: открытая лицензия BSD, протокол тот же — переменные REDIS_*
+  # прежние. Версия закреплена точно; ветка 8.1 сопровождается до 03.2028.
+  # Данные — только временные счётчики: новый том, перенос не нужен.
+  valkey:
+    image: valkey/valkey:8.1.11
+    container_name: unicorn-valkey
     restart: unless-stopped
     command:
-      - redis-server
+      - valkey-server
       - --requirepass
       - ${REDIS_PASSWORD:-local_dev_only_redis_change_me}
       - --appendonly
@@ -162,13 +166,9 @@ services:
     ports:
       - '127.0.0.1:${REDIS_PORT:-6380}:6379'
     volumes:
-      - redisdata:/data
+      - valkeydata:/data
     healthcheck:
-      test:
-        [
-          'CMD-SHELL',
-          'redis-cli -a "$$REDIS_PASSWORD" ping | grep PONG || redis-cli ping | grep PONG',
-        ]
+      test: ['CMD-SHELL', 'valkey-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep PONG']
       interval: 5s
       timeout: 5s
       retries: 20
@@ -419,7 +419,7 @@ services:
 
 volumes:
   pgdata:
-  redisdata:
+  valkeydata:
   natsdata:
   # Том брокера разрушительных проверок: отдельный, чтобы их стримы и
   # сообщения не смешивались с рабочими.

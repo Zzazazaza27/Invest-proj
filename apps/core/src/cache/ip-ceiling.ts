@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type Redis from 'ioredis';
 import { getEnv } from '../config/env';
+import type { Counters } from './counters';
 
 /**
  * Потолок частоты по АДРЕСУ поверх классовых вёдер.
@@ -27,36 +27,17 @@ import { getEnv } from '../config/env';
  * сторона размена, что и у `skipOnError: false` у классовых вёдер.
  */
 
-/**
- * Счёт и срок жизни ОДНОЙ операцией.
- *
- * Раньше здесь стояли `INCR` и следом `EXPIRE` — два обращения к счётчику.
- * Между ними есть окно: обрыв соединения, перезапуск процесса или падение
- * Redis после первого и до второго оставляют ключ БЕЗ СРОКА. Такой ключ не
- * истекает никогда, счётчик продолжает расти, и адрес получает 429 бессрочно —
- * то есть промах в служебном коде превращается в вечную блокировку живого
- * пользователя (SEC-11).
- *
- * Скрипт выполняется целиком и атомарно. Срок ставится не «первому запросу
- * окна», а любому запросу, увидевшему ключ без срока: это ещё и чинит ключи,
- * уже осиротевшие по прежней схеме, без ручной уборки.
- *
- * Возвращается и остаток срока — иначе `retry-after` требовал бы третьего
- * обращения, которое может увидеть уже другое состояние.
+/*
+ * Счёт и срок — одной атомарной операцией общего модуля `cache/counters`.
+ * Раньше здесь стояли `INCR` и следом `EXPIRE`: обрыв между ними оставлял ключ
+ * БЕЗ СРОКА, и адрес получал 429 бессрочно (SEC-11). Ключ без срока теперь
+ * получает срок при следующем увеличении. Остаток срока возвращается тем же
+ * вызовом — `retry-after` не требует третьего обращения.
  */
-const CEILING_SCRIPT = `
-local used = redis.call('INCR', KEYS[1])
-local ttl = redis.call('TTL', KEYS[1])
-if ttl < 0 then
-  redis.call('EXPIRE', KEYS[1], ARGV[1])
-  ttl = tonumber(ARGV[1])
-end
-return { used, ttl }
-`;
 
-export function registerIpCeiling(app: FastifyInstance, redis: Redis | null): void {
+export function registerIpCeiling(app: FastifyInstance, counters: Counters | null): void {
   const env = getEnv();
-  if (!redis) return;
+  if (!counters) return;
 
   const windowSeconds = 60;
 
@@ -69,15 +50,14 @@ export function registerIpCeiling(app: FastifyInstance, redis: Redis | null): vo
     let used: number;
     let ttl: number;
     try {
-      const [usedRaw, ttlRaw] = (await redis.eval(
-        CEILING_SCRIPT,
-        1,
-        key,
-        String(windowSeconds),
-      )) as [number, number];
-      used = Number(usedRaw);
-      ttl = Number(ttlRaw);
-    } catch {
+      const hit = await counters.hit(key, windowSeconds * 1_000);
+      used = hit.used;
+      ttl = Math.ceil(hit.ttlMs / 1_000);
+    } catch (error) {
+      request.log.error({
+        msg: 'потолок по адресу: счётчик недоступен, запрос отклонён',
+        error: error instanceof Error ? error.message : 'unknown',
+      });
       // Счётчик недоступен — отказ, а не проход мимо потолка.
       return reply.code(503).send({
         type: 'https://unicorn.vc/problems/dependency_unavailable',

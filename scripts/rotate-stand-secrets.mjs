@@ -139,7 +139,7 @@ const compose = spawnSync(
     '-d',
     '--force-recreate',
     'postgres',
-    'redis',
+    'valkey',
     'nats',
     'minio',
     'minio-init',

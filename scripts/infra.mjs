@@ -83,11 +83,11 @@ args.push(...tail, ...rest);
 // необратимо, поэтому здесь оно хотя бы названо вслух до запуска, а не
 // обнаруживается по пустой базе.
 if (command === 'reset') {
-  console.warn('infra: reset удаляет тома — данные БД, Redis и MinIO будут потеряны.');
+  console.warn('infra: reset удаляет тома — данные БД, Valkey и MinIO будут потеряны.');
 }
 
 console.warn(
-  `infra: ${command} — postgres:${PORTS.postgres} redis:${PORTS.redis} ` +
+  `infra: ${command} — postgres:${PORTS.postgres} valkey:${PORTS.redis} ` +
     `nats:${PORTS.nats} s3:${PORTS.s3}`,
 );
 // На Linux nginx не может найти host.docker.internal через DNS Docker (см.

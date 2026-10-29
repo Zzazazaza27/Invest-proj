@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type Redis from 'ioredis';
-import { createRateLimitRedis } from '../cache/redis.client';
+import { getCounters, type Counters } from '../cache/counters';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 
@@ -17,34 +16,22 @@ import { errors } from '../common/errors';
  * отклоняется ДО argon2, что заодно снимает CPU-DoS-усиление. Затем обычная
  * проверка; при неудаче — `recordFailure`, при успехе — `reset`.
  *
- * Ключ — только хеш индекса, значение контакта в Redis не попадает. Сам факт
+ * Ключ — только хеш индекса, значение контакта в счётчик не попадает. Сам факт
  * «есть счётчик для этого хеша» не выдаёт существование аккаунта: счётчик
  * заводится и для несуществующих контактов (иначе таймингом отличили бы
  * «залочен» от «нет такого»), поэтому anti-enumeration не ломается.
  *
- * Fail-closed при СБОЕ настроенного Redis (как ip-ceiling и rate-limit); если
- * Redis не настроен вовсе (dev), троттлинг выключен — классовые лимиты
- * остаются.
+ * Fail-closed при СБОЕ настроенного счётчика (как ip-ceiling и rate-limit);
+ * если счётчик не настроен вовсе (dev), троттлинг выключен — классовые лимиты
+ * остаются. Счёт и окно — общий модуль `cache/counters` (4.8).
  */
 @Injectable()
 export class LoginThrottleService {
   private readonly logger = new Logger(LoginThrottleService.name);
-  private readonly redis: Redis | null;
-
-  // INCR + установка срока одной атомарной операцией: два обращения оставляли
-  // бы ключ без срока при обрыве между ними — вечная блокировка аккаунта
-  // (та же грабля, что закрыта в ip-ceiling, SEC-11).
-  private static readonly INCR_SCRIPT = `
-local used = redis.call('INCR', KEYS[1])
-local ttl = redis.call('TTL', KEYS[1])
-if ttl < 0 then
-  redis.call('EXPIRE', KEYS[1], ARGV[1])
-end
-return used
-`;
+  private readonly counters: Counters | null;
 
   constructor() {
-    this.redis = createRateLimitRedis();
+    this.counters = getCounters();
   }
 
   private key(indexHex: string): string {
@@ -53,11 +40,10 @@ return used
 
   /** Отклонить вход до проверки пароля, если аккаунт превысил порог неудач. */
   async assertNotLocked(indexHex: string): Promise<void> {
-    if (!this.redis) return;
+    if (!this.counters) return;
     let used: number;
     try {
-      const raw = await this.redis.get(this.key(indexHex));
-      used = raw === null ? 0 : Number(raw);
+      used = await this.counters.read(this.key(indexHex));
     } catch (error) {
       this.logger.error({
         msg: 'счётчик неудачных входов недоступен',
@@ -75,19 +61,15 @@ return used
 
   /** Учесть неудачную попытку входа для контакта. */
   async recordFailure(indexHex: string): Promise<void> {
-    if (!this.redis) return;
+    if (!this.counters) return;
     try {
-      await this.redis.eval(
-        LoginThrottleService.INCR_SCRIPT,
-        1,
-        this.key(indexHex),
-        String(getEnv().LOGIN_THROTTLE_WINDOW_SEC),
-      );
+      await this.counters.hit(this.key(indexHex), getEnv().LOGIN_THROTTLE_WINDOW_SEC * 1_000);
     } catch (error) {
-      // Неудача учёта не должна блокировать ответ пользователю: вход и так
-      // уже отклонён. Просто фиксируем в лог.
+      // Вход и так уже отклонён — ответ пользователю не меняем. Но пропуск
+      // учёта не молчаливый: попытка не засчитана, и это видно в журнале.
       this.logger.warn({
-        msg: 'не удалось учесть неудачный вход',
+        msg: 'пропущенный учёт неудачного входа',
+        key: this.key(indexHex),
         error: error instanceof Error ? error.message : 'unknown',
       });
     }
@@ -95,11 +77,16 @@ return used
 
   /** Сбросить счётчик после успешного входа. */
   async reset(indexHex: string): Promise<void> {
-    if (!this.redis) return;
+    if (!this.counters) return;
     try {
-      await this.redis.del(this.key(indexHex));
-    } catch {
-      // Несброшенный счётчик истечёт сам по TTL — не критично.
+      await this.counters.reset(this.key(indexHex));
+    } catch (error) {
+      // Несброшенный счётчик истечёт сам по окну — вход не отменяем.
+      this.logger.warn({
+        msg: 'счётчик неудачных входов не сброшен',
+        key: this.key(indexHex),
+        error: error instanceof Error ? error.message : 'unknown',
+      });
     }
   }
 }

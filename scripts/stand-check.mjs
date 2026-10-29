@@ -78,7 +78,7 @@ const names = out('docker', ['ps', '--format', '{{.Names}}\t{{.Status}}'])
 if (names.length === 0) {
   bad('ни одного контейнера — Docker выключен или инфраструктура не поднята');
 } else {
-  const wanted = ['unicorn-postgres', 'unicorn-redis', 'unicorn-nats', 'unicorn-minio'];
+  const wanted = ['unicorn-postgres', 'unicorn-valkey', 'unicorn-nats', 'unicorn-minio'];
   for (const want of wanted) {
     const row = names.find((n) => n.startsWith(want));
     if (row) ok(row.replace('\t', ' — '));

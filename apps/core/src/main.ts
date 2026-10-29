@@ -14,7 +14,7 @@ import { createShutdown } from './background/shutdown';
 import { getEnv } from './config/env';
 import { ProblemDetailsFilter } from './common/problem.filter';
 import { MAX_BODY_BYTES } from './common/validation';
-import { createRateLimitRedis } from './cache/redis.client';
+import { getCounters, rateLimitStoreFor } from './cache/counters';
 import { registerIpCeiling } from './cache/ip-ceiling';
 import { normalizedPath, rateLimitClass } from './common/request-path';
 
@@ -183,8 +183,10 @@ async function bootstrap(): Promise<void> {
   // число, а перезапуск обнуляет счётчики (SEC-11). В production переменная
   // обязательна — проверяется конфигурацией, здесь остаётся только громкое
   // предупреждение для локального контура.
-  const rateLimitRedis = createRateLimitRedis();
-  if (!rateLimitRedis) {
+  // Одно соединение с Valkey на процесс: им пользуются плагин, потолок по
+  // адресу и счётчики входа и писем (4.8).
+  const counters = getCounters();
+  if (!counters) {
     logger.warn(
       'REDIS_URL не задан: ограничение частоты считается в памяти процесса. ' +
         'Для нескольких экземпляров это означает умножение разрешённой частоты.',
@@ -193,9 +195,10 @@ async function bootstrap(): Promise<void> {
 
   await app.register(rateLimit, {
     global: true,
-    // Плагин сам ведёт ключи и срок жизни ведра в Redis; при `null` остаётся
-    // встроенное хранилище в памяти.
-    ...(rateLimitRedis ? { redis: rateLimitRedis } : {}),
+    // Ведро считается общим модулем счётчиков, а не собственным скриптом
+    // плагина: один контракт операций и одно окно для всех ограничений. Без
+    // счётчика остаётся встроенное хранилище в памяти.
+    ...(counters ? { store: rateLimitStoreFor(counters) } : {}),
     // Недоступный счётчик НЕ означает «пропускать всё». По умолчанию плагин
     // поступает наоборот: ошибка хранилища — запрос проходит мимо лимита. Для
     // класса auth это ровно то, чего добивается атакующий: уронить счётчик и
@@ -301,7 +304,7 @@ async function bootstrap(): Promise<void> {
   // Потолок по адресу поверх классовых вёдер: закрывает остаточный обход
   // подделкой cookie, который классовый ключ закрыть не может (см.
   // `cache/ip-ceiling.ts`).
-  registerIpCeiling(app.getHttpAdapter().getInstance(), rateLimitRedis);
+  registerIpCeiling(app.getHttpAdapter().getInstance(), counters);
 
   // Ответы API не кешируются: в них персональные данные.
   app
@@ -350,7 +353,7 @@ async function bootstrap(): Promise<void> {
       // Соединение со счётчиком закрывается явно: иначе процесс держится живым
       // из-за открытого сокета и завершение выглядит зависанием.
       async () => {
-        if (rateLimitRedis) await rateLimitRedis.quit();
+        if (counters) await counters.close();
       },
     ],
     graceMs: env.BACKGROUND_STOP_GRACE_MS,

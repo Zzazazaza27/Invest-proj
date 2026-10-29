@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 197; требований: 45
+- Проверок: 199; требований: 45
 
 ## Что защищено без участия человека
 
@@ -188,7 +188,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 76
+### Зарегистрированы, но ни в наборе, ни в CI — 77
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -210,6 +210,7 @@
 - `PRB-MAIL-READINESS` — Зонд готовности домена к почте: MX, SPF, DKIM, DMARC, PTR и сам релей.
 - `PRB-OBJECT-VERSIONING` — Зонд версионирования хранилища (Ф29, остаток SEC-04).
 - `PRB-BACKGROUND-JOBS` — Общий механизм фоновой работы ядра — проверка фактом на PostgreSQL и процессах core: аренда, advisory-блокировка, выключатель, роли запуска.
+- `PRB-VALKEY-COUNTERS` — Общие счётчики ограничений на Valkey — проверка фактом: окно, обрыв, неизвестный результат, отказ без обхода.
 - `PRB-OUTBOX-LEASE` — Проверка очереди outbox: аренда между экземплярами и повтор рассылки.
 - `PRB-RATE-LIMIT` — Проверка: обходится ли ограничение частоты подделкой cookie сессии.
 - `PRB-ROLE-REVOCATION` — Проверка немедленности отзыва прав.
@@ -393,6 +394,7 @@
 | PRB-MAIL-READINESS | `node scripts/probe-mail-readiness.mjs` | 0 | вручную | — |
 | PRB-OBJECT-VERSIONING | `node scripts/probe-object-versioning.mjs` | 10 | вручную | — |
 | PRB-BACKGROUND-JOBS | `node scripts/probe-background-jobs.mjs` | 34 | вручную | — |
+| PRB-VALKEY-COUNTERS | `node scripts/probe-valkey-counters.mjs` | 15 | вручную | — |
 | PRB-OUTBOX-LEASE | `node scripts/probe-outbox-lease.mjs` | 10 | вручную | — |
 | PRB-RATE-LIMIT | `node scripts/probe-rate-limit.mjs` | 0 | вручную | — |
 | PRB-ROLE-REVOCATION | `node scripts/probe-role-revocation.mjs` | 5 | вручную | — |
@@ -511,6 +513,7 @@
 | UNIT-CORE-APPLICATIONS | `npm run test -w apps/core` | 17 | CI | CI |
 | UNIT-CORE-BILLING | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
+| UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |
 | UNIT-CORE-EXPERTS | `npm run test -w apps/core` | 26 | CI | CI |
 | UNIT-CORE-INTEGRATION | `npm run test -w apps/core` | 16 | CI | CI |

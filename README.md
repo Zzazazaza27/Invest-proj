@@ -162,9 +162,9 @@ NODE_ENV=test npm run db:migrate
 Между живыми прогонами нужна пауза в минуту: ведро класса auth считается по
 адресу (подделка cookie не должна давать новый лимит), поэтому все локальные
 прогоны делят одно окно. `security-audit-full.mjs` выдерживает паузы сам.
-Счётчик теперь общий (Redis), поэтому перезапуск ядра окно НЕ обнуляет —
+Счётчик теперь общий (Valkey), поэтому перезапуск ядра окно НЕ обнуляет —
 сбросить вёдра локально можно только руками:
-`docker exec unicorn-redis redis-cli -a "$REDIS_PASSWORD" FLUSHDB`.
+`docker exec unicorn-valkey valkey-cli -a "$REDIS_PASSWORD" FLUSHDB`.
 
 Запуск ядра и живая проверка:
 

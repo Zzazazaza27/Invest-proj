@@ -13,7 +13,7 @@
  *      удвоенная;
  *   3. перезапуск экземпляра не обнуляет счётчик.
  *
- * Запуск: node scripts/probe-shared-rate-limit.mjs (нужен поднятый core и Redis)
+ * Запуск: node scripts/probe-shared-rate-limit.mjs (нужен поднятый core и Valkey)
  */
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
@@ -123,9 +123,9 @@ async function waitHealthy(base, timeoutMs = 30_000) {
   return false;
 }
 
-/** Значение ведра класса auth. Ключ строит сам плагин: префикс + ключ запроса. */
+/** Значение ведра класса auth. Ключ — префикс общего модуля `rl:` + ключ запроса плагина. */
 async function bucketValue() {
-  const keys = await redis.keys('fastify-rate-limit-*');
+  const keys = await redis.keys('rl:*');
   if (keys.length === 0) return { key: null, value: 0 };
   // Ведро класса auth считается по адресу: ключ без подсказки сессии.
   const key = keys.find((k) => k.endsWith('127.0.0.1')) ?? keys[0];
@@ -142,7 +142,7 @@ check('второй экземпляр поднялся', await waitHealthy(SECO
 
 // Ведро класса auth считается по адресу — обнуляем его перед замером, чтобы
 // прогон не зависел от того, что происходило до него.
-await redis.del(...(await redis.keys('fastify-rate-limit-*')).concat(['__probe_noop__']));
+await redis.del(...(await redis.keys('rl:*')).concat(['__probe_noop__']));
 
 async function hitAuth(base) {
   return fetch(`${base}/v1/auth/login`, {

@@ -1,6 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-import type Redis from 'ioredis';
-import { createRateLimitRedis } from '../cache/redis.client';
+import { getCounters, type Counters } from '../cache/counters';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 
@@ -13,7 +12,7 @@ import { errors } from '../common/errors';
  * ни другое: он считает по адресу запрашивающего, а «залить чужой ящик
  * письмами со сброса пароля» делается с тысячи адресов по одному запросу.
  *
- * Ключ — хеш blind-индекса контакта, значение адреса в Redis не попадает.
+ * Ключ — хеш blind-индекса контакта, значение адреса в счётчик не попадает.
  * Счётчик заводится и для НЕСУЩЕСТВУЮЩИХ контактов: иначе разница «счётчик
  * есть / счётчика нет» отличала бы зарегистрированный адрес от чужого, а весь
  * смысл ответа 202 в том, что отличить нельзя.
@@ -24,42 +23,28 @@ import { errors } from '../common/errors';
 @Injectable()
 export class MailThrottleService {
   private readonly logger = new Logger(MailThrottleService.name);
-  private readonly redis: Redis | null;
-
-  // INCR и срок жизни — одной атомарной операцией. Два обращения оставляют
-  // ключ без срока при обрыве между ними, и адрес блокируется навсегда (та же
-  // грабля, что закрыта в ip-ceiling, SEC-11).
-  private static readonly INCR_SCRIPT = `
-local used = redis.call('INCR', KEYS[1])
-local ttl = redis.call('TTL', KEYS[1])
-if ttl < 0 then
-  redis.call('EXPIRE', KEYS[1], ARGV[1])
-end
-return used
-`;
+  private readonly counters: Counters | null;
 
   constructor() {
-    this.redis = createRateLimitRedis();
+    this.counters = getCounters();
   }
 
   /**
    * Учесть запрос письма и сказать, можно ли его отправлять.
    *
-   * Счётчик не настроен (dev без Redis) — отправляем: классовый лимит остаётся,
+   * Счётчик не настроен (dev без Valkey) — отправляем: классовый лимит остаётся,
    * и превращать отсутствие необязательной инфраструктуры в неработающее
-   * восстановление пароля незачем. Настроенный, но упавший Redis — отказ:
+   * восстановление пароля незачем. Настроенный, но упавший счётчик — отказ:
    * fail-closed, как у остальных счётчиков.
    */
   async allow(indexHex: string): Promise<boolean> {
-    if (!this.redis) return true;
+    if (!this.counters) return true;
     let used: number;
     try {
-      used = (await this.redis.eval(
-        MailThrottleService.INCR_SCRIPT,
-        1,
+      ({ used } = await this.counters.hit(
         `verify-mail:${indexHex}`,
-        String(getEnv().VERIFY_MAIL_WINDOW_SEC),
-      )) as number;
+        getEnv().VERIFY_MAIL_WINDOW_SEC * 1_000,
+      ));
     } catch (error) {
       this.logger.error({
         msg: 'счётчик писем подтверждения недоступен',

@@ -18,12 +18,13 @@
  *   4. счёт и установка срока происходят одной атомарной операцией: при сотне
  *      одновременных запросов ни один не оставляет ключ без срока.
  *
- * Запуск: node scripts/probe-ip-ceiling-ttl.mjs (нужен поднятый Redis)
+ * Запуск: node scripts/probe-ip-ceiling-ttl.mjs (нужны Valkey стенда и собранный core)
  */
 import Redis from 'ioredis';
 import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -62,25 +63,32 @@ function check(name, condition, detail = '') {
   }
 }
 
-// Тот же скрипт, что выполняет приложение. Он читается из исходника, а не
-// копируется сюда: копия рано или поздно разойдётся с оригиналом, и прогон
-// начнёт проверять текст, которого в приложении уже нет.
-const source = readFileSync(join(ROOT, 'apps/core/src/cache/ip-ceiling.ts'), 'utf8');
-const match = source.match(/const CEILING_SCRIPT = `([\s\S]*?)`;/);
-if (!match) {
-  console.error('ПРОГОН НЕВОЗМОЖЕН: в ip-ceiling.ts не найден CEILING_SCRIPT');
+// Счётчик — тот же код, что выполняет приложение: общий модуль из сборки
+// ядра (с 29.10.2026, 4.8). Свой клиент — только чтобы смотреть срок ключа.
+const DIST = join(ROOT, 'apps/core/dist/cache/counters.js');
+if (!existsSync(DIST)) {
+  console.error('ПРОГОН НЕВОЗМОЖЕН: нет apps/core/dist — сначала npm run build -w apps/core');
   process.exit(1);
 }
-const SCRIPT = match[1];
+const { Counters } = createRequire(import.meta.url)(DIST);
 
 const redis = new Redis(process.env.REDIS_URL ?? 'redis://127.0.0.1:6379', {
   password: process.env.REDIS_PASSWORD || undefined,
   maxRetriesPerRequest: 1,
 });
+const counters = new Counters(
+  new Redis(process.env.REDIS_URL ?? 'redis://127.0.0.1:6379', {
+    password: process.env.REDIS_PASSWORD || undefined,
+    maxRetriesPerRequest: 1,
+  }),
+);
 
 const WINDOW = 60;
 const key = `probe-ip-ceiling:${randomUUID()}`;
-const bump = () => redis.eval(SCRIPT, 1, key, String(WINDOW));
+const bump = async (k = key) => {
+  const { used, ttlMs } = await counters.hit(k, WINDOW * 1_000);
+  return [used, Math.ceil(ttlMs / 1_000)];
+};
 
 console.warn('\n=== ПРОВЕРКА: ПОТОЛОК ЧАСТОТЫ ПО АДРЕСУ НЕ ЗАЛИПАЕТ ===\n');
 
@@ -118,9 +126,7 @@ check(
 
 // 4. Сотня одновременных запросов не оставляет ключ без срока.
 const stormKey = `probe-ip-ceiling:${randomUUID()}`;
-const storm = await Promise.all(
-  Array.from({ length: 100 }, () => redis.eval(SCRIPT, 1, stormKey, String(WINDOW))),
-);
+const storm = await Promise.all(Array.from({ length: 100 }, () => bump(stormKey)));
 const counts = storm.map(([used]) => Number(used)).sort((a, b) => a - b);
 const stormTtl = await redis.ttl(stormKey);
 check(
@@ -137,6 +143,7 @@ check(
 
 await redis.del(key, stormKey);
 await redis.quit();
+await counters.close();
 
 console.warn(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===\n`);
 process.exitCode = failed > 0 ? 1 : 0;

@@ -1060,6 +1060,30 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: PRB-VALKEY-COUNTERS
+    file: scripts/probe-valkey-counters.mjs
+    command: node scripts/probe-valkey-counters.mjs
+    kind: probe
+    level: интеграционный
+    runner: manual
+    asserts: 15
+    needs: [core]
+    effects:
+      [
+        'свои ключи probe-valkey:* в Valkey, убирает в finally',
+        'рвёт соединения Valkey и останавливает контейнер unicorn-valkey на несколько секунд',
+      ]
+    studied: code
+    studiedOn: 2026-10-29
+    note: >-
+      4.8, D-008 (W02): фиксированное окно и его истечение, ключ без срока,
+      обрыв соединения без повторной отправки, неизвестный результат при
+      CLIENT PAUSE (команда выполнена ровно один раз), 503 на живом ядре при
+      остановленном Valkey и возврат.
+    purpose: 'Общие счётчики ограничений на Valkey — проверка фактом: окно, обрыв, неизвестный результат, отказ без обхода.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
+
   - id: PRB-OUTBOX-LEASE
     file: scripts/probe-outbox-lease.mjs
     command: node scripts/probe-outbox-lease.mjs
@@ -3097,6 +3121,25 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: UNIT-CORE-COUNTERS
+    file: apps/core/tests/counters.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 8
+    studied: code
+    studiedOn: 2026-10-29
+    needs: []
+    effects: ['подменённый счётчик в памяти — побочных действий нет']
+    note: >-
+      4.8 (W02): адаптер @fastify/rate-limit — окно в мс, Retry-After,
+      независимость классов, 503 при отказе, отказ от продления окна, префикс
+      маршрута; потолок по адресу — окно, 429, 503.
+    purpose: 'Юнит-тесты общего контракта счётчиков ограничений на подменённом счётчике.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
+
   - id: UNIT-CORE-EVENTS
     file: apps/core/tests/events.test.ts
     command: npm run test -w apps/core
@@ -4367,6 +4410,8 @@ blocks:
         PRB-SECRET-LEAK,
         PRB-RATE-LIMIT,
         PRB-IP-CEILING-TTL,
+        PRB-VALKEY-COUNTERS,
+        UNIT-CORE-COUNTERS,
         UNIT-PKG-UI-MARKDOWN,
         UNIT-CORE-EXPERTS,
         UNIT-CORE-LAB,
