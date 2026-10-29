@@ -12,14 +12,18 @@
  *   2. снимает дамп базы НА СЕРВЕРЕ и убеждается, что он читается;
  *   3. запоминает текущий коммит сервера — точку отката;
  *   4. подтягивает код, ставит зависимости, собирает пакеты и фронтенды;
- *   5. накатывает миграции и заводит логин-роли;
- *   6. перезапускает ядро и AI-шлюз, пересоздаёт прокси;
- *   7. проверяет health и маршруты снаружи.
+ *   5. останавливает и отключает сервисы, удалённые из кода (AI-шлюз);
+ *   6. перед contract-миграцией останавливает ядро с фоновыми обработчиками;
+ *   7. накатывает миграции и заводит логин-роли;
+ *   8. запускает ядро, пересоздаёт прокси;
+ *   9. проверяет health и маршруты снаружи.
  *
  * Если проверка не прошла — откатывает код на прежний коммит, пересобирает и
- * перезапускает, после чего проверяет снова. База при этом НЕ откатывается:
- * миграции forward-only, и автоматический откат данных опаснее самой неудачи.
- * Дамп остаётся на сервере, путь печатается.
+ * перезапускает, после чего проверяет снова. Но только если contract-миграция
+ * НЕ применена: после неё прежний код обращается к удалённой схеме, поэтому
+ * выпуск останавливается и ждёт решения человека (2.1-W05, M150). База не
+ * откатывается никогда: миграции forward-only, и автоматический откат данных
+ * опаснее самой неудачи. Дамп остаётся на сервере, путь печатается.
  *
  * Запуск:
  *   node scripts/deploy.mjs --dry-run   показать план, ничего не менять
@@ -29,6 +33,7 @@
 import { execSync, spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
+import { runRelease } from './lib/deploy-release.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const DRY = process.argv.includes('--dry-run');
@@ -185,99 +190,17 @@ ok(`${dump} — таблиц с данными: ${tables}`);
 
 // ------------------------------------------------------------------ 4. выкат
 
-let deployFailed = false;
-
-try {
-  step('Код и сборка');
-  remote(`git fetch origin main --quiet && git reset --hard ${head} --quiet`);
-  ok(`код на ${remote('git rev-parse --short HEAD')}`);
-
-  info('npm ci — займёт минуту');
-  remote('npm ci --no-audit --no-fund', { show: true });
-
-  info('сборка пакетов и фронтендов');
-  remote('npm run build', { show: true });
-  // Консоль собирается отдельной командой намеренно: `npm run build` её не
-  // трогает, чтобы она не уезжала туда, где не нужна. Здесь нужна — доступ к
-  // ней закрыт привратником, а не отсутствием файлов.
-  remote('npm run build:console', { show: true });
-  // Фронты обязаны быть production-сборкой: отладочный React удваивает запросы
-  // (StrictMode) и тянет предупреждения в консоль (этап 5.6.4д).
-  remote('npm run check:front-builds', { show: true });
-  ok('собрано, сборки production');
-
-  step('База');
-  remote('npm run db:migrate', { show: true });
-  remote('npm run bootstrap:roles -w database', { show: true });
-  ok('миграции и роли применены');
-
-  step('Перезапуск');
-  remote('systemctl restart unicorn-core');
-
-  // Ядру нужно время подняться: сразу после restart оно ещё не слушает порт,
-  // а следом идёт проверка конфигурации nginx, которая ходит именно в него.
-  let coreUp = false;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    sleep(3000);
-    if (
-      remote('curl -s -o /dev/null -w "%{http_code}" -m 5 http://127.0.0.1:4300/v1/health', {
-        allowFail: true,
-      }) === '200'
-    ) {
-      coreUp = true;
-      break;
-    }
-  }
-  if (!coreUp) throw new Error('ядро не поднялось после перезапуска');
-  ok('ядро отвечает');
-
-  remote('npm run web:up', { show: true });
-
-  // compose НЕ пересоздаёт контейнер, если его определение не менялось, —
-  // а конфиг nginx лежит в смонтированном каталоге и меняется вместе с кодом.
-  // nginx же читает конфигурацию только при старте. Без явного reload новый
-  // console.conf приехал бы файлом, но не применился: ровно так 2026-09-13
-  // консоль осталась открытой при обновлённом коде.
-  const confOk = remote('docker exec unicorn-web nginx -t', { allowFail: true });
-  if (confOk === null) throw new Error('конфигурация nginx не проходит проверку — reload отменён');
-  remote('docker exec unicorn-web nginx -s reload');
-  ok('ядро, шлюз и прокси подняты, конфигурация nginx перечитана');
-
-  step('Проверка снаружи');
-  let bad = [];
-  for (let attempt = 0; attempt < 12; attempt += 1) {
-    bad = ROUTES.filter((r) => probe(`${PUBLIC_URL}${r}`) !== 200);
-    if (bad.length === 0) break;
-    sleep(5000);
-  }
-  if (bad.length > 0) throw new Error(`не отвечают: ${bad.join(', ')}`);
-  ok(`все ${ROUTES.length} маршрутов отвечают 200`);
-
-  // Консоль обязана быть закрыта анониму: это и проверяем снаружи, а не
-  // верим конфигурации.
-  const consoleCode = probe(`${PUBLIC_URL}/console/`);
-  if (consoleCode === 200) {
-    throw new Error('/console/ открыта анониму — привратник не работает');
-  }
-  ok(`/console/ закрыта анониму (${consoleCode})`);
-} catch (error) {
-  deployFailed = true;
-  fail(error instanceof Error ? error.message : String(error));
-
-  step('Откат кода');
-  try {
-    remote(`git reset --hard ${before} --quiet`);
-    remote('npm ci --no-audit --no-fund', { show: true });
-    remote('npm run build', { show: true });
-    remote('npm run build:console', { show: true });
-    remote('systemctl restart unicorn-core');
-    remote('npm run web:up', { show: true });
-    const back = ROUTES.filter((r) => probe(`${PUBLIC_URL}${r}`) !== 200);
-    if (back.length === 0) ok(`откатились на ${before}, стенд отвечает`);
-    else fail(`откатились на ${before}, но стенд отвечает не полностью: ${back.join(', ')}`);
-  } catch {
-    fail('ОТКАТ НЕ УДАЛСЯ — стенд требует ручного вмешательства');
-  }
+// Порядок шагов и решение об откате — в `lib/deploy-release.mjs`: там их без
+// сервера проверяет `check-deploy-release.mjs`.
+const release = runRelease({
+  ops: { remote, probe, sleep, log: { step, ok, info, fail } },
+  before,
+  head,
+  publicUrl: PUBLIC_URL,
+  routes: ROUTES,
+});
+const deployFailed = release.outcome !== 'released';
+if (deployFailed) {
   console.error(`\nБаза НЕ откатывалась: миграции forward-only. Дамп: ${dump}\n`);
 }
 
