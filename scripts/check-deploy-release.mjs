@@ -40,14 +40,28 @@
  *  15. переименование, M150 применена, ядро не поднялось — откат запрещён,
  *      имена остаются новыми;
  *  16. переименование без contract-миграции, сбой — откат возвращает имена;
- *  17. база уже переименована прошлой попыткой, `.env` — нет — дописывается
- *      только `.env`;
- *  18. обе базы существуют — выпуск отменяется до остановки ядра;
- *  19. ALTER DATABASE упал — откат восстанавливает `.env`.
+ *  17. база уже переименована прерванной попыткой, `.env` — нет: сверка до
+ *      бэкапа возвращает базе имя из `.env`, дальше штатное переименование
+ *      (замечание Тэнка: иначе бэкап и чтение миграций падают раньше);
+ *  18. обе базы существуют — остановка до бэкапа, ничего не тронуто;
+ *  19. ALTER DATABASE упал — откат восстанавливает `.env`;
+ *  20. то же, что 17, но выпуск затем падает — откат приходит к согласованным
+ *      прежним именам;
+ *  21. `.env` уже с новым именем, а база — со старым — сверка доводит базу.
+ *
+ * Сценарии идут тем же путём, что `deploy.mjs`: сверка имён → дамп → выпуск.
+ * Имитация отказывает в подключении к базе, которой нет под именем из `.env`
+ * (дамп, чтение и применение миграций, роли).
  *
  * Запуск: npm run check:deploy-release
  */
-import { parseMigrationStatus, runRelease } from './lib/deploy-release.mjs';
+import {
+  dumpCommand,
+  parseMigrationStatus,
+  reconcileDatabaseNames,
+  runRelease,
+  serverDatabaseName,
+} from './lib/deploy-release.mjs';
 
 const OLD = 'aaa1111';
 const NEW = 'bbb2222';
@@ -92,7 +106,7 @@ function makeServer(o) {
     commit: OLD,
     builtCommit: OLD,
     units: {
-      'unicorn-core': { active: true, enabled: true, runsCommit: OLD },
+      'unicorn-core': { active: !o.coreStopped, enabled: true, runsCommit: OLD },
       ...(o.gateway === false
         ? {}
         : {
@@ -116,6 +130,7 @@ function makeServer(o) {
   };
   const events = [];
   const violations = [];
+  const connectFailures = [];
 
   // Нарушение: сервис работает на коде, в котором нет применённой
   // contract-миграции, — то есть обращается к удалённой схеме.
@@ -194,6 +209,26 @@ function makeServer(o) {
     }
     if (cmd.startsWith('npm ci') || cmd.startsWith('npm run build:console')) return '';
     if (cmd.startsWith('npm run check:front-builds')) return '';
+    // Подключение по `.env`: базы под этим именем нет — отказ, как у pg.
+    const connects =
+      cmd.startsWith('npm run --silent migrate:status') ||
+      cmd === 'npm run db:migrate' ||
+      cmd.startsWith('npm run bootstrap:roles');
+    if (connects && !state.dbs.has(state.env.DATABASE_URL_OWNER)) {
+      connectFailures.push(cmd);
+      fail(`${cmd}: database "${state.env.DATABASE_URL_OWNER}" does not exist`);
+    }
+    if (cmd === "grep -m1 '^DATABASE_URL_OWNER=' .env") {
+      return `DATABASE_URL_OWNER=postgres://u:p@localhost:5432/${state.env.DATABASE_URL_OWNER}`;
+    }
+    if ((m = / pg_dump .* -d (\w+) /.exec(cmd))) {
+      if (!state.dbs.has(m[1])) {
+        connectFailures.push(cmd);
+        fail(cmd);
+      }
+      state.dumpedFrom = m[1];
+      return '';
+    }
     if (cmd.startsWith('npm run --silent migrate:status')) {
       if (state.migrated && o.statusDownAfterMigrate) fail(cmd);
       const files = o.files[state.commit];
@@ -265,12 +300,23 @@ function makeServer(o) {
     sleep: quiet,
     log: { step: quiet, ok: quiet, info: quiet, fail: quiet },
   };
-  return { ops, state, events, violations };
+  return { ops, state, events, violations, connectFailures };
 }
 
+/** Тот же путь, что `deploy.mjs`: сверка имён → дамп → выпуск. */
 function run(name, o) {
   console.warn(`\n▸ ${name}`);
   const server = makeServer(o);
+  try {
+    reconcileDatabaseNames(server.ops);
+  } catch (error) {
+    return { ...server, result: { outcome: 'stopped', reason: error.message } };
+  }
+  try {
+    server.ops.remote(dumpCommand(serverDatabaseName(server.ops)));
+  } catch {
+    return { ...server, result: { outcome: 'backup-failed' } };
+  }
   const result = runRelease({
     ops: server.ops,
     before: OLD,
@@ -606,17 +652,31 @@ const W05_DONE = { [OLD]: [...BASE, M150], [NEW]: [...BASE, M150, M151] };
 
 // --- 17 -------------------------------------------------------------------------
 {
-  const s = run('17. база переименована прошлой попыткой, .env — нет', {
+  const s = run('17. база переименована прерванной попыткой, .env — нет', {
     files: W05_DONE,
     contract: [M150],
     applied: [...BASE, M150],
     gateway: false,
     dbs: ['fifth_element', 'fifth_element_test'],
     envDb: 'unicorn_launch',
+    coreStopped: true,
   });
   check('выпуск завершён', s.result.outcome === 'released', s.result.outcome);
   check('базы и .env под новыми именами', namesNew(s), JSON.stringify(s.state.env));
-  check('ALTER DATABASE не выполнялся', idx(s.events, /ALTER DATABASE/) === -1);
+  check(
+    'ни одного отказа подключения',
+    s.connectFailures.length === 0,
+    s.connectFailures.join('; '),
+  );
+  check(
+    'дамп снят под именем из .env',
+    s.state.dumpedFrom === 'unicorn_launch',
+    s.state.dumpedFrom,
+  );
+  const back = idx(s.events, /ALTER DATABASE fifth_element RENAME TO unicorn_launch/);
+  const dump = idx(s.events, / pg_dump /);
+  check('имя возвращено до дампа', back >= 0 && back < dump);
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
 }
 
 // --- 18 -------------------------------------------------------------------------
@@ -629,9 +689,10 @@ const W05_DONE = { [OLD]: [...BASE, M150], [NEW]: [...BASE, M150, M151] };
     dbs: ['unicorn_launch', 'unicorn_test', 'fifth_element', 'fifth_element_test'],
     envDb: 'unicorn_launch',
   });
-  check('выпуск не завершён', s.result.outcome !== 'released', s.result.outcome);
+  check('остановка для разбора вручную', s.result.outcome === 'stopped', s.result.outcome);
+  check('дамп не снимался', idx(s.events, / pg_dump /) === -1);
   check('ALTER DATABASE не выполнялся', idx(s.events, /ALTER DATABASE/) === -1);
-  check('миграция не запускалась', idx(s.events, /^npm run db:migrate$/) === -1);
+  check('код и ядро не тронуты', s.state.commit === OLD && s.state.units['unicorn-core'].active);
   check('.env не тронут', s.state.env.DATABASE_URL_OWNER === 'unicorn_launch');
 }
 
@@ -648,6 +709,52 @@ const W05_DONE = { [OLD]: [...BASE, M150], [NEW]: [...BASE, M150, M151] };
   check('код откатан', s.result.outcome === 'rolled-back', s.result.outcome);
   check('базы и .env под прежними именами', namesOld(s), JSON.stringify(s.state.env));
   check('ядро поднято', s.state.units['unicorn-core'].active);
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
+}
+
+// --- 20 -------------------------------------------------------------------------
+{
+  const s = run('20. прерванное переименование, затем сбой выпуска', {
+    files: W05_DONE,
+    contract: [M150],
+    applied: [...BASE, M150],
+    gateway: false,
+    dbs: ['fifth_element', 'fifth_element_test'],
+    envDb: 'unicorn_launch',
+    coreDown: true,
+    coreStopped: true,
+  });
+  check('код откатан', s.result.outcome === 'rolled-back', s.result.outcome);
+  check('базы и .env под прежними именами, согласованно', namesOld(s), JSON.stringify(s.state.env));
+  check(
+    'ядро на прежнем коде и поднято',
+    s.state.units['unicorn-core'].runsCommit === OLD && s.state.units['unicorn-core'].active,
+  );
+  check(
+    'ни одного отказа подключения',
+    s.connectFailures.length === 0,
+    s.connectFailures.join('; '),
+  );
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
+}
+
+// --- 21 -------------------------------------------------------------------------
+{
+  const s = run('21. .env с новым именем, база — со старым', {
+    files: W05_DONE,
+    contract: [M150],
+    applied: [...BASE, M150],
+    gateway: false,
+    dbs: ['unicorn_launch', 'unicorn_test'],
+    coreStopped: true,
+  });
+  check('выпуск завершён', s.result.outcome === 'released', s.result.outcome);
+  check('базы и .env под новыми именами', namesNew(s), JSON.stringify(s.state.env));
+  check(
+    'ни одного отказа подключения',
+    s.connectFailures.length === 0,
+    s.connectFailures.join('; '),
+  );
   check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
 }
 

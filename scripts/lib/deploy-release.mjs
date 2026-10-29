@@ -134,13 +134,63 @@ export function databaseExists(ops, name) {
  * оставшиеся (скрипт, забытая консоль) обрываются явно.
  */
 export function renameDatabase(ops, from, to) {
+  alterDatabaseName(ops, from, to);
+  // \b — граница слова: `unicorn_test` не задевает `unicorn_test_x`.
+  ops.remote(`sed -i -E '/^DATABASE_URL/ s#/${from}\\b#/${to}#' .env`);
+}
+
+function alterDatabaseName(ops, from, to) {
   ops.remote(
     `${PSQL} -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity ` +
       `WHERE datname = '${from}' AND pid <> pg_backend_pid()" ` +
       `-c "ALTER DATABASE ${from} RENAME TO ${to}"`,
   );
-  // \b — граница слова: `unicorn_test` не задевает `unicorn_test_x`.
-  ops.remote(`sed -i -E '/^DATABASE_URL/ s#/${from}\\b#/${to}#' .env`);
+}
+
+/** Команда дампа на сервере — одна для `deploy.mjs` и его проверки. */
+export function dumpCommand(database) {
+  return (
+    `PGPASSWORD=$(grep -m1 '^POSTGRES_PASSWORD=' .env | cut -d= -f2-) ` +
+    `docker exec -e PGPASSWORD -i unicorn-postgres pg_dump -U unicorn_owner ` +
+    `-d ${database} --format=custom -f /tmp/deploy.dump`
+  );
+}
+
+/**
+ * Сверка имён баз ДО бэкапа и чтения миграций: оба подключаются по `.env`, и
+ * если база под другим именем, выпуск упал бы раньше, чем дошёл бы до
+ * переименования.
+ *
+ * Такое расхождение оставляет только прерванное переименование: база уже
+ * переименована, а `.env` — нет (связь оборвалась между ALTER DATABASE и
+ * правкой `.env`). Сверка возвращает базе имя из `.env` — то есть исходное
+ * согласованное состояние, — и выпуск дальше переименовывает её штатно: с
+ * дампом, остановкой ядра и откатом. Обе базы существуют или нет ни одной —
+ * остановка для разбора вручную.
+ *
+ * @returns {string[]} что сделано (или было бы сделано при dryRun)
+ */
+export function reconcileDatabaseNames(ops, { dryRun = false } = {}) {
+  const envNames = envDatabaseNames(ops);
+  const actions = [];
+  for (const pair of Object.entries(RENAMED_DATABASES)) {
+    for (const [want, other] of [pair, [...pair].reverse()]) {
+      if (!envNames.has(want)) continue;
+      const hasWant = databaseExists(ops, want);
+      const hasOther = databaseExists(ops, other);
+      if (hasWant && hasOther) {
+        throw new Error(`существуют обе базы, ${want} и ${other}, — нужен разбор вручную`);
+      }
+      if (hasWant) continue;
+      if (!hasOther) throw new Error(`нет ни ${want}, ни ${other} — нужен разбор вручную`);
+      actions.push(`${other} → ${want} (по .env; прерванное переименование)`);
+      if (!dryRun) {
+        ops.remote(`systemctl stop ${CORE_UNIT}`);
+        alterDatabaseName(ops, other, want);
+      }
+    }
+  }
+  return actions;
 }
 
 /**

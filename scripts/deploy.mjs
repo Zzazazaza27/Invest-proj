@@ -33,7 +33,12 @@
 import { execSync, spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { runRelease, serverDatabaseName } from './lib/deploy-release.mjs';
+import {
+  dumpCommand,
+  reconcileDatabaseNames,
+  runRelease,
+  serverDatabaseName,
+} from './lib/deploy-release.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const DRY = process.argv.includes('--dry-run');
@@ -158,6 +163,21 @@ if (serverDirty) {
 }
 ok('на сервере нет правок мимо git');
 
+// Имена баз и `.env` сверяются ДО бэкапа: дамп и чтение миграций подключаются
+// по `.env`, и прерванное переименование уронило бы их раньше, чем выпуск
+// дошёл бы до его исправления.
+step('Имена баз');
+let nameActions;
+try {
+  nameActions = reconcileDatabaseNames({ remote }, { dryRun: DRY });
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+}
+if (nameActions.length === 0) ok('базы и .env согласованы');
+for (const action of nameActions)
+  info(`${DRY ? 'было бы восстановлено' : 'восстановлено'}: ${action}`);
+
 if (DRY) {
   console.warn(`\nПробный прогон: выкатили бы ${before} → ${head}. Ничего не менялось.\n`);
   process.exit(0);
@@ -173,11 +193,7 @@ const database = serverDatabaseName({ remote });
 const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 const dump = `/root/backups/${database}_${stamp}.dump`;
 remote('mkdir -p /root/backups');
-remote(
-  `PGPASSWORD=$(grep -m1 '^POSTGRES_PASSWORD=' .env | cut -d= -f2-) ` +
-    `docker exec -e PGPASSWORD -i unicorn-postgres pg_dump -U unicorn_owner ` +
-    `-d ${database} --format=custom -f /tmp/deploy.dump`,
-);
+remote(dumpCommand(database));
 remote(`docker cp unicorn-postgres:/tmp/deploy.dump ${dump}`);
 
 // Дамп без проверки — не страховка, а её видимость: битый файл ничем не
