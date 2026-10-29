@@ -17,6 +17,7 @@ import pg from 'pg';
 import { createHmac, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 
 import { CORE_URL } from './lib/ports.mjs';
@@ -36,6 +37,9 @@ function loadDotEnv() {
 }
 
 const BASE = process.env.CORE_URL ?? CORE_URL;
+const { putObject } = createRequire(import.meta.url)(
+  join(ROOT, 'apps/core/dist/storage/s3.service.js'),
+);
 const SESSION_COOKIE = process.env.SESSION_COOKIE_NAME ?? 'ul_session';
 const CSRF_COOKIE = process.env.CSRF_COOKIE_NAME ?? 'ul_csrf';
 
@@ -261,6 +265,113 @@ if (firstMaterialId) {
       (finalize.json?.uploadState === 'pending' && finalize.json?.received === false),
     `HTTP ${finalize.status} ${finalize.json?.uploadState ?? finalize.json?.code ?? ''}`,
   );
+}
+
+// Резерв места и лимит активных передач (M149, замечание Тэнка к W03).
+// Истёкшая форма без полученного объекта освобождает лимит передач, но не
+// место в общем пределе: поздний файл всё равно можно завершить, и материалов
+// не станет больше 50.
+{
+  const third = await client.call('/v1/projects', {
+    method: 'POST',
+    body: {
+      title: `Проект резерва ${suffix}`,
+      stage: 'mvp',
+      taxonomyId: taxonomy,
+      investmentAsk: '1000000.00',
+      askCurrency: 'RUB',
+    },
+  });
+  const reserveProjectId = third.json?.id;
+  const keyOf = (id) => `projects/${reserveProjectId}/materials/deck/${id}/upload`;
+  const expired = [];
+  for (let i = 0; i < 5; i += 1) {
+    const id = randomUUID();
+    expired.push(id);
+    await sql(
+      `INSERT INTO lab.project_materials
+         (id, project_id, type, version, upload_key, upload_expires_at, parse_status, uploaded_by)
+       VALUES ($1, $2, 'deck', $3, $4, now() - interval '1 hour', 'queued', $5)`,
+      [id, reserveProjectId, 200 + i, keyOf(id), user.id],
+    );
+  }
+  const counters = async () =>
+    (
+      await sql('SELECT total::int, pending::int FROM lab.material_counters($1)', [
+        reserveProjectId,
+      ])
+    )[0];
+  const before = await counters();
+  check(
+    'брошенные формы держат место, но не лимит передач',
+    before.total === 5 && before.pending === 0,
+    `total ${before.total}, pending ${before.pending}`,
+  );
+  const allowed = await client.call(`/v1/projects/${reserveProjectId}/materials/upload`, {
+    method: 'POST',
+    body: { type: 'deck', fileName: 'next.pdf', contentType: 'application/pdf', sizeBytes: 1024 },
+  });
+  check(
+    'новая передача разрешена при 5 брошенных формах',
+    allowed.status === 201,
+    `HTTP ${allowed.status}`,
+  );
+
+  // Добиваем общий предел готовыми материалами: 5 брошенных + 1 активная + 44.
+  for (let i = 0; i < 44; i += 1) {
+    await sql(
+      `INSERT INTO lab.project_materials
+         (id, project_id, type, version, s3_key, upload_state, uploaded_at, size_bytes,
+          parse_status, uploaded_by)
+       VALUES ($1, $2, 'deck', $3, $4, 'ready', now(), 10, 'queued', $5)`,
+      [randomUUID(), reserveProjectId, 300 + i, `ready-${i}`, user.id],
+    );
+  }
+  const full = await counters();
+  check('резерв учтён в общем пределе', full.total === 50, `total ${full.total}`);
+  const refused = await client.call(`/v1/projects/${reserveProjectId}/materials/upload`, {
+    method: 'POST',
+    body: { type: 'deck', fileName: 'over.pdf', contentType: 'application/pdf', sizeBytes: 1024 },
+  });
+  check(
+    '51-я форма не выдаётся',
+    refused.status === 422 || refused.status === 429,
+    `HTTP ${refused.status}`,
+  );
+
+  // Поздний файл брошенной формы приходит — и завершается без превышения.
+  await putObject({
+    key: keyOf(expired[0]),
+    body: Buffer.from(`%PDF-1.4 поздний файл ${suffix}`, 'utf8'),
+    contentType: 'application/pdf',
+  });
+  const late = await client.call(
+    `/v1/projects/${reserveProjectId}/materials/${expired[0]}/finalize`,
+    { method: 'POST' },
+  );
+  const [{ live }] = await sql(
+    `SELECT count(*)::int AS live FROM lab.project_materials
+      WHERE project_id = $1 AND upload_state IN ('ready', 'pending')`,
+    [reserveProjectId],
+  );
+  check(
+    'поздний файл завершён, материалов не больше 50',
+    late.json?.uploadState === 'ready' && live <= 50,
+    `${late.json?.uploadState}, готовых и незавершённых ${live}`,
+  );
+
+  await sql(
+    `DELETE FROM lab.material_upload_attempts
+      WHERE material_id IN (SELECT id FROM lab.project_materials WHERE project_id = $1)`,
+    [reserveProjectId],
+  );
+  await sql('DELETE FROM lab.project_materials WHERE project_id = $1', [reserveProjectId]);
+  await sql('UPDATE lab.projects SET current_application_id = NULL WHERE id = $1', [
+    reserveProjectId,
+  ]);
+  await sql('DELETE FROM lab.investment_applications WHERE project_id = $1', [reserveProjectId]);
+  await sql('DELETE FROM lab.founders_projects WHERE project_id = $1', [reserveProjectId]);
+  await sql('DELETE FROM lab.projects WHERE id = $1', [reserveProjectId]);
 }
 
 // Гонка версии ссылки на продукт (CODE-15). Версия считалась как MAX+1 без

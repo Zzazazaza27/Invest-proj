@@ -573,6 +573,80 @@ try {
     );
   }
 
+  // M. Настоящий сигнал остановки на живых БД и хранилище (замечание Тэнка):
+  // прерывание не записывается как неудача и не публикует после себя.
+  console.warn('▸ M. Остановка во время выполнения');
+  // Прерванная работа держит аренду до истечения срока; сдвигаем срок в
+  // прошлое (имитация истечения) и доводим загрузку следующим исполнителем —
+  // заодно это освобождает лимит активных передач для следующих сценариев.
+  const finishAfterStop = async (materialId) => {
+    await sql(
+      `UPDATE lab.project_materials SET lease_until = now() - interval '1 second'
+        WHERE id = $1 AND lease_id IS NOT NULL`,
+      [materialId],
+    );
+    return completion.complete(materialId, {
+      executor: 'reconcile',
+      actorId: null,
+      traceId: 'w03-m-next',
+    });
+  };
+  {
+    const bytes = pdf('M1');
+    const t = await ticket(bytes, 'M1');
+    await uploadByTicket(t, bytes);
+    const stopped = new AbortController();
+    stopped.abort(new Error('остановка'));
+    const pre = await completion.complete(t.materialId, {
+      executor: 'reconcile',
+      actorId: null,
+      traceId: 'w03-m1',
+      signal: stopped.signal,
+    });
+    const r = await row(t.materialId);
+    check(
+      'заранее прерванный сигнал: ни захвата, ни записи неудачи',
+      pre.state === 'pending' && r.lease_id === null && r.check_failures === 0,
+    );
+    check(
+      'следующий исполнитель довёл загрузку',
+      (await finishAfterStop(t.materialId)).state === 'ready',
+    );
+  }
+  for (const delayMs of [0, 5, 20, 60]) {
+    const bytes = pdf(`M2-${delayMs}`);
+    const t = await ticket(bytes, `M2-${delayMs}`);
+    await uploadByTicket(t, bytes);
+    const stop = new AbortController();
+    setTimeout(() => stop.abort(new Error('остановка')), delayMs);
+    const outcome = await completion.complete(t.materialId, {
+      executor: 'reconcile',
+      actorId: null,
+      traceId: `w03-m2-${delayMs}`,
+      signal: stop.signal,
+    });
+    const r = await row(t.materialId);
+    const [{ published }] = await sql(
+      `SELECT count(*)::int AS published FROM lab.material_upload_attempts
+        WHERE material_id = $1 AND state = 'published'`,
+      [t.materialId],
+    );
+    check(
+      `прерывание через ${delayMs} мс: неудача не записана, итог согласован`,
+      r.check_failures === 0 &&
+        r.unknown_since === undefined &&
+        (outcome.state === 'ready') === (r.upload_state === 'ready') &&
+        (r.upload_state === 'ready') === (published === 1),
+      `исход ${outcome.state}, в БД ${r.upload_state}, публикаций ${published}`,
+    );
+    if (r.upload_state !== 'ready') {
+      check(
+        `после прерывания через ${delayMs} мс работу завершает следующий исполнитель`,
+        (await finishAfterStop(t.materialId)).state === 'ready',
+      );
+    }
+  }
+
   // J. Откат: SQL прежнего кода.
   console.warn('▸ J. Откат: прежнее создание, подтверждение и удаление');
   const pendingBefore = await sql(

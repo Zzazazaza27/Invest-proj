@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 199; требований: 45
+- Проверок: 200; требований: 45
 
 ## Что защищено без участия человека
 
@@ -383,7 +383,7 @@
 
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
-| PRB-UPLOAD-COMPLETION | `node scripts/probe-upload-completion.mjs` | 45 | вручную | — |
+| PRB-UPLOAD-COMPLETION | `node scripts/probe-upload-completion.mjs` | 55 | вручную | — |
 | PRB-AI-DETERMINISM | `node scripts/probe-ai-determinism.mjs` | 0 | вручную | — |
 | PRB-CSRF-BINDING | `node scripts/probe-csrf-binding.mjs` | 6 | вручную | — |
 | PRB-DNS-REBINDING | `node scripts/probe-dns-rebinding.mjs` | 6 | вручную | — |
@@ -402,7 +402,7 @@
 | PRB-SERVICE-TOKEN-EPOCH | `node scripts/probe-service-token-epoch.mjs` | 10 | вручную | — |
 | PRB-SHARED-RATE-LIMIT | `node scripts/probe-shared-rate-limit.mjs` | 10 | вручную | — |
 | PRB-TOKEN-REVOCATION | `node scripts/probe-token-revocation.mjs` | 23 | вручную | — |
-| PRB-UPLOAD-QUOTA | `node scripts/probe-upload-quota.mjs` | 9 | вручную | — |
+| PRB-UPLOAD-QUOTA | `node scripts/probe-upload-quota.mjs` | 13 | вручную | — |
 
 ### Браузерные проходы (`render-check-*`)
 
@@ -514,6 +514,7 @@
 | UNIT-CORE-BILLING | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
+| UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |
 | UNIT-CORE-EXPERTS | `npm run test -w apps/core` | 26 | CI | CI |
 | UNIT-CORE-INTEGRATION | `npm run test -w apps/core` | 16 | CI | CI |

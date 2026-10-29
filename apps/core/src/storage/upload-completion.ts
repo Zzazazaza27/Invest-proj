@@ -126,6 +126,22 @@ export class UploadCompletion {
     return this.db.asServiceRole('app_maintenance', { traceId }, work);
   }
 
+  /**
+   * Транзакция, меняющая состояние загрузки. Сигнал проверяется ВНУТРИ — после
+   * получения соединения и перед изменением: остановка, пришедшая во время
+   * ожидания БД, не должна превратиться в публикацию или запись неудачи.
+   */
+  private change<T>(
+    traceId: string,
+    signal: AbortSignal,
+    work: (tx: Tx) => Promise<T>,
+  ): Promise<T> {
+    return this.tx(traceId, async (tx) => {
+      signal.throwIfAborted();
+      return work(tx);
+    });
+  }
+
   async readRow(id: string, traceId: string): Promise<UploadRow | null> {
     return this.tx(traceId, async (tx) => {
       const { rows } = await tx.query<UploadRow>(
@@ -150,15 +166,21 @@ export class UploadCompletion {
     },
   ): Promise<CompletionOutcome> {
     const { traceId } = options;
-    const [lease] = await this.tx(traceId, (tx) =>
-      claimLeases(tx, {
-        table: this.target.table,
-        where: `id = $1 AND upload_state = 'pending' AND type <> 'product_link'`,
-        params: [id],
-        limit: 1,
-        seconds: UPLOAD_COMPLETION.leaseSeconds,
-      }),
-    );
+    const external = options.signal ?? new AbortController().signal;
+    let lease: Lease | undefined;
+    try {
+      [lease] = await this.change(traceId, external, (tx) =>
+        claimLeases(tx, {
+          table: this.target.table,
+          where: `id = $1 AND upload_state = 'pending' AND type <> 'product_link'`,
+          params: [id],
+          limit: 1,
+          seconds: UPLOAD_COMPLETION.leaseSeconds,
+        }),
+      );
+    } catch (error) {
+      if (!external.aborted) throw error;
+    }
     if (!lease) {
       const row = await this.readRow(id, traceId);
       if (!row) throw new Error(`запись загрузки ${id} не найдена`);
@@ -169,6 +191,7 @@ export class UploadCompletion {
         reason: row.upload_state_reason,
       };
     }
+    const held = lease;
 
     // Продление аренды по ходу долгой работы. Не продлилась — прерывание:
     // следующее действие не начинается, публикацию отсечёт условие UPDATE.
@@ -177,7 +200,7 @@ export class UploadCompletion {
       void this.tx(traceId, (tx) =>
         renewLease(tx, {
           table: this.target.table,
-          lease,
+          lease: held,
           seconds: UPLOAD_COMPLETION.leaseSeconds,
         }),
       ).then(
@@ -188,12 +211,12 @@ export class UploadCompletion {
       );
     }, UPLOAD_COMPLETION.renewEveryMs);
     heartbeat.unref();
-    const signal = options.signal ? AbortSignal.any([options.signal, lost.signal]) : lost.signal;
+    const signal = AbortSignal.any([external, lost.signal]);
 
     try {
       const row = await this.readRow(id, traceId);
       if (!row) throw new Error(`запись загрузки ${id} не найдена`);
-      return await this.process(row, lease, signal, options);
+      return await this.process(row, held, signal, options);
     } finally {
       clearInterval(heartbeat);
     }
@@ -206,8 +229,20 @@ export class UploadCompletion {
     options: { executor: 'browser' | 'reconcile'; actorId: string | null; traceId: string },
   ): Promise<CompletionOutcome> {
     const { traceId } = options;
+    // Прерывание — не неудача: ни записи о сбое, ни отсчёта неизвестности.
+    // Аренда истечёт сама, и работу продолжит следующий исполнитель.
+    const stop = (error: unknown): CompletionOutcome | null =>
+      signal.aborted || error instanceof LeaseLost ? this.interrupted(row) : null;
+
     if (!row.upload_key) {
-      return this.settle(row, lease, traceId, 'needs_attention', 'нет временного ключа загрузки');
+      return this.settle(
+        row,
+        lease,
+        signal,
+        traceId,
+        'needs_attention',
+        'нет временного ключа загрузки',
+      );
     }
 
     // 1. Получен ли объект формы.
@@ -216,7 +251,7 @@ export class UploadCompletion {
       signal.throwIfAborted();
       head = await this.s3.headObject(row.upload_key);
     } catch (error) {
-      return this.unknown(row, lease, traceId, error);
+      return stop(error) ?? this.unknown(row, lease, signal, traceId, error);
     }
     if (!head.exists) {
       // Хранилище раньше подтвердило объект, а теперь его нет — утрачен
@@ -225,40 +260,50 @@ export class UploadCompletion {
         return this.settle(
           row,
           lease,
+          signal,
           traceId,
           'needs_attention',
           'утрачен ранее полученный объект',
         );
       }
-      return this.notYetReceived(row, lease, traceId);
+      return this.notYetReceived(row, lease, signal, traceId);
     }
 
     const maxBytes = row.upload_max_bytes === null ? null : Number(row.upload_max_bytes);
     if (maxBytes !== null && head.sizeBytes !== null && head.sizeBytes > maxBytes) {
-      return this.settle(row, lease, traceId, 'rejected', `размер больше предела ${maxBytes} байт`);
+      return this.settle(
+        row,
+        lease,
+        signal,
+        traceId,
+        'rejected',
+        `размер больше предела ${maxBytes} байт`,
+      );
     }
-    await this.markReceived(row, lease, traceId);
 
-    // 2. Попытка с новым окончательным ключом — в БД до копирования.
+    // 2. Отметка получения и попытка с новым окончательным ключом — в БД до
+    // копирования.
     const attemptId = randomUUID();
     const finalKey = this.target.finalKey(row, attemptId);
     try {
-      signal.throwIfAborted();
-      const inserted = await this.tx(traceId, async (tx) => {
+      await this.change(traceId, signal, async (tx) => {
         const { rowCount } = await tx.query(
+          `UPDATE ${this.target.table}
+              SET object_received_at = coalesce(object_received_at, now()), not_received_at = NULL
+            WHERE id = $1 AND lease_id = $2::uuid AND lease_until > now()`,
+          [row.id, lease.leaseId],
+        );
+        if (rowCount !== 1) throw new LeaseLost();
+        await tx.query(
           `INSERT INTO ${this.target.attemptsTable} (id, material_id, final_key, lease_id)
-           SELECT $1, $2, $3, $4::uuid
-            WHERE EXISTS (SELECT 1 FROM ${this.target.table}
-                           WHERE id = $2 AND lease_id = $4::uuid AND lease_until > now())`,
+           VALUES ($1, $2, $3, $4::uuid)`,
           [attemptId, row.id, finalKey, lease.leaseId],
         );
-        return rowCount === 1;
       });
-      if (!inserted) throw new LeaseLost();
     } catch (error) {
-      if (error instanceof LeaseLost || signal.aborted) return this.busyOutcome(row);
-      return this.unknown(row, lease, traceId, error);
+      return stop(error) ?? this.unknown(row, lease, signal, traceId, error);
     }
+    row.object_received_at ??= new Date();
 
     // 3. Копия и её проверка по содержимому.
     let digest: { exists: boolean; sizeBytes: number; sha256: string | null; head: Buffer };
@@ -278,25 +323,35 @@ export class UploadCompletion {
         signal,
       });
     } catch (error) {
-      await this.markAttempt(attemptId, 'failed', errorText(error), traceId).catch(() => undefined);
-      if (signal.aborted) return this.busyOutcome(row);
-      return this.unknown(row, lease, traceId, error);
+      const interrupted = stop(error);
+      await this.markAttempt(
+        attemptId,
+        interrupted ? 'abandoned' : 'failed',
+        interrupted ? 'прервано' : errorText(error),
+        traceId,
+      ).catch(() => undefined);
+      return interrupted ?? this.unknown(row, lease, signal, traceId, error);
     }
     if (!digest.exists || digest.sha256 === null) {
       await this.markAttempt(attemptId, 'failed', 'копия не найдена после копирования', traceId);
-      return this.unknown(row, lease, traceId, new Error('копия не найдена после копирования'));
+      return this.unknown(
+        row,
+        lease,
+        signal,
+        traceId,
+        new Error('копия не найдена после копирования'),
+      );
     }
 
     const rejection = this.target.validate(row, digest);
     if (rejection) {
       await this.markAttempt(attemptId, 'abandoned', rejection, traceId);
-      return this.settle(row, lease, traceId, 'rejected', rejection);
+      return this.settle(row, lease, signal, traceId, 'rejected', rejection);
     }
 
-    // 4. Публикация — одна транзакция.
+    // 4. Публикация — одна транзакция; сигнал проверяется внутри неё.
     try {
-      signal.throwIfAborted();
-      await this.tx(traceId, async (tx) => {
+      await this.change(traceId, signal, async (tx) => {
         const published = await completeUnderLease(tx, {
           table: this.target.table,
           lease,
@@ -329,25 +384,19 @@ export class UploadCompletion {
         });
       });
     } catch (error) {
-      if (error instanceof LeaseLost || signal.aborted) return this.busyOutcome(row);
-      return this.unknown(row, lease, traceId, error);
+      return stop(error) ?? this.unknown(row, lease, signal, traceId, error);
     }
     return { state: 'ready', received: true, busy: false, reason: null };
   }
 
-  private busyOutcome(_row: UploadRow): CompletionOutcome {
-    return { state: 'pending', received: true, busy: true, reason: null };
-  }
-
-  private async markReceived(row: UploadRow, lease: Lease, traceId: string): Promise<void> {
-    if (row.object_received_at) return;
-    await this.tx(traceId, (tx) =>
-      tx.query(
-        `UPDATE ${this.target.table} SET object_received_at = now(), not_received_at = NULL
-          WHERE id = $1 AND lease_id = $2::uuid AND lease_until > now()`,
-        [row.id, lease.leaseId],
-      ),
-    );
+  /** Работа прервана остановкой или потерей аренды: состояние прежнее. */
+  private interrupted(row: UploadRow): CompletionOutcome {
+    return {
+      state: 'pending',
+      received: row.object_received_at !== null,
+      busy: true,
+      reason: null,
+    };
   }
 
   private async markAttempt(
@@ -370,32 +419,40 @@ export class UploadCompletion {
   private async notYetReceived(
     row: UploadRow,
     lease: Lease,
+    signal: AbortSignal,
     traceId: string,
   ): Promise<CompletionOutcome> {
     const expired = row.upload_expires_at !== null && row.upload_expires_at.getTime() < Date.now();
     const nextMs = expired ? UPLOAD_COMPLETION.expiredCheckMs : UPLOAD_COMPLETION.freshCheckMs;
-    await this.tx(traceId, (tx) =>
-      completeUnderLease(tx, {
-        table: this.target.table,
-        lease,
-        set: `next_check_at = now() + make_interval(secs => $1),
-              not_received_at = CASE WHEN $2 THEN coalesce(not_received_at, now())
-                                     ELSE not_received_at END,
-              check_failures = 0, unknown_since = NULL, last_error = NULL`,
-        params: [nextMs / 1_000, expired],
-      }),
-    );
+    try {
+      await this.change(traceId, signal, (tx) =>
+        completeUnderLease(tx, {
+          table: this.target.table,
+          lease,
+          set: `next_check_at = now() + make_interval(secs => $1),
+                not_received_at = CASE WHEN $2 THEN coalesce(not_received_at, now())
+                                       ELSE not_received_at END,
+                check_failures = 0, unknown_since = NULL, last_error = NULL`,
+          params: [nextMs / 1_000, expired],
+        }),
+      );
+    } catch (error) {
+      if (signal.aborted) return this.interrupted(row);
+      throw error;
+    }
     return { state: 'pending', received: false, busy: false, reason: null };
   }
 
   /**
    * Результат неизвестен: состояние не меняется, диагностика сохраняется,
    * повтор назначается по нарастающей паузе. Затянувшийся неизвестный
-   * результат или серия неудач — «требует вмешательства».
+   * результат или серия неудач — «требует вмешательства». Вызывается только
+   * для технических ошибок — прерывание сюда не попадает.
    */
   private async unknown(
     row: UploadRow,
     lease: Lease,
+    signal: AbortSignal,
     traceId: string,
     error: unknown,
   ): Promise<CompletionOutcome> {
@@ -418,21 +475,28 @@ export class UploadCompletion {
       return this.settle(
         row,
         lease,
+        signal,
         traceId,
         'needs_attention',
         `результат неизвестен: ${failures} неудач подряд с ${since.toISOString()}`,
         message,
       );
     }
-    await this.tx(traceId, (tx) =>
-      completeUnderLease(tx, {
-        table: this.target.table,
-        lease,
-        set: `check_failures = $1, unknown_since = $2, last_error = left($3, 500),
-              next_check_at = now() + make_interval(secs => $4)`,
-        params: [failures, since, message, failureBackoffMs(failures) / 1_000],
-      }),
-    ).catch(() => undefined);
+    try {
+      await this.change(traceId, signal, (tx) =>
+        completeUnderLease(tx, {
+          table: this.target.table,
+          lease,
+          set: `check_failures = $1, unknown_since = $2, last_error = left($3, 500),
+                next_check_at = now() + make_interval(secs => $4)`,
+          params: [failures, since, message, failureBackoffMs(failures) / 1_000],
+        }),
+      );
+    } catch {
+      if (signal.aborted) return this.interrupted(row);
+      // Записать диагностику не удалось — запись остаётся «ожидает», аренда
+      // истечёт, сверка повторит.
+    }
     return {
       state: 'pending',
       received: row.object_received_at !== null,
@@ -445,22 +509,29 @@ export class UploadCompletion {
   private async settle(
     row: UploadRow,
     lease: Lease,
+    signal: AbortSignal,
     traceId: string,
     state: 'rejected' | 'needs_attention',
     reason: string,
     lastError: string | null = null,
   ): Promise<CompletionOutcome> {
-    const settled = await this.tx(traceId, (tx) =>
-      completeUnderLease(tx, {
-        table: this.target.table,
-        lease,
-        set: `upload_state = $1, upload_state_reason = left($2, 500),
-              upload_state_changed_at = now(), next_check_at = NULL,
-              last_error = coalesce(left($3, 500), last_error)`,
-        params: [state, reason, lastError],
-      }),
-    );
-    if (!settled) return this.busyOutcome(row);
+    let settled: boolean;
+    try {
+      settled = await this.change(traceId, signal, (tx) =>
+        completeUnderLease(tx, {
+          table: this.target.table,
+          lease,
+          set: `upload_state = $1, upload_state_reason = left($2, 500),
+                upload_state_changed_at = now(), next_check_at = NULL,
+                last_error = coalesce(left($3, 500), last_error)`,
+          params: [state, reason, lastError],
+        }),
+      );
+    } catch (error) {
+      if (signal.aborted) return this.interrupted(row);
+      throw error;
+    }
+    if (!settled) return this.interrupted(row);
     if (state === 'needs_attention') {
       this.logger.error({ msg: 'загрузка требует вмешательства', uploadId: row.id, reason });
     }

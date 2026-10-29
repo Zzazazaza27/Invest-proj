@@ -470,7 +470,7 @@ export class ProjectsService {
     // — самый дешёвый способ занять место, ничего не загружая.
     if (pending >= MAX_PENDING_UPLOADS_PER_PROJECT) {
       throw errors.limitExceeded(
-        `У проекта ${pending} незавершённых загрузок. Завершите или дождитесь их отмены`,
+        `У проекта идёт ${pending} передач файлов. Дождитесь их окончания`,
       );
     }
   }

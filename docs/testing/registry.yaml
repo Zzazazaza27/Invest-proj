@@ -869,7 +869,7 @@ checks:
     kind: probe
     level: интеграционный
     runner: manual
-    asserts: 45
+    asserts: 55
     needs: [db, core]
     effects:
       [
@@ -1221,7 +1221,7 @@ checks:
     kind: probe
     level: интеграционный
     runner: manual
-    asserts: 9
+    asserts: 13
     needs: [db, core]
     effects:
       [
@@ -3147,6 +3147,26 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: UNIT-CORE-UPLOAD-COMPLETION
+    file: apps/core/tests/upload-completion.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 6
+    studied: code
+    studiedOn: 2026-10-29
+    needs: []
+    effects: ['подменённые БД и хранилище — побочных действий нет']
+    note: >-
+      2.1-W03, замечания Тэнка: прерывание до обращения к хранилищу, заранее
+      прерванный сигнал, остановка во время HEAD и во время ожидания соединения
+      перед публикацией — без записи неудачи и без публикации. На версии
+      1e375ac четыре из шести падают.
+    purpose: 'Прерывание общей функции завершения загрузки в точный момент — то, что на живом процессе не воспроизвести детерминированно.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
+
   - id: UNIT-CORE-EVENTS
     file: apps/core/tests/events.test.ts
     command: npm run test -w apps/core
@@ -4260,6 +4280,7 @@ blocks:
         PRB-UPLOAD-QUOTA,
         PRB-OBJECT-VERSIONING,
         PRB-UPLOAD-COMPLETION,
+        UNIT-CORE-UPLOAD-COMPLETION,
         UNIT-PKG-CONTRACTS-APPLICATION-VIEWS-EFFECTIVE,
         DBT-APPLICATIONS,
         DBT-APPLICATION-FORMS,
