@@ -196,7 +196,7 @@ node scripts/probe-event-versions.mjs  # версии событий агрег�
 node scripts/probe-upload-quota.mjs    # квоты и подтверждение загрузки: 6 проверок
 node scripts/probe-token-revocation.mjs # точечный отзыв токена: 18 проверок
 node scripts/probe-shared-rate-limit.mjs # общий счётчик частоты на двух экземплярах: 9 проверок
-node scripts/probe-abandoned-uploads.mjs # уборка брошенных загрузок: 14 проверок
+node scripts/probe-upload-completion.mjs # завершение загрузок материалов (W03): 45 проверок
 node scripts/s3-lifecycle-apply.mjs      # политика жизненного цикла бакета (идемпотентно)
 node scripts/load-test.mjs               # нагрузка: 32 клиента, p50/p95/p99 по маршрутам
 node scripts/archive-events.mjs --dry-run # выгрузка журнала в холодное хранилище (посчитать)

@@ -377,6 +377,22 @@ export const ProjectMaterialSchema = z.object({
 export type ProjectMaterial = z.infer<typeof ProjectMaterialSchema>;
 
 /**
+ * Итог подтверждения загрузки (2.1-W03). Успех — только `ready`: файл
+ * скопирован, проверен и связан с проектом. `pending` — сохранение не
+ * завершено; `received` различает «объект получен, сохраняем» и «загрузка ещё
+ * не завершена, проверяем состояние». `rejected` — проверенное несоответствие
+ * формату или размеру, `reason` объясняет пользователю, что выбрать другой
+ * файл. `needs_attention` — сбой сохранения разбирает эксплуатация.
+ */
+export const MaterialUploadResultSchema = z.object({
+  uploadState: z.enum(['pending', 'ready', 'rejected', 'needs_attention']),
+  received: z.boolean(),
+  reason: z.string().nullable(),
+  material: ProjectMaterialSchema.nullable(),
+});
+export type MaterialUploadResult = z.infer<typeof MaterialUploadResultSchema>;
+
+/**
  * Неизменяемый снимок заявки. Именно на него ссылаются AI-скоринг и эксперты,
  * поэтому наружу отдаются только метаданные версии, а не право её изменить.
  */

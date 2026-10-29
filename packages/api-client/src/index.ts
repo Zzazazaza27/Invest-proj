@@ -64,6 +64,7 @@ import {
   PricingSchema,
   ProjectFullSchema,
   ProjectMaterialSchema,
+  MaterialUploadResultSchema,
   ProjectStageChangeSchema,
   ProjectSummarySchema,
   ProjectVersionSchema,
@@ -629,7 +630,7 @@ export class UnicornApi {
       this.http.request({
         method: 'POST',
         path: `/projects/${id}/materials/${materialId}/finalize`,
-        schema: ProjectMaterialSchema,
+        schema: MaterialUploadResultSchema,
       }),
 
     addProductLink: (id: string, body: AddProductLink) =>

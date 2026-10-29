@@ -1180,7 +1180,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 13 схем и 111 таблиц', async () => {
+  it('схема соответствует спецификации: 13 схем и 112 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
@@ -1295,7 +1295,10 @@ describe('RLS: покрытие манифеста', () => {
     // добавлена и в запрос покрытия выше — иначе новые таблицы оказались бы
     // вне манифеста RLS, то есть вне той самой гарантии, ради которой он
     // существует.
-    expect(Number(tables.rows[0]!.count)).toBe(111);
+    // + 1 таблица попыток завершения загрузки (M147, 2.1-W03): окончательный
+    // ключ каждой попытки записывается до копирования, чтобы после сбоя найти
+    // и копии, не ставшие итоговым файлом.
+    expect(Number(tables.rows[0]!.count)).toBe(112);
   });
 });
 
@@ -1402,7 +1405,7 @@ describe('RLS: реестр отозванных токенов (M038)', () => {
   });
 });
 
-describe('RLS: роль планового обслуживания (M039)', () => {
+describe('RLS: роль планового обслуживания (M039, M147)', () => {
   /** Билет на загрузку: строка материала без подтверждения. */
   async function createTicket(
     c: Client,
@@ -1418,10 +1421,15 @@ describe('RLS: роль планового обслуживания (M039)', () 
       // подтверждённый объект без известного размера — состояние, которого не
       // бывает, и схема его больше не принимает (M047). Помощник создавал
       // именно его — ограничение это и поймало.
+      // С M147 незавершённая загрузка лежит по временному ключу формы, а
+      // окончательный ключ появляется только у готового материала.
       `INSERT INTO lab.project_materials
-         (id, project_id, type, version, s3_key, parse_status, uploaded_by, created_at,
-          uploaded_at, size_bytes)
-       VALUES ($1, $2, 'deck', $7, $3, 'queued', $4,
+         (id, project_id, type, version, s3_key, upload_key, upload_state, parse_status,
+          uploaded_by, created_at, uploaded_at, size_bytes)
+       VALUES ($1, $2, 'deck', $7,
+               CASE WHEN $6 THEN $3 ELSE NULL END,
+               CASE WHEN $6 THEN NULL ELSE $3 || '/upload' END,
+               CASE WHEN $6 THEN 'ready' ELSE 'pending' END, 'queued', $4,
                now() - ($5 || ' hours')::interval,
                CASE WHEN $6 THEN now() ELSE NULL END,
                CASE WHEN $6 THEN 1024 ELSE NULL END)`,
@@ -1438,7 +1446,7 @@ describe('RLS: роль планового обслуживания (M039)', () 
     return id;
   }
 
-  it('видит только брошенные билеты старше часа', async () => {
+  it('видит загрузки файлов — и незавершённые, и готовые (M147)', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c, { role: 'founder' });
       const project = await createProject(c, founder.id);
@@ -1448,27 +1456,27 @@ describe('RLS: роль планового обслуживания (M039)', () 
 
       await actAs(c, { userId: null, roles: [], dbRole: 'app_maintenance' });
       const { rows } = await c.query<{ id: string }>('SELECT id FROM lab.project_materials');
-      const visible = rows.map((r) => r.id);
-      expect(visible).toContain(abandoned);
-      // Свежий билет — возможно, загрузка ещё идёт: подписанная форма живёт
-      // до часа. Подтверждённый материал роли обслуживания не виден вовсе.
-      expect(visible).not.toContain(fresh);
-      expect(visible).not.toContain(confirmed);
+      // Сверке нужны все незавершённые, независимо от возраста, а для
+      // повтора — и готовые (уже готовый не завершается второй раз).
+      expect(rows.map((r) => r.id)).toEqual(expect.arrayContaining([abandoned, fresh, confirmed]));
     });
   });
 
-  it('не может удалить подтверждённый материал', async () => {
+  it('не может удалить ни один материал (M147: удаления по возрасту нет)', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c, { role: 'founder' });
       const project = await createProject(c, founder.id);
-      const confirmed = await createTicket(c, project, founder.id, 48, true);
+      const confirmed = await createTicket(c, project, founder.id, 48, true, 1);
+      const abandoned = await createTicket(c, project, founder.id, 48, false, 2);
 
       await actAs(c, { userId: null, roles: [], dbRole: 'app_maintenance' });
-      const { rowCount } = await c.query('DELETE FROM lab.project_materials WHERE id = $1', [
-        confirmed,
-      ]);
-      // Уборка, способная удалить настоящий материал, — это не уборка.
-      expect(rowCount).toBe(0);
+      // Права на DELETE у роли нет вовсе: это и есть защита при откате кода,
+      // возвращающем прежнего уборщика.
+      await c.query('SAVEPOINT del');
+      await expect(
+        c.query('DELETE FROM lab.project_materials WHERE id = ANY($1)', [[confirmed, abandoned]]),
+      ).rejects.toThrow(/permission denied/);
+      await c.query('ROLLBACK TO SAVEPOINT del');
     });
   });
 
@@ -1484,18 +1492,24 @@ describe('RLS: роль планового обслуживания (M039)', () 
     });
   });
 
-  it('убирает брошенный билет', async () => {
+  it('меняет только незавершённую загрузку, готовую — нет (M147)', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c, { role: 'founder' });
       const project = await createProject(c, founder.id);
-      const abandoned = await createTicket(c, project, founder.id, 48, false);
+      const confirmed = await createTicket(c, project, founder.id, 1, true, 1);
+      const pending = await createTicket(c, project, founder.id, 1, false, 2);
 
       await actAs(c, { userId: null, roles: [], dbRole: 'app_maintenance' });
-      const { rowCount } = await c.query('DELETE FROM lab.project_materials WHERE id = $1', [
-        abandoned,
-      ]);
-      // Контроль: политика ограничивает уборку, а не запрещает её.
-      expect(rowCount).toBe(1);
+      const ready = await c.query(
+        `UPDATE lab.project_materials SET last_error = 'проба' WHERE id = $1`,
+        [confirmed],
+      );
+      const open = await c.query(
+        `UPDATE lab.project_materials SET last_error = 'проба' WHERE id = $1`,
+        [pending],
+      );
+      expect(ready.rowCount).toBe(0);
+      expect(open.rowCount).toBe(1);
     });
   });
 });
@@ -1724,9 +1738,12 @@ describe('M056: least privilege и доуточнённые инварианты
         const id = uuidv7();
         await c.query(
           `INSERT INTO lab.project_materials
-             (id, project_id, type, version, s3_key, parse_status, uploaded_by,
-              uploaded_at, size_bytes)
-           VALUES ($1, $2, 'deck', $3, $4, 'queued', $5,
+             (id, project_id, type, version, s3_key, upload_key, upload_state, parse_status,
+              uploaded_by, uploaded_at, size_bytes)
+           VALUES ($1, $2, 'deck', $3,
+                   CASE WHEN $6 THEN $4 ELSE NULL END,
+                   CASE WHEN $6 THEN NULL ELSE $4 || '/upload' END,
+                   CASE WHEN $6 THEN 'ready' ELSE 'pending' END, 'queued', $5,
                    CASE WHEN $6 THEN now() ELSE NULL END,
                    CASE WHEN $6 THEN 1024 ELSE NULL END)`,
           [id, project, version, `projects/${project}/materials/deck/${id}`, uploader, uploaded],

@@ -490,13 +490,7 @@ describe('задачи обслуживания: сигнал перед изм�
   it('прерванный сигнал: ни одного изменяющего запроса, проход отклоняется прерыванием', async () => {
     const { db, queries } = fakeDb();
     const revocations = new TokenRevocationService(db as never);
-    const janitor = { purgeAbandonedUploads: async () => 0 };
-    const maintenance = new PartitionMaintenanceService(
-      db as never,
-      revocations,
-      janitor as never,
-      service(),
-    );
+    const maintenance = new PartitionMaintenanceService(db as never, revocations, service());
     const stopped = new AbortController();
     stopped.abort(new Error('остановка процесса'));
 

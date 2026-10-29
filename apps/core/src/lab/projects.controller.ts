@@ -8,6 +8,7 @@ import {
   ProjectFullSchema,
   ProjectLimitsSchema,
   ProjectMaterialSchema,
+  MaterialUploadResultSchema,
   ProjectSummarySchema,
   ProjectVersionSchema,
   RequestUploadSchema,
@@ -182,7 +183,9 @@ export class ProjectsController {
   ) {
     const id = parseOrThrow(UuidSchema, rawId);
     const materialId = parseOrThrow(UuidSchema, rawMaterialId);
-    return ProjectMaterialSchema.parse(await this.projects.finalizeUpload(ctx, id, materialId));
+    return MaterialUploadResultSchema.parse(
+      await this.projects.finalizeUpload(ctx, id, materialId),
+    );
   }
 
   @Roles('founder', 'admin')

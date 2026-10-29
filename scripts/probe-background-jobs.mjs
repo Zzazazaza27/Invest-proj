@@ -276,7 +276,8 @@ async function processScenarios() {
     const failedJobs = (body?.jobs ?? []).filter((job) => job.lastStatus === 'failed');
     check(
       `${core.label}: обслуживание прошло`,
-      maintenance.length === 4 &&
+      // С 2.1-W03 уборки незавершённых загрузок нет: три задачи обслуживания.
+      maintenance.length === 3 &&
         maintenance.every((job) => ['done', 'idle', 'skipped'].includes(job.lastStatus)),
       maintenance.map((job) => `${job.name}=${job.lastStatus}`).join(', '),
     );
@@ -284,6 +285,12 @@ async function processScenarios() {
       `${core.label}: отказов нет`,
       failedJobs.length === 0,
       failedJobs.map((job) => `${job.name}: ${job.lastError}`).join(' | '),
+    );
+    const reconcile = (body?.jobs ?? []).find((job) => job.name === 'uploads.reconcile');
+    check(
+      `${core.label}: сверка загрузок зарегистрирована и без отказов`,
+      reconcile !== undefined && reconcile.lastStatus !== 'failed',
+      reconcile ? `${reconcile.lastStatus}` : 'нет задачи',
     );
     const publish = (body?.jobs ?? []).find((job) => job.name === 'outbox.publish');
     check(

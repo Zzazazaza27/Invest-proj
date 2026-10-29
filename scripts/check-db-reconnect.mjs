@@ -155,7 +155,6 @@ try {
     'apps/core/src/events/publisher.service.ts',
     'apps/core/src/events/webhook-delivery.service.ts',
     'apps/core/src/maintenance/partitions.service.ts',
-    'apps/core/src/maintenance/storage-janitor.service.ts',
   ];
   const ownTimers = serviceFiles.filter((file) =>
     /\bset(Interval|Timeout)\(/.test(readFileSync(join(ROOT, file), 'utf8')),

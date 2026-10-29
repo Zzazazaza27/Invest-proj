@@ -1,8 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import {
   uuidv7,
-  MATERIAL_UPLOAD_RULES,
-  type UploadableMaterialType,
   type AddProductLink,
   type CreateProjectRequest,
   type ApplicationPolicy,
@@ -10,6 +8,7 @@ import {
   type ProjectFull,
   type ProjectLimits,
   type ProjectMaterial,
+  type MaterialUploadResult,
   type ProjectSummary,
   type ProjectVersion,
   type RequestUpload,
@@ -20,11 +19,12 @@ import { AppError, errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
-import { getEnv } from '../config/env';
 import { SEASONS_FLAG, seasonsEnabled } from '../common/seasons-gate';
 import { ApplicationsService, activeSchemaVersion, loadActivePolicy } from './applications.service';
 import { currentDisclosureDigest } from './project-views.service';
 import { VERSION_COLUMNS, mapVersion, type VersionRow } from './versions';
+import { MAX_UPLOAD_BYTES } from './material-rules';
+import { MaterialUploadsService } from './material-uploads.service';
 
 /**
  * Проекты и листинги основателя.
@@ -45,38 +45,6 @@ const MAX_MATERIALS_PER_PROJECT = 50;
 /** Незавершённых загрузок одновременно: больше — это уже не работа, а запас. */
 const MAX_PENDING_UPLOADS_PER_PROJECT = 5;
 
-/**
- * Лимиты и MIME — из контрактов (MATERIAL_UPLOAD_RULES): один источник правды
- * для DTO, сервера и интерфейсов (CODE-HIGH-09/CODE-MED-02).
- */
-const MAX_UPLOAD_BYTES: Record<UploadableMaterialType, number> = {
-  deck: MATERIAL_UPLOAD_RULES.deck.maxBytes,
-  video: MATERIAL_UPLOAD_RULES.video.maxBytes,
-  doc: MATERIAL_UPLOAD_RULES.doc.maxBytes,
-};
-
-/**
- * Сигнатуры форматов по типу материала. Заявленный Content-Type — слово
- * клиента; подписанная форма фиксирует заголовок, но не содержимое
- * (SEC-HIGH-02). Первые байты объекта обязаны соответствовать одному из
- * форматов, допустимых для типа, иначе подтверждение отказывает.
- */
-const MATERIAL_SIGNATURES: Record<UploadableMaterialType, (head: Buffer) => boolean> = {
-  // %PDF- либо контейнер OOXML (pptx — это zip: PK\x03\x04).
-  deck: (head) => isPdf(head) || isZip(head),
-  // ISO BMFF: 'ftyp' по смещению 4.
-  video: (head) => head.length >= 8 && head.subarray(4, 8).toString('latin1') === 'ftyp',
-  // Скан или документ: pdf, png, jpeg.
-  doc: (head) => isPdf(head) || isPng(head) || isJpeg(head),
-};
-
-const isPdf = (head: Buffer) => head.subarray(0, 5).toString('latin1') === '%PDF-';
-const isZip = (head: Buffer) => head.length >= 4 && head.readUInt32BE(0) === 0x504b0304;
-const isPng = (head: Buffer) =>
-  head.length >= 8 && head.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'));
-const isJpeg = (head: Buffer) =>
-  head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
-
 @Injectable()
 export class ProjectsService {
   constructor(
@@ -84,6 +52,7 @@ export class ProjectsService {
     private readonly audit: AuditRepository,
     private readonly s3: S3Service,
     private readonly applications: ApplicationsService,
+    private readonly uploads: MaterialUploadsService,
   ) {}
 
   async create(ctx: RequestContext, input: CreateProjectRequest): Promise<ProjectFull> {
@@ -517,100 +486,47 @@ export class ProjectsService {
     ctx: RequestContext,
     projectId: string,
     materialId: string,
-  ): Promise<ProjectMaterial> {
-    return this.db.transaction(ctx, async (tx) => {
-      const { rows } = await tx.query<MaterialRow & { s3_key: string | null }>(
-        // FOR UPDATE обязателен. Без блокировки между этим чтением и записью
-        // ниже успевает вклиниться уборщик брошенных загрузок: он удаляет
-        // объект в хранилище, а подтверждение затем проставляет `uploaded_at` —
-        // и получается «готовый» материал без файла (SEC-04). Блокировка
-        // сериализует подтверждение и уборку одной строки.
-        `SELECT id, project_id, type, version, url, parse_status, created_at, visibility, s3_key, uploaded_at
-           FROM lab.project_materials
-          WHERE id = $1 AND project_id = $2
-            FOR UPDATE`,
+  ): Promise<MaterialUploadResult> {
+    // Доступ проверяется контекстом пользователя: политика материалов (M056)
+    // показывает незавершённую загрузку только её автору и администратору.
+    // Чужой идентификатор неотличим от несуществующего.
+    const visible = await this.db.readOnly(ctx, async (tx) => {
+      const { rows } = await tx.query<{ type: string }>(
+        `SELECT type FROM lab.project_materials WHERE id = $1 AND project_id = $2`,
         [materialId, projectId],
       );
-      const material = rows[0] as
-        (MaterialRow & { s3_key: string | null; uploaded_at: Date | null }) | undefined;
-      if (!material) throw errors.notFound({ subject: 'material' });
-      if (!material.s3_key) {
-        throw errors.conflict('Этот материал не требует подтверждения загрузки');
-      }
-
-      // Повторное подтверждение уже подтверждённого материала возвращает
-      // запись КАК ЕСТЬ, не перечитывая объект: getObjectDigest тянет тело
-      // целиком (до 500 МБ), и владелец проекта мог крутить finalize в цикле,
-      // расходуя egress хранилища и I/O ядра (LOW внешнего аудита №2).
-      // Отпечаток и размер зафиксированы при первом подтверждении и
-      // перезаписи не подлежат — перечитывать нечего.
-      if (material.uploaded_at) return mapMaterial(material);
-
-      // Подтверждение имеет срок. Без него билет, переживший все проходы
-      // уборки, можно подтвердить когда угодно — и материал, который система
-      // уже считает мусором и чей объект могла удалить, вернулся бы в оборот
-      // «готовым» (CODE-05). Срок тот же, по которому работает уборка: за его
-      // пределами материала уже нет с точки зрения платформы.
-      const ttlHours = getEnv().MATERIAL_ABANDONED_TTL_HOURS;
-      const ageMs = Date.now() - material.created_at.getTime();
-      if (ageMs > ttlHours * 3600_000) {
-        throw errors.conflict(
-          `Срок подтверждения загрузки истёк (${ttlHours} ч): запроси новый билет`,
-        );
-      }
-
-      // Объект читается ПОТОКОМ целиком: отпечаток — настоящий sha256 по
-      // фактическим байтам, а не ETag (ETag не криптографический digest:
-      // multipart и SSE меняют его семантику — SEC-HIGH-03), а первые байты
-      // сверяются с сигнатурой формата, допустимого для типа материала
-      // (SEC-HIGH-02): заявленный Content-Type — слово клиента, содержимое —
-      // нет.
-      const object = await this.s3.getObjectDigest(material.s3_key);
-      if (!object.exists) {
-        throw errors.conflict('Объект не найден в хранилище: загрузка не завершена');
-      }
-      const signatureOk = MATERIAL_SIGNATURES[material.type as UploadableMaterialType];
-      if (!signatureOk || !signatureOk(object.head)) {
-        throw errors.conflict(
-          `Содержимое файла не соответствует типу материала «${material.type}»: ` +
-            'загрузите файл допустимого формата',
-        );
-      }
-
-      const { rows: updated } = await tx.query<MaterialRow>(
-        // Отпечаток пишется только при первом подтверждении — тем же
-        // `coalesce`, что и момент загрузки: повторный вызов не должен
-        // переписывать зафиксированное состояние новым содержимым объекта.
-        `UPDATE lab.project_materials
-            SET uploaded_at = coalesce(uploaded_at, now()),
-                size_bytes = $3,
-                content_hash = coalesce(content_hash, $4)
-          WHERE id = $1 AND project_id = $2
-        RETURNING id, project_id, type, version, url, parse_status, created_at, visibility`,
-        [materialId, projectId, object.sizeBytes, `sha256:${object.sha256}`],
-      );
-      // Строки может не быть, если её убрали между чтением и записью. Прежний
-      // код брал `updated[0]!` и падал внутренней ошибкой; отказ должен быть
-      // объяснимым.
-      if (!updated[0]) {
-        throw errors.conflict('Материал был удалён во время подтверждения загрузки');
-      }
-
-      await this.audit.emit(tx, {
-        verb: 'lab.material.added',
-        actorId: ctx.userId,
-        actorRole: 'founder',
-        subjectType: 'project',
-        subjectId: projectId,
-        context: { materialId, sizeBytes: object.sizeBytes, finalized: true },
-        traceId: ctx.traceId,
-      });
-
-      return mapMaterial(updated[0]);
+      return rows[0];
     });
-  }
+    if (!visible) throw errors.notFound({ subject: 'material' });
+    if (visible.type === 'product_link') {
+      throw errors.conflict('Этот материал не требует подтверждения загрузки');
+    }
 
-  // ------------------------------------------------------------------ материалы
+    // Завершение — общая функция (2.1-W03), та же, что у фоновой сверки.
+    // Срока подтверждения больше нет: истечение формы запрещает новую
+    // передачу, но не завершение уже полученного файла (2.1.2).
+    const outcome = await this.uploads.finalizeFromBrowser(materialId, ctx.userId, ctx.traceId);
+
+    let material: ProjectMaterial | null = null;
+    if (outcome.state === 'ready') {
+      material = await this.db.readOnly(ctx, async (tx) => {
+        const { rows } = await tx.query<MaterialRow>(
+          `SELECT id, project_id, type, version, url, parse_status, created_at, visibility
+             FROM lab.project_materials WHERE id = $1 AND project_id = $2`,
+          [materialId, projectId],
+        );
+        return rows[0] ? mapMaterial(rows[0]) : null;
+      });
+    }
+    return {
+      uploadState: outcome.state,
+      received: outcome.received,
+      // Наружу — только причина отклонения: она адресована пользователю.
+      // Диагностика вмешательства остаётся во внутренних полях.
+      reason: outcome.state === 'rejected' ? outcome.reason : null,
+      material,
+    };
+  }
 
   async listMaterials(ctx: RequestContext, projectId: string): Promise<ProjectMaterial[]> {
     return this.db.readOnly(ctx, async (tx) => {
@@ -754,13 +670,33 @@ export class ProjectsService {
         await this.assertUploadQuota(tx, input.projectId);
         const version = await this.nextMaterialVersion(tx, input.projectId, input.type);
         const materialId = uuidv7();
-        const key = this.s3.buildMaterialKey(input.projectId, materialId, input.type);
+        // Форма получает ВРЕМЕННЫЙ ключ: готовый файл создаётся копией по
+        // другому ключу при завершении, и повторная отправка формы его не
+        // меняет (2.1.2).
+        const key = this.s3.buildMaterialUploadKey(input.projectId, materialId, input.type);
+        const form = this.s3.presignUpload({
+          key,
+          contentType: input.contentType,
+          maxBytes,
+        });
 
         await tx.query(
           `INSERT INTO lab.project_materials
-             (id, project_id, type, version, s3_key, parse_status, uploaded_by)
-           VALUES ($1, $2, $3, $4, $5, 'queued', $6)`,
-          [materialId, input.projectId, input.type, version, key, ctx.userId],
+             (id, project_id, type, version, upload_key, upload_expires_at,
+              upload_content_type, upload_max_bytes, next_check_at,
+              parse_status, uploaded_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + interval '1 minute', 'queued', $9)`,
+          [
+            materialId,
+            input.projectId,
+            input.type,
+            version,
+            key,
+            form.expiresAt,
+            input.contentType,
+            maxBytes,
+            ctx.userId,
+          ],
         );
 
         await this.audit.emit(tx, {
@@ -771,12 +707,6 @@ export class ProjectsService {
           subjectId: input.projectId,
           context: { type: input.type, sizeBytes: input.sizeBytes },
           traceId: ctx.traceId,
-        });
-
-        const form = this.s3.presignUpload({
-          key,
-          contentType: input.contentType,
-          maxBytes,
         });
 
         return {

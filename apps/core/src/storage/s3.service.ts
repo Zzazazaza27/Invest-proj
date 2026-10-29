@@ -58,6 +58,24 @@ export class S3Service {
     return `projects/${projectId}/materials/${kind}/${materialId}`;
   }
 
+  /** Временный ключ формы загрузки материала (2.1.2): готовым файлом не бывает. */
+  buildMaterialUploadKey(projectId: string, materialId: string, kind: string): string {
+    return `projects/${projectId}/materials/${kind}/${materialId}/upload`;
+  }
+
+  /**
+   * Окончательный ключ попытки завершения: новый на каждую попытку, в формах
+   * его нет — браузер записать по нему не может.
+   */
+  buildMaterialFinalKey(
+    projectId: string,
+    materialId: string,
+    kind: string,
+    attemptId: string,
+  ): string {
+    return `projects/${projectId}/materials/${kind}/${materialId}/final/${attemptId}`;
+  }
+
   /**
    * Существует ли объект и какого он размера.
    *
@@ -387,6 +405,147 @@ export class S3Service {
     if (response.status !== 204 && response.status !== 200 && response.status !== 404) {
       throw new Error(`хранилище ответило ${response.status} на DELETE`);
     }
+  }
+
+  /**
+   * Серверная копия объекта (CopyObject) — окончательный файл загрузки (2.1.2).
+   *
+   * Копия лежит по новому ключу, которого нет в подписанной форме: повторная
+   * отправка формы меняет только временный объект, а готовый файл — нет.
+   * Ответ 200 ещё не успех: S3 может вернуть ошибку копирования в теле.
+   */
+  async copyObject(input: {
+    sourceKey: string;
+    destinationKey: string;
+    timeoutMs: number;
+    signal?: AbortSignal;
+  }): Promise<void> {
+    const env = getEnv();
+    const response = await this.signedFetch('PUT', input.destinationKey, {
+      extraHeaders: {
+        'x-amz-copy-source': `/${env.S3_BUCKET}/${input.sourceKey}`,
+        'x-amz-metadata-directive': 'COPY',
+      },
+      timeoutMs: input.timeoutMs,
+      signal: input.signal,
+    });
+    const body = await response.text();
+    if (!response.ok || body.includes('<Error>')) {
+      throw new Error(`хранилище не скопировало объект: ${response.status}`);
+    }
+  }
+
+  /**
+   * Прочитать объект потоком: фактические размер, SHA-256 и первые байты.
+   *
+   * В отличие от `getObjectDigest` пределы раздельные: простой без данных и
+   * общая длительность. 404 — объекта нет (подтверждено); любая другая ошибка
+   * или таймаут — исключение: отсутствие файла этим НЕ подтверждается.
+   */
+  async readObjectDigest(
+    key: string,
+    limits: { idleMs: number; totalMs: number; signal?: AbortSignal },
+  ): Promise<{ exists: boolean; sizeBytes: number; sha256: string | null; head: Buffer }> {
+    const idle = new AbortController();
+    let idleTimer = setTimeout(() => idle.abort(new Error('простой чтения')), limits.idleMs);
+    const signals = [idle.signal, AbortSignal.timeout(limits.totalMs)];
+    if (limits.signal) signals.push(limits.signal);
+    const signal = AbortSignal.any(signals);
+    try {
+      const response = await this.signedFetch('GET', key, { signal, timeoutMs: limits.totalMs });
+      if (response.status === 404) {
+        return { exists: false, sizeBytes: 0, sha256: null, head: Buffer.alloc(0) };
+      }
+      if (!response.ok || !response.body) {
+        throw new Error(`хранилище ответило ${response.status} на GET`);
+      }
+      const hash = createHash('sha256');
+      const headChunks: Buffer[] = [];
+      let headBytes = 0;
+      let sizeBytes = 0;
+      for await (const chunk of response.body) {
+        clearTimeout(idleTimer);
+        idleTimer = setTimeout(() => idle.abort(new Error('простой чтения')), limits.idleMs);
+        const buf = Buffer.from(chunk);
+        hash.update(buf);
+        sizeBytes += buf.byteLength;
+        if (headBytes < 16) {
+          headChunks.push(buf.subarray(0, 16 - headBytes));
+          headBytes = Math.min(16, headBytes + buf.byteLength);
+        }
+      }
+      return {
+        exists: true,
+        sizeBytes,
+        sha256: hash.digest('hex'),
+        head: Buffer.concat(headChunks),
+      };
+    } finally {
+      clearTimeout(idleTimer);
+    }
+  }
+
+  /** Подписанный SigV4 запрос без тела — для новых операций хранилища. */
+  private async signedFetch(
+    method: 'GET' | 'PUT' | 'HEAD' | 'DELETE',
+    key: string,
+    options: {
+      extraHeaders?: Record<string, string>;
+      timeoutMs?: number;
+      signal?: AbortSignal;
+    },
+  ): Promise<Response> {
+    const env = getEnv();
+    if (!this.isConfigured) throw new Error('S3 не настроен');
+
+    const amzDate = toAmzDate(new Date());
+    const shortDate = amzDate.slice(0, 8);
+    const payloadHash = sha256Hex(Buffer.alloc(0));
+    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
+    const url = new URL(
+      env.S3_FORCE_PATH_STYLE === 'true'
+        ? `${base}/${env.S3_BUCKET}/${key}`
+        : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${key}`,
+    );
+
+    const headers: Record<string, string> = {
+      host: url.host,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate,
+      ...(options.extraHeaders ?? {}),
+    };
+    const names = Object.keys(headers).sort();
+    const signedHeaders = names.join(';');
+    const canonicalHeaders = names.map((name) => `${name}:${headers[name]}\n`).join('');
+    const canonicalRequest = [
+      method,
+      url.pathname,
+      '',
+      canonicalHeaders,
+      signedHeaders,
+      payloadHash,
+    ].join('\n');
+    const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
+    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
+    const signature = createHmac(
+      'sha256',
+      signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
+    )
+      .update(stringToSign, 'utf8')
+      .digest('hex');
+
+    const signals = [AbortSignal.timeout(options.timeoutMs ?? 10_000)];
+    if (options.signal) signals.push(options.signal);
+    return fetch(url.toString(), {
+      method,
+      headers: {
+        ...headers,
+        Authorization:
+          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
+          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      },
+      signal: AbortSignal.any(signals),
+    });
   }
 
   presignUpload(input: {

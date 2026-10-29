@@ -5,7 +5,6 @@ import { resultOf } from '../background/job';
 import { getEnv } from '../config/env';
 import { Database } from '../db/unit-of-work';
 import { TokenRevocationService } from '../auth/token-revocation.service';
-import { StorageJanitorService } from './storage-janitor.service';
 
 /**
  * Плановое обслуживание партиций журнала.
@@ -29,7 +28,6 @@ export class PartitionMaintenanceService implements OnModuleInit {
   constructor(
     private readonly db: Database,
     private readonly revocations: TokenRevocationService,
-    private readonly storageJanitor: StorageJanitorService,
     private readonly jobs: BackgroundJobsService,
   ) {}
 
@@ -49,7 +47,6 @@ export class PartitionMaintenanceService implements OnModuleInit {
       });
     maintenance('maintenance.partitions', (signal) => this.runOnce(signal));
     maintenance('maintenance.revocations', (signal) => this.purgeRevocations(signal));
-    maintenance('maintenance.abandoned-uploads', (signal) => this.purgeAbandonedUploads(signal));
     maintenance('maintenance.verification-tokens', (signal) =>
       this.purgeVerificationTokens(signal),
     );
@@ -122,16 +119,5 @@ export class PartitionMaintenanceService implements OnModuleInit {
     );
     if (removed > 0) this.logger.log(`убрано отработавших ссылок подтверждения: ${removed}`);
     return removed;
-  }
-
-  /**
-   * Уборка брошенных билетов на загрузку (остаток SEC-14).
-   *
-   * Ошибка уборки не роняет процесс: обслуживание — фоновая работа, и
-   * недоступное хранилище не повод не обслуживать запросы. Но и молчать о ней
-   * нельзя: мусор копится незаметно.
-   */
-  async purgeAbandonedUploads(signal?: AbortSignal): Promise<number> {
-    return await this.storageJanitor.purgeAbandonedUploads(signal);
   }
 }

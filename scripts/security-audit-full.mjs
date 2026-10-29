@@ -171,7 +171,7 @@ run('немедленный отзыв прав', 'node', ['scripts/probe-role-r
 pause(62, 'лимит класса auth');
 run('точечный отзыв токена', 'node', ['scripts/probe-token-revocation.mjs']);
 pause(62, 'лимит класса auth');
-run('уборка брошенных загрузок', 'node', ['scripts/probe-abandoned-uploads.mjs']);
+run('завершение загрузок материалов', 'node', ['scripts/probe-upload-completion.mjs']);
 // Выгрузка журнала в холодное хранилище: класса auth не касается, паузы не
 // требует — работает подключением владельца и хранилищем.
 run('выгрузка журнала в архив', 'node', ['scripts/probe-event-archive.mjs']);

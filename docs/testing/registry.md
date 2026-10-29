@@ -200,7 +200,7 @@
 - `CHK-UPSTREAM-OWNER` — Гейт «в репозиторий коммитит только владелец».
 - `CHK-PRE-PUSH` — Быстрая проверка перед отправкой: только файлы, которые уходят в origin.
 - `GAT-AI-GATEWAY` — Гейт AI-шлюза: тесты политики и анализатора + аудит зависимостей.
-- `PRB-ABANDONED-UPLOADS` — Проверка уборки брошенных загрузок (остаток SEC-14).
+- `PRB-UPLOAD-COMPLETION` — Приёмка завершения загрузок материалов на общем механизме: аренда, попытки, сверка, отказы и режим отката.
 - `PRB-AI-DETERMINISM` — Зонд детерминизма LLM-скоринга: откуда разброс IRS между прогонами.
 - `PRB-CSRF-BINDING` — Проверка привязки CSRF-токена к сессии.
 - `PRB-DNS-REBINDING` — Проверка защиты доставки вебхуков от DNS rebinding.
@@ -383,7 +383,7 @@
 
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
-| PRB-ABANDONED-UPLOADS | `node scripts/probe-abandoned-uploads.mjs` | 18 | вручную | — |
+| PRB-UPLOAD-COMPLETION | `node scripts/probe-upload-completion.mjs` | 45 | вручную | — |
 | PRB-AI-DETERMINISM | `node scripts/probe-ai-determinism.mjs` | 0 | вручную | — |
 | PRB-CSRF-BINDING | `node scripts/probe-csrf-binding.mjs` | 6 | вручную | — |
 | PRB-DNS-REBINDING | `node scripts/probe-dns-rebinding.mjs` | 6 | вручную | — |
@@ -393,7 +393,7 @@
 | PRB-MAIL-DELIVERY | `node scripts/probe-mail-delivery.mjs` | 0 | вручную | — |
 | PRB-MAIL-READINESS | `node scripts/probe-mail-readiness.mjs` | 0 | вручную | — |
 | PRB-OBJECT-VERSIONING | `node scripts/probe-object-versioning.mjs` | 10 | вручную | — |
-| PRB-BACKGROUND-JOBS | `node scripts/probe-background-jobs.mjs` | 34 | вручную | — |
+| PRB-BACKGROUND-JOBS | `node scripts/probe-background-jobs.mjs` | 36 | вручную | — |
 | PRB-VALKEY-COUNTERS | `node scripts/probe-valkey-counters.mjs` | 15 | вручную | — |
 | PRB-OUTBOX-LEASE | `node scripts/probe-outbox-lease.mjs` | 10 | вручную | — |
 | PRB-RATE-LIMIT | `node scripts/probe-rate-limit.mjs` | 0 | вручную | — |

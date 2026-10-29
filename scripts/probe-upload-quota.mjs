@@ -189,9 +189,12 @@ check('предел незавершённых загрузок сработал
   // проверяется поведение сервиса на границе.
   for (let i = 0; i < 4; i += 1) {
     await sql(
+      // С M147 незавершённая загрузка — временный ключ формы и действующий
+      // срок формы: такие и считаются квотой (M148).
       `INSERT INTO lab.project_materials
-         (id, project_id, type, version, s3_key, parse_status, uploaded_by)
-       VALUES (public.uuid_generate_v7(), $1, 'doc', $2::int, 'key-' || $2::text, 'queued', $3)`,
+         (id, project_id, type, version, upload_key, upload_expires_at, parse_status, uploaded_by)
+       VALUES (public.uuid_generate_v7(), $1, 'doc', $2::int, 'key-' || $2::text,
+               now() + interval '15 minutes', 'queued', $3)`,
       [raceProjectId, 100 + i, ownerRow.user_id],
     );
   }
@@ -250,10 +253,13 @@ if (firstMaterialId) {
     `/v1/projects/${projectId}/materials/${firstMaterialId}/finalize`,
     { method: 'POST' },
   );
+  // С 2.1-W03 это не ошибка, а состояние: «загрузка ещё не завершена». Важно
+  // одно — успеха нет и объект не объявлен полученным.
   check(
-    'подтверждение без объекта в хранилище отвергнуто',
-    finalize.status >= 400,
-    `HTTP ${finalize.status} ${finalize.json?.code ?? ''}`,
+    'подтверждение без объекта в хранилище не объявляет успех',
+    finalize.status >= 400 ||
+      (finalize.json?.uploadState === 'pending' && finalize.json?.received === false),
+    `HTTP ${finalize.status} ${finalize.json?.uploadState ?? finalize.json?.code ?? ''}`,
   );
 }
 

@@ -863,25 +863,32 @@ checks:
     purpose: 'Замеры на синтетическом объёме сезона. Существует потому, что «индексы созданы по спецификации» и «запрос быстрый» — разные утверждения. На единичных данных планировщик выбирает последовательное чтение и укладывается в д'
     confirmation: reviewed-in-code
 
-  - id: PRB-ABANDONED-UPLOADS
-    file: scripts/probe-abandoned-uploads.mjs
-    command: node scripts/probe-abandoned-uploads.mjs
+  - id: PRB-UPLOAD-COMPLETION
+    file: scripts/probe-upload-completion.mjs
+    command: node scripts/probe-upload-completion.mjs
     kind: probe
     level: интеграционный
     runner: manual
-    asserts: 18
+    asserts: 45
     needs: [db, core]
     effects:
       [
-        'создаёт пользователя, проект и брошенные загрузки',
-        'убирает созданное, развязывая круговую ссылку проект ↔ заявка',
+        'создаёт двух пользователей, проект и загрузки; объекты кладёт в хранилище',
+        'убирает пользователей, проект, материалы и попытки; объекты в хранилище остаются',
       ]
     studied: code
-    studiedOn: 2026-09-22
+    studiedOn: 2026-10-29
     note: >-
-      SEC-14: уборка брошенных загрузок. Проверяется фактом, а не чтением кода.
-    purpose: 'Проверка уборки брошенных загрузок (остаток SEC-14). Билет на загрузку выдаётся вместе со строкой материала, но загрузка может не состояться. С M037 такой материал наружу не выдаётся — но и не исчезает: строка остаётся н'
-    confirmation: reviewed-in-code
+      2.1-W03 (блок 1 1.3.2–1.3.4, 3.3, 2.1.2). Заменил PRB-ABANDONED-UPLOADS:
+      удаления незавершённых загрузок по возрасту больше нет, проверяется
+      обратное. Копия по новому ключу, повторная отправка формы, «отклонено»,
+      сверка без браузера, гонка браузер/сверка, истёкший захват, сбой до и
+      после CopyObject, «к сроку не получен», чужой id, неизвестный результат
+      и эскалация, откат (прежние создание, подтверждение, удаление), права
+      роли обслуживания, неизменность готового файла.
+    purpose: 'Приёмка завершения загрузок материалов на общем механизме: аренда, попытки, сверка, отказы и режим отката.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
 
   - id: PRB-AI-DETERMINISM
     file: scripts/probe-ai-determinism.mjs
@@ -1042,7 +1049,7 @@ checks:
     kind: probe
     level: интеграционный
     runner: manual
-    asserts: 34
+    asserts: 36
     needs: [db, core]
     effects:
       [
@@ -4252,7 +4259,7 @@ blocks:
       [
         PRB-UPLOAD-QUOTA,
         PRB-OBJECT-VERSIONING,
-        PRB-ABANDONED-UPLOADS,
+        PRB-UPLOAD-COMPLETION,
         UNIT-PKG-CONTRACTS-APPLICATION-VIEWS-EFFECTIVE,
         DBT-APPLICATIONS,
         DBT-APPLICATION-FORMS,

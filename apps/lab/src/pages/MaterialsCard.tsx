@@ -12,6 +12,7 @@ import {
 } from '@unicorn/ui';
 import {
   MATERIAL_UPLOAD_RULES,
+  type MaterialUploadResult,
   type ProjectMaterial,
   type ProjectVersion,
 } from '@unicorn/contracts';
@@ -61,7 +62,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
   >({ status: 'loading' });
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
   const [file, setFile] = useState<File | null>(null);
 
   const load = useCallback(async () => {
@@ -181,13 +182,13 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
       });
       if (!response.ok) throw new Error(`хранилище ответило ${response.status}`);
 
-      // Успех объявляется ПОСЛЕ подтверждения, а не после ответа хранилища.
-      // Отказ здесь — настоящий отказ загрузки: объект есть, но материал
-      // считается незавершённым и будет убран.
-      await api.projects.finalizeUpload(projectId, ticket.materialId);
+      // Успех объявляется только по состоянию «готово»: файл скопирован,
+      // проверен и связан с проектом. Ответ хранилища и сам вызов
+      // подтверждения успехом ещё не являются (2.1-W03).
+      const result = await api.projects.finalizeUpload(projectId, ticket.materialId);
 
       setFile(null);
-      setNotice({ tone: 'ok', text: 'Файл загружен и подтверждён' });
+      setNotice(uploadNotice(result));
       await load();
     } catch (error) {
       setNotice({
@@ -283,12 +284,12 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
         {notice ? (
           <div
             role={notice.tone === 'error' ? 'alert' : 'status'}
+            data-upload-notice={notice.tone}
             style={{
               padding: 'var(--u-space-3) var(--u-space-4)',
               borderRadius: 'var(--u-radius-md)',
-              background:
-                notice.tone === 'error' ? 'var(--u-danger-subtle)' : 'var(--u-success-subtle)',
-              color: notice.tone === 'error' ? 'var(--u-danger)' : 'var(--u-success)',
+              background: NOTICE_COLORS[notice.tone].background,
+              color: NOTICE_COLORS[notice.tone].color,
             }}
           >
             {notice.text}
@@ -378,4 +379,38 @@ export function SubmissionsCard({ projectId }: { projectId: string }) {
       </Stack>
     </Card>
   );
+}
+
+type Notice = { tone: 'ok' | 'error' | 'pending'; text: string };
+
+const NOTICE_COLORS: Record<Notice['tone'], { background: string; color: string }> = {
+  ok: { background: 'var(--u-success-subtle)', color: 'var(--u-success)' },
+  error: { background: 'var(--u-danger-subtle)', color: 'var(--u-danger)' },
+  pending: { background: 'var(--u-warning-subtle)', color: 'var(--u-warning)' },
+};
+
+/**
+ * Сообщение по итогу подтверждения (2.1-W03). «Получен, сохраняем» — только
+ * когда хранилище подтвердило объект; иначе состояние ещё выясняется.
+ * Полная проверка операций при возвращении — W04 (1.5).
+ */
+function uploadNotice(result: MaterialUploadResult): Notice {
+  switch (result.uploadState) {
+    case 'ready':
+      return { tone: 'ok', text: 'Файл загружен и подтверждён' };
+    case 'rejected':
+      return { tone: 'error', text: result.reason ?? 'Файл не подходит — выберите другой файл' };
+    case 'needs_attention':
+      return {
+        tone: 'error',
+        text: 'Не удалось сохранить файл. Мы разбираемся — повторять загрузку не нужно',
+      };
+    default:
+      return result.received
+        ? {
+            tone: 'pending',
+            text: 'Файл получен, сохраняем. Он появится в списке, когда будет готов',
+          }
+        : { tone: 'pending', text: 'Загрузка ещё не завершена, проверяем состояние' };
+  }
 }

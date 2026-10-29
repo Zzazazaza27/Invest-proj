@@ -125,6 +125,7 @@ import { ProjectViewsController } from './lab/project-views.controller';
 import { ProjectViewsService } from './lab/project-views.service';
 import { ProjectsController } from './lab/projects.controller';
 import { ProjectsService } from './lab/projects.service';
+import { MaterialUploadsService } from './lab/material-uploads.service';
 import { ProjectMediaController } from './lab/project-media.controller';
 import { ProjectMediaService } from './lab/project-media.service';
 import {
@@ -140,7 +141,6 @@ import {
 import { ApplicationFormsService } from './lab/application-forms.service';
 import { FeaturesController } from './health/features.controller';
 import { PartitionMaintenanceService } from './maintenance/partitions.service';
-import { StorageJanitorService } from './maintenance/storage-janitor.service';
 import { PricingController } from './pricing/pricing.controller';
 import { SeasonsController } from './seasons/seasons.controller';
 import { SeasonsService } from './seasons/seasons.service';
@@ -243,6 +243,7 @@ import { S3Service } from './storage/s3.service';
     { provide: MailTransport, useFactory: createMailTransport },
     KycService,
     ProjectsService,
+    MaterialUploadsService,
     ApplicationsService,
     ApplicationFormsService,
     CatalogService,
@@ -287,7 +288,6 @@ import { S3Service } from './storage/s3.service';
     BackgroundJobsService,
     OutboxPublisherService,
     WebhookDeliveryService,
-    StorageJanitorService,
     PartitionMaintenanceService,
     { provide: APP_GUARD, useClass: AuthGuard },
   ],

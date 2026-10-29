@@ -275,6 +275,7 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   'lab.project_favorites': { kind: 'operational' },
   'lab.project_material_parses': { kind: 'operational' },
   'lab.project_materials': { kind: 'operational' },
+  'lab.material_upload_attempts': { kind: 'operational' },
   'lab.project_media': { kind: 'operational' },
   'lab.project_taxonomy': { kind: 'system', note: 'отрасли и стадии' },
   'lab.project_versions': { kind: 'operational' },
