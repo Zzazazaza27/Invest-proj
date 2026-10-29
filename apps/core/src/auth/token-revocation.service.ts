@@ -97,7 +97,8 @@ export class TokenRevocationService {
    * отклонит его раньше. Реестр обязан оставаться маленьким — на этом построена
    * дешевизна проверки снимком.
    */
-  async purgeExpired(): Promise<number> {
+  /** @param signal прерывание фона: проверяется после получения соединения, до DELETE. */
+  async purgeExpired(signal?: AbortSignal): Promise<number> {
     // Ролью обслуживания, а не ролью приложения. DELETE читает строку, поэтому
     // к нему применяется SELECT-политика: у роли приложения она ограничена
     // своими записями, и уборка без пользовательского контекста удаляла ноль
@@ -106,6 +107,7 @@ export class TokenRevocationService {
       'app_maintenance',
       { traceId: `token-purge-${randomUUID()}` },
       async (tx) => {
+        signal?.throwIfAborted();
         const { rowCount } = await tx.query(
           'DELETE FROM identity.revoked_tokens WHERE expires_at < now()',
         );

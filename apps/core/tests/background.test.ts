@@ -5,6 +5,8 @@ import type { AdvisoryLock, AdvisoryLockProvider } from '../src/background/advis
 import { resultOf } from '../src/background/job';
 import { createShutdown } from '../src/background/shutdown';
 import { resetEnvCache } from '../src/config/env';
+import { TokenRevocationService } from '../src/auth/token-revocation.service';
+import { PartitionMaintenanceService } from '../src/maintenance/partitions.service';
 
 /**
  * Юнит-тесты общего механизма фоновой работы (блок 1, 1.4).
@@ -373,5 +375,140 @@ describe('завершение процесса: общий предел', () =>
     await sleep(20);
     expect(closed).toEqual(['app', 'internal']);
     expect(codes).toEqual([0]);
+  });
+});
+
+describe('прерывание до начала прикладной работы', () => {
+  /** Блокировка выдаётся с задержкой; учёт освобождений. */
+  function slowLocks(options: { delayMs: number; lostOnAcquire?: boolean }) {
+    const released: string[] = [];
+    const provider: AdvisoryLockProvider = {
+      async tryAcquire(name) {
+        await sleep(options.delayMs);
+        const lost = new AbortController();
+        if (options.lostOnAcquire) lost.abort(new Error('обрыв'));
+        return {
+          lost: lost.signal,
+          release: async () => {
+            released.push(name);
+          },
+        };
+      },
+    };
+    return { provider, released };
+  }
+
+  it('остановка во время получения блокировки: работа не начинается, блокировка освобождена', async () => {
+    const jobs = service();
+    const locks = slowLocks({ delayMs: 60 });
+    jobs.locks = locks.provider;
+    let calls = 0;
+    jobs.register({
+      name: 'maintenance.slow-lock',
+      intervalMs: 60_000,
+      coordination: 'advisory',
+      run: async () => {
+        calls += 1;
+        return resultOf(1);
+      },
+    });
+    const pass = jobs.runNow('maintenance.slow-lock');
+    await sleep(10);
+    await jobs.stop(1_000);
+    await pass;
+    expect(calls).toBe(0);
+    expect(locks.released).toEqual(['maintenance.slow-lock']);
+    expect(state(jobs, 'maintenance.slow-lock')).toMatchObject({
+      lastStatus: 'interrupted',
+      lastInterrupted: true,
+      consecutiveFailures: 0,
+    });
+  });
+
+  it('блокировка потеряна к моменту получения: работа не начинается, блокировка освобождена', async () => {
+    const jobs = service();
+    const locks = slowLocks({ delayMs: 0, lostOnAcquire: true });
+    jobs.locks = locks.provider;
+    let calls = 0;
+    jobs.register({
+      name: 'maintenance.lost-lock',
+      intervalMs: 60_000,
+      coordination: 'advisory',
+      run: async () => {
+        calls += 1;
+        return resultOf(1);
+      },
+    });
+    await jobs.runNow('maintenance.lost-lock');
+    expect(calls).toBe(0);
+    expect(locks.released).toEqual(['maintenance.lost-lock']);
+    expect(state(jobs, 'maintenance.lost-lock').lastStatus).toBe('interrupted');
+  });
+
+  it('прерывание внутри задачи — не отказ: ошибки подряд не растут', async () => {
+    const jobs = service();
+    jobs.register({
+      name: 'aborting',
+      intervalMs: 60_000,
+      coordination: 'local',
+      runAtStart: true,
+      run: async ({ signal }) => {
+        await sleep(30);
+        signal.throwIfAborted();
+        return resultOf(1);
+      },
+    });
+    jobs.start();
+    await sleep(5);
+    await jobs.stop(1_000);
+    expect(state(jobs, 'aborting')).toMatchObject({
+      lastStatus: 'interrupted',
+      lastError: null,
+      consecutiveFailures: 0,
+    });
+  });
+});
+
+describe('задачи обслуживания: сигнал перед изменением', () => {
+  /** БД-подделка: соединение «получено», запросы записываются. */
+  function fakeDb() {
+    const queries: string[] = [];
+    const tx = {
+      query: async (sql: string) => {
+        queries.push(sql);
+        return { rows: [{ created: 0 }], rowCount: 0 };
+      },
+    };
+    const db = {
+      transaction: async (_ctx: unknown, work: (t: typeof tx) => Promise<unknown>) => work(tx),
+      asServiceRole: async (_r: unknown, _c: unknown, work: (t: typeof tx) => Promise<unknown>) =>
+        work(tx),
+    };
+    return { db, queries };
+  }
+
+  it('прерванный сигнал: ни одного изменяющего запроса, проход отклоняется прерыванием', async () => {
+    const { db, queries } = fakeDb();
+    const revocations = new TokenRevocationService(db as never);
+    const janitor = { purgeAbandonedUploads: async () => 0 };
+    const maintenance = new PartitionMaintenanceService(
+      db as never,
+      revocations,
+      janitor as never,
+      service(),
+    );
+    const stopped = new AbortController();
+    stopped.abort(new Error('остановка процесса'));
+
+    await expect(maintenance.runOnce(stopped.signal)).rejects.toBe(stopped.signal.reason);
+    await expect(maintenance.purgeRevocations(stopped.signal)).rejects.toBe(stopped.signal.reason);
+    await expect(maintenance.purgeVerificationTokens(stopped.signal)).rejects.toBe(
+      stopped.signal.reason,
+    );
+    expect(queries).toEqual([]);
+
+    // Без прерывания те же задачи доходят до запроса.
+    await maintenance.runOnce(new AbortController().signal);
+    expect(queries.length).toBe(1);
   });
 });

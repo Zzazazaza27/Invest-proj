@@ -73,6 +73,8 @@ export class StorageJanitorService {
           'app_maintenance',
           { traceId: `uploads-purge-${candidate.id}` },
           async (tx) => {
+            // Остановка могла прийти, пока ждали соединение: удаление не начинаем.
+            signal?.throwIfAborted();
             // Порядок здесь принципиален. Раньше объект удалялся ДО и ВНЕ
             // транзакции: подтверждение, шедшее параллельно, успевало увидеть
             // объект существующим, а затем проставить `uploaded_at` — уборка
@@ -113,6 +115,8 @@ export class StorageJanitorService {
         );
         removed += deleted;
       } catch (error) {
+        // Прерывание — не неудача объекта: транзакция откатилась, выходим.
+        if (signal?.aborted) break;
         // Один неудачный объект не должен останавливать весь проход: следующий
         // тик повторит попытку по тому же условию.
         this.logger.error({

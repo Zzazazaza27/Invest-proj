@@ -47,18 +47,28 @@ export class PartitionMaintenanceService implements OnModuleInit {
         runAtStart: true,
         run: async ({ signal }) => resultOf(await run(signal)),
       });
-    maintenance('maintenance.partitions', () => this.runOnce());
-    maintenance('maintenance.revocations', () => this.purgeRevocations());
+    maintenance('maintenance.partitions', (signal) => this.runOnce(signal));
+    maintenance('maintenance.revocations', (signal) => this.purgeRevocations(signal));
     maintenance('maintenance.abandoned-uploads', (signal) => this.purgeAbandonedUploads(signal));
-    maintenance('maintenance.verification-tokens', () => this.purgeVerificationTokens());
+    maintenance('maintenance.verification-tokens', (signal) =>
+      this.purgeVerificationTokens(signal),
+    );
   }
 
-  /** Возвращает число созданных партиций. Ошибка бросается: её записывает оболочка фона. */
-  async runOnce(): Promise<number> {
+  /**
+   * Возвращает число созданных партиций. Ошибка бросается: её записывает
+   * оболочка фона.
+   *
+   * Сигнал во всех задачах обслуживания проверяется ВНУТРИ транзакции, перед
+   * изменением: так он охватывает и ожидание соединения из пула. Прерванная
+   * транзакция откатывается, оболочка записывает проход как прерванный.
+   */
+  async runOnce(signal?: AbortSignal): Promise<number> {
     const env = getEnv();
     return await this.db.transaction(
       { userId: null, roles: ['system'], traceId: `partitions-${randomUUID()}` },
       async (tx) => {
+        signal?.throwIfAborted();
         const { rows } = await tx.query<{ created: number }>(
           'SELECT audit.ensure_event_partitions($1) AS created',
           [env.PARTITION_MONTHS_AHEAD],
@@ -79,8 +89,8 @@ export class PartitionMaintenanceService implements OnModuleInit {
    * раньше. Реестр обязан оставаться маленьким — на этом построена дешевизна
    * проверки отзыва снимком, а не запросом на каждый вызов API.
    */
-  async purgeRevocations(): Promise<number> {
-    const removed = await this.revocations.purgeExpired();
+  async purgeRevocations(signal?: AbortSignal): Promise<number> {
+    const removed = await this.revocations.purgeExpired(signal);
     if (removed > 0) this.logger.log(`убрано записей об истёкших токенах: ${removed}`);
     return removed;
   }
@@ -97,11 +107,12 @@ export class PartitionMaintenanceService implements OnModuleInit {
    * контекста, и выдавать право удаления роли, обслуживающей запросы людей,
    * незачем (M039).
    */
-  async purgeVerificationTokens(): Promise<number> {
+  async purgeVerificationTokens(signal?: AbortSignal): Promise<number> {
     const removed = await this.db.asServiceRole(
       'app_maintenance',
       { traceId: `verification-purge-${randomUUID()}` },
       async (tx) => {
+        signal?.throwIfAborted();
         const { rowCount } = await tx.query(
           `DELETE FROM identity.verification_tokens
             WHERE expires_at < now() - interval '7 days' OR used_at < now() - interval '7 days'`,

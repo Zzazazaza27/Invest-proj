@@ -18,7 +18,12 @@ import type { JobCoordination, JobDefinition, JobResult } from './job';
  * в прикладных записях, а не в реестре.
  */
 
-export type PassStatus = JobResult['status'] | 'failed' | 'skipped';
+/**
+ * `skipped` — блокировку держит другой экземпляр; `interrupted` — проход
+ * прерван остановкой или потерей блокировки до начала либо по ходу работы.
+ * Ни то ни другое не считается отказом задачи.
+ */
+export type PassStatus = JobResult['status'] | 'failed' | 'skipped' | 'interrupted';
 
 export interface JobState {
   name: string;
@@ -234,6 +239,11 @@ export class BackgroundJobsService {
       let release: (() => Promise<void>) | null = null;
 
       try {
+        if (signal.aborted) {
+          entry.lastInterrupted = true;
+          this.finish(entry, started, 'interrupted', null);
+          return;
+        }
         if (entry.def.coordination === 'advisory') {
           const lock = await this.locks.tryAcquire(entry.def.name);
           if (!lock) {
@@ -243,11 +253,27 @@ export class BackgroundJobsService {
           release = () => lock.release();
           signal = AbortSignal.any([this.stopController.signal, lock.lost]);
         }
+        // Остановка могла прийти, пока ждали блокировку, а блокировка — уже
+        // потеряться. Задачу с прерванным сигналом не запускаем: часть задач
+        // делает одно изменение и сигнал внутри не проверяет. Блокировка
+        // освобождается в finally.
+        if (signal.aborted) {
+          entry.lastInterrupted = true;
+          this.finish(entry, started, 'interrupted', null);
+          return;
+        }
         const result = await entry.def.run({ name: entry.def.name, signal });
         entry.lastInterrupted = signal.aborted;
         this.finish(entry, started, result.status, null, result);
       } catch (error) {
         entry.lastInterrupted = signal.aborted;
+        // Отказ от `signal.throwIfAborted()` — это прерывание, а не ошибка
+        // задачи. Настоящая ошибка, совпавшая по времени с остановкой,
+        // остаётся ошибкой.
+        if (signal.aborted && error === signal.reason) {
+          this.finish(entry, started, 'interrupted', null);
+          return;
+        }
         const message = error instanceof Error ? error.message : String(error);
         this.finish(entry, started, 'failed', message);
         this.logger.error({
@@ -281,7 +307,7 @@ export class BackgroundJobsService {
       entry.lastError = error;
       entry.lastErrorAt = now;
       entry.consecutiveFailures += 1;
-    } else if (status !== 'skipped') {
+    } else if (status !== 'skipped' && status !== 'interrupted') {
       entry.lastSuccessAt = now;
       entry.consecutiveFailures = 0;
     }

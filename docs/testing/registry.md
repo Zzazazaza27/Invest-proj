@@ -510,7 +510,7 @@
 | UNIT-CORE-APPLICATION-SUBMIT | `npm run test -w apps/core` | 3 | CI | CI |
 | UNIT-CORE-APPLICATIONS | `npm run test -w apps/core` | 17 | CI | CI |
 | UNIT-CORE-BILLING | `npm run test -w apps/core` | 8 | CI | CI |
-| UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 14 | CI | CI |
+| UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |
 | UNIT-CORE-EXPERTS | `npm run test -w apps/core` | 26 | CI | CI |
 | UNIT-CORE-INTEGRATION | `npm run test -w apps/core` | 16 | CI | CI |
