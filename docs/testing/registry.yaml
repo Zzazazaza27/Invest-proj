@@ -1760,6 +1760,74 @@ checks:
     purpose: 'Проверка витрины в РЕАЛЬНОМ рендере (`RULES.md` §2). Вычитка кода не показывает ни того, что страница вообще отрисовалась, ни того, что она показала пользователю вместо данных при недоступном API. Поэтому здесь настоящий'
     confirmation: reviewed-in-code
 
+  - id: TOOL-WIPE-STAND-DATA
+    file: scripts/wipe-stand-data.mjs
+    command: node --experimental-strip-types scripts/wipe-stand-data.mjs truncate
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db]
+    effects: ['удаляет данные']
+    studied: code
+    studiedOn: 2026-10-29
+    note: >-
+      обнуление прикладных данных стенда по классам data-classes с сохранением справочников, содержимого и MI; применено 29.10.2026 к локальному стенду и 5espace.com
+    purpose: 'Обнуление стенда: operational/journal/run и интеграционные клиенты удаляются, system/content и intelligence сохраняются; авторство справочников переносится на служебного автора.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
+
+  - id: TOOL-PURGE-EVENT-STREAM
+    file: scripts/purge-event-stream.mjs
+    command: node scripts/purge-event-stream.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [nats]
+    effects: ['удаляет сообщения потока']
+    studied: code
+    studiedOn: 2026-10-29
+    note: >-
+      очистка сообщений потока JetStream при обнулении стенда; поток и настройки сохраняются
+    purpose: 'Очистка потока событий JetStream стенда без удаления самого потока.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
+
+  - id: TOOL-STAND-SERVICE-ACCOUNTS
+    file: scripts/stand-service-accounts.mjs
+    command: node scripts/stand-service-accounts.mjs <platform> <admin>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db]
+    effects: ['пишет в БД']
+    studied: code
+    studiedOn: 2026-10-29
+    note: >-
+      доводит начальные учётки после обнуления: служебный автор без входа и администратор
+    purpose: 'Начальные учётные записи после обнуления стенда: «Платформа» без входа и единственный администратор.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
+
+  - id: TOOL-LIST-KEPT-DATA
+    file: scripts/list-kept-data.mjs
+    command: node --experimental-strip-types scripts/list-kept-data.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db]
+    effects: ['только чтение']
+    studied: code
+    studiedOn: 2026-10-29
+    note: >-
+      перечень сохраняемых при обнулении таблиц (system, content, intelligence) с числом строк
+    purpose: 'Что сохраняется при обнулении стенда: справочники, содержимое и MI с числом строк.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-29
+
   - id: TOOL-RESET-TEST-DB
     file: scripts/reset-test-db.mjs
     command: node scripts/reset-test-db.mjs

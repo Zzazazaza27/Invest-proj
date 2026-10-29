@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 200; требований: 45
+- Проверок: 204; требований: 45
 
 ## Что защищено без участия человека
 
@@ -316,6 +316,10 @@
 | TOOL-NATS-INIT-STREAM | `node scripts/nats-init-stream.mjs` | 0 | вручную, по поводу | — |
 | TOOL-PERF-MEASURE | `node scripts/perf-measure.mjs` | 0 | вручную, по поводу | — |
 | TOOL-REANALYZE-PROJECTS | `node scripts/reanalyze-projects.mjs` | 0 | вручную, по поводу | — |
+| TOOL-WIPE-STAND-DATA | `node --experimental-strip-types scripts/wipe-stand-data.mjs truncate` | 0 | вручную, по поводу | — |
+| TOOL-PURGE-EVENT-STREAM | `node scripts/purge-event-stream.mjs` | 0 | вручную, по поводу | — |
+| TOOL-STAND-SERVICE-ACCOUNTS | `node scripts/stand-service-accounts.mjs <platform> <admin>` | 0 | вручную, по поводу | — |
+| TOOL-LIST-KEPT-DATA | `node --experimental-strip-types scripts/list-kept-data.mjs` | 0 | вручную, по поводу | — |
 | TOOL-RESET-TEST-DB | `node scripts/reset-test-db.mjs` | 0 | вручную, по поводу | — |
 | TOOL-ROTATE-KEK | `npm run rotate:kek` | 0 | вручную, по поводу | — |
 | TOOL-ROTATE-STAND-SECRETS | `npm run rotate:stand-secrets` | 0 | вручную, по поводу | — |
