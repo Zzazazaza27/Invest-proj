@@ -58,7 +58,7 @@ function loadDotEnv() {
 }
 
 /** Имена и порты жёсткие: переменная позволила бы задеть рабочий стенд. */
-const DB_NAME = 'unicorn_temp_stand';
+const DB_NAME = 'fifth_element_temp_stand';
 const CORE_PORT = 4302;
 const WEB_PORT = 8081;
 const COMPOSE = ['-f', join(ROOT, 'infra', 'docker-compose.yml'), '--env-file', join(ROOT, '.env')];

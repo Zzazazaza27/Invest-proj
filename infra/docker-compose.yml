@@ -102,7 +102,7 @@ services:
     container_name: unicorn-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: unicorn_launch
+      POSTGRES_DB: fifth_element
       POSTGRES_USER: unicorn_owner
       # Fallback-значения секретов различимы по службам (Ф26): даже запуск без
       # .env не должен давать один пароль на несколько служб — привычка к общей
@@ -138,7 +138,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U unicorn_owner -d unicorn_launch']
+      test: ['CMD-SHELL', 'pg_isready -U unicorn_owner -d fifth_element']
       interval: 5s
       timeout: 5s
       retries: 20
@@ -349,7 +349,7 @@ services:
       - -c
       - |
         set -e
-        psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d unicorn_launch <<SQL
+        psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d fifth_element <<SQL
         DO \$\$
         BEGIN
           IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'keycloak') THEN
@@ -360,11 +360,11 @@ services:
         END
         \$\$;
         SQL
-        psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d unicorn_launch -tAc \
+        psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d fifth_element -tAc \
           "SELECT 1 FROM pg_database WHERE datname = 'keycloak'" | grep -q 1 || \
-          psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d unicorn_launch \
+          psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d fifth_element \
             -c "CREATE DATABASE keycloak OWNER keycloak"
-        psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d unicorn_launch \
+        psql -v ON_ERROR_STOP=1 -h postgres -U unicorn_owner -d fifth_element \
           -c "ALTER DATABASE keycloak OWNER TO keycloak"
         echo "роль и БД keycloak готовы (владелец — keycloak, не unicorn_owner)"
     profiles: ['idp']
@@ -372,7 +372,7 @@ services:
 
   # Проверенный IdP. Launch НЕ реализует протокол OIDC самостоятельно
   # (docs/architecture/Database_Launch.md §2): сессии, refresh-токены, WebAuthn, MFA и ключи
-  # подписи живут в БД Keycloak, а не в unicorn_launch.
+  # подписи живут в БД Keycloak, а не в fifth_element.
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
     container_name: unicorn-keycloak

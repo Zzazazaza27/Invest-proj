@@ -58,8 +58,8 @@ function loadDotEnv() {
 }
 
 const CONTAINER = process.env.POSTGRES_CONTAINER ?? 'unicorn-postgres';
-const SOURCE_DB = 'unicorn_launch';
-const RESTORE_DB = `unicorn_restore_check`;
+const SOURCE_DB = 'fifth_element';
+const RESTORE_DB = `fifth_element_restore_check`;
 const OWNER_URL = process.env.DATABASE_URL_OWNER;
 const ownerUser = new URL(OWNER_URL).username;
 const ownerPassword = decodeURIComponent(new URL(OWNER_URL).password);
@@ -93,7 +93,7 @@ console.warn('\n=== ПРОВЕРКА ВОССТАНОВЛЕНИЯ ИЗ КОПИ�
  * только у текущего пользователя, а снос вынесен в `finally` ниже.
  */
 const backupDir = mkdtempSync(join(tmpdir(), 'unicorn-dr-'));
-const dumpPath = join(backupDir, 'unicorn_launch.dump');
+const dumpPath = join(backupDir, 'fifth_element.dump');
 
 /**
  * Снос дампа при ЛЮБОМ исходе.

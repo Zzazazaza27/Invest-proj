@@ -10,7 +10,7 @@
 
 Спецификация прямо требует: issuer `https://id.unicorn.vc` реализуется
 **проверенным self-hosted IdP**, а не собственной реализацией протокола. В
-`unicorn_launch` не должно быть таблиц сессий, refresh-токенов, WebAuthn-ключей,
+`fifth_element` не должно быть таблиц сессий, refresh-токенов, WebAuthn-ключей,
 MFA-факторов, кодов восстановления, ключей подписи и OAuth-клиентов — они живут
 в отдельной БД IdP.
 
@@ -25,7 +25,7 @@ MFA-факторов, кодов восстановления, ключей по
   отвергаются), `acr` для step-up операций.
 - **Доменный профиль** пользователя — `identity.users`; связь с IdP —
   `identity.auth_identities(provider, provider_uid)`, где `provider_uid` —
-  неизменяемый `sub` IdP. Секреты IdP в `unicorn_launch` не дублируются.
+  неизменяемый `sub` IdP. Секреты IdP в `fifth_element` не дублируются.
 
 ### Локальный адаптер для dev/CI
 

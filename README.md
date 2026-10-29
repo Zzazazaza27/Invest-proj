@@ -198,15 +198,15 @@ docker compose -f infra/docker-compose.yml --profile idp up -d keycloak
 
 ### Порты локального контура
 
-| Сервис         | Адрес                                                         |
-| -------------- | ------------------------------------------------------------- |
-| Core API       | http://localhost:4300/v1                                      |
-| PostgreSQL     | 127.0.0.1:5433 (`unicorn_launch`, `unicorn_test`, `keycloak`) |
-| Redis          | 127.0.0.1:6380 (общий счётчик ограничения частоты)            |
-| NATS JetStream | 127.0.0.1:4222 (мониторинг 8222)                              |
-| MinIO          | http://localhost:9000 (консоль 9001)                          |
-| Keycloak       | http://localhost:8081 (профиль `idp`)                         |
-| Mailpit        | http://localhost:8025 (профиль `idp`/`full`)                  |
+| Сервис         | Адрес                                                              |
+| -------------- | ------------------------------------------------------------------ |
+| Core API       | http://localhost:4300/v1                                           |
+| PostgreSQL     | 127.0.0.1:5433 (`fifth_element`, `fifth_element_test`, `keycloak`) |
+| Redis          | 127.0.0.1:6380 (общий счётчик ограничения частоты)                 |
+| NATS JetStream | 127.0.0.1:4222 (мониторинг 8222)                                   |
+| MinIO          | http://localhost:9000 (консоль 9001)                               |
+| Keycloak       | http://localhost:8081 (профиль `idp`)                              |
+| Mailpit        | http://localhost:8025 (профиль `idp`/`full`)                       |
 
 Все порты биндятся на `127.0.0.1` — контейнеры не выставлены в сеть.
 

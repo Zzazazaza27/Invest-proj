@@ -33,7 +33,7 @@
 import { execSync, spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
-import { runRelease } from './lib/deploy-release.mjs';
+import { runRelease, serverDatabaseName } from './lib/deploy-release.mjs';
 
 const ROOT = resolve(import.meta.dirname, '..');
 const DRY = process.argv.includes('--dry-run');
@@ -166,13 +166,17 @@ if (DRY) {
 // ------------------------------------------------------------------ 3. бэкап
 
 step('Бэкап базы');
+// Имя базы — из конфигурации сервера, а не из кода: выпуск может как раз
+// переименовывать базу (2.1, `unicorn_launch` → `fifth_element`), и до него
+// на сервере действует прежнее имя.
+const database = serverDatabaseName({ remote });
 const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
-const dump = `/root/backups/unicorn_launch_${stamp}.dump`;
+const dump = `/root/backups/${database}_${stamp}.dump`;
 remote('mkdir -p /root/backups');
 remote(
   `PGPASSWORD=$(grep -m1 '^POSTGRES_PASSWORD=' .env | cut -d= -f2-) ` +
     `docker exec -e PGPASSWORD -i unicorn-postgres pg_dump -U unicorn_owner ` +
-    `-d unicorn_launch --format=custom -f /tmp/deploy.dump`,
+    `-d ${database} --format=custom -f /tmp/deploy.dump`,
 );
 remote(`docker cp unicorn-postgres:/tmp/deploy.dump ${dump}`);
 

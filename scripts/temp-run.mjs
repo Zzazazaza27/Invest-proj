@@ -35,7 +35,7 @@ function loadDotEnv() {
   }
 }
 
-const DB_NAME = 'unicorn_temp_stand';
+const DB_NAME = 'fifth_element_temp_stand';
 const CORE_PORT = '4302';
 const WEB_PORT = '8081';
 

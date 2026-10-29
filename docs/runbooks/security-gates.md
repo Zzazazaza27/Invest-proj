@@ -112,7 +112,7 @@ production вместе с образом.
 
 ```bash
 docker exec -e PGPASSWORD=<пароль> unicorn-postgres \
-  psql -U unicorn_owner -d unicorn_launch -c "SELECT 1"
+  psql -U unicorn_owner -d fifth_element -c "SELECT 1"
 ```
 
 ### Порт занят чужим проектом

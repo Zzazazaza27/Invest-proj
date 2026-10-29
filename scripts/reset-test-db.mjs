@@ -8,7 +8,7 @@
  * Сброс — не команда выката.
  *
  * Защиты (каждая — отказ до первого DROP):
- *  - имя базы передаётся явно: `--db unicorn_launch` или `--db unicorn_test`;
+ *  - имя базы передаётся явно: `--db fifth_element` или `--db fifth_element_test`;
  *    другие имена не принимаются;
  *  - строка подключения берётся из DATABASE_URL_OWNER / DATABASE_URL_TEST и
  *    обязана указывать на ту же базу и на localhost / 127.0.0.1;
@@ -16,11 +16,11 @@
  *  - без `--yes` только показывает, что будет удалено.
  *
  * Запуск:
- *   node scripts/reset-test-db.mjs --db unicorn_test --yes
- *   node scripts/reset-test-db.mjs --db unicorn_launch --yes
+ *   node scripts/reset-test-db.mjs --db fifth_element_test --yes
+ *   node scripts/reset-test-db.mjs --db fifth_element --yes
  * Затем:
- *   NODE_ENV=test npm run db:migrate   (для unicorn_test)
- *   npm run db:migrate                 (для unicorn_launch)
+ *   NODE_ENV=test npm run db:migrate   (для fifth_element_test)
+ *   npm run db:migrate                 (для fifth_element)
  *   npm run demo:load
  */
 import pg from 'pg';
@@ -31,7 +31,10 @@ import { fileURLToPath } from 'node:url';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
 
-const ALLOWED_DBS = { unicorn_launch: 'DATABASE_URL_OWNER', unicorn_test: 'DATABASE_URL_TEST' };
+const ALLOWED_DBS = {
+  fifth_element: 'DATABASE_URL_OWNER',
+  fifth_element_test: 'DATABASE_URL_TEST',
+};
 /**
  * Схемы, которые создают миграции проекта (M000, M048, M129).
  *

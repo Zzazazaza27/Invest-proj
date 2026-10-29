@@ -20,7 +20,7 @@ import { createScratchDatabase, inCommittedTx } from './helpers.ts';
  * раньше строки копились в общей тестовой базе от прогона к прогону.
  * Теперь база одноразовая и удаляется целиком — со всем, что появилось.
  */
-const DB_NAME = `unicorn_test_concurrency_${process.pid}`;
+const DB_NAME = `fifth_element_test_concurrency_${process.pid}`;
 let scratch: { pool: pg.Pool; drop: () => Promise<void> };
 
 /** Короткая запись: вся работа файла идёт в одноразовой базе, а не в общей. */

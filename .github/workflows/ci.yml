@@ -195,17 +195,17 @@ jobs:
         # Дайджест соответствует pg16.
         image: pgvector/pgvector@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
         env:
-          POSTGRES_DB: unicorn_test
+          POSTGRES_DB: fifth_element_test
           POSTGRES_USER: unicorn_owner
           POSTGRES_PASSWORD: ci_only_password
         options: >-
-          --health-cmd "pg_isready -U unicorn_owner -d unicorn_test"
+          --health-cmd "pg_isready -U unicorn_owner -d fifth_element_test"
           --health-interval 5s --health-timeout 5s --health-retries 20
         ports:
           - 5432:5432
     env:
-      DATABASE_URL_TEST: postgres://unicorn_owner:ci_only_password@localhost:5432/unicorn_test
-      DATABASE_URL_OWNER: postgres://unicorn_owner:ci_only_password@localhost:5432/unicorn_test
+      DATABASE_URL_TEST: postgres://unicorn_owner:ci_only_password@localhost:5432/fifth_element_test
+      DATABASE_URL_OWNER: postgres://unicorn_owner:ci_only_password@localhost:5432/fifth_element_test
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
@@ -245,7 +245,7 @@ jobs:
       # секрет-скан (он и поймал первую версию этого шага).
       - name: Границы сервисных ролей БД
         run: |
-          host="localhost:5432/unicorn_test"
+          host="localhost:5432/fifth_element_test"
           export DATABASE_URL="postgres://app_backend_user:${PW_BACKEND}@${host}"
           export DATABASE_URL_APP_NOTIFICATIONS="postgres://app_notifications_user:${PW_NOTIFY}@${host}"
           export DATABASE_URL_APP_INTEGRATION="postgres://app_integration_user:${PW_INTEGR}@${host}"
@@ -271,11 +271,11 @@ jobs:
         # Дайджест соответствует pg16.
         image: pgvector/pgvector@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617fb552e0de514c6b
         env:
-          POSTGRES_DB: unicorn_test
+          POSTGRES_DB: fifth_element_test
           POSTGRES_USER: unicorn_owner
           POSTGRES_PASSWORD: ci_only_password
         options: >-
-          --health-cmd "pg_isready -U unicorn_owner -d unicorn_test"
+          --health-cmd "pg_isready -U unicorn_owner -d fifth_element_test"
           --health-interval 5s --health-timeout 5s --health-retries 20
         ports:
           - 5432:5432
@@ -289,8 +289,8 @@ jobs:
           - 6379:6379
     env:
       NODE_ENV: test
-      DATABASE_URL_TEST: postgres://unicorn_owner:ci_only_password@localhost:5432/unicorn_test
-      DATABASE_URL_OWNER: postgres://unicorn_owner:ci_only_password@localhost:5432/unicorn_test
+      DATABASE_URL_TEST: postgres://unicorn_owner:ci_only_password@localhost:5432/fifth_element_test
+      DATABASE_URL_OWNER: postgres://unicorn_owner:ci_only_password@localhost:5432/fifth_element_test
       REDIS_URL: redis://localhost:6379
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0

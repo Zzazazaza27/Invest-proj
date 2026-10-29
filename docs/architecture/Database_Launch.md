@@ -31,7 +31,7 @@
 
 ## 1. Организация: доменные схемы PostgreSQL
 
-Одна БД `unicorn_launch`, одиннадцать схем. Схема = граница владения данными внутри модульного монолита. Межсхемные FK допустимы в Launch; при будущем выносе они заменяются API/событиями и локальными проекциями.
+Одна БД `fifth_element`, одиннадцать схем. Схема = граница владения данными внутри модульного монолита. Межсхемные FK допустимы в Launch; при будущем выносе они заменяются API/событиями и локальными проекциями.
 
 | Схема | Назначение | Таблицы |
 |---|---|---|
@@ -119,7 +119,7 @@ CREATE TABLE identity.auth_identities (
 );
 ```
 
-OIDC/OAuth sessions, refresh tokens, WebAuthn credentials, MFA factors, recovery codes, signing keys and OAuth clients принадлежат отдельной БД проверенного IdP. `identity.users` хранит доменный профиль и связывается с IdP по неизменяемому subject; Launch не реализует протокол OIDC самостоятельно и не дублирует секреты IdP в `unicorn_launch`.
+OIDC/OAuth sessions, refresh tokens, WebAuthn credentials, MFA factors, recovery codes, signing keys and OAuth clients принадлежат отдельной БД проверенного IdP. `identity.users` хранит доменный профиль и связывается с IdP по неизменяемому subject; Launch не реализует протокол OIDC самостоятельно и не дублирует секреты IdP в `fifth_element`.
 
 ### 2.1. Согласия — включая обязательный акцепт тарифов и комиссии
 

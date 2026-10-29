@@ -6,7 +6,7 @@
 состоянию, а стенд — к рабочему. Проверен 2026-09-19 (обе базы пересозданы с
 нуля, все проверки зелёные).
 
-**Область.** Только локальные базы проекта `unicorn_launch` и `unicorn_test`
+**Область.** Только локальные базы проекта `fifth_element` и `fifth_element_test`
 на `localhost:5433` (контейнер `unicorn-postgres`) и бакет `unicorn-launch`
 локального MinIO. Базы `postgres` и `keycloak`, роли, расширения, секреты,
 конфигурация подключения и удалённый стенд **не трогаются**. Если строка
@@ -32,7 +32,7 @@
 3. Проверить, что конфигурация — та самая:
 
 ```bash
-node scripts/reset-test-db.mjs --db unicorn_test
+node scripts/reset-test-db.mjs --db fifth_element_test
 ```
 
 Пробный запуск без `--yes` печатает базу, хост, порт и перечень схем к
@@ -61,8 +61,8 @@ node scripts/reset-test-db.mjs --db unicorn_test
 
 ```bash
 # 1. Базы
-node scripts/reset-test-db.mjs --db unicorn_test   --yes
-node scripts/reset-test-db.mjs --db unicorn_launch --yes
+node scripts/reset-test-db.mjs --db fifth_element_test --yes
+node scripts/reset-test-db.mjs --db fifth_element      --yes
 NODE_ENV=test npm run db:migrate
 npm run db:migrate
 

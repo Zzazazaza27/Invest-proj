@@ -16,7 +16,7 @@
  *   5. пофайловое сравнение: расхождений быть не должно;
  *   6. отдельно — что в комплект не попало то, чему там не место.
  *
- * Почему своя база, а не `unicorn_test`. Первая версия грузила комплект в
+ * Почему своя база, а не `fifth_element_test`. Первая версия грузила комплект в
  * тестовую базу и оставляла его там: после прогона три теста схемы падали на
  * «уже есть черновик анкеты» — комплект принёс свой. Проверка, которая
  * ломает соседние проверки, чинится не уборкой за собой, а собственной
@@ -60,7 +60,7 @@ function loadDotEnv() {
 }
 
 /** Своя база на один прогон: имя с pid, чтобы два прогона не мешали друг другу. */
-const SCRATCH_DB = `unicorn_content_check_${process.pid}`;
+const SCRATCH_DB = `fifth_element_content_check_${process.pid}`;
 const ownerUrl = new URL(process.env.DATABASE_URL_OWNER ?? '');
 const scratchUrl = new URL(ownerUrl.toString());
 scratchUrl.pathname = `/${SCRATCH_DB}`;

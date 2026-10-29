@@ -24,6 +24,10 @@
  * состояние, в котором был до выпуска, и только если база ещё совместима с
  * ним: после миграции, удалившей его схему, он не включается никогда — ни в
  * этом выпуске, ни при сбое любого следующего.
+ *
+ * Переименование баз (`RENAMED_DATABASES`) идёт при остановленном ядре, база
+ * и `.env` меняются вместе. Откат кода возвращает и прежние имена: старый код
+ * и его конфигурация знают базу под прежним именем.
  */
 
 /**
@@ -88,6 +92,58 @@ function unitState(ops, unit) {
 }
 
 /**
+ * Переименованные базы: прежнее имя → новое (2.1, решение Томаса 30.10.2026).
+ * Сервер, где в `.env` ещё прежнее имя, переименовывается в выпуске.
+ */
+export const RENAMED_DATABASES = {
+  unicorn_launch: 'fifth_element',
+  unicorn_test: 'fifth_element_test',
+};
+
+const ENV_BACKUP = '.env.before-db-rename';
+const PSQL =
+  "PGPASSWORD=$(grep -m1 '^POSTGRES_PASSWORD=' .env | cut -d= -f2-) " +
+  'docker exec -e PGPASSWORD unicorn-postgres psql -U unicorn_owner -d postgres -v ON_ERROR_STOP=1 -tA';
+
+/** Имена баз во всех `DATABASE_URL*` из `.env` сервера. */
+function envDatabaseNames(ops) {
+  const out = ops.remote("grep -E '^DATABASE_URL[A-Z_]*=' .env || true") || '';
+  return new Set(
+    out
+      .split(/\r?\n/)
+      .map((line) => /\/([A-Za-z0-9_]+)(?:\?.*)?\s*$/.exec(line)?.[1])
+      .filter(Boolean),
+  );
+}
+
+/** Имя основной базы на сервере — из `DATABASE_URL_OWNER`. */
+export function serverDatabaseName(ops) {
+  const line = ops.remote("grep -m1 '^DATABASE_URL_OWNER=' .env");
+  const name = /\/([A-Za-z0-9_]+)(?:\?.*)?\s*$/.exec(line || '')?.[1];
+  if (!name) throw new Error('в .env сервера нет DATABASE_URL_OWNER с именем базы');
+  return name;
+}
+
+export function databaseExists(ops, name) {
+  return ops.remote(`${PSQL} -c "SELECT 1 FROM pg_database WHERE datname = '${name}'"`) === '1';
+}
+
+/**
+ * Переименовать базу и `.env` вместе. Ядро к этому моменту остановлено:
+ * ALTER DATABASE … RENAME не проходит, пока к базе есть подключения, а
+ * оставшиеся (скрипт, забытая консоль) обрываются явно.
+ */
+export function renameDatabase(ops, from, to) {
+  ops.remote(
+    `${PSQL} -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity ` +
+      `WHERE datname = '${from}' AND pid <> pg_backend_pid()" ` +
+      `-c "ALTER DATABASE ${from} RENAME TO ${to}"`,
+  );
+  // \b — граница слова: `unicorn_test` не задевает `unicorn_test_x`.
+  ops.remote(`sed -i -E '/^DATABASE_URL/ s#/${from}\\b#/${to}#' .env`);
+}
+
+/**
  * @param {object} p
  * @param {{ remote: Function, probe: Function, sleep: Function,
  *           log: { step: Function, ok: Function, info: Function, fail: Function } }} p.ops
@@ -98,6 +154,8 @@ export function runRelease({ ops, before, head, publicUrl, routes }) {
   const { remote, probe, sleep, log } = ops;
   let pendingContract = [];
   const retired = [];
+  /** Переименования, сделанные этим выпуском: откат кода возвращает и их. */
+  const renamed = [];
 
   try {
     log.step('Код и сборка');
@@ -160,12 +218,48 @@ export function runRelease({ ops, before, head, publicUrl, routes }) {
       }
     }
 
-    if (pendingContract.length) {
-      log.step('Остановка ядра перед contract-миграцией');
+    // Переименование баз: какие прежние имена ещё стоят в `.env` сервера.
+    const envNames = envDatabaseNames(ops);
+    const renames = Object.entries(RENAMED_DATABASES).filter(([from]) => envNames.has(from));
+    for (const [from, to] of renames) {
+      const hasFrom = databaseExists(ops, from);
+      const hasTo = databaseExists(ops, to);
+      if (hasFrom === hasTo) {
+        throw new Error(
+          `переименование ${from} → ${to} невозможно: ` +
+            (hasFrom ? 'обе базы существуют' : 'нет ни одной') +
+            ' — нужен разбор вручную',
+        );
+      }
+    }
+
+    if (pendingContract.length || renames.length) {
+      log.step(
+        pendingContract.length
+          ? 'Остановка ядра перед contract-миграцией'
+          : 'Остановка ядра перед переименованием базы',
+      );
       remote(`systemctl stop ${CORE_UNIT}`);
       const state = unitState(ops, CORE_UNIT);
       if (state.active === 'active') throw new Error('ядро не остановилось — миграция отменена');
       log.ok('ядро и его фоновые обработчики остановлены');
+    }
+
+    if (renames.length) {
+      log.step('Переименование баз');
+      remote(`cp .env ${ENV_BACKUP}`);
+      for (const [from, to] of renames) {
+        // Запоминается ДО действия: сбой посреди переименования откат тоже
+        // должен вернуть.
+        renamed.push([from, to]);
+        // Половина прошлой попытки: база уже под новым именем, `.env` — нет.
+        if (databaseExists(ops, from)) renameDatabase(ops, from, to);
+        else remote(`sed -i -E '/^DATABASE_URL/ s#/${from}\\b#/${to}#' .env`);
+        log.ok(`${from} → ${to}`);
+      }
+      const left = renames.filter(([from]) => envDatabaseNames(ops).has(from));
+      if (left.length) throw new Error(`в .env осталось прежнее имя: ${left.map(([f]) => f)}`);
+      log.ok(`.env переписан, прежний сохранён в ${ENV_BACKUP}`);
     }
 
     log.step('База');
@@ -226,11 +320,11 @@ export function runRelease({ ops, before, head, publicUrl, routes }) {
     return { outcome: 'released', contractApplied: [] };
   } catch (error) {
     log.fail(error instanceof Error ? error.message : String(error));
-    return recover({ ops, before, routes, publicUrl, pendingContract, retired });
+    return recover({ ops, before, routes, publicUrl, pendingContract, retired, renamed });
   }
 }
 
-function recover({ ops, before, routes, publicUrl, pendingContract, retired }) {
+function recover({ ops, before, routes, publicUrl, pendingContract, retired, renamed }) {
   const { remote, probe, log } = ops;
 
   // Применена ли contract-миграция — спрашиваем базу. Не смогли спросить —
@@ -257,6 +351,9 @@ function recover({ ops, before, routes, publicUrl, pendingContract, retired }) {
         'к удалённой схеме и на этой базе не работает',
     );
     log.info('код оставлен на новом коммите, удалённые сервисы остаются отключены');
+    if (renamed.length) {
+      log.info(`базы остаются под новыми именами; прежний .env — ${ENV_BACKUP}`);
+    }
     log.info('дальше решает человек: исправить вперёд новым коммитом');
     log.info('или восстановить базу из дампа и вернуть код вместе с ней — вручную');
     return { outcome: 'held', contractApplied };
@@ -264,6 +361,18 @@ function recover({ ops, before, routes, publicUrl, pendingContract, retired }) {
 
   log.step('Откат кода');
   try {
+    // Прежний код и его конфигурация (compose, скрипты) знают базу под
+    // прежним именем — возвращается и имя, и `.env`, иначе откат кода
+    // смотрел бы в базу, которой для него нет.
+    if (renamed.length) {
+      remote(`systemctl stop ${CORE_UNIT}`);
+      for (const [from, to] of [...renamed].reverse()) {
+        if (databaseExists(ops, to)) renameDatabase(ops, to, from);
+        log.info(`база возвращена: ${to} → ${from}`);
+      }
+      remote(`cp ${ENV_BACKUP} .env`);
+      log.info(`.env восстановлен из ${ENV_BACKUP}`);
+    }
     remote(`git reset --hard ${before} --quiet`);
     remote('npm ci --no-audit --no-fund', { show: true });
     remote('npm run build', { show: true });

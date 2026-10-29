@@ -114,7 +114,7 @@ const alter = spawnSync(
     'unicorn-postgres',
     'sh',
     '-c',
-    'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U unicorn_owner -d unicorn_launch -f -',
+    'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U unicorn_owner -d fifth_element -f -',
   ],
   { input: alterSql, encoding: 'utf8' },
 );

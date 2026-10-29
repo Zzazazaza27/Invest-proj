@@ -32,7 +32,18 @@
  *  11. то же, но шлюз кто-то запустил руками — выпуск его гасит, откат не
  *      поднимает;
  *  12. до M150 шлюз был включён, но не запущен — откат возвращает именно это
- *      состояние, а не «включён и запущен».
+ *      состояние, а не «включён и запущен»;
+ *  13. переименование баз вместе с M150, выпуск прошёл — ядро остановлено до
+ *      ALTER DATABASE, база и `.env` под новыми именами;
+ *  14. переименование, M150 упала — откат возвращает и код, и имена баз, и
+ *      `.env` (замечание Тэнка: прежний код и конфигурация знают прежнее имя);
+ *  15. переименование, M150 применена, ядро не поднялось — откат запрещён,
+ *      имена остаются новыми;
+ *  16. переименование без contract-миграции, сбой — откат возвращает имена;
+ *  17. база уже переименована прошлой попыткой, `.env` — нет — дописывается
+ *      только `.env`;
+ *  18. обе базы существуют — выпуск отменяется до остановки ядра;
+ *  19. ALTER DATABASE упал — откат восстанавливает `.env`.
  *
  * Запуск: npm run check:deploy-release
  */
@@ -71,6 +82,10 @@ function check(name, condition, detail = '') {
  * @param {boolean} [o.coreDown]                ядро на новом коде не отвечает
  * @param {boolean} [o.routesDown]              маршруты снаружи не отвечают
  * @param {boolean} [o.statusDownAfterMigrate]  реестр не читается после миграции
+ * @param {string[]} [o.dbs]                    базы на сервере
+ *                                             (по умолчанию уже новые имена)
+ * @param {string} [o.envDb]                    имя основной базы в `.env`
+ * @param {boolean} [o.renameFails]             ALTER DATABASE падает
  */
 function makeServer(o) {
   const state = {
@@ -91,6 +106,13 @@ function makeServer(o) {
     },
     applied: [...o.applied],
     migrated: false,
+    dbs: new Set(o.dbs ?? ['fifth_element', 'fifth_element_test']),
+    env: {
+      DATABASE_URL: o.envDb ?? 'fifth_element',
+      DATABASE_URL_OWNER: o.envDb ?? 'fifth_element',
+      DATABASE_URL_TEST: o.envDb === 'unicorn_launch' ? 'unicorn_test' : 'fifth_element_test',
+    },
+    envBackup: null,
   };
   const events = [];
   const violations = [];
@@ -106,6 +128,10 @@ function makeServer(o) {
       // Удалённый из кода сервис не должен работать над новой схемой вовсе.
       if (name === 'unicorn-ai-gateway' && state.applied.includes(M150)) {
         violations.push(`${where}: шлюз работает после ${M150}`);
+      }
+      // Ядро смотрит в базу из `.env`: её не должно не быть.
+      if (name === 'unicorn-core' && !state.dbs.has(state.env.DATABASE_URL_OWNER)) {
+        violations.push(`${where}: ядро смотрит в несуществующую ${state.env.DATABASE_URL_OWNER}`);
       }
     }
   };
@@ -130,6 +156,33 @@ function makeServer(o) {
 
   function exec(cmd) {
     let m;
+    if (cmd.startsWith("grep -E '^DATABASE_URL")) {
+      return Object.entries(state.env)
+        .map(([k, v]) => `${k}=postgres://u:p@localhost:5432/${v}`)
+        .join('\n');
+    }
+    if ((m = /datname = '(\w+)'"$/.exec(cmd)) && cmd.includes('SELECT 1 FROM pg_database')) {
+      return state.dbs.has(m[1]) ? '1' : '';
+    }
+    if ((m = /ALTER DATABASE (\w+) RENAME TO (\w+)/.exec(cmd))) {
+      if (state.units['unicorn-core'].active) violations.push(`${cmd}: ядро работает`);
+      if (o.renameFails) fail(cmd);
+      state.dbs.delete(m[1]);
+      state.dbs.add(m[2]);
+      return '';
+    }
+    if ((m = /^sed -i -E '\/\^DATABASE_URL\/ s#\/(\w+)\\b#\/(\w+)#' \.env$/.exec(cmd))) {
+      for (const k of Object.keys(state.env)) if (state.env[k] === m[1]) state.env[k] = m[2];
+      return '';
+    }
+    if (cmd === 'cp .env .env.before-db-rename') {
+      state.envBackup = { ...state.env };
+      return '';
+    }
+    if (cmd === 'cp .env.before-db-rename .env') {
+      state.env = { ...state.envBackup };
+      return '';
+    }
     if ((m = /git reset --hard (\w+)/.exec(cmd))) {
       state.commit = m[1];
       return '';
@@ -401,6 +454,19 @@ console.warn('\n▸ разбор migrate:status');
   check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
 }
 
+const OLD_NAMES = { dbs: ['unicorn_launch', 'unicorn_test'], envDb: 'unicorn_launch' };
+const namesOld = (s) =>
+  s.state.dbs.has('unicorn_launch') &&
+  !s.state.dbs.has('fifth_element') &&
+  s.state.env.DATABASE_URL_OWNER === 'unicorn_launch' &&
+  s.state.env.DATABASE_URL_TEST === 'unicorn_test';
+const namesNew = (s) =>
+  s.state.dbs.has('fifth_element') &&
+  s.state.dbs.has('fifth_element_test') &&
+  !s.state.dbs.has('unicorn_launch') &&
+  s.state.env.DATABASE_URL_OWNER === 'fifth_element' &&
+  s.state.env.DATABASE_URL_TEST === 'fifth_element_test';
+
 const W05_DONE = { [OLD]: [...BASE, M150], [NEW]: [...BASE, M150, M151] };
 
 // --- 10 -------------------------------------------------------------------------
@@ -462,6 +528,126 @@ const W05_DONE = { [OLD]: [...BASE, M150], [NEW]: [...BASE, M150, M151] };
   const gw = s.state.units['unicorn-ai-gateway'];
   check('шлюз снова включён, как был', gw.enabled);
   check('шлюз не запущен, как был', !gw.active);
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
+}
+
+// --- 13 -------------------------------------------------------------------------
+{
+  const s = run('13. переименование баз вместе с M150, выпуск прошёл', {
+    files: W05,
+    contract: [M150],
+    applied: BASE,
+    ...OLD_NAMES,
+  });
+  check('выпуск завершён', s.result.outcome === 'released', s.result.outcome);
+  check('базы и .env под новыми именами', namesNew(s), JSON.stringify(s.state.env));
+  const stop = idx(s.events, /^systemctl stop unicorn-core$/);
+  const alter = idx(s.events, /ALTER DATABASE unicorn_launch RENAME/);
+  check('ядро остановлено до ALTER DATABASE', stop >= 0 && stop < alter);
+  check('.env сохранён до правки', idx(s.events, /^cp \.env \.env\.before/) < alter);
+  check('ядро работает на новом коде', s.state.units['unicorn-core'].runsCommit === NEW);
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
+}
+
+// --- 14 -------------------------------------------------------------------------
+{
+  const s = run('14. переименование, M150 упала', {
+    files: W05,
+    contract: [M150],
+    applied: BASE,
+    failMigration: M150,
+    ...OLD_NAMES,
+  });
+  check('код откатан', s.result.outcome === 'rolled-back', s.result.outcome);
+  check('базы и .env под прежними именами', namesOld(s), JSON.stringify(s.state.env));
+  check(
+    'ядро на прежнем коде и поднято',
+    s.state.units['unicorn-core'].runsCommit === OLD && s.state.units['unicorn-core'].active,
+  );
+  const back = idx(s.events, /ALTER DATABASE fifth_element RENAME TO unicorn_launch/);
+  const reset = idx(s.events, new RegExp(`git reset --hard ${OLD}`));
+  check('имя возвращено до сброса кода', back >= 0 && back < reset);
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
+}
+
+// --- 15 -------------------------------------------------------------------------
+{
+  const s = run('15. переименование, M150 применена, ядро не поднялось', {
+    files: W05,
+    contract: [M150],
+    applied: BASE,
+    coreDown: true,
+    ...OLD_NAMES,
+  });
+  check('откат запрещён', s.result.outcome === 'held', s.result.outcome);
+  check('имена остаются новыми', namesNew(s), JSON.stringify(s.state.env));
+  check('код не откатывался', s.state.commit === NEW);
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
+}
+
+// --- 16 -------------------------------------------------------------------------
+{
+  const s = run('16. переименование без contract-миграции, сбой', {
+    files: W05_DONE,
+    contract: [M150],
+    applied: [...BASE, M150],
+    gateway: false,
+    coreDown: true,
+    ...OLD_NAMES,
+  });
+  check('код откатан', s.result.outcome === 'rolled-back', s.result.outcome);
+  check('базы и .env под прежними именами', namesOld(s), JSON.stringify(s.state.env));
+  check(
+    'ядро остановлено до ALTER DATABASE',
+    idx(s.events, /^systemctl stop unicorn-core$/) < idx(s.events, /ALTER DATABASE unicorn_launch/),
+  );
+  check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
+}
+
+// --- 17 -------------------------------------------------------------------------
+{
+  const s = run('17. база переименована прошлой попыткой, .env — нет', {
+    files: W05_DONE,
+    contract: [M150],
+    applied: [...BASE, M150],
+    gateway: false,
+    dbs: ['fifth_element', 'fifth_element_test'],
+    envDb: 'unicorn_launch',
+  });
+  check('выпуск завершён', s.result.outcome === 'released', s.result.outcome);
+  check('базы и .env под новыми именами', namesNew(s), JSON.stringify(s.state.env));
+  check('ALTER DATABASE не выполнялся', idx(s.events, /ALTER DATABASE/) === -1);
+}
+
+// --- 18 -------------------------------------------------------------------------
+{
+  const s = run('18. обе базы существуют', {
+    files: W05_DONE,
+    contract: [M150],
+    applied: [...BASE, M150],
+    gateway: false,
+    dbs: ['unicorn_launch', 'unicorn_test', 'fifth_element', 'fifth_element_test'],
+    envDb: 'unicorn_launch',
+  });
+  check('выпуск не завершён', s.result.outcome !== 'released', s.result.outcome);
+  check('ALTER DATABASE не выполнялся', idx(s.events, /ALTER DATABASE/) === -1);
+  check('миграция не запускалась', idx(s.events, /^npm run db:migrate$/) === -1);
+  check('.env не тронут', s.state.env.DATABASE_URL_OWNER === 'unicorn_launch');
+}
+
+// --- 19 -------------------------------------------------------------------------
+{
+  const s = run('19. ALTER DATABASE упал', {
+    files: W05_DONE,
+    contract: [M150],
+    applied: [...BASE, M150],
+    gateway: false,
+    renameFails: true,
+    ...OLD_NAMES,
+  });
+  check('код откатан', s.result.outcome === 'rolled-back', s.result.outcome);
+  check('базы и .env под прежними именами', namesOld(s), JSON.stringify(s.state.env));
+  check('ядро поднято', s.state.units['unicorn-core'].active);
   check('нарушений нет', s.violations.length === 0, s.violations.join('; '));
 }
 
