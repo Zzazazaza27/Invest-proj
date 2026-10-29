@@ -202,7 +202,6 @@ async function up() {
       DATABASE_URL_OWNER: dbUrl,
       MAIL_TRANSPORT: 'none',
       WEBHOOK_DELIVERY_MODE: 'capture',
-      PAYMENTS_MODE: 'test',
     },
   });
   child.unref();

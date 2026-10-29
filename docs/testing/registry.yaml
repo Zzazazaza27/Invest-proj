@@ -342,7 +342,7 @@ checks:
     kind: check
     level: интеграционный
     runner: manual
-    asserts: 11
+    asserts: 7
     needs: [db, core, nats]
     effects: ['создаёт подписку и доставку в БД', 'убирает созданное в finally']
     studied: code

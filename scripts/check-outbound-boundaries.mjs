@@ -65,11 +65,6 @@ console.warn('\n=== ГРАНИЦЫ КОНТУРА НАРУЖУ ===\n');
 
 // ------------------------------------------------ каналы, которые уже закрыты
 check(
-  'платежи в тестовом режиме',
-  (process.env.PAYMENTS_MODE ?? 'test') === 'test',
-  `PAYMENTS_MODE=${process.env.PAYMENTS_MODE ?? 'test'}`,
-);
-check(
   'почта не уходит через релей',
   (process.env.MAIL_TRANSPORT ?? 'none') !== 'smtp',
   `MAIL_TRANSPORT=${process.env.MAIL_TRANSPORT ?? 'none'}`,

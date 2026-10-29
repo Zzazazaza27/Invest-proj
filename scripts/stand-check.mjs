@@ -198,14 +198,11 @@ if (existsSync(envFile)) {
     { encoding: 'utf8' },
   );
   const value = (key) => (text.match(new RegExp(`^${key}=(.*)$`, 'm')) || [])[1]?.trim() ?? '';
-  const payments = value('PAYMENTS_MODE') || 'test';
   const nodeEnv = value('NODE_ENV') || 'development';
-  if (payments === 'test') ok('оплата в тестовом режиме (PAYMENTS_MODE=test)');
-  else bad(`PAYMENTS_MODE=${payments} — это НЕ тестовый режим`);
   if (nodeEnv !== 'production') ok(`NODE_ENV=${nodeEnv} — локальный контур`);
-  else info('NODE_ENV=production — тестовое подтверждение оплаты будет отклонено');
+  else info('NODE_ENV=production — контур настроен как боевой');
   // Доставка вебхуков — единственный живой канал наружу: почта локальная,
-  // платежи тестовые. «В базе нет рабочих данных» от внешнего вызова не
+  // платежей нет (удалены в 2.1-W05). «В базе нет рабочих данных» от внешнего вызова не
   // защищает, поэтому режим показывается рядом с остальными границами.
   const webhooks = value('WEBHOOK_DELIVERY_MODE') || 'capture';
   if (webhooks === 'capture') ok('вебхуки наружу не уходят (WEBHOOK_DELIVERY_MODE=capture)');

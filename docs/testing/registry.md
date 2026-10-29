@@ -309,7 +309,7 @@
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |
 | CHK-FRONTEND-BOUNDARY | `npm run gate:boundary` | 0 | CI | CI |
 | CHK-KEK-DOMAINS | `npm run gate:kek` | 0 | CI | CI |
-| CHK-OUTBOUND-BOUNDARIES | `npm run check:outbound` | 11 | вручную | `suite:handoff`, `suite:regression` |
+| CHK-OUTBOUND-BOUNDARIES | `npm run check:outbound` | 7 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-PORTS-CONSISTENCY | `npm run gate:ports` | 0 | вручную | — |
 | CHK-PROFILE-API | `node scripts/check-profile-api.mjs` | 30 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-ROLE-ENV-CONSISTENCY | `npm run gate:roles-env` | 0 | CI | CI |
