@@ -5,7 +5,6 @@ import {
   approveKyc,
   closePool,
   createEntity,
-  createInvestorSubscription,
   createProject,
   createUser,
   inRollbackTx,
@@ -14,18 +13,16 @@ import {
 } from './helpers.ts';
 
 /**
- * M087 (5.7.1): режим видимости проекта, предикат аудитории, согласие
- * владельца, барьер подписки как настройка.
+ * M087 (5.7.1): режим видимости проекта и предикат аудитории.
  *
  *  - матрица предикат × режим × зритель совпадает с `projectAudience()` в
  *    @unicorn/contracts (та же таблица ожиданий, что в
  *    packages/contracts/tests/visibility.test.ts);
- *  - grant — набор разрешений: {materials} даёт материалы и тизер, не ответы;
- *  - исключение перекрывает режим и grant; организатор — тизер сезона;
- *  - барьер подписки — флаг: включён (умолчание) → нужно членство,
- *    выключен → достаточно роли; права на данные флагом не обходятся;
- *  - после миграции наружу не ушло ничего нового: согласий нет, материалы
- *    закрыты, round_view для private пуст.
+ *  - grant — набор разрешений: {materials} даёт материалы и тизер, не описание;
+ *  - исключение перекрывает режим и grant;
+ *  - допуска инвестора по роли нет (2.1-W05: держался на подписке) — инвестор
+ *    без личного разрешения видит то же, что аноним; удалённые роли прав не
+ *    дают.
  */
 
 afterAll(async () => {
@@ -33,7 +30,7 @@ afterAll(async () => {
 });
 
 type Viewer = { userId: string | null; roles: string[]; dbRole: 'app_backend' | 'app_public_read' };
-const PERMS = ['teaser', 'profile', 'round', 'materials', 'passport', 'extended'] as const;
+const PERMS = ['teaser', 'profile', 'materials', 'extended'] as const;
 type Perm = (typeof PERMS)[number];
 
 async function audience(
@@ -49,24 +46,13 @@ async function audience(
   );
   await resetRole(c);
   // RESET ROLE не снимает GUC сессии: без этого следующий UPDATE в тесте
-  // пошёл бы от роли последнего зрителя (например, организатора с триггером
-  // «только статус»).
+  // пошёл бы от роли последнего зрителя.
   await actAs(c, { userId: null, roles: [] });
   return rows[0]!.a;
 }
 
 async function setMode(c: Client, projectId: string, mode: string): Promise<void> {
   await c.query(`UPDATE lab.projects SET visibility = $2 WHERE id = $1`, [projectId, mode]);
-}
-
-async function setBarrier(c: Client, enabled: boolean): Promise<void> {
-  await actAs(c, { roles: ['admin'] });
-  await c.query(
-    `UPDATE audit.feature_flags SET enabled = $1
-      WHERE key = 'billing.investor_access_requires_subscription'`,
-    [enabled],
-  );
-  await actAs(c, { roles: [] });
 }
 
 /**
@@ -120,82 +106,55 @@ const asUser = (userId: string, ...roles: string[]): Viewer => ({
 });
 
 describe('M087: предикат аудитории — матрица режим × зритель', () => {
-  it('public: аноним — public на тизер/профиль/раунд, ничего на материалы/паспорт; инвестор с членством — investors', async () => {
+  it('public: аноним и инвестор без разрешения — public на тизер и профиль, ничего на материалы', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id, { listed: true });
       const investor = await createUser(c, { role: 'investor' });
-      const memberInv = await createUser(c, { role: 'investor' });
-      await createInvestorSubscription(c, memberInv.id);
 
-      const expected: Record<Perm, [string | null, string | null, string | null]> = {
-        // [аноним, инвестор без членства (барьер включён), инвестор с членством]
-        teaser: ['public', 'public', 'investors'],
-        profile: ['public', 'public', 'investors'],
-        round: ['public', 'public', 'investors'],
-        materials: [null, null, 'investors'],
-        passport: [null, null, 'investors'],
-        extended: [null, null, null],
+      const expected: Record<Perm, [string | null, string | null]> = {
+        // [аноним, инвестор без личного разрешения]
+        teaser: ['public', 'public'],
+        profile: ['public', 'public'],
+        materials: [null, null],
+        extended: [null, null],
       };
       for (const perm of PERMS) {
         expect([
           await audience(c, anon, projectId, perm),
           await audience(c, asUser(investor.id, 'investor'), projectId, perm),
-          await audience(c, asUser(memberInv.id, 'investor'), projectId, perm),
         ]).toEqual(expected[perm]);
       }
     });
   });
 
-  it('private и registered_investors: внешним по режиму; команда — private, админ — private, рецензент — platform', async () => {
+  it('private и registered_investors: вне команды — ничего; команда и админ — private', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id, { listed: true });
       const admin = await createUser(c, { role: 'admin' });
-      const memberInv = await createUser(c, { role: 'investor' });
-      await createInvestorSubscription(c, memberInv.id);
-      const expert = await createUser(c, { role: 'expert' });
-      await c.query(
-        `INSERT INTO experts.experts (user_id, expertise_tags) VALUES ($1, ARRAY['fintech'])`,
-        [expert.id],
-      );
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, status, due_at)
-         VALUES ($1, $2, $3, 'manual', 'accepted', now() + interval '7 days')`,
-        [uuidv7(), projectId, expert.id],
-      );
+      const investor = await createUser(c, { role: 'investor' });
 
-      await setMode(c, projectId, 'private');
-      for (const perm of PERMS) {
-        expect(await audience(c, anon, projectId, perm)).toBeNull();
-        expect(await audience(c, asUser(memberInv.id, 'investor'), projectId, perm)).toBeNull();
-        expect(await audience(c, asUser(owner.id, 'founder'), projectId, perm)).toBe('private');
-        expect(await audience(c, asUser(admin.id, 'admin'), projectId, perm)).toBe('private');
-        expect(await audience(c, asUser(expert.id, 'expert'), projectId, perm)).toBe(
-          perm === 'extended' ? null : 'platform',
-        );
-      }
-
-      await setMode(c, projectId, 'registered_investors');
-      for (const perm of PERMS) {
-        expect(await audience(c, anon, projectId, perm)).toBeNull();
-        expect(await audience(c, asUser(memberInv.id, 'investor'), projectId, perm)).toBe(
-          perm === 'extended' ? null : 'investors',
-        );
+      for (const mode of ['private', 'registered_investors']) {
+        await setMode(c, projectId, mode);
+        for (const perm of PERMS) {
+          expect(await audience(c, anon, projectId, perm)).toBeNull();
+          expect(await audience(c, asUser(investor.id, 'investor'), projectId, perm)).toBeNull();
+          expect(await audience(c, asUser(owner.id, 'founder'), projectId, perm)).toBe('private');
+          expect(await audience(c, asUser(admin.id, 'admin'), projectId, perm)).toBe('private');
+        }
       }
     });
   });
 
-  it('selected_investors: grant — набор разрешений; {materials} не даёт ответов; допуск личный, членство не нужно', async () => {
+  it('selected_investors: grant — набор разрешений; {materials} не даёт описания; допуск личный', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id, { listed: true });
       await setMode(c, projectId, 'selected_investors');
       const gMaterials = await createUser(c, { role: 'investor' });
       const gProfile = await createUser(c, { role: 'founder' }); // роль не важна — допуск личный
-      const memberInv = await createUser(c, { role: 'investor' });
-      await createInvestorSubscription(c, memberInv.id);
+      const investor = await createUser(c, { role: 'investor' });
       await grant(c, projectId, owner.id, { userId: gMaterials.id }, ['materials']);
       await grant(c, projectId, owner.id, { userId: gProfile.id }, ['profile']);
 
@@ -203,16 +162,14 @@ describe('M087: предикат аудитории — матрица режи�
       expect(await audience(c, m, projectId, 'teaser')).toBe('investors');
       expect(await audience(c, m, projectId, 'materials')).toBe('investors');
       expect(await audience(c, m, projectId, 'profile')).toBeNull();
-      expect(await audience(c, m, projectId, 'round')).toBeNull();
-      expect(await audience(c, m, projectId, 'passport')).toBeNull();
 
       const p = asUser(gProfile.id, 'founder');
       expect(await audience(c, p, projectId, 'profile')).toBe('investors');
       expect(await audience(c, p, projectId, 'materials')).toBeNull();
 
-      // Инвестор с членством, но без grant — ничего; аноним — ничего.
+      // Инвестор без grant — ничего; аноним — ничего.
       for (const perm of PERMS) {
-        expect(await audience(c, asUser(memberInv.id, 'investor'), projectId, perm)).toBeNull();
+        expect(await audience(c, asUser(investor.id, 'investor'), projectId, perm)).toBeNull();
         expect(await audience(c, anon, projectId, perm)).toBeNull();
       }
 
@@ -263,8 +220,8 @@ describe('M087: предикат аудитории — матрица режи�
       // Запись, заведённая при включённом флаге, перестаёт давать доступ,
       // как только направление отложено обратно.
       await setEntityGrants(c, true);
-      await grant(c, projectId, owner.id, { entityId }, ['profile', 'round']);
-      expect(await audience(c, v, projectId, 'round')).toBe('investors');
+      await grant(c, projectId, owner.id, { entityId }, ['profile', 'materials']);
+      expect(await audience(c, v, projectId, 'materials')).toBe('investors');
       await setEntityGrants(c, false);
       for (const perm of PERMS) expect(await audience(c, v, projectId, perm)).toBeNull();
 
@@ -298,8 +255,8 @@ describe('M087: предикат аудитории — матрица режи�
       // Личное разрешение действует, организационное исключение его снимает:
       // запрет — сторона, которую откладывать небезопасно, поэтому ветка
       // исключений по организации осталась рабочей (M092).
-      await grant(c, projectId, owner.id, { userId: rep.id }, ['profile', 'round']);
-      expect(await audience(c, v, projectId, 'round')).toBe('investors');
+      await grant(c, projectId, owner.id, { userId: rep.id }, ['profile', 'materials']);
+      expect(await audience(c, v, projectId, 'materials')).toBe('investors');
       await setEntityGrants(c, true);
       await exclude(c, projectId, owner.id, { entityId });
       await setEntityGrants(c, false);
@@ -307,22 +264,23 @@ describe('M087: предикат аудитории — матрица режи�
 
       // Исключение пользователя перекрывает и режим public.
       await setMode(c, projectId, 'public');
-      const memberInv = await createUser(c, { role: 'investor' });
-      await createInvestorSubscription(c, memberInv.id);
-      await exclude(c, projectId, owner.id, { userId: memberInv.id });
-      expect(await audience(c, asUser(memberInv.id, 'investor'), projectId, 'teaser')).toBeNull();
+      const investor = await createUser(c, { role: 'investor' });
+      expect(await audience(c, asUser(investor.id, 'investor'), projectId, 'teaser')).toBe(
+        'public',
+      );
+      await exclude(c, projectId, owner.id, { userId: investor.id });
+      expect(await audience(c, asUser(investor.id, 'investor'), projectId, 'teaser')).toBeNull();
       // Аноним в public по-прежнему видит тизер: исключение — для входа под учёткой.
       expect(await audience(c, anon, projectId, 'teaser')).toBe('public');
     });
   });
 
-  it('заблокированный и удалённый проект закрыты внешним; команда и админ видят; организатор прав не даёт', async () => {
+  it('заблокированный и удалённый проект закрыты внешним; команда и админ видят; удалённые роли прав не дают', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const admin = await createUser(c, { role: 'admin' });
-      const organizer = await createUser(c, { role: 'organizer' });
-      const memberInv = await createUser(c, { role: 'investor' });
-      await createInvestorSubscription(c, memberInv.id);
+      const outsider = await createUser(c, { role: 'founder' });
+      const investor = await createUser(c, { role: 'investor' });
       const projectId = await createProject(c, owner.id, { listed: true });
 
       await c.query(
@@ -330,7 +288,7 @@ describe('M087: предикат аудитории — матрица режи�
         [projectId],
       );
       expect(await audience(c, anon, projectId, 'teaser')).toBeNull();
-      expect(await audience(c, asUser(memberInv.id, 'investor'), projectId, 'profile')).toBeNull();
+      expect(await audience(c, asUser(investor.id, 'investor'), projectId, 'profile')).toBeNull();
       expect(await audience(c, asUser(owner.id, 'founder'), projectId, 'profile')).toBe('private');
       expect(await audience(c, asUser(admin.id, 'admin'), projectId, 'profile')).toBe('private');
       await c.query(
@@ -338,23 +296,20 @@ describe('M087: предикат аудитории — матрица режи�
         [projectId],
       );
 
-      // Организатор (сезоны отложены, M088): роль прав не даёт — как обычный
-      // вошедший без допуска инвестора; в private — ничего, даже для проекта
-      // сезона; `app.has_role('organizer')` — false, пока флаг выключен.
-      const org = asUser(organizer.id, 'organizer');
+      // Удалённые роли (2.1-W05), даже дойдя до сессии, не дают ничего сверх
+      // обычного вошедшего: в private — ничего, в public — только общедоступное.
+      const removed = asUser(outsider.id, 'organizer', 'expert', 'showrunner');
       await setMode(c, projectId, 'private');
-      expect(await audience(c, org, projectId, 'teaser')).toBeNull();
-      expect(await audience(c, org, projectId, 'profile')).toBeNull();
+      for (const perm of PERMS) expect(await audience(c, removed, projectId, perm)).toBeNull();
       await setMode(c, projectId, 'public');
-      expect(await audience(c, org, projectId, 'teaser')).toBe('public');
-      expect(await audience(c, org, projectId, 'materials')).toBeNull();
-      await actAs(c, { userId: organizer.id, roles: ['organizer'], dbRole: 'app_backend' });
+      expect(await audience(c, removed, projectId, 'teaser')).toBe('public');
+      expect(await audience(c, removed, projectId, 'materials')).toBeNull();
+      await actAs(c, { userId: outsider.id, roles: ['organizer'], dbRole: 'app_backend' });
       const hasRole = await c.query<{ r: boolean }>(`SELECT app.has_role('organizer') AS r`);
-      const viewer = await c.query<{ a: string }>(`SELECT lab.viewer_audience() AS a`);
       await resetRole(c);
       await actAs(c, { userId: null, roles: [] });
-      expect(hasRole.rows[0]!.r).toBe(false);
-      expect(viewer.rows[0]!.a).toBe('public');
+      // has_role отвечает по сессии честно; прав роли не даёт ни одна политика.
+      expect(hasRole.rows[0]!.r).toBe(true);
 
       await c.query(`UPDATE lab.projects SET deleted_at = now() WHERE id = $1`, [projectId]);
       expect(await audience(c, anon, projectId, 'teaser')).toBeNull();
@@ -373,131 +328,9 @@ describe('M087: предикат аудитории — матрица режи�
   });
 });
 
-describe('M087: барьер подписки — настройка, не миграция', () => {
-  it('включён (умолчание): нужно членство; выключен: достаточно роли investor; права на данные не обходятся', async () => {
+describe('M087: перенос и ограничения разрешений', () => {
+  it('после миграции: материалы private, листинг — только в режиме «все»', async () => {
     await inRollbackTx(async (c) => {
-      const { rows } = await c.query<{ enabled: boolean }>(
-        `SELECT enabled FROM audit.feature_flags WHERE key = 'billing.investor_access_requires_subscription'`,
-      );
-      expect(rows[0]?.enabled).toBe(true);
-
-      const owner = await createUser(c, { role: 'founder' });
-      const projectId = await createProject(c, owner.id, { listed: true });
-      await setMode(c, projectId, 'registered_investors');
-      const investor = await createUser(c, { role: 'investor' });
-      const v = asUser(investor.id, 'investor');
-      expect(await audience(c, v, projectId, 'profile')).toBeNull();
-
-      await setBarrier(c, false);
-      expect(await audience(c, v, projectId, 'profile')).toBe('investors');
-      // Роль не investor — допуска нет и при выключенном барьере.
-      expect(await audience(c, asUser(investor.id, 'founder'), projectId, 'profile')).toBeNull();
-      // Режим private и исключение — сильнее флага.
-      await setMode(c, projectId, 'private');
-      expect(await audience(c, v, projectId, 'teaser')).toBeNull();
-      await setMode(c, projectId, 'public');
-      await exclude(c, projectId, owner.id, { userId: investor.id });
-      expect(await audience(c, v, projectId, 'teaser')).toBeNull();
-      // viewer_audience — та же точка.
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      const va = await c.query<{ a: string }>(`SELECT lab.viewer_audience() AS a`);
-      await resetRole(c);
-      expect(va.rows[0]!.a).toBe('investors');
-    });
-  });
-});
-
-describe('M087: согласие владельца и эффективная видимость', () => {
-  it('без согласия — private; с согласием — строже из активной конфигурации и версии согласия', async () => {
-    await inRollbackTx(async (c) => {
-      await c.query(`UPDATE lab.application_form_versions SET is_active = false WHERE is_active`);
-      const publish = async (vis: string): Promise<number> => {
-        await c.query(`UPDATE lab.application_form_versions SET is_active = false WHERE is_active`);
-        const { rows } = await c.query<{ version: number }>(
-          `INSERT INTO lab.application_form_versions
-             (id, version, status, is_active, config_jsonb, reason, published_at, activated_at)
-           VALUES ($1, (SELECT COALESCE(MAX(version), 0) + 1 FROM lab.application_form_versions),
-                   'published', true, $2::jsonb, 'тест согласия', now(), now())
-           RETURNING version`,
-          [
-            uuidv7(),
-            JSON.stringify({ questions: [{ key: 'problem_statement', visibility: vis }] }),
-          ],
-        );
-        return rows[0]!.version;
-      };
-      const q = async (v: number | null): Promise<string> =>
-        (
-          await c.query<{ e: string }>(
-            `SELECT lab.effective_visibility('problem_statement', $1) AS e`,
-            [v],
-          )
-        ).rows[0]!.e;
-
-      const v1 = await publish('investors');
-      expect(await q(null)).toBe('private');
-      expect(await q(v1)).toBe('investors');
-      // Администратор смягчил — согласие v1 держит investors.
-      const v2 = await publish('public');
-      expect(await q(v1)).toBe('investors');
-      // Владелец применил v2 — public.
-      expect(await q(v2)).toBe('public');
-      // Администратор ужесточил — сразу для любого согласия.
-      await publish('platform');
-      expect(await q(v1)).toBe('platform');
-      expect(await q(v2)).toBe('platform');
-      // Ключа нет ни в активной, ни в версии согласия — private.
-      const missing = await c.query<{ e: string }>(
-        `SELECT lab.effective_visibility('no_such_question', $1) AS e`,
-        [v2],
-      );
-      expect(missing.rows[0]!.e).toBe('private');
-    });
-  });
-
-  it('снимок согласия обязан принадлежать проекту; снимок и версия ставятся вместе', async () => {
-    await inRollbackTx(async (c) => {
-      const owner = await createUser(c, { role: 'founder' });
-      const a = await createProject(c, owner.id);
-      const b = await createProject(c, owner.id);
-      const { rows } = await c.query<{ id: string }>(
-        `SELECT id FROM lab.investment_applications WHERE project_id = $1`,
-        [b],
-      );
-      const versionId = uuidv7();
-      await c.query(
-        `INSERT INTO lab.project_versions (id, project_id, application_id, version_no, snapshot_jsonb, schema_version)
-         VALUES ($1, $2, $3, 1, '{}', 1)`,
-        [versionId, b, rows[0]!.id],
-      );
-      await c.query('SAVEPOINT s1');
-      await expect(
-        c.query(
-          `UPDATE lab.projects SET disclosed_version_id = $2, disclosure_form_version = 1 WHERE id = $1`,
-          [a, versionId],
-        ),
-      ).rejects.toThrow();
-      await c.query('ROLLBACK TO SAVEPOINT s1');
-      await c.query('SAVEPOINT s2');
-      await expect(
-        c.query(`UPDATE lab.projects SET disclosed_version_id = $2 WHERE id = $1`, [b, versionId]),
-      ).rejects.toThrow();
-      await c.query('ROLLBACK TO SAVEPOINT s2');
-      await c.query(
-        `UPDATE lab.projects SET disclosed_version_id = $2, disclosure_form_version = 1 WHERE id = $1`,
-        [b, versionId],
-      );
-    });
-  });
-});
-
-describe('M087: перенос ничего не раскрыл; проекция сезона', () => {
-  it('после миграции: согласий нет, материалы private; round_view пуст для private и отдаёт строку для public', async () => {
-    await inRollbackTx(async (c) => {
-      const consents = await c.query<{ n: string }>(
-        `SELECT count(*)::text AS n FROM lab.projects WHERE disclosed_version_id IS NOT NULL`,
-      );
-      expect(Number(consents.rows[0]!.n)).toBe(0);
       const materials = await c.query<{ n: string }>(
         `SELECT count(*)::text AS n FROM lab.project_materials WHERE visibility <> 'private'`,
       );
@@ -507,64 +340,31 @@ describe('M087: перенос ничего не раскрыл; проекци�
           WHERE listing_status = 'listed' AND deleted_at IS NULL AND visibility <> 'public'`,
       );
       expect(Number(listed.rows[0]!.n)).toBe(0);
-
-      const owner = await createUser(c, { role: 'founder' });
-      const projectId = await createProject(c, owner.id, { listed: true });
-      const memberInv = await createUser(c, { role: 'investor' });
-      await createInvestorSubscription(c, memberInv.id);
-      const rv = async (v: Viewer): Promise<number> => {
-        await actAs(c, { userId: v.userId, roles: v.roles, dbRole: v.dbRole });
-        const { rowCount } = await c.query(`SELECT * FROM lab.round_view($1)`, [projectId]);
-        await resetRole(c);
-        await actAs(c, { userId: null, roles: [] });
-        return rowCount ?? 0;
-      };
-      expect(await rv(anon)).toBe(1);
-      expect(await rv(asUser(memberInv.id, 'investor'))).toBe(1);
-      await setMode(c, projectId, 'private');
-      expect(await rv(anon)).toBe(0);
-      expect(await rv(asUser(memberInv.id, 'investor'))).toBe(0);
-      expect(await rv(asUser(owner.id, 'founder'))).toBe(1);
     });
   });
 
-  it('сезоны отложены (M088): сезонной проекции нет, флаг выключен, организатор без прав на строки проектов', async () => {
+  it('сезоны и удалённые флаги (2.1-W05): ни проекций, ни флагов, ни функций', async () => {
     await inRollbackTx(async (c) => {
-      const view = await c.query(
-        `SELECT 1 FROM information_schema.views WHERE table_schema = 'lab' AND table_name = 'v_season_projects'`,
+      const schemas = await c.query(
+        `SELECT nspname FROM pg_namespace WHERE nspname IN ('seasons', 'experts', 'scoring', 'investments')`,
       );
-      expect(view.rowCount).toBe(0);
-      const flag = await c.query<{ enabled: boolean }>(
-        `SELECT enabled FROM audit.feature_flags WHERE key = 'seasons.enabled'`,
+      expect(schemas.rows).toEqual([]);
+      const flags = await c.query<{ key: string }>(
+        `SELECT key FROM audit.feature_flags
+          WHERE key ~ '^(ai|billing|investments)\\.' OR key IN ('seasons.enabled',
+                'show.publication.enabled', 'capital.integration.enabled', 'lab.ui.application_v2')`,
       );
-      expect(flag.rows[0]?.enabled).toBe(false);
-
-      const owner = await createUser(c, { role: 'founder' });
-      const organizer = await createUser(c, { role: 'organizer' });
-      const projectId = await createProject(c, owner.id);
-      await actAs(c, { userId: organizer.id, roles: ['organizer'], dbRole: 'app_backend' });
-      const rows = await c.query(`SELECT id FROM lab.projects WHERE id = $1`, [projectId]);
-      const apps = await c.query(
-        `SELECT id FROM lab.investment_applications WHERE project_id = $1`,
-        [projectId],
+      expect(flags.rows).toEqual([]);
+      const fns = await c.query(
+        `SELECT proname FROM pg_proc
+          WHERE proname IN ('seasons_enabled', 'investor_gate', 'viewer_audience',
+                            'has_active_investor_membership', 'round_view', 'disclosed_profile')`,
       );
-      await resetRole(c);
-      await actAs(c, { userId: null, roles: [] });
-      expect(rows.rowCount).toBe(0);
-      expect(apps.rowCount).toBe(0);
-
-      // Включённый флаг возвращает прежние ветки RLS — контур отключён, не удалён.
-      await actAs(c, { roles: ['admin'] });
-      await c.query(`UPDATE audit.feature_flags SET enabled = true WHERE key = 'seasons.enabled'`);
-      await actAs(c, { userId: organizer.id, roles: ['organizer'], dbRole: 'app_backend' });
-      const after = await c.query(`SELECT id FROM lab.projects WHERE id = $1`, [projectId]);
-      await resetRole(c);
-      await actAs(c, { userId: null, roles: [] });
-      expect(after.rowCount).toBe(1);
+      expect(fns.rows).toEqual([]);
     });
   });
 
-  it('grant: пустой набор и неизвестное разрешение отвергаются; ровно один получатель', async () => {
+  it('grant: пустой набор, неизвестное и удалённое разрешение отвергаются; ровно один получатель', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id);
@@ -572,6 +372,9 @@ describe('M087: перенос ничего не раскрыл; проекци�
       for (const bad of [
         [projectId, g.id, null, []],
         [projectId, g.id, null, ['everything']],
+        // Удалённые части разрешения (2.1-W05) больше не принимаются.
+        [projectId, g.id, null, ['round']],
+        [projectId, g.id, null, ['passport']],
         [projectId, null, null, ['profile']],
       ]) {
         await c.query('SAVEPOINT g');

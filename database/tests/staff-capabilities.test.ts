@@ -1,72 +1,27 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import type { Client } from './helpers.ts';
-import {
-  actAs,
-  approveKyc,
-  closePool,
-  createEntity,
-  createOffer,
-  createProject,
-  createSignedAgreement,
-  createUser,
-  inRollbackTx,
-  resetRole,
-  uuidv7,
-} from './helpers.ts';
+import { actAs, closePool, createUser, inRollbackTx, resetRole, uuidv7 } from './helpers.ts';
 
 /**
- * M097 (полномочия и ручные денежные записи).
+ * M097 (функциональные полномочия сотрудников).
  *
- * Проверяется то, ради чего слои разделены:
+ * Проверяется механизм, который остался после 2.1-W05:
  *
- *  - роль `expert` сама по себе не даёт ни полномочия, ни области работы;
- *  - полномочие без назначения не открывает чужую сделку, а назначение без
- *    полномочия не даёт трогать деньги;
- *  - отзыв полномочия закрывает доступ при следующем запросе;
+ *  - роль сама по себе не даёт полномочия;
+ *  - выданное полномочие действует, отзыв закрывает его при следующем запросе;
  *  - сотрудник не может выдать полномочие сам себе;
- *  - возвраты частичные, в сумме не больше транша, запись неизменяема;
- *  - уменьшение начисления и возврат уплаченного — разные записи и разные
- *    полномочия.
+ *  - денежных полномочий finance.* больше нет — ни в каталоге, ни у кого.
+ *
+ * Денежные записи (возвраты, корректировки вознаграждения) и назначения на
+ * объект (рецензия, сопровождение сделки) удалены вместе со сделками и
+ * экспертизой — их проверки ушли вместе с ними.
  */
 
 afterAll(async () => {
   await closePool();
 });
 
-/** Подтверждённый транш с начислением: обстановка для ручных записей. */
-async function dealWithTranche(
-  c: Client,
-  amount = 1_000_000,
-): Promise<{ projectId: string; agreementId: string; trancheId: string; accrualId: string }> {
-  const founder = await createUser(c);
-  const investor = await createUser(c, { role: 'investor' });
-  await approveKyc(c, investor.id);
-  const entity = await createEntity(c, founder.id);
-  const projectId = await createProject(c, founder.id, { listed: true });
-  const offer = await createOffer(c, {
-    projectId,
-    entityId: entity,
-    createdBy: founder.id,
-    target: amount * 5,
-    min: 1000,
-  });
-  const agreementId = await createSignedAgreement(c, {
-    offerId: offer,
-    investorId: investor.id,
-    amount,
-  });
-  const { rows } = await c.query<{ tranche_id: string; accrual_id: string }>(
-    `SELECT tranche_id, accrual_id
-       FROM billing.confirm_tranche($1, $2, $3, now(), digest('stmt','sha256'), NULL, 'test')`,
-    [agreementId, `bank-${uuidv7()}`, amount],
-  );
-  return {
-    projectId,
-    agreementId,
-    trancheId: rows[0]!.tranche_id,
-    accrualId: rows[0]!.accrual_id,
-  };
-}
+const CAPABILITY = 'testing.sessions.manage';
 
 /** Выдача идёт от имени администратора: запрет в БД стоит именно на этом. */
 async function grant(c: Client, admin: string, userId: string, capability: string): Promise<void> {
@@ -79,505 +34,72 @@ async function grant(c: Client, admin: string, userId: string, capability: strin
   await resetRole(c);
 }
 
-describe('M097: полномочия отдельно от области работы', () => {
-  it('роль expert сама по себе не даёт полномочия', async () => {
+async function hasCapability(c: Client, code: string): Promise<boolean> {
+  const { rows } = await c.query<{ allowed: boolean }>('SELECT app.has_capability($1) AS allowed', [
+    code,
+  ]);
+  return rows[0]!.allowed;
+}
+
+describe('M097: функциональные полномочия', () => {
+  it('роль сама по себе не даёт полномочия', async () => {
     await inRollbackTx(async (c) => {
-      const expert = await createUser(c, { role: 'expert' });
-      await actAs(c, { userId: expert.id, roles: ['expert'] });
-      const { rows } = await c.query<{ allowed: boolean }>(
-        `SELECT app.has_capability('finance.tranche_return.record') AS allowed`,
-      );
-      expect(rows[0]!.allowed).toBe(false);
+      const investor = await createUser(c, { role: 'investor' });
+      await actAs(c, { userId: investor.id, roles: ['investor'] });
+      expect(await hasCapability(c, CAPABILITY)).toBe(false);
     });
   });
 
   it('выданное полномочие действует, отозванное — нет', async () => {
     await inRollbackTx(async (c) => {
       const admin = await createUser(c, { role: 'admin' });
-      const expert = await createUser(c, { role: 'expert' });
-      await grant(c, admin.id, expert.id, 'finance.tranche_return.record');
+      const staff = await createUser(c, { role: 'founder' });
+      await grant(c, admin.id, staff.id, CAPABILITY);
 
-      await actAs(c, { userId: expert.id, roles: ['expert'] });
-      const granted = await c.query<{ allowed: boolean }>(
-        `SELECT app.has_capability('finance.tranche_return.record') AS allowed`,
-      );
-      expect(granted.rows[0]!.allowed).toBe(true);
+      await actAs(c, { userId: staff.id, roles: ['founder'] });
+      expect(await hasCapability(c, CAPABILITY)).toBe(true);
 
       await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
       await c.query(
         `UPDATE identity.staff_capability_grants
             SET revoked_at = now(), revoked_by = $1, revoke_reason = 'проверка отзыва'
           WHERE user_id = $2 AND capability = $3 AND revoked_at IS NULL`,
-        [admin.id, expert.id, 'finance.tranche_return.record'],
+        [admin.id, staff.id, CAPABILITY],
       );
       await resetRole(c);
 
-      await actAs(c, { userId: expert.id, roles: ['expert'] });
-      const revoked = await c.query<{ allowed: boolean }>(
-        `SELECT app.has_capability('finance.tranche_return.record') AS allowed`,
-      );
-      expect(revoked.rows[0]!.allowed).toBe(false);
+      await actAs(c, { userId: staff.id, roles: ['founder'] });
+      expect(await hasCapability(c, CAPABILITY)).toBe(false);
     });
   });
 
   it('сотрудник не выдаёт полномочие сам себе', async () => {
     await inRollbackTx(async (c) => {
-      const expert = await createUser(c, { role: 'expert' });
-      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
+      const staff = await createUser(c, { role: 'founder' });
+      await actAs(c, { userId: staff.id, roles: ['founder'], dbRole: 'app_backend' });
       await expect(
         c.query(
           `INSERT INTO identity.staff_capability_grants (id, user_id, capability, reason, granted_by)
-           VALUES ($1, $2, 'finance.commission.reduce', 'сам себе', $2)`,
-          [uuidv7(), expert.id],
+           VALUES ($1, $2, $3, 'сам себе', $2)`,
+          [uuidv7(), staff.id, CAPABILITY],
         ),
       ).rejects.toThrow(/только администратор/);
     });
   });
-
-  it('полномочие без назначения не открывает чужую сделку', async () => {
-    await inRollbackTx(async (c) => {
-      const admin = await createUser(c, { role: 'admin' });
-      const expert = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [expert.id]);
-      const deal = await dealWithTranche(c);
-      await grant(c, admin.id, expert.id, 'finance.tranche_return.record');
-
-      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
-      // Полномочие есть, назначения нет: RLS на запись не пропускает.
-      await expect(
-        c.query(
-          `INSERT INTO investments.tranche_returns
-             (id, tranche_id, amount, currency, occurred_on, reason, recorded_by, idempotency_key)
-           VALUES ($1, $2, 1000, 'RUB', current_date, 'без назначения', $3, $4)`,
-          [uuidv7(), deal.trancheId, expert.id, 'idem-' + uuidv7()],
-        ),
-        // Отказ приходит раньше проверки политики: сама сделка эксперту не
-        // видна, поэтому транш «не найден». Это и есть нужное поведение —
-        // сообщение не подтверждает даже существование чужого транша.
-      ).rejects.toThrow(/не найден|row-level security|политик/i);
-    });
-  });
-
-  it('назначение без полномочия не даёт трогать деньги', async () => {
-    await inRollbackTx(async (c) => {
-      const expert = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [expert.id]);
-      const deal = await dealWithTranche(c);
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, status, due_at)
-         VALUES ($1, $2, $3, 'manual', 'accepted', now() + interval '7 days')`,
-        [uuidv7(), deal.projectId, expert.id],
-      );
-
-      await actAs(c, { userId: expert.id, roles: ['expert'] });
-      const { rows } = await c.query<{ allowed: boolean }>(
-        `SELECT app.has_capability('finance.commission.reduce') AS allowed`,
-      );
-      expect(rows[0]!.allowed).toBe(false);
-    });
-  });
 });
 
-describe('M099: цель назначения различает рецензию и сопровождение сделки', () => {
-  it('сопровождение сделки не даёт ни рецензентских прав, ни данных проекта', async () => {
+describe('2.1-W05: денежных полномочий нет', () => {
+  it('каталог не содержит finance.*, удалённые роли полномочий не дают', async () => {
     await inRollbackTx(async (c) => {
-      const staff = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [staff.id]);
-      const deal = await dealWithTranche(c);
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
-         VALUES ($1, $2, $3, 'manual', 'deal_support', 'accepted', now() + interval '30 days')`,
-        [uuidv7(), deal.projectId, staff.id],
+      const { rows } = await c.query<{ code: string }>(
+        `SELECT code FROM identity.staff_capabilities WHERE code LIKE 'finance.%'`,
       );
+      expect(rows).toEqual([]);
 
-      // Сравниваем с посторонним вошедшим: назначение на сопровождение не
-      // должно поднимать аудиторию НИ НА ШАГ — ни до platform, ни куда-либо
-      // ещё. Абсолютное значение зависит от режима проекта, поэтому важно
-      // именно равенство.
-      const stranger = await createUser(c, { role: 'investor' });
-      const { rows } = await c.query<{
-        reviewer: boolean;
-        supporter: boolean;
-        audience: string | null;
-        stranger_audience: string | null;
-      }>(
-        `SELECT experts.is_assigned_reviewer($1, $2) AS reviewer,
-                experts.is_assigned_deal_supporter($1, $2) AS supporter,
-                lab.project_audience($1, $2, 'profile') AS audience,
-                lab.project_audience($1, $3, 'profile') AS stranger_audience`,
-        [deal.projectId, staff.id, stranger.id],
-      );
-      expect(rows[0]!.supporter).toBe(true);
-      // Главное: рецензентом он не стал, и аудитория у него как у постороннего.
-      expect(rows[0]!.reviewer).toBe(false);
-      expect(rows[0]!.audience).toBe(rows[0]!.stranger_audience);
-      expect(rows[0]!.audience).not.toBe('platform');
-    });
-  });
-
-  it('рецензент сохраняет прежние права', async () => {
-    await inRollbackTx(async (c) => {
-      const reviewer = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
-      const deal = await dealWithTranche(c);
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
-         VALUES ($1, $2, $3, 'manual', 'review', 'accepted', now() + interval '30 days')`,
-        [uuidv7(), deal.projectId, reviewer.id],
-      );
-      const { rows } = await c.query<{
-        reviewer: boolean;
-        supporter: boolean;
-        audience: string | null;
-      }>(
-        `SELECT experts.is_assigned_reviewer($1, $2) AS reviewer,
-                experts.is_assigned_deal_supporter($1, $2) AS supporter,
-                lab.project_audience($1, $2, 'profile') AS audience`,
-        [deal.projectId, reviewer.id],
-      );
-      expect(rows[0]!.reviewer).toBe(true);
-      expect(rows[0]!.audience).toBe('platform');
-      // И симметрично: рецензент не получает область денежных действий.
-      expect(rows[0]!.supporter).toBe(false);
-    });
-  });
-
-  it('рецензию нельзя подать по назначению на сопровождение', async () => {
-    await inRollbackTx(async (c) => {
-      const staff = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [staff.id]);
-      const deal = await dealWithTranche(c);
-      const assignmentId = uuidv7();
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
-         VALUES ($1, $2, $3, 'manual', 'deal_support', 'accepted', now() + interval '30 days')`,
-        [assignmentId, deal.projectId, staff.id],
-      );
-      await expect(
-        c.query(
-          `INSERT INTO experts.expert_reviews
-             (id, assignment_id, rubric_scores_jsonb, recommendation)
-           VALUES ($1, $2, '{"team":5,"product":5,"strategy":5,"legal":5,"finmodel":5,"scalability":5}'::jsonb,
-                   'pass')`,
-          [uuidv7(), assignmentId],
-        ),
-      ).rejects.toThrow(/только по назначению на экспертную оценку/);
-    });
-  });
-
-  it('один человек может и рецензировать проект, и сопровождать его сделки', async () => {
-    await inRollbackTx(async (c) => {
-      const staff = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [staff.id]);
-      const deal = await dealWithTranche(c);
-      const insert = (purpose: string) =>
-        c.query(
-          `INSERT INTO experts.expert_assignments
-             (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
-           VALUES ($1, $2, $3, 'manual', $4, 'accepted', now() + interval '30 days')`,
-          [uuidv7(), deal.projectId, staff.id, purpose],
-        );
-      await expect(insert('review')).resolves.toBeDefined();
-      // Это разные работы, а не дубликат: уникальность считает и цель.
-      await expect(insert('deal_support')).resolves.toBeDefined();
-      await c.query('SAVEPOINT duplicate');
-      await expect(insert('review')).rejects.toThrow(/assignments_active_uq/);
-      await c.query('ROLLBACK TO SAVEPOINT duplicate');
-    });
-  });
-});
-
-describe('M097: фиксация возврата', () => {
-  it('частичные возвраты складываются и не превышают сумму транша', async () => {
-    await inRollbackTx(async (c) => {
-      const admin = await createUser(c, { role: 'admin' });
-      const deal = await dealWithTranche(c, 1_000_000);
-      await actAs(c, { userId: admin.id, roles: ['admin'] });
-
-      const record = (amount: number) =>
-        c.query(
-          `INSERT INTO investments.tranche_returns
-             (id, tranche_id, amount, currency, occurred_on, reason, recorded_by, idempotency_key)
-           VALUES ($1, $2, $3, 'RUB', current_date, 'частичный возврат по договорённости', $4, $5)`,
-          [uuidv7(), deal.trancheId, amount, admin.id, `idem-${uuidv7()}`],
-        );
-
-      await expect(record(400_000)).resolves.toBeDefined();
-      await expect(record(600_000)).resolves.toBeDefined();
-      await c.query('SAVEPOINT excess');
-      await expect(record(1)).rejects.toThrow(/превышают его сумму/);
-      await c.query('ROLLBACK TO SAVEPOINT excess');
-    });
-  });
-
-  it('запись о возврате не удаляется и не правится — только аннулируется', async () => {
-    await inRollbackTx(async (c) => {
-      const admin = await createUser(c, { role: 'admin' });
-      const deal = await dealWithTranche(c, 500_000);
-      await actAs(c, { userId: admin.id, roles: ['admin'] });
-      const id = uuidv7();
-      await c.query(
-        `INSERT INTO investments.tranche_returns
-           (id, tranche_id, amount, currency, occurred_on, reason, recorded_by, idempotency_key)
-         VALUES ($1, $2, 100000, 'RUB', current_date, 'возврат по соглашению сторон', $3, $4)`,
-        [id, deal.trancheId, admin.id, `idem-${uuidv7()}`],
-      );
-
-      await c.query('SAVEPOINT removal');
-      await expect(
-        c.query('DELETE FROM investments.tranche_returns WHERE id = $1', [id]),
-      ).rejects.toThrow(/не удаляется/);
-      await c.query('ROLLBACK TO SAVEPOINT removal');
-
-      await c.query('SAVEPOINT rewrite');
-      await expect(
-        c.query('UPDATE investments.tranche_returns SET amount = 1 WHERE id = $1', [id]),
-      ).rejects.toThrow(/неизменяема/);
-      await c.query('ROLLBACK TO SAVEPOINT rewrite');
-
-      await expect(
-        c.query(
-          `UPDATE investments.tranche_returns
-              SET cancelled_at = now(), cancelled_by = $2, cancel_reason = 'ошибочная запись'
-            WHERE id = $1`,
-          [id, admin.id],
-        ),
-      ).resolves.toBeDefined();
-
-      // Аннулированная запись освобождает сумму: возврат можно записать заново.
-      await expect(
-        c.query(
-          `INSERT INTO investments.tranche_returns
-             (id, tranche_id, amount, currency, occurred_on, reason, recorded_by, idempotency_key)
-           VALUES ($1, $2, 500000, 'RUB', current_date, 'верная запись', $3, $4)`,
-          [uuidv7(), deal.trancheId, admin.id, `idem-${uuidv7()}`],
-        ),
-      ).resolves.toBeDefined();
-    });
-  });
-
-  it('повторная отправка с тем же ключом не создаёт дубликат', async () => {
-    await inRollbackTx(async (c) => {
-      const admin = await createUser(c, { role: 'admin' });
-      const deal = await dealWithTranche(c, 300_000);
-      await actAs(c, { userId: admin.id, roles: ['admin'] });
-      const key = `idem-${uuidv7()}`;
-      const record = () =>
-        c.query(
-          `INSERT INTO investments.tranche_returns
-             (id, tranche_id, amount, currency, occurred_on, reason, recorded_by, idempotency_key)
-           VALUES ($1, $2, 1000, 'RUB', current_date, 'двойное нажатие', $3, $4)`,
-          [uuidv7(), deal.trancheId, admin.id, key],
-        );
-      await expect(record()).resolves.toBeDefined();
-      await c.query('SAVEPOINT duplicate');
-      await expect(record()).rejects.toThrow(/idempotency_key/);
-      await c.query('ROLLBACK TO SAVEPOINT duplicate');
-    });
-  });
-});
-
-describe('M097: корректировка вознаграждения', () => {
-  it('уменьшение и возврат уплаченного — разные записи, каждая в пределах доли', async () => {
-    await inRollbackTx(async (c) => {
-      const admin = await createUser(c, { role: 'admin' });
-      const deal = await dealWithTranche(c, 1_000_000);
-      await actAs(c, { userId: admin.id, roles: ['admin'] });
-
-      const adjust = (kind: string, amount: number) =>
-        c.query(
-          `INSERT INTO billing.commission_adjustments
-             (id, accrual_id, kind, party, amount, currency, reason, recorded_by, idempotency_key)
-           VALUES ($1, $2, $3, 'investor', $4, 'RUB', 'решение по итогам переговоров', $5, $6)`,
-          [uuidv7(), deal.accrualId, kind, amount, admin.id, `idem-${uuidv7()}`],
-        );
-
-      // Доля инвестора — 10 % от 1 млн = 100 000.
-      await expect(adjust('accrual_reduction', 60_000)).resolves.toBeDefined();
-      await c.query('SAVEPOINT excess');
-      await expect(adjust('accrual_reduction', 40_001)).rejects.toThrow(/превышают долю стороны/);
-      await c.query('ROLLBACK TO SAVEPOINT excess');
-      // Возврат уплаченного считается отдельно: уменьшение его не исчерпало.
-      await expect(adjust('paid_refund', 100_000)).resolves.toBeDefined();
-    });
-  });
-
-  it('корректировка неизменяема', async () => {
-    await inRollbackTx(async (c) => {
-      const admin = await createUser(c, { role: 'admin' });
-      const deal = await dealWithTranche(c, 400_000);
-      await actAs(c, { userId: admin.id, roles: ['admin'] });
-      const id = uuidv7();
-      await c.query(
-        `INSERT INTO billing.commission_adjustments
-           (id, accrual_id, kind, party, amount, currency, reason, recorded_by, idempotency_key)
-         VALUES ($1, $2, 'accrual_reduction', 'issuer', 1000, 'RUB', 'основание', $3, $4)`,
-        [id, deal.accrualId, admin.id, `idem-${uuidv7()}`],
-      );
-      await expect(
-        c.query('UPDATE billing.commission_adjustments SET amount = 1 WHERE id = $1', [id]),
-      ).rejects.toThrow(/неизменяема/);
-    });
-  });
-});
-
-/**
- * M120 — прекращение доступа отдельно от завершённой работы.
- *
- * Разбор замечания владельца: «снять назначение» означало отменить саму
- * работу, поэтому после сданной рецензии закрыть эксперту доступ было нечем.
- * Здесь проверяется, что эти два факта разошлись и ни один не подменяет
- * другой.
- */
-describe('M120: прекращение доступа не отменяет выполненную работу', () => {
-  it('доступ закрывается при любом состоянии работы, рецензия остаётся', async () => {
-    await inRollbackTx(async (c) => {
-      const reviewer = await createUser(c, { role: 'expert' });
-      const admin = await createUser(c, { role: 'admin' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
-      const deal = await dealWithTranche(c);
-      const assignmentId = uuidv7();
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
-         VALUES ($1, $2, $3, 'manual', 'review', 'completed', now() + interval '30 days')`,
-        [assignmentId, deal.projectId, reviewer.id],
-      );
-      const reviewId = uuidv7();
-      await c.query(
-        `INSERT INTO experts.expert_reviews
-           (id, assignment_id, rubric_scores_jsonb, recommendation)
-         VALUES ($1, $2, '{"team":5,"product":5,"strategy":5,"legal":5,"finmodel":5,"scalability":5}'::jsonb,
-                 'pass')`,
-        [reviewId, assignmentId],
-      );
-
-      const before = await c.query<{ reviewer: boolean }>(
-        `SELECT experts.is_assigned_reviewer($1, $2) AS reviewer`,
-        [deal.projectId, reviewer.id],
-      );
-      // Сданная рецензия доступ не закрывает: автор видит то, о чём писал.
-      expect(before.rows[0]!.reviewer).toBe(true);
-
-      await c.query(
-        `UPDATE experts.expert_assignments
-            SET access_revoked_at = now(), access_revoked_by = $2,
-                access_revoke_reason = 'работа по проекту завершена'
-          WHERE id = $1`,
-        [assignmentId, admin.id],
-      );
-
-      const after = await c.query<{ reviewer: boolean; status: string; review_kept: boolean }>(
-        `SELECT experts.is_assigned_reviewer(a.project_id, a.expert_id) AS reviewer,
-                a.status,
-                EXISTS (SELECT 1 FROM experts.expert_reviews r WHERE r.id = $2) AS review_kept
-           FROM experts.expert_assignments a WHERE a.id = $1`,
-        [assignmentId, reviewId],
-      );
-      expect(after.rows[0]!.reviewer).toBe(false);
-      // Работа не переписана, рецензия на месте — закрылся только доступ.
-      expect(after.rows[0]!.status).toBe('completed');
-      expect(after.rows[0]!.review_kept).toBe(true);
-    });
-  });
-
-  it('прекращение доступа нельзя отменить правкой записи', async () => {
-    await inRollbackTx(async (c) => {
-      const reviewer = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
-      const deal = await dealWithTranche(c);
-      const assignmentId = uuidv7();
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, purpose, status, due_at,
-            access_revoked_at, access_revoke_reason)
-         VALUES ($1, $2, $3, 'manual', 'review', 'completed', now() + interval '30 days',
-                 now(), 'работа завершена')`,
-        [assignmentId, deal.projectId, reviewer.id],
-      );
-      // Вернуть доступ можно только новым назначением: иначе запись о
-      // прекращении ничего не доказывала бы.
-      await expect(
-        c.query(`UPDATE experts.expert_assignments SET access_revoked_at = NULL WHERE id = $1`, [
-          assignmentId,
-        ]),
-      ).rejects.toThrow(/уже прекращён/);
-    });
-  });
-
-  it('прекращение без основания невозможно', async () => {
-    await inRollbackTx(async (c) => {
-      const reviewer = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
-      const deal = await dealWithTranche(c);
-      const assignmentId = uuidv7();
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
-         VALUES ($1, $2, $3, 'manual', 'review', 'accepted', now() + interval '30 days')`,
-        [assignmentId, deal.projectId, reviewer.id],
-      );
-      await expect(
-        c.query(`UPDATE experts.expert_assignments SET access_revoked_at = now() WHERE id = $1`, [
-          assignmentId,
-        ]),
-      ).rejects.toThrow(/assignments_revoke_reason_present/);
-    });
-  });
-
-  it('рецензию нельзя удалить', async () => {
-    await inRollbackTx(async (c) => {
-      const reviewer = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [reviewer.id]);
-      const deal = await dealWithTranche(c);
-      const assignmentId = uuidv7();
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
-         VALUES ($1, $2, $3, 'manual', 'review', 'completed', now() + interval '30 days')`,
-        [assignmentId, deal.projectId, reviewer.id],
-      );
-      const reviewId = uuidv7();
-      await c.query(
-        `INSERT INTO experts.expert_reviews
-           (id, assignment_id, rubric_scores_jsonb, recommendation)
-         VALUES ($1, $2, '{"team":5,"product":5,"strategy":5,"legal":5,"finmodel":5,"scalability":5}'::jsonb,
-                 'pass')`,
-        [reviewId, assignmentId],
-      );
-      await expect(
-        c.query(`DELETE FROM experts.expert_reviews WHERE id = $1`, [reviewId]),
-      ).rejects.toThrow(/нельзя удалить/);
-    });
-  });
-
-  it('сопровождение сделки закрывается тем же способом', async () => {
-    await inRollbackTx(async (c) => {
-      const staff = await createUser(c, { role: 'expert' });
-      await c.query(`INSERT INTO experts.experts (user_id) VALUES ($1)`, [staff.id]);
-      const deal = await dealWithTranche(c);
-      const assignmentId = uuidv7();
-      await c.query(
-        `INSERT INTO experts.expert_assignments
-           (id, project_id, expert_id, assigned_reason, purpose, status, due_at)
-         VALUES ($1, $2, $3, 'manual', 'deal_support', 'accepted', now() + interval '30 days')`,
-        [assignmentId, deal.projectId, staff.id],
-      );
-      await c.query(
-        `UPDATE experts.expert_assignments
-            SET access_revoked_at = now(), access_revoke_reason = 'сопровождение прекращено'
-          WHERE id = $1`,
-        [assignmentId],
-      );
-      const { rows } = await c.query<{ supporter: boolean }>(
-        `SELECT experts.is_assigned_deal_supporter($1, $2) AS supporter`,
-        [deal.projectId, staff.id],
-      );
-      expect(rows[0]!.supporter).toBe(false);
+      const user = await createUser(c, { role: 'founder' });
+      await actAs(c, { userId: user.id, roles: ['expert', 'organizer'] });
+      expect(await hasCapability(c, CAPABILITY)).toBe(false);
+      expect(await hasCapability(c, 'finance.tranche_return.record')).toBe(false);
     });
   });
 });

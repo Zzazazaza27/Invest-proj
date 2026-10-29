@@ -1,9 +1,13 @@
 /**
  * Создание логин-пользователей БД из переменных окружения.
  *
- * Групповые роли (app_backend, app_billing, …) создаёт миграция M000 как
+ * Групповые роли (app_backend, app_notifications, …) создаёт миграция M000 как
  * NOLOGIN — паролей в миграциях нет и быть не должно. Этот скрипт заводит
  * логин-пользователей и включает их в соответствующие группы.
+ *
+ * Контуры денег и сделок (app_billing, app_investments) удалены в 2.1-W05:
+ * M150 отозвала у них все права, и логин-пользователи для них больше не
+ * заводятся. Сами групповые роли общие для баз кластера и снимаются вручную.
  *
  * Пароль НЕ передаётся на сервер в открытом виде: клиент сам считает
  * SCRAM-SHA-256 верификатор и отправляет уже его. Иначе пароль сервисной роли
@@ -22,12 +26,6 @@ const ROLE_MAP: { login: string; group: string; passwordEnv: string }[] = [
     group: 'app_public_read',
     passwordEnv: 'DB_ROLE_PASSWORD_APP_PUBLIC_READ',
   },
-  {
-    login: 'app_investments_user',
-    group: 'app_investments',
-    passwordEnv: 'DB_ROLE_PASSWORD_APP_INVESTMENTS',
-  },
-  { login: 'app_billing_user', group: 'app_billing', passwordEnv: 'DB_ROLE_PASSWORD_APP_BILLING' },
   {
     login: 'app_notifications_user',
     group: 'app_notifications',

@@ -12,13 +12,8 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { Client } from './helpers.ts';
 import {
   actAs,
-  approveKyc,
   closePool,
-  createEntity,
-  createInvestorSubscription,
-  createOffer,
   createProject,
-  createSignedAgreement,
   createUser,
   getPool,
   inRollbackTx,
@@ -53,7 +48,7 @@ describe('RLS: изоляция проектов', () => {
     });
   });
 
-  it('инвестор БЕЗ подписки не видит листинг', async () => {
+  it('инвестор строку проекта не читает — только проекцию по предикату (M090)', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c, { role: 'founder' });
       const investor = await createUser(c, { role: 'investor' });
@@ -62,190 +57,42 @@ describe('RLS: изоляция проектов', () => {
       await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
       const { rows } = await c.query('SELECT id FROM lab.projects WHERE id = $1', [project]);
       expect(rows).toHaveLength(0);
+      // Проект в режиме «все»: тизер виден, как и анониму, — не шире.
+      const view = await c.query('SELECT profile_audience FROM lab.project_view_base($1)', [
+        project,
+      ]);
+      expect(view.rows).toEqual([{ profile_audience: 'public' }]);
     });
   });
 
-  it('инвестор С подпиской строку проекта не читает — только проекцию по предикату (M090)', async () => {
+  it('удалённые роли (2.1-W05) в сессии не дают ни строк, ни проекций', async () => {
     await inRollbackTx(async (c) => {
       const founder = await createUser(c, { role: 'founder' });
-      const investor = await createUser(c, { role: 'investor' });
-      const project = await createProject(c, founder.id, { listed: true });
-      await createInvestorSubscription(c, investor.id);
+      const outsider = await createUser(c, { role: 'founder' });
+      const hidden = await createProject(c, founder.id, { listed: false });
 
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      const { rows } = await c.query('SELECT id FROM lab.projects WHERE id = $1', [project]);
-      expect(rows).toHaveLength(0);
-      const view = await c.query('SELECT id FROM lab.project_view_base($1)', [project]);
-      expect(view.rows).toHaveLength(1);
-    });
-  });
-
-  it('инвестор с подпиской НЕ видит нелистинговый проект', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const investor = await createUser(c, { role: 'investor' });
-      const project = await createProject(c, founder.id, { listed: false });
-      await createInvestorSubscription(c, investor.id);
-
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      const { rows } = await c.query('SELECT id FROM lab.projects WHERE id = $1', [project]);
-      expect(rows).toHaveLength(0);
-    });
-  });
-
-  it('эксперт не видит неназначенный проект', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const expert = await createUser(c, { role: 'expert' });
-      const project = await createProject(c, founder.id);
-
-      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
-      const { rows } = await c.query('SELECT id FROM lab.projects WHERE id = $1', [project]);
-      expect(rows).toHaveLength(0);
+      // Старый токен мог нести удалённые роли. Ядро их отсекает, но и база не
+      // должна давать им ничего, даже если они дошли до GUC.
+      await actAs(c, {
+        userId: outsider.id,
+        roles: ['organizer', 'expert', 'showrunner'],
+        dbRole: 'app_backend',
+      });
+      expect((await c.query('SELECT id FROM lab.projects WHERE id = $1', [hidden])).rows).toEqual(
+        [],
+      );
+      expect((await c.query('SELECT id FROM lab.project_view_base($1)', [hidden])).rows).toEqual(
+        [],
+      );
+      const users = await c.query('SELECT id FROM identity.users');
+      expect(users.rows.map((r) => r.id)).toEqual([outsider.id]);
+      const roles = await c.query('SELECT user_id FROM identity.user_roles');
+      expect(new Set(roles.rows.map((r) => r.user_id))).toEqual(new Set([outsider.id]));
     });
   });
 });
 
-describe('RLS: паспорт и скоринг', () => {
-  it('инвестор без подписки не видит полный паспорт', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const investor = await createUser(c, { role: 'investor' });
-      const project = await createProject(c, founder.id, { listed: true });
-      await c.query(
-        `INSERT INTO scoring.investment_passports (id, project_id, version, jsonb_data,
-                                                   disclosure_tier, published_at)
-         VALUES (public.uuid_generate_v7(), $1, 1, '{}'::jsonb, 'full', now())`,
-        [project],
-      );
-
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      const { rows } = await c.query(
-        'SELECT id FROM scoring.investment_passports WHERE project_id = $1',
-        [project],
-      );
-      expect(rows).toHaveLength(0);
-    });
-  });
-
-  it('tier=dataroom не выдаётся инвестору даже с подпиской', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const investor = await createUser(c, { role: 'investor' });
-      const project = await createProject(c, founder.id, { listed: true });
-      await createInvestorSubscription(c, investor.id);
-      await c.query(
-        `INSERT INTO scoring.investment_passports (id, project_id, version, jsonb_data,
-                                                   disclosure_tier, published_at)
-         VALUES (public.uuid_generate_v7(), $1, 1, '{}'::jsonb, 'dataroom', now())`,
-        [project],
-      );
-
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      const { rows } = await c.query(
-        'SELECT id FROM scoring.investment_passports WHERE project_id = $1',
-        [project],
-      );
-      expect(rows).toHaveLength(0);
-    });
-  });
-});
-
-describe('RLS: регулируемый инвестконтур', () => {
-  it('посторонний не видит чужой договор', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const investor = await createUser(c, { role: 'investor' });
-      const stranger = await createUser(c, { role: 'investor' });
-      await approveKyc(c, investor.id);
-      const entity = await createEntity(c, founder.id);
-      const project = await createProject(c, founder.id, { listed: true });
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-      });
-      const agreement = await createSignedAgreement(c, { offerId: offer, investorId: investor.id });
-
-      await actAs(c, { userId: stranger.id, roles: ['investor'], dbRole: 'app_backend' });
-      const { rows } = await c.query(
-        'SELECT id FROM investments.investment_agreements WHERE id = $1',
-        [agreement],
-      );
-      expect(rows).toHaveLength(0);
-    });
-  });
-
-  it('инвестор видит СВОЙ договор', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const investor = await createUser(c, { role: 'investor' });
-      await approveKyc(c, investor.id);
-      const entity = await createEntity(c, founder.id);
-      const project = await createProject(c, founder.id, { listed: true });
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-      });
-      const agreement = await createSignedAgreement(c, { offerId: offer, investorId: investor.id });
-
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      const { rows } = await c.query(
-        'SELECT id FROM investments.investment_agreements WHERE id = $1',
-        [agreement],
-      );
-      expect(rows).toHaveLength(1);
-    });
-  });
-
-  it('выписка номинального счёта недоступна роли основного API', async () => {
-    await inRollbackTx(async (c) => {
-      const user = await createUser(c, { role: 'investor' });
-      await c.query(
-        `INSERT INTO investments.nominal_account_transactions
-           (id, bank_transaction_ref, direction, amount, booked_at, raw_statement_sha256)
-         VALUES (public.uuid_generate_v7(), 'ref-rls-1', 'incoming', 1000, now(), digest('s','sha256'))`,
-      );
-
-      // app_backend не получает GRANT на банковскую выписку вовсе — защита
-      // срабатывает на уровне привилегий, ещё до RLS. Это сильнее, чем
-      // «политика вернула ноль строк».
-      await actAs(c, { userId: user.id, roles: ['investor'], dbRole: 'app_backend' });
-      await expect(
-        c.query('SELECT id FROM investments.nominal_account_transactions'),
-      ).rejects.toThrow(/permission denied/i);
-    });
-  });
-});
-
-describe('RLS: разделение денежных прав между ролями БД', () => {
-  it('app_backend не может подтвердить транш', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const investor = await createUser(c, { role: 'investor' });
-      await approveKyc(c, investor.id);
-      const entity = await createEntity(c, founder.id);
-      const project = await createProject(c, founder.id, { listed: true });
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-      });
-      const agreement = await createSignedAgreement(c, { offerId: offer, investorId: investor.id });
-
-      await actAs(c, { userId: null, roles: ['system'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `INSERT INTO investments.investment_tranches
-             (id, agreement_id, tranche_no, amount, status, transferred_at, confirmed_at)
-           VALUES (public.uuid_generate_v7(), $1, 1, 1000, 'confirmed', now(), now())`,
-          [agreement],
-        ),
-      ).rejects.toThrow();
-    });
-  });
-
+describe('RLS: разделение прав между ролями БД', () => {
   /**
    * Разделение ролей держится не только на GRANT'ах, но и на том, что
    * логин-пользователь приложения НЕ состоит в сервисных группах: иначе любая
@@ -270,21 +117,6 @@ describe('RLS: разделение денежных прав между рол�
     }
   });
 
-  it('app_backend не может создать начисление вознаграждения', async () => {
-    await inRollbackTx(async (c) => {
-      await actAs(c, { userId: null, roles: ['system'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `INSERT INTO billing.commission_accruals
-             (id, agreement_id, trigger_tranche_id, fee_schedule_id, base_amount,
-              investor_fee_pct, issuer_fee_pct)
-           VALUES (public.uuid_generate_v7(), public.uuid_generate_v7(), public.uuid_generate_v7(),
-                   public.uuid_generate_v7(), 1000, 10, 5)`,
-        ),
-      ).rejects.toThrow();
-    });
-  });
-
   it('ни одна роль приложения не может писать напрямую в журнал событий', async () => {
     for (const role of ['app_backend', 'app_investments', 'app_billing', 'app_integration']) {
       await inRollbackTx(async (c) => {
@@ -292,7 +124,7 @@ describe('RLS: разделение денежных прав между рол�
         await expect(
           c.query(
             `INSERT INTO audit.events (id, verb, actor_role, context_jsonb)
-             VALUES (public.uuid_generate_v7(), 'lab.season.opened', 'admin', '{}'::jsonb)`,
+             VALUES (public.uuid_generate_v7(), 'lab.project.created', 'admin', '{}'::jsonb)`,
           ),
         ).rejects.toThrow();
       });
@@ -322,89 +154,14 @@ describe('RLS: разделение денежных прав между рол�
   });
 });
 
-describe('RLS: экспертиза и уведомления', () => {
-  /** Эксперт с назначением в заданном статусе. Возвращает id проекта и эксперта. */
-  async function assignedReviewer(
-    c: Client,
-    status: string,
-  ): Promise<{ projectId: string; expertId: string }> {
-    const founder = await createUser(c, { role: 'founder' });
-    const expert = await createUser(c, { role: 'expert' });
-    const projectId = await createProject(c, founder.id);
-    await c.query(
-      `INSERT INTO experts.experts (user_id, expertise_tags) VALUES ($1, ARRAY['fintech'])`,
-      [expert.id],
-    );
-    await c.query(
-      `INSERT INTO experts.expert_assignments
-         (id, project_id, expert_id, assigned_reason, status, due_at)
-       VALUES ($1, $2, $3, 'manual', $4, now() + interval '7 days')`,
-      [uuidv7(), projectId, expert.id, status],
-    );
-    return { projectId, expertId: expert.id };
-  }
-
-  // Обратный случай — «эксперт не видит неназначенный проект» — уже закрыт в
-  // блоке изоляции проектов; здесь проверяется, что назначение доступ ОТКРЫВАЕТ.
-  it('назначенный рецензент видит проект — иначе рецензировать нечего', async () => {
-    await inRollbackTx(async (c) => {
-      const { projectId, expertId } = await assignedReviewer(c, 'accepted');
-
-      await actAs(c, { userId: expertId, roles: ['expert'], dbRole: 'app_backend' });
-      const { rows } = await c.query('SELECT id FROM lab.projects WHERE id = $1', [projectId]);
-      expect(rows).toHaveLength(1);
-    });
-  });
-
-  it('отказавшийся от назначения эксперт теряет доступ к проекту', async () => {
-    await inRollbackTx(async (c) => {
-      const { projectId, expertId } = await assignedReviewer(c, 'declined');
-
-      await actAs(c, { userId: expertId, roles: ['expert'], dbRole: 'app_backend' });
-      const { rows } = await c.query('SELECT id FROM lab.projects WHERE id = $1', [projectId]);
-      expect(rows).toHaveLength(0);
-    });
-  });
-
-  it('эксперт не читает чужую рецензию', async () => {
-    await inRollbackTx(async (c) => {
-      const first = await assignedReviewer(c, 'accepted');
-      const intruder = await createUser(c, { role: 'expert' });
-      const { rows: assignment } = await c.query<{ id: string }>(
-        `SELECT id FROM experts.expert_assignments WHERE expert_id = $1`,
-        [first.expertId],
-      );
-      await c.query(
-        `INSERT INTO experts.expert_reviews
-           (id, assignment_id, rubric_scores_jsonb, recommendation)
-         VALUES ($1, $2, $3::jsonb, 'pass')`,
-        [
-          uuidv7(),
-          assignment[0]!.id,
-          JSON.stringify({
-            team: 8,
-            product: 8,
-            strategy: 8,
-            legal: 8,
-            finmodel: 8,
-            scalability: 8,
-          }),
-        ],
-      );
-
-      await actAs(c, { userId: intruder.id, roles: ['expert'], dbRole: 'app_backend' });
-      const { rows } = await c.query('SELECT id FROM experts.expert_reviews');
-      expect(rows).toHaveLength(0);
-    });
-  });
-
+describe('RLS: уведомления', () => {
   it('пользователь не видит чужих уведомлений и чужих устройств', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const intruder = await createUser(c, { role: 'founder' });
       await c.query(
         `INSERT INTO comms.notifications (id, user_id, channel, template_code, payload_jsonb)
-         VALUES ($1, $2, 'push', 'project.scored', '{}'::jsonb)`,
+         VALUES ($1, $2, 'push', 'listing.published', '{}'::jsonb)`,
         [uuidv7(), owner.id],
       );
       await c.query(
@@ -420,39 +177,18 @@ describe('RLS: экспертиза и уведомления', () => {
       expect(devices.rows).toHaveLength(0);
     });
   });
-
-  it('роль приложения не может пересчитать рейтинг мимо функции-обёртки', async () => {
-    await inRollbackTx(async (c) => {
-      await actAs(c, { userId: null, roles: ['admin'], dbRole: 'app_backend' });
-      await expect(c.query('REFRESH MATERIALIZED VIEW seasons.mv_season_rating')).rejects.toThrow();
-    });
-  });
-
-  it('без роли организатора функция пересчёта рейтинга отказывает', async () => {
-    await inRollbackTx(async (c) => {
-      const user = await createUser(c, { role: 'founder' });
-      await actAs(c, { userId: user.id, roles: ['founder'], dbRole: 'app_backend' });
-      await expect(c.query('SELECT seasons.refresh_rating()')).rejects.toThrow(
-        /admin or organizer/,
-      );
-    });
-  });
 });
 
 describe('RLS: граница интеграционного контура', () => {
   /**
    * Роль `app_integration` обслуживает ВНЕШНИЕ системы. Проверяется не то, что
-   * ей доступно, а то, что ей недоступно: персональные данные, деньги и чужая
-   * переписка. Отказ здесь — это и есть работающая граница.
+   * ей доступно, а то, что ей недоступно: персональные данные, проверки
+   * личности и чужая переписка. Отказ здесь — это и есть работающая граница.
    */
   const forbidden: [string, string][] = [
     ['персональные данные пользователей', 'SELECT id FROM identity.users LIMIT 1'],
-    ['согласия на публичность', 'SELECT id FROM identity.publication_consents LIMIT 1'],
     ['верификации KYC', 'SELECT id FROM kyc.kyc_verifications LIMIT 1'],
-    ['начисления вознаграждения', 'SELECT id FROM billing.commission_accruals LIMIT 1'],
-    ['платежи', 'SELECT id FROM billing.payments LIMIT 1'],
     ['очередь уведомлений', 'SELECT id FROM comms.notifications LIMIT 1'],
-    ['рецензии экспертов', 'SELECT id FROM experts.expert_reviews LIMIT 1'],
   ];
 
   for (const [label, query] of forbidden) {
@@ -470,161 +206,6 @@ describe('RLS: граница интеграционного контура', ()
       // Позитивный контроль: отказы выше должны означать «нет прав», а не
       // «роль не работает вовсе».
       await expect(c.query('SELECT id FROM lab.projects LIMIT 1')).resolves.toBeDefined();
-      await expect(c.query('SELECT id FROM seasons.seasons LIMIT 1')).resolves.toBeDefined();
-      await expect(
-        c.query('SELECT id FROM scoring.investment_passports LIMIT 1'),
-      ).resolves.toBeDefined();
-    });
-  });
-
-  it('факт согласия доступен интеграции без доступа к самим согласиям', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const projectId = await createProject(c, founder.id);
-      await c.query(
-        `INSERT INTO identity.publication_consents
-           (id, user_id, project_id, scope, document_version, document_sha256)
-         VALUES ($1, $2, $3, 'top100_public', 'v1', digest('doc','sha256'))`,
-        [uuidv7(), founder.id, projectId],
-      );
-
-      await actAs(c, { userId: null, roles: [], dbRole: 'app_integration' });
-      const { rows } = await c.query(
-        `SELECT scope, granted_at FROM integration.active_publication_consent($1, 'top100_public')`,
-        [projectId],
-      );
-      expect(rows).toHaveLength(1);
-      // Через функцию не достать ни владельца согласия, ни его документ.
-      expect(Object.keys(rows[0] as object).sort()).toEqual(['granted_at', 'scope']);
-    });
-  });
-
-  it('отозванное согласие исчезает из выдачи функции немедленно', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const projectId = await createProject(c, founder.id);
-      const { rows: inserted } = await c.query<{ id: string }>(
-        `INSERT INTO identity.publication_consents
-           (id, user_id, project_id, scope, document_version, document_sha256)
-         VALUES ($1, $2, $3, 'top100_public', 'v1', digest('doc','sha256'))
-         RETURNING id`,
-        [uuidv7(), founder.id, projectId],
-      );
-      await c.query('UPDATE identity.publication_consents SET revoked_at = now() WHERE id = $1', [
-        inserted[0]!.id,
-      ]);
-
-      await actAs(c, { userId: null, roles: [], dbRole: 'app_integration' });
-      const { rows } = await c.query(
-        `SELECT scope FROM integration.active_publication_consent($1, 'top100_public')`,
-        [projectId],
-      );
-      expect(rows).toHaveLength(0);
-    });
-  });
-
-  /**
-   * Граница проекта у согласия на публичность (M059).
-   *
-   * Прежняя политика проверяла только «согласие выдано ОТ СЕБЯ», но не то, что
-   * человек имеет отношение к проекту: строку согласия на чужой проект мог
-   * оставить кто угодно, а медиаконтур читает эти строки как разрешение снимать.
-   */
-  it('согласие на публичность нельзя выдать на чужой проект', async () => {
-    await inRollbackTx(async (c) => {
-      const owner = await createUser(c, { role: 'founder' });
-      const stranger = await createUser(c, { role: 'founder' });
-      const projectId = await createProject(c, owner.id);
-
-      await actAs(c, { userId: stranger.id, roles: ['founder'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `INSERT INTO identity.publication_consents
-             (id, user_id, project_id, scope, document_version, document_sha256)
-           VALUES ($1, $2, $3, 'final_live', 'v1', digest('doc','sha256'))`,
-          [uuidv7(), stranger.id, projectId],
-        ),
-      ).rejects.toThrow();
-    });
-  });
-
-  it('участник проекта выдаёт согласие на публичность сам', async () => {
-    // Позитивный контроль к предыдущему тесту: отказ выше обязан означать
-    // «не участник», а не «политика запрещает всем».
-    await inRollbackTx(async (c) => {
-      const owner = await createUser(c, { role: 'founder' });
-      const projectId = await createProject(c, owner.id);
-
-      await actAs(c, { userId: owner.id, roles: ['founder'], dbRole: 'app_backend' });
-      const { rowCount } = await c.query(
-        `INSERT INTO identity.publication_consents
-           (id, user_id, project_id, scope, document_version, document_sha256)
-         VALUES ($1, $2, $3, 'final_live', 'v1', digest('doc','sha256'))`,
-        [uuidv7(), owner.id, projectId],
-      );
-      expect(rowCount).toBe(1);
-    });
-  });
-
-  it('вышедший из проекта отзывает собственное согласие', async () => {
-    // Требование членства стоит только на ВЫДАЧЕ. Если бы оно попало и в отзыв,
-    // человек, выбывший из проекта, не смог бы отозвать согласие на съёмку —
-    // а право отозвать согласие (152-ФЗ ст. 9) не зависит от состава команды.
-    await inRollbackTx(async (c) => {
-      const owner = await createUser(c, { role: 'founder' });
-      const projectId = await createProject(c, owner.id);
-      const consentId = uuidv7();
-      await c.query(
-        `INSERT INTO identity.publication_consents
-           (id, user_id, project_id, scope, document_version, document_sha256)
-         VALUES ($1, $2, $3, 'episode_bootcamp', 'v1', digest('doc','sha256'))`,
-        [consentId, owner.id, projectId],
-      );
-      await c.query('DELETE FROM lab.founders_projects WHERE project_id = $1 AND user_id = $2', [
-        projectId,
-        owner.id,
-      ]);
-
-      await actAs(c, { userId: owner.id, roles: ['founder'], dbRole: 'app_backend' });
-      const { rowCount } = await c.query(
-        'UPDATE identity.publication_consents SET revoked_at = now() WHERE id = $1',
-        [consentId],
-      );
-      expect(rowCount).toBe(1);
-    });
-  });
-
-  it('момент выпуска проставляется триггером и не переписывается', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c, { role: 'founder' });
-      const projectId = await createProject(c, founder.id);
-      // Проект проходит воронку по шагам. Прыжок `draft -> graduated` запрещён
-      // триггером `projects_stage_order` (M025), и тест, который его делал,
-      // был зелёным только на устаревшей схеме.
-      for (const stage of [
-        'submitted',
-        'ai_review',
-        'expert_review',
-        'bootcamp',
-        'finalist',
-        'graduated',
-      ]) {
-        await c.query(`UPDATE lab.projects SET status = $2 WHERE id = $1`, [projectId, stage]);
-      }
-      const first = await c.query<{ graduated_at: Date }>(
-        'SELECT graduated_at FROM lab.projects WHERE id = $1',
-        [projectId],
-      );
-      expect(first.rows[0]!.graduated_at).not.toBeNull();
-
-      // Повторное обновление статуса не должно сдвигать точку отсчёта, по
-      // которой внешние системы синхронизируются.
-      await c.query(`UPDATE lab.projects SET status = 'graduated' WHERE id = $1`, [projectId]);
-      const second = await c.query<{ graduated_at: Date }>(
-        'SELECT graduated_at FROM lab.projects WHERE id = $1',
-        [projectId],
-      );
-      expect(second.rows[0]!.graduated_at.getTime()).toBe(first.rows[0]!.graduated_at.getTime());
     });
   });
 });
@@ -944,219 +525,6 @@ describe('RLS: избранные проекты инвестора (M063)', () 
   });
 });
 
-describe('RLS: рабочая зона эксперта (M064)', () => {
-  /** Эксперт с назначением на проект. Фикстуры заводятся от имени владельца. */
-  async function assignExpert(c: Client): Promise<{
-    expert: { id: string };
-    other: { id: string };
-    project: string;
-    assignment: string;
-  }> {
-    const owner = await createUser(c, { role: 'founder' });
-    const expert = await createUser(c, { role: 'expert' });
-    const other = await createUser(c, { role: 'expert' });
-    const project = await createProject(c, owner.id);
-
-    for (const person of [expert, other]) {
-      await c.query(
-        `INSERT INTO experts.experts (user_id, expertise_tags) VALUES ($1, ARRAY['fintech'])
-         ON CONFLICT (user_id) DO NOTHING`,
-        [person.id],
-      );
-    }
-    const assignment = uuidv7();
-    await c.query(
-      `INSERT INTO experts.expert_assignments
-         (id, project_id, expert_id, assigned_reason, status, due_at)
-       VALUES ($1, $2, $3, 'manual', 'accepted', now() + interval '7 days')`,
-      [assignment, project, expert.id],
-    );
-    return { expert, other, project, assignment };
-  }
-
-  it('заметку нельзя оставить в чужом рассмотрении', async () => {
-    await inRollbackTx(async (c) => {
-      const { other, assignment } = await assignExpert(c);
-      await actAs(c, { userId: other.id, roles: ['expert'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `INSERT INTO experts.expert_notes (id, assignment_id, author_id, body)
-                VALUES ($1, $2, $3, 'Чужая заметка')`,
-          [uuidv7(), assignment, other.id],
-        ),
-      ).rejects.toMatchObject({ code: '42501' });
-    });
-  });
-
-  it('заметку нельзя подписать чужим именем', async () => {
-    await inRollbackTx(async (c) => {
-      const { expert, other, assignment } = await assignExpert(c);
-      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `INSERT INTO experts.expert_notes (id, assignment_id, author_id, body)
-                VALUES ($1, $2, $3, 'Подпись коллеги')`,
-          [uuidv7(), assignment, other.id],
-        ),
-      ).rejects.toMatchObject({ code: '42501' });
-    });
-  });
-
-  it('чужие заметки не читаются', async () => {
-    await inRollbackTx(async (c) => {
-      const { expert, other, assignment } = await assignExpert(c);
-      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
-      const mine = await c.query(
-        `INSERT INTO experts.expert_notes (id, assignment_id, author_id, body)
-              VALUES ($1, $2, $3, 'Своя заметка')`,
-        [uuidv7(), assignment, expert.id],
-      );
-      // Позитивный контроль: своя заметка пишется — иначе следующая проверка
-      // была бы зелёной просто потому, что писать нельзя вообще.
-      expect(mine.rowCount).toBe(1);
-
-      await actAs(c, { userId: other.id, roles: ['expert'], dbRole: 'app_backend' });
-      const { rows } = await c.query('SELECT id FROM experts.expert_notes');
-      expect(rows).toHaveLength(0);
-    });
-  });
-
-  // UPDATE и DELETE проверяются в РАЗНЫХ транзакциях: отказ 42501 обрывает
-  // текущую, и вторая проверка внутри одной падала бы с 25P02 «transaction is
-  // aborted» — то есть была бы красной по неверной причине.
-  it.each([
-    ['переписать', `UPDATE experts.expert_notes SET body = 'Переписано' WHERE id = $1`],
-    ['удалить', 'DELETE FROM experts.expert_notes WHERE id = $1'],
-  ])('заметку нельзя %s', async (_what, statement) => {
-    await inRollbackTx(async (c) => {
-      const { expert, assignment } = await assignExpert(c);
-      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
-      const noteId = uuidv7();
-      await c.query(
-        `INSERT INTO experts.expert_notes (id, assignment_id, author_id, body)
-              VALUES ($1, $2, $3, 'Исходная запись')`,
-        [noteId, assignment, expert.id],
-      );
-      // Прав UPDATE и DELETE нет вовсе — отказ приходит от GRANT, а не от
-      // политики, и это правильный уровень: append-only заявлен привилегиями.
-      await expect(c.query(statement, [noteId])).rejects.toMatchObject({ code: '42501' });
-    });
-  });
-
-  it('рецензию нельзя переписать после решения консенсуса', async () => {
-    await inRollbackTx(async (c) => {
-      const { expert, project, assignment } = await assignExpert(c);
-      // Решение консенсуса принимает администратор: роль organizer бездействует,
-      // пока сезонный контур отложен (M088, флаг seasons.enabled).
-      const decider = await createUser(c, { role: 'admin' });
-
-      const scores = JSON.stringify({
-        team: 7,
-        product: 7,
-        strategy: 7,
-        legal: 7,
-        finmodel: 7,
-        scalability: 7,
-      });
-      await c.query(
-        `INSERT INTO experts.expert_reviews
-           (id, assignment_id, rubric_scores_jsonb, comment, recommendation)
-         VALUES ($1, $2, $3::jsonb, 'Есть замечания', 'needs_review')`,
-        [uuidv7(), assignment, scores],
-      );
-
-      // До решения пересмотр разрешён — позитивный контроль окна.
-      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
-      const before = await c.query(
-        `UPDATE experts.expert_reviews SET recommendation = 'pass' WHERE assignment_id = $1`,
-        [assignment],
-      );
-      expect(before.rowCount).toBe(1);
-
-      await actAs(c, { userId: decider.id, roles: ['admin'], dbRole: 'app_backend' });
-      await c.query(
-        `INSERT INTO experts.review_consensus (id, project_id, final_decision, decided_by)
-              VALUES ($1, $2, 'needs_review', $3)`,
-        [uuidv7(), project, decider.id],
-      );
-
-      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `UPDATE experts.expert_reviews SET recommendation = 'fail' WHERE assignment_id = $1`,
-          [assignment],
-        ),
-      ).rejects.toMatchObject({ code: '42501' });
-    });
-  });
-
-  it('рецензию нельзя перенести на другое назначение', async () => {
-    await inRollbackTx(async (c) => {
-      const first = await assignExpert(c);
-      const second = await assignExpert(c);
-      const scores = JSON.stringify({
-        team: 5,
-        product: 5,
-        strategy: 5,
-        legal: 5,
-        finmodel: 5,
-        scalability: 5,
-      });
-      await c.query(
-        `INSERT INTO experts.expert_reviews
-           (id, assignment_id, rubric_scores_jsonb, recommendation)
-         VALUES ($1, $2, $3::jsonb, 'pass')`,
-        [uuidv7(), first.assignment, scores],
-      );
-
-      await actAs(c, { userId: first.expert.id, roles: ['expert'], dbRole: 'app_backend' });
-      await expect(
-        c.query(`UPDATE experts.expert_reviews SET assignment_id = $2 WHERE assignment_id = $1`, [
-          first.assignment,
-          second.assignment,
-        ]),
-      ).rejects.toMatchObject({ code: '42501' });
-    });
-  });
-
-  it('эксперт читает журнал только по своему назначению', async () => {
-    await inRollbackTx(async (c) => {
-      const { expert, other, assignment } = await assignExpert(c);
-
-      // Событие пишется единственным разрешённым путём — через app_emit_event.
-      await c.query(`SELECT set_config('app.event_emit_context', 'on', true)`);
-      await c
-        .query(`SELECT audit.app_emit_event($1, $2, $3, $4, $5, $6, $7)`, [
-          'lab.expert.assigned',
-          null,
-          'organizer',
-          'expert_assignment',
-          assignment,
-          JSON.stringify({ projectId: null }),
-          null,
-        ])
-        .catch(() => undefined);
-
-      await actAs(c, { userId: other.id, roles: ['expert'], dbRole: 'app_backend' });
-      const foreign = await c.query(
-        `SELECT id FROM audit.events WHERE subject_type = 'expert_assignment' AND subject_id = $1`,
-        [assignment],
-      );
-      expect(foreign.rows).toHaveLength(0);
-
-      // Позитивный контроль наличия события проверяется от имени владельца:
-      // если бы записи не было вовсе, предыдущая проверка была бы зелёной по
-      // неверной причине.
-      await actAs(c, { userId: expert.id, roles: ['expert'], dbRole: 'app_backend' });
-      const own = await c.query(
-        `SELECT id FROM audit.events WHERE subject_type = 'expert_assignment' AND subject_id = $1`,
-        [assignment],
-      );
-      expect(own.rows.length).toBeGreaterThanOrEqual(0);
-    });
-  });
-});
-
 describe('RLS: покрытие манифеста', () => {
   it('каждая доменная таблица имеет ENABLE + FORCE RLS и хотя бы одну политику', async () => {
     const { rows } = await getPool().query<{ table_name: string; reason: string }>(
@@ -1166,9 +534,8 @@ describe('RLS: покрытие манифеста', () => {
                    ELSE 'нет ни одной политики' END AS reason
          FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname IN ('identity','kyc','lab','investments','scoring','experts',
-                            'seasons','comms','billing','audit','integration','content',
-                            'testing')
+        WHERE n.nspname IN ('identity','kyc','lab','comms','billing','audit','integration',
+                            'content','testing')
           AND c.relkind IN ('r','p')
           AND c.relispartition = false
           AND (NOT c.relrowsecurity
@@ -1180,21 +547,19 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 13 схем и 112 таблиц', async () => {
+  it('схема соответствует спецификации: 9 схем и 50 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
-        WHERE schema_name IN ('identity','kyc','lab','investments','scoring','experts',
-                              'seasons','comms','billing','audit','integration','content',
-                              'testing')`,
+        WHERE schema_name IN ('identity','kyc','lab','comms','billing','audit','integration',
+                              'content','testing')`,
     );
-    expect(Number(schemas.rows[0]!.count)).toBe(13);
+    expect(Number(schemas.rows[0]!.count)).toBe(9);
 
     const tables = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
-        WHERE n.nspname IN ('identity','kyc','lab','investments','scoring','experts',
-                            'seasons','comms','billing','audit','integration','content',
-                            'testing')
+        WHERE n.nspname IN ('identity','kyc','lab','comms','billing','audit','integration',
+                            'content','testing')
           AND c.relkind IN ('r','p') AND c.relispartition = false`,
     );
     // 60 таблиц по docs/architecture/Database_Launch.md.
@@ -1298,7 +663,13 @@ describe('RLS: покрытие манифеста', () => {
     // + 1 таблица попыток завершения загрузки (M147, 2.1-W03): окончательный
     // ключ каждой попытки записывается до копирования, чтобы после сбоя найти
     // и копии, не ставшие итоговым файлом.
-    expect(Number(tables.rows[0]!.count)).toBe(112);
+    //
+    // − 62 таблицы и 4 схемы в M150 (2.1-W05): сезоны, инвестиционный процесс
+    // (заявки, анкеты, версии, раунды, сделки, биллинг кроме стран
+    // обслуживания), экспертиза, анализ ИИ, согласия на публичный контур,
+    // профили инвесторов, проекции сделок и внешние ссылки, служебные
+    // журналы агентов ИИ. История выше — как было, итог — 50.
+    expect(Number(tables.rows[0]!.count)).toBe(50);
   });
 });
 
@@ -1424,12 +795,12 @@ describe('RLS: роль планового обслуживания (M039, M147)
       // С M147 незавершённая загрузка лежит по временному ключу формы, а
       // окончательный ключ появляется только у готового материала.
       `INSERT INTO lab.project_materials
-         (id, project_id, type, version, s3_key, upload_key, upload_state, parse_status,
+         (id, project_id, type, version, s3_key, upload_key, upload_state,
           uploaded_by, created_at, uploaded_at, size_bytes)
        VALUES ($1, $2, 'deck', $7,
                CASE WHEN $6 THEN $3 ELSE NULL END,
                CASE WHEN $6 THEN NULL ELSE $3 || '/upload' END,
-               CASE WHEN $6 THEN 'ready' ELSE 'pending' END, 'queued', $4,
+               CASE WHEN $6 THEN 'ready' ELSE 'pending' END, $4,
                now() - ($5 || ' hours')::interval,
                CASE WHEN $6 THEN now() ELSE NULL END,
                CASE WHEN $6 THEN 1024 ELSE NULL END)`,
@@ -1514,82 +885,7 @@ describe('RLS: роль планового обслуживания (M039, M147)
   });
 });
 
-describe('M054: переходы подписки и выдача ролей', () => {
-  /** Своя подписка в статусе pending_payment — фикстура владельцем. */
-  async function pendingSubscription(c: Client, userId: string): Promise<string> {
-    const id = uuidv7();
-    await c.query(
-      `INSERT INTO billing.subscriptions
-         (id, user_id, plan_id, price_snapshot, terms_version, status)
-       SELECT $1, $2, sp.id, sp.price, 'v1', 'pending_payment'
-       FROM billing.subscription_plans sp
-       WHERE sp.code = 'investor_membership' AND sp.version = 1`,
-      [id, userId],
-    );
-    return id;
-  }
-
-  it('пользователь НЕ может активировать свою подписку (обход оплаты)', async () => {
-    await inRollbackTx(async (c) => {
-      const investor = await createUser(c, { role: 'investor' });
-      const sub = await pendingSubscription(c, investor.id);
-
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      await expect(
-        c.query(`UPDATE billing.subscriptions SET status = 'active' WHERE id = $1`, [sub]),
-      ).rejects.toThrow(/только отменить/);
-    });
-  });
-
-  it('пользователь НЕ может занизить себе цену при отмене (только status+canceled_at)', async () => {
-    await inRollbackTx(async (c) => {
-      const investor = await createUser(c, { role: 'investor' });
-      const sub = await pendingSubscription(c, investor.id);
-
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `UPDATE billing.subscriptions
-              SET status = 'canceled', canceled_at = now(), price_snapshot = 0.01
-            WHERE id = $1`,
-          [sub],
-        ),
-      ).rejects.toThrow(/только отменить/);
-    });
-  });
-
-  it('отмена своей подписки проходит (позитивный контроль)', async () => {
-    await inRollbackTx(async (c) => {
-      const investor = await createUser(c, { role: 'investor' });
-      const sub = await pendingSubscription(c, investor.id);
-
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      const { rowCount } = await c.query(
-        `UPDATE billing.subscriptions SET status = 'canceled', canceled_at = now()
-          WHERE id = $1`,
-        [sub],
-      );
-      expect(rowCount).toBe(1);
-    });
-  });
-
-  it('INSERT подписки сразу active отвергается политикой', async () => {
-    await inRollbackTx(async (c) => {
-      const investor = await createUser(c, { role: 'investor' });
-      await actAs(c, { userId: investor.id, roles: ['investor'], dbRole: 'app_backend' });
-      await expect(
-        c.query(
-          `INSERT INTO billing.subscriptions
-             (id, user_id, plan_id, price_snapshot, terms_version, status)
-           SELECT $1, $2, sp.id, sp.price, 'v1', 'active'
-           FROM billing.subscription_plans sp
-           WHERE sp.code = 'investor_membership' AND sp.version = 1`,
-          [uuidv7(), investor.id],
-        ),
-      ).rejects.toThrow();
-    });
-  });
-
+describe('M054: выдача ролей', () => {
   it('пользователь НЕ может выдать себе admin', async () => {
     await inRollbackTx(async (c) => {
       const user = await createUser(c, { role: 'founder' });
@@ -1610,7 +906,7 @@ describe('M054: переходы подписки и выдача ролей', (
       await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
       await expect(
         c.query(
-          `INSERT INTO identity.user_roles (user_id, role, granted_by) VALUES ($1, 'expert', $2)`,
+          `INSERT INTO identity.user_roles (user_id, role, granted_by) VALUES ($1, 'investor', $2)`,
           [target.id, target.id],
         ),
       ).rejects.toThrow();
@@ -1623,7 +919,7 @@ describe('M054: переходы подписки и выдача ролей', (
       const target = await createUser(c, { role: 'founder' });
       await actAs(c, { userId: admin.id, roles: ['admin'], dbRole: 'app_backend' });
       const { rowCount } = await c.query(
-        `INSERT INTO identity.user_roles (user_id, role, granted_by) VALUES ($1, 'expert', $2)`,
+        `INSERT INTO identity.user_roles (user_id, role, granted_by) VALUES ($1, 'investor', $2)`,
         [target.id, admin.id],
       );
       expect(rowCount).toBe(1);
@@ -1670,7 +966,7 @@ describe('M056: least privilege и доуточнённые инварианты
   it('сервисные роли НЕ читают password_hash, но читают разрешённые колонки', async () => {
     await inRollbackTx(async (c) => {
       await createUser(c, { role: 'investor' });
-      for (const role of ['app_investments', 'app_billing', 'app_notifications']) {
+      for (const role of ['app_notifications']) {
         await actAs(c, { userId: null, roles: [], dbRole: role });
         expect(await deniedInSavepoint(c, 'SELECT password_hash FROM identity.users LIMIT 1')).toBe(
           true,
@@ -1686,7 +982,7 @@ describe('M056: least privilege и доуточнённые инварианты
   it('сервисные роли НЕ читают шифртексты контактов и blind-индексы', async () => {
     await inRollbackTx(async (c) => {
       await createUser(c, { role: 'investor' });
-      await actAs(c, { userId: null, roles: [], dbRole: 'app_billing' });
+      await actAs(c, { userId: null, roles: [], dbRole: 'app_notifications' });
       for (const column of ['email_ciphertext', 'email_hmac', 'contact_wrapped_dek']) {
         expect(await deniedInSavepoint(c, `SELECT ${column} FROM identity.users LIMIT 1`)).toBe(
           true,
@@ -1738,12 +1034,12 @@ describe('M056: least privilege и доуточнённые инварианты
         const id = uuidv7();
         await c.query(
           `INSERT INTO lab.project_materials
-             (id, project_id, type, version, s3_key, upload_key, upload_state, parse_status,
+             (id, project_id, type, version, s3_key, upload_key, upload_state,
               uploaded_by, uploaded_at, size_bytes)
            VALUES ($1, $2, 'deck', $3,
                    CASE WHEN $6 THEN $4 ELSE NULL END,
                    CASE WHEN $6 THEN NULL ELSE $4 || '/upload' END,
-                   CASE WHEN $6 THEN 'ready' ELSE 'pending' END, 'queued', $5,
+                   CASE WHEN $6 THEN 'ready' ELSE 'pending' END, $5,
                    CASE WHEN $6 THEN now() ELSE NULL END,
                    CASE WHEN $6 THEN 1024 ELSE NULL END)`,
           [id, project, version, `projects/${project}/materials/deck/${id}`, uploader, uploaded],

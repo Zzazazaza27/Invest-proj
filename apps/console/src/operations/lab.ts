@@ -13,7 +13,7 @@ import {
 export const projectsGroup: OperationGroup = {
   id: 'projects',
   title: 'Проекты основателя',
-  note: 'Роль founder. Порядок: создать → материалы → подать → анализ → листинг.',
+  note: 'Роль founder. Порядок: создать → материалы → листинг.',
   operations: [
     {
       id: 'projects-create',
@@ -122,27 +122,6 @@ export const projectsGroup: OperationGroup = {
           stage: optionalStr(values, 'stage') as never,
           investmentAsk: optionalMoney(values, 'investmentAsk'),
         }),
-    },
-    {
-      id: 'projects-submit',
-      title: 'Подать заявку',
-      method: 'POST',
-      path: '/v1/projects/:id/submit',
-      summary:
-        'Фиксирует версию-снимок, на которую сошлётся экспертиза. Повторная подача без изменений отклоняется.',
-      needsAuth: true,
-      fields: [idField('projectId', 'Проект')],
-      run: (values, { api }) => api.projects.submit(str(values, 'projectId')),
-    },
-    {
-      id: 'projects-versions',
-      title: 'История подач',
-      method: 'GET',
-      path: '/v1/projects/:id/versions',
-      summary: 'Версии-снимки заявки. Именно на них ссылается рецензия, а не на текущее состояние.',
-      needsAuth: true,
-      fields: [idField('projectId', 'Проект')],
-      run: (values, { api }) => api.projects.versions(str(values, 'projectId')),
     },
     {
       id: 'projects-publish',
@@ -299,55 +278,6 @@ export const materialsGroup: OperationGroup = {
           projectId: str(values, 'projectId'),
           url: str(values, 'url'),
         }),
-    },
-  ],
-};
-
-export const analysisGroup: OperationGroup = {
-  id: 'analysis',
-  title: 'ИИ-анализ и паспорт',
-  note: 'Требует поданной заявки и подтверждённых материалов.',
-  operations: [
-    {
-      id: 'analysis-run',
-      title: 'Запустить анализ',
-      method: 'POST',
-      path: '/v1/projects/:id/analysis',
-      summary:
-        'Считает оценку по осям. В ответе видно, посчитала ли её модель или сработал запасной путь.',
-      needsAuth: true,
-      fields: [idField('projectId', 'Проект')],
-      run: (values, { api }) => api.projects.runAnalysis(str(values, 'projectId')),
-    },
-    {
-      id: 'analysis-readiness',
-      title: 'Готовность',
-      method: 'GET',
-      path: '/v1/projects/:id/readiness',
-      summary: 'Чего проекту не хватает до следующего этапа.',
-      needsAuth: true,
-      fields: [idField('projectId', 'Проект')],
-      run: (values, { api }) => api.projects.readiness(str(values, 'projectId')),
-    },
-    {
-      id: 'analysis-roadmap',
-      title: 'Дорожная карта',
-      method: 'GET',
-      path: '/v1/projects/:id/roadmap',
-      summary: 'Рекомендованные шаги проекта.',
-      needsAuth: true,
-      fields: [idField('projectId', 'Проект')],
-      run: (values, { api }) => api.projects.roadmap(str(values, 'projectId')),
-    },
-    {
-      id: 'analysis-passport',
-      title: 'Инвестиционный паспорт',
-      method: 'GET',
-      path: '/v1/projects/:id/passport',
-      summary: 'Сводка для инвестора. Проверь, что персональных данных основателя в ней нет.',
-      needsAuth: true,
-      fields: [idField('projectId', 'Проект')],
-      run: (values, { api }) => api.projects.passport(str(values, 'projectId')),
     },
   ],
 };

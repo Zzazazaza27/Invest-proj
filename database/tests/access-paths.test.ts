@@ -3,7 +3,6 @@ import type { Client } from './helpers.ts';
 import {
   actAs,
   closePool,
-  createInvestorSubscription,
   createProject,
   createUser,
   inRollbackTx,
@@ -14,15 +13,17 @@ import {
 /**
  * M090 (5.7.5): старые пути закрыты — RLS и вью на предикате доступа.
  *
- *  - инвестор (даже с членством) не читает строки проектов, паспортов,
- *    оценок и IRS напрямую; данные — только через проекции по предикату;
+ *  - инвестор не читает строки проектов напрямую; данные — только через
+ *    проекции по предикату;
  *  - материалы: по предикату materials И отметке владельца; grant {materials}
  *    в selected_investors читает только отмеченные; исключённый — ничего;
  *  - пользователь с несколькими ролями (founder + investor) на чужом
  *    закрытом проекте — ничего, на своём — всё;
- *  - каталог (v_public_catalog) — по сессии зрителя: registered_investors
- *    анониму не виден, допущенному инвестору виден; исключённому — нет;
- *  - избранное: добавить можно только проект с доступным тизером.
+ *  - каталог (v_public_catalog) — по сессии зрителя; избранное — только
+ *    проект с доступным тизером.
+ *
+ * Допуска инвестора по роли нет с 2.1-W05 (он держался на подписке):
+ * инвестор без личного разрешения видит ровно то, что аноним.
  */
 
 afterAll(async () => {
@@ -68,58 +69,25 @@ async function addMaterial(
   return id;
 }
 
-async function scoring(c: Client, projectId: string): Promise<void> {
-  const passportId = uuidv7();
-  await c.query(
-    `INSERT INTO scoring.investment_passports (id, project_id, version, jsonb_data, disclosure_tier, published_at)
-     VALUES ($1, $2, 1, '{}'::jsonb, 'teaser', now())`,
-    [passportId, projectId],
-  );
-  await c.query(
-    `INSERT INTO scoring.scores (id, project_id, passport_id, axis, value, confidence_low, confidence_high, explanation)
-     VALUES ($1, $2, $3, 'market', 70, 60, 80, 'тест')`,
-    [uuidv7(), projectId, passportId],
-  );
-  await c.query(`INSERT INTO scoring.irs_scores (id, project_id, value) VALUES ($1, $2, 60)`, [
-    uuidv7(),
-    projectId,
-  ]);
-}
-
-describe('M090: строки проектов и скоринга инвестору не читаются', () => {
-  it('инвестор с членством: projects, passports, scores, irs — пусто; проекции — по предикату', async () => {
+describe('M090: строки проектов инвестору не читаются', () => {
+  it('инвестор: строки projects — пусто; проекция — по предикату, как анониму', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id, { listed: true });
-      await scoring(c, projectId);
-      const memberInv = await createUser(c, { role: 'investor' });
-      await createInvestorSubscription(c, memberInv.id);
-      const v = asUser(memberInv.id, 'investor');
+      const investor = await createUser(c, { role: 'investor' });
+      const v = asUser(investor.id, 'investor');
 
       expect(await count(c, v, `SELECT 1 FROM lab.projects WHERE id = $1`, [projectId])).toBe(0);
-      expect(
-        await count(c, v, `SELECT 1 FROM scoring.investment_passports WHERE project_id = $1`, [
-          projectId,
-        ]),
-      ).toBe(0);
-      expect(
-        await count(c, v, `SELECT 1 FROM scoring.scores WHERE project_id = $1`, [projectId]),
-      ).toBe(0);
-      expect(
-        await count(c, v, `SELECT 1 FROM scoring.irs_scores WHERE project_id = $1`, [projectId]),
-      ).toBe(0);
-      expect(
-        await count(c, v, `SELECT 1 FROM lab.project_versions WHERE project_id = $1`, [projectId]),
-      ).toBe(0);
-      // Проекции — есть, по предикату.
-      expect(await count(c, v, `SELECT 1 FROM lab.project_view_base($1)`, [projectId])).toBe(1);
-      expect(await count(c, v, `SELECT 1 FROM lab.visible_passport($1)`, [projectId])).toBe(1);
+      const view = await as(c, v, () =>
+        c.query<{ profile_audience: string }>(
+          `SELECT profile_audience FROM lab.project_view_base($1)`,
+          [projectId],
+        ),
+      );
+      expect(view.rows).toEqual([{ profile_audience: 'public' }]);
       // Команда — строки как прежде.
       const team = asUser(owner.id, 'founder');
       expect(await count(c, team, `SELECT 1 FROM lab.projects WHERE id = $1`, [projectId])).toBe(1);
-      expect(
-        await count(c, team, `SELECT 1 FROM scoring.irs_scores WHERE project_id = $1`, [projectId]),
-      ).toBe(1);
     });
   });
 
@@ -132,7 +100,6 @@ describe('M090: строки проектов и скоринга инвесто
       await c.query(`INSERT INTO identity.user_roles (user_id, role) VALUES ($1, 'investor')`, [
         dual.id,
       ]);
-      await createInvestorSubscription(c, dual.id);
       const own = await createProject(c, dual.id, { listed: false });
       const v = asUser(dual.id, 'founder', 'investor');
 
@@ -155,7 +122,7 @@ describe('M090: строки проектов и скоринга инвесто
         ).rows[0]!.profile_audience,
       ).toBe('private');
 
-      // Исключение закрывает и допущенному с членством, и в каталоге.
+      // Исключение закрывает и проекцию, и каталог.
       await c.query(
         `INSERT INTO lab.project_access_exclusions (id, project_id, excluded_user_id, created_by)
          VALUES ($1, $2, $3, $4)`,
@@ -170,15 +137,13 @@ describe('M090: строки проектов и скоринга инвесто
 });
 
 describe('M090: материалы — предикат и отметка владельца', () => {
-  it('инвестор читает только отмеченные; grant {materials} — только отмеченные; исключённый — ничего', async () => {
+  it('в режиме «все» материалов вне команды не видит никто; grant {materials} — только отмеченные; исключённый — ничего', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id, { listed: true });
       const privateId = await addMaterial(c, projectId, owner.id, 'private', 1);
       const openId = await addMaterial(c, projectId, owner.id, 'investors', 2);
-      const memberInv = await createUser(c, { role: 'investor' });
-      await createInvestorSubscription(c, memberInv.id);
-      const noMember = await createUser(c, { role: 'investor' });
+      const investor = await createUser(c, { role: 'investor' });
       const rowsOf = (v: Viewer) =>
         as(c, v, async () =>
           (
@@ -189,15 +154,15 @@ describe('M090: материалы — предикат и отметка вла
           ).rows.map((r) => r.id),
         );
 
-      expect(await rowsOf(asUser(memberInv.id, 'investor'))).toEqual([openId]);
-      // Барьер включён: инвестор без членства в режиме public материалов не видит.
-      expect(await rowsOf(asUser(noMember.id, 'investor'))).toEqual([]);
+      // Допуска по роли нет: отметка «инвесторам» в режиме «все» ничего не
+      // открывает без личного разрешения.
+      expect(await rowsOf(asUser(investor.id, 'investor'))).toEqual([]);
       expect(await rowsOf(asUser(owner.id, 'founder'))).toEqual([privateId, openId]);
 
       await c.query(`UPDATE lab.projects SET visibility = 'selected_investors' WHERE id = $1`, [
         projectId,
       ]);
-      expect(await rowsOf(asUser(memberInv.id, 'investor'))).toEqual([]);
+      expect(await rowsOf(asUser(investor.id, 'investor'))).toEqual([]);
       const grantee = await createUser(c, { role: 'investor' });
       await c.query(
         `INSERT INTO lab.project_access_grants (id, project_id, grantee_user_id, permissions, granted_by)
@@ -224,50 +189,41 @@ describe('M090: материалы — предикат и отметка вла
 });
 
 describe('M090: каталог и избранное по сессии зрителя', () => {
-  it('registered_investors: анониму нет, допущенному есть; избранное только при доступном тизере', async () => {
+  it('каталог и избранное: в режиме «все» — всем; «зарегистрированные инвесторы» — никому вне команды', async () => {
     await inRollbackTx(async (c) => {
       const owner = await createUser(c, { role: 'founder' });
       const projectId = await createProject(c, owner.id, { listed: true });
-      await c.query(`UPDATE lab.projects SET visibility = 'registered_investors' WHERE id = $1`, [
-        projectId,
-      ]);
-      const memberInv = await createUser(c, { role: 'investor' });
-      await createInvestorSubscription(c, memberInv.id);
-      const noMember = await createUser(c, { role: 'investor' });
+      const investor = await createUser(c, { role: 'investor' });
+      const inCatalog = (v: Viewer) =>
+        count(c, v, `SELECT 1 FROM lab.v_public_catalog WHERE id = $1`, [projectId]);
+      const investorPublic = {
+        ...asUser(investor.id, 'investor'),
+        dbRole: 'app_public_read' as const,
+      };
 
-      expect(
-        await count(c, anon, `SELECT 1 FROM lab.v_public_catalog WHERE id = $1`, [projectId]),
-      ).toBe(0);
-      expect(
-        await count(
-          c,
-          { ...asUser(memberInv.id, 'investor'), dbRole: 'app_public_read' },
-          `SELECT 1 FROM lab.v_public_catalog WHERE id = $1`,
-          [projectId],
-        ),
-      ).toBe(1);
-      expect(
-        await count(
-          c,
-          { ...asUser(noMember.id, 'investor'), dbRole: 'app_public_read' },
-          `SELECT 1 FROM lab.v_public_catalog WHERE id = $1`,
-          [projectId],
-        ),
-      ).toBe(0);
-
-      await as(c, asUser(memberInv.id, 'investor'), () =>
+      expect(await inCatalog(anon)).toBe(1);
+      expect(await inCatalog(investorPublic)).toBe(1);
+      await as(c, asUser(investor.id, 'investor'), () =>
         c.query(`INSERT INTO lab.project_favorites (user_id, project_id) VALUES ($1, $2)`, [
-          memberInv.id,
+          investor.id,
           projectId,
         ]),
       );
+
+      await c.query(`UPDATE lab.projects SET visibility = 'registered_investors' WHERE id = $1`, [
+        projectId,
+      ]);
+      expect(await inCatalog(anon)).toBe(0);
+      expect(await inCatalog(investorPublic)).toBe(0);
+
       // Ожидаемая ошибка — под SAVEPOINT; контекст роли снимается после отката.
+      const other = await createUser(c, { role: 'investor' });
       await c.query('SAVEPOINT f');
-      await actAs(c, { userId: noMember.id, roles: ['investor'], dbRole: 'app_backend' });
+      await actAs(c, { userId: other.id, roles: ['investor'], dbRole: 'app_backend' });
       let code: string | null = null;
       try {
         await c.query(`INSERT INTO lab.project_favorites (user_id, project_id) VALUES ($1, $2)`, [
-          noMember.id,
+          other.id,
           projectId,
         ]);
       } catch (e) {

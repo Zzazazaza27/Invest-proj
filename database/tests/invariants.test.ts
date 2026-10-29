@@ -5,12 +5,9 @@
 import { afterAll, describe, expect, it } from 'vitest';
 import {
   actAs,
-  approveKyc,
   closePool,
   createEntity,
-  createOffer,
   createProject,
-  createSignedAgreement,
   createUser,
   getPool,
   inRollbackTx,
@@ -148,7 +145,7 @@ describe('Журнал событий: append-only и hash-chain', () => {
     await inRollbackTx(async (c) => {
       await expect(
         c.query(
-          `SELECT audit.app_emit_event('billing.commission.accrued', NULL, 'founder', 'x', NULL,
+          `SELECT audit.app_emit_event('admin.feature_flag.changed', NULL, 'founder', 'x', NULL,
                                        '{}'::jsonb, 't')`,
         ),
       ).rejects.toThrow(/not allowed/i);
@@ -159,285 +156,13 @@ describe('Журнал событий: append-only и hash-chain', () => {
     await inRollbackTx(async (c) => {
       for (let i = 0; i < 5; i += 1) {
         await c.query(
-          `SELECT audit.app_emit_event('lab.season.opened', NULL, 'admin', 'season', NULL,
+          `SELECT audit.app_emit_event('lab.project.updated', NULL, 'system', 'project', NULL,
                                        $1::jsonb, 'chain')`,
           [JSON.stringify({ i })],
         );
       }
       const { rows } = await c.query(`SELECT * FROM audit.verify_event_chain()`);
       expect(rows).toEqual([]);
-    });
-  });
-});
-
-describe('IRS и рейтинг не переписываются', () => {
-  it('irs_scores append-only', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const project = await createProject(c, founder.id);
-      await c.query(
-        `INSERT INTO scoring.irs_scores (id, project_id, value) VALUES (public.uuid_generate_v7(), $1, 42)`,
-        [project],
-      );
-      await expect(
-        c.query(`UPDATE scoring.irs_scores SET value = 99 WHERE project_id = $1`, [project]),
-      ).rejects.toThrow(/append-only|not for sale/i);
-    });
-  });
-
-  it('delta обязана соответствовать value - previous_value', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const project = await createProject(c, founder.id);
-      await expect(
-        c.query(
-          `INSERT INTO scoring.irs_scores (id, project_id, value, previous_value, delta)
-           VALUES (public.uuid_generate_v7(), $1, 50, 40, 99)`,
-          [project],
-        ),
-      ).rejects.toThrow();
-    });
-  });
-});
-
-describe('Тарифы и условия вознаграждения: неизменяемость', () => {
-  it('условия вознаграждения неизменяемы — только новая версия', async () => {
-    await inRollbackTx(async (c) => {
-      await expect(
-        c.query(
-          `UPDATE billing.fee_schedules SET investor_fee_pct = 20 WHERE code = 'operator_success_fee'`,
-        ),
-      ).rejects.toThrow(/immutable/i);
-    });
-  });
-
-  it('fee schedule нельзя удалить', async () => {
-    await inRollbackTx(async (c) => {
-      await expect(
-        c.query(`DELETE FROM billing.fee_schedules WHERE code = 'operator_success_fee'`),
-      ).rejects.toThrow(/cannot be deleted/i);
-    });
-  });
-
-  it('пересекающиеся периоды действия одного тарифа отвергаются', async () => {
-    await inRollbackTx(async (c) => {
-      await expect(
-        c.query(
-          `INSERT INTO billing.subscription_plans
-             (id, code, version, name, price, valid_from)
-           VALUES (public.uuid_generate_v7(), 'investor_membership', 99, 'Дубль', 5990,
-                   '2026-09-01T00:00:00Z')`,
-        ),
-      ).rejects.toThrow(/overlapping/i);
-    });
-  });
-});
-
-describe('Подписки инвестора: форма', () => {
-  it('снапшот цены обязан совпадать с ценой тарифа', async () => {
-    await inRollbackTx(async (c) => {
-      const user = await createUser(c);
-      await expect(
-        c.query(
-          `INSERT INTO billing.subscriptions
-             (id, user_id, plan_id, price_snapshot, terms_version, status)
-           SELECT public.uuid_generate_v7(), $1, id, 1, 'v1', 'active'
-             FROM billing.subscription_plans WHERE code = 'investor_membership' AND version = 1`,
-          [user.id],
-        ),
-      ).rejects.toThrow(/does not match plan price/i);
-    });
-  });
-
-  it('вторая незакрытая подписка того же человека отвергается', async () => {
-    await inRollbackTx(async (c) => {
-      const user = await createUser(c);
-      const insert = () =>
-        c.query(
-          `INSERT INTO billing.subscriptions
-             (id, user_id, plan_id, price_snapshot, terms_version, status)
-           SELECT public.uuid_generate_v7(), $1, id, price, 'v1', 'active'
-             FROM billing.subscription_plans WHERE code = 'investor_membership' AND version = 1`,
-          [user.id],
-        );
-      await insert();
-      await c.query('SAVEPOINT second_subscription');
-      await expect(insert()).rejects.toThrow();
-      await c.query('ROLLBACK TO SAVEPOINT second_subscription');
-    });
-  });
-
-  // Публикация проекта больше НЕ зависит от подписки: барьер листинга и тариф
-  // основателя удалены вместе с отменённой моделью (M094). Проверка того, что
-  // листинг обходится без денег, живёт в applications.test.ts.
-});
-
-describe('Регулируемый контур: лимиты и антифрод', () => {
-  it('инвестор не может инвестировать в проект, где он в команде', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const investor = await createUser(c, { role: 'investor' });
-      await approveKyc(c, investor.id);
-      const entity = await createEntity(c, founder.id);
-      const project = await createProject(c, founder.id, { listed: true });
-      // Инвестор — сооснователь того же проекта.
-      await c.query(
-        `INSERT INTO lab.founders_projects (project_id, user_id, role) VALUES ($1, $2, 'cofounder')`,
-        [project, investor.id],
-      );
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-      });
-      await expect(
-        createSignedAgreement(c, { offerId: offer, investorId: investor.id }),
-      ).rejects.toThrow(/self-deal/i);
-    });
-  });
-
-  it('инвестор без действующего KYC не может заключить договор', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const investor = await createUser(c, { role: 'investor' });
-      const entity = await createEntity(c, founder.id);
-      const project = await createProject(c, founder.id, { listed: true });
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-      });
-      await expect(
-        createSignedAgreement(c, { offerId: offer, investorId: investor.id }),
-      ).rejects.toThrow(/KYC is not valid/i);
-    });
-  });
-
-  it('ЛПИ без действующего KYB не может привлекать инвестиции', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const investor = await createUser(c, { role: 'investor' });
-      await approveKyc(c, investor.id);
-      const entity = await createEntity(c, founder.id, { approvedKyb: false });
-      const project = await createProject(c, founder.id, { listed: true });
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-      });
-      await expect(
-        createSignedAgreement(c, { offerId: offer, investorId: investor.id }),
-      ).rejects.toThrow(/KYB is not valid/i);
-    });
-  });
-
-  it('сумма договоров не превышает цель предложения', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const investor = await createUser(c, { role: 'investor' });
-      await approveKyc(c, investor.id);
-      const entity = await createEntity(c, founder.id);
-      const project = await createProject(c, founder.id, { listed: true });
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-        target: 1_000_000,
-        min: 100_000,
-      });
-      await createSignedAgreement(c, { offerId: offer, investorId: investor.id, amount: 900_000 });
-      const other = await createUser(c, { role: 'investor' });
-      await approveKyc(c, other.id);
-      await expect(
-        createSignedAgreement(c, { offerId: offer, investorId: other.id, amount: 200_000 }),
-      ).rejects.toThrow(/capacity exceeded/i);
-    });
-  });
-
-  it('сумма траншей не превышает сумму договора', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const investor = await createUser(c, { role: 'investor' });
-      await approveKyc(c, investor.id);
-      const entity = await createEntity(c, founder.id);
-      const project = await createProject(c, founder.id, { listed: true });
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-      });
-      const agreement = await createSignedAgreement(c, {
-        offerId: offer,
-        investorId: investor.id,
-        amount: 1_000_000,
-      });
-      await expect(
-        c.query(
-          `INSERT INTO investments.investment_tranches (id, agreement_id, tranche_no, amount)
-           VALUES (public.uuid_generate_v7(), $1, 1, 2000000)`,
-          [agreement],
-        ),
-      ).rejects.toThrow(/exceeds contract_amount/i);
-    });
-  });
-
-  it('недопустимый переход статуса договора отвергается', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const investor = await createUser(c, { role: 'investor' });
-      await approveKyc(c, investor.id);
-      const entity = await createEntity(c, founder.id);
-      const project = await createProject(c, founder.id, { listed: true });
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-      });
-      const agreement = await createSignedAgreement(c, { offerId: offer, investorId: investor.id });
-      // signed → completed напрямую недопустим.
-      await expect(
-        c.query(
-          `UPDATE investments.investment_agreements SET status = 'completed', effective_at = now()
-            WHERE id = $1`,
-          [agreement],
-        ),
-      ).rejects.toThrow(/illegal agreement transition/i);
-    });
-  });
-
-  it('сумма договора неизменяема после подписания', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const investor = await createUser(c, { role: 'investor' });
-      await approveKyc(c, investor.id);
-      const entity = await createEntity(c, founder.id);
-      const project = await createProject(c, founder.id, { listed: true });
-      const offer = await createOffer(c, {
-        projectId: project,
-        entityId: entity,
-        createdBy: founder.id,
-      });
-      const agreement = await createSignedAgreement(c, { offerId: offer, investorId: investor.id });
-      await expect(
-        c.query(`UPDATE investments.investment_agreements SET contract_amount = 1 WHERE id = $1`, [
-          agreement,
-        ]),
-      ).rejects.toThrow(/immutable after signing/i);
-    });
-  });
-
-  it('банковская операция append-only', async () => {
-    await inRollbackTx(async (c) => {
-      await c.query(
-        `INSERT INTO investments.nominal_account_transactions
-           (id, bank_transaction_ref, direction, amount, booked_at, raw_statement_sha256)
-         VALUES (public.uuid_generate_v7(), 'inv-ref-1', 'incoming', 100, now(), digest('s','sha256'))`,
-      );
-      await expect(
-        c.query(
-          `UPDATE investments.nominal_account_transactions SET amount = 1 WHERE bank_transaction_ref = 'inv-ref-1'`,
-        ),
-      ).rejects.toThrow(/append-only/i);
     });
   });
 });
@@ -463,50 +188,6 @@ describe('Прочие доменные инварианты', () => {
     });
   });
 
-  it('лимит золотых билетов — 2 на организатора за сезон', async () => {
-    await inRollbackTx(async (c) => {
-      const admin = await createUser(c, { role: 'admin' });
-      const founder = await createUser(c);
-      const { rows } = await c.query<{ id: string }>(`SELECT id FROM seasons.seasons LIMIT 1`);
-      const seasonId = rows[0]!.id;
-      for (let i = 0; i < 2; i += 1) {
-        const project = await createProject(c, founder.id);
-        await c.query(
-          `INSERT INTO seasons.golden_tickets (id, project_id, season_id, granted_by, reason)
-           VALUES (public.uuid_generate_v7(), $1, $2, $3, 'тест')`,
-          [project, seasonId, admin.id],
-        );
-      }
-      const third = await createProject(c, founder.id);
-      await expect(
-        c.query(
-          `INSERT INTO seasons.golden_tickets (id, project_id, season_id, granted_by, reason)
-           VALUES (public.uuid_generate_v7(), $1, $2, $3, 'третий')`,
-          [third, seasonId, admin.id],
-        ),
-      ).rejects.toThrow(/limit reached/i);
-    });
-  });
-
-  it('версия заявки append-only', async () => {
-    await inRollbackTx(async (c) => {
-      const founder = await createUser(c);
-      const project = await createProject(c, founder.id);
-      const { rows } = await c.query<{ id: string }>(`SELECT id FROM seasons.seasons LIMIT 1`);
-      await c.query(
-        `INSERT INTO lab.project_versions (id, project_id, season_id, version_no, snapshot_jsonb)
-         VALUES (public.uuid_generate_v7(), $1, $2, 1, '{}'::jsonb)`,
-        [project, rows[0]!.id],
-      );
-      await expect(
-        c.query(
-          `UPDATE lab.project_versions SET snapshot_jsonb = '{"x":1}'::jsonb WHERE project_id = $1`,
-          [project],
-        ),
-      ).rejects.toThrow(/append-only/i);
-    });
-  });
-
   it('вебхук на внутренний адрес отвергается (защита от SSRF)', async () => {
     await inRollbackTx(async (c) => {
       const admin = await createUser(c, { role: 'admin' });
@@ -514,7 +195,7 @@ describe('Прочие доменные инварианты', () => {
       await c.query(
         `INSERT INTO integration.service_accounts
            (id, client_id, name, client_secret_hash, mtls_cert_fingerprint, scopes, created_by)
-         VALUES ($1, $2, 'test', 'argon2id$hash', 'fp', ARRAY['deals:read'], $3)`,
+         VALUES ($1, $2, 'test', 'argon2id$hash', 'fp', ARRAY['webhooks:manage'], $3)`,
         [accountId, `client-${accountId.slice(0, 8)}`, admin.id],
       );
       for (const url of [
@@ -529,7 +210,7 @@ describe('Прочие доменные инварианты', () => {
             `INSERT INTO integration.webhook_endpoints
                (id, service_account_id, url, subscribed_verbs, secret_ciphertext,
                 secret_kms_key_id, secret_fingerprint)
-             VALUES (public.uuid_generate_v7(), $1, $2, ARRAY['lab.project.graduated'],
+             VALUES (public.uuid_generate_v7(), $1, $2, ARRAY['lab.listing.published'],
                      '\\x00'::bytea, 'kms', '\\x00'::bytea)`,
             [accountId, url],
           ),
@@ -538,22 +219,30 @@ describe('Прочие доменные инварианты', () => {
     });
   });
 
-  it('скоуп вне allowlist отвергается', async () => {
+  it('скоуп вне allowlist отвергается — в том числе удалённые в 2.1-W05', async () => {
     await inRollbackTx(async (c) => {
       const admin = await createUser(c, { role: 'admin' });
-      await expect(
-        c.query(
-          `INSERT INTO integration.service_accounts
-             (id, client_id, name, client_secret_hash, mtls_cert_fingerprint, scopes, created_by)
-           VALUES (public.uuid_generate_v7(), 'c-evil', 'evil', 'h', 'fp',
-                   ARRAY['deals:read','admin:all'], $1)`,
-          [admin.id],
-        ),
-      ).rejects.toThrow();
+      for (const scopes of [
+        ['webhooks:manage', 'admin:all'],
+        ['deals:read'],
+        ['graduates:read'],
+        ['seasons:read'],
+      ]) {
+        await c.query('SAVEPOINT s');
+        await expect(
+          c.query(
+            `INSERT INTO integration.service_accounts
+               (id, client_id, name, client_secret_hash, mtls_cert_fingerprint, scopes, created_by)
+             VALUES (public.uuid_generate_v7(), 'c-evil', 'evil', 'h', 'fp', $2, $1)`,
+            [admin.id, scopes],
+          ),
+        ).rejects.toThrow();
+        await c.query('ROLLBACK TO SAVEPOINT s');
+      }
     });
   });
 
-  it('security и billing уведомления нельзя отключить', async () => {
+  it('уведомления безопасности нельзя отключить', async () => {
     await inRollbackTx(async (c) => {
       const user = await createUser(c);
       await actAs(c, { userId: user.id, roles: ['founder'], dbRole: 'app_backend' });
@@ -565,14 +254,6 @@ describe('Прочие доменные инварианты', () => {
         ),
       ).rejects.toThrow();
     });
-  });
-
-  it('регулируемый контур закрыт фичефлагом до гейта A', async () => {
-    const { rows } = await getPool().query<{ key: string; enabled: boolean }>(
-      `SELECT key, enabled FROM audit.feature_flags WHERE key LIKE 'investments%' ORDER BY key`,
-    );
-    expect(rows.length).toBeGreaterThan(0);
-    expect(rows.every((r) => r.enabled === false)).toBe(true);
   });
 });
 
@@ -670,77 +351,6 @@ describe('Публичный поиск не раскрывает непубли
     expect(granted).not.toContain('description');
     expect(granted).not.toContain('teaser_jsonb');
     expect(granted).not.toContain('search_tsv');
-  });
-});
-
-describe('Тарифы: история цен неизменяема (M015–M016)', () => {
-  it('цену действующей версии переписать нельзя', async () => {
-    await inRollbackTx(async (c) => {
-      const [plan] = (
-        await c.query(`SELECT id FROM billing.subscription_plans
-                        WHERE valid_from <= now() AND (valid_to IS NULL OR valid_to > now())
-                        LIMIT 1`)
-      ).rows;
-      await expect(
-        c.query('UPDATE billing.subscription_plans SET price = 1 WHERE id = $1', [plan.id]),
-      ).rejects.toThrow(/immutable/);
-    });
-  });
-
-  it('снять с продажи (проставить valid_to) действующую версию можно', async () => {
-    await inRollbackTx(async (c) => {
-      const [plan] = (
-        await c.query(`SELECT id FROM billing.subscription_plans
-                        WHERE valid_from <= now() AND (valid_to IS NULL OR valid_to > now())
-                        LIMIT 1`)
-      ).rows;
-      await c.query(
-        `UPDATE billing.subscription_plans SET valid_to = now() + interval '1 day' WHERE id = $1`,
-        [plan.id],
-      );
-      const { rows } = await c.query(
-        'SELECT valid_to FROM billing.subscription_plans WHERE id = $1',
-        [plan.id],
-      );
-      expect(rows[0]?.valid_to).not.toBeNull();
-    });
-  });
-
-  it('объявленную будущую версию можно править и удалить', async () => {
-    await inRollbackTx(async (c) => {
-      const id = uuidv7();
-      // Периоды версий одного тарифа не пересекаются: как и сервис, сначала
-      // закрываем действующую версию тем моментом, с которого начнётся новая.
-      await c.query(
-        `UPDATE billing.subscription_plans SET valid_to = now() + interval '10 days'
-          WHERE code = 'investor_membership' AND valid_to IS NULL`,
-      );
-      await c.query(
-        `INSERT INTO billing.subscription_plans
-           (id, code, version, name, price, valid_from)
-         VALUES ($1, 'investor_membership', 99, 'Будущая цена', 31990,
-                 now() + interval '10 days')`,
-        [id],
-      );
-      await c.query('UPDATE billing.subscription_plans SET price = 32990 WHERE id = $1', [id]);
-      await c.query('DELETE FROM billing.subscription_plans WHERE id = $1', [id]);
-      const { rows } = await c.query('SELECT 1 FROM billing.subscription_plans WHERE id = $1', [
-        id,
-      ]);
-      expect(rows).toHaveLength(0);
-    });
-  });
-
-  it('удалить действующую версию нельзя', async () => {
-    await inRollbackTx(async (c) => {
-      const [plan] = (
-        await c.query(`SELECT id FROM billing.subscription_plans
-                        WHERE valid_from <= now() LIMIT 1`)
-      ).rows;
-      await expect(
-        c.query('DELETE FROM billing.subscription_plans WHERE id = $1', [plan.id]),
-      ).rejects.toThrow(/уже действует|действовала/);
-    });
   });
 });
 

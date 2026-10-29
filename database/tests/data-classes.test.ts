@@ -68,14 +68,10 @@ describe('Классы данных: выгрузка содержимого', (
   });
 
   it('секреты не выгружаются', () => {
-    // Список именной, а не по догадке: таблица с ключами провайдеров или
+    // Список именной, а не по догадке: таблица с секретами клиентов или
     // подписями вебхуков не должна попасть в Git даже случайной правкой
     // одного поля в реестре.
-    const secretHolders = [
-      'scoring.ai_provider_credentials',
-      'integration.service_accounts',
-      'integration.webhook_endpoints',
-    ];
+    const secretHolders = ['integration.service_accounts', 'integration.webhook_endpoints'];
     for (const name of secretHolders) {
       expect(DATA_CLASSES[name]?.exportable, `${name} не должна выгружаться`).toBe(false);
     }

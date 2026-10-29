@@ -307,43 +307,17 @@ export async function createProject(
 ): Promise<string> {
   const id = uuidv7();
   const ask = opts.ask ?? 5_000_000;
-  const { rows } = await client.query<{ id: string }>(
-    `SELECT id FROM seasons.seasons ORDER BY number LIMIT 1`,
-  );
-  const seasonId = rows[0]?.id ?? null;
-
   await client.query(
-    `INSERT INTO lab.projects (id, title, stage, investment_ask, season_id, status)
-     VALUES ($1, $2, 'mvp', $3, $4, $5)`,
-    [id, `Проект ${id.slice(0, 6)}`, ask, seasonId, opts.status ?? 'draft'],
+    `INSERT INTO lab.projects (id, title, stage, investment_ask, status)
+     VALUES ($1, $2, 'mvp', $3, $4)`,
+    [id, `Проект ${id.slice(0, 6)}`, ask, opts.status ?? 'draft'],
   );
   await client.query(
     `INSERT INTO lab.founders_projects (project_id, user_id, role) VALUES ($1, $2, 'owner')`,
     [id, ownerUserId],
   );
 
-  // С M071 у проекта есть заявка: фикстура повторяет перенос (одна заявка из
-  // полей проекта, схема 0), иначе проект в тестах существовал бы в форме,
-  // которой после миграции не бывает. Вставка идёт от владельца схем под
-  // FORCE RLS — контекст владельца проекта выставляется и снимается здесь же.
-  const applicationId = uuidv7();
-  await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', ownerUserId]);
-  await client.query('SELECT set_config($1, $2, true)', ['app.current_roles', 'founder']);
-  await client.query(
-    `INSERT INTO lab.investment_applications
-       (id, project_id, status, stage, investment_ask, schema_version, created_by, funding_scope)
-     VALUES ($1, $2, 'draft', 'mvp', $3, 0, $4, 'project')`,
-    [applicationId, id, ask, ownerUserId],
-  );
-  await client.query(`UPDATE lab.projects SET current_application_id = $2 WHERE id = $1`, [
-    id,
-    applicationId,
-  ]);
-  await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', '']);
-  await client.query('SELECT set_config($1, $2, true)', ['app.current_roles', '']);
-
   if (opts.listed) {
-    // Публикация не требует оплаты: подписка основателя отменена (M094).
     // С M087 листинг — следствие режима видимости: опубликованный проект в
     // фикстуре получает режим public (тизер), как и при переносе данных.
     await client.query(
@@ -354,79 +328,5 @@ export async function createProject(
       [id],
     );
   }
-  return id;
-}
-
-export async function createInvestorSubscription(client: Client, userId: string): Promise<string> {
-  const id = uuidv7();
-  await client.query(
-    `INSERT INTO billing.subscriptions
-       (id, user_id, plan_id, price_snapshot, terms_version, status, current_period_end)
-     SELECT $1, $2, sp.id, sp.price, 'v1', 'active', now() + interval '30 days'
-     FROM billing.subscription_plans sp
-     WHERE sp.code = 'investor_membership' AND sp.version = 1`,
-    [id, userId],
-  );
-  return id;
-}
-
-export async function createOffer(
-  client: Client,
-  opts: { projectId: string; entityId: string; createdBy: string; target?: number; min?: number },
-): Promise<string> {
-  const id = uuidv7();
-  await client.query(
-    `INSERT INTO investments.investment_offers
-       (id, project_id, issuer_entity_id, instrument_type, rules_version, target_amount,
-        min_investment, terms_jsonb, document_s3_key, document_sha256, document_wrapped_dek,
-        status, opens_at, created_by)
-     VALUES ($1, $2, $3, 'loan', 'platform_rules_v1', $4, $5, '{}'::jsonb,
-             'offers/doc.pdf', digest('doc', 'sha256'), $6, 'published', now() - interval '1 day', $7)`,
-    [
-      id,
-      opts.projectId,
-      opts.entityId,
-      opts.target ?? 10_000_000,
-      opts.min ?? 100_000,
-      FAKE_DEK,
-      opts.createdBy,
-    ],
-  );
-  return id;
-}
-
-export async function createSignedAgreement(
-  client: Client,
-  opts: { offerId: string; investorId: string; amount?: number },
-): Promise<string> {
-  const id = uuidv7();
-  const { rows } = await client.query<{ id: string }>(
-    `SELECT id FROM billing.fee_schedules WHERE code = 'operator_success_fee' AND version = 1`,
-  );
-  const feeScheduleId = rows[0]!.id;
-
-  await client.query(
-    `INSERT INTO investments.investment_agreements
-       (id, offer_id, investor_id, contract_amount, fee_schedule_id, document_s3_key,
-        document_sha256, document_wrapped_dek, idempotency_key, status)
-     VALUES ($1, $2, $3, $4, $5, 'agreements/doc.pdf', digest('a', 'sha256'), $6, $7,
-             'pending_signatures')`,
-    [
-      id,
-      opts.offerId,
-      opts.investorId,
-      opts.amount ?? 1_000_000,
-      feeScheduleId,
-      FAKE_DEK,
-      `idem-${id}`,
-    ],
-  );
-  // Обе подписи → статус signed.
-  await client.query(
-    `UPDATE investments.investment_agreements
-        SET investor_signed_at = now(), issuer_signed_at = now(), status = 'signed'
-      WHERE id = $1`,
-    [id],
-  );
   return id;
 }

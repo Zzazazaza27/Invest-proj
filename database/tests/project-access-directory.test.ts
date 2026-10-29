@@ -87,7 +87,7 @@ describe('M091: список выданного', () => {
       await c.query(
         `INSERT INTO lab.project_access_grants
            (id, project_id, grantee_user_id, permissions, granted_by)
-         VALUES ($1, $2, $3, ARRAY['materials','round'], $4)`,
+         VALUES ($1, $2, $3, ARRAY['materials','profile'], $4)`,
         [uuidv7(), projectId, investor.id, owner.id],
       );
       await c.query(
@@ -116,7 +116,7 @@ describe('M091: список выданного', () => {
       const grantRow = byOwner.find((r) => r.kind === 'grant');
       expect(grantRow?.subject_id).toBe(investor.id);
       expect(grantRow?.subject_name).not.toBe('');
-      expect([...(grantRow?.permissions ?? [])].sort()).toEqual(['materials', 'round']);
+      expect([...(grantRow?.permissions ?? [])].sort()).toEqual(['materials', 'profile']);
       const exclusionRow = byOwner.find((r) => r.kind === 'exclusion');
       expect(exclusionRow?.subject_id).toBe(stranger.id);
       expect(exclusionRow?.permissions).toBeNull();
