@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Badge,
   Button,
@@ -14,8 +14,10 @@ import {
   MATERIAL_UPLOAD_RULES,
   type MaterialUploadResult,
   type ProjectMaterial,
+  type UserOperation,
 } from '@unicorn/contracts';
 import { ApiError, api } from '../api';
+import { useOperations } from '../operations';
 import { S } from '../strings';
 
 // Лимит и допустимые форматы — из контрактов, а не строкой в подсказке:
@@ -32,11 +34,18 @@ const TYPE_TITLES: Record<string, string> = {
 };
 
 /**
- * Состояние разбора материала по-человечески.
- *
- * Сырое `not_required` в списке читалось как поломка: человек видит английский
- * код там, где ждёт понятного слова, и не может отличить норму от ошибки.
+ * Опрос показанной операции (1.5): первую минуту наблюдения — раз в 5 секунд,
+ * дальше — раз в 30. В скрытой вкладке опрос стоит, по итогу прекращается.
+ * Это запрос состояния, а не повтор действия.
  */
+const POLL_FAST_MS = 5_000;
+const POLL_SLOW_MS = 30_000;
+const POLL_FAST_WINDOW_MS = 60_000;
+
+/** Текст «требует вмешательства» — честно: автоматическая обработка остановлена. */
+const NEEDS_ATTENTION_TEXT =
+  'Не удалось завершить сохранение. Повторять загрузку не нужно — требуется проверка.';
+
 /**
  * Материалы проекта и ссылка на продукт.
  *
@@ -44,6 +53,11 @@ const TYPE_TITLES: Record<string, string> = {
  * в хранилище напрямую. Поэтому здесь два разных действия с разной механикой —
  * добавить ссылку (обычный запрос) и получить билет на загрузку (после чего
  * форма отправляется в хранилище браузером).
+ *
+ * Под списком материалов — загрузки ТЕКУЩЕГО пользователя, которые ещё не
+ * стали материалом: идущие, не принятые и требующие проверки (2.1-W04). Идущую
+ * можно отменить; не принятая остаётся с причиной и после закрытия
+ * всплывающего сообщения.
  */
 export function MaterialsCard({ projectId }: { projectId: string }) {
   const [state, setState] = useState<
@@ -51,29 +65,88 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
     | { status: 'ready'; items: ProjectMaterial[] }
     | { status: 'error'; message: string }
   >({ status: 'loading' });
+  const [uploads, setUploads] = useState<UserOperation[]>([]);
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [file, setFile] = useState<File | null>(null);
+  const { requestCheck } = useOperations();
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
     try {
       setState({ status: 'ready', items: await api.projects.materials(projectId) });
     } catch (error) {
-      setState({
-        status: 'error',
-        message:
-          error instanceof ApiError
-            ? (error.problem?.detail ?? error.message)
-            : 'Сервис недоступен',
-      });
+      setState({ status: 'error', message: errorText(error) });
+    }
+  }, [projectId]);
+
+  /** Загрузки пользователя. Ошибка чтения не ломает карточку — список просто не обновился. */
+  const loadUploads = useCallback(async (): Promise<UserOperation[] | null> => {
+    try {
+      const items = await api.projects.materialUploads(projectId);
+      setUploads(items);
+      return items;
+    } catch {
+      return null;
     }
   }, [projectId]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadUploads();
+  }, [load, loadUploads]);
+
+  // --- опрос идущих загрузок ------------------------------------------------
+  const hasPending = uploads.some((item) => item.state === 'pending');
+  const pendingIds = useRef(new Set<string>());
+  pendingIds.current = new Set(uploads.filter((u) => u.state === 'pending').map((u) => u.id));
+
+  useEffect(() => {
+    if (!hasPending) return;
+    const started = Date.now();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let stopped = false;
+
+    const tick = async () => {
+      if (stopped) return;
+      // Скрытая вкладка: опрос стоит до возвращения.
+      if (document.visibilityState !== 'visible') return;
+      const before = pendingIds.current;
+      const items = await loadUploads();
+      if (stopped) return;
+      if (items) {
+        const finished = [...before].filter(
+          (id) => !items.some((item) => item.id === id && item.state === 'pending'),
+        );
+        if (finished.length > 0) {
+          // Итог появился: материал — в список, окончательная ошибка — во
+          // всплывающее сообщение через общую проверку.
+          void load();
+          requestCheck();
+        }
+        if (!items.some((item) => item.state === 'pending')) return;
+      }
+      schedule();
+    };
+    const schedule = () => {
+      const delay = Date.now() - started < POLL_FAST_WINDOW_MS ? POLL_FAST_MS : POLL_SLOW_MS;
+      timer = setTimeout(() => void tick(), delay);
+    };
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible' || stopped) return;
+      if (timer) clearTimeout(timer);
+      void tick();
+    };
+
+    schedule();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      stopped = true;
+      if (timer) clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [hasPending, load, loadUploads, requestCheck]);
 
   /** Отметка владельца: единственный способ открыть материал допущенным инвесторам (5.7.3). */
   const toggleVisibility = useCallback(
@@ -87,13 +160,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
         setNotice({ tone: 'ok', text: S.materials.visibility.done });
         await load();
       } catch (error) {
-        setNotice({
-          tone: 'error',
-          text:
-            error instanceof ApiError
-              ? (error.problem?.detail ?? error.message)
-              : 'Сервис недоступен',
-        });
+        setNotice({ tone: 'error', text: errorText(error) });
       } finally {
         setBusy(false);
       }
@@ -113,13 +180,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
       setNotice({ tone: 'ok', text: 'Ссылка добавлена' });
       await load();
     } catch (error) {
-      setNotice({
-        tone: 'error',
-        text:
-          error instanceof ApiError
-            ? (error.problem?.detail ?? error.message)
-            : 'Сервис недоступен',
-      });
+      setNotice({ tone: 'error', text: errorText(error) });
     } finally {
       setBusy(false);
     }
@@ -160,6 +221,9 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
         contentType: file.type as 'application/pdf',
         sizeBytes: file.size,
       });
+      // Загрузка уже числится: она видна в списке и её можно отменить, пока
+      // файл передаётся.
+      void loadUploads();
       const form = new FormData();
       for (const [key, value] of Object.entries(ticket.formFields)) form.append(key, value);
       form.append('file', file);
@@ -180,24 +244,42 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
 
       setFile(null);
       setNotice(uploadNotice(result));
-      await load();
+      await Promise.all([load(), loadUploads()]);
+      // Не принят — итог показывает общее сообщение (1.5), один раз.
+      if (result.uploadState === 'rejected') requestCheck();
     } catch (error) {
-      setNotice({
-        tone: 'error',
-        text:
-          error instanceof ApiError
-            ? (error.problem?.detail ?? error.message)
-            : error instanceof Error
-              ? error.message
-              : 'Загрузка не удалась',
-      });
+      setNotice({ tone: 'error', text: errorText(error, 'Загрузка не удалась') });
+      void loadUploads();
     } finally {
       setBusy(false);
     }
-  }, [file, projectId, load]);
+  }, [file, projectId, load, loadUploads, requestCheck]);
+
+  /**
+   * Отмена идущей загрузки: состояние «отменено», запись и файл сохраняются,
+   * место в проекте освобождается. Загрузка могла успеть завершиться — тогда
+   * сервер отвечает её фактическим состоянием, и отменять нечего.
+   */
+  const cancel = useCallback(
+    async (op: UserOperation) => {
+      setBusy(true);
+      setNotice(null);
+      try {
+        const result = await api.projects.cancelUpload(projectId, op.id);
+        setNotice(cancelNotice(result));
+        await Promise.all([load(), loadUploads()]);
+        if (result.uploadState === 'rejected') requestCheck();
+      } catch (error) {
+        setNotice({ tone: 'error', text: errorText(error) });
+      } finally {
+        setBusy(false);
+      }
+    },
+    [projectId, load, loadUploads, requestCheck],
+  );
 
   return (
-    <Card>
+    <Card id="materials">
       <Stack>
         <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Материалы</h2>
 
@@ -269,6 +351,68 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
           </span>
         ) : null}
 
+        {uploads.length > 0 ? (
+          <div data-uploads>
+            <h3 style={{ margin: '0 0 var(--u-space-2)', fontSize: 'var(--u-text-md)' }}>
+              Ваши загрузки
+            </h3>
+            <ul
+              style={{
+                listStyle: 'none',
+                margin: 0,
+                padding: 0,
+                display: 'grid',
+                gap: 'var(--u-space-2)',
+              }}
+            >
+              {uploads.map((op) => (
+                <li
+                  key={op.id}
+                  data-upload-row={op.id}
+                  data-upload-state={op.state}
+                  style={{
+                    display: 'flex',
+                    gap: 'var(--u-space-3)',
+                    alignItems: 'center',
+                    flexWrap: 'wrap',
+                    padding: 'var(--u-space-2) var(--u-space-3)',
+                    border: '1px solid var(--u-border)',
+                    borderRadius: 'var(--u-radius-md)',
+                  }}
+                >
+                  <Badge tone={UPLOAD_BADGES[op.state].tone}>{UPLOAD_BADGES[op.state].label}</Badge>
+                  <span style={{ flex: '1 1 200px', minWidth: 0, overflowWrap: 'anywhere' }}>
+                    <strong style={{ fontWeight: 600 }}>
+                      {op.fileName ?? TYPE_TITLES[op.materialType] ?? op.materialType}
+                    </strong>
+                    <span
+                      data-upload-text
+                      style={{
+                        display: 'block',
+                        fontSize: 'var(--u-text-sm)',
+                        color: op.state === 'rejected' ? 'var(--u-danger)' : 'var(--u-text-muted)',
+                      }}
+                    >
+                      {uploadText(op)}
+                    </span>
+                  </span>
+                  {op.state === 'pending' ? (
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      loading={busy}
+                      data-upload-cancel={op.id}
+                      onClick={() => void cancel(op)}
+                    >
+                      Отменить загрузку
+                    </Button>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
+
         {notice ? (
           <div
             role={notice.tone === 'error' ? 'alert' : 'status'}
@@ -325,10 +469,35 @@ const NOTICE_COLORS: Record<Notice['tone'], { background: string; color: string 
   pending: { background: 'var(--u-warning-subtle)', color: 'var(--u-warning)' },
 };
 
+const UPLOAD_BADGES: Record<
+  UserOperation['state'],
+  { label: string; tone: 'neutral' | 'warning' | 'danger' | 'success' }
+> = {
+  pending: { label: 'Загружается', tone: 'neutral' },
+  rejected: { label: 'Не принят', tone: 'danger' },
+  needs_attention: { label: 'Требует проверки', tone: 'warning' },
+  ready: { label: 'Готово', tone: 'success' },
+  cancelled: { label: 'Отменено', tone: 'neutral' },
+};
+
+function uploadText(op: UserOperation): string {
+  switch (op.state) {
+    case 'pending':
+      return op.received
+        ? 'Файл получен, сохраняем. Он появится в материалах, когда будет готов'
+        : 'Файл передаётся или ещё не получен';
+    case 'rejected':
+      return op.reason ?? 'Файл не подошёл — загрузите другой файл';
+    case 'needs_attention':
+      return NEEDS_ATTENTION_TEXT;
+    default:
+      return '';
+  }
+}
+
 /**
  * Сообщение по итогу подтверждения (2.1-W03). «Получен, сохраняем» — только
  * когда хранилище подтвердило объект; иначе состояние ещё выясняется.
- * Полная проверка операций при возвращении — W04 (1.5).
  */
 function uploadNotice(result: MaterialUploadResult): Notice {
   switch (result.uploadState) {
@@ -337,10 +506,9 @@ function uploadNotice(result: MaterialUploadResult): Notice {
     case 'rejected':
       return { tone: 'error', text: result.reason ?? 'Файл не подходит — выберите другой файл' };
     case 'needs_attention':
-      return {
-        tone: 'error',
-        text: 'Не удалось сохранить файл. Мы разбираемся — повторять загрузку не нужно',
-      };
+      return { tone: 'error', text: NEEDS_ATTENTION_TEXT };
+    case 'cancelled':
+      return { tone: 'pending', text: 'Загрузка отменена' };
     default:
       return result.received
         ? {
@@ -349,4 +517,27 @@ function uploadNotice(result: MaterialUploadResult): Notice {
           }
         : { tone: 'pending', text: 'Загрузка ещё не завершена, проверяем состояние' };
   }
+}
+
+/** Итог отмены: отменено — или загрузка успела закончиться раньше. */
+function cancelNotice(result: MaterialUploadResult): Notice {
+  switch (result.uploadState) {
+    case 'cancelled':
+      return { tone: 'ok', text: 'Загрузка отменена, место в проекте освобождено' };
+    case 'ready':
+      return { tone: 'ok', text: 'Файл успел загрузиться — он уже в материалах' };
+    default:
+      return uploadNotice(result);
+  }
+}
+
+/**
+ * Текст ошибки: отказ сервера — его объяснение. Для загрузки показывается и
+ * собственная ошибка браузера (отказ хранилища, таймаут), для остального — общее
+ * «Сервис недоступен», как раньше.
+ */
+function errorText(error: unknown, uploadFallback?: string): string {
+  if (error instanceof ApiError) return error.problem?.detail ?? error.message;
+  if (uploadFallback) return error instanceof Error ? error.message : uploadFallback;
+  return 'Сервис недоступен';
 }

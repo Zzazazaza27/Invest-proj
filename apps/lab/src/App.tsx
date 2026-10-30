@@ -45,6 +45,7 @@ import type {
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { GlossaryPage } from './pages/GlossaryPage';
+import { OperationsProvider } from './operations';
 
 /**
  * Кабинет основателя.
@@ -222,58 +223,69 @@ export default function App() {
             <SessionCheckFailed failure={failure} onRetry={retry} busy={checking} />
           ) : null}
           {!checking && me ? (
-            <Routes>
-              <Route
-                path="/"
-                element={
-                  <Stack gap="var(--u-space-6)">
-                    <ProjectsPage onOpen={(id) => navigate(`/projects/${id}`)} />
-                    {/*
+            // Проверка длительных операций (1.5) — только для вошедшего:
+            // операции принадлежат пользователю.
+            <OperationsProvider
+              onOpenProject={(id) => {
+                navigate(`/projects/${id}`);
+                // Карточка материалов внизу страницы проекта: кнопка обещает
+                // «к материалам», а не «к проекту».
+                setTimeout(() => document.getElementById('materials')?.scrollIntoView(), 300);
+              }}
+            >
+              <Routes>
+                <Route
+                  path="/"
+                  element={
+                    <Stack gap="var(--u-space-6)">
+                      <ProjectsPage onOpen={(id) => navigate(`/projects/${id}`)} />
+                      {/*
                       Юрлицо основателю нужно раньше, чем предложение: без
                       проверенной компании выпуск закрыт. Поэтому карточка стоит в
                       списке проектов, а не прячется внутри одного из них.
                     */}
-                    {/*
+                      {/*
                       Верификация личности стоит рядом с юрлицом: оба шага
                       обязательны для публикации, и оба сервер требует до неё.
                     */}
-                    <VerificationCard port={verificationPort} />
-                    <BusinessEntitiesCard port={entitiesPort} />
-                    <NotificationsCard port={notificationsPort} />
-                    <SupportCard port={supportPort} />
-                  </Stack>
-                }
-              />
-              <Route path="/projects/:id" element={<ProjectRoute />} />
-              <Route
-                path="/profile"
-                element={
-                  <ProfilePage
-                    port={profilePort}
-                    kycSlot={<VerificationCard port={verificationPort} />}
-                    onProfileChanged={(next) =>
-                      setMe((prev) =>
-                        prev
-                          ? {
-                              ...prev,
-                              displayName: next.displayName,
-                              avatarUrl: next.avatar?.urls.sm ?? null,
-                            }
-                          : prev,
-                      )
-                    }
-                    onPasswordChanged={() => {
-                      // Сессии закрыты все, включая эту: держать человека на
-                      // экране, который через секунду ответит 401, нечестно.
-                      setCsrf(null);
-                      window.location.replace(hrefFor('login', __CABINET_PORTS__));
-                    }}
-                  />
-                }
-              />
-              <Route path="/glossary" element={<GlossaryPage />} />
-              <Route path="*" element={<Navigate to="/" replace />} />
-            </Routes>
+                      <VerificationCard port={verificationPort} />
+                      <BusinessEntitiesCard port={entitiesPort} />
+                      <NotificationsCard port={notificationsPort} />
+                      <SupportCard port={supportPort} />
+                    </Stack>
+                  }
+                />
+                <Route path="/projects/:id" element={<ProjectRoute />} />
+                <Route
+                  path="/profile"
+                  element={
+                    <ProfilePage
+                      port={profilePort}
+                      kycSlot={<VerificationCard port={verificationPort} />}
+                      onProfileChanged={(next) =>
+                        setMe((prev) =>
+                          prev
+                            ? {
+                                ...prev,
+                                displayName: next.displayName,
+                                avatarUrl: next.avatar?.urls.sm ?? null,
+                              }
+                            : prev,
+                        )
+                      }
+                      onPasswordChanged={() => {
+                        // Сессии закрыты все, включая эту: держать человека на
+                        // экране, который через секунду ответит 401, нечестно.
+                        setCsrf(null);
+                        window.location.replace(hrefFor('login', __CABINET_PORTS__));
+                      }}
+                    />
+                  }
+                />
+                <Route path="/glossary" element={<GlossaryPage />} />
+                <Route path="*" element={<Navigate to="/" replace />} />
+              </Routes>
+            </OperationsProvider>
           ) : null}
           {me ? (
             <div

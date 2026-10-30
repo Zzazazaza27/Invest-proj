@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 147; требований: 41
+- Проверок: 150; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 53
+### Зарегистрированы, но ни в наборе, ни в CI — 55
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -188,6 +188,7 @@
 - `CHK-UPSTREAM-OWNER` — Гейт «в репозиторий коммитит только владелец».
 - `CHK-PRE-PUSH` — Быстрая проверка перед отправкой: только файлы, которые уходят в origin.
 - `PRB-UPLOAD-COMPLETION` — Приёмка завершения загрузок материалов на общем механизме: аренда, попытки, сверка, отказы и режим отката.
+- `PRB-UPLOAD-CANCEL` — Отмена загрузки — состояние «отменено» без удаления: место в квоте освобождено, поздний файл не публикуется ни завершением, ни сверкой, гонка отмены с публик…
 - `PRB-CSRF-BINDING` — Проверка привязки CSRF-токена к сессии.
 - `PRB-DNS-REBINDING` — Проверка защиты доставки вебхуков от DNS rebinding.
 - `PRB-EVENT-ARCHIVE` — Проверка выгрузки журнала событий в холодное хранилище (M041).
@@ -216,6 +217,7 @@
 - `RND-LAB` — Проверка кабинета основателя в РЕАЛЬНОМ рендере (`RULES.md` §2): вход настоящей учётной записью, создание проекта, отображение своих проектов, страница проек…
 - `RND-MEDIA-EMBEDDING` — Проверка встраивания изображений проекта (7.2, уточнение).
 - `RND-PROJECT-MEDIA` — Рендер-проверка логотипа и обложки НА ТЕЛЕФОНЕ (7.2).
+- `RND-UPLOAD-OPERATIONS` — Длительные операции в кабинете основателя (2.1-W04, блок 1 1.5): окончательная ошибка — всплывающее сообщение; скрытая вкладка показ не подтверждает, видимая…
 - `RND-PROJECT-PAGE` — Рендер-проверка страницы проекта для ТРЁХ зрителей (этап 7.3).
 - `RND-SUPPORT` — Поддержка и сообщение об ошибке в РЕАЛЬНОМ рендере (`RULES.md` §2).
 - `RND-WEB-PUBLIC` — Проверка витрины в РЕАЛЬНОМ рендере (`RULES.md` §2).
@@ -335,6 +337,7 @@
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
 | PRB-UPLOAD-COMPLETION | `node scripts/probe-upload-completion.mjs` | 55 | вручную | — |
+| PRB-UPLOAD-CANCEL | `node scripts/probe-upload-cancel.mjs` | 42 | вручную | — |
 | PRB-CSRF-BINDING | `node scripts/probe-csrf-binding.mjs` | 6 | вручную | — |
 | PRB-DNS-REBINDING | `node scripts/probe-dns-rebinding.mjs` | 6 | вручную | — |
 | PRB-EVENT-ARCHIVE | `node scripts/probe-event-archive.mjs` | 11 | вручную | — |
@@ -371,6 +374,7 @@
 | RND-MEDIA-EMBEDDING | `node scripts/render-check-media-embedding.mjs` | 12 | вручную | — |
 | RND-PROFILE | `node scripts/render-check-profile.mjs` | 17 | вручную | `suite:regression` |
 | RND-PROJECT-MEDIA | `node scripts/render-check-project-media.mjs` | 16 | вручную | — |
+| RND-UPLOAD-OPERATIONS | `UNICORN_ENTRY=web node scripts/render-check-upload-operations.mjs` | 24 | вручную | — |
 | RND-PROJECT-PAGE | `node scripts/render-check-project-page.mjs` | 15 | вручную | — |
 | RND-SUPPORT | `node scripts/render-check-support.mjs` | 26 | вручную | — |
 | RND-TESTING-SESSIONS | `node scripts/render-check-testing-sessions.mjs` | 27 | вручную | `suite:regression` |
@@ -400,6 +404,7 @@
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
 | DBT-ACCESS-PATHS | `npm run test -w database` | 4 | CI | CI |
+| DBT-OPERATIONS | `npm run test -w database` | 10 | CI | CI |
 | DBT-CONCURRENCY | `npm run test -w database` | 1 | CI | CI |
 | DBT-DATA-CLASSES | `npm run test -w database` | 7 | CI | CI |
 | DBT-INVARIANTS | `npm run test -w database` | 28 | CI | CI |

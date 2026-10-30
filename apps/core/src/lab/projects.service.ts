@@ -467,8 +467,9 @@ export class ProjectsService {
         await tx.query(
           `INSERT INTO lab.project_materials
              (id, project_id, type, version, upload_key, upload_expires_at,
-              upload_content_type, upload_max_bytes, next_check_at, uploaded_by)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + interval '1 minute', $9)`,
+              upload_content_type, upload_max_bytes, next_check_at, uploaded_by,
+              upload_file_name)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + interval '1 minute', $9, $10)`,
           [
             materialId,
             input.projectId,
@@ -479,6 +480,8 @@ export class ProjectsService {
             input.contentType,
             maxBytes,
             ctx.userId,
+            // Имя — для сообщений пользователю о ЕГО файле (2.1-W04).
+            input.fileName.slice(0, 255),
           ],
         );
 

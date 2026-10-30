@@ -81,6 +81,8 @@ import { ProjectViewsService } from './lab/project-views.service';
 import { ProjectsController } from './lab/projects.controller';
 import { ProjectsService } from './lab/projects.service';
 import { MaterialUploadsService } from './lab/material-uploads.service';
+import { OperationsController } from './lab/operations.controller';
+import { UploadOperationsService } from './lab/upload-operations.service';
 import { ProjectMediaController } from './lab/project-media.controller';
 import { ProjectMediaService } from './lab/project-media.service';
 import { FeaturesController } from './health/features.controller';
@@ -110,6 +112,7 @@ import { S3Service } from './storage/s3.service';
     VerificationController,
     KycController,
     ProjectsController,
+    OperationsController,
     FeaturesController,
     CatalogController,
     ProjectAccessController,
@@ -157,6 +160,7 @@ import { S3Service } from './storage/s3.service';
     KycService,
     ProjectsService,
     MaterialUploadsService,
+    UploadOperationsService,
     CatalogService,
     ProjectAccessService,
     ProjectViewsService,

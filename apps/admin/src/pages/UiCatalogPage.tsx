@@ -19,6 +19,7 @@ import {
   SKINS,
   Select,
   TextArea,
+  Toast,
 } from '@unicorn/ui';
 import { api } from '../api';
 import { problemText } from '../lib/format';
@@ -1152,6 +1153,29 @@ function StatusBlock() {
       <div className="grid-2" style={{ marginTop: 12 }}>
         <EmptyState title="Пусто (EmptyState)" />
         <ErrorState title="Ошибка (ErrorState)" />
+      </div>
+      {/*
+        Всплывающее сообщение (Toast, 2.1-W04): в кабинете стоит в стопке
+        справа сверху (ToastStack) и само не исчезает. Здесь — в потоке
+        страницы, чтобы видеть вид в текущем скине.
+      */}
+      <div data-sample="toast" style={{ marginTop: 12, maxWidth: 360 }}>
+        <Toast
+          tone="danger"
+          title="Файл не загружен (Toast)"
+          onClose={() => undefined}
+          actions={
+            <>
+              <Button size="sm">К материалам</Button>
+              <Button size="sm" variant="secondary">
+                Понятно
+              </Button>
+            </>
+          }
+        >
+          «Презентация.pdf», проект «Альфа»: содержимое не соответствует формату. Загрузите другой
+          файл.
+        </Toast>
       </div>
     </div>
   );

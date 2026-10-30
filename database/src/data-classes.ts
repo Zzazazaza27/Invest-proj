@@ -102,6 +102,7 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
     naturalKey: ['code', 'channel', 'locale', 'version'],
   },
   'comms.notifications': { kind: 'operational' },
+  'comms.operation_notices': { kind: 'operational' },
   'comms.support_messages': { kind: 'operational' },
   'comms.support_tickets': { kind: 'operational' },
   'comms.user_devices': { kind: 'operational' },

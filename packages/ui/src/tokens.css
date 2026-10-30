@@ -477,6 +477,95 @@ input.u-switch__input {
   border-color: color-mix(in srgb, var(--u-danger) 25%, transparent);
 }
 
+/*
+ * Всплывающее сообщение (Toast, 2.1-W04): карточка справа сверху с полосой
+ * тона слева. Фон — поверхность, а не мягкая подложка тона: сообщение лежит
+ * поверх страницы, и тень отделяет его лучше, чем заливка.
+ */
+/* Под шапкой кабинета: сообщение не закрывает профиль и выход. Кабинет с
+   другой шапкой задаёт свой отступ через --u-toast-top. */
+.u-toast-stack {
+  position: fixed;
+  top: var(--u-toast-top, 76px);
+  right: var(--u-space-4);
+  z-index: 90;
+  display: grid;
+  gap: var(--u-space-2);
+  width: min(360px, calc(100vw - 2 * var(--u-space-4)));
+  pointer-events: none;
+}
+
+.u-toast {
+  pointer-events: auto;
+  background: var(--u-surface);
+  color: var(--u-text);
+  border: 1px solid var(--u-border);
+  border-left: 4px solid var(--u-accent);
+  border-radius: var(--u-radius-md);
+  box-shadow: var(--u-shadow-md);
+  padding: var(--u-space-3) var(--u-space-4);
+  font-size: var(--u-text-sm);
+  line-height: 1.45;
+}
+
+.u-toast--danger {
+  border-left-color: var(--u-danger);
+}
+.u-toast--warning {
+  border-left-color: var(--u-warning);
+}
+.u-toast--success {
+  border-left-color: var(--u-success);
+}
+
+.u-toast__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--u-space-2);
+}
+
+.u-toast__title {
+  font-weight: 600;
+}
+
+.u-toast__close {
+  border: 0;
+  background: transparent;
+  color: var(--u-text-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+  border-radius: var(--u-radius-sm);
+}
+.u-toast__close:focus-visible {
+  outline: none;
+  box-shadow: var(--u-focus-ring);
+}
+
+.u-toast__body {
+  color: var(--u-text-muted);
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
+
+.u-toast__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--u-space-2);
+  margin-top: var(--u-space-3);
+}
+
+@media (max-width: 560px) {
+  .u-toast-stack {
+    left: var(--u-space-2);
+    right: var(--u-space-2);
+    top: var(--u-space-2);
+    width: auto;
+  }
+}
+
 /* Ссылка «пропустить к содержимому»: первое, что встречает клавиатурный вход. */
 .u-skip-link {
   position: absolute;

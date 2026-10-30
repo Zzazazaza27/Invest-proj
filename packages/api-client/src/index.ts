@@ -31,6 +31,10 @@ import {
   ProjectFullSchema,
   ProjectMaterialSchema,
   MaterialUploadResultSchema,
+  OperationNoticeResultSchema,
+  UserOperationSchema,
+  UserOperationsResponseSchema,
+  type OperationKind,
   ProjectSummarySchema,
   ProjectTeaserSchema,
   PublicViewSchema,
@@ -493,6 +497,23 @@ export class UnicornApi {
         schema: MaterialUploadResultSchema,
       }),
 
+    /** Незавершённые и неудачные загрузки текущего пользователя в проекте (1.5). */
+    materialUploads: (id: string) =>
+      this.http
+        .request({ path: `/projects/${id}/material-uploads`, schema: UserOperationsResponseSchema })
+        .then((response) => response.items),
+
+    /**
+     * Отмена загрузки автором: состояние «отменено», без удаления. Загрузка
+     * успела завершиться — в ответе её фактическое состояние.
+     */
+    cancelUpload: (id: string, materialId: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/projects/${id}/materials/${materialId}/cancel`,
+        schema: MaterialUploadResultSchema,
+      }),
+
     addProductLink: (id: string, body: AddProductLink) =>
       this.http.request({
         method: 'POST',
@@ -788,6 +809,28 @@ export class UnicornApi {
       }),
     currentContext: () =>
       this.http.request({ path: '/testing/context/current', schema: CurrentContextSchema }),
+  };
+
+  /**
+   * Длительные операции текущего пользователя (блок 1, 1.5): проверка при
+   * загрузке кабинета и возвращении на вкладку, опрос показанной операции и
+   * отметка «итог показан».
+   */
+  readonly operations = {
+    pending: () =>
+      this.http
+        .request({ path: '/me/operations', schema: UserOperationsResponseSchema })
+        .then((response) => response.items),
+
+    one: (kind: OperationKind, id: string) =>
+      this.http.request({ path: `/me/operations/${kind}/${id}`, schema: UserOperationSchema }),
+
+    notice: (kind: OperationKind, id: string) =>
+      this.http.request({
+        method: 'POST',
+        path: `/me/operations/${kind}/${id}/notice`,
+        schema: OperationNoticeResultSchema,
+      }),
   };
 
   readonly profile = {

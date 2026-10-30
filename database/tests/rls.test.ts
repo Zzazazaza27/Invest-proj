@@ -547,7 +547,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 9 схем и 50 таблиц', async () => {
+  it('схема соответствует спецификации: 9 схем и 51 таблица', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','comms','billing','audit','integration',
@@ -669,7 +669,10 @@ describe('RLS: покрытие манифеста', () => {
     // обслуживания), экспертиза, анализ ИИ, согласия на публичный контур,
     // профили инвесторов, проекции сделок и внешние ссылки, служебные
     // журналы агентов ИИ. История выше — как было, итог — 50.
-    expect(Number(tables.rows[0]!.count)).toBe(50);
+    //
+    // + comms.operation_notices (M151, 2.1-W04): отметка «итог операции
+    // показан пользователю» — одна на пару «операция — пользователь».
+    expect(Number(tables.rows[0]!.count)).toBe(51);
   });
 });
 

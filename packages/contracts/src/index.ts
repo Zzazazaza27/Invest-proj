@@ -32,6 +32,7 @@ export * from './domain/testing-sessions';
 export * from './domain/integration';
 export * from './domain/support';
 export * from './domain/misc';
+export * from './domain/operations';
 
 export * from './events';
 

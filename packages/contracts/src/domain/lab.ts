@@ -273,9 +273,10 @@ export type ProjectMaterial = z.infer<typeof ProjectMaterialSchema>;
  * не завершена, проверяем состояние». `rejected` — проверенное несоответствие
  * формату или размеру, `reason` объясняет пользователю, что выбрать другой
  * файл. `needs_attention` — сбой сохранения разбирает эксплуатация.
+ * `cancelled` — загрузку отменил автор (2.1-W04); ответ и на отмену.
  */
 export const MaterialUploadResultSchema = z.object({
-  uploadState: z.enum(['pending', 'ready', 'rejected', 'needs_attention']),
+  uploadState: z.enum(['pending', 'ready', 'rejected', 'needs_attention', 'cancelled']),
   received: z.boolean(),
   reason: z.string().nullable(),
   material: ProjectMaterialSchema.nullable(),

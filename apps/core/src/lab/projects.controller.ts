@@ -1,4 +1,15 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Put, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Put,
+  Res,
+} from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import {
   AddProductLinkSchema,
@@ -12,12 +23,14 @@ import {
   SetProjectVisibilityRequestSchema,
   UpdateProjectRequestSchema,
   UploadTicketSchema,
+  UserOperationsResponseSchema,
   UuidSchema,
 } from '@unicorn/contracts';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';
 import { ProjectsService } from './projects.service';
+import { UploadOperationsService } from './upload-operations.service';
 
 /**
  * Кабинет основателя.
@@ -31,7 +44,10 @@ import { ProjectsService } from './projects.service';
  */
 @Controller('projects')
 export class ProjectsController {
-  constructor(private readonly projects: ProjectsService) {}
+  constructor(
+    private readonly projects: ProjectsService,
+    private readonly operations: UploadOperationsService,
+  ) {}
 
   @Roles('founder', 'admin')
   @Post()
@@ -160,6 +176,33 @@ export class ProjectsController {
     return MaterialUploadResultSchema.parse(
       await this.projects.finalizeUpload(ctx, id, materialId),
     );
+  }
+
+  /** Незавершённые и неудачные загрузки ТЕКУЩЕГО пользователя в проекте (1.5). */
+  @Roles('founder', 'admin')
+  @Get(':id/material-uploads')
+  async materialUploads(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    return UserOperationsResponseSchema.parse({
+      items: await this.operations.forProject(ctx, id),
+    });
+  }
+
+  /**
+   * Отмена загрузки автором (2.1-W04): состояние «отменено», без удаления.
+   * Загрузка успела завершиться — ответ с её фактическим состоянием.
+   */
+  @Roles('founder', 'admin')
+  @Post(':id/materials/:materialId/cancel')
+  @HttpCode(200)
+  async cancelUpload(
+    @Param('id') rawId: string,
+    @Param('materialId') rawMaterialId: string,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const id = parseOrThrow(UuidSchema, rawId);
+    const materialId = parseOrThrow(UuidSchema, rawMaterialId);
+    return MaterialUploadResultSchema.parse(await this.operations.cancel(ctx, id, materialId));
   }
 
   @Roles('founder', 'admin')

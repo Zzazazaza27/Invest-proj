@@ -27,7 +27,7 @@ import type { S3Service } from './s3.service';
  * путь проверяет раньше, своим контекстом.
  */
 
-export type UploadState = 'pending' | 'ready' | 'rejected' | 'needs_attention';
+export type UploadState = 'pending' | 'ready' | 'rejected' | 'needs_attention' | 'cancelled';
 
 export interface UploadRow {
   id: string;
