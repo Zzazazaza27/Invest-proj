@@ -178,6 +178,7 @@ for (const [origin, allowed] of [
       'Access-Control-Request-Method': 'POST',
       'Access-Control-Request-Headers': 'content-type',
     },
+    signal: AbortSignal.timeout(30_000),
   });
   const acao = r.headers.get('access-control-allow-origin');
   check(
@@ -267,6 +268,7 @@ for (const [method, path, label] of closed) {
     method,
     headers: { Origin: ALLOWED },
     body: method === 'PUT' ? 'x' : undefined,
+    signal: AbortSignal.timeout(30_000),
   });
   check(`${label} — 404`, r.status === 404, `${method} ${path} → ${r.status}`);
 }
