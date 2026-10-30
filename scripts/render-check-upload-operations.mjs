@@ -137,6 +137,8 @@ const VISIBILITY_SHIM = () => {
   Object.defineProperty(Document.prototype, 'hidden', { get: () => state !== 'visible' });
   window.__setVisibility = (next) => {
     state = next;
+    // В хранилище вкладки — только «видима / скрыта» для проверки, не токен.
+    // nosemgrep: unicorn-no-token-in-web-storage
     sessionStorage.setItem('__visibility', next);
     document.dispatchEvent(new Event('visibilitychange'));
   };
