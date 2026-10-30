@@ -530,6 +530,42 @@ try {
     pendingNotice.status === 409,
     `HTTP ${pendingNotice.status}`,
   );
+
+  // G. История отказов не вытесняет идущую загрузку (замечание Тэнка при
+  // приёмке W04). Старая идущая — `e` выше; после неё 25 более новых отказов.
+  console.warn('▸ G. Старая идущая загрузка и 25 новых отказов');
+  await sql(
+    `INSERT INTO lab.project_materials
+       (id, project_id, type, version, upload_key, upload_state, upload_state_reason,
+        upload_state_changed_at, uploaded_by, created_at, upload_file_name)
+     SELECT public.uuid_generate_v7(), $1::uuid, 'doc', 100 + g,
+            'projects/' || $1::text || '/materials/doc/w04-g-' || g || '/upload', 'rejected',
+            'проба истории', now() + make_interval(secs => g), $2,
+            now() + make_interval(secs => g), 'отказ-' || g || '.pdf'
+       FROM generate_series(1, 25) AS g`,
+    [projectId, owner.userId],
+  );
+  const listG =
+    (await owner.client.call(`/v1/projects/${projectId}/material-uploads`)).json?.items ?? [];
+  check(
+    'идущая загрузка в списке проекта, несмотря на 25 более новых отказов',
+    listG.some((op) => op.id === e.materialId && op.state === 'pending'),
+  );
+  check(
+    'история ограничена 20 последними',
+    listG.filter((op) => op.state !== 'pending').length === 20,
+    `${listG.filter((op) => op.state !== 'pending').length}`,
+  );
+  check('идущие — первыми', listG[0]?.state === 'pending');
+  const opsG = await ops(owner.client);
+  check(
+    'идущая загрузка и в общей проверке',
+    opsG.some((op) => op.id === e.materialId && op.state === 'pending'),
+  );
+  const pollG = await owner.client.call(`/v1/me/operations/material_upload/${e.materialId}`);
+  check('опрос идущей работает', pollG.json?.state === 'pending');
+  const cancelG = await cancel(e.materialId);
+  check('и её можно отменить', cancelG.json?.uploadState === 'cancelled');
 } finally {
   if (projectId) {
     await sql(

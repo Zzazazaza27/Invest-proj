@@ -337,7 +337,7 @@
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
 | PRB-UPLOAD-COMPLETION | `node scripts/probe-upload-completion.mjs` | 55 | вручную | — |
-| PRB-UPLOAD-CANCEL | `node scripts/probe-upload-cancel.mjs` | 42 | вручную | — |
+| PRB-UPLOAD-CANCEL | `node scripts/probe-upload-cancel.mjs` | 48 | вручную | — |
 | PRB-CSRF-BINDING | `node scripts/probe-csrf-binding.mjs` | 6 | вручную | — |
 | PRB-DNS-REBINDING | `node scripts/probe-dns-rebinding.mjs` | 6 | вручную | — |
 | PRB-EVENT-ARCHIVE | `node scripts/probe-event-archive.mjs` | 11 | вручную | — |
@@ -374,7 +374,7 @@
 | RND-MEDIA-EMBEDDING | `node scripts/render-check-media-embedding.mjs` | 12 | вручную | — |
 | RND-PROFILE | `node scripts/render-check-profile.mjs` | 17 | вручную | `suite:regression` |
 | RND-PROJECT-MEDIA | `node scripts/render-check-project-media.mjs` | 16 | вручную | — |
-| RND-UPLOAD-OPERATIONS | `UNICORN_ENTRY=web node scripts/render-check-upload-operations.mjs` | 24 | вручную | — |
+| RND-UPLOAD-OPERATIONS | `UNICORN_ENTRY=web node scripts/render-check-upload-operations.mjs` | 35 | вручную | — |
 | RND-PROJECT-PAGE | `node scripts/render-check-project-page.mjs` | 15 | вручную | — |
 | RND-SUPPORT | `node scripts/render-check-support.mjs` | 26 | вручную | — |
 | RND-TESTING-SESSIONS | `node scripts/render-check-testing-sessions.mjs` | 27 | вручную | `suite:regression` |

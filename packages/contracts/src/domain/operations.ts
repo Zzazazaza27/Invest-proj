@@ -60,6 +60,12 @@ export const UserOperationsResponseSchema = z.object({
 });
 export type UserOperationsResponse = z.infer<typeof UserOperationsResponseSchema>;
 
+/**
+ * Завершённых без успеха загрузок в карточке материалов — последние столько.
+ * Идущие загрузки этим пределом не ограничиваются: они возвращаются все.
+ */
+export const MATERIAL_UPLOAD_HISTORY_LIMIT = 20;
+
 export const OperationNoticeResultSchema = z.object({
   noticed: z.literal(true),
 });

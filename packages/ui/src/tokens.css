@@ -492,7 +492,21 @@ input.u-switch__input {
   display: grid;
   gap: var(--u-space-2);
   width: min(360px, calc(100vw - 2 * var(--u-space-4)));
-  pointer-events: none;
+  max-height: calc(100vh - var(--u-toast-top, 76px) - var(--u-space-4));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.u-toast-stack__more {
+  pointer-events: auto;
+  justify-self: end;
+  font-size: var(--u-text-xs);
+  color: var(--u-text-muted);
+  background: var(--u-surface);
+  border: 1px solid var(--u-border);
+  border-radius: var(--u-radius-pill);
+  padding: 2px var(--u-space-3);
+  box-shadow: var(--u-shadow-sm);
 }
 
 .u-toast {
@@ -563,6 +577,7 @@ input.u-switch__input {
     right: var(--u-space-2);
     top: var(--u-space-2);
     width: auto;
+    max-height: calc(100vh - 2 * var(--u-space-2));
   }
 }
 

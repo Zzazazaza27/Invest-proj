@@ -21,7 +21,7 @@
  * Требуется поднятое: ядро, MinIO, кабинет основателя, приложение входа.
  * Снимки — `out/render-upload-operations/`.
  */
-/* global window, document, Document -- код в page.evaluate и addInitScript выполняется в браузере */
+/* global window, document, Document, innerHeight -- код в page.evaluate и addInitScript выполняется в браузере */
 import { chromium } from 'playwright';
 import { mkdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -364,8 +364,136 @@ try {
   check('без кнопки отмены', (await stuckRow.locator('[data-upload-cancel]').count()) === 0);
   await fresh.screenshot({ path: join(OUT, '3-materials.png'), fullPage: true });
 
-  check('ошибок в консоли нет', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
   await ctx.close();
+
+  // ------------------------------------------------ 5. очередь на телефоне
+  // Замечание Тэнка при приёмке W04: невидимые карточки не должны
+  // отмечаться показанными. Пять длинных сообщений на узком экране.
+  console.warn('\n[5] Несколько длинных сообщений на телефоне');
+  const old = await ticket(projectId, Buffer.from('%PDF-1.4 старая'), 'Старая-идущая.pdf');
+  const longReason =
+    'Содержимое файла не соответствует типу материала: проверьте, что это PDF или PPTX, ' +
+    'что файл не повреждён и не защищён паролем, и загрузите его заново. '.repeat(3);
+  const queued = (
+    await sql(
+      `INSERT INTO lab.project_materials
+         (id, project_id, type, version, upload_key, upload_state, upload_state_reason,
+          upload_state_changed_at, uploaded_by, created_at, upload_file_name)
+       SELECT public.uuid_generate_v7(), $1::uuid, 'doc', 200 + g,
+              'projects/' || $1::text || '/materials/doc/q-' || g || '/upload', 'rejected', $3,
+              now() + make_interval(secs => g), m.uploaded_by,
+              now() + make_interval(secs => g), 'Длинное-имя-файла-номер-' || g || '.pdf'
+         FROM generate_series(1, 5) AS g,
+              (SELECT uploaded_by FROM lab.project_materials WHERE id = $2) AS m
+       RETURNING id`,
+      [projectId, old.materialId, longReason.slice(0, 480)],
+    )
+  ).map((r) => r.id);
+  const noticedOf = async (ids) =>
+    (
+      await sql(
+        'SELECT operation_id FROM comms.operation_notices WHERE operation_id = ANY($1::uuid[])',
+        [ids],
+      )
+    ).map((r) => r.operation_id);
+
+  const phone = await browser.newContext({ viewport: { width: 390, height: 700 } });
+  const mobile = await login(phone, 'телефон');
+  await mobile.waitForSelector('[data-toast]', { timeout: 15_000 });
+  await mobile.waitForTimeout(1500);
+
+  /** Какие карточки реально видны: пересечение с экраном и со стопкой ≥ 75 %. */
+  const seen = () =>
+    mobile.evaluate(() => {
+      const stack = document.querySelector('.u-toast-stack')?.getBoundingClientRect();
+      return [...document.querySelectorAll('[data-toast]')].map((el) => {
+        const r = el.getBoundingClientRect();
+        const top = Math.max(r.top, stack?.top ?? 0, 0);
+        const bottom = Math.min(r.bottom, stack?.bottom ?? innerHeight, innerHeight);
+        return { id: el.getAttribute('data-toast'), ratio: Math.max(0, bottom - top) / r.height };
+      });
+    });
+  const cards = await seen();
+  check('на экране не больше трёх карточек', cards.length === 3, `${cards.length}`);
+  check(
+    'остальные — в очереди со счётчиком',
+    (await mobile.locator('[data-toast-queued="2"]').count()) === 1,
+  );
+  const visibleIds = cards.filter((c) => c.ratio >= 0.75).map((c) => c.id);
+  const hiddenIds = cards.filter((c) => c.ratio < 0.75).map((c) => c.id);
+  await mobile.screenshot({ path: join(OUT, '4-phone-queue.png') });
+  const noticed1 = await noticedOf(queued);
+  check(
+    'отмечены ровно видимые карточки',
+    noticed1.length === visibleIds.length && visibleIds.every((id) => noticed1.includes(id)),
+    `видно ${visibleIds.length}, за краем ${hiddenIds.length}, отмечено ${noticed1.length}`,
+  );
+  check('есть карточка за краем стопки — проверка не пустая', hiddenIds.length > 0);
+
+  await mobile.reload({ waitUntil: 'networkidle' });
+  await mobile.waitForSelector('[data-toast]', { timeout: 15_000 });
+  await mobile.waitForTimeout(1000);
+  const afterReload = (await seen()).map((c) => c.id);
+  check(
+    'после обновления неувиденные вернулись, увиденные — нет',
+    hiddenIds.every((id) => afterReload.includes(id)) &&
+      visibleIds.every((id) => !afterReload.includes(id)),
+  );
+
+  // Закрываем по одной: встаёт следующая и отмечается, когда её видно.
+  for (let i = 0; i < 6 && (await mobile.locator('[data-toast]').count()) > 0; i += 1) {
+    await mobile.locator('[data-toast] .u-toast__close').first().click();
+    await mobile.waitForTimeout(700);
+  }
+  check('после закрытия всех очередь пуста', (await mobile.locator('[data-toast]').count()) === 0);
+  check('все пять в итоге отмечены', (await noticedOf(queued)).length === 5);
+
+  // ------------------------------------------------ 6. история и идущая
+  console.warn('\n[6] Старая идущая загрузка и много новых отказов');
+  await sql(
+    `INSERT INTO lab.project_materials
+       (id, project_id, type, version, upload_key, upload_state, upload_state_reason,
+        upload_state_changed_at, uploaded_by, created_at, upload_file_name)
+     SELECT public.uuid_generate_v7(), $1::uuid, 'doc', 300 + g,
+            'projects/' || $1::text || '/materials/doc/h-' || g || '/upload', 'rejected', 'история',
+            now() + make_interval(secs => 10 + g), m.uploaded_by,
+            now() + make_interval(secs => 10 + g), 'история-' || g || '.pdf'
+       FROM generate_series(1, 20) AS g,
+            (SELECT uploaded_by FROM lab.project_materials WHERE id = $2) AS m`,
+    [projectId, old.materialId],
+  );
+  await sql(
+    `INSERT INTO comms.operation_notices (operation_kind, operation_id, user_id)
+     SELECT 'material_upload', id, uploaded_by FROM lab.project_materials
+      WHERE project_id = $1 AND upload_state = 'rejected'
+     ON CONFLICT DO NOTHING`,
+    [projectId],
+  );
+  await mobile.goto(projectUrl, { waitUntil: 'networkidle', timeout: 30_000 });
+  const oldRow = mobile.locator(`[data-upload-row="${old.materialId}"]`);
+  await oldRow.waitFor({ timeout: 15_000 });
+  check(
+    'старая идущая загрузка в списке при 25+ более новых отказах',
+    (await oldRow.count()) === 1,
+  );
+  check(
+    'у неё есть кнопка отмены',
+    (await mobile.locator(`[data-upload-cancel="${old.materialId}"]`).count()) === 1,
+  );
+  check(
+    'история ограничена и подписана',
+    (await mobile.locator('[data-uploads-history-limit]').count()) === 1 &&
+      (await mobile.locator('[data-upload-row][data-upload-state="rejected"]').count()) === 20,
+  );
+  await mobile.locator(`[data-upload-cancel="${old.materialId}"]`).click();
+  await mobile.waitForSelector(`[data-upload-row="${old.materialId}"]`, {
+    state: 'detached',
+    timeout: 15_000,
+  });
+  check('отменяется из списка', true);
+  await phone.close();
+
+  check('ошибок в консоли нет', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
 } catch (error) {
   failed += 1;
   console.error('ПРОГОН ОБОРВАН:', error);

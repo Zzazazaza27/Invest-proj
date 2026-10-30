@@ -30,6 +30,9 @@ import { api } from './api';
 
 const MIN_CHECK_INTERVAL_MS = 60_000;
 
+/** Карточек на экране одновременно; остальные — в очереди. */
+const MAX_VISIBLE = 3;
+
 const TYPE_TITLES: Record<string, string> = {
   deck: 'Презентация',
   video: 'Видео',
@@ -39,7 +42,7 @@ const TYPE_TITLES: Record<string, string> = {
 /** «Что, где и что делать» одной фразой; причина — с сервера, она адресована пользователю. */
 function describe(op: UserOperation): string {
   const what = op.fileName ? `«${op.fileName}»` : (TYPE_TITLES[op.materialType] ?? 'Файл');
-  const reason = (op.reason ?? 'файл не подошёл').replace(/\.$/, '');
+  const reason = (op.reason ?? 'файл не подошёл').trim().replace(/\.+$/, '');
   const action = /выберите|загрузите/i.test(reason) ? '' : ' Загрузите другой файл.';
   return `${what}, проект «${op.projectTitle}»: ${reason}.${action}`;
 }
@@ -102,15 +105,28 @@ export function OperationsProvider({
     <OperationsContext.Provider value={{ requestCheck: () => void check(true) }}>
       {children}
       {notices.length > 0 ? (
-        <ToastStack>
-          {notices.map((op) => (
+        <ToastStack
+          more={
+            notices.length > MAX_VISIBLE ? (
+              <span data-toast-queued={notices.length - MAX_VISIBLE}>
+                Ещё сообщений: {notices.length - MAX_VISIBLE}
+              </span>
+            ) : null
+          }
+        >
+          {/*
+            Одновременно — не больше MAX_VISIBLE карточек: остальные ждут в
+            очереди и НЕ монтируются, поэтому и не отмечаются показанными.
+            Закрыли верхнюю — встаёт следующая.
+          */}
+          {notices.slice(0, MAX_VISIBLE).map((op) => (
             <Toast
               key={op.id}
               data-toast={op.id}
               tone="danger"
               title="Файл не загружен"
-              // Показ отмечается на сервере, как только сообщение появилось на
-              // видимой вкладке. Ошибка отметки не прячет сообщение — оно
+              // Показ отмечается на сервере, когда карточка действительно в
+              // поле зрения на видимой вкладке (Toast проверяет оба условия). Ошибка отметки не прячет сообщение — оно
               // покажется ещё раз при следующей проверке, и это честнее, чем
               // потерять его.
               onShown={() => void api.operations.notice(op.kind, op.id).catch(() => undefined)}

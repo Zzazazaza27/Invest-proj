@@ -1,5 +1,10 @@
 import { Injectable } from '@nestjs/common';
-import type { MaterialUploadResult, OperationKind, UserOperation } from '@unicorn/contracts';
+import {
+  MATERIAL_UPLOAD_HISTORY_LIMIT as HISTORY_LIMIT,
+  type MaterialUploadResult,
+  type OperationKind,
+  type UserOperation,
+} from '@unicorn/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
@@ -60,32 +65,53 @@ export class UploadOperationsService {
    * и окончательные ошибки, ещё не показанные пользователю. «Требует
    * вмешательства» сюда не входит — действия от пользователя не нужно, оно
    * показано в карточке материалов.
+   *
+   * Идущие и неотмеченные ошибки — разными запросами с отдельными пределами:
+   * накопленные ошибки не должны вытеснять идущие загрузки.
    */
   async pending(ctx: RequestContext): Promise<UserOperation[]> {
     return this.db.readOnly(ctx, async (tx) => {
-      const { rows } = await tx.query<OperationRow>(
+      const active = await tx.query<OperationRow>(
         `SELECT ${OPERATION_COLUMNS} ${OPERATION_FROM}
-           AND (m.upload_state = 'pending'
-                OR (m.upload_state = 'rejected' AND n.operation_id IS NULL))
+           AND m.upload_state = 'pending'
          ORDER BY m.created_at DESC
+         LIMIT 200`,
+      );
+      const unreported = await tx.query<OperationRow>(
+        `SELECT ${OPERATION_COLUMNS} ${OPERATION_FROM}
+           AND m.upload_state = 'rejected' AND n.operation_id IS NULL
+         ORDER BY m.upload_state_changed_at
          LIMIT 50`,
       );
-      return rows.map(mapOperation);
+      return [...active.rows, ...unreported.rows].map(mapOperation);
     });
   }
 
-  /** Незавершённые и неудачные загрузки пользователя в проекте — для карточки материалов. */
+  /**
+   * Загрузки пользователя в проекте — для карточки материалов.
+   *
+   * Идущие возвращаются ВСЕ, отдельным запросом: история не должна вытеснять
+   * их из списка — вместе со строкой пропали бы кнопка отмены и опрос. Их
+   * число ограничено квотой проекта (M149: не больше 50 вместе с готовыми).
+   * Завершённые без успеха — «не принят» и «требует проверки» — история: только
+   * последние `HISTORY_LIMIT`, после идущих.
+   */
   async forProject(ctx: RequestContext, projectId: string): Promise<UserOperation[]> {
     return this.db.readOnly(ctx, async (tx) => {
-      const { rows } = await tx.query<OperationRow>(
+      const active = await tx.query<OperationRow>(
         `SELECT ${OPERATION_COLUMNS} ${OPERATION_FROM}
-           AND m.project_id = $1
-           AND m.upload_state IN ('pending', 'rejected', 'needs_attention')
-         ORDER BY m.created_at DESC
-         LIMIT 20`,
+           AND m.project_id = $1 AND m.upload_state = 'pending'
+         ORDER BY m.created_at DESC`,
         [projectId],
       );
-      return rows.map(mapOperation);
+      const history = await tx.query<OperationRow>(
+        `SELECT ${OPERATION_COLUMNS} ${OPERATION_FROM}
+           AND m.project_id = $1 AND m.upload_state IN ('rejected', 'needs_attention')
+         ORDER BY m.upload_state_changed_at DESC
+         LIMIT $2`,
+        [projectId, HISTORY_LIMIT],
+      );
+      return [...active.rows, ...history.rows].map(mapOperation);
     });
   }
 

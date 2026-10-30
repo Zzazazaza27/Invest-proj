@@ -11,6 +11,7 @@ import {
   Stack,
 } from '@unicorn/ui';
 import {
+  MATERIAL_UPLOAD_HISTORY_LIMIT,
   MATERIAL_UPLOAD_RULES,
   type MaterialUploadResult,
   type ProjectMaterial,
@@ -410,6 +411,16 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
                 </li>
               ))}
             </ul>
+            {uploads.filter((op) => op.state !== 'pending').length >=
+            MATERIAL_UPLOAD_HISTORY_LIMIT ? (
+              <span
+                data-uploads-history-limit
+                style={{ fontSize: 'var(--u-text-xs)', color: 'var(--u-text-muted)' }}
+              >
+                Из завершённых без успеха показаны последние {MATERIAL_UPLOAD_HISTORY_LIMIT}. Идущие
+                загрузки показаны все.
+              </span>
+            ) : null}
           </div>
         ) : null}
 
