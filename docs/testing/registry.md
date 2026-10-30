@@ -308,7 +308,7 @@
 | CHK-DB-RECONNECT | `npm run check:db-reconnect` | 8 | вручную | `suite:regression` |
 | CHK-DB-RESILIENCE | `npm run check:db-resilience` | 23 | вручную | `suite:isolated` |
 | CHK-DEFINER-PRIVILEGES | `node scripts/check-definer-privileges.mjs` | 0 | CI | CI |
-| CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 25 | вручную | — |
+| CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |
 | CHK-FRONTEND-BOUNDARY | `npm run gate:boundary` | 0 | CI | CI |
@@ -376,7 +376,7 @@
 | RND-MEDIA-EMBEDDING | `node scripts/render-check-media-embedding.mjs` | 12 | вручную | — |
 | RND-PROFILE | `node scripts/render-check-profile.mjs` | 17 | вручную | `suite:regression` |
 | RND-PROJECT-MEDIA | `node scripts/render-check-project-media.mjs` | 16 | вручную | — |
-| RND-UPLOAD-OPERATIONS | `UNICORN_ENTRY=web node scripts/render-check-upload-operations.mjs` | 35 | вручную | — |
+| RND-UPLOAD-OPERATIONS | `UNICORN_ENTRY=web node scripts/render-check-upload-operations.mjs` | 40 | вручную | — |
 | RND-PROJECT-PAGE | `node scripts/render-check-project-page.mjs` | 15 | вручную | — |
 | RND-SUPPORT | `node scripts/render-check-support.mjs` | 26 | вручную | — |
 | RND-TESTING-SESSIONS | `node scripts/render-check-testing-sessions.mjs` | 27 | вручную | `suite:regression` |
@@ -435,7 +435,7 @@
 | --- | --- | --- | --- | --- |
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
-| UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 8 | CI | CI |
+| UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |

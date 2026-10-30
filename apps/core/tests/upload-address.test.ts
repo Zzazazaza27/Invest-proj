@@ -71,6 +71,24 @@ describe('Публичный адрес загрузки', () => {
     );
   });
 
+  it('внешний стенд без публичного адреса и с внутренним НЕ петлёй — тоже отказ', () => {
+    // Замечание Тэнка при приёмке W06: имя вроде minio:9000 снаружи не
+    // разрешается — публичный адрес на внешнем стенде обязателен явно.
+    withEnv({ PUBLIC_BASE_URL: 'https://5espace.com', S3_ENDPOINT: 'http://minio:9000' }, () => {
+      const s3 = new S3Service();
+      expect(s3.uploadAddressProblem()).toMatch(/S3_PUBLIC_ENDPOINT/);
+      expect(() => form(s3)).toThrow(AppError);
+    });
+  });
+
+  it('локальный стенд с внутренним не петлёй — работает как раньше', () => {
+    withEnv({ PUBLIC_BASE_URL: 'http://127.0.0.1', S3_ENDPOINT: 'http://minio:9000' }, () => {
+      const s3 = new S3Service();
+      expect(s3.uploadAddressProblem()).toBeNull();
+      expect(form(s3).url).toBe('http://minio:9000/unicorn-launch');
+    });
+  });
+
   it('публичный адрес петлёй на внешнем стенде — тоже отказ', () => {
     withEnv(
       { PUBLIC_BASE_URL: 'https://5espace.com', S3_PUBLIC_ENDPOINT: 'http://127.0.0.1:9000' },

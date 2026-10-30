@@ -42,9 +42,12 @@ files.5espace.com {
 
 		@upload method POST
 		handle @upload {
-			# Наибольший материал — 500 МБ; запас на поля формы multipart.
+			# Наибольший материал — 500 МиБ (524 288 000 байт, MATERIAL_UPLOAD_RULES).
+			# Единицы двоичные: «520MB» у Caddy — 520 000 000 байт, меньше
+			# разрешённого файла (замечание Тэнка при приёмке W06). Запас — на поля
+			# формы multipart.
 			request_body {
-				max_size 520MB
+				max_size 520MiB
 			}
 			header @prod_origin Access-Control-Allow-Origin "https://5espace.com"
 			header Vary "Origin"

@@ -17,11 +17,16 @@
  *     node scripts/check-files-endpoint.mjs
  * Локально (Caddy из infra/caddy/files.caddy на :8099):
  *   FILES_URL=http://127.0.0.1:8099 ALLOWED_ORIGIN=https://5espace.com \
- *   CADDY_MAX_BYTES=2097152 node scripts/check-files-endpoint.mjs
+ *     node scripts/check-files-endpoint.mjs
+ *
+ * Прогон передаёт настоящий файл наибольшего разрешённого размера (500 МиБ) и
+ * тело сверх предела Caddy (521 МиБ): это минуты и ~500 МиБ в хранилище.
  *
  * Пробные объекты кладутся под префикс `w06-probe/` и не удаляются: удаление
  * объектов — не дело этого прогона (2.1.2).
  */
+import http from 'node:http';
+import https from 'node:https';
 import { createRequire } from 'node:module';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -40,8 +45,8 @@ if (existsSync(join(ROOT, '.env'))) {
 const FILES_URL = (process.env.FILES_URL ?? '').replace(/\/+$/, '');
 const ALLOWED = process.env.ALLOWED_ORIGIN ?? 'https://5espace.com';
 const FOREIGN = 'https://evil.example';
-/** Предел тела у Caddy для проверки 413: на стенде 520 МБ — проверяется только локально. */
-const CADDY_MAX = Number(process.env.CADDY_MAX_BYTES ?? 0);
+/** Предел тела у Caddy (`max_size 520MiB` в infra/caddy/files.caddy). */
+const CADDY_MAX = 520 * 1024 * 1024;
 if (!FILES_URL) {
   console.error('нужен FILES_URL — публичный адрес загрузки');
   process.exit(2);
@@ -51,8 +56,67 @@ process.env.S3_PUBLIC_ENDPOINT = FILES_URL;
 
 const require = createRequire(import.meta.url);
 const { S3Service } = require(join(ROOT, 'apps/core/dist/storage/s3.service.js'));
+const { MATERIAL_UPLOAD_RULES } = require(join(ROOT, 'packages/contracts/dist/index.js'));
 const s3 = new S3Service();
 const BUCKET = s3.bucket;
+/** Наибольший разрешённый материал по контракту. */
+const MAX_FILE = Math.max(...Object.values(MATERIAL_UPLOAD_RULES).map((r) => r.maxBytes));
+
+/**
+ * Форма с файлом заданного размера — потоком, с объявленной длиной, как её
+ * отправляет браузер. Полгигабайта в памяти держать незачем.
+ */
+function streamForm(form, size, origin = ALLOWED) {
+  const boundary = `----w06${Date.now()}`;
+  let head = '';
+  for (const [k, v] of Object.entries(form.fields)) {
+    head += `--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`;
+  }
+  head +=
+    `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="x.pdf"\r\n` +
+    'Content-Type: application/pdf\r\n\r\n';
+  const headBuf = Buffer.from(head);
+  const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+  const url = new URL(form.url);
+  const transport = url.protocol === 'https:' ? https : http;
+  return new Promise((resolve) => {
+    const req = transport.request(
+      {
+        hostname: url.hostname,
+        port: url.port || undefined,
+        path: url.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': `multipart/form-data; boundary=${boundary}`,
+          'Content-Length': headBuf.length + size + tail.length,
+          Origin: origin,
+        },
+      },
+      (res) => {
+        let text = '';
+        res.on('data', (d) => (text += d));
+        res.on('end', () =>
+          resolve({ status: res.statusCode, code: text.match(/<Code>([^<]+)<\/Code>/)?.[1] ?? '' }),
+        );
+      },
+    );
+    // Отказ до конца передачи (413) закрывает соединение — это ответ, а не сбой прогона.
+    req.on('error', (error) => resolve({ status: 0, code: error.code ?? error.message }));
+    req.write(headBuf);
+    const chunk = Buffer.alloc(1024 * 1024, 'x');
+    chunk.write('%PDF-1.4 ');
+    let left = size;
+    const pump = () => {
+      while (left > 0) {
+        const part = left >= chunk.length ? chunk : chunk.subarray(0, left);
+        left -= part.length;
+        if (!req.write(part)) return void req.once('drain', pump);
+      }
+      req.end(tail);
+    };
+    pump();
+  });
+}
 
 let passed = 0;
 let failed = 0;
@@ -162,10 +226,28 @@ console.warn('  ·     ждём истечения формы на 60 с…');
 await new Promise((r) => setTimeout(r, 65_000));
 const late = await postForm(shortForm, pdf());
 check('после срока формы — отказ', late.status === 403, `HTTP ${late.status} ${late.code}`);
-if (CADDY_MAX > 0) {
-  const huge = await postForm(sign('huge', { maxBytes: 50 * 1024 * 1024 }), pdf(CADDY_MAX + 1024));
-  check('сверх предела тела Caddy — 413', huge.status === 413, `HTTP ${huge.status}`);
-}
+console.warn('▸ Настоящие пределы размера');
+// Наибольший разрешённый материал проходит через вход целиком. Проверка на
+// уменьшенном пределе это не ловила: «520MB» у Caddy — десятичные мегабайты,
+// меньше 500 МиБ контракта (замечание Тэнка при приёмке W06).
+const maxKey = key('max');
+const atMax = await streamForm(sign('max', { key: maxKey, maxBytes: MAX_FILE }), MAX_FILE);
+check(
+  `наибольший разрешённый файл (${MAX_FILE} байт) принят`,
+  atMax.status === 204,
+  `HTTP ${atMax.status} ${atMax.code}`,
+);
+const stored = await s3.headObject(maxKey);
+check('и сохранён целиком', stored.exists && stored.sizeBytes === MAX_FILE, `${stored.sizeBytes}`);
+const over = await streamForm(
+  sign('over', { maxBytes: CADDY_MAX + 16 * 1024 * 1024 }),
+  CADDY_MAX + 1024 * 1024,
+);
+check(
+  `сверх предела тела Caddy (${CADDY_MAX} байт) — 413`,
+  over.status === 413,
+  `HTTP ${over.status}`,
+);
 
 console.warn('▸ Закрыто всё, кроме приёма формы');
 const closed = [

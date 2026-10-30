@@ -120,7 +120,8 @@ const consoleErrors = [];
 function watch(page, who) {
   page.on('console', (message) => {
     if (message.type() !== 'error') return;
-    if (/\b(400|401|403|404|409|503) \(/.test(message.text())) return;
+    // 429 — ожидание сброса лимита адреса в длинном прогоне (calm), не дефект.
+    if (/\b(400|401|403|404|409|429|503) \(/.test(message.text())) return;
     consoleErrors.push(`${who}: ${message.text()}`);
   });
   page.on('pageerror', (error) => consoleErrors.push(`${who}: ${String(error)}`));
@@ -145,6 +146,19 @@ const VISIBILITY_SHIM = () => {
 };
 
 /**
+ * Дождаться, пока ограничитель частоты снова пустит. Прогон длинный, а опрос
+ * на подставных часах делает много запросов за секунды реального времени —
+ * следующая часть иначе упирается в 429, и это неотличимо от дефекта.
+ */
+async function calm(page) {
+  for (let i = 0; i < 20; i += 1) {
+    const status = await page.evaluate(() => fetch('/v1/auth/me').then((r) => r.status));
+    if (status !== 429) return;
+    await new Promise((resolve) => setTimeout(resolve, 5_000));
+  }
+}
+
+/**
  * Вход настоящей формой. `hidden` — вкладка скрыта уже на форме входа: после
  * входа кабинет открывается сразу, и видимая вкладка успела бы отметить показ
  * раньше, чем прогон его проверит.
@@ -153,6 +167,8 @@ async function login(context, who, { hidden = false } = {}) {
   const page = await context.newPage();
   watch(page, who);
   await page.goto(`${LAB_URL}/`, { waitUntil: 'networkidle', timeout: 30_000 });
+  // Поздние части прогона входят, когда лимит адреса уже выбран опросом.
+  await calm(page);
   if (hidden) await page.evaluate(() => window.__setVisibility('hidden'));
   await page.fill('#email', email);
   await page.fill('#password', password);
@@ -322,6 +338,7 @@ try {
 
   // ------------------------------------------------ 3. отмена
   console.warn('\n[3] Отмена загрузки');
+  await calm(page);
   await page.locator(`[data-upload-cancel="${pending.materialId}"]`).click();
   await page.waitForSelector(`[data-upload-row="${pending.materialId}"]`, {
     state: 'detached',
@@ -494,6 +511,81 @@ try {
   });
   check('отменяется из списка', true);
   await phone.close();
+
+  // ------------------------------------------------ 7. 200 после обрыва
+  // Замечание Тэнка при приёмке W06: при обрыве по read_body Caddy отвечает
+  // 200 с пустым телом, а файл в хранилище не попадает. Ответ хранилища не
+  // должен становиться успехом — итог решает завершение на сервере.
+  console.warn('\n[7] Хранилище ответило 200, а файла нет');
+  const desk = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const cut = await login(desk, 'обрыв');
+  await calm(cut);
+  const formPosts = [];
+  await cut.route(
+    (url) => url.pathname.endsWith(`/${process.env.S3_BUCKET ?? 'unicorn-launch'}`),
+    async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      formPosts.push(route.request().url());
+      // Тело не уходит в хранилище: ответ как у Caddy при обрыве передачи.
+      await route.fulfill({ status: 200, body: '' });
+    },
+  );
+  await cut.goto(projectUrl, { waitUntil: 'networkidle', timeout: 30_000 });
+  const readyBefore = (
+    await sql(
+      `SELECT count(*)::int AS n FROM lab.project_materials
+      WHERE project_id = $1 AND upload_state = 'ready'`,
+      [projectId],
+    )
+  )[0].n;
+  await cut
+    .waitForSelector('#deck-file', { state: 'attached', timeout: 15_000 })
+    .catch(async () => {
+      await cut.screenshot({ path: join(OUT, '7-no-input.png'), fullPage: true });
+      console.warn('  адрес страницы:', cut.url());
+    });
+  await cut.setInputFiles('#deck-file', {
+    name: 'Оборванный.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 оборванная передача'),
+  });
+  await cut.getByRole('button', { name: 'Загрузить презентацию' }).click();
+  const cutNotice = cut.locator('[data-upload-notice]');
+  await cutNotice.waitFor({ timeout: 30_000 });
+  const cutText = await cutNotice.innerText();
+  check('форма ушла в «хранилище» и получила 200', formPosts.length === 1);
+  check(
+    'сообщения об успехе нет',
+    !/загружен и подтверждён/i.test(cutText) &&
+      (await cutNotice.getAttribute('data-upload-notice')) !== 'ok',
+    cutText,
+  );
+  const [cutRow] = await sql(
+    `SELECT upload_state, uploaded_at FROM lab.project_materials
+      WHERE project_id = $1 AND upload_file_name = 'Оборванный.pdf'`,
+    [projectId],
+  );
+  check(
+    'загрузка не готова, числится идущей',
+    cutRow?.upload_state === 'pending' && !cutRow.uploaded_at,
+  );
+  const readyAfter = (
+    await sql(
+      `SELECT count(*)::int AS n FROM lab.project_materials
+      WHERE project_id = $1 AND upload_state = 'ready'`,
+      [projectId],
+    )
+  )[0].n;
+  check(
+    'готовых материалов не прибавилось',
+    readyAfter === readyBefore,
+    `${readyBefore} → ${readyAfter}`,
+  );
+  check(
+    'в карточке — идущая загрузка, не материал',
+    (await cut.locator('[data-upload-row][data-upload-state="pending"]').count()) >= 1,
+  );
+  await desk.close();
 
   check('ошибок в консоли нет', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
 } catch (error) {
