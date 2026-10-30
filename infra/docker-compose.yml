@@ -101,6 +101,11 @@ services:
     image: unicorn/postgres:16
     container_name: unicorn-postgres
     restart: unless-stopped
+    # tini процессом №1 (2.1-W07). Без него фоновый процесс асинхронного
+    # архива pgBackRest после отсоединения доставался PostgreSQL как дочерний,
+    # и его выход с ошибкой postmaster принимал за падение — перезапуск всех
+    # соединений при любом сбое архива (поймано имитацией сбоя 30.10.2026).
+    init: true
     environment:
       POSTGRES_DB: fifth_element
       POSTGRES_USER: unicorn_owner
@@ -115,8 +120,43 @@ services:
       POSTGRES_INITDB_ARGS: '--auth-host=scram-sha-256 --auth-local=scram-sha-256'
       TZ: UTC
       PGTZ: UTC
+      # Резервирование (блок 7, 2.1-W07). pgBackRest читает настройки из
+      # переменных PGBACKREST_*; их наследует и archive_command — процессы
+      # сервера получают окружение контейнера. Пароль шифрования хранилища
+      # копий — секрет стенда (.env) и комплекта ключей Томаса.
+      PGBACKREST_STANZA: main
+      PGBACKREST_PG1_PATH: /var/lib/postgresql/data
+      PGBACKREST_PG1_USER: unicorn_owner
+      PGBACKREST_PG1_DATABASE: fifth_element
+      PGPASSWORD: ${POSTGRES_PASSWORD:-local_dev_only_pg_change_me}
+      PGBACKREST_REPO1_PATH: /var/lib/pgbackrest
+      PGBACKREST_REPO1_CIPHER_TYPE: aes-256-cbc
+      PGBACKREST_REPO1_CIPHER_PASS: ${BACKUP_PGBACKREST_CIPHER_PASS:-local_dev_only_backup_change_me}
+      # Удаление копий выключено до согласованного правила (7.5): срок
+      # хранения — предел pgBackRest, по сути «не удалять».
+      PGBACKREST_REPO1_RETENTION_FULL: '9999999'
+      PGBACKREST_COMPRESS_TYPE: zst
+      PGBACKREST_ARCHIVE_ASYNC: 'y'
+      PGBACKREST_SPOOL_PATH: /var/spool/pgbackrest
+      # Если архив не принимает журнал (нет места, сбой), сверх этого объёма
+      # журнал перестаёт копиться в pg_wal: архив получит разрыв — его ловит
+      # проверка, — но база не остановится из-за заполненного диска.
+      PGBACKREST_ARCHIVE_PUSH_QUEUE_MAX: 2GiB
+      PGBACKREST_LOG_LEVEL_CONSOLE: warn
+      PGBACKREST_LOG_LEVEL_FILE: info
     command:
       - postgres
+      - -c
+      # Архив журнала включается на стенде, где настроено резервирование
+      # (BACKUP_ARCHIVE_MODE=on): без хранилища archive_command отказывал бы,
+      # и журнал копился бы в pg_wal.
+      - archive_mode=${BACKUP_ARCHIVE_MODE:-off}
+      - -c
+      - archive_command=pgbackrest archive-push %p
+      - -c
+      - archive_timeout=60
+      - -c
+      - wal_level=replica
       - -c
       - shared_preload_libraries=pg_stat_statements
       - -c
@@ -137,6 +177,9 @@ services:
       - '127.0.0.1:${POSTGRES_PORT:-5433}:5432'
     volumes:
       - pgdata:/var/lib/postgresql/data
+      # Хранилище копий базы — каталог узла, а не том: его забирает команда
+      # скачивания и (позже) внешний приёмник. По умолчанию — том.
+      - ${BACKUP_PGBACKREST_DIR:-pgbackrest}:/var/lib/pgbackrest
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U unicorn_owner -d fifth_element']
       interval: 5s
@@ -277,6 +320,8 @@ services:
       S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-}
       ARCHIVE_S3_ACCESS_KEY_ID: ${ARCHIVE_S3_ACCESS_KEY_ID:-}
       ARCHIVE_S3_SECRET_ACCESS_KEY: ${ARCHIVE_S3_SECRET_ACCESS_KEY:-}
+      BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
+      BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
     entrypoint:
       - /bin/sh
       - -c
@@ -332,6 +377,17 @@ services:
           mc admin policy create local unicorn-archive-append /tmp/archive-policy.json
           mc admin policy attach local unicorn-archive-append --user "$$ARCHIVE_S3_ACCESS_KEY_ID"
           echo "учётка архива $$ARCHIVE_S3_ACCESS_KEY_ID готова (политика unicorn-archive-append, без Delete)"
+        fi
+        # Учётка резервного копирования (блок 7, 7.6, 2.1-W07): только читать.
+        # Копированию не нужно ни писать, ни удалять в рабочем бакете.
+        if [ -n "$$BACKUP_S3_ACCESS_KEY_ID" ] && [ -n "$$BACKUP_S3_SECRET_ACCESS_KEY" ]; then
+          printf '{"Version":"2012-10-17","Statement":[{"Effect":"Allow","Action":["s3:GetObject","s3:GetObjectVersion"],"Resource":["arn:aws:s3:::%s/*"]},{"Effect":"Allow","Action":["s3:ListBucket","s3:ListBucketVersions","s3:GetBucketLocation"],"Resource":["arn:aws:s3:::%s"]}]}' "$$S3_BUCKET" "$$S3_BUCKET" > /tmp/backup-policy.json
+          mc admin user add local "$$BACKUP_S3_ACCESS_KEY_ID" "$$BACKUP_S3_SECRET_ACCESS_KEY"
+          mc admin policy detach local unicorn-backup-read --user "$$BACKUP_S3_ACCESS_KEY_ID" || true
+          mc admin policy rm local unicorn-backup-read || true
+          mc admin policy create local unicorn-backup-read /tmp/backup-policy.json
+          mc admin policy attach local unicorn-backup-read --user "$$BACKUP_S3_ACCESS_KEY_ID"
+          echo "учётка копирования $$BACKUP_S3_ACCESS_KEY_ID готова (политика unicorn-backup-read, только чтение)"
         fi
         echo "бакет $$S3_BUCKET готов"
     restart: 'no'
@@ -427,3 +483,5 @@ volumes:
   # сообщения не смешивались с рабочими.
   natstestdata:
   miniodata:
+  # Хранилище копий базы по умолчанию (BACKUP_PGBACKREST_DIR не задан).
+  pgbackrest:

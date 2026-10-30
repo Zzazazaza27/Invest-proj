@@ -1,0 +1,522 @@
+/**
+ * Резервирование стенда (блок 7, 2.1-W07) — общая часть команд.
+ *
+ * Что здесь и почему так:
+ *
+ * - База — pgBackRest внутри контейнера PostgreSQL: полные и добавочные
+ *   копии, непрерывный архив журнала (WAL). Хранилище копий — каталог узла
+ *   `BACKUP_DIR/pgbackrest`, смонтированный в контейнер.
+ * - Файлы — rclone из рабочего бакета под учёткой «только чтение» в
+ *   шифрованный каталог `BACKUP_DIR/files`. Только `copy --immutable`:
+ *   удалённое в источнике остаётся в копии, изменившийся под прежним ключом
+ *   объект — ошибка, а не тихая перезапись прежней копии (7.3).
+ * - Ключи — весь `.env` стенда (в нём и ключи шифрования полей, и пароли
+ *   копий), зашифрованный открытым ключом Томаса (gpg). Закрытый ключ на
+ *   сервере не хранится: комплект ключей не открывается одним сервером.
+ * - Комплект на момент T — каталог `sets/<id>`: метка копии базы и LSN на T
+ *   (восстановление на T, а не «на дату копии»), объекты бакета на T с
+ *   размером и SHA-256, отпечаток комплекта ключей, несекретная конфигурация.
+ *   Пригодным комплект становится только после проверки всех частей — файл
+ *   READY; команда скачивания берёт только такие.
+ *
+ * Инструменты (pgBackRest, rclone, gpg) — из образа базы `unicorn/postgres:16`:
+ * одна версия и на сервере, и на площадке проверки.
+ *
+ * Секреты не печатаются: в контейнеры уходят переменными окружения процесса
+ * docker (`-e ИМЯ` без значения), а не аргументами.
+ */
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statfsSync,
+  writeFileSync,
+} from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+export const TOOL_IMAGE = 'unicorn/postgres:16';
+export const PG_CONTAINER = 'unicorn-postgres';
+export const MINIO_CONTAINER = 'unicorn-minio';
+
+// ----------------------------------------------------------------- окружение
+
+/** Разбор `.env` в объект; файл не печатается. */
+export function parseEnvFile(path) {
+  const out = {};
+  if (!existsSync(path)) return out;
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed || trimmed.startsWith('#')) continue;
+    const eq = trimmed.indexOf('=');
+    if (eq <= 0) continue;
+    let value = trimmed.slice(eq + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    out[trimmed.slice(0, eq).trim()] = value;
+  }
+  return out;
+}
+
+export const ENV_PATH = join(ROOT, '.env');
+
+export function loadEnv() {
+  const env = parseEnvFile(ENV_PATH);
+  for (const [k, v] of Object.entries(env)) if (process.env[k] === undefined) process.env[k] = v;
+  return env;
+}
+
+export function cfg() {
+  const dir = resolve(process.env.BACKUP_DIR || join(ROOT, '.local', 'backup-stand'));
+  return {
+    dir,
+    repo: join(dir, 'pgbackrest'),
+    files: join(dir, 'files'),
+    index: join(dir, 'files-index.jsonl'),
+    keys: join(dir, 'keys'),
+    sets: join(dir, 'sets'),
+    state: join(dir, 'state'),
+    bucket: process.env.S3_BUCKET || 'unicorn-launch',
+    recipient: process.env.BACKUP_KEYS_RECIPIENT
+      ? resolve(process.env.BACKUP_KEYS_RECIPIENT)
+      : join(dir, 'recipient.asc'),
+    // Пороги места (7.3, замечание Тэнка): предупреждение и запрет начинать.
+    warnPercent: Number(process.env.BACKUP_DISK_WARN_PERCENT || 25),
+    reservePercent: Number(process.env.BACKUP_DISK_RESERVE_PERCENT || 15),
+    reserveMinBytes: Number(process.env.BACKUP_DISK_RESERVE_MIN_GB || 10) * 1024 ** 3,
+  };
+}
+
+/** Секрет ли переменная `.env` — по имени или по значению с паролем в URL. */
+export function isSecretVar(name, value) {
+  if (/(PASS|SECRET|KEY|TOKEN|KEK|PRIVATE|SALT|CREDENTIAL|SIGNING|DSN)/i.test(name)) return true;
+  return /^[a-z][a-z0-9+.-]*:\/\/[^/@\s]*:[^/@\s]*@/i.test(String(value ?? ''));
+}
+
+// --------------------------------------------------------------- исполнение
+
+/** docker с выводом в строку; ошибка — исключение с хвостом stderr. */
+export function docker(args, { env, input, allowFail = false, timeoutMs = 3_600_000 } = {}) {
+  const result = spawnSync('docker', args, {
+    encoding: 'utf8',
+    env: { ...process.env, ...env },
+    input,
+    timeout: timeoutMs,
+    maxBuffer: 256 * 1024 * 1024,
+  });
+  if (result.status !== 0 && !allowFail) {
+    const tail = `${result.stderr || ''}${result.error ? String(result.error) : ''}`
+      .trim()
+      .split('\n')
+      .slice(-6)
+      .join('\n');
+    throw new Error(`docker ${args.slice(0, 3).join(' ')}… → ${result.status}: ${tail}`);
+  }
+  return result;
+}
+
+/** Сеть compose стенда (по контейнеру MinIO). */
+export function standNetwork() {
+  const out = docker([
+    'inspect',
+    MINIO_CONTAINER,
+    '-f',
+    '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}',
+  ]).stdout.trim();
+  return out.split(/\s+/)[0];
+}
+
+/** Команда pgBackRest в контейнере базы — окружение у него своё (compose). */
+export function pgbackrest(args, opts = {}) {
+  return docker(['exec', '-u', 'postgres', PG_CONTAINER, 'pgbackrest', ...args], opts);
+}
+
+export function psql(sql, { allowFail = false } = {}) {
+  const r = docker(
+    [
+      'exec',
+      '-i',
+      PG_CONTAINER,
+      'psql',
+      '-X',
+      '-v',
+      'ON_ERROR_STOP=1',
+      '-At',
+      '-U',
+      'unicorn_owner',
+      '-d',
+      process.env.POSTGRES_DB || 'fifth_element',
+    ],
+    { input: sql, allowFail },
+  );
+  return r.stdout.trim();
+}
+
+/**
+ * rclone в образе инструментов. Источник SRC — рабочий бакет (учётка только
+ * для чтения), DST — шифрованный каталог копий. Пароли шифрования
+ * обфусцируются внутри контейнера из переменных окружения, в аргументы не
+ * попадают.
+ */
+export function rclone(
+  rcloneArgs,
+  { network, mounts = [], extraEnv = {}, allowFail = false } = {},
+) {
+  const c = cfg();
+  const script = [
+    'set -e',
+    'export RCLONE_CONFIG_DST_PASSWORD="$(printf %s "$BACKUP_FILES_CRYPT_PASS" | rclone obscure -)"',
+    'export RCLONE_CONFIG_DST_PASSWORD2="$(printf %s "$BACKUP_FILES_CRYPT_SALT" | rclone obscure -)"',
+    'exec rclone "$@"',
+  ].join('\n');
+  const env = {
+    RCLONE_CONFIG_SRC_TYPE: 's3',
+    RCLONE_CONFIG_SRC_PROVIDER: 'Minio',
+    RCLONE_CONFIG_SRC_ENDPOINT: 'http://minio:9000',
+    RCLONE_CONFIG_SRC_ACCESS_KEY_ID: process.env.BACKUP_S3_ACCESS_KEY_ID,
+    RCLONE_CONFIG_SRC_SECRET_ACCESS_KEY: process.env.BACKUP_S3_SECRET_ACCESS_KEY,
+    RCLONE_CONFIG_SRC_REGION: process.env.S3_REGION || 'us-east-1',
+    RCLONE_CONFIG_DST_TYPE: 'crypt',
+    RCLONE_CONFIG_DST_REMOTE: '/backup/files',
+    RCLONE_CONFIG_DST_FILENAME_ENCRYPTION: 'standard',
+    RCLONE_CONFIG_DST_DIRECTORY_NAME_ENCRYPTION: 'true',
+    BACKUP_FILES_CRYPT_PASS: process.env.BACKUP_FILES_CRYPT_PASS,
+    BACKUP_FILES_CRYPT_SALT: process.env.BACKUP_FILES_CRYPT_SALT,
+    ...extraEnv,
+  };
+  const args = ['run', '--rm', '--entrypoint', 'sh'];
+  if (network) args.push('--network', network);
+  args.push('-v', `${c.dir}:/backup`);
+  for (const m of mounts) args.push('-v', m);
+  for (const k of Object.keys(env)) args.push('-e', k);
+  args.push(TOOL_IMAGE, '-c', script, 'rclone', ...rcloneArgs);
+  return docker(args, { env, allowFail });
+}
+
+// ------------------------------------------------------------------ состояние
+
+export function ensureDirs() {
+  const c = cfg();
+  for (const d of [c.dir, c.repo, c.files, c.keys, c.sets, c.state])
+    mkdirSync(d, { recursive: true });
+  return c;
+}
+
+export function readState(name) {
+  const p = join(cfg().state, `${name}.json`);
+  try {
+    return JSON.parse(readFileSync(p, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+export function writeState(name, value) {
+  const p = join(cfg().state, `${name}.json`);
+  mkdirSync(dirname(p), { recursive: true });
+  writeFileSync(`${p}.tmp`, JSON.stringify(value, null, 2));
+  renameSync(`${p}.tmp`, p);
+}
+
+/** Итог задания: успех или ошибка — читает проверка. */
+export function recordJob(name, ok, details = {}) {
+  const prev = readState(`job-${name}`) ?? {};
+  writeState(`job-${name}`, {
+    ...prev,
+    lastRunAt: new Date().toISOString(),
+    lastOk: ok,
+    ...(ok ? { lastSuccessAt: new Date().toISOString(), lastError: null } : {}),
+    ...details,
+  });
+}
+
+/** Блокировка задания: два запуска одного задания не идут одновременно. */
+export function withLock(name, fn) {
+  const c = ensureDirs();
+  const lock = join(c.state, `${name}.lock`);
+  let fd;
+  try {
+    fd = openSync(lock, 'wx');
+  } catch {
+    const pid = Number(readFileSync(lock, 'utf8').trim());
+    let alive = false;
+    try {
+      process.kill(pid, 0);
+      alive = true;
+    } catch {
+      /* процесса нет — блокировка осталась от упавшего запуска */
+    }
+    if (alive) throw new Error(`задание «${name}» уже идёт (pid ${pid})`);
+    rmSync(lock, { force: true });
+    fd = openSync(lock, 'wx');
+  }
+  writeFileSync(fd, String(process.pid));
+  closeSync(fd);
+  const release = () => rmSync(lock, { force: true });
+  return Promise.resolve().then(fn).finally(release);
+}
+
+// --------------------------------------------------------------------- диск
+
+/** Свободное место на диске копий. */
+export function diskInfo() {
+  const c = ensureDirs();
+  const s = statfsSync(c.dir);
+  const total = s.blocks * s.bsize;
+  const free = s.bavail * s.bsize;
+  const reserve = Math.max(c.reserveMinBytes, (total * c.reservePercent) / 100);
+  return { total, free, freePercent: (free / total) * 100, reserve };
+}
+
+/**
+ * Можно ли начать задание, которому нужно `needBytes`. Не удаляет ничего ради
+ * места: старые пригодные комплекты без согласованного правила не трогаются.
+ */
+export function assertSpace(needBytes, what) {
+  const d = diskInfo();
+  if (d.free - needBytes < d.reserve) {
+    throw new Error(
+      `мало места для «${what}»: свободно ${gb(d.free)}, нужно ~${gb(needBytes)}, ` +
+        `запас ${gb(d.reserve)} — задание не начато, прежние копии не тронуты`,
+    );
+  }
+  return d;
+}
+
+export const gb = (n) => `${(n / 1024 ** 3).toFixed(2)} ГБ`;
+
+// ------------------------------------------------------------------- ключи
+
+/** Отпечаток комплекта ключей: SHA-256 содержимого `.env`. */
+export function keysFingerprint() {
+  const text = readFileSync(ENV_PATH, 'utf8').replace(/\r\n/g, '\n');
+  return createHash('sha256').update(text).digest('hex').slice(0, 32);
+}
+
+/**
+ * Зашифровать `.env` открытым ключом Томаса, если такого комплекта ещё нет.
+ * Возвращает отпечаток. Без открытого ключа — ошибка: комплект без ключей
+ * восстановить нельзя, и молчать об этом нельзя.
+ */
+export function ensureKeyBundle() {
+  const c = ensureDirs();
+  const fp = keysFingerprint();
+  const target = join(c.keys, `${fp}.env.gpg`);
+  if (existsSync(target)) return fp;
+  if (!existsSync(c.recipient)) {
+    throw new Error(
+      `нет открытого ключа получателя комплекта ключей (${c.recipient}) — ` +
+        'выполните `node scripts/backup.mjs keys-init` и передайте открытый ключ на стенд',
+    );
+  }
+  const tmp = `${target}.tmp`;
+  const r = docker(
+    [
+      'run',
+      '--rm',
+      '-i',
+      '--entrypoint',
+      'sh',
+      '-v',
+      `${c.recipient}:/in/recipient.asc:ro`,
+      TOOL_IMAGE,
+      '-c',
+      'export GNUPGHOME=$(mktemp -d) && gpg -q --batch --import /in/recipient.asc 2>/dev/null && ' +
+        'gpg -q --batch --trust-model always --encrypt --armor ' +
+        '--recipient "$(gpg --batch --list-keys --with-colons | awk -F: \'/^fpr/{print $10; exit}\')" --output -',
+    ],
+    { input: readFileSync(ENV_PATH) },
+  );
+  if (!r.stdout.includes('BEGIN PGP MESSAGE')) throw new Error('gpg не зашифровал комплект ключей');
+  writeFileSync(tmp, r.stdout);
+  renameSync(tmp, target);
+  return fp;
+}
+
+// ------------------------------------------------------------- конфигурация
+
+/** Несекретная конфигурация на момент комплекта; секреты — в комплекте ключей. */
+export function snapshotConfig(targetDir) {
+  mkdirSync(targetDir, { recursive: true });
+  const env = parseEnvFile(ENV_PATH);
+  const lines = Object.entries(env).map(([k, v]) =>
+    isSecretVar(k, v) ? `${k}=<секрет: в комплекте ключей>` : `${k}=${v}`,
+  );
+  writeFileSync(join(targetDir, 'env.public'), `${lines.join('\n')}\n`);
+
+  const copy = (from, name) => {
+    if (existsSync(from)) writeFileSync(join(targetDir, name), readFileSync(from));
+  };
+  copy(join(ROOT, 'infra', 'docker-compose.yml'), 'docker-compose.yml');
+  copy(join(ROOT, 'infra', 'caddy', 'files.caddy'), 'files.caddy');
+  copy('/etc/caddy/Caddyfile', 'Caddyfile');
+  for (const unit of ['unicorn-core.service', 'unicorn-workers.service']) {
+    copy(`/etc/systemd/system/${unit}`, unit);
+  }
+  const timers = '/etc/systemd/system';
+  if (existsSync(timers)) {
+    for (const f of readdirSync(timers)) {
+      if (/^fifth-backup-.*\.(service|timer)$/.test(f)) copy(join(timers, f), f);
+    }
+  }
+
+  let commit = '';
+  try {
+    commit = execFileSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  } catch {
+    /* не репозиторий — фиксируем пустым */
+  }
+  const images = {};
+  const ps = docker(['ps', '--format', '{{.Names}}'], { allowFail: true }).stdout.trim();
+  for (const name of ps.split('\n').filter((n) => n.startsWith('unicorn-'))) {
+    const r = docker(['inspect', name, '-f', '{{.Config.Image}} {{.Image}}'], { allowFail: true });
+    const [image, id] = r.stdout.trim().split(' ');
+    images[name] = { image, id };
+  }
+  // Конфигурация потоков NATS: при восстановлении поток создаётся пустым (7.1).
+  let nats = null;
+  const port = process.env.NATS_MONITOR_PORT || 8222;
+  const r = spawnSync(
+    'curl',
+    ['-s', '-m', '5', `http://127.0.0.1:${port}/jsz?streams=true&config=true`],
+    {
+      encoding: 'utf8',
+    },
+  );
+  if (r.status === 0 && r.stdout.trim().startsWith('{')) {
+    try {
+      const j = JSON.parse(r.stdout);
+      nats = (j.account_details ?? []).flatMap((a) =>
+        (a.stream_detail ?? []).map((s) => ({ name: s.name, config: s.config })),
+      );
+    } catch {
+      /* монитор недоступен — отметим пустым */
+    }
+  }
+  const meta = { commit, images, nats };
+  writeFileSync(join(targetDir, 'meta.json'), JSON.stringify(meta, null, 2));
+  return meta;
+}
+
+// ---------------------------------------------------------------- сигналы
+
+/**
+ * Состояние проверки и сообщение при смене: первое нарушение — сообщение,
+ * повторы — без шума, возврат к норме — сообщение «восстановилось».
+ */
+export async function signal(key, problem, text) {
+  const all = readState('signals') ?? {};
+  const prev = all[key] ?? { status: 'ok' };
+  const now = new Date().toISOString();
+  let message = null;
+  if (problem && prev.status !== 'problem') {
+    all[key] = { status: 'problem', since: now, text };
+    message = `⚠️ Резервирование 5Э: ${text}`;
+  } else if (!problem && prev.status === 'problem') {
+    all[key] = { status: 'ok', since: now, text };
+    message = `✅ Резервирование 5Э восстановилось: ${text}`;
+  } else {
+    all[key] = { ...prev, status: problem ? 'problem' : 'ok', text, checkedAt: now };
+  }
+  if (message) {
+    const delivered = await telegram(message);
+    all[key].notified = delivered;
+    if (!delivered) console.warn(`[сигнал не доставлен в Telegram] ${message}`);
+  }
+  writeState('signals', all);
+  return all[key];
+}
+
+/** Отправка в Telegram; без настроек — false (и это видно в статусе). */
+export async function telegram(text) {
+  const token = process.env.BACKUP_TELEGRAM_BOT_TOKEN;
+  const chat = process.env.BACKUP_TELEGRAM_CHAT_ID;
+  if (!token || !chat) return false;
+  try {
+    const host = process.env.HOSTNAME_LABEL || process.env.PUBLIC_BASE_URL || '';
+    const r = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ chat_id: chat, text: host ? `${text}\n${host}` : text }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    return r.ok;
+  } catch {
+    return false;
+  }
+}
+
+// ------------------------------------------------------------------ разное
+
+export const sha256File = (path) => createHash('sha256').update(readFileSync(path)).digest('hex');
+export const newId = () =>
+  `${new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, 'Z')}-${randomBytes(3).toString('hex')}`;
+
+/** Индекс файлов копии: ключ → {size, sha256, firstSeen}. */
+export function readIndex() {
+  const c = cfg();
+  const map = new Map();
+  if (!existsSync(c.index)) return map;
+  for (const line of readFileSync(c.index, 'utf8').split('\n')) {
+    if (!line.trim()) continue;
+    const row = JSON.parse(line);
+    map.set(row.key, row);
+  }
+  return map;
+}
+
+export function appendIndex(rows) {
+  if (!rows.length) return;
+  const c = cfg();
+  writeFileSync(c.index, rows.map((r) => JSON.stringify(r)).join('\n') + '\n', { flag: 'a' });
+}
+
+/** Готовые комплекты, новые первыми. */
+export function readySets() {
+  const c = cfg();
+  if (!existsSync(c.sets)) return [];
+  return readdirSync(c.sets)
+    .filter((id) => existsSync(join(c.sets, id, 'READY')))
+    .sort()
+    .reverse();
+}
+
+/**
+ * Все части комплекта на месте: копия базы, сегменты журнала до T, файлы с
+ * SHA-256 в индексе и в шифрованной копии, комплект ключей.
+ */
+export function verifyCatalog(catalog, dir, { inBackup } = {}) {
+  const problems = [];
+  const repo = join(dir, 'pgbackrest');
+  if (!existsSync(join(repo, 'backup', 'main', catalog.db.backup))) {
+    problems.push(`нет копии базы ${catalog.db.backup}`);
+  }
+  const walDir = join(
+    repo,
+    'archive',
+    'main',
+    catalog.db.archiveId,
+    catalog.target.walfile.slice(0, 16),
+  );
+  const walOk =
+    existsSync(walDir) && readdirSync(walDir).some((f) => f.startsWith(catalog.target.walfile));
+  if (!walOk) problems.push(`нет сегмента журнала ${catalog.target.walfile}`);
+  if (!existsSync(join(dir, catalog.keys.file))) problems.push('нет комплекта ключей');
+  for (const o of catalog.files.objects) {
+    if (!o.sha256) problems.push(`нет SHA-256: ${o.key}`);
+    if (inBackup && inBackup.get(o.key) !== o.size) problems.push(`нет в копии файлов: ${o.key}`);
+  }
+  return problems;
+}

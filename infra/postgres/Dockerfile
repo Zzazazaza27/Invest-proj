@@ -14,10 +14,16 @@ FROM pgvector/pgvector@sha256:a36250871de0833b8757561c72f2477ef1ddd1101afa4e617f
 
 USER root
 
+# pgBackRest и rclone — резервирование (блок 7, 2.1-W07). В образе базы, а не
+# отдельно: копии и восстановление идут тем же образом и на сервере, и на
+# изолированной площадке проверки — одна версия инструментов. gnupg в образе
+# уже есть: им шифруется комплект ключей.
+
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends postgresql-16-partman; \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y --no-install-recommends postgresql-16-partman pgbackrest rclone; \
+    rm -rf /var/lib/apt/lists/*; \
+    install -d -o postgres -g postgres -m 0750 /var/lib/pgbackrest /var/spool/pgbackrest /var/log/pgbackrest
 
 # Служебная БД для Keycloak создаётся один раз при инициализации кластера.
 COPY init/00-databases.sh /docker-entrypoint-initdb.d/00-databases.sh

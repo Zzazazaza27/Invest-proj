@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 152; требований: 41
+- Проверок: 154; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,13 +176,14 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 56
+### Зарегистрированы, но ни в наборе, ни в CI — 57
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
 
 - `CHK-CHECKPOINT-SECRETS` — Имена, значения которых являются секретами.
 - `CHK-CONSOLE-PRIVATE` — Гейт «служебная консоль закрыта постороннему».
+- `CHK-BACKUP-RESTORE` — Восстановление из комплекта на момент T (блок 7, 7.7): комплект ключей открывается закрытым ключом; база восстанавливается pgBackRest на LSN T, транзакция T …
 - `CHK-FILES-ENDPOINT` — Вход файлов (2.1-W06): форма подписана на публичный адрес; CORS — разрешённому сайту разрешение, чужому нет, без разрешения на куки; право загрузки держит фо…
 - `CHK-FRONT-BUILDS` — Проверка перед выкатом: все фронты собраны в production-режиме.
 - `CHK-PORTS-CONSISTENCY` — Гейт согласованности портов стенда.
@@ -263,6 +264,7 @@
 | TOOL-PROBE-RESIDUE | `node scripts/probe-residue.mjs` | 0 | вручную, по поводу | — |
 | TOOL-CLEAN-PROBE-DATA | `npm run stand:clean-probes` | 0 | вручную, по поводу | — |
 | TOOL-CONTENT-SNAPSHOT | `npm run content:export` | 0 | вручную, по поводу | — |
+| TOOL-BACKUP | `node scripts/backup.mjs init-secrets|keys-init|db|set|check|status|pull` | 0 | вручную, по поводу | — |
 | TOOL-DB-BACKUP | `npm run db:backup` | 0 | вручную, по поводу | — |
 | TOOL-DEPLOY | `npm run deploy` | 0 | вручную, по поводу | — |
 | TOOL-DEV-CORE | `node scripts/dev-core.mjs` | 0 | вручную, по поводу | — |
@@ -308,6 +310,7 @@
 | CHK-DB-RECONNECT | `npm run check:db-reconnect` | 8 | вручную | `suite:regression` |
 | CHK-DB-RESILIENCE | `npm run check:db-resilience` | 23 | вручную | `suite:isolated` |
 | CHK-DEFINER-PRIVILEGES | `node scripts/check-definer-privileges.mjs` | 0 | CI | CI |
+| CHK-BACKUP-RESTORE | `node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>]` | 20 | вручную | — |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |

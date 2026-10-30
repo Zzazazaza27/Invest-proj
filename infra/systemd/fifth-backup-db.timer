@@ -1,0 +1,11 @@
+# Расписание: копия базы (полная раз в неделю, иначе добавочная).
+[Unit]
+Description=5E backup timer: db
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

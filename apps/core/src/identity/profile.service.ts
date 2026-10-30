@@ -243,7 +243,6 @@ export class ProfileService {
       ]);
     }
 
-    const previous = await this.db.readOnly(ctx, async (tx) => this.readAvatarRow(tx, userId));
     const stamp = Date.now().toString(36);
     const variants: Record<string, { key: string; width: number; height: number }> = {};
     for (const [size, box] of Object.entries(AVATAR_VARIANTS) as [
@@ -292,15 +291,15 @@ export class ProfileService {
       return this.read(tx, userId);
     });
 
-    // Прежние объекты удаляются ПОСЛЕ успешной записи: упади мы раньше, у
-    // человека не осталось бы ни старого аватара, ни нового.
-    if (previous) await this.dropObjects(previous);
+    // Прежние объекты НЕ удаляются физически (блок 7, 2.1-W07): файл, уже
+    // попавший в комплект резервной копии, должен остаться и в хранилище.
+    // Очистка неиспользуемых объектов — отдельной процедурой по 3.3.
     return profile;
   }
 
   async removeAvatar(ctx: RequestContext): Promise<MyProfile> {
     const userId = ctx.userId!;
-    const { profile, removed } = await this.db.transaction(ctx, async (tx) => {
+    const { profile } = await this.db.transaction(ctx, async (tx) => {
       const existing = await this.readAvatarRow(tx, userId);
       if (!existing) return { profile: await this.read(tx, userId), removed: null };
       await tx.query(`DELETE FROM identity.user_avatars WHERE user_id = $1`, [userId]);
@@ -315,7 +314,6 @@ export class ProfileService {
       });
       return { profile: await this.read(tx, userId), removed: existing };
     });
-    if (removed) await this.dropObjects(removed);
     return profile;
   }
 
@@ -394,15 +392,6 @@ export class ProfileService {
       [userId],
     );
     return rows[0] ?? null;
-  }
-
-  private async dropObjects(row: AvatarRow): Promise<void> {
-    const keys = [row.master_key, ...Object.values(row.variants ?? {}).map((v) => v.key)];
-    for (const key of keys) {
-      await this.s3.deleteObject(key).catch((error: unknown) => {
-        this.logger.warn({ msg: 'объект аватара не удалён', key, error: String(error) });
-      });
-    }
   }
 
   private mask(row: ProfileRow, field: 'email' | 'phone'): string | null {

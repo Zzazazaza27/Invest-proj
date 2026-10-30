@@ -255,6 +255,27 @@ checks:
     purpose: 'Гейт: ни одна функция SECURITY DEFINER не исполнима ролью PUBLIC. PostgreSQL выдаёт EXECUTE роли PUBLIC на каждую новую функцию по умолчанию, а адресный GRANT нужным ролям этот default не отменяет. Поэтому «мы выдали пра'
     confirmation: reviewed-in-code
 
+  - id: CHK-BACKUP-RESTORE
+    file: scripts/check-backup-restore.mjs
+    command: node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>]
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 20
+    needs: [docker]
+    effects: ['поднимает временные контейнеры, тома и сеть fifth-restore-* и удаляет их; на восстановленной копии меняет пароль одной учётной записи (площадка одноразовая)']
+    studied: code
+    studiedOn: 2026-10-30
+    note: >-
+      Локальная проверка механизма W07, не приёмка 2.1.4. Работает только со
+      скачанным комплектом (backup.mjs pull) — к исходному стенду не
+      обращается, адреса вне площадки останавливают проверку. Отрицательные
+      опыты 30.10.2026: изменённый файл копии, удалённый сегмент журнала,
+      неверная фраза ключа — каждый даёт FAIL.
+    purpose: 'Восстановление из комплекта на момент T (блок 7, 7.7): комплект ключей открывается закрытым ключом; база восстанавливается pgBackRest на LSN T, транзакция T в ней есть; файлы расшифровываются в чистое хранилище, SHA-256 каждого совпадает с каталогом; ядро стартует без внешних адресов; шифрованные контакты всех учётных записей открываются, слепой индекс email сходится; вход по API и профиль; готовые материалы ссылаются на восстановленные файлы; незавершённые загрузки не стали готовыми без файла.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-30
+
   - id: CHK-FILES-ENDPOINT
     file: scripts/check-files-endpoint.mjs
     command: FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs
@@ -618,6 +639,26 @@ checks:
     studied: code
     purpose: 'Комплект подготовленного содержимого: выгрузка, расхождения, загрузка. ЗАЧЕМ. Словарь, ЧАВО, вопросы заявки, тарифы, страны и шаблоны владелец заполняет в админке, и живут они только в базе. Любой сброс — и работа пропал'
     confirmation: reviewed-in-code
+
+  - id: TOOL-BACKUP
+    file: scripts/backup.mjs
+    command: node scripts/backup.mjs init-secrets|keys-init|db|set|check|status|pull
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db, storage, docker]
+    effects: ['пишет копии в BACKUP_DIR; ничего не удаляет']
+    studied: code
+    studiedOn: 2026-10-30
+    note: >-
+      Резервирование W07: pgBackRest, rclone, комплект на момент T, ключи gpg,
+      сигналы. На сервере запускается таймерами infra/systemd/fifth-backup-*.
+      Опыты 30.10.2026: запрет задания при нехватке места; отказ архива
+      журнала ловится сигналом wal и не перезапускает базу (init: true).
+    purpose: 'Резервирование стенда (блок 7, 2.1-W07): копии базы и журнала, файлы, комплект ключей, комплект на момент T с проверкой частей, проверки по компонентам и сигналы, скачивание комплекта.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-30
 
   - id: TOOL-DB-BACKUP
     file: scripts/db-backup.mjs
@@ -3482,6 +3523,7 @@ blocks:
         UNIT-CORE-EVENTS,
         CHK-DB-RECONNECT,
         CHK-DB-RESILIENCE,
+        CHK-BACKUP-RESTORE,
         DBT-CONCURRENCY,
         DBT-INVARIANTS,
         SMK-CORE,

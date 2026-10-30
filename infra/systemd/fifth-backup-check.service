@@ -1,0 +1,14 @@
+# Резервирование 5Э (блок 7, 2.1-W07): проверки и сигналы.
+# Запускается таймером systemd, не ядром: сбой ядра не выключает резервирование.
+[Unit]
+Description=5E backup: check
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/unicorn-launch
+ExecStart=/usr/bin/node scripts/backup.mjs check
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=6h

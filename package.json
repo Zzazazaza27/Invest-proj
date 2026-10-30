@@ -27,6 +27,8 @@
     "test": "npm run build:packages && npm run test --workspaces --if-present",
     "deploy": "node scripts/deploy.mjs",
     "deploy:dry": "node scripts/deploy.mjs --dry-run",
+    "backup:pull": "node scripts/backup.mjs pull",
+    "backup:restore-check": "node scripts/check-backup-restore.mjs",
     "check:deploy-release": "node scripts/check-deploy-release.mjs",
     "temp:up": "node scripts/temp-stand.mjs up",
     "temp:run": "node scripts/temp-run.mjs",

@@ -190,8 +190,6 @@ export class ProjectMediaService {
     await putObject({ key: masterKey, body: object.body, contentType: mime });
     await this.s3.deleteObject(key).catch(() => undefined);
 
-    const previous = await this.db.readOnly(ctx, async (tx) => this.readRow(tx, projectId, kind));
-
     const media = await this.db.transaction(ctx, async (tx) => {
       await tx.query(
         `INSERT INTO lab.project_media
@@ -236,16 +234,16 @@ export class ProjectMediaService {
       return (await this.readRow(tx, projectId, kind))!;
     });
 
-    // Прежние объекты удаляются ПОСЛЕ успешной записи: упади мы раньше, у
-    // проекта не осталось бы ни старого изображения, ни нового.
-    if (previous) await this.dropObjects(previous);
+    // Прежние объекты НЕ удаляются физически (блок 7, 2.1-W07): файл, уже
+    // попавший в комплект резервной копии, должен остаться и в хранилище.
+    // Очистка неиспользуемых объектов — отдельной процедурой по 3.3.
 
     return view(projectId, media);
   }
 
-  /** Убрать изображение: сначала запись, потом объекты. */
+  /** Убрать изображение: запись удаляется, объекты остаются (блок 7). */
   async remove(ctx: RequestContext, projectId: string, kind: ProjectMediaKind): Promise<void> {
-    const row = await this.db.transaction(ctx, async (tx) => {
+    await this.db.transaction(ctx, async (tx) => {
       await this.assertCanEdit(tx, projectId);
       const existing = await this.readRow(tx, projectId, kind);
       if (!existing) return null;
@@ -264,7 +262,6 @@ export class ProjectMediaService {
       });
       return existing;
     });
-    if (row) await this.dropObjects(row);
   }
 
   /** Что показывать в карточке и на странице. Пусто — изображения нет. */
@@ -330,17 +327,6 @@ export class ProjectMediaService {
       [projectId, kind],
     );
     return rows[0] ?? null;
-  }
-
-  private async dropObjects(row: MediaRow): Promise<void> {
-    const keys = [row.master_key, ...Object.values(row.variants ?? {}).map((v) => v.key)];
-    for (const key of keys) {
-      await this.s3.deleteObject(key).catch((error: unknown) => {
-        // Потерянный объект — повод для уборки, а не причина отказать
-        // пользователю в удалении записи.
-        this.logger.warn({ msg: 'объект изображения не удалён', key, error: String(error) });
-      });
-    }
   }
 }
 
