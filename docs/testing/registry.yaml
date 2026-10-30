@@ -255,6 +255,25 @@ checks:
     purpose: 'Гейт: ни одна функция SECURITY DEFINER не исполнима ролью PUBLIC. PostgreSQL выдаёт EXECUTE роли PUBLIC на каждую новую функцию по умолчанию, а адресный GRANT нужным ролям этот default не отменяет. Поэтому «мы выдали пра'
     confirmation: reviewed-in-code
 
+  - id: CHK-BACKUP-LOGIC
+    file: scripts/check-backup-logic.mjs
+    command: node scripts/check-backup-logic.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 20
+    needs: []
+    effects: ['только временный каталог ОС']
+    studied: code
+    studiedOn: 2026-10-31
+    note: >-
+      Четыре замечания Тэнка при приёмке W07; сценарии 1 и 4 воспроизведены
+      на d984ec9 (неполная цепочка — 0 проблем; одна попытка отправки без
+      повтора), описи и версий объектов там не было.
+    purpose: 'Пригодность копий и сигналы (2.1-W07): разрыв журнала в середине и пропавшая копия-основа не дают READY; подмена файла того же размера ловится описью; изменение готового объекта при том же размере — нарушение, временной загрузки — новая версия по своему пути; недоставленный сигнал повторяется раз в 15 минут и после доставки не шлётся, так же «восстановилось».'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-31
+
   - id: CHK-BACKUP-RESTORE
     file: scripts/check-backup-restore.mjs
     command: node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>]
@@ -656,6 +675,10 @@ checks:
       сигналы. На сервере запускается таймерами infra/systemd/fifth-backup-*.
       Опыты 30.10.2026: запрет задания при нехватке места; отказ архива
       журнала ловится сигналом wal и не перезапускает базу (init: true).
+      После замечаний Тэнка 31.10.2026 на стенде: подмена готового объекта
+      того же размера останавливает комплект; временная загрузка — новая
+      версия; пропавший средний сегмент журнала — нет READY и сигнал
+      wal-chain; подмена байта в копии ловится скачиванием.
     purpose: 'Резервирование стенда (блок 7, 2.1-W07): копии базы и журнала, файлы, комплект ключей, комплект на момент T с проверкой частей, проверки по компонентам и сигналы, скачивание комплекта.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-30
@@ -3524,6 +3547,7 @@ blocks:
         CHK-DB-RECONNECT,
         CHK-DB-RESILIENCE,
         CHK-BACKUP-RESTORE,
+        CHK-BACKUP-LOGIC,
         DBT-CONCURRENCY,
         DBT-INVARIANTS,
         SMK-CORE,

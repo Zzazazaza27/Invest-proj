@@ -20,15 +20,14 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import {
-  cpSync,
+  copyFileSync,
   existsSync,
-  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   writeFileSync,
 } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import {
   ENV_PATH,
   ROOT,
@@ -51,6 +50,15 @@ import {
   readState,
   readySets,
   verifyCatalog,
+  backupPathOf,
+  buildManifest,
+  isMutableKey,
+  loadHashCache,
+  objectVersion,
+  planObjects,
+  saveHashCache,
+  walFile,
+  walSegments,
   recordJob,
   signal,
   snapshotConfig,
@@ -229,21 +237,105 @@ async function db() {
 
 const segNo = (wal) => parseInt(wal.slice(8, 16), 16) * 256 + parseInt(wal.slice(16, 24), 16);
 
-/** Объекты бакета сейчас: [{key, size}]. */
+/** Объекты бакета сейчас: [{key, size, md5, modTime}]. */
 function listSource(network) {
-  const r = rclone(['lsjson', '-R', '--files-only', '--no-mimetype', `SRC:${cfg().bucket}`], {
-    network,
-  });
-  return JSON.parse(r.stdout).map((o) => ({ key: o.Path, size: o.Size }));
+  const r = rclone(
+    [
+      'lsjson',
+      '-R',
+      '--files-only',
+      '--no-mimetype',
+      '--hash',
+      '--hash-type',
+      'MD5',
+      `SRC:${cfg().bucket}`,
+    ],
+    { network },
+  );
+  return JSON.parse(r.stdout).map((o) => ({
+    key: o.Path,
+    size: o.Size,
+    md5: o.Hashes?.md5 ?? o.Hashes?.MD5 ?? '',
+    modTime: o.ModTime ?? '',
+  }));
 }
 
-function listBackup(network) {
-  const r = rclone(['lsjson', '-R', '--files-only', '--no-mimetype', `DST:${cfg().bucket}`], {
+/**
+ * Скопировать версии объектов в копию. Неизменяемые — одной командой по
+ * списку, путь в копии = ключ; изменяемые — по одному, каждая версия по
+ * своему пути (прежняя версия остаётся для старых комплектов). --immutable:
+ * сохранённое не перезаписывается никогда.
+ */
+function copyVersions(rows, network, id) {
+  const c = cfg();
+  const plain = rows.filter((r) => !isMutableKey(r.key));
+  const versioned = rows.filter((r) => isMutableKey(r.key));
+  if (plain.length) {
+    writeFileSync(join(c.state, `copy-${id}.txt`), plain.map((r) => r.key).join('\n') + '\n');
+    rclone(
+      [
+        'copy',
+        `SRC:${c.bucket}`,
+        `DST:${c.bucket}`,
+        '--files-from-raw',
+        `/backup/state/copy-${id}.txt`,
+        '--immutable',
+        // Время изменения в каталоге копии (общие папки Docker) хранится
+        // неточно; изменение содержимого ловит сравнение версий источника.
+        '--size-only',
+        '--transfers',
+        '2',
+      ],
+      { network },
+    );
+  }
+  if (versioned.length) {
+    writeFileSync(
+      join(c.state, `copyto-${id}.tsv`),
+      versioned.map((r) => `${r.key}\t${r.backupPath}`).join('\n') + '\n',
+    );
+    rclone([], {
+      network,
+      body:
+        `TAB="$(printf '\\t')"; while IFS="$TAB" read -r key path; do ` +
+        `rclone copyto "SRC:${c.bucket}/$key" "DST:$path" --immutable --size-only; ` +
+        `done < /backup/state/copyto-${id}.tsv`,
+    });
+  }
+}
+
+/** SHA-256 содержимого сохранённых версий: считается по самой копии. */
+function hashBackup(paths, network, id) {
+  if (!paths.length) return new Map();
+  const c = cfg();
+  writeFileSync(join(c.state, `hash-${id}.txt`), paths.join('\n') + '\n');
+  const out = rclone(
+    ['hashsum', 'sha256', '--download', 'DST:', '--files-from-raw', `/backup/state/hash-${id}.txt`],
+    { network },
+  ).stdout;
+  const map = new Map();
+  for (const line of out.split('\n')) {
+    const m = line.match(/^([0-9a-f]{64})\s+(.+)$/);
+    if (m) map.set(m[2], m[1]);
+  }
+  return map;
+}
+
+/** Зашифрованные имена путей копии (для описи без ключей). */
+function encryptedPaths(paths, network, id) {
+  const map = new Map();
+  if (!paths.length) return map;
+  writeFileSync(join(cfg().state, `enc-${id}.txt`), paths.join('\n') + '\n');
+  // cryptdecode принимает до 10 путей за вызов — серия в одном контейнере.
+  const out = rclone([], {
     network,
-    allowFail: true,
-  });
-  if (r.status !== 0) return new Map();
-  return new Map(JSON.parse(r.stdout).map((o) => [o.Path, o.Size]));
+    body: `xargs -d '\\n' -n 10 rclone cryptdecode --reverse DST: < /backup/state/enc-${id}.txt`,
+  }).stdout;
+  for (const line of out.split('\n')) {
+    const [plain, enc] = line.split('\t').map((x) => x?.trim());
+    if (plain && enc) map.set(plain, enc);
+  }
+  return map;
 }
 
 async function set() {
@@ -251,6 +343,7 @@ async function set() {
   await withLock('set', async () => {
     const id = newId();
     const dir = join(c.sets, id);
+    const cache = loadHashCache();
     try {
       if (psql('SHOW archive_mode') !== 'on') throw new Error('архив журнала выключен');
       let info = ensureStanza();
@@ -286,71 +379,68 @@ async function set() {
       const base = [...info.backup].reverse().find((b) => lsnLe(b.lsn.stop, lsn));
       if (!base) throw new Error('нет копии базы, завершённой до T');
 
-      // --- файлы на T и их копия.
+      // --- файлы на T: что новое, что изменилось.
       const atT = listSource(network);
       const index = readIndex();
-      const fresh = atT.filter((o) => !index.has(o.key));
+      const plan = planObjects(index, atT);
+      if (plan.immutableChanged.length) {
+        throw new Error(
+          `готовый объект изменился под прежним ключом (2.1.2), прежняя копия сохранена: ` +
+            plan.immutableChanged
+              .slice(0, 3)
+              .map((o) => o.key)
+              .join(', '),
+        );
+      }
+      const toSave = [...plan.fresh, ...plan.mutableChanged].map((o) => ({
+        ...o,
+        version: objectVersion(o),
+        backupPath: backupPathOf(c.bucket, o.key, objectVersion(o)),
+      }));
       assertSpace(
-        fresh.reduce((n, o) => n + o.size, 0),
+        toSave.reduce((n, o) => n + o.size, 0),
         'копия файлов',
       );
-      rclone(
-        [
-          'copy',
-          `SRC:${c.bucket}`,
-          `DST:${c.bucket}`,
-          '--immutable',
-          // Сравнение по размеру: время изменения в каталоге копии (общие папки
-          // Docker) хранится неточно, а ключи объектов не перезаписываются по
-          // 2.1.2. Содержимое новых файлов сверяется ниже через cryptcheck.
-          '--size-only',
-          '--transfers',
-          '2',
-          '--checkers',
-          '4',
-        ],
-        {
+      copyVersions(toSave, network, id);
+      if (toSave.length) {
+        const sums = hashBackup(
+          toSave.map((o) => o.backupPath),
           network,
-        },
-      );
-      if (fresh.length) {
-        const listFile = join(c.state, `new-${id}.txt`);
-        writeFileSync(listFile, fresh.map((o) => o.key).join('\n') + '\n');
-        const rel = `/backup/state/new-${id}.txt`;
-        // Содержимое копии совпадает с источником — проверка через шифр.
-        rclone(
-          [
-            'cryptcheck',
-            `SRC:${c.bucket}`,
-            `DST:${c.bucket}`,
-            '--files-from-raw',
-            rel,
-            '--one-way',
-          ],
-          {
-            network,
-          },
+          id,
         );
-        const sums = rclone(
-          ['hashsum', 'sha256', '--download', `SRC:${c.bucket}`, '--files-from-raw', rel],
-          {
-            network,
-          },
-        ).stdout;
-        const byKey = new Map();
-        for (const line of sums.split('\n')) {
-          const m = line.match(/^([0-9a-f]{64})\s+(.+)$/);
-          if (m) byKey.set(m[2], m[1]);
-        }
-        const rows = fresh.map((o) => {
-          const sha256 = byKey.get(o.key);
-          if (!sha256) throw new Error(`нет SHA-256 для ${o.key}`);
-          return { key: o.key, size: o.size, sha256, firstSeen: at };
-        });
-        appendIndex(rows);
+        const enc = encryptedPaths(
+          toSave.map((o) => o.backupPath),
+          network,
+          id,
+        );
+        appendIndex(
+          toSave.map((o) => {
+            const sha256 = sums.get(o.backupPath);
+            const encPath = enc.get(o.backupPath);
+            if (!sha256 || !encPath) throw new Error(`версия не сохранена в копии: ${o.key}`);
+            return {
+              key: o.key,
+              size: o.size,
+              version: o.version,
+              sha256,
+              backupPath: o.backupPath,
+              encPath,
+              firstSeen: at,
+            };
+          }),
+        );
       }
-      const indexAfter = readIndex();
-      const inBackup = listBackup(network);
+      const saved = readIndex();
+      const objects = atT.map((o) => {
+        const row = saved.get(o.key);
+        return {
+          key: o.key,
+          size: o.size,
+          sha256: row?.sha256 ?? null,
+          backupPath: row?.backupPath ?? null,
+          encPath: row?.encPath ?? null,
+        };
+      });
 
       // --- ключи и конфигурация.
       const fingerprint = ensureKeyBundle();
@@ -363,14 +453,31 @@ async function set() {
           WHERE upload_state IN ('pending', 'needs_attention') AND upload_key IS NOT NULL`,
       );
 
-      const objects = atT.map((o) => ({
-        key: o.key,
-        size: o.size,
-        sha256: indexAfter.get(o.key)?.sha256 ?? null,
-      }));
+      // --- цепочка базы: основа, её зависимости и журнал до T.
+      const archiveId = info.archive.at(-1).id;
+      const references = base.reference ?? [];
+      const walPaths = walSegments(base.archive.start, walfile)
+        .map((seg) => walFile(c.dir, archiveId, seg))
+        .filter(Boolean);
+      const manifest = buildManifest(
+        c.dir,
+        [
+          ...[base.label, ...references].map((l) => `pgbackrest/backup/main/${l}`),
+          'pgbackrest/backup/main/backup.info',
+          'pgbackrest/backup/main/backup.info.copy',
+          `pgbackrest/archive/main/archive.info`,
+          `pgbackrest/archive/main/archive.info.copy`,
+          ...walPaths,
+          ...objects.filter((o) => o.encPath).map((o) => `files/${o.encPath}`),
+          `keys/${fingerprint}.env.gpg`,
+          `sets/${id}/config`,
+        ],
+        cache,
+      );
+
       const catalog = {
         id,
-        format: 1,
+        format: 2,
         at: new Date(at).toISOString(),
         // txid зафиксированной на T транзакции: восстановленная база обязана
         // её знать — так проверяется, что восстановление дошло до T.
@@ -378,9 +485,11 @@ async function set() {
         db: {
           stanza: 'main',
           backup: base.label,
+          references,
           backupStop: new Date(base.timestamp.stop * 1000).toISOString(),
+          archiveStart: base.archive.start,
           archiveMax: info.archive.at(-1).max,
-          archiveId: info.archive.at(-1).id,
+          archiveId,
         },
         files: {
           bucket: c.bucket,
@@ -391,20 +500,24 @@ async function set() {
         pendingUploads: JSON.parse(pending),
         keys: { fingerprint, file: `keys/${fingerprint}.env.gpg` },
         config: { commit: config.commit, images: config.images, natsStreams: config.nats },
+        manifest,
       };
 
       // --- проверка частей: только после неё комплект пригоден.
-      const problems = verifyCatalog(catalog, c.dir, { inBackup });
+      const problems = verifyCatalog(catalog, c.dir, { cache });
       writeFileSync(join(dir, 'catalog.json'), JSON.stringify(catalog, null, 2));
       if (problems.length) throw new Error(`комплект неполон: ${problems.slice(0, 5).join('; ')}`);
       writeFileSync(join(dir, 'READY'), new Date().toISOString());
       recordJob('set', true, { lastSet: id, lastAt: catalog.at, files: objects.length });
       console.log(
-        `комплект ${id} пригоден: T=${catalog.at}, база ${base.label}, файлов ${objects.length}`,
+        `комплект ${id} пригоден: T=${catalog.at}, база ${base.label}, файлов ${objects.length}, ` +
+          `в описи ${manifest.length}`,
       );
     } catch (error) {
       recordJob('set', false, { lastError: String(error.message ?? error) });
       throw error;
+    } finally {
+      saveHashCache(cache);
     }
   });
 }
@@ -466,6 +579,27 @@ async function check() {
     }
   } catch (error) {
     await say('wal', true, `база недоступна для проверки журнала: ${error.message}`);
+  }
+
+  // Разрыв журнала после последней основы: такая неисправность не проходит
+  // сама с появлением новых сегментов — только с новой копией базы.
+  try {
+    const inf = backupInfo();
+    const lastBase = inf?.backup?.at(-1);
+    const repoMax = inf?.archive?.at(-1)?.max;
+    if (lastBase && repoMax) {
+      const segs = walSegments(lastBase.archive.start, repoMax);
+      const missing = segs.filter((seg) => !walFile(c.dir, inf.archive.at(-1).id, seg));
+      await say(
+        'wal-chain',
+        missing.length > 0,
+        missing.length
+          ? `разрыв журнала после копии ${lastBase.label}: нет ${missing.length} сегментов (${missing[0]}…) — нужна новая копия базы`
+          : `журнал непрерывен от копии ${lastBase.label} до ${repoMax}`,
+      );
+    }
+  } catch (error) {
+    await say('wal-chain', true, `цепочка журнала не проверена: ${error.message}`);
   }
 
   // Копии базы: полная — не старше 8 суток, любая — не старше 26 часов.
@@ -546,9 +680,12 @@ function status() {
 // -------------------------------------------------------------------- pull
 
 /**
- * Скачать последний пригодный комплект. С сервера — по ssh потоком tar;
- * для проверки на одной машине — `--from-dir`. После скачивания части
- * комплекта сверяются на месте; без этого комплект не считается скачанным.
+ * Скачать последний пригодный комплект — ровно файлы его описи и каталог.
+ * С сервера — по ssh потоком tar; на одной машине — `--from-dir`.
+ *
+ * «Скачан и сверен» пишется только после пересчёта SHA-256 КАЖДОГО файла
+ * описи на месте и проверки цепочки журнала (замечание Тэнка при приёмке
+ * W07): подмена файла с тем же размером ловится уже здесь, без ключей.
  */
 async function pull() {
   const fromDir = option('--from-dir');
@@ -556,11 +693,9 @@ async function pull() {
   let id;
   let catalog;
   const parts = (cat) => [
-    'pgbackrest',
-    'files',
-    'files-index.jsonl',
-    `sets/${cat.id}`,
-    cat.keys.file,
+    ...cat.manifest.map((m) => m.path),
+    `sets/${cat.id}/catalog.json`,
+    `sets/${cat.id}/READY`,
   ];
   if (fromDir) {
     const src = resolve(fromDir);
@@ -570,18 +705,10 @@ async function pull() {
       .pop();
     if (!id) throw new Error('пригодных комплектов нет');
     catalog = JSON.parse(readFileSync(join(src, 'sets', id, 'catalog.json'), 'utf8'));
-    // Символические ссылки (`latest` у pgBackRest) пропускаются: созданные в
-    // Linux-контейнере на общей папке Windows, они роняют копирование, а для
-    // восстановления не нужны.
-    const noLinks = (path) => {
-      try {
-        return !lstatSync(path).isSymbolicLink();
-      } catch {
-        return false;
-      }
-    };
+    if (!catalog.manifest) throw new Error(`у комплекта ${id} нет описи (старый формат)`);
     for (const p of parts(catalog)) {
-      cpSync(join(src, p), join(dest, id, p), { recursive: true, filter: noLinks });
+      mkdirSync(dirname(join(dest, id, p)), { recursive: true });
+      copyFileSync(join(src, p), join(dest, id, p));
     }
   } else {
     const ssh = (cmd) =>
@@ -591,23 +718,18 @@ async function pull() {
     ).trim();
     if (!id) throw new Error('на сервере пригодных комплектов нет');
     catalog = JSON.parse(ssh(`cat ${VPS_BACKUP_DIR}/sets/${id}/catalog.json`));
+    if (!catalog.manifest) throw new Error(`у комплекта ${id} нет описи (старый формат)`);
     mkdirSync(join(dest, id), { recursive: true });
-    // Поток tar по ssh прямо в распаковку: без промежуточного архива и без sh.
+    // Список файлов — на вход tar по ssh; поток — прямо в распаковку.
     const remote = spawn(
       'ssh',
-      [
-        '-i',
-        VPS_KEY,
-        '-o',
-        'BatchMode=yes',
-        VPS,
-        `tar -C ${VPS_BACKUP_DIR} -cf - ${parts(catalog).join(' ')}`,
-      ],
-      { stdio: ['ignore', 'pipe', 'inherit'] },
+      ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `tar -C ${VPS_BACKUP_DIR} -cf - -T -`],
+      { stdio: ['pipe', 'pipe', 'inherit'] },
     );
     const local = spawn('tar', ['-xf', '-', '-C', join(dest, id)], {
       stdio: ['pipe', 'inherit', 'inherit'],
     });
+    remote.stdin.end(parts(catalog).join('\n') + '\n');
     remote.stdout.pipe(local.stdin);
     const codes = await Promise.all(
       [remote, local].map((p) => new Promise((r) => p.on('close', r))),
@@ -615,31 +737,26 @@ async function pull() {
     if (codes.some((code) => code !== 0)) throw new Error('скачивание оборвалось');
   }
   const root = join(dest, id);
+  console.log(`сверяю ${catalog.manifest.length} файлов описи…`);
   const problems = verifyCatalog(catalog, root);
-  const encrypted = countFiles(join(root, 'files'));
-  if (encrypted < catalog.files.count)
-    problems.push(`файлов в копии ${encrypted}, в комплекте ${catalog.files.count}`);
   writeFileSync(
     join(root, 'PULLED.json'),
     JSON.stringify(
-      { at: new Date().toISOString(), from: fromDir ? 'каталог' : VPS, problems },
+      {
+        at: new Date().toISOString(),
+        from: fromDir ? 'каталог' : VPS,
+        files: catalog.manifest.length,
+        problems,
+      },
       null,
       2,
     ),
   );
-  if (problems.length)
-    throw new Error(`скачанный комплект неполон: ${problems.slice(0, 5).join('; ')}`);
-  console.log(`комплект ${id} скачан и сверен: ${root}`);
-  return root;
-}
-
-function countFiles(dir) {
-  if (!existsSync(dir)) return 0;
-  let n = 0;
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    n += e.isDirectory() ? countFiles(join(dir, e.name)) : 1;
+  if (problems.length) {
+    throw new Error(`скачанный комплект не сошёлся с описью: ${problems.slice(0, 5).join('; ')}`);
   }
-  return n;
+  console.log(`комплект ${id} скачан и сверен (SHA-256 каждого файла описи): ${root}`);
+  return root;
 }
 
 // ------------------------------------------------------------------- вызов

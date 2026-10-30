@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 154; требований: 41
+- Проверок: 155; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,13 +176,14 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 57
+### Зарегистрированы, но ни в наборе, ни в CI — 58
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
 
 - `CHK-CHECKPOINT-SECRETS` — Имена, значения которых являются секретами.
 - `CHK-CONSOLE-PRIVATE` — Гейт «служебная консоль закрыта постороннему».
+- `CHK-BACKUP-LOGIC` — Пригодность копий и сигналы (2.1-W07): разрыв журнала в середине и пропавшая копия-основа не дают READY; подмена файла того же размера ловится описью; измене…
 - `CHK-BACKUP-RESTORE` — Восстановление из комплекта на момент T (блок 7, 7.7): комплект ключей открывается закрытым ключом; база восстанавливается pgBackRest на LSN T, транзакция T …
 - `CHK-FILES-ENDPOINT` — Вход файлов (2.1-W06): форма подписана на публичный адрес; CORS — разрешённому сайту разрешение, чужому нет, без разрешения на куки; право загрузки держит фо…
 - `CHK-FRONT-BUILDS` — Проверка перед выкатом: все фронты собраны в production-режиме.
@@ -310,6 +311,7 @@
 | CHK-DB-RECONNECT | `npm run check:db-reconnect` | 8 | вручную | `suite:regression` |
 | CHK-DB-RESILIENCE | `npm run check:db-resilience` | 23 | вручную | `suite:isolated` |
 | CHK-DEFINER-PRIVILEGES | `node scripts/check-definer-privileges.mjs` | 0 | CI | CI |
+| CHK-BACKUP-LOGIC | `node scripts/check-backup-logic.mjs` | 20 | вручную | — |
 | CHK-BACKUP-RESTORE | `node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>]` | 20 | вручную | — |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |

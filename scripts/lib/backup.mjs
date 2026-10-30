@@ -33,9 +33,11 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  lstatSync,
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   statfsSync,
   writeFileSync,
 } from 'node:fs';
@@ -172,14 +174,16 @@ export function psql(sql, { allowFail = false } = {}) {
  */
 export function rclone(
   rcloneArgs,
-  { network, mounts = [], extraEnv = {}, allowFail = false } = {},
+  { network, mounts = [], extraEnv = {}, allowFail = false, body = 'exec rclone "$@"' } = {},
 ) {
   const c = cfg();
+  // body — команда после настройки шифра; по умолчанию сам rclone с
+  // аргументами, для серии copyto — короткий цикл sh.
   const script = [
     'set -e',
     'export RCLONE_CONFIG_DST_PASSWORD="$(printf %s "$BACKUP_FILES_CRYPT_PASS" | rclone obscure -)"',
     'export RCLONE_CONFIG_DST_PASSWORD2="$(printf %s "$BACKUP_FILES_CRYPT_SALT" | rclone obscure -)"',
-    'exec rclone "$@"',
+    body,
   ].join('\n');
   const env = {
     RCLONE_CONFIG_SRC_TYPE: 's3',
@@ -412,31 +416,56 @@ export function snapshotConfig(targetDir) {
 
 // ---------------------------------------------------------------- сигналы
 
+/** Как часто повторять недоставленное сообщение. */
+export const SIGNAL_RETRY_MS = 15 * 60_000;
+
 /**
  * Состояние проверки и сообщение при смене: первое нарушение — сообщение,
- * повторы — без шума, возврат к норме — сообщение «восстановилось».
+ * повторы того же состояния — без шума, возврат к норме — «восстановилось».
+ *
+ * Недоставленное сообщение не теряется (замечание Тэнка при приёмке W07):
+ * оно остаётся в очереди и повторяется не чаще раза в SIGNAL_RETRY_MS, пока
+ * не дойдёт. Если состояние сменилось раньше, в очереди — новое сообщение.
  */
-export async function signal(key, problem, text) {
+export async function signal(key, problem, text, { send = telegram, now = Date.now() } = {}) {
   const all = readState('signals') ?? {};
   const prev = all[key] ?? { status: 'ok' };
-  const now = new Date().toISOString();
-  let message = null;
-  if (problem && prev.status !== 'problem') {
-    all[key] = { status: 'problem', since: now, text };
-    message = `⚠️ Резервирование 5Э: ${text}`;
-  } else if (!problem && prev.status === 'problem') {
-    all[key] = { status: 'ok', since: now, text };
-    message = `✅ Резервирование 5Э восстановилось: ${text}`;
+  const at = new Date(now).toISOString();
+  const status = problem ? 'problem' : 'ok';
+  let entry;
+  if (status !== prev.status) {
+    entry = {
+      status,
+      since: at,
+      text,
+      pending: problem
+        ? `⚠️ Резервирование 5Э: ${text}`
+        : `✅ Резервирование 5Э восстановилось: ${text}`,
+      attempts: 0,
+      lastAttemptAt: null,
+      notified: false,
+    };
   } else {
-    all[key] = { ...prev, status: problem ? 'problem' : 'ok', text, checkedAt: now };
+    entry = { ...prev, text, checkedAt: at };
   }
-  if (message) {
-    const delivered = await telegram(message);
-    all[key].notified = delivered;
-    if (!delivered) console.warn(`[сигнал не доставлен в Telegram] ${message}`);
+  const due =
+    entry.pending &&
+    (!entry.lastAttemptAt || now - Date.parse(entry.lastAttemptAt) >= SIGNAL_RETRY_MS);
+  if (due) {
+    entry.attempts = (entry.attempts ?? 0) + 1;
+    entry.lastAttemptAt = at;
+    const delivered = await send(entry.pending);
+    if (delivered) {
+      entry.notified = true;
+      entry.notifiedAt = at;
+      entry.pending = null;
+    } else {
+      console.warn(`[сигнал не доставлен, попытка ${entry.attempts}] ${entry.pending}`);
+    }
   }
+  all[key] = entry;
   writeState('signals', all);
-  return all[key];
+  return entry;
 }
 
 /** Отправка в Telegram; без настроек — false (и это видно в статусе). */
@@ -452,7 +481,7 @@ export async function telegram(text) {
       body: JSON.stringify({ chat_id: chat, text: host ? `${text}\n${host}` : text }),
       signal: AbortSignal.timeout(15_000),
     });
-    return r.ok;
+    return Boolean(r.ok);
   } catch {
     return false;
   }
@@ -464,7 +493,10 @@ export const sha256File = (path) => createHash('sha256').update(readFileSync(pat
 export const newId = () =>
   `${new Date().toISOString().replace(/[-:]/g, '').replace(/\..*/, 'Z')}-${randomBytes(3).toString('hex')}`;
 
-/** Индекс файлов копии: ключ → {size, sha256, firstSeen}. */
+/**
+ * Индекс файлов копии: ключ → последняя сохранённая версия
+ * {key, size, version, sha256, backupPath, encPath, firstSeen}.
+ */
 export function readIndex() {
   const c = cfg();
   const map = new Map();
@@ -493,30 +525,184 @@ export function readySets() {
     .reverse();
 }
 
+// ------------------------------------------------------- объекты и версии
+
 /**
- * Все части комплекта на месте: копия базы, сегменты журнала до T, файлы с
- * SHA-256 в индексе и в шифрованной копии, комплект ключей.
+ * Временный ключ формы загрузки — изменяемый: повторная отправка формы
+ * перезаписывает его. Остальные (окончательные файлы, медиа) по 2.1.2 не
+ * перезаписываются никогда.
  */
-export function verifyCatalog(catalog, dir, { inBackup } = {}) {
-  const problems = [];
-  const repo = join(dir, 'pgbackrest');
-  if (!existsSync(join(repo, 'backup', 'main', catalog.db.backup))) {
-    problems.push(`нет копии базы ${catalog.db.backup}`);
+export const isMutableKey = (key) => key.endsWith('/upload');
+
+/** Версия объекта источника: MD5 из ETag, иначе время изменения. */
+export const objectVersion = (o) => o.md5 || o.modTime || '';
+
+/** Путь версии в копии: неизменяемый — по ключу, изменяемый — по ключу и версии. */
+export function backupPathOf(bucket, key, version) {
+  if (!isMutableKey(key)) return `${bucket}/${key}`;
+  const v =
+    String(version)
+      .replace(/[^0-9A-Za-z]/g, '')
+      .slice(0, 40) || 'v';
+  return `mutable/${v}/${bucket}/${key}`;
+}
+
+/**
+ * Что делать с объектами источника по сравнению с индексом копии:
+ * fresh — их нет в копии; mutableChanged — изменилась временная загрузка
+ * (сохраняется новой версией рядом с прежней); immutableChanged — изменился
+ * готовый объект под прежним ключом: нарушение 2.1.2, комплект не выдаётся,
+ * прежняя копия не затирается.
+ */
+export function planObjects(index, current) {
+  const fresh = [];
+  const mutableChanged = [];
+  const immutableChanged = [];
+  for (const o of current) {
+    const last = index.get(o.key);
+    if (!last) {
+      fresh.push(o);
+      continue;
+    }
+    const v = objectVersion(o);
+    const changed = last.size !== o.size || Boolean(v && last.version && v !== last.version);
+    if (!changed) continue;
+    if (isMutableKey(o.key)) mutableChanged.push(o);
+    else immutableChanged.push(o);
   }
-  const walDir = join(
-    repo,
-    'archive',
-    'main',
-    catalog.db.archiveId,
-    catalog.target.walfile.slice(0, 16),
-  );
-  const walOk =
-    existsSync(walDir) && readdirSync(walDir).some((f) => f.startsWith(catalog.target.walfile));
-  if (!walOk) problems.push(`нет сегмента журнала ${catalog.target.walfile}`);
-  if (!existsSync(join(dir, catalog.keys.file))) problems.push('нет комплекта ключей');
+  return { fresh, mutableChanged, immutableChanged };
+}
+
+// ------------------------------------------------------- журнал базы (WAL)
+
+/** Сегменты журнала от a до b включительно (одна линия времени, 16 МБ). */
+export function walSegments(a, b) {
+  if (a.slice(0, 8) !== b.slice(0, 8)) {
+    throw new Error(`сегменты на разных линиях времени: ${a} … ${b}`);
+  }
+  const tl = a.slice(0, 8);
+  const n = (w) => parseInt(w.slice(8, 16), 16) * 256 + parseInt(w.slice(16, 24), 16);
+  const hex = (x) => x.toString(16).toUpperCase().padStart(8, '0');
+  const out = [];
+  for (let i = n(a); i <= n(b); i += 1) out.push(`${tl}${hex(Math.floor(i / 256))}${hex(i % 256)}`);
+  return out;
+}
+
+/** Файл сегмента в хранилище pgBackRest (относительно корня копий) или null. */
+export function walFile(dir, archiveId, seg) {
+  const sub = `pgbackrest/archive/main/${archiveId}/${seg.slice(0, 16)}`;
+  const abs = join(dir, sub);
+  if (!existsSync(abs)) return null;
+  const f = readdirSync(abs).find((x) => x.startsWith(`${seg}-`));
+  return f ? `${sub}/${f}` : null;
+}
+
+/**
+ * Цепочка восстановления на T: основа и все копии, от которых она зависит
+ * (добавочная → полная), их описи и КАЖДЫЙ сегмент журнала от начала основы
+ * до сегмента T. Разрыв в середине — неисправность, даже если конечный
+ * сегмент на месте: восстановление через него не пройдёт, пока не появится
+ * новая основа (замечание Тэнка при приёмке W07).
+ */
+export function chainProblems(catalog, dir) {
+  const problems = [];
+  const backups = [catalog.db.backup, ...(catalog.db.references ?? [])];
+  for (const label of new Set(backups)) {
+    const b = join(dir, 'pgbackrest', 'backup', 'main', label);
+    if (!existsSync(b)) problems.push(`нет копии базы ${label}`);
+    else if (!existsSync(join(b, 'backup.manifest'))) {
+      problems.push(`нет описи копии базы ${label}`);
+    }
+  }
+  if (!catalog.db.archiveStart) {
+    problems.push('в каталоге нет начала журнала основы');
+    return problems;
+  }
+  let segs = [];
+  try {
+    segs = walSegments(catalog.db.archiveStart, catalog.target.walfile);
+  } catch (error) {
+    problems.push(error.message);
+  }
+  const missing = segs.filter((seg) => !walFile(dir, catalog.db.archiveId, seg));
+  if (missing.length) {
+    const head = missing.slice(0, 3).join(', ');
+    problems.push(
+      `разрыв журнала: нет ${missing.length} из ${segs.length} сегментов (${head}${missing.length > 3 ? ', …' : ''})`,
+    );
+  }
+  return problems;
+}
+
+// ----------------------------------------------------- опись файлов комплекта
+
+/** SHA-256 файла с запоминанием по пути, размеру и времени изменения. */
+export function hashCached(abs, cache) {
+  const st = statSync(abs);
+  const id = `${abs}|${st.size}|${Math.floor(st.mtimeMs)}`;
+  if (cache && cache[id]) return { size: st.size, sha256: cache[id] };
+  const sha256 = sha256File(abs);
+  if (cache) cache[id] = sha256;
+  return { size: st.size, sha256 };
+}
+
+function listFilesRel(dir, rel) {
+  const abs = join(dir, rel);
+  if (!existsSync(abs)) return [rel];
+  const st = lstatSync(abs);
+  if (st.isSymbolicLink()) return [];
+  if (!st.isDirectory()) return [rel];
+  return readdirSync(abs).flatMap((name) => listFilesRel(dir, `${rel}/${name}`));
+}
+
+/**
+ * Опись комплекта: каждый файл, нужный для восстановления, с размером и
+ * SHA-256. По ней сверяется и сам комплект перед READY, и скачанная копия —
+ * без ключей расшифровки: хеш считается от того, что лежит на диске.
+ */
+export function buildManifest(dir, relPaths, cache) {
+  const files = [...new Set(relPaths.flatMap((p) => listFilesRel(dir, p)))].sort();
+  return files.map((path) => {
+    const abs = join(dir, path);
+    if (!existsSync(abs)) return { path, size: null, sha256: null };
+    return { path, ...hashCached(abs, cache) };
+  });
+}
+
+/** Расхождения с описью: нет файла, другой размер, другой SHA-256. */
+export function manifestProblems(dir, manifest, { cache } = {}) {
+  const problems = [];
+  for (const m of manifest) {
+    const abs = join(dir, m.path);
+    if (!m.sha256 || !existsSync(abs)) {
+      problems.push(`нет файла ${m.path}`);
+      continue;
+    }
+    const got = hashCached(abs, cache);
+    if (got.size !== m.size) problems.push(`другой размер ${m.path}`);
+    else if (got.sha256 !== m.sha256) problems.push(`другое содержимое ${m.path}`);
+  }
+  return problems;
+}
+
+export const loadHashCache = () => readState('hash-cache') ?? {};
+export const saveHashCache = (cache) => writeState('hash-cache', cache);
+
+/**
+ * Пригодность комплекта: цепочка базы до T, опись (каждый файл на месте и с
+ * тем же SHA-256), SHA-256 содержимого каждого объекта, комплект ключей.
+ */
+export function verifyCatalog(catalog, dir, { cache } = {}) {
+  const problems = [...chainProblems(catalog, dir)];
+  const inManifest = new Set((catalog.manifest ?? []).map((m) => m.path));
+  if (!inManifest.size) problems.push('у комплекта нет описи файлов');
+  else problems.push(...manifestProblems(dir, catalog.manifest, { cache }));
+  if (!inManifest.has(catalog.keys.file)) problems.push('комплект ключей не в описи');
   for (const o of catalog.files.objects) {
-    if (!o.sha256) problems.push(`нет SHA-256: ${o.key}`);
-    if (inBackup && inBackup.get(o.key) !== o.size) problems.push(`нет в копии файлов: ${o.key}`);
+    if (!o.sha256) problems.push(`нет SHA-256 содержимого: ${o.key}`);
+    if (!o.encPath || !inManifest.has(`files/${o.encPath}`)) {
+      problems.push(`файла нет в описи: ${o.key}`);
+    }
   }
   return problems;
 }

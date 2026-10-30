@@ -311,13 +311,22 @@ try {
       RCLONE_CONFIG_DST_SECRET_ACCESS_KEY: env.MINIO_ROOT_PASSWORD,
       RCLONE_CONFIG_DST_REGION: env.S3_REGION || 'us-east-1',
     };
+    const lists = join(from, '.restore-lists');
+    mkdirSync(lists, { recursive: true });
+    writeFileSync(
+      join(lists, 'restore.tsv'),
+      catalog.files.objects.map((o) => `${o.backupPath}\t${o.key}`).join('\n') + '\n',
+    );
     const script = [
       'set -e',
       'export RCLONE_CONFIG_SRC_PASSWORD="$(printf %s "$BACKUP_FILES_CRYPT_PASS" | rclone obscure -)"',
       'export RCLONE_CONFIG_SRC_PASSWORD2="$(printf %s "$BACKUP_FILES_CRYPT_SALT" | rclone obscure -)"',
       'for i in $(seq 1 30); do rclone lsd DST: >/dev/null 2>&1 && break; sleep 1; done',
       `rclone mkdir "DST:${catalog.files.bucket}"`,
-      `rclone copy "SRC:${catalog.files.bucket}" "DST:${catalog.files.bucket}" --transfers 4`,
+      // Каждый объект — из своей версии в копии (путь из каталога) под свой ключ.
+      `TAB="$(printf '\\t')"; while IFS="$TAB" read -r path key; do ` +
+        `rclone copyto "SRC:$path" "DST:${catalog.files.bucket}/$key" --size-only; ` +
+        `done < /lists/restore.tsv`,
       `rclone hashsum sha256 --download "DST:${catalog.files.bucket}"`,
     ].join('\n');
     const r = docker(
@@ -328,6 +337,8 @@ try {
         NET,
         '-v',
         `${join(from, 'files')}:/backup/files:ro`,
+        '-v',
+        `${lists}:/lists:ro`,
         ...Object.keys(rc).flatMap((k) => ['-e', k]),
         '--entrypoint',
         'sh',
