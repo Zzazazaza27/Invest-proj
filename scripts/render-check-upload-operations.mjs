@@ -538,18 +538,16 @@ try {
       [projectId],
     )
   )[0].n;
-  await cut
-    .waitForSelector('#deck-file', { state: 'attached', timeout: 15_000 })
-    .catch(async () => {
-      await cut.screenshot({ path: join(OUT, '7-no-input.png'), fullPage: true });
-      console.warn('  адрес страницы:', cut.url());
-    });
+  await cut.waitForSelector('#deck-upload', { timeout: 15_000 }).catch(async () => {
+    await cut.screenshot({ path: join(OUT, '7-no-input.png'), fullPage: true });
+    console.warn('  адрес страницы:', cut.url());
+  });
+  // Одна кнопка: выбор файла сам начинает загрузку — без второго нажатия.
   await cut.setInputFiles('#deck-file', {
     name: 'Оборванный.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from('%PDF-1.4 оборванная передача'),
   });
-  await cut.getByRole('button', { name: 'Загрузить презентацию' }).click();
   const cutNotice = cut.locator('[data-upload-notice]');
   await cutNotice.waitFor({ timeout: 30_000 });
   const cutText = await cutNotice.innerText();
@@ -610,13 +608,13 @@ try {
     }
   });
   await own.goto(projectUrl, { waitUntil: 'networkidle', timeout: 30_000 });
-  await own.waitForSelector('#deck-file', { state: 'attached', timeout: 15_000 });
+  await own.waitForSelector('#deck-upload', { timeout: 15_000 });
+  // Одна кнопка: выбор файла сам начинает загрузку — без второго нажатия.
   await own.setInputFiles('#deck-file', {
     name: 'Своя-отмена.pdf',
     mimeType: 'application/pdf',
     buffer: Buffer.from('%PDF-1.4 своя отмена'),
   });
-  await own.getByRole('button', { name: 'Загрузить презентацию' }).click();
   const [ownRow] = await (async () => {
     for (let i = 0; i < 30; i += 1) {
       const rows = await sql(
@@ -632,7 +630,17 @@ try {
   check('загрузка числится', Boolean(ownRow));
   const ownCancel = own.locator(`[data-upload-cancel="${ownRow?.id}"]`);
   await ownCancel.waitFor({ timeout: 15_000 });
-  check('кнопка отмены доступна во время передачи', await ownCancel.isEnabled());
+  check(
+    'кнопка отмены доступна во время передачи',
+    await own.locator(`[data-upload-cancel="${ownRow?.id}"]`).isEnabled(),
+  );
+  // Индикатор — только на кнопке загрузки, не на всей карточке.
+  const busyButtons = await own.locator('#materials button[aria-busy="true"]').allInnerTexts();
+  check(
+    'во время передачи крутится только кнопка загрузки',
+    busyButtons.length === 1 && /Загрузить презентацию/.test(busyButtons[0]),
+    busyButtons.join(' | '),
+  );
   await ownCancel.click();
   const ownNotice = own.locator('[data-upload-notice]');
   await own.waitForFunction(
@@ -653,8 +661,8 @@ try {
     await ownNotice.innerText(),
   );
   check(
-    'файл сброшен, кнопка загрузки не зависла',
-    await own.getByRole('button', { name: 'Загрузить презентацию' }).isDisabled(),
+    'кнопка загрузки снова доступна',
+    await own.getByRole('button', { name: 'Загрузить презентацию' }).isEnabled(),
   );
   await ownCtx.close();
 

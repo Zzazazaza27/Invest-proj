@@ -77,6 +77,9 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
   const [uploads, setUploads] = useState<UserOperation[]>([]);
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
+  // У загрузки своё «занято»: долгая передача не должна крутить индикатор на
+  // ссылке и отметках материалов (приёмка W06, 30.10.2026).
+  const [uploading, setUploading] = useState(false);
   // Отмена не зависит от `busy`: она нужна именно пока идёт передача, а
   // передача держит `busy` поднятым (приёмка W06 на VPS, 30.10.2026).
   const [cancelling, setCancelling] = useState<string | null>(null);
@@ -86,7 +89,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
     null,
   );
   const [notice, setNotice] = useState<Notice | null>(null);
-  const [file, setFile] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const { requestCheck } = useOperations();
 
   const load = useCallback(async () => {
@@ -217,73 +220,72 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
    * Подтверждение не «отчёт клиента»: сервер сам ходит в хранилище и убеждается,
    * что объект есть. Поэтому вызов нельзя ни пропустить, ни подделать.
    */
-  const upload = useCallback(async () => {
-    if (!file) return;
-    // Лимит проверяется ДО запроса билета: пользователь узнаёт об ошибке
-    // сразу, а не после ожидания ответа сервера (CODE-MED-02).
-    if (file.size > DECK_RULES.maxBytes) {
-      setNotice({
-        tone: 'error',
-        text: `Файл больше ${DECK_MAX_MB} МБ — выберите файл меньшего размера`,
-      });
-      return;
-    }
-    setBusy(true);
-    setNotice(null);
-    try {
-      const ticket = await api.projects.requestUpload(projectId, {
-        projectId,
-        type: 'deck',
-        fileName: file.name,
-        contentType: file.type as 'application/pdf',
-        sizeBytes: file.size,
-      });
-      // Загрузка уже числится: она видна в списке и её можно отменить, пока
-      // файл передаётся.
-      void loadUploads();
-      const form = new FormData();
-      for (const [key, value] of Object.entries(ticket.formFields)) form.append(key, value);
-      form.append('file', file);
-      // Таймаут обязателен и здесь: хранилище — внешняя зависимость, и зависший
-      // запрос иначе оставляет кнопку в состоянии «загружается» навсегда.
-      // Но не короче всей допустимой передачи (2.1.2, 2.1-W06): форма живёт
-      // 95 минут, Caddy принимает тело до 90 — браузер ждёт до срока формы.
-      // Пять минут прежнего таймаута обрывали большой файл на медленном канале.
-      const controller = new AbortController();
-      transfer.current = { id: ticket.materialId, controller, cancelled: false };
-      const response = await fetch(ticket.uploadUrl, {
-        method: 'POST',
-        body: form,
-        signal: AbortSignal.any([
-          controller.signal,
-          AbortSignal.timeout(uploadTimeoutMs(ticket.expiresAt)),
-        ]),
-      });
-      if (!response.ok) throw new Error(`хранилище ответило ${response.status}`);
-
-      // Успех объявляется только по состоянию «готово»: файл скопирован,
-      // проверен и связан с проектом. Ответ хранилища и сам вызов
-      // подтверждения успехом ещё не являются (2.1-W03).
-      const result = await api.projects.finalizeUpload(projectId, ticket.materialId);
-
-      setFile(null);
-      setNotice(uploadNotice(result));
-      await Promise.all([load(), loadUploads()]);
-      // Не принят — итог показывает общее сообщение (1.5), один раз.
-      if (result.uploadState === 'rejected') requestCheck();
-    } catch (error) {
-      // Передачу остановила отмена — итог уже показан отменой, это не ошибка.
-      if (transfer.current?.cancelled) {
-        setFile(null);
-      } else {
-        setNotice({ tone: 'error', text: errorText(error, 'Загрузка не удалась') });
+  const upload = useCallback(
+    async (file: File) => {
+      // Лимит проверяется ДО запроса билета: пользователь узнаёт об ошибке
+      // сразу, а не после ожидания ответа сервера (CODE-MED-02).
+      if (file.size > DECK_RULES.maxBytes) {
+        setNotice({
+          tone: 'error',
+          text: `Файл больше ${DECK_MAX_MB} МБ — выберите файл меньшего размера`,
+        });
+        return;
       }
-      void loadUploads();
-    } finally {
-      transfer.current = null;
-      setBusy(false);
-    }
-  }, [file, projectId, load, loadUploads, requestCheck]);
+      setUploading(true);
+      setNotice(null);
+      try {
+        const ticket = await api.projects.requestUpload(projectId, {
+          projectId,
+          type: 'deck',
+          fileName: file.name,
+          contentType: file.type as 'application/pdf',
+          sizeBytes: file.size,
+        });
+        // Загрузка уже числится: она видна в списке и её можно отменить, пока
+        // файл передаётся.
+        void loadUploads();
+        const form = new FormData();
+        for (const [key, value] of Object.entries(ticket.formFields)) form.append(key, value);
+        form.append('file', file);
+        // Таймаут обязателен и здесь: хранилище — внешняя зависимость, и зависший
+        // запрос иначе оставляет кнопку в состоянии «загружается» навсегда.
+        // Но не короче всей допустимой передачи (2.1.2, 2.1-W06): форма живёт
+        // 95 минут, Caddy принимает тело до 90 — браузер ждёт до срока формы.
+        // Пять минут прежнего таймаута обрывали большой файл на медленном канале.
+        const controller = new AbortController();
+        transfer.current = { id: ticket.materialId, controller, cancelled: false };
+        const response = await fetch(ticket.uploadUrl, {
+          method: 'POST',
+          body: form,
+          signal: AbortSignal.any([
+            controller.signal,
+            AbortSignal.timeout(uploadTimeoutMs(ticket.expiresAt)),
+          ]),
+        });
+        if (!response.ok) throw new Error(`хранилище ответило ${response.status}`);
+
+        // Успех объявляется только по состоянию «готово»: файл скопирован,
+        // проверен и связан с проектом. Ответ хранилища и сам вызов
+        // подтверждения успехом ещё не являются (2.1-W03).
+        const result = await api.projects.finalizeUpload(projectId, ticket.materialId);
+
+        setNotice(uploadNotice(result));
+        await Promise.all([load(), loadUploads()]);
+        // Не принят — итог показывает общее сообщение (1.5), один раз.
+        if (result.uploadState === 'rejected') requestCheck();
+      } catch (error) {
+        // Передачу остановила отмена — итог уже показан отменой, это не ошибка.
+        if (!transfer.current?.cancelled) {
+          setNotice({ tone: 'error', text: errorText(error, 'Загрузка не удалась') });
+        }
+        void loadUploads();
+      } finally {
+        transfer.current = null;
+        setUploading(false);
+      }
+    },
+    [projectId, load, loadUploads, requestCheck],
+  );
 
   /**
    * Отмена идущей загрузки: состояние «отменено», запись и файл сохраняются,
@@ -489,21 +491,38 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
           Добавить ссылку
         </Button>
 
+        {/*
+          Одна кнопка — одно действие: выбор файла и есть начало загрузки
+          (замечание Томаса при приёмке W06). Поле выбора скрыто, его
+          открывает кнопка.
+        */}
         <Field
           label="Презентация"
           htmlFor="deck-file"
           hint={`PDF или PPTX, до ${DECK_MAX_MB} МБ. Файл уходит в хранилище напрямую, минуя API.`}
         >
-          <input
-            id="deck-file"
-            type="file"
-            accept="application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-          />
+          <Button
+            id="deck-upload"
+            variant="secondary"
+            onClick={() => fileInput.current?.click()}
+            loading={uploading}
+          >
+            Загрузить презентацию
+          </Button>
         </Field>
-        <Button variant="secondary" onClick={() => void upload()} loading={busy} disabled={!file}>
-          Загрузить презентацию
-        </Button>
+        <input
+          ref={fileInput}
+          id="deck-file"
+          type="file"
+          hidden
+          accept="application/pdf,application/vnd.openxmlformats-officedocument.presentationml.presentation"
+          onChange={(event) => {
+            const chosen = event.target.files?.[0];
+            // Сброс — чтобы тот же файл можно было выбрать снова.
+            event.target.value = '';
+            if (chosen) void upload(chosen);
+          }}
+        />
       </Stack>
     </Card>
   );

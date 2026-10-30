@@ -376,7 +376,7 @@
 | RND-MEDIA-EMBEDDING | `node scripts/render-check-media-embedding.mjs` | 12 | вручную | — |
 | RND-PROFILE | `node scripts/render-check-profile.mjs` | 17 | вручную | `suite:regression` |
 | RND-PROJECT-MEDIA | `node scripts/render-check-project-media.mjs` | 16 | вручную | — |
-| RND-UPLOAD-OPERATIONS | `UNICORN_ENTRY=web node scripts/render-check-upload-operations.mjs` | 47 | вручную | — |
+| RND-UPLOAD-OPERATIONS | `UNICORN_ENTRY=web node scripts/render-check-upload-operations.mjs` | 48 | вручную | — |
 | RND-PROJECT-PAGE | `node scripts/render-check-project-page.mjs` | 15 | вручную | — |
 | RND-SUPPORT | `node scripts/render-check-support.mjs` | 26 | вручную | — |
 | RND-TESTING-SESSIONS | `node scripts/render-check-testing-sessions.mjs` | 27 | вручную | `suite:regression` |
@@ -413,7 +413,7 @@
 | DBT-PROJECT-ACCESS-DIRECTORY | `npm run test -w database` | 4 | CI | CI |
 | DBT-PROJECT-ACCESS | `npm run test -w database` | 11 | CI | CI |
 | DBT-PROJECT-VIEWS | `npm run test -w database` | 2 | CI | CI |
-| DBT-RLS | `npm run test -w database` | 47 | CI | CI |
+| DBT-RLS | `npm run test -w database` | 48 | CI | CI |
 | DBT-STAFF-CAPABILITIES | `npm run test -w database` | 4 | CI | CI |
 
 ### Задания CI

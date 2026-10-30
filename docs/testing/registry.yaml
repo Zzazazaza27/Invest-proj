@@ -1411,7 +1411,7 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 47
+    asserts: 48
     needs: [db, core, web]
     effects:
       [
@@ -2275,7 +2275,7 @@ checks:
     kind: db-test
     level: интеграционный
     runner: ci
-    asserts: 47
+    asserts: 48
     needs: [db]
     studied: code
     studiedOn: 2026-10-29
