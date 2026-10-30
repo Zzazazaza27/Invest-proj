@@ -25,6 +25,16 @@ export const MATERIAL_SIGNATURES: Record<UploadableMaterialType, (head: Buffer) 
   doc: (head) => isPdf(head) || isPng(head) || isJpeg(head),
 };
 
+/**
+ * Причина отказа по формату — словами пользователя: какой материал и какие
+ * форматы годятся. Внутреннее имя типа (`deck`) наружу не уходит.
+ */
+export const MATERIAL_FORMAT_REJECTIONS: Record<UploadableMaterialType, string> = {
+  deck: 'Файл не похож на презентацию: подойдёт PDF или PPTX',
+  video: 'Файл не похож на видео: подойдёт MP4',
+  doc: 'Файл не похож на документ: подойдёт PDF, PNG или JPEG',
+};
+
 const isPdf = (head: Buffer) => head.subarray(0, 5).toString('latin1') === '%PDF-';
 const isZip = (head: Buffer) => head.length >= 4 && head.readUInt32BE(0) === 0x504b0304;
 const isPng = (head: Buffer) =>

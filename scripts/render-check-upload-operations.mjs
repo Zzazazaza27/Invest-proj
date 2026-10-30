@@ -587,6 +587,77 @@ try {
   );
   await desk.close();
 
+  // ------------------------------------------------ 8. отмена своей передачи
+  // Приёмка W06 на VPS (Томас, 30.10.2026): пока файл передаётся из этой же
+  // вкладки, кнопка отмены была недоступна — её держал общий флаг «занято».
+  // Отмена должна нажиматься, менять состояние на сервере и обрывать передачу.
+  console.warn('\n[8] Отмена во время своей передачи');
+  const ownCtx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const own = await login(ownCtx, 'своя-отмена');
+  await calm(own);
+  let transferAborted = false;
+  await own.route(
+    (url) => url.pathname.endsWith(`/${process.env.S3_BUCKET ?? 'unicorn-launch'}`),
+    async (route) => {
+      if (route.request().method() !== 'POST') return route.continue();
+      // Передача «идёт» и не заканчивается сама: ответа нет, пока её не оборвут.
+      await new Promise(() => {});
+    },
+  );
+  own.on('requestfailed', (request) => {
+    if (request.method() === 'POST' && /unicorn-launch$/.test(new URL(request.url()).pathname)) {
+      transferAborted = true;
+    }
+  });
+  await own.goto(projectUrl, { waitUntil: 'networkidle', timeout: 30_000 });
+  await own.waitForSelector('#deck-file', { state: 'attached', timeout: 15_000 });
+  await own.setInputFiles('#deck-file', {
+    name: 'Своя-отмена.pdf',
+    mimeType: 'application/pdf',
+    buffer: Buffer.from('%PDF-1.4 своя отмена'),
+  });
+  await own.getByRole('button', { name: 'Загрузить презентацию' }).click();
+  const [ownRow] = await (async () => {
+    for (let i = 0; i < 30; i += 1) {
+      const rows = await sql(
+        `SELECT id FROM lab.project_materials
+          WHERE project_id = $1 AND upload_file_name = 'Своя-отмена.pdf'`,
+        [projectId],
+      );
+      if (rows.length) return rows;
+      await new Promise((r) => setTimeout(r, 500));
+    }
+    return [];
+  })();
+  check('загрузка числится', Boolean(ownRow));
+  const ownCancel = own.locator(`[data-upload-cancel="${ownRow?.id}"]`);
+  await ownCancel.waitFor({ timeout: 15_000 });
+  check('кнопка отмены доступна во время передачи', await ownCancel.isEnabled());
+  await ownCancel.click();
+  const ownNotice = own.locator('[data-upload-notice]');
+  await own.waitForFunction(
+    () => /отменена/i.test(document.querySelector('[data-upload-notice]')?.textContent ?? ''),
+    null,
+    { timeout: 15_000 },
+  );
+  check('сообщение об отмене', /Загрузка отменена/.test(await ownNotice.innerText()));
+  const [ownAfter] = await sql(`SELECT upload_state FROM lab.project_materials WHERE id = $1`, [
+    ownRow?.id,
+  ]);
+  check('на сервере — отменено', ownAfter?.upload_state === 'cancelled', ownAfter?.upload_state);
+  await own.waitForTimeout(500);
+  check('передача оборвана браузером', transferAborted);
+  check(
+    'ошибки «не удалась» нет',
+    !/не удалась/i.test(await ownNotice.innerText()),
+    await ownNotice.innerText(),
+  );
+  check(
+    'файл сброшен, кнопка загрузки не зависла',
+    await own.getByRole('button', { name: 'Загрузить презентацию' }).isDisabled(),
+  );
+  await ownCtx.close();
+
   check('ошибок в консоли нет', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
 } catch (error) {
   failed += 1;

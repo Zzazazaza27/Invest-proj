@@ -10,7 +10,11 @@ import {
   type CompletionOutcome,
   type UploadTarget,
 } from '../storage/upload-completion';
-import { MATERIAL_SIGNATURES, detectMaterialContentType } from './material-rules';
+import {
+  MATERIAL_FORMAT_REJECTIONS,
+  MATERIAL_SIGNATURES,
+  detectMaterialContentType,
+} from './material-rules';
 
 /**
  * Завершение загрузок материалов проекта — первое подключение общей функции
@@ -110,13 +114,14 @@ export class MaterialUploadsService implements OnModuleInit {
       finalKey: (row, attemptId) =>
         this.s3.buildMaterialFinalKey(row.project_id, row.id, row.type, attemptId),
       validate: (row, digest) => {
-        const check = MATERIAL_SIGNATURES[row.type as UploadableMaterialType];
+        const type = row.type as UploadableMaterialType;
+        const check = MATERIAL_SIGNATURES[type];
         if (!check || !check(digest.head)) {
-          return `Содержимое файла не соответствует типу материала «${row.type}»: выберите файл допустимого формата`;
+          return MATERIAL_FORMAT_REJECTIONS[type] ?? 'Формат файла не подходит для этого материала';
         }
         const max = row.upload_max_bytes === null ? null : Number(row.upload_max_bytes);
         if (max !== null && digest.sizeBytes > max) {
-          return `Файл больше допустимого размера (${max} байт)`;
+          return `Файл больше допустимого размера (${Math.floor(max / (1024 * 1024))} МБ)`;
         }
         return null;
       },

@@ -1411,7 +1411,7 @@ checks:
     kind: render
     level: сквозной
     runner: manual
-    asserts: 40
+    asserts: 47
     needs: [db, core, web]
     effects:
       [

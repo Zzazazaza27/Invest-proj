@@ -77,6 +77,14 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
   const [uploads, setUploads] = useState<UserOperation[]>([]);
   const [url, setUrl] = useState('');
   const [busy, setBusy] = useState(false);
+  // Отмена не зависит от `busy`: она нужна именно пока идёт передача, а
+  // передача держит `busy` поднятым (приёмка W06 на VPS, 30.10.2026).
+  const [cancelling, setCancelling] = useState<string | null>(null);
+  // Передача из этой вкладки: отмена останавливает и её, а не только меняет
+  // состояние на сервере, — иначе браузер досылал бы уже ненужный файл.
+  const transfer = useRef<{ id: string; controller: AbortController; cancelled: boolean } | null>(
+    null,
+  );
   const [notice, setNotice] = useState<Notice | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const { requestCheck } = useOperations();
@@ -241,10 +249,15 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
       // Но не короче всей допустимой передачи (2.1.2, 2.1-W06): форма живёт
       // 95 минут, Caddy принимает тело до 90 — браузер ждёт до срока формы.
       // Пять минут прежнего таймаута обрывали большой файл на медленном канале.
+      const controller = new AbortController();
+      transfer.current = { id: ticket.materialId, controller, cancelled: false };
       const response = await fetch(ticket.uploadUrl, {
         method: 'POST',
         body: form,
-        signal: AbortSignal.timeout(uploadTimeoutMs(ticket.expiresAt)),
+        signal: AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(uploadTimeoutMs(ticket.expiresAt)),
+        ]),
       });
       if (!response.ok) throw new Error(`хранилище ответило ${response.status}`);
 
@@ -259,9 +272,15 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
       // Не принят — итог показывает общее сообщение (1.5), один раз.
       if (result.uploadState === 'rejected') requestCheck();
     } catch (error) {
-      setNotice({ tone: 'error', text: errorText(error, 'Загрузка не удалась') });
+      // Передачу остановила отмена — итог уже показан отменой, это не ошибка.
+      if (transfer.current?.cancelled) {
+        setFile(null);
+      } else {
+        setNotice({ tone: 'error', text: errorText(error, 'Загрузка не удалась') });
+      }
       void loadUploads();
     } finally {
+      transfer.current = null;
       setBusy(false);
     }
   }, [file, projectId, load, loadUploads, requestCheck]);
@@ -273,17 +292,24 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
    */
   const cancel = useCallback(
     async (op: UserOperation) => {
-      setBusy(true);
+      setCancelling(op.id);
       setNotice(null);
       try {
         const result = await api.projects.cancelUpload(projectId, op.id);
+        // Передачу обрываем только после ответа сервера: если загрузка
+        // успела завершиться, отменять нечего и файл должен дойти.
+        const current = transfer.current;
+        if (result.uploadState === 'cancelled' && current?.id === op.id) {
+          current.cancelled = true;
+          current.controller.abort();
+        }
         setNotice(cancelNotice(result));
         await Promise.all([load(), loadUploads()]);
         if (result.uploadState === 'rejected') requestCheck();
       } catch (error) {
         setNotice({ tone: 'error', text: errorText(error) });
       } finally {
-        setBusy(false);
+        setCancelling(null);
       }
     },
     [projectId, load, loadUploads, requestCheck],
@@ -411,7 +437,8 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
                     <Button
                       variant="secondary"
                       size="sm"
-                      loading={busy}
+                      loading={cancelling === op.id}
+                      disabled={cancelling !== null && cancelling !== op.id}
                       data-upload-cancel={op.id}
                       onClick={() => void cancel(op)}
                     >
