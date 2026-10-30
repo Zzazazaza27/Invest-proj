@@ -30,7 +30,7 @@
  *   node scripts/deploy.mjs             выкатить
  *   node scripts/deploy.mjs --no-verify пропустить локальные гейты (не надо)
  */
-import { execSync, spawnSync } from 'node:child_process';
+import { execFileSync, execSync, spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { homedir } from 'node:os';
 import {
@@ -61,12 +61,17 @@ const local = (cmd) => execSync(cmd, { cwd: ROOT, encoding: 'utf8' }).trim();
 /**
  * Команда на сервере. Длинные шаги идут с выводом в консоль: сборка занимает
  * минуты, и молчащий терминал неотличим от зависшего.
+ *
+ * ssh запускается НАПРЯМУЮ, без локальной оболочки: команда для сервера — один
+ * аргумент, и разбирает её только оболочка сервера. Раньше строка шла через
+ * cmd.exe Windows, для которого `\"` не экранирование: кавычка закрывалась, и
+ * `<>` в SQL переименования баз он принял за перенаправление — выпуск
+ * 30.10.2026 остановился на этом шаге и откатился.
  */
 function remote(cmd, { show = false, allowFail = false } = {}) {
-  const ssh = [
-    'ssh',
+  const args = [
     '-i',
-    `"${KEY}"`,
+    KEY,
     '-o',
     'IdentitiesOnly=yes',
     '-o',
@@ -74,10 +79,10 @@ function remote(cmd, { show = false, allowFail = false } = {}) {
     '-o',
     'ConnectTimeout=20',
     HOST,
-    `"cd ${APP_DIR} && ${cmd.replace(/"/g, '\\"')}"`,
-  ].join(' ');
+    `cd ${APP_DIR} && ${cmd}`,
+  ];
   try {
-    const out = execSync(ssh, {
+    const out = execFileSync('ssh', args, {
       encoding: 'utf8',
       stdio: show ? ['ignore', 'inherit', 'inherit'] : ['ignore', 'pipe', 'pipe'],
       maxBuffer: 64 * 1024 * 1024,

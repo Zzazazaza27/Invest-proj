@@ -417,8 +417,12 @@ function recover({ ops, before, routes, publicUrl, pendingContract, retired, ren
     if (renamed.length) {
       remote(`systemctl stop ${CORE_UNIT}`);
       for (const [from, to] of [...renamed].reverse()) {
-        if (databaseExists(ops, to)) renameDatabase(ops, to, from);
-        log.info(`база возвращена: ${to} → ${from}`);
+        if (databaseExists(ops, to)) {
+          renameDatabase(ops, to, from);
+          log.info(`база возвращена: ${to} → ${from}`);
+        } else {
+          log.info(`база ${from} не переименовывалась — возвращать нечего`);
+        }
       }
       remote(`cp ${ENV_BACKUP} .env`);
       log.info(`.env восстановлен из ${ENV_BACKUP}`);
