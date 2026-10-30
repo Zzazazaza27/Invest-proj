@@ -43,6 +43,14 @@ const POLL_FAST_MS = 5_000;
 const POLL_SLOW_MS = 30_000;
 const POLL_FAST_WINDOW_MS = 60_000;
 
+/** Предел передачи на входе (Caddy `read_body`, 2.1.2): браузер ждёт не меньше. */
+const TRANSFER_LIMIT_MS = 90 * 60_000;
+
+/** Ждать до срока формы, но не меньше предела передачи. */
+function uploadTimeoutMs(expiresAt: string): number {
+  return Math.max(TRANSFER_LIMIT_MS, Date.parse(expiresAt) - Date.now());
+}
+
 /** Текст «требует вмешательства» — честно: автоматическая обработка остановлена. */
 const NEEDS_ATTENTION_TEXT =
   'Не удалось завершить сохранение. Повторять загрузку не нужно — требуется проверка.';
@@ -230,11 +238,13 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
       form.append('file', file);
       // Таймаут обязателен и здесь: хранилище — внешняя зависимость, и зависший
       // запрос иначе оставляет кнопку в состоянии «загружается» навсегда.
-      // Пять минут, а не пятнадцать секунд: это выгрузка файла до 500 МБ.
+      // Но не короче всей допустимой передачи (2.1.2, 2.1-W06): форма живёт
+      // 95 минут, Caddy принимает тело до 90 — браузер ждёт до срока формы.
+      // Пять минут прежнего таймаута обрывали большой файл на медленном канале.
       const response = await fetch(ticket.uploadUrl, {
         method: 'POST',
         body: form,
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(uploadTimeoutMs(ticket.expiresAt)),
       });
       if (!response.ok) throw new Error(`хранилище ответило ${response.status}`);
 

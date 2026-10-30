@@ -255,6 +255,28 @@ checks:
     purpose: 'Гейт: ни одна функция SECURITY DEFINER не исполнима ролью PUBLIC. PostgreSQL выдаёт EXECUTE роли PUBLIC на каждую новую функцию по умолчанию, а адресный GRANT нужным ролям этот default не отменяет. Поэтому «мы выдали пра'
     confirmation: reviewed-in-code
 
+  - id: CHK-FILES-ENDPOINT
+    file: scripts/check-files-endpoint.mjs
+    command: FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 25
+    needs: [storage]
+    effects: ['кладёт пробные объекты под префикс w06-probe/ — не удаляет их (2.1.2)']
+    studied: code
+    studiedOn: 2026-10-30
+    note: >-
+      Подтверждён локально через Caddy 2.11.4 с infra/caddy/files.caddy
+      (без TLS, предел тела снижен до 2 МБ для проверки 413) — 25/25. На VPS
+      запускается на сервере после включения files.5espace.com. Опыты W06:
+      MinIO проверяет срок формы после приёма тела; бесплатная редакция MinIO
+      не поддерживает CORS на бакете; при обрыве по read_body Caddy отвечает
+      200 с пустым телом — успех объявляет только завершение на сервере.
+    purpose: 'Вход файлов (2.1-W06): форма подписана на публичный адрес; CORS — разрешённому сайту разрешение, чужому нет, без разрешения на куки; право загрузки держит форма — без подписи, с поддельной подписью, с чужим типом, сверх размера и после срока отказ; сверх предела тела Caddy — 413; чтение объекта, список, запись мимо формы, удаление, служебные адреса и консоль MinIO — 404.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-30
+
   - id: CHK-FILE-ACCESS
     file: scripts/check-file-access.mjs
     command: npm run check:file-access
@@ -2446,6 +2468,21 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: UNIT-CORE-UPLOAD-ADDRESS
+    file: apps/core/tests/upload-address.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 8
+    studied: code
+    studiedOn: 2026-10-30
+    needs: []
+    effects: ['только подпись формы в памяти — к хранилищу не обращается']
+    purpose: 'Публичный адрес загрузки (2.1-W06, блок 4): локальный стенд — форма на внутренний адрес, как раньше; внешний стенд без S3_PUBLIC_ENDPOINT или с петлёй — форма не выдаётся, причина названа; с публичным адресом — форма на него; в production публичный адрес только https, внутренний по http — только на той же машине; срок формы материала по умолчанию 95 минут.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-10-30
+
   - id: UNIT-CORE-COUNTERS
     file: apps/core/tests/counters.test.ts
     command: npm run test -w apps/core
@@ -3475,6 +3512,8 @@ blocks:
         PRB-IP-CEILING-TTL,
         PRB-VALKEY-COUNTERS,
         UNIT-CORE-COUNTERS,
+        UNIT-CORE-UPLOAD-ADDRESS,
+        CHK-FILES-ENDPOINT,
         UNIT-PKG-UI-MARKDOWN,
         UNIT-CORE-LAB,
         CHK-SERVICE-ROLES,

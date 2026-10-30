@@ -240,6 +240,12 @@ services:
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-unicorn_minio}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-local_dev_only_minio_change_me}
+      # Общий список сайтов, которым MinIO отвечает на CORS (2.1-W06). Бесплатная
+      # редакция не умеет CORS на бакете, поэтому по бакетам его задаёт Caddy на
+      # files.<домен>, а этот список — вторая линия: по умолчанию MinIO пускает
+      # любой сайт. Локально форма идёт с 127.0.0.1/localhost — отсюда значение
+      # по умолчанию; на внешнем стенде — адреса кабинетов через запятую.
+      MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_CORS_ALLOW_ORIGIN:-http://127.0.0.1,http://localhost}
     ports:
       - '127.0.0.1:${S3_PORT:-9000}:9000'
       - '127.0.0.1:${S3_CONSOLE_PORT:-9001}:9001'

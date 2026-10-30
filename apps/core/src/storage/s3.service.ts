@@ -1,6 +1,7 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { createHash, createHmac } from 'node:crypto';
-import { getEnv } from '../config/env';
+import { errors } from '../common/errors';
+import { getEnv, isLoopbackUrl } from '../config/env';
 
 /**
  * Подписанная загрузка в объектное хранилище.
@@ -34,7 +35,16 @@ const ALGORITHM = 'AWS4-HMAC-SHA256';
 const SIGV4_KEY_PREFIX = Buffer.from('AWS4', 'utf8');
 
 @Injectable()
-export class S3Service {
+export class S3Service implements OnModuleInit {
+  private readonly logger = new Logger(S3Service.name);
+
+  /** Неверный публичный адрес виден при старте, а не при первой загрузке пользователя. */
+  onModuleInit(): void {
+    if (!this.isConfigured) return;
+    const problem = this.uploadAddressProblem();
+    if (problem) this.logger.warn({ msg: 'загрузка файлов из браузера отключена', problem });
+  }
+
   /**
    * Настроено ли хранилище. Без него загрузка материалов не «работает
    * частично», а честно объявляется недоступной.
@@ -48,6 +58,30 @@ export class S3Service {
 
   get bucket(): string {
     return getEnv().S3_BUCKET;
+  }
+
+  /**
+   * Почему форму загрузки сейчас выдавать нельзя — или `null`, если можно
+   * (блок 4, 2.1-W06).
+   *
+   * Форма уходит в БРАУЗЕР пользователя. Если платформа открыта по внешнему
+   * адресу, а адрес загрузки — петля (`localhost`, `127.*`), браузер понесёт
+   * файл на собственный компьютер: ровно это и было на VPS до W06. Такую
+   * форму не выдаём — честный отказ «загрузка не настроена» лучше формы,
+   * которая молча не работает. Стенд, где и платформа на петле, работает как
+   * раньше.
+   */
+  uploadAddressProblem(): string | null {
+    const env = getEnv();
+    const target = env.S3_PUBLIC_ENDPOINT || env.S3_ENDPOINT;
+    if (isLoopbackUrl(target) && !isLoopbackUrl(env.PUBLIC_BASE_URL)) {
+      return (
+        'публичный адрес загрузки не задан: платформа открыта по ' +
+        `${new URL(env.PUBLIC_BASE_URL).host}, а форма вела бы на ${new URL(target).host} ` +
+        'браузера (нужен S3_PUBLIC_ENDPOINT)'
+      );
+    }
+    return null;
   }
 
   /**
@@ -558,6 +592,11 @@ export class S3Service {
     if (!this.isConfigured) {
       throw new Error('S3 не настроен');
     }
+    const problem = this.uploadAddressProblem();
+    if (problem) {
+      this.logger.error({ msg: 'форма загрузки не выдана', problem });
+      throw errors.featureDisabled('upload_public_endpoint');
+    }
 
     const now = new Date();
     const ttl = input.ttlSeconds ?? env.S3_PRESIGN_TTL_SENSITIVE_SECONDS;
@@ -588,7 +627,8 @@ export class S3Service {
       encodedPolicy,
     ).toString('hex');
 
-    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
+    // Форму отправляет браузер — значит, адрес публичный, а не внутренний.
+    const base = (env.S3_PUBLIC_ENDPOINT || env.S3_ENDPOINT).replace(/\/+$/, '');
     const url =
       env.S3_FORCE_PATH_STYLE === 'true'
         ? `${base}/${env.S3_BUCKET}`

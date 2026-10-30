@@ -1,0 +1,194 @@
+#!/usr/bin/env node
+/**
+ * Проверка входа файлов (блок 4, «Вход и файлы MVP»; работа 2.1-W06).
+ *
+ * Гоняет публичный адрес загрузки так, как его видит внешний браузер, и
+ * проверяет ДВА независимых рубежа:
+ *   • CORS (Caddy, вторая линия — MinIO): разрешённому сайту кабинета —
+ *     разрешение, чужому — нет;
+ *   • право загрузки (подписанная форма): без подписи, с чужим типом, сверх
+ *     размера и после срока MinIO отказывает, какой бы ни был Origin.
+ * И закрытость: через вход файлов нельзя прочитать объект, получить список
+ * бакета, записать мимо формы или попасть в консоль MinIO — всё это 404.
+ *
+ * Формы подписывает сборка ядра с переменными окружения ТЕКУЩЕЙ машины.
+ * Поэтому на внешнем стенде прогон запускается на сервере:
+ *   FILES_URL=https://files.5espace.com ALLOWED_ORIGIN=https://5espace.com \
+ *     node scripts/check-files-endpoint.mjs
+ * Локально (Caddy из infra/caddy/files.caddy на :8099):
+ *   FILES_URL=http://127.0.0.1:8099 ALLOWED_ORIGIN=https://5espace.com \
+ *   CADDY_MAX_BYTES=2097152 node scripts/check-files-endpoint.mjs
+ *
+ * Пробные объекты кладутся под префикс `w06-probe/` и не удаляются: удаление
+ * объектов — не дело этого прогона (2.1.2).
+ */
+import { createRequire } from 'node:module';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+if (existsSync(join(ROOT, '.env'))) {
+  for (const line of readFileSync(join(ROOT, '.env'), 'utf8').split('\n')) {
+    const t = line.trim();
+    if (!t || t.startsWith('#')) continue;
+    const i = t.indexOf('=');
+    if (i > 0) process.env[t.slice(0, i).trim()] ??= t.slice(i + 1).trim();
+  }
+}
+
+const FILES_URL = (process.env.FILES_URL ?? '').replace(/\/+$/, '');
+const ALLOWED = process.env.ALLOWED_ORIGIN ?? 'https://5espace.com';
+const FOREIGN = 'https://evil.example';
+/** Предел тела у Caddy для проверки 413: на стенде 520 МБ — проверяется только локально. */
+const CADDY_MAX = Number(process.env.CADDY_MAX_BYTES ?? 0);
+if (!FILES_URL) {
+  console.error('нужен FILES_URL — публичный адрес загрузки');
+  process.exit(2);
+}
+// Формы подписываются на проверяемый адрес, а не на тот, что в .env.
+process.env.S3_PUBLIC_ENDPOINT = FILES_URL;
+
+const require = createRequire(import.meta.url);
+const { S3Service } = require(join(ROOT, 'apps/core/dist/storage/s3.service.js'));
+const s3 = new S3Service();
+const BUCKET = s3.bucket;
+
+let passed = 0;
+let failed = 0;
+function check(name, ok, detail = '') {
+  if (ok) passed += 1;
+  else failed += 1;
+  console.warn(`  ${ok ? 'OK  ' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
+}
+
+const key = (label) => `w06-probe/${label}-${Date.now()}`;
+const pdf = (n = 64) => Buffer.concat([Buffer.from('%PDF-1.4 '), Buffer.alloc(n, 'x')]);
+
+async function postForm(
+  form,
+  bytes,
+  { origin = ALLOWED, type = 'application/pdf', drop = [] } = {},
+) {
+  const body = new FormData();
+  for (const [k, v] of Object.entries(form.fields)) if (!drop.includes(k)) body.append(k, v);
+  body.append('file', new Blob([bytes], { type }), 'x.pdf');
+  const r = await fetch(form.url, {
+    method: 'POST',
+    body,
+    headers: { Origin: origin },
+    signal: AbortSignal.timeout(60_000),
+  });
+  const text = await r.text();
+  return {
+    status: r.status,
+    acao: r.headers.get('access-control-allow-origin'),
+    acac: r.headers.get('access-control-allow-credentials'),
+    code: text.match(/<Code>([^<]+)<\/Code>/)?.[1] ?? '',
+  };
+}
+
+const sign = (label, opts = {}) =>
+  s3.presignUpload({
+    key: opts.key ?? key(label),
+    contentType: 'application/pdf',
+    maxBytes: opts.maxBytes ?? 10 * 1024 * 1024,
+    ttlSeconds: opts.ttl ?? 900,
+  });
+
+console.warn(`\n=== ВХОД ФАЙЛОВ: ${FILES_URL} (бакет ${BUCKET}) ===\n`);
+
+console.warn('▸ Форма подписана на публичный адрес');
+const probe = sign('addr');
+check('адрес формы — публичный', probe.url.startsWith(FILES_URL), probe.url);
+
+console.warn('▸ CORS: предварительный запрос');
+for (const [origin, allowed] of [
+  [ALLOWED, true],
+  [FOREIGN, false],
+]) {
+  const r = await fetch(`${FILES_URL}/${BUCKET}`, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: origin,
+      'Access-Control-Request-Method': 'POST',
+      'Access-Control-Request-Headers': 'content-type',
+    },
+  });
+  const acao = r.headers.get('access-control-allow-origin');
+  check(
+    allowed ? `разрешённый сайт ${origin} — разрешение` : `чужой сайт ${origin} — отказ`,
+    allowed ? r.status === 204 && acao === origin : r.status >= 400 && !acao,
+    `HTTP ${r.status}, Allow-Origin: ${acao ?? '—'}`,
+  );
+}
+
+console.warn('▸ Загрузка формой');
+const okKey = key('ok');
+const ok = await postForm(sign('ok', { key: okKey }), pdf());
+check('PDF по действующей форме принят', ok.status === 204, `HTTP ${ok.status} ${ok.code}`);
+check('ответ разрешает читать только своему сайту', ok.acao === ALLOWED, ok.acao ?? '—');
+check('без разрешения на куки', !ok.acac, ok.acac ?? '—');
+check('объект в хранилище', (await s3.headObject(okKey)).exists);
+const foreign = await postForm(sign('foreign'), pdf(), { origin: FOREIGN });
+check(
+  'чужой сайт ответа не получает (CORS не авторизация: форма своя — объект принят)',
+  !foreign.acao,
+  `HTTP ${foreign.status}, Allow-Origin: ${foreign.acao ?? '—'}`,
+);
+
+console.warn('▸ Право загрузки держит форма, а не CORS');
+const unsigned = await postForm(sign('unsigned'), pdf(), {
+  drop: ['policy', 'x-amz-signature', 'x-amz-credential', 'x-amz-algorithm', 'x-amz-date'],
+});
+check('без подписи — отказ', unsigned.status >= 400, `HTTP ${unsigned.status} ${unsigned.code}`);
+const forged = sign('forged');
+forged.fields['x-amz-signature'] = '0'.repeat(64);
+const bad = await postForm(forged, pdf());
+check('с поддельной подписью — отказ', bad.status === 403, `HTTP ${bad.status} ${bad.code}`);
+const typeForm = sign('type2');
+typeForm.fields['Content-Type'] = 'text/html';
+const typed = await postForm(typeForm, pdf(), { type: 'text/html' });
+check('чужой тип — отказ', typed.status === 403, `HTTP ${typed.status} ${typed.code}`);
+const big = await postForm(sign('big', { maxBytes: 100 }), pdf(400));
+check('сверх размера формы — отказ', big.status === 400, `HTTP ${big.status} ${big.code}`);
+const shortForm = s3.presignUpload({
+  key: key('short'),
+  contentType: 'application/pdf',
+  maxBytes: 1024 * 1024,
+  ttlSeconds: 60,
+});
+console.warn('  ·     ждём истечения формы на 60 с…');
+await new Promise((r) => setTimeout(r, 65_000));
+const late = await postForm(shortForm, pdf());
+check('после срока формы — отказ', late.status === 403, `HTTP ${late.status} ${late.code}`);
+if (CADDY_MAX > 0) {
+  const huge = await postForm(sign('huge', { maxBytes: 50 * 1024 * 1024 }), pdf(CADDY_MAX + 1024));
+  check('сверх предела тела Caddy — 413', huge.status === 413, `HTTP ${huge.status}`);
+}
+
+console.warn('▸ Закрыто всё, кроме приёма формы');
+const closed = [
+  ['GET', `/${BUCKET}/${okKey}`, 'чтение объекта'],
+  ['HEAD', `/${BUCKET}/${okKey}`, 'заголовки объекта'],
+  ['GET', `/${BUCKET}`, 'список бакета'],
+  ['GET', `/${BUCKET}?list-type=2`, 'список бакета v2'],
+  ['GET', '/', 'список бакетов'],
+  ['PUT', `/${BUCKET}/w06-probe/put-${Date.now()}`, 'запись мимо формы'],
+  ['DELETE', `/${BUCKET}/${okKey}`, 'удаление'],
+  ['GET', '/minio/health/live', 'служебные адреса MinIO'],
+  ['GET', '/minio/admin/v3/info', 'администрирование MinIO'],
+  ['GET', '/browser', 'консоль MinIO'],
+];
+for (const [method, path, label] of closed) {
+  const r = await fetch(`${FILES_URL}${path}`, {
+    method,
+    headers: { Origin: ALLOWED },
+    body: method === 'PUT' ? 'x' : undefined,
+  });
+  check(`${label} — 404`, r.status === 404, `${method} ${path} → ${r.status}`);
+}
+check('объект после попытки удаления на месте', (await s3.headObject(okKey)).exists);
+
+console.warn(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===\n`);
+process.exit(failed > 0 ? 1 : 0);

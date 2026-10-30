@@ -1,0 +1,64 @@
+# Вход файлов: files.5espace.com (блок 4, «Вход и файлы MVP»; работа 2.1-W06).
+#
+# Подключается в /etc/caddy/Caddyfile строкой
+#   import /opt/unicorn-launch/infra/caddy/files.caddy
+# и требует общего предела передачи в глобальных настройках (там же, первым
+# блоком файла) — см. docs/runbooks/files-endpoint.md:
+#   { servers { timeouts { read_body 90m } } }
+#
+# Что здесь можно — и только это:
+#   * POST подписанной формы в бакет (путь /<бакет>, path-style);
+#   * OPTIONS — ответ браузеру на предварительный запрос, если он понадобится.
+# Всё остальное — 404: чтение объектов, список бакета, консоль MinIO. Файлы
+# читаются через ядро с проверкой прав на каждый запрос, а не отсюда.
+#
+# CORS — по бакету: каждому бакету свой разрешённый сайт кабинета. MinIO в
+# бесплатной редакции CORS на бакете не поддерживает (опыт 2.1-W06), поэтому
+# правило задаётся здесь, а общий список MinIO (MINIO_CORS_ALLOW_ORIGIN) —
+# вторая линия. CORS не авторизация: ключ, тип, размер и срок держит
+# подписанная форма, и без неё MinIO запрос отвергнет.
+#
+# Новая тестовая среда test-N.5espace.com со своим бакетом — ещё один блок
+# `handle /<бакет>` по образцу ниже, со своим Origin.
+
+files.5espace.com {
+	# Рабочий бакет ↔ рабочий кабинет.
+	@prod_origin header Origin https://5espace.com
+
+	handle /unicorn-launch {
+		# Предварительный запрос: разрешённому сайту — 204 с правилами, чужому — 403.
+		@preflight method OPTIONS
+		handle @preflight {
+			header @prod_origin {
+				Access-Control-Allow-Origin "https://5espace.com"
+				Access-Control-Allow-Methods "POST"
+				Access-Control-Allow-Headers "Content-Type"
+				Access-Control-Max-Age "600"
+			}
+			header Vary "Origin"
+			respond @prod_origin 204
+			respond 403
+		}
+
+		@upload method POST
+		handle @upload {
+			# Наибольший материал — 500 МБ; запас на поля формы multipart.
+			request_body {
+				max_size 520MB
+			}
+			header @prod_origin Access-Control-Allow-Origin "https://5espace.com"
+			header Vary "Origin"
+			reverse_proxy 127.0.0.1:9000 {
+				header_up Host {host}
+				# Заголовки CORS решает Caddy, ответ MinIO их не дополняет.
+				header_down -Access-Control-Allow-Origin
+				header_down -Access-Control-Allow-Credentials
+				header_down -Access-Control-Expose-Headers
+			}
+		}
+
+		respond 404
+	}
+
+	respond 404
+}

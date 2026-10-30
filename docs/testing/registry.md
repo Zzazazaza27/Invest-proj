@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 150; требований: 41
+- Проверок: 152; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,13 +176,14 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 55
+### Зарегистрированы, но ни в наборе, ни в CI — 56
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
 
 - `CHK-CHECKPOINT-SECRETS` — Имена, значения которых являются секретами.
 - `CHK-CONSOLE-PRIVATE` — Гейт «служебная консоль закрыта постороннему».
+- `CHK-FILES-ENDPOINT` — Вход файлов (2.1-W06): форма подписана на публичный адрес; CORS — разрешённому сайту разрешение, чужому нет, без разрешения на куки; право загрузки держит фо…
 - `CHK-FRONT-BUILDS` — Проверка перед выкатом: все фронты собраны в production-режиме.
 - `CHK-PORTS-CONSISTENCY` — Гейт согласованности портов стенда.
 - `CHK-UPSTREAM-OWNER` — Гейт «в репозиторий коммитит только владелец».
@@ -307,6 +308,7 @@
 | CHK-DB-RECONNECT | `npm run check:db-reconnect` | 8 | вручную | `suite:regression` |
 | CHK-DB-RESILIENCE | `npm run check:db-resilience` | 23 | вручную | `suite:isolated` |
 | CHK-DEFINER-PRIVILEGES | `node scripts/check-definer-privileges.mjs` | 0 | CI | CI |
+| CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 25 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |
 | CHK-FRONTEND-BOUNDARY | `npm run gate:boundary` | 0 | CI | CI |
@@ -433,6 +435,7 @@
 | --- | --- | --- | --- | --- |
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
+| UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |

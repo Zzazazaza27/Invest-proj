@@ -13,6 +13,7 @@ import {
 } from '@unicorn/contracts';
 import { AppError, errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
+import { getEnv } from '../config/env';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
 import { MAX_UPLOAD_BYTES } from './material-rules';
@@ -462,6 +463,9 @@ export class ProjectsService {
           key,
           contentType: input.contentType,
           maxBytes,
+          // Срок формы — предел всей передачи: MinIO проверяет его после
+          // приёма тела (2.1.2, 2.1-W06).
+          ttlSeconds: getEnv().MATERIAL_UPLOAD_FORM_TTL_SECONDS,
         });
 
         await tx.query(

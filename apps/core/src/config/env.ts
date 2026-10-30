@@ -312,6 +312,15 @@ const RawEnvSchema = z.object({
   // Файл идёт в S3 напрямую по presigned URL: через API он не проходит, чтобы
   // недоверенный контент не касался прикладного процесса.
   S3_ENDPOINT: z.string().default(''),
+  /**
+   * Публичный адрес загрузки — куда БРАУЗЕР отправляет подписанную форму
+   * (блок 4, «Вход и файлы MVP»; 2.1-W06). `S3_ENDPOINT` — внутренний адрес,
+   * по которому ходит само ядро. На стенде, где браузер и хранилище на одной
+   * машине, не задаётся: форма идёт на `S3_ENDPOINT`, как раньше. На внешнем
+   * стенде без него форма вела бы на localhost браузера — такую форму ядро
+   * не выдаёт (`S3Service.uploadAddressProblem`).
+   */
+  S3_PUBLIC_ENDPOINT: z.string().default(''),
   S3_REGION: z.string().default('ru-central1'),
   S3_BUCKET: z.string().default(''),
   S3_ACCESS_KEY_ID: z.string().default(''),
@@ -328,6 +337,17 @@ const RawEnvSchema = z.object({
    * идёт» остаётся возможной. Тот же порог продублирован в политике БД (M039).
    */
   MATERIAL_ABANDONED_TTL_HOURS: z.coerce.number().int().min(1).max(720).default(24),
+
+  /**
+   * Срок подписанной формы загрузки материала (2.1.2, решение 30.10.2026).
+   *
+   * MinIO проверяет срок формы ПОСЛЕ приёма тела (опыт 2.1-W06: форма 60 с,
+   * передача 102 с — «Policy expired», объект не сохранён). Поэтому срок
+   * формы и есть предел ожидания начала вместе со всей передачей: 95 минут
+   * при пределе передачи 90 минут в Caddy (`read_body`). Короче нельзя —
+   * большой файл на медленном канале потерялся бы в самом конце.
+   */
+  MATERIAL_UPLOAD_FORM_TTL_SECONDS: z.coerce.number().int().min(900).max(7200).default(5700),
 
   /** Плановое обслуживание партиций журнала: интервал прогона. */
   PARTITION_MAINTENANCE_INTERVAL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
@@ -353,6 +373,15 @@ function isLoopbackHost(host: string): boolean {
   if (!octets) return false;
   const parts = octets.slice(1).map(Number);
   return parts.every((value) => value <= 255) && parts[0] === 127;
+}
+
+/** Адрес указывает на эту же машину (литерал петли, без DNS). Битый URL — не петля. */
+export function isLoopbackUrl(url: string): boolean {
+  try {
+    return isLoopbackHost(new URL(url).hostname);
+  } catch {
+    return false;
+  }
 }
 
 const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
@@ -628,12 +657,34 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
   if (env.S3_ENDPOINT && !endpointScheme) {
     ctx.addIssue({ code: 'custom', path: ['S3_ENDPOINT'], message: 'ожидается http(s) URL' });
   }
-  if (isProd && env.S3_ENDPOINT && !env.S3_ENDPOINT.startsWith('https://')) {
+  // Внутренний адрес по http допустим только на той же машине: трафик ядра к
+  // хранилищу не выходит за пределы узла. Всё остальное — https.
+  if (
+    isProd &&
+    env.S3_ENDPOINT &&
+    !env.S3_ENDPOINT.startsWith('https://') &&
+    !isLoopbackUrl(env.S3_ENDPOINT)
+  ) {
     ctx.addIssue({
       code: 'custom',
       path: ['S3_ENDPOINT'],
-      message: 'в production обращение к хранилищу — только по https',
+      message: 'в production обращение к хранилищу вне узла — только по https',
     });
+  }
+  if (env.S3_PUBLIC_ENDPOINT) {
+    if (!/^https?:\/\//.test(env.S3_PUBLIC_ENDPOINT)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['S3_PUBLIC_ENDPOINT'],
+        message: 'ожидается http(s) URL',
+      });
+    } else if (isProd && !env.S3_PUBLIC_ENDPOINT.startsWith('https://')) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['S3_PUBLIC_ENDPOINT'],
+        message: 'в production публичный адрес загрузки — только https',
+      });
+    }
   }
 
   // ---- Cookie -------------------------------------------------------------
