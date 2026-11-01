@@ -50,6 +50,8 @@ import {
   readState,
   readySets,
   verifyCatalog,
+  materializeMeta,
+  snapshotMeta,
   copiedVersionProblems,
   ledgerAdd,
   ledgerProblems,
@@ -396,6 +398,20 @@ async function set() {
       const base = [...info.backup].reverse().find((b) => lsnLe(b.lsn.stop, lsn));
       if (!base) throw new Error('нет копии базы, завершённой до T');
 
+      // --- снимок сводок pgBackRest — под блокировкой задания копии базы,
+      // чтобы не захватить их посреди обновления. Копия базы бывает долгой:
+      // ждём до 50 минут, дальше — отказ с понятной причиной.
+      const meta = await withLock(
+        'db',
+        () =>
+          snapshotMeta(c.dir, id, () =>
+            (backupInfo()?.backup ?? []).some((b) => b.label === base.label),
+          ),
+        {
+          waitMs: 50 * 60_000,
+        },
+      );
+
       // --- файлы на T: что новое, что изменилось.
       const atT = listSource(network);
       // Только для опыта гонки «перезапись между списком и чтением» на стенде.
@@ -518,10 +534,7 @@ async function set() {
         c.dir,
         [
           ...[base.label, ...references].map((l) => `pgbackrest/backup/main/${l}`),
-          'pgbackrest/backup/main/backup.info',
-          'pgbackrest/backup/main/backup.info.copy',
-          `pgbackrest/archive/main/archive.info`,
-          `pgbackrest/archive/main/archive.info.copy`,
+          meta,
           ...walPaths,
           ...objects.filter((o) => o.encPath).map((o) => `files/${o.encPath}`),
           `keys/${fingerprint}.env.gpg`,
@@ -545,6 +558,9 @@ async function set() {
           archiveStart: base.archive.start,
           archiveMax: info.archive.at(-1).max,
           archiveId,
+          // Свой снимок сводок: скачивание и восстановление берут его, а не
+          // общие файлы, которые переписывает каждая следующая копия базы.
+          meta,
         },
         files: {
           bucket: c.bucket,
@@ -568,8 +584,10 @@ async function set() {
       ];
       writeFileSync(join(dir, 'catalog.json'), JSON.stringify(catalog, null, 2));
       if (problems.length) throw new Error(`комплект неполон: ${problems.slice(0, 5).join('; ')}`);
-      writeFileSync(join(dir, 'READY'), new Date().toISOString());
+      // Сначала эталон, потом публикация: авария между ними не оставит
+      // готовый комплект без записанных исходных хешей.
       saveLedger(ledgerAdd(manifest, ledger));
+      writeFileSync(join(dir, 'READY'), new Date().toISOString());
       recordJob('set', true, { lastSet: id, lastAt: catalog.at, files: objects.length });
       console.log(
         `комплект ${id} пригоден: T=${catalog.at}, база ${base.label}, файлов ${objects.length}, ` +
@@ -761,13 +779,19 @@ async function pull() {
   ];
   if (fromDir) {
     const src = resolve(fromDir);
-    id = readdirSync(join(src, 'sets'))
-      .filter((s) => existsSync(join(src, 'sets', s, 'READY')))
-      .sort()
-      .pop();
-    if (!id) throw new Error('пригодных комплектов нет');
+    id =
+      option('--set') ??
+      readdirSync(join(src, 'sets'))
+        .filter((s) => existsSync(join(src, 'sets', s, 'READY')))
+        .sort()
+        .pop();
+    if (!id || !existsSync(join(src, 'sets', id, 'READY'))) {
+      throw new Error(`пригодного комплекта ${id ?? ''} нет`);
+    }
     catalog = JSON.parse(readFileSync(join(src, 'sets', id, 'catalog.json'), 'utf8'));
-    if (!catalog.manifest) throw new Error(`у комплекта ${id} нет описи (старый формат)`);
+    if (!catalog.manifest || !catalog.db.meta) {
+      throw new Error(`у комплекта ${id} нет описи или снимка сводок (старый формат)`);
+    }
     for (const p of parts(catalog)) {
       mkdirSync(dirname(join(dest, id, p)), { recursive: true });
       copyFileSync(join(src, p), join(dest, id, p));
@@ -775,12 +799,18 @@ async function pull() {
   } else {
     const ssh = (cmd) =>
       execFileSync('ssh', ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, cmd], { encoding: 'utf8' });
+    const wanted = option('--set');
+    if (wanted && !/^[0-9TZ]+-[0-9a-f]+$/.test(wanted)) throw new Error('неверный --set');
     id = ssh(
-      `cd ${VPS_BACKUP_DIR}/sets && for d in *; do [ -f "$d/READY" ] && echo "$d"; done | sort | tail -1`,
+      wanted
+        ? `[ -f ${VPS_BACKUP_DIR}/sets/${wanted}/READY ] && echo ${wanted}`
+        : `cd ${VPS_BACKUP_DIR}/sets && for d in *; do [ -f "$d/READY" ] && echo "$d"; done | sort | tail -1`,
     ).trim();
-    if (!id) throw new Error('на сервере пригодных комплектов нет');
+    if (!id) throw new Error('на сервере пригодного комплекта нет');
     catalog = JSON.parse(ssh(`cat ${VPS_BACKUP_DIR}/sets/${id}/catalog.json`));
-    if (!catalog.manifest) throw new Error(`у комплекта ${id} нет описи (старый формат)`);
+    if (!catalog.manifest || !catalog.db.meta) {
+      throw new Error(`у комплекта ${id} нет описи или снимка сводок (старый формат)`);
+    }
     mkdirSync(join(dest, id), { recursive: true });
     // Список файлов — на вход tar по ssh; поток — прямо в распаковку.
     const remote = spawn(
@@ -817,6 +847,8 @@ async function pull() {
   if (problems.length) {
     throw new Error(`скачанный комплект не сошёлся с описью: ${problems.slice(0, 5).join('; ')}`);
   }
+  // Сводки pgBackRest — из снимка этого комплекта, на штатные места.
+  materializeMeta(root, catalog);
   console.log(`комплект ${id} скачан и сверен (SHA-256 каждого файла описи): ${root}`);
   return root;
 }

@@ -12,12 +12,14 @@
  *  5. испорченный после сохранения файл не становится новым эталоном;
  *  6. временный объект, перезаписанный между списком и чтением, не
  *     записывается под версию из списка;
+ *  7. новая копия базы переписала сводки pgBackRest — прежний комплект
+ *     скачивается и раскладывается со своим снимком;
  *  4. недоставленный сигнал повторяется не чаще раза в 15 минут и после
  *     доставки больше не шлётся; так же — сообщение «восстановилось».
  *
  *   node scripts/check-backup-logic.mjs
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -217,6 +219,42 @@ check(
   'без MD5: версия не менялась → порядок',
   lib.copiedVersionProblems([noMd5], new Map(), new Map([[noMd5.key, noMd5]])).length === 0,
 );
+
+// ------------------- 7. новая копия базы переписала сводки pgBackRest
+console.log('\n▸ 7. Комплект A после новой копии базы');
+for (const f of lib.META_FILES) {
+  put(`pgbackrest/${f}`, f.startsWith('backup') ? '[backup:current]\nL1F={}\n' : '[db]\n');
+}
+const metaRel = lib.snapshotMeta(dir, 'A', () => true);
+const manifestA = lib.buildManifest(dir, [metaRel]);
+check('снимок сводок комплекта A в описи', manifestA.length === lib.META_FILES.length);
+// Новая копия базы штатно переписывает общие сводки.
+put('pgbackrest/backup/main/backup.info', '[backup:current]\nL1F={}\nL1F_L3I={}\n');
+put('pgbackrest/backup/main/backup.info.copy', '[backup:current]\nL1F={}\nL1F_L3I={}\n');
+check(
+  'опись A сходится и после новой копии базы',
+  lib.manifestProblems(dir, manifestA).length === 0,
+  lib.manifestProblems(dir, manifestA).join('; '),
+);
+const pulled = mkdtempSync(join(tmpdir(), 'backup-pulled-'));
+mkdirSync(join(pulled, 'sets/A'), { recursive: true });
+for (const m of manifestA) {
+  mkdirSync(join(pulled, m.path, '..'), { recursive: true });
+  writeFileSync(join(pulled, m.path), readFileSync(join(dir, m.path)));
+}
+lib.materializeMeta(pulled, { db: { meta: metaRel } });
+check(
+  'в скачанной копии A — сводки из её снимка, не новые',
+  !readFileSync(join(pulled, 'pgbackrest/backup/main/backup.info'), 'utf8').includes('L1F_L3I'),
+);
+rmSync(pulled, { recursive: true, force: true });
+let refused = false;
+try {
+  lib.snapshotMeta(dir, 'B', () => false);
+} catch {
+  refused = true;
+}
+check('снимок, не знающий основу комплекта, не принимается', refused);
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===`);

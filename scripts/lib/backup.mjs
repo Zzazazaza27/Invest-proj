@@ -246,10 +246,34 @@ export function recordJob(name, ok, details = {}) {
   });
 }
 
-/** Блокировка задания: два запуска одного задания не идут одновременно. */
-export function withLock(name, fn) {
+/**
+ * Блокировка задания: два запуска одного задания не идут одновременно.
+ * waitMs > 0 — ждать освобождения (комплект ждёт окончания копии базы).
+ */
+export async function withLock(name, fn, { waitMs = 0 } = {}) {
   const c = ensureDirs();
   const lock = join(c.state, `${name}.lock`);
+  const deadline = Date.now() + waitMs;
+  let fd;
+  for (;;) {
+    try {
+      fd = takeLock(lock, name);
+      break;
+    } catch (error) {
+      if (Date.now() >= deadline) throw error;
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  writeFileSync(fd, String(process.pid));
+  closeSync(fd);
+  try {
+    return await fn();
+  } finally {
+    rmSync(lock, { force: true });
+  }
+}
+
+function takeLock(lock, name) {
   let fd;
   try {
     fd = openSync(lock, 'wx');
@@ -266,10 +290,7 @@ export function withLock(name, fn) {
     rmSync(lock, { force: true });
     fd = openSync(lock, 'wx');
   }
-  writeFileSync(fd, String(process.pid));
-  closeSync(fd);
-  const release = () => rmSync(lock, { force: true });
-  return Promise.resolve().then(fn).finally(release);
+  return fd;
 }
 
 // --------------------------------------------------------------------- диск
@@ -770,4 +791,48 @@ export function copiedVersionProblems(saved, copiedMd5, relisted = new Map()) {
     }
   }
   return wrong;
+}
+
+// ------------------------------------------- снимок сводок pgBackRest
+
+/**
+ * Сводки хранилища pgBackRest. Их переписывает каждая новая копия базы,
+ * поэтому комплект ссылается не на общие файлы, а на свой снимок (замечание
+ * Тэнка при приёмке W07): иначе после очередной копии прежний пригодный
+ * комплект переставал бы сходиться с описью.
+ */
+export const META_FILES = [
+  'backup/main/backup.info',
+  'backup/main/backup.info.copy',
+  'archive/main/archive.info',
+  'archive/main/archive.info.copy',
+];
+
+/**
+ * Снять сводки в каталог комплекта (`sets/<id>/meta/…`). Вызывать под
+ * блокировкой задания копии базы — тогда сводки не меняются между проверкой
+ * и снятием. Сводки зашифрованы, поэтому «знают ли они основу комплекта»
+ * проверяет вызывающий (pgBackRest info) — функция knowsBase.
+ */
+export function snapshotMeta(dir, setId, knowsBase) {
+  if (!knowsBase()) throw new Error('сводки pgBackRest не знают основу комплекта');
+  const rel = `sets/${setId}/meta`;
+  for (const f of META_FILES) {
+    const from = join(dir, 'pgbackrest', f);
+    if (!existsSync(from)) throw new Error(`нет сводки pgBackRest ${f}`);
+    const to = join(dir, rel, f);
+    mkdirSync(dirname(to), { recursive: true });
+    writeFileSync(to, readFileSync(from));
+  }
+  return rel;
+}
+
+/** Разложить снимок сводок комплекта на штатные места скачанной копии. */
+export function materializeMeta(root, catalog) {
+  if (!catalog.db.meta) throw new Error('у комплекта нет снимка сводок (старый формат)');
+  for (const f of META_FILES) {
+    const to = join(root, 'pgbackrest', f);
+    mkdirSync(dirname(to), { recursive: true });
+    writeFileSync(to, readFileSync(join(root, catalog.db.meta, f)));
+  }
 }

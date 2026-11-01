@@ -311,7 +311,7 @@
 | CHK-DB-RECONNECT | `npm run check:db-reconnect` | 8 | вручную | `suite:regression` |
 | CHK-DB-RESILIENCE | `npm run check:db-resilience` | 23 | вручную | `suite:isolated` |
 | CHK-DEFINER-PRIVILEGES | `node scripts/check-definer-privileges.mjs` | 0 | CI | CI |
-| CHK-BACKUP-LOGIC | `node scripts/check-backup-logic.mjs` | 29 | вручную | — |
+| CHK-BACKUP-LOGIC | `node scripts/check-backup-logic.mjs` | 33 | вручную | — |
 | CHK-BACKUP-RESTORE | `node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>]` | 20 | вручную | — |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
