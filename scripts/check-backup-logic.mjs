@@ -9,6 +9,9 @@
  *  2. подмена файла комплекта с тем же размером → сверка по описи ловит;
  *  3. готовый объект изменился под прежним ключом при том же размере →
  *     нарушение; временная загрузка изменилась → новая версия отдельно;
+ *  5. испорченный после сохранения файл не становится новым эталоном;
+ *  6. временный объект, перезаписанный между списком и чтением, не
+ *     записывается под версию из списка;
  *  4. недоставленный сигнал повторяется не чаще раза в 15 минут и после
  *     доставки больше не шлётся; так же — сообщение «восстановилось».
  *
@@ -158,6 +161,62 @@ check('«восстановилось» повторено и доставлен
 sent = [];
 await lib.signal('x', false, 'норма', { send, now: t0 + 120 * min });
 check('дальше в норме — тишина', sent.length === 0);
+
+// ------------------------------------- 5. порча до следующей сборки
+console.log('\n▸ 5. Порча сохранённого файла до следующей сборки');
+put('files/enc/c', 'CCCC');
+put('pgbackrest/archive/main/archive.info', 'v1');
+const first = lib.buildManifest(dir, ['files/enc/c', 'pgbackrest/archive/main/archive.info']);
+const ledger = lib.ledgerAdd(first, {});
+check('реестр принял файл после первой проверки', Boolean(ledger['files/enc/c']));
+put('files/enc/c', 'ZZZZ'); // порча того же размера, новое время изменения
+put('pgbackrest/archive/main/archive.info', 'v2'); // сводка pgBackRest штатно меняется
+const second = lib.buildManifest(dir, ['files/enc/c', 'pgbackrest/archive/main/archive.info']);
+check(
+  'новая опись сама с собой сходится (так порча и узаконивалась)',
+  lib.manifestProblems(dir, second).length === 0,
+);
+p = lib.ledgerProblems(second, ledger);
+check(
+  'сверка с реестром ловит порчу → READY не выдаётся',
+  p.length === 1 && p[0].includes('files/enc/c'),
+  p.join('; '),
+);
+check(
+  'сводка pgBackRest меняется штатно — не нарушение',
+  !p.some((x) => x.includes('archive.info')),
+);
+lib.ledgerAdd(second, ledger);
+check('эталон после этого не перезаписан', ledger['files/enc/c'].sha256 === first[0].sha256);
+
+// ------------------------- 6. перезапись между списком и чтением
+console.log('\n▸ 6. Временный объект перезаписан между списком и чтением');
+const listed = {
+  key: 'p/materials/deck/m9/upload',
+  size: 4,
+  md5: 'aaaa0000aaaa0000aaaa0000aaaa0000',
+  backupPath: 'mutable/aaaa/b/p/materials/deck/m9/upload',
+};
+const copiedB = new Map([[listed.backupPath, 'bbbb1111bbbb1111bbbb1111bbbb1111']]);
+check(
+  'в путь версии A легла версия B → нарушение',
+  lib.copiedVersionProblems([listed], copiedB).length === 1,
+);
+const copiedA = new Map([[listed.backupPath, listed.md5.toUpperCase()]]);
+check('скопирована именно A → порядок', lib.copiedVersionProblems([listed], copiedA).length === 0);
+const noMd5 = { ...listed, md5: '', modTime: '2026-10-31T10:00:00Z' };
+check(
+  'без MD5: версия источника после копирования другая → нарушение',
+  lib.copiedVersionProblems(
+    [noMd5],
+    new Map(),
+    new Map([[noMd5.key, { ...noMd5, modTime: '2026-10-31T10:00:05Z' }]]),
+  ).length === 1,
+);
+check(
+  'без MD5: версия не менялась → порядок',
+  lib.copiedVersionProblems([noMd5], new Map(), new Map([[noMd5.key, noMd5]])).length === 0,
+);
 
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===`);

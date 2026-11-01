@@ -706,3 +706,68 @@ export function verifyCatalog(catalog, dir, { cache } = {}) {
   }
   return problems;
 }
+
+// ------------------------------------------------- реестр исходных хешей
+
+/**
+ * Файлы копий, которые штатно ПЕРЕПИСЫВАЮТСЯ: сводки pgBackRest. Остальное
+ * (копии базы, сегменты журнала, зашифрованные файлы, комплекты ключей,
+ * конфигурация комплекта) после записи не меняется никогда.
+ */
+export const isRewrittenBackupFile = (path) =>
+  /^pgbackrest\/(backup|archive)\/main\/(backup|archive)\.info(\.copy)?$/.test(path);
+
+/**
+ * Реестр исходных хешей: путь → SHA-256 и размер на момент ПЕРВОЙ проверки,
+ * вошедшей в пригодный комплект. Пересчёт описи сравнивается с ним, а не с
+ * самим собой: испорченный после сохранения файл не становится новым эталоном
+ * (замечание Тэнка при приёмке W07). Запись в реестр — только после READY.
+ */
+export const loadLedger = () => readState('ledger') ?? {};
+export const saveLedger = (ledger) => writeState('ledger', ledger);
+
+export function ledgerProblems(manifest, ledger) {
+  const problems = [];
+  for (const m of manifest) {
+    if (isRewrittenBackupFile(m.path)) continue;
+    const first = ledger[m.path];
+    if (!first) continue;
+    if (first.size !== m.size || first.sha256 !== m.sha256) {
+      problems.push(`сохранённый файл изменился после первой проверки: ${m.path}`);
+    }
+  }
+  return problems;
+}
+
+export function ledgerAdd(manifest, ledger, at = new Date().toISOString()) {
+  for (const m of manifest) {
+    if (isRewrittenBackupFile(m.path) || ledger[m.path] || !m.sha256) continue;
+    ledger[m.path] = { size: m.size, sha256: m.sha256, at };
+  }
+  return ledger;
+}
+
+// ------------------------------------- соответствие копии версии источника
+
+/**
+ * Скопировано ли именно то, что было в списке. Копирование берёт объект по
+ * ключу в момент чтения; если временную загрузку перезаписали между списком
+ * и чтением, в путь версии A легла бы версия B (замечание Тэнка). MD5
+ * содержимого копии сравнивается с MD5 версии из списка; без MD5 в источнике
+ * (составная загрузка) — версия источника до и после копирования.
+ */
+export function copiedVersionProblems(saved, copiedMd5, relisted = new Map()) {
+  const wrong = [];
+  for (const o of saved) {
+    if (o.md5) {
+      const got = copiedMd5.get(o.backupPath);
+      if (!got || got.toLowerCase() !== o.md5.toLowerCase()) wrong.push(o);
+    } else {
+      const after = relisted.get(o.key);
+      if (!after || objectVersion(after) !== objectVersion(o) || after.size !== o.size) {
+        wrong.push(o);
+      }
+    }
+  }
+  return wrong;
+}

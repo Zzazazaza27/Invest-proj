@@ -50,6 +50,11 @@ import {
   readState,
   readySets,
   verifyCatalog,
+  copiedVersionProblems,
+  ledgerAdd,
+  ledgerProblems,
+  loadLedger,
+  saveLedger,
   backupPathOf,
   buildManifest,
   isMutableKey,
@@ -304,21 +309,33 @@ function copyVersions(rows, network, id) {
   }
 }
 
-/** SHA-256 содержимого сохранённых версий: считается по самой копии. */
-function hashBackup(paths, network, id) {
+/** Хеш содержимого сохранённых версий (sha256 или md5): считается по самой копии. */
+function hashBackup(paths, network, id, type = 'sha256') {
   if (!paths.length) return new Map();
   const c = cfg();
   writeFileSync(join(c.state, `hash-${id}.txt`), paths.join('\n') + '\n');
   const out = rclone(
-    ['hashsum', 'sha256', '--download', 'DST:', '--files-from-raw', `/backup/state/hash-${id}.txt`],
+    ['hashsum', type, '--download', 'DST:', '--files-from-raw', `/backup/state/hash-${id}.txt`],
     { network },
   ).stdout;
   const map = new Map();
   for (const line of out.split('\n')) {
-    const m = line.match(/^([0-9a-f]{64})\s+(.+)$/);
+    const m = line.match(/^([0-9a-f]{32}|[0-9a-f]{64})\s+(.+)$/);
     if (m) map.set(m[2], m[1]);
   }
   return map;
+}
+
+/** Все пути версий, когда-либо записанные в индекс копии. */
+function indexedPaths() {
+  const c = cfg();
+  if (!existsSync(c.index)) return new Set();
+  return new Set(
+    readFileSync(c.index, 'utf8')
+      .split('\n')
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l).backupPath),
+  );
 }
 
 /** Зашифрованные имена путей копии (для описи без ключей). */
@@ -381,6 +398,9 @@ async function set() {
 
       // --- файлы на T: что новое, что изменилось.
       const atT = listSource(network);
+      // Только для опыта гонки «перезапись между списком и чтением» на стенде.
+      const pause = Number(process.env.BACKUP_TEST_PAUSE_AFTER_LIST_MS || 0);
+      if (pause) await new Promise((r) => setTimeout(r, pause));
       const index = readIndex();
       const plan = planObjects(index, atT);
       if (plan.immutableChanged.length) {
@@ -403,6 +423,41 @@ async function set() {
       );
       copyVersions(toSave, network, id);
       if (toSave.length) {
+        // Скопировано ли именно то, что было в списке: MD5 копии против MD5
+        // версии, без MD5 — версия источника после копирования. Несовпадение:
+        // только что записанный путь удаляется (в индексе его нет — это не
+        // прежняя версия), комплект не выдаётся; следующий запуск снимет заново.
+        const md5 = hashBackup(
+          toSave.map((o) => o.backupPath),
+          network,
+          `${id}-md5`,
+          'md5',
+        );
+        const relisted = toSave.some((o) => !o.md5)
+          ? new Map(listSource(network).map((o) => [o.key, o]))
+          : new Map();
+        const wrong = copiedVersionProblems(toSave, md5, relisted);
+        if (wrong.length) {
+          const known = indexedPaths();
+          const drop = wrong.filter((o) => !known.has(o.backupPath)).map((o) => o.backupPath);
+          if (drop.length) {
+            writeFileSync(join(c.state, `drop-${id}.txt`), drop.join('\n') + '\n');
+            rclone(
+              ['delete', 'DST:', '--rmdirs', '--files-from-raw', `/backup/state/drop-${id}.txt`],
+              {
+                network,
+                allowFail: true,
+              },
+            );
+          }
+          throw new Error(
+            'объект изменился во время копирования — комплект не выдан, повтор при следующем запуске: ' +
+              wrong
+                .slice(0, 3)
+                .map((o) => o.key)
+                .join(', '),
+          );
+        }
         const sums = hashBackup(
           toSave.map((o) => o.backupPath),
           network,
@@ -503,11 +558,18 @@ async function set() {
         manifest,
       };
 
-      // --- проверка частей: только после неё комплект пригоден.
-      const problems = verifyCatalog(catalog, c.dir, { cache });
+      // --- проверка частей: только после неё комплект пригоден. Каждый уже
+      // сохранённый файл сверяется с хешем его ПЕРВОЙ проверки — порча до этой
+      // сборки не становится новым эталоном.
+      const ledger = loadLedger();
+      const problems = [
+        ...verifyCatalog(catalog, c.dir, { cache }),
+        ...ledgerProblems(manifest, ledger),
+      ];
       writeFileSync(join(dir, 'catalog.json'), JSON.stringify(catalog, null, 2));
       if (problems.length) throw new Error(`комплект неполон: ${problems.slice(0, 5).join('; ')}`);
       writeFileSync(join(dir, 'READY'), new Date().toISOString());
+      saveLedger(ledgerAdd(manifest, ledger));
       recordJob('set', true, { lastSet: id, lastAt: catalog.at, files: objects.length });
       console.log(
         `комплект ${id} пригоден: T=${catalog.at}, база ${base.label}, файлов ${objects.length}, ` +
