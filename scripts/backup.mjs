@@ -876,8 +876,15 @@ async function pull() {
       ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `tar -C ${VPS_BACKUP_DIR} -cf - -T -`],
       { stdio: ['pipe', 'pipe', 'inherit'] },
     );
-    const local = spawn('tar', ['-xf', '-', '-C', join(dest, id)], {
+    // Каталог — рабочей папкой, не аргументом -C: GNU tar из Git для Windows
+    // принимает «D:\…» за адрес удалённой машины.
+    const local = spawn('tar', ['-xf', '-'], {
+      cwd: join(dest, id),
       stdio: ['pipe', 'inherit', 'inherit'],
+    });
+    // Распаковка упала — ssh не должен остаться ждать.
+    local.on('close', (code) => {
+      if (code !== 0) remote.kill();
     });
     remote.stdin.end(parts(catalog).join('\n') + '\n');
     remote.stdout.pipe(local.stdin);
