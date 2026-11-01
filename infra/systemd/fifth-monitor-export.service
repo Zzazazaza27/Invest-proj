@@ -1,0 +1,11 @@
+# Наблюдение 5Э (блок 8, 2.1-W08a): состояние контейнеров для агента Zabbix (без Docker socket).
+[Unit]
+Description=5E monitor: export
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/unicorn-launch
+ExecStart=/usr/bin/node scripts/monitor-export.mjs
+TimeoutStartSec=50

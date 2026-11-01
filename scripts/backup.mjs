@@ -684,7 +684,13 @@ async function check() {
   await say(
     'disk',
     d.freePercent < c.warnPercent || d.free < d.reserve,
-    `свободно ${gb(d.free)} (${d.freePercent.toFixed(0)}%), запас для копий ${gb(d.reserve)}`,
+    // Причина — в самом сигнале: какой порог нарушен (замечание Томаса по
+    // первому сообщению «⚠️» без объяснения).
+    d.free < d.reserve
+      ? `мало места на диске копий: свободно ${gb(d.free)} — меньше запаса ${gb(d.reserve)}, новые копии не начинаются`
+      : d.freePercent < c.warnPercent
+        ? `место на диске копий заканчивается: свободно ${d.freePercent.toFixed(0)}% (${gb(d.free)}) — ниже порога ${c.warnPercent}%`
+        : `место на диске копий в норме: свободно ${gb(d.free)} (${d.freePercent.toFixed(0)}%), запас ${gb(d.reserve)}`,
   );
 
   // Журнал (WAL): своё обнаружение, не через «свежесть комплекта».

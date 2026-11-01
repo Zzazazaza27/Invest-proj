@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 155; требований: 41
+- Проверок: 159; требований: 41
 
 ## Что защищено без участия человека
 
@@ -298,6 +298,9 @@
 | TOOL-TEMP-STAND | `npm run temp:up` | 0 | вручную, по поводу | — |
 | TOOL-TEMP-RUN | `npm run temp:run` | 0 | вручную, по поводу | — |
 | TOOL-VITE-BUILD | `node scripts/vite-build.mjs` | 0 | вручную, по поводу | — |
+| TOOL-MONITORING | `node scripts/monitoring.mjs configure|status [--items]` | 0 | вручную, по поводу | — |
+| TOOL-MONITOR-PULSE | `node scripts/monitor-pulse.mjs` | 0 | вручную, по поводу | — |
+| TOOL-MONITOR-EXPORT | `node scripts/monitor-export.mjs` | 0 | вручную, по поводу | — |
 
 ### Проверки поведения (`check-*`)
 
@@ -441,6 +444,7 @@
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
 | UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
+| UNIT-CORE-READINESS | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |

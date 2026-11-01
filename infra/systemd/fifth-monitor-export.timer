@@ -1,0 +1,11 @@
+# Раз в минуту: состояние контейнеров для агента Zabbix (без Docker socket).
+[Unit]
+Description=5E monitor timer: export
+
+[Timer]
+OnCalendar=*:*:00
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

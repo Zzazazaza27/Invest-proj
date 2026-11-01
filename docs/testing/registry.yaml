@@ -2554,6 +2554,80 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-30
 
+  - id: UNIT-CORE-READINESS
+    file: apps/core/tests/readiness.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 5
+    studied: code
+    studiedOn: 2026-11-01
+    needs: []
+    effects: ['только память — зависимости подменены']
+    purpose: 'Готовность ядра по зависимостям (2.1-W08a, блок 8, 8.2): настроенные ok и ненастроенные not_configured — готово; отказ одной зависимости — не готово, названа она; зависшая — fail в пределах ожидания; исключение проверки — fail, не падение; фон обязателен, но не запущен — fail.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-01
+
+  - id: TOOL-MONITORING
+    file: scripts/monitoring.mjs
+    command: node scripts/monitoring.mjs configure|status [--items]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects:
+      [
+        'настраивает Zabbix через API: узел, проверки, пороги, Telegram, повторы, хранение; меняет пароль Admin на сгенерированный; дописывает токен пульса в .env',
+      ]
+    studied: code
+    studiedOn: 2026-11-01
+    note: >-
+      Наблюдение как код (W08a). Испытано на локальном стенде 01.11.2026:
+      остановка ядра — «нет данных о живости ядра» и «API недоступно» в
+      Telegram за ~3 мин, восстановления пришли; условия действий — строгое
+      «И» (в режиме «И/ИЛИ» условия одного типа объединяются через ИЛИ, и
+      информационные события уходили в Telegram — поймано испытанием).
+    purpose: 'Конфигурация Zabbix как код (блок 8, 8.2–8.5): проверки ядра (/live, /ready, /jobs, /queues), сайта и сертификата, PostgreSQL, Valkey, NATS, MinIO, узла, контейнеров и резервирования W07; пороги 8.2; «нет данных»; Telegram; повторы 30 мин / 4 ч; хранение 30 дней / 24 месяца.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-01
+
+  - id: TOOL-MONITOR-PULSE
+    file: scripts/monitor-pulse.mjs
+    command: node scripts/monitor-pulse.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects: ['отправляет отметку или /fail на HEALTHCHECKS_PING_URL, если он задан']
+    studied: code
+    studiedOn: 2026-11-01
+    note: >-
+      Испытано локально 01.11.2026: ядро остановлено — пульс идёт; сервер
+      Zabbix остановлен — отказ «контрольная отметка устарела» через ~3 мин;
+      роль базы Zabbix без входа — отказ сразу («Error connecting to
+      database»); после возврата — пульс.
+    purpose: 'Пульс внешнему наблюдателю (блок 8, 8.2): отметка только при свежей контрольной отметке в Zabbix через его API (подтверждает сервер и базу Zabbix), иначе /fail; ядро на пульс не влияет.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-01
+
+  - id: TOOL-MONITOR-EXPORT
+    file: scripts/monitor-export.mjs
+    command: node scripts/monitor-export.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects: ['пишет MONITOR_STATE_DIR/containers.json']
+    studied: code
+    studiedOn: 2026-11-01
+    purpose: 'Состояние контейнеров для агента Zabbix без Docker socket (блок 8, 8.2): имя, состояние, перезапуски, должен ли работать.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-01
+
   - id: UNIT-CORE-COUNTERS
     file: apps/core/tests/counters.test.ts
     command: npm run test -w apps/core
@@ -3555,6 +3629,7 @@ blocks:
         CHK-DB-RESILIENCE,
         CHK-BACKUP-RESTORE,
         CHK-BACKUP-LOGIC,
+        UNIT-CORE-READINESS,
         DBT-CONCURRENCY,
         DBT-INVARIANTS,
         SMK-CORE,

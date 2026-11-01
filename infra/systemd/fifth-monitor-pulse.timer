@@ -1,0 +1,11 @@
+# Раз в минуту: пульс внешнему наблюдателю — только при свежей работе Zabbix.
+[Unit]
+Description=5E monitor timer: pulse
+
+[Timer]
+OnCalendar=*:*:00
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target
