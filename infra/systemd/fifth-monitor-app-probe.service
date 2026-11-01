@@ -1,0 +1,11 @@
+# Наблюдение 5Э (блок 8, 2.1-W08a): разрешённое чтение контрольных данных служебной учёткой (2.5).
+[Unit]
+Description=5E monitor: app-probe
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/unicorn-launch
+ExecStart=/usr/bin/node scripts/monitor-app-probe.mjs
+TimeoutStartSec=50

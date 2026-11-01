@@ -52,6 +52,7 @@ export const ORIGIN_LABEL: Record<string, string> = {
   render_check: 'браузерный прогон',
   load_test: 'нагрузочный прогон',
   test_session: 'тестовая сессия',
+  monitoring: 'служебная: мониторинг',
   unknown: 'неизвестно',
 };
 
@@ -61,7 +62,7 @@ export const ORIGIN_LABEL: Record<string, string> = {
  * Уборку это НЕ задаёт: следы прогонов убирает `stand:clean-probes`,
  * участников тестовой сессии — уборка их сессии.
  */
-export const PROBE_ORIGIN = new Set(['render_check', 'load_test', 'test_session']);
+export const PROBE_ORIGIN = new Set(['render_check', 'load_test', 'test_session', 'monitoring']);
 
 /** Цвет несёт подсказку, но не смысл: рядом всегда есть слово. */
 export function statusTone(status: string): 'ok' | 'warn' | 'danger' | 'muted' {

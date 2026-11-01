@@ -413,6 +413,64 @@ async function configure() {
     { comments: 'Загрузка не завершена и требует разбора по 2.1.2.' },
   );
 
+  // ---- Разрешённое чтение прикладным путём (2.5; служебная учётка) ---------------
+  await item({
+    name: 'Прикладной путь: итог проверки, исходный файл',
+    key_: 'vfs.file.contents[/monitor/app-probe.json]',
+    type: AGENT,
+    value_type: 4,
+    history: '0',
+  });
+  await item({
+    name: 'Прикладной путь: разрешённое чтение прошло',
+    key_: 'app.probe.ok',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/app-probe.json]'),
+    value_type: 3,
+    preprocessing: [step(JS, 'return JSON.parse(value).ok ? 1 : 0;', 2, '0')],
+  });
+  await item({
+    name: 'Прикладной путь: причина',
+    key_: 'app.probe.reason',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/app-probe.json]'),
+    value_type: 1,
+    preprocessing: [step(JS, 'return JSON.parse(value).reason;', 2, 'файл не читается')],
+  });
+  await trigger(
+    'Разрешённое чтение контрольных данных не проходит',
+    `count(/${H}/app.probe.ok,#3,"eq",0)=3`,
+    4,
+    {
+      recovery_mode: 1,
+      recovery_expression: `count(/${H}/app.probe.ok,#2,"eq",1)=2`,
+      comments:
+        'Служебная учётка мониторинга не прочитала контрольный проект или файл обычным входом и проверкой прав (2.5). Причина — в значении «Прикладной путь: причина».',
+    },
+  );
+  await item({
+    name: 'Прикладной путь: возраст итога, с',
+    key_: 'vfs.file.time[/monitor/app-probe.json,modify]',
+    type: AGENT,
+    value_type: 3,
+    preprocessing: [
+      UNSUP('missing'),
+      step(
+        JS,
+        "if (value === 'missing') return 999999; return Math.floor(Date.now() / 1000) - Number(value);",
+      ),
+    ],
+  });
+  await trigger(
+    'Проверка прикладного пути не запускается',
+    `last(/${H}/vfs.file.time[/monitor/app-probe.json,modify])>${THRESHOLDS.containersStaleSec}`,
+    2,
+    {
+      comments:
+        'Таймер fifth-monitor-app-probe не обновлял итог дольше 5 минут — состояние неизвестно.',
+    },
+  );
+
   // ---- Сайт снаружи, сертификат --------------------------------------------
   const page = async (name, url, marker, priority) => {
     const key = `web.page.get[${url}]`;
@@ -805,7 +863,7 @@ async function jobsDiscovery(hostid, masterid) {
       'core.job.missed[{#JOB}]',
       'Фоновая задача {#JOB}: пропущено интервалов',
       pick(
-        'if (!j.enabled || j.running || !j.lastStartedAt) return 0; return Math.max(0, Math.floor((Date.now() - Date.parse(j.lastStartedAt)) / j.intervalMs) - 1);',
+        'if (!j.enabled || j.running || !j.lastStartedAt) return 0; var now = Date.parse(JSON.parse(value).now) || Date.now(); return Math.max(0, Math.floor((now - Date.parse(j.lastStartedAt)) / j.intervalMs) - 1);',
       ),
     ],
   ];

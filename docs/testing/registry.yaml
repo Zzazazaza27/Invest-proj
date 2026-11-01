@@ -2560,7 +2560,7 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 13
+    asserts: 14
     studied: code
     studiedOn: 2026-11-01
     needs: []
@@ -2610,6 +2610,46 @@ checks:
       роль базы Zabbix без входа — отказ сразу («Error connecting to
       database»); после возврата — пульс.
     purpose: 'Пульс внешнему наблюдателю (блок 8, 8.2): отметка только при свежей контрольной отметке в Zabbix через его API (подтверждает сервер и базу Zabbix), иначе /fail; ядро на пульс не влияет.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-01
+
+  - id: TOOL-MONITOR-PROBE-INIT
+    file: scripts/monitor-probe-init.mjs
+    command: node scripts/monitor-probe-init.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db, storage, docker]
+    effects:
+      [
+        'заводит служебные учётки monitoring (владелец без входа и учётка мониторинга с ролью investor), закрытый контрольный проект, контрольный PDF и разрешение profile+materials; повтор ничего не дублирует',
+      ]
+    studied: code
+    studiedOn: 2026-11-01
+    purpose: 'Служебная учётка мониторинга с минимальными правами (2.5): только чтение контрольных данных через выданное разрешение; происхождение monitoring (M154) — скрыта из обычного списка, не уборка прогонов.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-01
+
+  - id: CHK-MONITOR-APP-PROBE
+    file: scripts/monitor-app-probe.mjs
+    command: node scripts/monitor-app-probe.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 4
+    needs: [core, web, storage]
+    effects: ['пишет MONITOR_STATE_DIR/app-probe.json и сессию в MONITOR_PRIVATE_DIR']
+    studied: code
+    studiedOn: 2026-11-01
+    note: >-
+      Опыт 01.11.2026: разрешение отозвано при исправной инфраструктуре
+      (/ready 200, /control 200) — проверка провалена (404), тревога Zabbix
+      «Разрешённое чтение контрольных данных не проходит» за ~2 мин; после
+      повторной выдачи — восстановление. Учётка мониторинга: свой список
+      проектов пуст, чужой закрытый проект — 404, админка и создание
+      проекта — 403.
+    purpose: 'Разрешённое чтение контрольных данных прикладным путём (2.5, 8.2): обычный вход служебной учётки через публичный адрес, карточка контрольного проекта и материал по выданному разрешению, сверка размера и SHA-256 файла; поломка входа или проверки прав — провал при исправной инфраструктуре.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
 
@@ -3630,6 +3670,7 @@ blocks:
         CHK-BACKUP-RESTORE,
         CHK-BACKUP-LOGIC,
         UNIT-CORE-READINESS,
+        CHK-MONITOR-APP-PROBE,
         DBT-CONCURRENCY,
         DBT-INVARIANTS,
         SMK-CORE,

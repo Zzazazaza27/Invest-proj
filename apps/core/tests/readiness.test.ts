@@ -81,6 +81,23 @@ describe('Общая готовность (4.9)', () => {
     expect(stopping.lifecycle).toBe('stopping');
   });
 
+  it('остановка началась ВО ВРЕМЯ проверки — ответ уже «не готово»', async () => {
+    let lifecycle: Lifecycle = 'running';
+    const r = await checkReadiness(
+      probes({
+        lifecycle: () => lifecycle,
+        database: async () => {
+          // Пока ждём БД, процесс получает сигнал остановки.
+          lifecycle = 'stopping';
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          return true;
+        },
+      }),
+    );
+    expect(r.ready).toBe(false);
+    expect(r.lifecycle).toBe('stopping');
+  });
+
   it('роль http без фона — фон not_configured и готовность не снимает', async () => {
     const r = await checkReadiness(
       probes({ background: () => ({ required: false, running: false }) }),

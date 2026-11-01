@@ -1,0 +1,11 @@
+# Раз в минуту: разрешённое чтение контрольных данных служебной учёткой (2.5).
+[Unit]
+Description=5E monitor timer: app-probe
+
+[Timer]
+OnCalendar=*:*:00
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

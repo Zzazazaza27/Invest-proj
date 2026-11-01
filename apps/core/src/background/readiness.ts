@@ -114,13 +114,15 @@ export async function checkReadiness(probes: ReadinessProbes): Promise<ReadyRepo
   const run = async (probe: (() => Promise<boolean>) | null): Promise<CheckState> =>
     probe ? ((await within(timeout, probe)) ? 'ok' : 'fail') : 'not_configured';
 
-  const lifecycle = probes.lifecycle();
   const [database, valkey, storage, nats] = await Promise.all([
     run(probes.database),
     run(probes.valkey),
     run(probes.storage),
     run(probes.nats),
   ]);
+  // Состояние читается ПОСЛЕ ожидания зависимостей: остановка, начавшаяся во
+  // время проверки, снимает готовность в этом же ответе (замечание Тэнка).
+  const lifecycle = probes.lifecycle();
   const bg = probes.background();
   const required = { database, valkey };
   return {

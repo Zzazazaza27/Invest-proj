@@ -42,6 +42,9 @@ export const AccountOriginSchema = z.enum([
   // участников — уборка ИХ сессии. Смешать значит однажды снести участников
   // чужого разбора вместе со случайным мусором.
   'test_session',
+  // Служебная учётка мониторинга и её контрольный проект (M154, 2.5): не
+  // человек и не след прогона — уборка прогонов её не трогает.
+  'monitoring',
   'unknown',
 ]);
 export type AccountOrigin = z.infer<typeof AccountOriginSchema>;
@@ -69,7 +72,7 @@ export type AdminUserOriginFilter = z.infer<typeof AdminUserOriginFilterSchema>;
  * своему перечню, участников сессии — уборка их сессии. Добавление сюда
  * ничего не удаляет.
  */
-export const PROBE_ORIGINS = ['render_check', 'load_test', 'test_session'] as const;
+export const PROBE_ORIGINS = ['render_check', 'load_test', 'test_session', 'monitoring'] as const;
 
 /** По какому полю ищем. Поле выбирается явно — «умный» поиск угадывает неверно. */
 export const AdminUserSearchFieldSchema = z.enum(['name', 'email', 'phone', 'id']);

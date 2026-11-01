@@ -52,6 +52,9 @@ export async function startInternalServer(
     }
     if (req.url === '/jobs') {
       return send(200, {
+        // Время процесса: просрочку и пропуски считают по нему, а не по часам
+        // наблюдателя — расхождение часов не даёт ложных тревог.
+        now: new Date().toISOString(),
         instance: jobs.instanceId,
         role: env.CORE_ROLE,
         backgroundEnabled: jobs.isStarted,

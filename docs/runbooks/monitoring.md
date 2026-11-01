@@ -38,7 +38,9 @@ Healthchecks.io. Это W08a — наблюдение и тревоги. **Бл�
 | Резервирование W07 | сигналы и свежесть проверки                                      | проверка не запускалась 15 мин; сами проблемы W07 — «информация» (W07 сообщает сам)    |
 | Zabbix             | очередь проверок                                                 | больше 50 старше 10 минут                                                              |
 
-**Готовность ядра (правило 4.9).** `/ready`: общая готовность — завершён
+**Готовность ядра (правило 4.9).** Состояние процесса читается после ожидания
+зависимостей: остановка, начавшаяся во время проверки, снимает готовность в том
+же ответе. `/ready`: общая готовность — завершён
 запуск, основная БД и обязательные счётчики (Valkey, если настроен). При
 сигнале остановки готовность снимается первым шагом. Хранилище и NATS —
 отдельные строки `functions`: их отказ виден и даёт свою тревогу, но общую
@@ -53,6 +55,18 @@ Healthchecks.io. Это W08a — наблюдение и тревоги. **Бл�
 другое, хранилище не отвечает) — высокая тревога после трёх неудач подряд,
 восстановление после двух успехов; в значении «состояние файла» — что именно.
 Завести объект: `node scripts/monitoring.mjs control-init`.
+
+**Разрешённое чтение прикладным путём (2.5).** Служебная учётка мониторинга
+`monitoring@5espace.invalid` (роль investor, происхождение `monitoring`, M154 —
+скрыта из обычного списка админки) раз в минуту (`fifth-monitor-app-probe`)
+входит обычным входом через публичный адрес (`MONITOR_PUBLIC_URL`) и читает
+закрытый «Контрольный проект наблюдения» и его PDF по выданному разрешению
+(profile + materials), сверяя SHA-256. Это ловит поломку входа и проверки
+прав при исправной инфраструктуре; `/control` проверяет саму инфраструктуру.
+Завести учётку и проект: `node scripts/monitor-probe-init.mjs` (пароль —
+`CONTROL_PROBE_PASSWORD`, секрет). Сессия — в `MONITOR_PRIVATE_DIR`, агенту не
+видна; вход — только при 401. Права учётки: свой список проектов пуст, чужой
+закрытый проект — 404, админка и создание проекта — 403.
 
 **Нет данных — не «в порядке».** У каждой основной проверки своя тревога
 «Нет данных: …» (три интервала). Ошибка получения — сервис недоступен,
@@ -103,10 +117,12 @@ Healthchecks.io, период 60 с, допуск 120 с. Отметка ухо�
    `ZABBIX_MONITOR_DB_PASSWORD`, `ZABBIX_ADMIN_PASSWORD` (генерируются),
    позже `HEALTHCHECKS_PING_URL`.
 3. `COMPOSE_PROFILES=monitoring,monitoring-host node scripts/infra.mjs up zabbix-db-init zabbix-server zabbix-web zabbix-agent2-host`.
-4. Таймеры: `cp infra/systemd/fifth-monitor-* /etc/systemd/system/`,
-   `systemctl daemon-reload`, `systemctl enable --now fifth-monitor-export.timer fifth-monitor-pulse.timer`.
-5. `node scripts/monitoring.mjs configure`, затем `status --items` — все
+4. Служебная учётка и контрольный проект: `node scripts/monitor-probe-init.mjs`,
+   `node scripts/monitoring.mjs control-init`.
+5. Таймеры: `cp infra/systemd/fifth-monitor-* /etc/systemd/system/`,
+   `systemctl daemon-reload`, `systemctl enable --now fifth-monitor-export.timer fifth-monitor-pulse.timer fifth-monitor-app-probe.timer`.
+6. `node scripts/monitoring.mjs configure`, затем `status --items` — все
    проверки с данными.
-6. Пароль Admin — в KeePassXC Томаса. Пульс: аккаунт Healthchecks.io
+7. Пароль Admin — в KeePassXC Томаса. Пульс: аккаунт Healthchecks.io
    (Томас), адрес пинга — в `.env` и KeePassXC.
-7. Проверка доставки на VPS: одна тревога и восстановление.
+8. Проверка доставки на VPS: одна тревога и восстановление.
