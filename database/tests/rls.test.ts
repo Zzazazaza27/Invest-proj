@@ -547,7 +547,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 9 схем и 51 таблица', async () => {
+  it('схема соответствует спецификации: 9 схем и 52 таблицы', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','comms','billing','audit','integration',
@@ -672,7 +672,8 @@ describe('RLS: покрытие манифеста', () => {
     //
     // + comms.operation_notices (M151, 2.1-W04): отметка «итог операции
     // показан пользователю» — одна на пару «операция — пользователь».
-    expect(Number(tables.rows[0]!.count)).toBe(51);
+    // + audit.control_objects (M153, 2.1-W08a): контрольные объекты наблюдения.
+    expect(Number(tables.rows[0]!.count)).toBe(52);
   });
 });
 

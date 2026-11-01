@@ -80,6 +80,10 @@ export const PREFIX_CLASSES: ReadonlyArray<{ prefix: string; kind: DataClass }> 
 export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   // ------------------------------------------------------------------ audit
   'audit.consumed_events': { kind: 'journal' },
+  'audit.control_objects': {
+    kind: 'system',
+    note: 'контрольные объекты наблюдения (M153): ключ, размер, SHA-256 — заводит monitoring.mjs и monitor-probe-init.mjs',
+  },
   'audit.encryption_keys_registry': { kind: 'system', note: 'домены KEK и ротации' },
   'audit.event_archives': { kind: 'journal' },
   'audit.event_type_registry': { kind: 'system', note: 'допуск событий, только миграциями' },

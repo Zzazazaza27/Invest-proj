@@ -325,6 +325,24 @@ export class Database implements OnModuleDestroy {
     return rows[0]?.o ?? null;
   }
 
+  /** Служебная учётка мониторинга (M155) — для ограничения её действий. */
+  async isMonitoringUser(userId: string): Promise<boolean> {
+    const { rows } = await this.pool.query<{ v: boolean }>(
+      'SELECT identity.is_monitoring_user($1) AS v',
+      [userId],
+    );
+    return rows[0]?.v === true;
+  }
+
+  /** Контрольный проект мониторинга (M155). */
+  async isMonitoringProject(projectId: string): Promise<boolean> {
+    const { rows } = await this.pool.query<{ v: boolean }>(
+      'SELECT lab.is_monitoring_project($1) AS v',
+      [projectId],
+    );
+    return rows[0]?.v === true;
+  }
+
   /** Проверка живости для /v1/health. */
   async ping(): Promise<boolean> {
     try {

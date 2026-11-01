@@ -1,3 +1,5 @@
+import { Database } from '../db/unit-of-work';
+import { MONITORING_DENIED, TtlFlags, monitoringAccountRoute } from './monitoring-account';
 import {
   type CanActivate,
   type ExecutionContext,
@@ -137,12 +139,16 @@ export const Ctx = createParamDecorator(
 
 @Injectable()
 export class AuthGuard implements CanActivate {
+  /** Признаки служебной учётки и контрольного проекта — кеш на минуту. */
+  private readonly monitoringFlags = new TtlFlags();
+
   constructor(
     private readonly reflector: Reflector,
     private readonly verifier: TokenVerifier,
     private readonly epochs: SessionEpochService,
     private readonly revocations: TokenRevocationService,
     private readonly contexts: AccessContextService,
+    private readonly db: Database,
   ) {}
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
@@ -220,6 +226,25 @@ export class AuthGuard implements CanActivate {
         context.getClass(),
       ]) === true;
     this.assertCsrf(request, originFallback);
+
+    // Служебная учётка мониторинга (2.5): только сессия и чтение контрольного
+    // проекта — всё остальное отказ, даже при случайно выданном разрешении.
+    // Обычные проверки ниже (роли, RLS) остаются: перечень их только сужает.
+    const subject = verified.subject;
+    if (await this.monitoringFlags.get(`u:${subject}`, () => this.db.isMonitoringUser(subject))) {
+      const decision = monitoringAccountRoute(request.method, request.url);
+      if (!decision.allowed)
+        throw errors.forbidden({ stage: 'monitoring-account' }, MONITORING_DENIED);
+      const projectId = decision.projectId;
+      if (
+        projectId &&
+        !(await this.monitoringFlags.get(`p:${projectId}`, () =>
+          this.db.isMonitoringProject(projectId),
+        ))
+      ) {
+        throw errors.forbidden({ stage: 'monitoring-account-project' }, MONITORING_DENIED);
+      }
+    }
 
     // --------------------------------------------- контекст доступа (M129)
     // Ставится ПОСЛЕ проверки токена инициатора и CSRF: подстановка личности

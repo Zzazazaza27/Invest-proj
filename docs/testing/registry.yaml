@@ -2653,6 +2653,40 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
 
+  - id: UNIT-CORE-MONITORING-ACCOUNT
+    file: apps/core/tests/monitoring-account.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 6
+    studied: code
+    studiedOn: 2026-11-01
+    needs: []
+    effects: ['только память']
+    purpose: 'Перечень разрешённого служебной учётке мониторинга (2.5): сессия и чтение карточки и материала проекта; изменение и чтение профиля, аватар, создание и список проектов, админка, избранное, обращения — отказ; не GET и пути с хвостом — отказ; кеш признаков.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-01
+
+  - id: CHK-MONITORING-ACCOUNT
+    file: scripts/check-monitoring-account.mjs
+    command: node scripts/check-monitoring-account.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 9
+    needs: [core, web, db]
+    effects: ['временно выдаёт учётке мониторинга разрешение на обычный проект и сразу отзывает']
+    studied: code
+    studiedOn: 2026-11-01
+    note: >-
+      Мутационный опыт 01.11.2026: со снятым ограничением в ядре изменение и
+      чтение профиля и удаление аватара проходят (200) — проверка даёт 6 FAIL;
+      с ограничением — 9/9.
+    purpose: 'Служебная учётка мониторинга — только чтение контрольных данных (2.5): контрольные карточка и файл читаются; изменение и чтение профиля, загрузка и удаление аватара, создание проекта, обычный проект даже с выданным разрешением — отказ ограничением учётки; «кто я» — разрешено.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-01
+
   - id: TOOL-MONITOR-EXPORT
     file: scripts/monitor-export.mjs
     command: node scripts/monitor-export.mjs
@@ -3671,6 +3705,8 @@ blocks:
         CHK-BACKUP-LOGIC,
         UNIT-CORE-READINESS,
         CHK-MONITOR-APP-PROBE,
+        CHK-MONITORING-ACCOUNT,
+        UNIT-CORE-MONITORING-ACCOUNT,
         DBT-CONCURRENCY,
         DBT-INVARIANTS,
         SMK-CORE,
