@@ -67,9 +67,17 @@ if (files.length === 0) {
   process.exitCode = 1;
 }
 
-for (const file of files) {
+// Текст всех миграций — для правил, где исправление может прийти следующей
+// миграцией: применённая миграция не правится (forward-only), поэтому
+// забытый RLS чинится только новой. Правило по-прежнему ловит таблицу, которую
+// не исправила ни одна миграция.
+const allSql = files.map((f) => stripNoise(readFileSync(join(MIGRATIONS_DIR, f), 'utf8')));
+
+for (const [fileIndex, file] of files.entries()) {
   const raw = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
   const sql = stripNoise(raw);
+  // Эта миграция и все последующие.
+  const fromHere = allSql.slice(fileIndex).join('\n');
   const lines = raw.split('\n');
 
   const lineOf = (needle: RegExp): number => {
@@ -189,7 +197,7 @@ for (const file of files) {
       `ALTER\\s+TABLE\\s+${table}\\s+FORCE\\s+ROW\\s+LEVEL\\s+SECURITY`,
       'i',
     );
-    if (!enable.test(sql)) {
+    if (!enable.test(fromHere)) {
       add(
         'ERROR',
         file,
@@ -198,7 +206,7 @@ for (const file of files) {
         `${table}: нет ENABLE ROW LEVEL SECURITY.`,
       );
     }
-    if (!force.test(sql)) {
+    if (!force.test(fromHere)) {
       add(
         'ERROR',
         file,
@@ -207,7 +215,7 @@ for (const file of files) {
         `${table}: нет FORCE ROW LEVEL SECURITY — владелец обходил бы политики.`,
       );
     }
-    if (!new RegExp(`CREATE\\s+POLICY\\s+[a-z_]+\\s+ON\\s+${table}\\b`, 'i').test(sql)) {
+    if (!new RegExp(`CREATE\\s+POLICY\\s+[a-z_]+\\s+ON\\s+${table}\\b`, 'i').test(fromHere)) {
       add(
         'ERROR',
         file,

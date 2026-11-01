@@ -27,7 +27,7 @@ describe('Учётка мониторинга: перечень разрешён
   });
 
   it('изменение профиля, аватар, создание проекта, список, админка — отказ', () => {
-    for (const [method, url] of [
+    const denied: Array<[string, string]> = [
       ['PATCH', '/v1/me/profile'],
       ['POST', '/v1/me/avatar/upload'],
       ['POST', '/v1/me/avatar'],
@@ -38,7 +38,8 @@ describe('Учётка мониторинга: перечень разрешён
       ['GET', '/v1/admin/users'],
       ['PUT', `/v1/investor/favorites/${P}`],
       ['POST', '/v1/support'],
-    ]) {
+    ];
+    for (const [method, url] of denied) {
       expect(monitoringAccountRoute(method, url).allowed, `${method} ${url}`).toBe(false);
     }
   });

@@ -130,6 +130,7 @@ describe('Остановка выводит из готовности перво
       jobs: {
         stop: async () => {
           order.push(`stop:${lifecycle}`);
+          return 0;
         },
       },
       closers: [async () => order.push(`close:${lifecycle}`)],
