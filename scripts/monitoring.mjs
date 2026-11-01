@@ -5,6 +5,7 @@
  *   node scripts/monitoring.mjs configure   завести/обновить в Zabbix узел, проверки, пороги,
  *                                          Telegram, повторы тревог, хранение истории
  *   node scripts/monitoring.mjs status      открытые проблемы и свежесть данных
+ *   node scripts/monitoring.mjs control-init  контрольный файл и запись для контрольной операции (M153)
  *
  * Идемпотентно: повторный запуск обновляет, а не дублирует. Пороги — таблица
  * 8.2 («начальные настройки для испытания»); числа собраны в THRESHOLDS ниже,
@@ -15,7 +16,8 @@
  * (пароль администратора Zabbix, пароли наблюдения за PostgreSQL и Valkey,
  * токен бота) — уходят в Zabbix скрытыми макросами и в вывод не попадают.
  */
-import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { ENV_PATH, loadEnv } from './lib/backup.mjs';
 import { zabbixApi } from './lib/zabbix-api.mjs';
@@ -89,6 +91,17 @@ const step = (type, params, onError = 0, errParams = '') =>
         error_handler_params: '',
       }
     : { type, params, error_handler: onError, error_handler_params: errParams };
+/**
+ * Ошибка ПОЛУЧЕНИЯ (сервис недоступен, файла нет) превращается в явное
+ * значение — 0 или «устарело», — а не оставляет прежнее зелёное (замечание
+ * Тэнка при приёмке W08a). Шаг ставится первым.
+ */
+const UNSUP = (value) => ({
+  type: 26,
+  params: '-1',
+  error_handler: 2,
+  error_handler_params: String(value),
+});
 /** Тело ответа web.page.get без заголовков. */
 const BODY = "return value.split(/\\r?\\n\\r?\\n/).slice(1).join('\\n\\n');";
 /** Код HTTP-ответа web.page.get. */
@@ -159,12 +172,25 @@ async function configure() {
   );
 
   const items = new Map();
+  // Для «нет данных»: у каждой основной проверки и у выбранных зависимых —
+  // своя тревога. nodata — важность, false — не нужна.
+  const freshness = [];
   const item = async (spec) => {
+    const { nodata, ...rest } = spec;
+    const primary = rest.type !== 18 && rest.history !== '0';
+    if (nodata !== false && (primary || nodata)) {
+      freshness.push({
+        key: rest.key_,
+        name: rest.name,
+        delay: rest.delay || '1m',
+        priority: nodata || 2,
+      });
+    }
     const body = {
       history: '30d',
       trends: '730d',
       delay: '1m',
-      ...spec,
+      ...rest,
       hostid,
     };
     if (body.value_type === 1 || body.value_type === 4) delete body.trends;
@@ -211,9 +237,11 @@ async function configure() {
     type: AGENT,
     value_type: 3,
     preprocessing: [
+      UNSUP(0),
       step(JS, `${BODY.replace('return ', 'var b = ')} return JSON.parse(b).live ? 1 : 0;`, 2, '0'),
     ],
     tags: [{ tag: 'component', value: 'core' }],
+    nodata: 4,
   });
   await trigger(
     'Ядро не живо (/live)',
@@ -223,16 +251,6 @@ async function configure() {
       comments: 'Процесс ядра завис или остановлен; запросы пользователей не обслуживаются.',
     },
   );
-  await trigger(
-    'Нет данных о живости ядра',
-    `nodata(/${H}/web.page.get[${ADDR.coreInternal}/live],3m)=1`,
-    4,
-    {
-      comments:
-        'Нет измерений больше трёх интервалов — состояние неизвестно (ядро, агент или сеть).',
-    },
-  );
-
   const readyKey = `web.page.get[${ADDR.coreInternal}/ready]`;
   await item({
     name: 'Ядро: готовность (/ready), исходный ответ',
@@ -242,24 +260,99 @@ async function configure() {
     history: '0',
     preprocessing: [step(JS, BODY)],
   });
-  for (const dep of ['database', 'storage', 'valkey', 'nats', 'background']) {
-    const key = `core.ready[${dep}]`;
-    await item({
-      name: `Ядро: готовность — ${dep}`,
+  const readyDep = async (name, key, js, valueType, extra = {}) =>
+    item({
+      name,
       key_: key,
       type: DEP,
       master_itemid: items.get(readyKey),
-      value_type: 1,
-      preprocessing: [step(JSONPATH, `$.checks.${dep}`, 2, 'нет ответа')],
+      value_type: valueType,
+      preprocessing: [step(JS, js, 2, valueType === 1 ? 'нет ответа' : '0')],
       tags: [{ tag: 'component', value: 'core' }],
+      ...extra,
     });
-    await trigger(
-      `Ядро: зависимость ${dep} недоступна`,
-      `count(/${H}/${key},#3,"eq","fail")=3 or count(/${H}/${key},#3,"eq","нет ответа")=3`,
-      4,
-      { comments: 'Три проверки подряд. Операции, зависящие от неё, не выполняются.' },
-    );
+  // Общая готовность (4.9): запуск, основная БД, обязательные счётчики.
+  await readyDep(
+    'Ядро: общая готовность',
+    'core.ready',
+    'return JSON.parse(value).ready ? 1 : 0;',
+    3,
+    {
+      nodata: 4,
+    },
+  );
+  await trigger('Ядро не готово', `count(/${H}/core.ready,#3,"eq",0)=3`, 4, {
+    recovery_mode: 1,
+    recovery_expression: `count(/${H}/core.ready,#2,"eq",1)=2`,
+    comments: 'Запуск не завершён, идёт остановка, или недоступна основная БД / счётчики (4.9).',
+  });
+  await readyDep(
+    'Ядро: состояние процесса',
+    'core.lifecycle',
+    'return JSON.parse(value).lifecycle;',
+    1,
+  );
+  const deps = [
+    ['required.database', 'основная БД', 4],
+    ['required.valkey', 'счётчики Valkey', 4],
+    ['functions.storage', 'хранилище — файлы и загрузки не работают', 4],
+    ['functions.nats', 'NATS — события не публикуются', 4],
+  ];
+  for (const [path, what, priority] of deps) {
+    const key = `core.dep[${path}]`;
+    await readyDep(`Ядро: ${what}`, key, `return JSON.parse(value).${path};`, 1);
+    await trigger(`Ядро: недоступно — ${what}`, `count(/${H}/${key},#3,"eq","fail")=3`, priority, {
+      comments:
+        'Три проверки подряд (8.2). Хранилище и NATS общую готовность не снимают (4.9, 4.11).',
+    });
   }
+  await readyDep(
+    'Ядро: фоновые задачи запущены',
+    'core.dep[background]',
+    'return JSON.parse(value).background;',
+    1,
+  );
+  await trigger(
+    'Ядро: фоновые задачи не работают',
+    `count(/${H}/core.dep[background],#3,"eq","fail")=3`,
+    2,
+  );
+
+  // Контрольная операция (8.2, 2.5): запись и файл со сверкой содержимого.
+  const controlKey = `web.page.get[${ADDR.coreInternal}/control]`;
+  await item({
+    name: 'Контрольная операция, исходный ответ',
+    key_: controlKey,
+    type: AGENT,
+    value_type: 4,
+    history: '0',
+    preprocessing: [step(JS, BODY)],
+  });
+  await item({
+    name: 'Контрольная операция: запись и файл совпали',
+    key_: 'core.control.ok',
+    type: DEP,
+    master_itemid: items.get(controlKey),
+    value_type: 3,
+    preprocessing: [step(JS, 'return JSON.parse(value).ok ? 1 : 0;', 2, '0')],
+    nodata: 4,
+  });
+  await item({
+    name: 'Контрольная операция: состояние файла',
+    key_: 'core.control.file',
+    type: DEP,
+    master_itemid: items.get(controlKey),
+    value_type: 1,
+    preprocessing: [
+      step(JS, 'var r = JSON.parse(value); return r.record + "/" + r.file;', 2, 'нет ответа'),
+    ],
+  });
+  await trigger('Контрольная операция не проходит', `count(/${H}/core.control.ok,#3,"eq",0)=3`, 4, {
+    recovery_mode: 1,
+    recovery_expression: `count(/${H}/core.control.ok,#2,"eq",1)=2`,
+    comments:
+      'Контрольная запись не читается или контрольный файл недоступен / испорчен (запись/файл — в значении «состояние файла»).',
+  });
 
   const jobsKey = `web.page.get[${ADDR.coreInternal}/jobs]`;
   await item({
@@ -292,6 +385,12 @@ async function configure() {
       tags: [{ tag: 'component', value: 'core' }],
     });
   await queue('Outbox: ждут публикации', 'outbox.pending');
+  freshness.push({
+    key: 'core.queue[outbox.pending]',
+    name: 'Ядро: очереди',
+    delay: '1m',
+    priority: 2,
+  });
   await queue('Outbox: возраст самой старой, с', 'outbox.oldestAgeSec');
   await queue('Outbox: исчерпали попытки', 'outbox.exhausted');
   await queue('Загрузки: ожидают', 'uploads.pending');
@@ -313,7 +412,6 @@ async function configure() {
     2,
     { comments: 'Загрузка не завершена и требует разбора по 2.1.2.' },
   );
-  await trigger('Нет данных об очередях ядра', `nodata(/${H}/core.queue[outbox.pending],3m)=1`, 2);
 
   // ---- Сайт снаружи, сертификат --------------------------------------------
   const page = async (name, url, marker, priority) => {
@@ -323,7 +421,9 @@ async function configure() {
       key_: key,
       type: AGENT,
       value_type: 3,
+      nodata: priority,
       preprocessing: [
+        UNSUP(0),
         step(
           JS,
           `var m = value.match(/^HTTP\\/\\S+ (\\d{3})/); var b = value.split(/\\r?\\n\\r?\\n/).slice(1).join(''); return (m && m[1] === '200' && b.indexOf(${JSON.stringify(marker)}) >= 0) ? 1 : 0;`,
@@ -355,6 +455,7 @@ async function configure() {
       value_type: 0,
       delay: '1h',
       preprocessing: [
+        UNSUP(-1),
         step(
           JS,
           'var t = JSON.parse(value).x509.not_after.timestamp; return Math.floor((t * 1000 - Date.now()) / 86400000);',
@@ -376,6 +477,8 @@ async function configure() {
     key_: `pgsql.ping[${pgArgs}]`,
     type: AGENT,
     value_type: 3,
+    preprocessing: [UNSUP(0)],
+    nodata: 4,
   });
   await trigger('PostgreSQL не отвечает', `count(/${H}/pgsql.ping[${pgArgs}],#3,"eq",0)=3`, 5);
   await item({
@@ -416,6 +519,8 @@ async function configure() {
     key_: `redis.ping[${redisArgs}]`,
     type: AGENT,
     value_type: 3,
+    preprocessing: [UNSUP(0)],
+    nodata: 4,
   });
   await trigger('Valkey не отвечает', `count(/${H}/redis.ping[${redisArgs}],#3,"eq",0)=3`, 4);
 
@@ -426,7 +531,9 @@ async function configure() {
       key_: key,
       type: AGENT,
       value_type: 3,
+      nodata: priority,
       preprocessing: [
+        UNSUP(0),
         step(
           JS,
           STATUS.replace('return m ? m[1] : 0;', "return (m && m[1] === '200') ? 1 : 0;"),
@@ -444,6 +551,7 @@ async function configure() {
   await item({
     name: 'Узел: загрузка процессора, %',
     key_: 'system.cpu.util',
+    nodata: 4,
     type: AGENT,
     value_type: 0,
   });
@@ -452,7 +560,6 @@ async function configure() {
     `avg(/${H}/system.cpu.util,10m)>${THRESHOLDS.cpuWarn}`,
     2,
   );
-  await trigger('Нет данных с узла', `nodata(/${H}/system.cpu.util,3m)=1`, 4);
   await item({
     name: 'Узел: доступно памяти, %',
     key_: 'vm.memory.size[pavailable]',
@@ -488,7 +595,13 @@ async function configure() {
   }
   if (ADDR.timesync) {
     const key = 'vfs.file.exists[/host-timesync/synchronized]';
-    await item({ name: 'Узел: время синхронизировано', key_: key, type: AGENT, value_type: 3 });
+    await item({
+      name: 'Узел: время синхронизировано',
+      key_: key,
+      type: AGENT,
+      value_type: 3,
+      preprocessing: [UNSUP(0)],
+    });
     await trigger('Время узла не синхронизировано', `max(/${H}/${key},10m)=0`, 2);
   }
 
@@ -533,7 +646,13 @@ async function configure() {
     key_: 'vfs.file.time[/monitor/containers.json,modify]',
     type: AGENT,
     value_type: 3,
-    preprocessing: [step(JS, 'return Math.floor(Date.now() / 1000) - Number(value);')],
+    preprocessing: [
+      UNSUP('missing'),
+      step(
+        JS,
+        "if (value === 'missing') return 999999; return Math.floor(Date.now() / 1000) - Number(value);",
+      ),
+    ],
   });
   await trigger(
     'Состояние контейнеров не обновляется',
@@ -569,7 +688,13 @@ async function configure() {
     key_: 'vfs.file.time[/backup-state/last-check.json,modify]',
     type: AGENT,
     value_type: 3,
-    preprocessing: [step(JS, 'return Math.floor(Date.now() / 1000) - Number(value);')],
+    preprocessing: [
+      UNSUP('missing'),
+      step(
+        JS,
+        "if (value === 'missing') return 999999; return Math.floor(Date.now() / 1000) - Number(value);",
+      ),
+    ],
   });
   await trigger(
     'Проверка резервирования не запускается',
@@ -606,6 +731,26 @@ async function configure() {
     output: ['hostid'],
   });
   for (const d of defaults) await api.call('host.update', { hostid: d.hostid, status: 1 });
+
+  const retired = ['Нет данных о живости ядра', 'Нет данных об очередях ядра', 'Нет данных с узла'];
+  const oldTriggers = await api.call('trigger.get', {
+    hostids: hostid,
+    filter: { description: retired },
+    output: ['triggerid'],
+  });
+  if (oldTriggers.length)
+    await api.call(
+      'trigger.delete',
+      oldTriggers.map((t) => t.triggerid),
+    );
+  for (const f of freshness) {
+    const n = Number.parseInt(f.delay, 10) * 3;
+    const window = `${n}${f.delay.replace(/^\d+/, '')}`;
+    await trigger(`Нет данных: ${f.name}`, `nodata(/${H}/${f.key},${window})=1`, f.priority, {
+      comments:
+        'Нет измерений больше трёх интервалов — состояние неизвестно, а не «в порядке» (8.2).',
+    });
+  }
 
   await notifications();
   await pulseUser(groupid);
@@ -880,9 +1025,63 @@ async function status() {
   }
 }
 
-const commands = { configure, status };
+/**
+ * Контрольный объект (M153): файл `control/probe-v1` в рабочем бакете и
+ * запись с его размером и SHA-256. Содержимое — служебное, без реальных
+ * данных. Повторный запуск при существующей записи ничего не меняет.
+ */
+async function controlInit() {
+  const bucket = env.S3_BUCKET || 'unicorn-launch';
+  const key = 'control/probe-v1';
+  const psql = (sql) =>
+    execFileSync(
+      'docker',
+      [
+        'exec',
+        '-i',
+        'unicorn-postgres',
+        'psql',
+        '-X',
+        '-v',
+        'ON_ERROR_STOP=1',
+        '-At',
+        '-U',
+        'unicorn_owner',
+        '-d',
+        env.POSTGRES_DB || 'fifth_element',
+      ],
+      { input: sql, encoding: 'utf8' },
+    ).trim();
+  if (psql("SELECT count(*) FROM audit.control_objects WHERE name = 'probe'") === '1') {
+    console.log('контрольный объект уже заведён');
+    return;
+  }
+  const body = Buffer.concat([
+    Buffer.from('5E control object v1 — служебный файл наблюдения, без пользовательских данных\n'),
+    randomBytes(4096),
+  ]);
+  const sha256 = createHash('sha256').update(body).digest('hex');
+  execFileSync(
+    'docker',
+    [
+      'exec',
+      '-i',
+      'unicorn-minio',
+      'sh',
+      '-c',
+      `mc alias set l http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc pipe l/${bucket}/${key} >/dev/null`,
+    ],
+    { input: body },
+  );
+  psql(
+    `INSERT INTO audit.control_objects (name, s3_key, size_bytes, sha256) VALUES ('probe', '${key}', ${body.length}, '${sha256}')`,
+  );
+  console.log(`контрольный объект заведён: ${key}, ${body.length} байт`);
+}
+
+const commands = { configure, status, 'control-init': controlInit };
 if (!commands[command]) {
-  console.error('команды: configure, status');
+  console.error('команды: configure, status, control-init');
   process.exit(2);
 }
 try {

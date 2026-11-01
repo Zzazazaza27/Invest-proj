@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { AppModule } from './app.module';
 import { BackgroundJobsService } from './background/background-jobs.service';
 import { startInternalServer } from './background/internal-server';
+import { runControl } from './background/readiness';
 import { Database } from './db/unit-of-work';
 import { NatsClient } from './events/nats.client';
 import { S3Service } from './storage/s3.service';
@@ -341,7 +342,11 @@ async function bootstrap(): Promise<void> {
   const db = app.get(Database);
   const s3 = app.get(S3Service);
   const nats = app.get(NatsClient);
+  // Состояние процесса для готовности (4.9): «запускается» до конца запуска,
+  // «останавливается» — первым шагом завершения.
+  let lifecycle: 'starting' | 'running' | 'stopping' = 'starting';
   const internal = await startInternalServer(jobs, {
+    lifecycle: () => lifecycle,
     database: () => db.ping(),
     // Хранилище: подписанный HEAD контрольного ключа — доступ и подпись,
     // а не наличие объекта (отсутствующий ключ — тоже ответ хранилища).
@@ -350,16 +355,25 @@ async function bootstrap(): Promise<void> {
       : null,
     valkey: counters ? () => counters.ping() : null,
     nats: nats.enabled ? () => nats.ping() : null,
-    background: () => ({ required: background.allowed, running: jobs.isStarted }),
+    background: () => ({
+      required: background.allowed,
+      running: jobs.isStarted && !jobs.isStopping,
+    }),
     queues: () => db.queueMetrics(),
+    control: () =>
+      runControl(
+        () => db.controlObject('probe'),
+        (key) => s3.getObjectDigest(key),
+      ),
   });
   logger.log(
-    `служебный порт ${env.CORE_INTERNAL_BIND_HOST}:${internal.port} (/live, /ready, /jobs, /queues)`,
+    `служебный порт ${env.CORE_INTERNAL_BIND_HOST}:${internal.port} (/live, /ready, /jobs, /queues, /control)`,
   );
   // Фон запускается здесь, а не при инициализации модулей: решение о роли и
   // выключателе принимается до первого прохода, включая стартовые уборки.
   if (background.allowed) jobs.start();
   else logger.warn(`фоновые задачи не запускаются: ${background.reason}`);
+  lifecycle = 'running';
 
   // Общий предел на всё завершение, включая закрытие приложения и пулов.
   const shutdown = createShutdown({
@@ -374,6 +388,9 @@ async function bootstrap(): Promise<void> {
       },
     ],
     graceMs: env.BACKGROUND_STOP_GRACE_MS,
+    beforeStop: () => {
+      lifecycle = 'stopping';
+    },
     exit: (code) => process.exit(code),
     log: (message) => logger.log(message),
   });

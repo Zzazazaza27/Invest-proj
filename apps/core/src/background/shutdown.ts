@@ -14,6 +14,8 @@ export interface ShutdownOptions {
   /** Закрытие приложения, служебного порта, соединений — по порядку. */
   closers: ReadonlyArray<() => Promise<unknown>>;
   graceMs: number;
+  /** Первый шаг: вывести экземпляр из готовности (блок 4.9). */
+  beforeStop?: () => void;
   exit: (code: number) => void;
   log: (message: string) => void;
 }
@@ -30,6 +32,7 @@ export function createShutdown(options: ShutdownOptions): (signal: string) => Pr
     }, options.graceMs);
     forced.unref();
 
+    options.beforeStop?.();
     options.log(`получен ${signal}, новая фоновая работа не захватывается`);
     await options.jobs.stop(Math.max(0, deadline - Date.now()));
     for (const close of options.closers) {

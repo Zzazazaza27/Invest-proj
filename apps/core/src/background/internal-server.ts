@@ -17,7 +17,8 @@ import { checkReadiness, type ReadinessProbes } from './readiness';
  * задача такт не останавливают; долгая задача видна в `/jobs` как `overdue`.
  *
  * `/ready` — готовность по зависимостям с ограниченным ожиданием (см.
- * `readiness.ts`), `/queues` — размер и возраст очередей (блок 8, 8.3).
+ * `readiness.ts`), `/queues` — размер и возраст очередей (блок 8, 8.3),
+ * `/control` — контрольная операция: запись и файл со сверкой содержимого.
  * Оба — для Zabbix (2.1-W08a); наружу не публикуются.
  */
 export interface InternalServer {
@@ -62,6 +63,13 @@ export async function startInternalServer(
       void checkReadiness(probes).then(
         (report) => send(report.ready ? 200 : 503, report),
         () => send(503, { ready: false, error: 'проверка готовности не выполнилась' }),
+      );
+      return;
+    }
+    if (req.url === '/control' && probes) {
+      void probes.control().then(
+        (report) => send(report.ok ? 200 : 503, report),
+        () => send(503, { ok: false, error: 'контрольная операция не выполнилась' }),
       );
       return;
     }

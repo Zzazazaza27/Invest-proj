@@ -444,7 +444,7 @@
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
 | UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
-| UNIT-CORE-READINESS | `npm run test -w apps/core` | 5 | CI | CI |
+| UNIT-CORE-READINESS | `npm run test -w apps/core` | 13 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |

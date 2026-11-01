@@ -315,6 +315,16 @@ export class Database implements OnModuleDestroy {
     return rows[0]?.m ?? {};
   }
 
+  /** Контрольная запись наблюдения (M153): ключ файла, размер, SHA-256. */
+  async controlObject(
+    name: string,
+  ): Promise<{ s3Key: string; sizeBytes: number; sha256: string } | null> {
+    const { rows } = await this.pool.query<{
+      o: { s3Key: string; sizeBytes: number; sha256: string } | null;
+    }>('SELECT audit.control_object($1) AS o', [name]);
+    return rows[0]?.o ?? null;
+  }
+
   /** Проверка живости для /v1/health. */
   async ping(): Promise<boolean> {
     try {
