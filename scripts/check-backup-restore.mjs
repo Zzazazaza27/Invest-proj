@@ -442,6 +442,9 @@ try {
     let up = false;
     for (let i = 0; i < 60 && !up; i += 1) {
       try {
+        // Ядро площадки проверки на петле этой машины: TLS процессу на 127.0.0.1
+        // ничего не защищает, а правило смотрит на схему.
+        // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
         const r = await fetch(`http://127.0.0.1:${CORE_PORT}/v1/health`, {
           signal: AbortSignal.timeout(3000),
         });
@@ -527,6 +530,9 @@ try {
         hash,
         candidate.id,
       ]);
+      // Ядро площадки проверки на петле этой машины: TLS процессу на 127.0.0.1
+      // ничего не защищает, а правило смотрит на схему.
+      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
       const login = await fetch(`http://127.0.0.1:${CORE_PORT}/v1/auth/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -539,6 +545,9 @@ try {
         login.status === 200 || login.status === 201,
         login.status,
       );
+      // Ядро площадки проверки на петле этой машины: TLS процессу на 127.0.0.1
+      // ничего не защищает, а правило смотрит на схему.
+      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
       const me = await fetch(`http://127.0.0.1:${CORE_PORT}/v1/auth/me`, {
         headers: { cookie },
         signal: AbortSignal.timeout(15_000),
@@ -553,6 +562,9 @@ try {
         me.status === 200 && body.emailMasked === expected,
         me.status,
       );
+      // Ядро площадки проверки на петле этой машины: TLS процессу на 127.0.0.1
+      // ничего не защищает, а правило смотрит на схему.
+      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
       const anon = await fetch(`http://127.0.0.1:${CORE_PORT}/v1/auth/me`, {
         signal: AbortSignal.timeout(15_000),
       });

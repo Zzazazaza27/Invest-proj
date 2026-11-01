@@ -182,6 +182,64 @@ function keysInit() {
   console.log(`пара создана в ${dir} (значения не печатаются); см. README.txt`);
 }
 
+/**
+ * Проверка пары ключей: случайная строка шифруется открытым ключом и
+ * расшифровывается закрытым с фразой. Так проверяются ключи, перенесённые в
+ * KeePassXC и выгруженные оттуда во временные файлы. Значения не печатаются.
+ *
+ *   node scripts/backup.mjs keys-check --secret-key <файл> --passphrase-file <файл> [--recipient <файл>]
+ */
+function keysCheck() {
+  const secret = resolve(option('--secret-key') ?? '');
+  const passFile = resolve(option('--passphrase-file') ?? '');
+  const recipient = resolve(
+    option('--recipient') ?? join(ROOT, '.local', 'backup-keys', 'recipient.asc'),
+  );
+  for (const f of [secret, passFile, recipient]) {
+    if (!existsSync(f)) throw new Error(`нет файла ${f}`);
+  }
+  const challenge = randomBytes(24).toString('hex');
+  const script = [
+    'set -e',
+    'export GNUPGHOME=$(mktemp -d)',
+    'gpg -q --batch --import /in/recipient.asc 2>/dev/null',
+    "fpr=$(gpg --batch --list-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')",
+    'printf %s "$CHALLENGE" | gpg -q --batch --trust-model always --encrypt --recipient "$fpr" --output /tmp/c.gpg',
+    'export GNUPGHOME=$(mktemp -d)',
+    'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --import /in/secret.asc 2>/dev/null',
+    'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --decrypt /tmp/c.gpg',
+  ].join('\n');
+  const r = docker(
+    [
+      'run',
+      '--rm',
+      '--network',
+      'none',
+      '-e',
+      'CHALLENGE',
+      '-e',
+      'PASSPHRASE',
+      '-v',
+      `${recipient}:/in/recipient.asc:ro`,
+      '-v',
+      `${secret}:/in/secret.asc:ro`,
+      '--entrypoint',
+      'sh',
+      TOOL_IMAGE,
+      '-c',
+      script,
+    ],
+    {
+      env: { CHALLENGE: challenge, PASSPHRASE: readFileSync(passFile, 'utf8').trim() },
+      allowFail: true,
+    },
+  );
+  if (r.stdout.trim() !== challenge) {
+    throw new Error('закрытый ключ с этой фразой НЕ открывает зашифрованное открытым ключом');
+  }
+  console.log('ключи в порядке: закрытый ключ с фразой открывает зашифрованное открытым ключом');
+}
+
 // ---------------------------------------------------------------------- db
 
 function backupInfo() {
@@ -858,6 +916,7 @@ async function pull() {
 const commands = {
   'init-secrets': initSecrets,
   'keys-init': keysInit,
+  'keys-check': keysCheck,
   db,
   set,
   check,
