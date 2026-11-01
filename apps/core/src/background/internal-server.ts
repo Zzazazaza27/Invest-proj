@@ -1,6 +1,7 @@
 import { createServer, type Server } from 'node:http';
 import { getEnv } from '../config/env';
 import type { BackgroundJobsService } from './background-jobs.service';
+import { checkReadiness, type ReadinessProbes } from './readiness';
 
 /**
  * Служебный порт процесса: живость и состояние фоновых задач (блок 1, 1.2).
@@ -14,13 +15,20 @@ import type { BackgroundJobsService } from './background-jobs.service';
  * проверяются намеренно: их отказ — повод для неготовности затронутой работы,
  * а не для перезапуска исправного процесса по кругу. Выключенный фон и долгая
  * задача такт не останавливают; долгая задача видна в `/jobs` как `overdue`.
+ *
+ * `/ready` — готовность по зависимостям с ограниченным ожиданием (см.
+ * `readiness.ts`), `/queues` — размер и возраст очередей (блок 8, 8.3).
+ * Оба — для Zabbix (2.1-W08a); наружу не публикуются.
  */
 export interface InternalServer {
   readonly port: number;
   close(): Promise<void>;
 }
 
-export async function startInternalServer(jobs: BackgroundJobsService): Promise<InternalServer> {
+export async function startInternalServer(
+  jobs: BackgroundJobsService,
+  probes?: ReadinessProbes,
+): Promise<InternalServer> {
   const env = getEnv();
   const port = env.CORE_INTERNAL_PORT ?? env.CORE_PORT + 100;
   let lastTick = Date.now();
@@ -49,6 +57,20 @@ export async function startInternalServer(jobs: BackgroundJobsService): Promise<
         stopping: jobs.isStopping,
         jobs: jobs.snapshot(),
       });
+    }
+    if (req.url === '/ready' && probes) {
+      void checkReadiness(probes).then(
+        (report) => send(report.ready ? 200 : 503, report),
+        () => send(503, { ready: false, error: 'проверка готовности не выполнилась' }),
+      );
+      return;
+    }
+    if (req.url === '/queues' && probes) {
+      void probes.queues().then(
+        (queues) => send(200, { queues }),
+        () => send(503, { error: 'очереди недоступны' }),
+      );
+      return;
     }
     return send(404, { error: 'not found' });
   });

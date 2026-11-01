@@ -87,6 +87,15 @@ export class Counters {
     await this.redis.del(key);
   }
 
+  /** Готовность (служебный порт `/ready`): ответ PING в пределах ожидания. */
+  async ping(): Promise<boolean> {
+    try {
+      return (await this.redis.ping()) === 'PONG';
+    } catch {
+      return false;
+    }
+  }
+
   async close(): Promise<void> {
     await this.redis.quit();
   }

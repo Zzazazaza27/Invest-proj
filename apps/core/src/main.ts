@@ -10,6 +10,9 @@ import { randomUUID } from 'node:crypto';
 import { AppModule } from './app.module';
 import { BackgroundJobsService } from './background/background-jobs.service';
 import { startInternalServer } from './background/internal-server';
+import { Database } from './db/unit-of-work';
+import { NatsClient } from './events/nats.client';
+import { S3Service } from './storage/s3.service';
 import { createShutdown } from './background/shutdown';
 import { getEnv } from './config/env';
 import { ProblemDetailsFilter } from './common/problem.filter';
@@ -334,11 +337,27 @@ async function bootstrap(): Promise<void> {
   }
 
   const jobs = app.get(BackgroundJobsService);
-  const internal = await startInternalServer(jobs);
-  logger.log(`служебный порт ${env.CORE_INTERNAL_BIND_HOST}:${internal.port} (/live, /jobs)`);
+  const background = BackgroundJobsService.allowedByConfig();
+  const db = app.get(Database);
+  const s3 = app.get(S3Service);
+  const nats = app.get(NatsClient);
+  const internal = await startInternalServer(jobs, {
+    database: () => db.ping(),
+    // Хранилище: подписанный HEAD контрольного ключа — доступ и подпись,
+    // а не наличие объекта (отсутствующий ключ — тоже ответ хранилища).
+    storage: s3.isConfigured
+      ? async () => (await s3.headObject('control/ready-probe'), true)
+      : null,
+    valkey: counters ? () => counters.ping() : null,
+    nats: nats.enabled ? () => nats.ping() : null,
+    background: () => ({ required: background.allowed, running: jobs.isStarted }),
+    queues: () => db.queueMetrics(),
+  });
+  logger.log(
+    `служебный порт ${env.CORE_INTERNAL_BIND_HOST}:${internal.port} (/live, /ready, /jobs, /queues)`,
+  );
   // Фон запускается здесь, а не при инициализации модулей: решение о роли и
   // выключателе принимается до первого прохода, включая стартовые уборки.
-  const background = BackgroundJobsService.allowedByConfig();
   if (background.allowed) jobs.start();
   else logger.warn(`фоновые задачи не запускаются: ${background.reason}`);
 

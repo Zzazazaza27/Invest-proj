@@ -26,6 +26,21 @@ export class NatsClient implements OnModuleDestroy {
     return getEnv().NATS_URL.length > 0;
   }
 
+  /**
+   * Готовность (служебный порт `/ready`): соединение установлено (или
+   * устанавливается сейчас) и брокер отвечает на flush.
+   */
+  async ping(): Promise<boolean> {
+    try {
+      await this.ensureJetStream();
+      if (!this.connection || this.connection.isClosed()) return false;
+      await this.connection.flush();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   /** Публикация с подтверждением. Возвращает порядковый номер в стриме. */
   async publish(
     subject: string,

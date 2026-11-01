@@ -304,6 +304,17 @@ export class Database implements OnModuleDestroy {
     await client.query('SELECT set_config($1, $2, true)', ['app.trace_id', ctx.traceId]);
   }
 
+  /**
+   * Размер и возраст очередей (служебный порт `/queues`, блок 8, 8.3): одна
+   * функция БД без идентификаторов и содержимого (M152).
+   */
+  async queueMetrics(): Promise<Record<string, Record<string, number>>> {
+    const { rows } = await this.pool.query<{ m: Record<string, Record<string, number>> }>(
+      'SELECT audit.queue_metrics() AS m',
+    );
+    return rows[0]?.m ?? {};
+  }
+
   /** Проверка живости для /v1/health. */
   async ping(): Promise<boolean> {
     try {

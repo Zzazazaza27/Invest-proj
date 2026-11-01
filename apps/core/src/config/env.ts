@@ -43,6 +43,9 @@ const RawEnvSchema = z.object({
   CORE_INTERNAL_BIND_HOST: z.string().default('127.0.0.1'),
   BACKGROUND_TICK_MS: z.coerce.number().int().min(500).max(60_000).default(5_000),
   BACKGROUND_LIVE_STALE_MS: z.coerce.number().int().min(2_000).max(600_000).default(30_000),
+  // Предел ожидания одной зависимости в /ready (блок 8, 8.2: проверки с
+  // ограниченным ожиданием). Зависшая зависимость — fail, а не висящий ответ.
+  READINESS_CHECK_TIMEOUT_MS: z.coerce.number().int().min(200).max(10_000).default(2_000),
   CORS_ALLOWED_ORIGINS: z.string().default(''),
   /**
    * Адреса прокси, чьим заголовкам `X-Forwarded-*` разрешено верить.
