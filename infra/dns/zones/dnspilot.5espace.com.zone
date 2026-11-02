@@ -2,7 +2,7 @@
 ; (docs/architecture/dns-independence-plan.md). НЕ делегирована: для
 ; пользователей и для 5espace.com ничего не меняет. Вторичный — 1984 FreeDNS.
 ;
-; {{SERIAL}} подставляет scripts/dns-primary.mjs (строго растущая версия,
+; Заглушку версии в SOA подставляет scripts/dns-primary.mjs (строго растущая версия,
 ; scripts/lib/dns-serial.mjs). Сроки SOA пробные: короткий EXPIRE, чтобы
 ; проверить поведение 1984 при пропаже первичного.
 ;   REFRESH 300, RETRY 60, EXPIRE 3600, MINIMUM 300

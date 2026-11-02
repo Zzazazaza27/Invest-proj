@@ -144,11 +144,13 @@ function up() {
     const text = readFileSync(z.src, 'utf8');
     const nsNames = [...text.matchAll(/^\S*\s+NS\s+(\S+?)\.?\s*$/gm)].map((m) => m[1]);
     const served = servedSerials(z.name, nsNames);
+    if ((text.match(/{{SERIAL}}/g) || []).length !== 1)
+      throw new Error(`${z.name}: заглушка {{SERIAL}} должна встречаться ровно один раз (в SOA)`);
     const prev = last[z.name];
     const serial = nextSerial({ published: [prev, ...served] });
     writeFileSync(
       join(STATE, 'zones', `${z.name}.zone`),
-      text.replace('{{SERIAL}}', String(serial)),
+      text.replaceAll('{{SERIAL}}', String(serial)),
     );
     last[z.name] = serial;
     console.log(
