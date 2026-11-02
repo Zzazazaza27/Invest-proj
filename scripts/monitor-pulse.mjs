@@ -17,7 +17,15 @@
  * HEALTHCHECKS_PING_URL — секрет (адрес пинга), без него команда только
  * сообщает состояние. ZABBIX_PULSE_API_TOKEN — токен учётки «5e-pulse»
  * (только чтение), его заводит `monitoring.mjs configure`.
+ *
+ * MONITOR_PULSE_PUBLIC_DIR — каталог публичного пульса: сюда пишется
+ * pulse.json `{ at, ok }`, его раздаёт nginx как /_pulse.json для внешней
+ * проверки (5e_watch). Только время этой проверки и итог — без причин,
+ * адресов и иных подробностей. Остановился таймер — время устаревает, и
+ * внешняя проверка видит отказ.
  */
+import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { loadEnv } from './lib/backup.mjs';
 import { zabbixApi } from './lib/zabbix-api.mjs';
 
@@ -47,6 +55,17 @@ async function zabbixFresh() {
 }
 
 const state = await zabbixFresh();
+const publicDir = env.MONITOR_PULSE_PUBLIC_DIR;
+if (publicDir) {
+  try {
+    mkdirSync(publicDir, { recursive: true });
+    const tmp = join(publicDir, '.pulse.json.tmp');
+    writeFileSync(tmp, JSON.stringify({ at: new Date().toISOString(), ok: state.ok }));
+    renameSync(tmp, join(publicDir, 'pulse.json'));
+  } catch (error) {
+    console.error(`публичный пульс не записан: ${error.message}`);
+  }
+}
 const url = env.HEALTHCHECKS_PING_URL;
 if (url) {
   try {
