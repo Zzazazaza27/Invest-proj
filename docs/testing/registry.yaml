@@ -2637,6 +2637,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
 
+  - id: CHK-DNS-HIDDEN-PRIMARY
+    file: scripts/check-dns-hidden-primary.mjs
+    command: node scripts/check-dns-hidden-primary.mjs
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 9
+    needs: [docker]
+    effects: ['временные контейнеры Knot DNS и сеть dnslab; удаляются после опыта']
+    studied: code
+    studiedOn: 2026-11-02
+    note: >-
+      Опыт 02.11.2026: 9/9. Мутационный опыт: правило доступа первичного без
+      ключа TSIG — сценарий 2 падает. Длительность ~2,5 мин (ожидание EXPIRE).
+    purpose: 'Схема «скрытый первичный + вторичные» на тестовой зоне (план независимого DNS): передача зоны только по ключу и с адреса вторичного, обновление по NOTIFY, ответы без первичного, истечение по SOA EXPIRE, подъём первичного на другой машине с ростом serial.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-02
+
   - id: TOOL-MONITOR-PROBE-INIT
     file: scripts/monitor-probe-init.mjs
     command: node scripts/monitor-probe-init.mjs
@@ -3731,6 +3749,7 @@ blocks:
         CHK-MONITOR-APP-PROBE,
         CHK-MONITORING-ACCOUNT,
         CHK-MONITOR-PULSE,
+        CHK-DNS-HIDDEN-PRIMARY,
         UNIT-CORE-MONITORING-ACCOUNT,
         DBT-CONCURRENCY,
         DBT-INVARIANTS,
