@@ -1,0 +1,18 @@
+; Пробная зона схемы «скрытый первичный + вторичные»
+; (docs/architecture/dns-independence-plan.md). НЕ делегирована: для
+; пользователей и для 5espace.com ничего не меняет. Вторичный — 1984 FreeDNS.
+;
+; {{SERIAL}} подставляет scripts/dns-primary.mjs (строго растущая версия,
+; scripts/lib/dns-serial.mjs). Сроки SOA пробные: короткий EXPIRE, чтобы
+; проверить поведение 1984 при пропаже первичного.
+;   REFRESH 300, RETRY 60, EXPIRE 3600, MINIMUM 300
+$ORIGIN dnspilot.5espace.com.
+$TTL 300
+@       SOA   hidden-primary.5espace.com. hostmaster.5espace.com. {{SERIAL}} 300 60 3600 300
+@       NS    ns0.1984.is.
+@       NS    ns1.1984.is.
+@       NS    ns2.1984.is.
+@       NS    ns1.1984hosting.com.
+@       NS    ns2.1984hosting.com.
+@       A     193.233.217.210
+probe   TXT   "dns pilot 2026-11-02"

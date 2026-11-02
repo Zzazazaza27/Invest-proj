@@ -2659,6 +2659,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
 
+  - id: TOOL-DNS-PRIMARY
+    file: scripts/dns-primary.mjs
+    command: node scripts/dns-primary.mjs up
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects:
+      [
+        'раскладывает зоны и конфигурацию Knot в DNS_STATE_DIR, поднимает или перезагружает контейнер fifth-dns-primary в сети хоста',
+      ]
+    studied: code
+    studiedOn: 2026-11-02
+    purpose: 'Скрытый первичный DNS: зоны из infra/dns/zones, строго растущая версия зоны (с учётом записанной и отдаваемой вторичными), проверка конфигурации и зон до применения, передача только DNS_TRANSFER_ALLOW.'
+    confirmation: not-run
+
   - id: TOOL-MONITOR-PROBE-INIT
     file: scripts/monitor-probe-init.mjs
     command: node scripts/monitor-probe-init.mjs
