@@ -68,6 +68,7 @@ import {
   walSegments,
   recordJob,
   signal,
+  setLimitations,
   snapshotConfig,
   standNetwork,
   withLock,
@@ -628,9 +629,15 @@ async function set() {
         },
         pendingUploads: JSON.parse(pending),
         keys: { fingerprint, file: `keys/${fingerprint}.env.gpg` },
-        config: { commit: config.commit, images: config.images, natsStreams: config.nats },
+        config: {
+          commit: config.commit,
+          commitError: config.commitError,
+          images: config.images,
+          natsStreams: config.nats,
+        },
         manifest,
       };
+      catalog.limitations = setLimitations(catalog);
 
       // --- проверка частей: только после неё комплект пригоден. Каждый уже
       // сохранённый файл сверяется с хешем его ПЕРВОЙ проверки — порча до этой
@@ -646,11 +653,17 @@ async function set() {
       // готовый комплект без записанных исходных хешей.
       saveLedger(ledgerAdd(manifest, ledger));
       writeFileSync(join(dir, 'READY'), new Date().toISOString());
-      recordJob('set', true, { lastSet: id, lastAt: catalog.at, files: objects.length });
+      recordJob('set', true, {
+        lastSet: id,
+        lastAt: catalog.at,
+        files: objects.length,
+        limitations: catalog.limitations,
+      });
       console.log(
         `комплект ${id} пригоден: T=${catalog.at}, база ${base.label}, файлов ${objects.length}, ` +
-          `в описи ${manifest.length}`,
+          `в описи ${manifest.length}, код ${catalog.config.commit ?? '—'}`,
       );
+      for (const l of catalog.limitations) console.error(`НЕПОЛНЫЙ комплект ${id}: ${l}`);
     } catch (error) {
       recordJob('set', false, { lastError: String(error.message ?? error) });
       throw error;
@@ -787,6 +800,19 @@ async function check() {
       ? `последний пригодный комплект ${lastReady} (T=${readyAt})`
       : 'пригодных комплектов нет',
   );
+  // Данные целы, но сведений не хватает: отдельный сигнал, не «всё в порядке».
+  if (lastReady) {
+    const limits = setLimitations(
+      JSON.parse(readFileSync(join(c.sets, lastReady, 'catalog.json'), 'utf8')),
+    );
+    await say(
+      'set-meta',
+      limits.length > 0,
+      limits.length
+        ? `комплект ${lastReady} неполный: ${limits.join('; ')}`
+        : `сведения комплекта ${lastReady} полные`,
+    );
+  }
 
   // Ключи: без открытого ключа получателя комплект ключей не обновится.
   await say(
@@ -921,6 +947,7 @@ async function pull() {
   // Сводки pgBackRest — из снимка этого комплекта, на штатные места.
   materializeMeta(root, catalog);
   console.log(`комплект ${id} скачан и сверен (SHA-256 каждого файла описи): ${root}`);
+  for (const l of setLimitations(catalog)) console.log(`ОГРАНИЧЕНИЕ комплекта ${id}: ${l}`);
   return root;
 }
 

@@ -25,7 +25,7 @@
  * Секреты не печатаются: в контейнеры уходят переменными окружения процесса
  * docker (`-e ИМЯ` без значения), а не аргументами.
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   closeSync,
@@ -401,11 +401,17 @@ export function snapshotConfig(targetDir) {
     }
   }
 
-  let commit = '';
-  try {
-    commit = execFileSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-  } catch {
-    /* не репозиторий — фиксируем пустым */
+  // Версия кода — полный SHA или явная причина, почему её нет: пустая строка
+  // выдавала неполный комплект за полный (комплекты 02.11 на VPS).
+  let commit = null;
+  let commitError = null;
+  const git = spawnSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8' });
+  const sha = (git.stdout ?? '').trim();
+  if (git.status === 0 && /^[0-9a-f]{40}$/.test(sha)) commit = sha;
+  else {
+    commitError =
+      (git.error?.message ?? git.stderr ?? '').trim().split('\n')[0] ||
+      `git rev-parse: код ${git.status}, ответ «${sha}»`;
   }
   const images = {};
   const ps = docker(['ps', '--format', '{{.Names}}'], { allowFail: true }).stdout.trim();
@@ -434,7 +440,7 @@ export function snapshotConfig(targetDir) {
       /* монитор недоступен — отметим пустым */
     }
   }
-  const meta = { commit, images, nats };
+  const meta = { commit, commitError, images, nats };
   writeFileSync(join(targetDir, 'meta.json'), JSON.stringify(meta, null, 2));
   return meta;
 }
@@ -712,6 +718,22 @@ export function manifestProblems(dir, manifest, { cache } = {}) {
 
 export const loadHashCache = () => readState('hash-cache') ?? {};
 export const saveHashCache = (cache) => writeState('hash-cache', cache);
+
+/**
+ * Ограничения пригодного комплекта: чего в нём нет, хотя данные целы.
+ * Такой комплект восстанавливает данные, но не выдаётся за полный. Старые
+ * комплекты (до 2026-11-02 включительно) писали пустую строку вместо SHA.
+ */
+export function setLimitations(catalog) {
+  const out = [];
+  const commit = catalog.config?.commit;
+  if (!commit || !/^[0-9a-f]{40}$/.test(commit)) {
+    out.push(
+      `версия кода не записана${catalog.config?.commitError ? `: ${catalog.config.commitError}` : ''}`,
+    );
+  }
+  return out;
+}
 
 /**
  * Пригодность комплекта: цепочка базы до T, опись (каждый файл на месте и с
