@@ -16,7 +16,9 @@ import { NatsClient } from './events/nats.client';
 import { S3Service } from './storage/s3.service';
 import { createShutdown } from './background/shutdown';
 import { getEnv } from './config/env';
-import { ProblemDetailsFilter } from './common/problem.filter';
+import { ProblemDetailsFilter, problemCodeOf } from './common/problem.filter';
+import { JsonLogger, defaultMeta } from './common/logging/json-logger';
+import { safeError } from './common/logging/safe-log';
 import { MAX_BODY_BYTES } from './common/validation';
 import { getCounters, rateLimitStoreFor } from './cache/counters';
 import { registerIpCeiling } from './cache/ip-ceiling';
@@ -83,6 +85,20 @@ async function bootstrap(): Promise<void> {
   // или CORS '*' процесс просто не поднимется.
   const env = getEnv();
   const logger = new Logger('bootstrap');
+  // Структурированный журнал (8.4, 2.1-W08b): поля из перечня, маскировка
+  // до записи. В тестах журнал выключен, как и раньше.
+  const json = new JsonLogger(defaultMeta(env.CORE_ROLE === 'worker' ? 'worker' : 'core'));
+  // Авария процесса: текст исключения не пишется (в нём бывают значения),
+  // только класс, код и кадры стека; затем выход — как поведение по
+  // умолчанию, но без сырого стека в stderr.
+  process.on('uncaughtException', (error) => {
+    json.record('fatal', 'process', { msg: 'необработанное исключение', ...safeError(error) });
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    json.record('fatal', 'process', { msg: 'необработанный отказ промиса', ...safeError(reason) });
+    process.exit(1);
+  });
 
   const adapter = new FastifyAdapter({
     bodyLimit: MAX_BODY_BYTES,
@@ -100,17 +116,39 @@ async function bootstrap(): Promise<void> {
     // пустой список в production означает «прокси нет», и заголовки
     // игнорируются.
     trustProxy: env.TRUSTED_PROXY_CIDRS === '' ? false : env.TRUSTED_PROXY_CIDRS.split(','),
-    // Логи запросов Fastify оставлены включёнными: они нужны для разбора
-    // инцидентов. (Прежний комментарий говорил про «заголовок, раскрывающий
-    // стек» — это про `hidePoweredBy` у helmet, к этой опции отношения не
-    // имеет; INFO аудита №2.)
-    disableRequestLogging: false,
+    // Логгер Fastify не включается: он писал бы url с query. Журнал запросов —
+    // хук onResponse ниже, с шаблоном маршрута вместо адреса (8.4).
   });
 
   const app = await NestFactory.create<NestFastifyApplication>(AppModule, adapter, {
-    logger: env.isTest ? false : ['error', 'warn', 'log'],
+    logger: env.isTest ? false : json,
     bufferLogs: true,
   });
+
+  // ---- Журнал запросов (8.4) ---------------------------------------------
+  // Метод, ШАБЛОН маршрута (не адрес: в нём query и идентификаторы),
+  // статус, длительность, код результата и ID запроса. Отказ внутри 2xx
+  // ядро помечает тем же кодом через problemCodeOf, если операция его
+  // записала.
+  if (!env.isTest) {
+    app
+      .getHttpAdapter()
+      .getInstance()
+      .addHook('onResponse', (request, reply, done) => {
+        const status = reply.statusCode;
+        json.record(status >= 500 ? 'error' : 'log', 'http', {
+          msg: 'запрос',
+          method: request.method,
+          route: request.routeOptions.url ?? '(нет маршрута)',
+          status,
+          durationMs: Math.round(reply.elapsedTime),
+          code: problemCodeOf(request),
+          result: status >= 500 ? 'error' : status >= 400 ? 'refused' : 'ok',
+          requestId: request.id,
+        });
+        done();
+      });
+  }
 
   app.setGlobalPrefix('v1');
   app.enableVersioning({ type: VersioningType.URI, defaultVersion: false as never });

@@ -2794,6 +2794,21 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
 
+  - id: UNIT-CORE-SAFE-LOG
+    file: apps/core/tests/safe-log.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 21
+    studied: code
+    studiedOn: 2026-11-02
+    needs: []
+    effects: ['только память']
+    purpose: 'Технический журнал ядра без секретов до записи (8.4, 2.1-W08b): маскировка текста (пароль в адресе, query, Bearer, JWT, пары ключ=значение, Key (…)=(…), значения в кавычках, почта, управляющие символы); поля только по перечню, отброшенные видны по имени; исключение — класс, SQLSTATE, кадры без текста; JsonLogger — строки Nest, объекты, уровни; сторож — подстановки в текст сообщения только из утверждённого перечня.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-02
+
   - id: CHK-MONITORING-ACCOUNT
     file: scripts/check-monitoring-account.mjs
     command: node scripts/check-monitoring-account.mjs
@@ -3863,6 +3878,7 @@ blocks:
         TOOL-NETWORK-AUDIT,
         PRB-SHARED-RATE-LIMIT,
         PRB-SECRET-LEAK,
+        UNIT-CORE-SAFE-LOG,
         PRB-RATE-LIMIT,
         PRB-IP-CEILING-TTL,
         PRB-VALKEY-COUNTERS,

@@ -8,6 +8,14 @@ import {
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { ErrorCode, problemTypeUri, type ProblemDetails } from '@unicorn/contracts';
 import { AppError } from './errors';
+import { safeError } from './logging/safe-log';
+
+/** Код результата запроса для журнала запросов (8.4): ставит фильтр. */
+const PROBLEM_CODE = Symbol('problemCode');
+
+export function problemCodeOf(request: FastifyRequest): string | undefined {
+  return (request as FastifyRequest & { [PROBLEM_CODE]?: string })[PROBLEM_CODE];
+}
 
 /**
  * Единая точка формирования ответа об ошибке (RFC 9457).
@@ -34,16 +42,21 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     const traceId = request.id;
 
     const { problem, internal, cause } = this.toProblem(exception, request.url, traceId);
+    (request as FastifyRequest & { [PROBLEM_CODE]?: string })[PROBLEM_CODE] = problem.code;
 
+    // В журнал — шаблон маршрута, а не адрес (в адресе query и
+    // идентификаторы), и исключение без текста (8.4): класс, код драйвера,
+    // кадры стека. Наружу по-прежнему уходит только problem.
+    const route = request.routeOptions?.url ?? '(нет маршрута)';
     if (problem.status >= 500) {
       this.logger.error({
         msg: 'необработанная ошибка',
         traceId,
         code: problem.code,
-        path: request.url,
+        route,
         method: request.method,
         internal,
-        error: cause instanceof Error ? { message: cause.message, stack: cause.stack } : cause,
+        ...(cause === undefined ? {} : safeError(cause)),
       });
     } else {
       this.logger.warn({
@@ -51,7 +64,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
         traceId,
         code: problem.code,
         status: problem.status,
-        path: request.url,
+        route,
         method: request.method,
         internal,
       });
