@@ -2601,7 +2601,7 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [docker]
-    effects: ['отправляет отметку или /fail на HEALTHCHECKS_PING_URL, если он задан']
+    effects: ['отправляет отметку или /fail на HEALTHCHECKS_PING_URL, если он задан; пишет pulse.json {at, ok} в MONITOR_PULSE_PUBLIC_DIR, если он задан']
     studied: code
     studiedOn: 2026-11-01
     note: >-
@@ -2612,6 +2612,24 @@ checks:
     purpose: 'Пульс внешнему наблюдателю (блок 8, 8.2): отметка только при свежей контрольной отметке в Zabbix через его API (подтверждает сервер и базу Zabbix), иначе /fail; ядро на пульс не влияет.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
+
+  - id: CHK-MONITOR-PULSE
+    file: scripts/check-monitor-pulse.mjs
+    command: node scripts/check-monitor-pulse.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 12
+    needs: []
+    effects: ['только память']
+    studied: code
+    studiedOn: 2026-11-02
+    note: >-
+      Мутационный опыт 02.11.2026: без проверки времени из будущего — 2 FAIL
+      (отметка на час и на 61 с вперёд считалась свежей); с проверкой — 12/12.
+    purpose: 'Свежесть контрольной отметки Zabbix для пульса: свежая и на пороге — да; устаревшая, из будущего сверх допуска 60 с, пустая, нулевая, не число, дробная — отказ.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-02
 
   - id: TOOL-MONITOR-PROBE-INIT
     file: scripts/monitor-probe-init.mjs
@@ -3706,6 +3724,7 @@ blocks:
         UNIT-CORE-READINESS,
         CHK-MONITOR-APP-PROBE,
         CHK-MONITORING-ACCOUNT,
+        CHK-MONITOR-PULSE,
         UNIT-CORE-MONITORING-ACCOUNT,
         DBT-CONCURRENCY,
         DBT-INVARIANTS,

@@ -28,6 +28,7 @@ import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadEnv } from './lib/backup.mjs';
 import { zabbixApi } from './lib/zabbix-api.mjs';
+import { pulseVerdict } from './lib/pulse.mjs';
 
 loadEnv();
 const env = process.env;
@@ -45,10 +46,7 @@ async function zabbixFresh() {
       output: ['lastclock'],
     });
     if (!item) return { ok: false, reason: 'контрольный элемент не найден' };
-    const age = Math.round(Date.now() / 1000 - Number(item.lastclock));
-    return age <= FRESH_SEC
-      ? { ok: true, reason: `контрольная отметка ${age} с назад` }
-      : { ok: false, reason: `контрольная отметка устарела: ${age} с` };
+    return pulseVerdict(item.lastclock, Date.now() / 1000, FRESH_SEC);
   } catch (error) {
     return { ok: false, reason: `API Zabbix недоступен: ${error.message.slice(0, 120)}` };
   }
