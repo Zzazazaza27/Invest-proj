@@ -850,12 +850,27 @@ async function configure() {
       dependencies: [],
     },
   );
+  // Агентская проверка «молчит» по-настоящему, только если сам агент всё её
+  // окно присылал отметки (раз в минуту, допуск — одна). Иначе после
+  // возвращения агента зависимость снимается раньше первых свежих данных и
+  // «Нет данных» вспыхивает на секунды (проба 2026-11-02: живость и общая
+  // готовность ядра, 4 лишних сообщения).
+  const minutes = (w) => Number.parseInt(w, 10) * ({ s: 1 / 60, m: 1, h: 60 }[w.at(-1)] ?? 1);
   for (const f of freshness) {
     if (f.key === 'agent.ping') continue;
-    await trigger(`Нет данных: ${f.name}`, `nodata(/${H}/${f.key},${windowOf(f)})=1`, f.priority, {
-      comments,
-      dependencies: viaAgent(f) ? [{ triggerid: agentTrigger }] : [],
-    });
+    const w = windowOf(f);
+    const agentAlive = Math.max(1, Math.floor(minutes(w)) - 1);
+    await trigger(
+      `Нет данных: ${f.name}`,
+      viaAgent(f)
+        ? `nodata(/${H}/${f.key},${w})=1 and count(/${H}/agent.ping,${w})>=${agentAlive}`
+        : `nodata(/${H}/${f.key},${w})=1`,
+      f.priority,
+      {
+        comments,
+        dependencies: viaAgent(f) ? [{ triggerid: agentTrigger }] : [],
+      },
+    );
   }
 
   await notifications();
