@@ -21,10 +21,14 @@ import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ROOT, loadEnv } from './lib/backup.mjs';
+import { pinned, pinnedFetch } from './lib/pinned-fetch.mjs';
 
 loadEnv();
 const env = process.env;
 const BASE = (env.MONITOR_PUBLIC_URL || 'http://127.0.0.1').replace(/\/$/, '');
+// PUBLIC_PIN — на время отказа DNS: путь проверяется по закреплённому IP,
+// результат помечается pinned, доступность по имени им не подтверждается.
+const PINNED = pinned(BASE);
 const stateDir = resolve(env.MONITOR_STATE_DIR || join(ROOT, '.local', 'monitor-state'));
 const privateDir = resolve(env.MONITOR_PRIVATE_DIR || join(ROOT, '.local', 'monitor-private'));
 mkdirSync(privateDir, { recursive: true });
@@ -34,7 +38,7 @@ const started = Date.now();
 
 let cookie = existsSync(sessionFile) ? readFileSync(sessionFile, 'utf8').trim() : '';
 const call = (path, init = {}) =>
-  fetch(`${BASE}${path}`, {
+  pinnedFetch(`${BASE}${path}`, {
     ...init,
     redirect: 'manual',
     headers: { ...(init.headers ?? {}), ...(cookie ? { cookie } : {}) },
@@ -42,7 +46,7 @@ const call = (path, init = {}) =>
   });
 
 async function login() {
-  const r = await fetch(`${BASE}/v1/auth/login`, {
+  const r = await pinnedFetch(`${BASE}/v1/auth/login`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ email: expected.email, password: env.CONTROL_PROBE_PASSWORD }),
@@ -94,7 +98,8 @@ try {
 } catch (error) {
   result = { ok: false, step: 'error', reason: String(error.message ?? error).slice(0, 200) };
 }
-const out = { at: new Date().toISOString(), ms: Date.now() - started, ...result };
+if (PINNED) result.reason += ' [IP закреплён — имя (DNS) не проверялось]';
+const out = { at: new Date().toISOString(), ms: Date.now() - started, pinned: PINNED, ...result };
 mkdirSync(stateDir, { recursive: true });
 const target = join(stateDir, 'app-probe.json');
 writeFileSync(`${target}.tmp`, JSON.stringify(out, null, 2));

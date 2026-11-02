@@ -97,22 +97,24 @@ function remote(cmd, { show = false, allowFail = false } = {}) {
   }
 }
 
-/** Запрос снаружи — средствами Node, без curl (на Windows он псевдоним). */
+/**
+ * Запрос снаружи — средствами Node, без curl (на Windows он псевдоним).
+ * PUBLIC_PIN (scripts/lib/pinned-fetch.mjs) — на время отказа DNS: соединение
+ * на заданный IP, Host/SNI и проверка сертификата по имени. Такой успех
+ * подтверждает сервер, но не доступность по имени — это печатается явно.
+ */
 function probe(url) {
-  const script = [
-    'const c = new AbortController();',
-    'const t = setTimeout(() => c.abort(), 15000);',
-    'fetch(process.argv[1], { signal: c.signal })',
-    '  .then((r) => process.stdout.write(String(r.status)))',
-    "  .catch(() => process.stdout.write('0'))",
-    '  .finally(() => clearTimeout(t));',
-  ].join('');
-  const out = spawnSync(process.execPath, ['-e', script, url], {
-    encoding: 'utf8',
-    timeout: 30000,
-  });
+  const out = spawnSync(
+    process.execPath,
+    [resolve(ROOT, 'scripts', 'lib', 'pinned-fetch.mjs'), '--status', url],
+    { encoding: 'utf8', timeout: 30000 },
+  );
   return Number((out.stdout || '0').trim()) || 0;
 }
+if (process.env.PUBLIC_PIN)
+  console.warn(
+    `ВНИМАНИЕ: PUBLIC_PIN=${process.env.PUBLIC_PIN} — публичные проверки идут по закреплённому IP; доступность по имени (DNS) этим выкатом НЕ подтверждается.`,
+  );
 
 const sleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 

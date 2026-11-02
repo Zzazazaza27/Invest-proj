@@ -2593,6 +2593,28 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
 
+  - id: TOOL-MONITOR-PROBE-DISABLE
+    file: scripts/monitor-probe-disable.mjs
+    command: node scripts/monitor-probe-disable.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [core, db]
+    effects:
+      [
+        'блокирует служебную учётку мониторинга и сдвигает рубеж её сессий; удаляет сохранённую сессию пробы; учётку и проект не удаляет',
+      ]
+    studied: code
+    studiedOn: 2026-11-02
+    note: >-
+      Испытано на стенде 02.11.2026: блокировка → сохранённая сессия 401, вход
+      паролем 403, проба проваливается («вход служебной учётки: 403»);
+      monitor-probe-init.mjs возвращает учётку в работу, проба снова ok.
+    purpose: 'Безопасное прекращение работы учётки мониторинга при откате W08a или сбое её заведения: проба остановлена, учётка заблокирована, сессии отозваны, отказ проверен (401/403), объекты сохранены для диагностики.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-02
+
   - id: TOOL-MONITOR-PULSE
     file: scripts/monitor-pulse.mjs
     command: node scripts/monitor-pulse.mjs
