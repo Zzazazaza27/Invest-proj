@@ -6,6 +6,9 @@
  *   node scripts/logs-archive.mjs run       один проход: новые записи → порции в S3
  *   node scripts/logs-archive.mjs rebuild   состояние и каталог заново из S3
  *   node scripts/logs-archive.mjs status    сводка без секретов
+ *   node scripts/logs-archive.mjs verify    каждая порция — своей версией; вердикт
+ *   node scripts/logs-archive.mjs pack      суточные пакеты закрытых суток
+ *   node scripts/logs-archive.mjs pull --to <каталог>   ручная копия (добавочно)
  *
  * Источник — journald (`journalctl -o export`), курсоры даёт он; подтверждение
  * архива, повторы, каталог и обнаружение потерь — ответственность этого кода.
@@ -599,6 +602,10 @@ async function run() {
       await confirm(state, catalogRow(key, slice, res), slice.at(-1));
       written++;
     }
+    // Журнал дочитан до конца — момент нужен пакетам: сутки закрыты, если
+    // после их конца архиватор дочитал журнал (записи суток уже в архиве).
+    state.caughtUpAt = new Date(nowMs()).toISOString();
+    saveState(state);
     console.log(`проход: порций ${written}, последняя запись ${state.lastSeq ?? '—'}`);
   });
 }
@@ -825,10 +832,288 @@ async function verify() {
     `проверено порций: ${rows.length}, квитанций: ${receiptsSeen}, проблем: ${problems.length}, посторонних версий: ${foreign.length}, без квитанции: ${unconfirmed}, пропусков архива: ${gaps}`,
   );
   for (const p of [...problems, ...foreign]) console.log(`  ${p}`);
-  if (problems.length || foreign.length || gaps) process.exitCode = 1;
+  const failedCheck = problems.length || foreign.length || gaps;
+  // Два разных успеха (Тэнк 2026-11-03): согласованность архива с учтёнными
+  // потерями не означает, что данные сохранены полностью.
+  const losses = all.filter((r) => r.kind === 'loss');
+  const lostRecords = losses.reduce((n, r) => n + (BigInt(r.last) - BigInt(r.first) + 1n), 0n);
+  const byReason = {};
+  for (const r of losses) byReason[r.reason] = (byReason[r.reason] ?? 0) + 1;
+  console.log(
+    failedCheck
+      ? 'ИТОГ: проверка НЕ пройдена'
+      : losses.length
+        ? `ИТОГ: проверка пройдена, есть учтённые потери — отрезков ${losses.length}, записей ${lostRecords} (${Object.entries(
+            byReason,
+          )
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(', ')}); утраченное не восстановлено`
+        : 'ИТОГ: данные сохранены полностью',
+  );
+  if (failedCheck) process.exitCode = 1;
 }
 
-const commands = { init, run, rebuild: rebuildState, status, verify };
+// ------------------------------------------------------------- пакеты
+
+const DAY_MS = 86_400_000;
+const dayOf = (micros) => new Date(Math.floor(Number(micros) / 1000)).toISOString().slice(0, 10);
+const nowMs = () => (env.LOGS_TEST_NOW ? Date.parse(env.LOGS_TEST_NOW) : Date.now());
+
+/**
+ * Пакет суток: заголовок-опись (длина + JSON) и исходные байты порций подряд.
+ * Минутные порции остаются — пакет уменьшает число СКАЧИВАЕМЫХ объектов, а не
+ * хранимых.
+ */
+function buildPack(parts) {
+  const manifest = [];
+  let offset = 0;
+  for (const p of parts) {
+    manifest.push({ ...p.row, offset, length: p.plain.length });
+    offset += p.plain.length;
+  }
+  const head = Buffer.from(JSON.stringify(manifest));
+  const len = Buffer.alloc(4);
+  len.writeUInt32BE(head.length);
+  return Buffer.concat([len, head, ...parts.map((p) => p.plain)]);
+}
+
+function parsePack(plain) {
+  const n = plain.readUInt32BE(0);
+  const manifest = JSON.parse(plain.subarray(4, 4 + n).toString('utf8'));
+  const body = plain.subarray(4 + n);
+  return manifest.map((m) => ({ ...m, plain: body.subarray(m.offset, m.offset + m.length) }));
+}
+
+const packKey = (sid, day) => `p/${sid}/${day}.pack`;
+const packReceiptKey = (sid, day, versionId) => `pr/${sid}/${day}/${versionId}.json`;
+
+/**
+ * Собрать пакеты закрытых суток (UTC). Сутки закрыты, когда архиватор дочитал
+ * журнал до конца позже их окончания (с запасом 5 минут), — иначе опоздавшая
+ * порция выпала бы из пакета. Каждая порция читается ИМЕННО своей версией и
+ * сверяется по исходному хешу.
+ */
+async function pack() {
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  await withLock(async () => {
+    const state = loadState();
+    if (!state) throw new Error('нет состояния — сначала rebuild');
+    const rows = loadCatalog().filter((r) => r.kind === 'chunk' && r.from);
+    const today = new Date(nowMs()).toISOString().slice(0, 10);
+    const caughtUp = state.caughtUpAt ? Date.parse(state.caughtUpAt) : 0;
+    const byDay = new Map();
+    for (const r of rows) {
+      const d = dayOf(r.from);
+      if (d < today && caughtUp >= Date.parse(`${d}T00:00:00Z`) + DAY_MS + 5 * 60_000) {
+        byDay.set(d, [...(byDay.get(d) ?? []), r]);
+      }
+    }
+    const existing = new Set(
+      (await listVersions(`pr/${state.seqId}/`)).map((v) => v.key.split('/')[2]),
+    );
+    let made = 0;
+    for (const [day, list] of [...byDay].sort()) {
+      if (existing.has(day)) continue;
+      const parts = [];
+      for (const row of list.sort((a, b) => (BigInt(a.first) < BigInt(b.first) ? -1 : 1))) {
+        const got = await plainOfVersion(row.key, row.versionId, keyMat);
+        if (!got || sha256Hex(got.plain) !== row.plainSha) {
+          throw new Error(`пакет ${day}: порция ${row.key} не сошлась — пакет не собран`);
+        }
+        parts.push({ row, plain: got.plain });
+      }
+      const plain = buildPack(parts);
+      const sealed = seal(plain, keyMat.key);
+      const key = packKey(state.seqId, day);
+      const versionId = await putObject(key, sealed, { format: `pack+${FORMAT}` });
+      await putObject(
+        packReceiptKey(state.seqId, day, versionId),
+        Buffer.from(
+          JSON.stringify({
+            day,
+            key,
+            versionId,
+            objSha: sha256Hex(sealed),
+            plainSha: sha256Hex(plain),
+            chunks: parts.map((p) => ({
+              key: p.row.key,
+              versionId: p.row.versionId,
+              first: p.row.first,
+              last: p.row.last,
+              count: p.row.count,
+              plainSha: p.row.plainSha,
+            })),
+          }),
+        ),
+      );
+      made++;
+      console.log(`пакет ${day}: порций ${parts.length}`);
+    }
+    console.log(`пакетов собрано: ${made}`);
+  });
+}
+
+// ------------------------------------------------------------- скачивание
+
+/**
+ * Ручная копия на ноутбук. Работает по S3 (граница, квитанции порций,
+ * потерь и пакетов), а не по каталогу сервера: добавочно качает пакеты,
+ * которых нет, и подтверждённые порции, ещё не вошедшие в пакет. Всё
+ * скачанное — зашифрованным, как в архиве; проверка — расшифровкой в памяти
+ * до исходного хеша и числа записей каждой порции.
+ *
+ *   node scripts/logs-archive.mjs pull --to <каталог>
+ */
+async function pull() {
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  const i = process.argv.indexOf('--to');
+  const to = i > 0 ? process.argv[i + 1] : env.LOGS_PULL_TO || null;
+  if (!to) throw new Error('нужен --to <каталог>');
+  mkdirSync(join(to, 'packs'), { recursive: true });
+  mkdirSync(join(to, 'chunks'), { recursive: true });
+
+  const anchors = await readAnchors();
+  if (!anchors.length) throw new Error('в S3 нет границы архива');
+  const anchor = anchors.sort((a, b) => (a.at < b.at ? -1 : 1)).at(-1);
+  const sid = anchor.seqId;
+
+  // Квитанции порций и потерь; действующая — чья версия объекта есть.
+  const objectVersions = groupByKey(await listVersions(`${PREFIX}/${sid}/`));
+  const receipts = [];
+  for (const [key] of groupByKey(await listVersions(`r/${sid}/`))) {
+    const r = parseReceiptKey(key);
+    if (!r) continue;
+    const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
+    if (!(objectVersions.get(range) ?? []).some((v) => v.versionId === r.versionId)) continue;
+    receipts.push({ ...r, range, key });
+  }
+  // Пакеты по их квитанциям.
+  const packs = [];
+  for (const [key, versions] of groupByKey(await listVersions(`pr/${sid}/`))) {
+    if (versions.length !== 1) throw new Error(`НЕОДНОЗНАЧНОСТЬ: квитанция пакета ${key}`);
+    packs.push(JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8')));
+  }
+
+  let downloaded = 0;
+  const problems = [];
+  const coveredByPack = new Set();
+  for (const p of packs) {
+    const local = join(to, 'packs', `${p.day}.${p.versionId}.pack`);
+    if (!existsSync(local)) {
+      const sealed = await getVersion(p.key, p.versionId);
+      if (!sealed) {
+        problems.push(`пакет ${p.day}: версии нет в архиве`);
+        continue;
+      }
+      writeFileSync(local, sealed);
+      downloaded++;
+    }
+    const sealed = readFileSync(local);
+    if (sha256Hex(sealed) !== p.objSha) {
+      problems.push(`пакет ${p.day}: хеш файла не совпал (порча копии)`);
+      continue;
+    }
+    let parts;
+    try {
+      parts = parsePack(open(sealed, keyMat.key));
+    } catch (error) {
+      problems.push(`пакет ${p.day}: не расшифрован (${error.message})`);
+      continue;
+    }
+    for (const c of p.chunks) {
+      const part = parts.find((x) => x.key === c.key && x.versionId === c.versionId);
+      if (
+        !part ||
+        sha256Hex(part.plain) !== c.plainSha ||
+        new ExportReader().push(part.plain).length !== c.count
+      ) {
+        problems.push(`пакет ${p.day}: порция ${c.key} не сошлась`);
+        continue;
+      }
+      coveredByPack.add(`${c.key}@${c.versionId}`);
+    }
+  }
+
+  const ranges = [];
+  let lossRecords = 0n;
+  let losses = 0;
+  for (const r of receipts) {
+    if (r.kind === 'loss') {
+      ranges.push({ first: r.first, last: r.last });
+      losses++;
+      lossRecords += r.last - r.first + 1n;
+      continue;
+    }
+    if (coveredByPack.has(`${r.range}@${r.versionId}`)) {
+      ranges.push({ first: r.first, last: r.last });
+      continue;
+    }
+    const row = JSON.parse(
+      (await getVersion(r.key, (await listVersions(r.key))[0].versionId)).toString('utf8'),
+    );
+    const local = join(to, 'chunks', `${r.range.split('/').pop()}.${r.versionId}`);
+    if (!existsSync(local)) {
+      const sealed = await getVersion(r.range, r.versionId);
+      writeFileSync(local, sealed);
+      downloaded++;
+    }
+    const sealed = readFileSync(local);
+    let plain = null;
+    try {
+      plain = open(sealed, keyMat.key);
+    } catch {
+      /* ниже — проблема */
+    }
+    if (
+      !plain ||
+      sha256Hex(sealed) !== row.objSha ||
+      sha256Hex(plain) !== row.plainSha ||
+      new ExportReader().push(plain).length !== row.count
+    ) {
+      problems.push(`порция ${r.range}: копия не сошлась с квитанцией`);
+      continue;
+    }
+    ranges.push({ first: r.first, last: r.last });
+  }
+
+  // Непрерывность от границы до последней квитанции.
+  const merged = mergeRanges(ranges);
+  const start = BigInt(anchor.afterSeq) + 1n;
+  const gaps = [];
+  let at = start;
+  for (const m of merged) {
+    if (m.first > at) gaps.push(`${at}–${m.first - 1n}`);
+    if (m.last + 1n > at) at = m.last + 1n;
+  }
+  const summary = {
+    at: new Date().toISOString(),
+    seqId: sid,
+    from: str(start),
+    to: str(at - 1n),
+    packs: packs.length,
+    downloaded,
+    losses,
+    lossRecords: str(lossRecords),
+    gaps,
+    problems,
+  };
+  writeFileSync(join(to, 'PULLED.json'), JSON.stringify(summary, null, 2));
+  console.log(
+    `скачано объектов: ${downloaded}, пакетов: ${packs.length}, записи ${summary.from}–${summary.to}, пропусков: ${gaps.length}, проблем: ${problems.length}`,
+  );
+  for (const p of [...gaps.map((g) => `пропуск ${g}`), ...problems]) console.log(`  ${p}`);
+  const failedCheck = gaps.length || problems.length;
+  console.log(
+    failedCheck
+      ? 'ИТОГ: копия НЕ сошлась'
+      : losses
+        ? `ИТОГ: копия сошлась, есть учтённые потери — отрезков ${losses}, записей ${lossRecords}; утраченное не восстановлено`
+        : 'ИТОГ: данные сохранены полностью',
+  );
+  if (failedCheck) process.exitCode = 1;
+}
+
+const commands = { init, run, rebuild: rebuildState, status, verify, pack, pull };
 const command = process.argv[2];
 if (!commands[command]) {
   console.error(`команды: ${Object.keys(commands).join(', ')}`);

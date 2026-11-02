@@ -143,6 +143,12 @@ async function versionsOf(key) {
     .filter((v) => v.key === key);
 }
 
+async function allKeysUnder(prefix) {
+  const r = await rootReq('GET', '', { 'list-type': '2', prefix });
+  const xml = await r.text();
+  return [...xml.matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
+}
+
 async function allKeys() {
   const r = await rootReq('GET', '', { 'list-type': '2', prefix: 'j/' });
   const xml = await r.text();
@@ -189,7 +195,19 @@ function verifyOk(name) {
     v.code === 0,
     v.out.split('\n')[0],
   );
+  // Вердикт различает «сохранено полностью» и «пройдено с учтёнными потерями».
+  const hasLoss = catalog().some((r) => r.kind === 'loss');
+  const verdict = v.out.split('\n').find((l) => l.startsWith('ИТОГ:')) ?? '';
+  check(
+    `${name}: вердикт — ${hasLoss ? 'есть учтённые потери' : 'данные сохранены полностью'}`,
+    hasLoss
+      ? verdict.includes('есть учтённые потери')
+      : verdict.includes('данные сохранены полностью'),
+    verdict,
+  );
 }
+
+let readerCreated = null;
 
 async function cleanup() {
   if (keep) {
@@ -198,7 +216,7 @@ async function cleanup() {
   }
   sh('docker', ['rm', '-f', CT], { allowFail: true });
   mcRoot(
-    `mc rb --force --dangerous r/${BUCKET} >/dev/null 2>&1 || mc rb --force r/${BUCKET} >/dev/null 2>&1; mc admin user rm r ${USER} >/dev/null 2>&1; mc admin policy rm r ${USER} >/dev/null 2>&1; true`,
+    `mc rb --force --dangerous r/${BUCKET} >/dev/null 2>&1 || mc rb --force r/${BUCKET} >/dev/null 2>&1; mc admin user rm r ${USER} >/dev/null 2>&1; mc admin policy rm r ${USER} >/dev/null 2>&1; ${readerCreated ? `mc admin user rm r ${readerCreated} >/dev/null 2>&1; mc admin policy rm r ${readerCreated} >/dev/null 2>&1;` : ''} true`,
   );
 }
 
@@ -484,6 +502,121 @@ try {
     r9.code === 0 && !r9.out.includes('ПОТЕРЯ'),
     r9.out.split('\n').pop(),
   );
+
+  // ---------------------------------------------------------- P
+  console.log('\n▸ P. Суточные пакеты и ручная копия (учётка только на чтение)');
+  const READER = `logs-r-${tag}`;
+  const READER_SECRET = randomBytes(18).toString('hex');
+  const readerPolicy = JSON.stringify({
+    Version: '2012-10-17',
+    Statement: [
+      {
+        Effect: 'Allow',
+        Action: [
+          's3:GetObject',
+          's3:GetObjectVersion',
+          's3:ListBucket',
+          's3:ListBucketVersions',
+          's3:GetBucketLocation',
+        ],
+        Resource: [`arn:aws:s3:::${BUCKET}`, `arn:aws:s3:::${BUCKET}/*`],
+      },
+    ],
+  });
+  sh('docker', ['exec', '-i', 'unicorn-minio', 'sh', '-c', `cat > /tmp/pr-${tag}.json`], {
+    input: readerPolicy,
+  });
+  sh(
+    'docker',
+    [
+      'exec',
+      '-e',
+      'RS',
+      'unicorn-minio',
+      'sh',
+      '-c',
+      `mc alias set r http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc admin policy create r ${READER} /tmp/pr-${tag}.json >/dev/null && mc admin user add r ${READER} "$RS" >/dev/null && mc admin policy attach r ${READER} --user ${READER} >/dev/null; rm -f /tmp/pr-${tag}.json; mc alias rm r >/dev/null`,
+    ],
+    { env: { RS: READER_SECRET } },
+  );
+  readerCreated = READER;
+  const asReader = { LOGS_S3_ACCESS_KEY_ID: READER, LOGS_S3_SECRET_ACCESS_KEY: READER_SECRET };
+  const PULL = `/tmp/pull-${tag}`;
+  const pull = () => arch('pull', { ...asReader, LOGS_PULL_TO: PULL });
+  const downloadedOf = (out) => Number(out.match(/скачано объектов: (\d+)/)?.[1] ?? -1);
+  // «Завтра»: архиватор дочитал журнал после конца суток — сутки закрыты.
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
+  check('проход «завтра»', arch('run', { LOGS_TEST_NOW: tomorrow }).code === 0);
+  const pk = arch('pack', { LOGS_TEST_NOW: tomorrow });
+  check(
+    'пакет закрытых суток собран',
+    pk.code === 0 && /пакет \d{4}-\d{2}-\d{2}: порций \d+/.test(pk.out),
+    pk.out.split('\n')[0],
+  );
+  const pk2 = arch('pack', { LOGS_TEST_NOW: tomorrow });
+  check('повторная сборка пакета не дублирует', pk2.out.includes('пакетов собрано: 0'));
+  const p1 = pull();
+  check(
+    'скачивание: копия сошлась',
+    p1.code === 0 && p1.out.includes('ИТОГ: данные сохранены полностью'),
+    p1.out.split('\n')[0],
+  );
+  check(
+    'скачан один пакет, порции из пакета отдельно не качались',
+    downloadedOf(p1.out) === 1,
+    `скачано ${downloadedOf(p1.out)}`,
+  );
+  const p2 = pull();
+  check(
+    'повтор скачивания — добавочно, ничего',
+    p2.code === 0 && downloadedOf(p2.out) === 0,
+    `скачано ${downloadedOf(p2.out)}`,
+  );
+  gen(10, 'sP');
+  check('проход', arch('run').code === 0);
+  const fresh = catalog().filter((r) => r.kind === 'chunk').length;
+  const p3 = pull();
+  check(
+    'новые порции текущих суток докачаны без пакета',
+    p3.code === 0 && downloadedOf(p3.out) >= 1,
+    `скачано ${downloadedOf(p3.out)}, порций в каталоге ${fresh}`,
+  );
+  // Порча копии на ноутбуке.
+  inCt(
+    `f=$(ls ${PULL}/packs/*.pack | head -1); printf 'X' | dd of="$f" bs=1 seek=40 conv=notrunc 2>/dev/null`,
+  );
+  const p4 = pull();
+  check(
+    'порча байта копии пакета обнаружена',
+    p4.code !== 0 && p4.out.includes('порча копии'),
+    p4.out.split('\n').find((l) => l.includes('пакет')) ?? p4.out.split('\n')[0],
+  );
+  inCt(`rm -f ${PULL}/packs/*.pack`);
+  const p5 = pull();
+  check(
+    'испорченная копия скачана заново — сошлась',
+    p5.code === 0 && downloadedOf(p5.out) === 1,
+    p5.out.split('\n').at(-1),
+  );
+  // Посторонняя версия под ключом пакета не меняет чтение по квитанции.
+  const packObj = (await allKeysUnder('p/'))[0];
+  await rootReq('PUT', packObj, {}, Buffer.from('чужой пакет'));
+  inCt(`rm -f ${PULL}/packs/*.pack`);
+  const p6 = pull();
+  check(
+    'новая версия под ключом пакета: копия по квитанции сошлась',
+    p6.code === 0 && p6.out.includes('ИТОГ: данные сохранены полностью'),
+    p6.out.split('\n').at(-1),
+  );
+  // Учётка чтения не пишет.
+  const rw = await s3Object(
+    { ...root, accessKey: READER, secretKey: READER_SECRET },
+    'PUT',
+    'p/запрещено',
+    Buffer.from('x'),
+  );
+  check('учётка чтения: запись запрещена', rw.status === 403, `HTTP ${rw.status}`);
+  inCt(`rm -rf ${PULL}`);
 
   // ---------------------------------------------------------- 11
   console.log('\n▸ 11. Утрата первой порции архива + потеря состояния (journald ещё хранит)');
