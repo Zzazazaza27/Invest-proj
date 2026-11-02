@@ -200,7 +200,11 @@ export function rclone(
     BACKUP_FILES_CRYPT_SALT: process.env.BACKUP_FILES_CRYPT_SALT,
     ...extraEnv,
   };
-  const args = ['run', '--rm', '--entrypoint', 'sh'];
+  // От root: образ инструмента по умолчанию — пользователь postgres (999), а
+  // каталог копий на VPS — root с правами 700. Без этого rclone не мог прочесть
+  // список файлов и писать в /backup/files; скрыто, пока новых файлов не было
+  // (первые появились при выпуске W08a 2026-11-02 — комплект 16:17 упал).
+  const args = ['run', '--rm', '--user', '0:0', '--entrypoint', 'sh'];
   if (network) args.push('--network', network);
   args.push('-v', `${c.dir}:/backup`);
   for (const m of mounts) args.push('-v', m);
