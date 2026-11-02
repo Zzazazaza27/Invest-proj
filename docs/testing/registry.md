@@ -343,7 +343,7 @@
 | CHK-PRE-PUSH | `npm run gate:pre-push` | 0 | вручную | — |
 | CHK-MONITOR-PULSE | `node scripts/check-monitor-pulse.mjs` | 12 | вручную | — |
 | CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
-| CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 10 | вручную | — |
+| CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
 | CHK-MONITORING-ACCOUNT | `node scripts/check-monitoring-account.mjs` | 9 | вручную | — |
 

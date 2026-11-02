@@ -26,9 +26,13 @@
  * Применение безопасное (замечание Тэнка 2026-11-02): новый комплект
  * (конфигурация + зоны) собирается и проверяется в STATE/staging. Рабочие
  * каталоги не трогаются, пока проверка не прошла. Затем прежний комплект
- * копируется в STATE/previous, новый ставится атомарной заменой файлов,
- * Knot перезагружается и проверяется, что каждая зона загружена с новой
- * версией. Не загрузилась — возврат прежнего комплекта и перезагрузка.
+ * копируется в STATE/previous, новый ставится пофайловой заменой (каждый
+ * файл — через временный и rename; комплект целиком атомарно не
+ * переключается), Knot перезагружается или запускается, и проверяется, что
+ * каждая зона загружена с новой версией. Любая ошибка на этих шагах —
+ * установка, reload, запуск, не та версия — ведёт к общему возврату:
+ * прежний комплект на место, перезагрузка (при её ошибке — перезапуск
+ * контейнера) и подтверждение, что загружены прежние версии.
  * Версия зоны = max(время, последняя записанная + 1, отдаваемая вторичными + 1)
  * — рост сохраняется при той же секунде, переводе часов и подъёме с нуля.
  */
@@ -191,6 +195,10 @@ function install(from, files) {
   }
 }
 
+/** Версия из строки SOA файла зоны (null, если не найдена). */
+const soaSerial = (text) =>
+  text.match(/^\S+\s+(?:\d+\s+)?(?:IN\s+)?SOA\s+\S+\s+\S+\s+(\d+)/m)?.[1] ?? null;
+
 /** Загружены ли зоны с ожидаемыми версиями (ждём до 15 с). */
 function loaded(expected) {
   const end = Date.now() + 15_000;
@@ -278,30 +286,79 @@ function up() {
     process.exit(1);
   }
 
-  // 3. Прежний комплект — в previous (для возврата), новый — в рабочие каталоги.
+  // 3. Прежний комплект — в previous (для возврата).
   const files = setFiles(names);
   const previous = join(STATE, 'previous');
   rmSync(previous, { recursive: true, force: true });
   for (const d of ['config', 'zones']) mkdirSync(join(previous, d), { recursive: true });
-  for (const rel of files)
-    if (existsSync(join(STATE, rel))) copyFileSync(join(STATE, rel), join(previous, rel));
-  install(staging, files);
-
-  // 4. Применение и проверка, что зоны загружены с новыми версиями.
-  const running = sh('docker', ['ps', '-q', '-f', `name=^${NAME}$`], true);
-  if (running) knotc('reload');
-  else startContainer();
-  const res = loaded(next);
-  if (!res.ok) {
-    console.error(
-      `ОТКАЗ: Knot не загрузил новые версии — возврат прежнего комплекта.\n${res.last}`,
-    );
-    install(previous, files);
-    if (sh('docker', ['ps', '-q', '-f', `name=^${NAME}$`], true)) knotc('reload');
-    else startContainer();
-    process.exit(1);
+  const existed = new Set();
+  const prevSerials = {};
+  for (const rel of files) {
+    if (!existsSync(join(STATE, rel))) continue;
+    existed.add(rel);
+    copyFileSync(join(STATE, rel), join(previous, rel));
   }
-  console.log(running ? 'конфигурация и зоны перезагружены' : 'контейнер поднят');
+  for (const z of names) {
+    const rel = join('zones', `${z}.zone`);
+    if (existed.has(rel)) prevSerials[z] = soaSerial(readFileSync(join(previous, rel), 'utf8'));
+  }
+  const isRunning = () => Boolean(sh('docker', ['ps', '-q', '-f', `name=^${NAME}$`], true));
+
+  /** Привести Knot к файлам на диске: reload, при ошибке — перезапуск. */
+  const activate = () => {
+    if (!isRunning()) return startContainer();
+    try {
+      knotc('reload');
+    } catch {
+      sh('docker', ['restart', NAME]);
+    }
+  };
+
+  /** Общий возврат: прежние файлы на место, активация, подтверждение. */
+  const rollback = (reason) => {
+    console.error(`ОТКАЗ: ${reason}\nВозврат прежнего комплекта.`);
+    for (const rel of files) {
+      if (existed.has(rel)) install(previous, [rel]);
+      else rmSync(join(STATE, rel), { force: true });
+    }
+    try {
+      activate();
+    } catch (e) {
+      console.error(
+        `ВОЗВРАТ НЕ ЗАВЕРШЁН: не удалось перезагрузить или запустить Knot — ${`${e.stderr || e.message}`.trim()}`,
+      );
+      process.exit(2);
+    }
+    const expectPrev = Object.fromEntries(Object.entries(prevSerials).filter(([, v]) => v));
+    if (Object.keys(expectPrev).length) {
+      const back = loaded(expectPrev);
+      if (!back.ok) {
+        console.error(`ВОЗВРАТ НЕ ПОДТВЕРЖДЁН: прежние версии не загружены.\n${back.last}`);
+        process.exit(2);
+      }
+      console.error(
+        `возврат подтверждён: ${Object.entries(expectPrev)
+          .map(([z, v]) => `${z} ${v}`)
+          .join(', ')}`,
+      );
+    }
+    process.exit(1);
+  };
+
+  // 4. Установка, применение и проверка версий — под общим возвратом.
+  const wasRunning = isRunning();
+  try {
+    install(staging, files);
+    if (wasRunning) knotc('reload');
+    else startContainer();
+  } catch (e) {
+    rollback(
+      `ошибка установки или применения — ${`${e.stderr || e.message}`.trim().split('\n')[0]}`,
+    );
+  }
+  const res = loaded(next);
+  if (!res.ok) rollback(`Knot не загрузил новые версии.\n${res.last}`);
+  console.log(wasRunning ? 'конфигурация и зоны перезагружены' : 'контейнер поднят');
   // Версия записывается только после подтверждённой загрузки.
   writeFileSync(serialFile, JSON.stringify({ ...last, ...next }, null, 2));
 }
