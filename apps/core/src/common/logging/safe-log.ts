@@ -92,6 +92,9 @@ export function sanitizeText(input: string): string {
   // JWT
   s = s.replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+/g, '***');
   // Пары с секретом: password=…, token: …, "cookie":"…"
+  // Правило SAST срабатывает на слова password/token в выражении: здесь они —
+  // образец для МАСКИРОВКИ, секрета в исходнике нет.
+  // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
   s = s.replace(
     /\b(pass(?:word|wd)?|pwd|secret|token|api[_-]?key|authorization|cookie|session(?:id)?|otp|code_verifier)("?\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,;&)]+)/gi,
     '$1$2***',
