@@ -121,7 +121,12 @@ Healthchecks.io, период 60 с, допуск 120 с. Отметка ухо�
    `MONITOR_STATE_DIR=/var/lib/fifth-monitor`, пароли `ZABBIX_DB_PASSWORD`,
    `ZABBIX_MONITOR_DB_PASSWORD`, `ZABBIX_ADMIN_PASSWORD` (генерируются),
    позже `HEALTHCHECKS_PING_URL`.
-3. `COMPOSE_PROFILES=monitoring,monitoring-host node scripts/infra.mjs up zabbix-db-init zabbix-server zabbix-web zabbix-agent2-host`.
+3. `COMPOSE_PROFILES=monitoring,monitoring-host node scripts/infra.mjs up zabbix-db-init zabbix-server-host zabbix-web zabbix-agent2-host`.
+   Сервер Zabbix на VPS — в сети узла (`zabbix-server-host`): Telegram с VPS
+   доступен только по IPv6, у сетей Docker IPv6 нет. В `.env`
+   `ZABBIX_WEB_SERVER_HOST=host.docker.internal`; в ufw —
+   `ufw allow proto tcp from 172.16.0.0/12 to any port 10051` (веб-интерфейс к
+   серверу), снаружи порт закрыт политикой «входящие запрещены».
 4. Служебная учётка и контрольный проект: `node scripts/monitor-probe-init.mjs`,
    `node scripts/monitoring.mjs control-init`.
 5. Таймеры: `cp infra/systemd/fifth-monitor-* /etc/systemd/system/`,

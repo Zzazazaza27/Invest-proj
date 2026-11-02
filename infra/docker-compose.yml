@@ -520,15 +520,22 @@ services:
         echo "база и роли Zabbix готовы"
     restart: 'no'
 
-  zabbix-server:
+  # Сервер Zabbix в двух вариантах: в сети Docker (стенд, monitoring-local)
+  # и в сети узла (VPS, monitoring-host). На VPS Telegram доступен только по
+  # IPv6, а у сетей Docker IPv6 нет — оповещения из контейнера не уходили
+  # (выпуск W08a 2026-11-02: «Connection timed out» к api.telegram.org).
+  # В сети узла сервер ходит наружу тем же IPv6, что и узел. Порт 10051 при
+  # этом слушается на узле — снаружи его закрывает ufw (входящие запрещены),
+  # разрешены только сети Docker (веб-интерфейс).
+  zabbix-server: &zabbix-server
     image: zabbix/zabbix-server-pgsql:alpine-7.0.31
     container_name: unicorn-zabbix-server
-    profiles: ['monitoring']
+    profiles: ['monitoring-local']
     restart: unless-stopped
     depends_on:
       zabbix-db-init:
         condition: service_completed_successfully
-    environment:
+    environment: &zabbix-server-env
       DB_SERVER_HOST: postgres
       DB_SERVER_PORT: '5432'
       POSTGRES_USER: zabbix
@@ -555,15 +562,33 @@ services:
     mem_limit: 512m
     cpus: 1.0
 
+  zabbix-server-host:
+    <<: *zabbix-server
+    profiles: ['monitoring-host']
+    network_mode: host
+    ports: []
+    environment:
+      <<: *zabbix-server-env
+      DB_SERVER_HOST: 127.0.0.1
+      DB_SERVER_PORT: '${POSTGRES_PORT:-5433}'
+
   zabbix-web:
     image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.31
     container_name: unicorn-zabbix-web
     profiles: ['monitoring']
     restart: unless-stopped
     depends_on:
-      - zabbix-server
+      zabbix-server:
+        condition: service_started
+        required: false
+      zabbix-server-host:
+        condition: service_started
+        required: false
+    # На VPS сервер в сети узла — веб ходит к нему через шлюз узла.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     environment:
-      ZBX_SERVER_HOST: zabbix-server
+      ZBX_SERVER_HOST: ${ZABBIX_WEB_SERVER_HOST:-zabbix-server}
       DB_SERVER_HOST: postgres
       DB_SERVER_PORT: '5432'
       POSTGRES_USER: zabbix
@@ -606,6 +631,8 @@ services:
     container_name: unicorn-zabbix-agent-host
     profiles: ['monitoring-host']
     network_mode: host
+    depends_on:
+      - zabbix-server-host
     environment:
       ZBX_HOSTNAME: ${ZABBIX_HOST_NAME:-5e-vps}
       ZBX_SERVER_HOST: 127.0.0.1
