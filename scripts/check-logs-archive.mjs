@@ -15,12 +15,17 @@
  *   5. разрыв в S3 (порция удалена) + потеря состояния — продолжение с конца
  *      непрерывной цепочки, объекты за разрывом сверяются, а не дублируются;
  *   6. оборванная строка каталога;
- *   7. конфликт: под ключом порции другая порция — без перезаписи, отказ;
- *   8. новая версия под тем же ключом не меняет чтение подтверждённой
- *      порции (каталог хранит VersionId);
+ *   7. конфликт: под ключом только чужая порция (даже с «верным» хешем в
+ *      метаданных) — отказ без перезаписи; после разбора утрата видна;
+ *   8. новая версия B под ключом подтверждённой порции A: verify читает A и
+ *      называет B посторонней; потеря каталога + rebuild — привязка снова A;
  *   9. ротация journald без потерь;
- *  10. вытеснение неархивированных записей — отметка потери, а не успех.
- * Итог: цепочка непрерывна от начала, перекрытий нет.
+ *  10. вытеснение неархивированных записей — отметка «вытеснено journald»;
+ *  11. утрата первой порции архива + потеря состояния — пропуск у границы
+ *      обнаружен и восполнен из journald;
+ *  12. утрата нескольких начальных порций при уже вытесненном journald —
+ *      отметка «утрачено в архиве», а не «вытеснено journald».
+ * Цепочка проверяется от ЗАКРЕПЛЁННОЙ в S3 границы.
  *
  *   node scripts/check-logs-archive.mjs [--keep]
  */
@@ -152,15 +157,24 @@ const catalog = () =>
       }
     });
 
+/** Граница архива из S3 — то, от чего обязана идти цепочка. */
+async function anchorStart() {
+  const r = await rootReq('GET', '', { 'list-type': '2', prefix: 'anchors/' });
+  const key = (await r.text()).match(/<Key>([^<]+)<\/Key>/)?.[1];
+  const a = JSON.parse(await (await rootReq('GET', key)).text());
+  return BigInt(a.afterSeq) + 1n;
+}
+
+/** Цепочка от ЗАКРЕПЛЁННОЙ границы, только по объектам с действующей квитанцией. */
 async function chainCheck(name) {
   const items = (await allKeys())
     .map((k) => ({ key: k, ...parseChunkKey(k) }))
     .filter((i) => i.seqId);
-  const { chain, beyond, overlaps } = contiguousChain(items);
+  const { chain, beyond, overlaps, gaps } = contiguousChain(items, await anchorStart());
   check(
-    `${name}: цепочка непрерывна, перекрытий нет`,
-    beyond.length === 0 && overlaps.length === 0,
-    `звеньев ${chain.length}, за разрывом ${beyond.length}, перекрытий ${overlaps.length}`,
+    `${name}: цепочка непрерывна от границы, перекрытий нет`,
+    beyond.length === 0 && overlaps.length === 0 && gaps.length === 0 && chain.length > 0,
+    `звеньев ${chain.length}, пропусков ${gaps.length}, перекрытий ${overlaps.length}`,
   );
 }
 
@@ -185,6 +199,28 @@ async function cleanup() {
 }
 
 console.log(`=== АРХИВАТОР ЖУРНАЛОВ: испытания (${tag}) ===`);
+
+// Чистая функция: начало закреплено границей (случай Тэнка — граница 100,
+// есть только 110–119; прежняя версия принимала её за непрерывную цепочку).
+{
+  const r = contiguousChain([{ first: 110n, last: 119n }], 100n);
+  check(
+    'цепочка от границы 100 при единственной порции 110–119 — пропуск 100–109',
+    r.chain.length === 0 &&
+      r.gaps.length === 1 &&
+      r.gaps[0].first === 100n &&
+      r.gaps[0].last === 109n,
+  );
+  const ok = contiguousChain(
+    [
+      { first: 100n, last: 109n },
+      { first: 110n, last: 119n },
+    ],
+    100n,
+  );
+  check('цепочка 100–119 от границы 100 — без пропусков', ok.gaps.length === 0 && ok.end === 119n);
+}
+
 try {
   // ---------------------------------------------------------- стенд
   if (sh('docker', ['image', 'inspect', IMAGE], { allowFail: true }).status !== 0) {
@@ -356,28 +392,60 @@ try {
   check('проход после обрыва строки', r6.code === 0, r6.out.split('\n').pop());
   verifyOk('6');
 
-  // ---------------------------------------------------------- 7–8
-  console.log('\n▸ 7–8. Конфликт и новая версия под тем же ключом');
+  // ---------------------------------------------------------- 8
+  console.log('\n▸ 8. Новая версия под тем же ключом — и потеря каталога');
+  gen(10, 's8');
+  check('проход', arch('run').code === 0);
+  const k = catalog().at(-1);
+  const versionA = k.versionId;
+  // root кладёт под тот же ключ другую порцию — новая версия B, даже с
+  // «правильным» исходным хешем в метаданных.
+  const rogue = await rootReq('PUT', k.key, {}, Buffer.from('чужая порция'), {
+    'x-amz-meta-plain-sha256': k.plainSha,
+  });
+  const versionB = rogue.headers.get('x-amz-version-id');
+  check('версия B под тем же ключом (root)', rogue.ok && (await versionsOf(k.key)).length === 2);
+  const v8 = arch('verify');
+  check(
+    'verify: подтверждённая порция читается версией A, B — посторонняя',
+    v8.out.includes('проблем: 0') && v8.out.includes('посторонних версий: 1'),
+    v8.out.split('\n')[0],
+  );
+  inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
+  const rb8 = arch('rebuild');
+  const k8 = catalog().find((r) => r.key === k.key);
+  check(
+    'rebuild после потери каталога: привязка — снова A, а не последняя B',
+    rb8.code === 0 && k8?.versionId === versionA,
+    `в каталоге: ${k8?.versionId === versionA ? 'A' : k8?.versionId === versionB ? 'B' : 'нет'}`,
+  );
+  const v8b = arch('verify');
+  check(
+    'verify после rebuild: проблем 0, B по-прежнему посторонняя',
+    v8b.out.includes('проблем: 0') && v8b.out.includes('посторонних версий: 1'),
+    v8b.out.split('\n')[0],
+  );
+  await rootReq('DELETE', k.key, { versionId: versionB });
+
+  // ---------------------------------------------------------- 7
+  console.log('\n▸ 7. Конфликт: под ключом только чужая порция');
   const stateBefore = inCt(`cat ${ARCH_ENV.LOGS_STATE_DIR}/state.json`);
   const catBefore = inCt(`cat ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
   gen(10, 's7');
   check('проход', arch('run').code === 0);
-  const k = catalog().at(-1);
-  const kHead = await rootReq('HEAD', k.key);
-  const firstCursor = kHead.headers.get('x-amz-meta-first-cursor');
-  // root кладёт под тот же ключ другую порцию — новая версия.
-  const rogue = await rootReq('PUT', k.key, {}, Buffer.from('чужая порция'), {
-    'x-amz-meta-plain-sha256': '0'.repeat(64),
+  const c = catalog().at(-1);
+  for (const v of await versionsOf(c.key)) {
+    await rootReq('DELETE', c.key, { versionId: v.versionId });
+  }
+  const rogue7 = await rootReq('PUT', c.key, {}, Buffer.from('чужая порция'), {
+    'x-amz-meta-plain-sha256': c.plainSha,
   });
   check(
-    'новая версия под тем же ключом (root)',
-    rogue.ok && (await versionsOf(k.key)).length === 2,
+    'под ключом только чужая версия (root)',
+    rogue7.ok && (await versionsOf(c.key)).length === 1,
   );
-  verifyOk('8: подтверждённая порция читается прежней версией');
-  // Состояние «до этой порции» с незавершённым отрезком — повтор должен
-  // встретить чужой объект и отказать без перезаписи.
   const st = JSON.parse(stateBefore);
-  st.pending = { key: k.key, firstCursor, count: k.count, plainSha: k.plainSha };
+  st.pending = { key: c.key, firstCursor: c.firstCursor, count: c.count, plainSha: c.plainSha };
   sh('docker', ['exec', '-i', CT, 'sh', '-c', `cat > ${ARCH_ENV.LOGS_STATE_DIR}/state.json`], {
     input: JSON.stringify(st),
   });
@@ -385,17 +453,22 @@ try {
     input: catBefore,
   });
   const r7 = arch('run');
-  check('конфликт: отказ', r7.code !== 0 && r7.out.includes('КОНФЛИКТ'), r7.out.split('\n').pop());
-  check('конфликт: без перезаписи', (await versionsOf(k.key)).length === 2);
-  // Вернуть рабочее состояние: каталог и курсор после порции k.
+  check(
+    'конфликт: отказ (верный хеш в метаданных чужой версии не помог)',
+    r7.code !== 0 && r7.out.includes('КОНФЛИКТ'),
+    r7.out.split('\n').pop(),
+  );
+  check('конфликт: без перезаписи', (await versionsOf(c.key)).length === 1);
+  await rootReq('DELETE', c.key, { versionId: rogue7.headers.get('x-amz-version-id') });
   inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
-  // Чужая версия последняя — восстановление по метаданным увидело бы её;
-  // root возвращает порядок, удалив чужую версию (испытание, не работа).
-  const vs = await versionsOf(k.key);
-  const rogueId = rogue.headers.get('x-amz-version-id');
-  await rootReq('DELETE', k.key, { versionId: rogueId });
-  check('чужая версия убрана (root)', vs.length === 2 && (await versionsOf(k.key)).length === 1);
-  check('восстановление после конфликта', arch('rebuild').code === 0);
+  const r7b = arch('run');
+  check(
+    'после разбора: утрата подтверждённой порции видна, отрезок восстановлен из journald',
+    r7b.code === 0 && r7b.out.includes('УТРАЧЕНО ПОДТВЕРЖДЁННЫХ'),
+    r7b.out.split('\n')[0],
+  );
+  await chainCheck('7');
+  verifyOk('7');
 
   // ---------------------------------------------------------- 9
   console.log('\n▸ 9. Ротация journald');
@@ -408,6 +481,34 @@ try {
     r9.out.split('\n').pop(),
   );
 
+  // ---------------------------------------------------------- 11
+  console.log('\n▸ 11. Утрата первой порции архива + потеря состояния (journald ещё хранит)');
+  const byFirst = (a, b) => (BigInt(a.first) < BigInt(b.first) ? -1 : 1);
+  const firstChunk = catalog()
+    .filter((r) => r.kind === 'chunk')
+    .sort(byFirst)[0];
+  check(
+    'первая порция начинается сразу за границей',
+    BigInt(firstChunk.first) === (await anchorStart()),
+  );
+  for (const v of await versionsOf(firstChunk.key)) {
+    await rootReq('DELETE', firstChunk.key, { versionId: v.versionId });
+  }
+  inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
+  const r11 = arch('run');
+  check(
+    'пропуск в начале обнаружен',
+    r11.out.includes(`ПРОПУСК В АРХИВЕ: записи ${firstChunk.first}`),
+    r11.out.split('\n').find((l) => l.includes('ПРОПУСК')) ?? r11.out.split('\n')[0],
+  );
+  check(
+    'и восстановлен из journald, без отметки потери',
+    r11.code === 0 && !/ПОТЕРЯ|ПРОПУСК АРХИВА|НЕ ПРОВЕРЯЕМО/.test(r11.out),
+    r11.out.split('\n').pop(),
+  );
+  await chainCheck('11');
+  verifyOk('11');
+
   // ---------------------------------------------------------- 10
   console.log('\n▸ 10. Вытеснение до архивации');
   gen(20, 's10-lost');
@@ -415,16 +516,53 @@ try {
   gen(5, 's10-after');
   const r10 = arch('run');
   check(
-    'потеря обнаружена и отмечена',
-    r10.code === 0 && r10.out.includes('ПОТЕРЯ'),
+    'потеря обнаружена и отмечена как вытеснение journald',
+    r10.code === 0 && r10.out.includes('ПОТЕРЯ (вытеснено journald)'),
     r10.out.split('\n').find((l) => l.includes('ПОТЕРЯ')) ?? r10.out,
   );
   check(
-    'в каталоге — отметка потери',
-    catalog().some((r) => r.kind === 'loss'),
+    'в каталоге — отметка потери journald-vacuumed',
+    catalog().some((r) => r.kind === 'loss' && r.reason === 'journald-vacuumed'),
   );
   await chainCheck('10');
   verifyOk('10');
+
+  // ---------------------------------------------------------- 12
+  console.log('\n▸ 12. Утрата нескольких начальных порций, journald уже вытеснен');
+  const firstThree = catalog()
+    .filter((r) => r.kind === 'chunk')
+    .sort(byFirst)
+    .slice(0, 3);
+  for (const ch of firstThree) {
+    for (const v of await versionsOf(ch.key)) {
+      await rootReq('DELETE', ch.key, { versionId: v.versionId });
+    }
+  }
+  inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
+  const r12 = arch('run');
+  check(
+    'пропуск в начале обнаружен при восстановлении',
+    r12.out.includes(`ПРОПУСК В АРХИВЕ: записи ${firstThree[0].first}`),
+    r12.out.split('\n').find((l) => l.includes('ПРОПУСК В АРХИВЕ')) ?? r12.out.split('\n')[0],
+  );
+  const lost12 = catalog().filter(
+    (r) => r.kind === 'loss' && BigInt(r.first) === BigInt(firstThree[0].first),
+  );
+  check(
+    'отмечен как утрата АРХИВА, а не вытеснение journald',
+    r12.code === 0 &&
+      lost12.length === 1 &&
+      lost12[0].reason === 'archive-missing' &&
+      BigInt(lost12[0].last) === BigInt(firstThree[2].last),
+    lost12.map((r) => `${r.reason} ${r.first}–${r.last}`).join(', ') ||
+      r12.out.split('\n').slice(-2).join(' | '),
+  );
+  check(
+    'подтверждённые порции за разрывом приняты по квитанциям',
+    catalog().filter((r) => r.kind === 'chunk').length >= 3,
+  );
+  await chainCheck('12');
+  verifyOk('12');
 } catch (error) {
   failed++;
   console.log(`  FAIL  испытание прервано: ${error.message}`);

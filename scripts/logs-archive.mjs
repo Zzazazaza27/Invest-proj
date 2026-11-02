@@ -44,6 +44,8 @@ import {
   contiguousChain,
   cursorParts,
   parseChunkKey,
+  parseReceiptKey,
+  receiptKey,
   open,
   seal,
   sha256Hex,
@@ -208,26 +210,11 @@ async function tailCursor() {
 
 // --------------------------------------------------------------------- S3
 
-const meta = (h, name) => h.get(`x-amz-meta-${name}`);
-
-async function headChunk(key) {
-  const r = await s3Object(storage, 'HEAD', key);
-  if (r.status === 404) return null;
-  if (!r.ok) throw new Error(`S3 HEAD ${key}: ${r.status}`);
-  return {
-    versionId: r.headers.get('x-amz-version-id'),
-    plainSha: meta(r.headers, 'plain-sha256'),
-    count: Number(meta(r.headers, 'count') ?? 0),
-    firstCursor: meta(r.headers, 'first-cursor'),
-    lastCursor: meta(r.headers, 'last-cursor'),
-    from: meta(r.headers, 'from'),
-    to: meta(r.headers, 'to'),
-    reason: meta(r.headers, 'reason'),
-    objSha: meta(r.headers, 'object-sha256'),
-  };
+async function s3(method, key, { body = null, headers = {}, query = {} } = {}) {
+  return s3Object(storage, method, key, body, headers, query);
 }
 
-async function putChunk(key, body, metadata) {
+async function putObject(key, body, metadata = {}) {
   // Метаданные объекта идут заголовками HTTP — только ASCII (испытание 10:
   // причина потери по-русски роняла запись). Описания — в каталоге.
   for (const [k, v] of Object.entries(metadata)) {
@@ -237,25 +224,96 @@ async function putChunk(key, body, metadata) {
     Object.entries(metadata).map(([k, v]) => [`x-amz-meta-${k}`, String(v)]),
   );
   headers['content-type'] = 'application/octet-stream';
-  const r = await s3Object(storage, 'PUT', key, body, headers);
+  const r = await s3('PUT', key, { body, headers });
   if (!r.ok) throw new Error(`S3 PUT ${key}: ${r.status}`);
-  return r.headers.get('x-amz-version-id');
+  const versionId = r.headers.get('x-amz-version-id');
+  if (!versionId) throw new Error(`S3 не вернул VersionId для ${key}: версии бакета выключены?`);
+  return versionId;
 }
 
-async function listKeys(prefix) {
-  const keys = [];
-  let token = null;
+async function getVersion(key, versionId) {
+  const r = await s3('GET', key, { query: { versionId } });
+  if (r.status === 404) return null;
+  if (!r.ok) throw new Error(`S3 GET ${key}@${versionId}: ${r.status}`);
+  return Buffer.from(await r.arrayBuffer());
+}
+
+/** Все версии под префиксом: [{key, versionId, latest}] (удаления не входят). */
+async function listVersions(prefix) {
+  const out = [];
+  let marker = null;
+  let vmarker = null;
   for (;;) {
-    const query = { 'list-type': '2', prefix, ...(token ? { 'continuation-token': token } : {}) };
-    const r = await s3Object(storage, 'GET', '', null, {}, query);
-    if (!r.ok) throw new Error(`S3 LIST ${prefix}: ${r.status}`);
+    const query = {
+      versions: '',
+      prefix,
+      ...(marker ? { 'key-marker': marker } : {}),
+      ...(vmarker ? { 'version-id-marker': vmarker } : {}),
+    };
+    const r = await s3('GET', '', { query });
+    if (!r.ok) throw new Error(`S3 LIST VERSIONS ${prefix}: ${r.status}`);
     const xml = await r.text();
-    for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) keys.push(m[1]);
-    const next = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/);
-    if (!next) break;
-    token = next[1];
+    for (const m of xml.matchAll(/<Version>([\s\S]*?)<\/Version>/g)) {
+      out.push({
+        key: m[1].match(/<Key>([^<]+)<\/Key>/)?.[1],
+        versionId: m[1].match(/<VersionId>([^<]+)<\/VersionId>/)?.[1],
+        latest: /<IsLatest>true<\/IsLatest>/.test(m[1]),
+      });
+    }
+    if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
+    marker = xml.match(/<NextKeyMarker>([^<]+)<\/NextKeyMarker>/)?.[1] ?? null;
+    vmarker = xml.match(/<NextVersionIdMarker>([^<]+)<\/NextVersionIdMarker>/)?.[1] ?? null;
+    if (!marker) break;
   }
-  return keys;
+  return out;
+}
+
+const groupByKey = (versions) => {
+  const map = new Map();
+  for (const v of versions) map.set(v.key, [...(map.get(v.key) ?? []), v]);
+  return map;
+};
+
+// -------------------------------------------------------- граница архива
+
+/**
+ * Граница архива журнала — в S3, вне теряемого локального состояния:
+ * `anchors/<seqnum_id>.json` = после какой записи начат архив. Две версии
+ * одной границы — неоднозначность, работа останавливается.
+ */
+async function putAnchor(anchor) {
+  const key = `anchors/${anchor.seqId}.json`;
+  const versions = (await listVersions(key)).filter((v) => v.key === key);
+  if (versions.length) throw new Error(`граница архива ${anchor.seqId} уже закреплена`);
+  await putObject(key, Buffer.from(JSON.stringify(anchor)));
+}
+
+async function readAnchors() {
+  const byKey = groupByKey(await listVersions('anchors/'));
+  const out = [];
+  for (const [key, versions] of byKey) {
+    if (versions.length !== 1) {
+      throw new Error(`НЕОДНОЗНАЧНОСТЬ: у границы ${key} версий ${versions.length} — нужен разбор`);
+    }
+    out.push(JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8')));
+  }
+  return out;
+}
+
+// ------------------------------------------------------------- квитанции
+
+/**
+ * Квитанция — подтверждённая привязка «отрезок → VersionId → хеши». Пишется
+ * после записи порции и проверки её содержимого; восстановление каталога
+ * берёт привязки только из квитанций и никогда не признаёт эталоном
+ * последнюю версию объекта.
+ */
+async function putReceipt(row) {
+  const p = parseChunkKey(row.key);
+  const key = receiptKey(p.seqId, p.first, p.last, p.kind, row.versionId);
+  const existing = (await listVersions(key)).filter((v) => v.key === key);
+  if (existing.length) return;
+  await putObject(key, Buffer.from(JSON.stringify(row)));
 }
 
 // ------------------------------------------------------------- проход
@@ -264,54 +322,127 @@ function buildPlain(entries) {
   return Buffer.concat(entries.map((e) => e.raw));
 }
 
+/** Содержимое версии порции: исходные байты или null, если не открывается. */
+async function plainOfVersion(key, versionId, keyMat) {
+  const sealed = await getVersion(key, versionId);
+  if (!sealed) return null;
+  try {
+    return { plain: open(sealed, keyMat.key), objSha: sha256Hex(sealed) };
+  } catch {
+    return null;
+  }
+}
+
 /**
- * Записать порцию (или подтвердить уже записанную). Конфликт — объект с тем
- * же именем и другим исходным хешем: без перезаписи, ошибка.
+ * Записать порцию или подтвердить уже записанную. Уже лежащая версия
+ * подтверждается только по СОДЕРЖИМОМУ: расшифровка и исходный хеш, а не
+ * метаданные объекта (их может записать кто угодно с правом записи).
+ * Под ключом есть версии, но ни одна не совпала, — конфликт, без перезаписи.
  */
 async function storeChunk(key, entries, keyMat) {
   const plain = buildPlain(entries);
   const plainSha = sha256Hex(plain);
-  const existing = await headChunk(key);
-  if (existing) {
-    if (existing.plainSha !== plainSha) {
-      throw new Error(`КОНФЛИКТ ${key}: в архиве другая порция с тем же отрезком — без перезаписи`);
+  const versions = (await listVersions(key)).filter((v) => v.key === key);
+  for (const v of versions) {
+    const got = await plainOfVersion(key, v.versionId, keyMat);
+    if (got && sha256Hex(got.plain) === plainSha) {
+      return { versionId: v.versionId, plainSha, objSha: got.objSha, reused: true };
     }
-    return { versionId: existing.versionId, plainSha, objSha: existing.objSha, reused: true };
+  }
+  if (versions.length) {
+    throw new Error(`КОНФЛИКТ ${key}: в архиве другая порция с тем же отрезком — без перезаписи`);
   }
   const sealed = seal(plain, keyMat.key);
   const objSha = sha256Hex(sealed);
-  const first = entries[0];
-  const last = entries.at(-1);
-  const versionId = await putChunk(key, sealed, {
+  const versionId = await putObject(key, sealed, {
     format: FORMAT,
     'plain-sha256': plainSha,
     'object-sha256': objSha,
     count: entries.length,
-    'first-cursor': first.cursor,
-    'last-cursor': last.cursor,
-    from: first.realtime ?? '',
-    to: last.realtime ?? '',
     'key-fp': keyMat.fingerprint,
   });
-  if (!versionId) throw new Error(`S3 не вернул VersionId для ${key}: версии бакета выключены?`);
   return { versionId, plainSha, objSha, reused: false };
 }
 
+const LOSS_REASONS = {
+  'journald-vacuumed': 'вытеснено из journald до архивации',
+  'archive-missing': 'утрачено в архиве; в journald записей уже нет',
+  'archive-unverifiable':
+    'порция в архиве без квитанции; в journald записей уже нет — сверить нельзя',
+};
+const LOSS_LABELS = {
+  'journald-vacuumed': 'ПОТЕРЯ (вытеснено journald)',
+  'archive-missing': 'ПРОПУСК АРХИВА (в journald уже нет)',
+  'archive-unverifiable': 'НЕ ПРОВЕРЯЕМО (нет квитанции, в journald уже нет)',
+};
+
 async function storeLoss(seqId, first, last, reason) {
   const key = chunkKey(PREFIX, seqId, first, last, 'loss');
-  const existing = await headChunk(key);
-  if (existing) return existing.versionId;
-  return putChunk(key, Buffer.alloc(0), { format: 'loss/v1', reason });
+  const versions = (await listVersions(key)).filter((v) => v.key === key);
+  const versionId =
+    versions[0]?.versionId ??
+    (await putObject(key, Buffer.alloc(0), { format: 'loss/v1', reason }));
+  const row = {
+    kind: 'loss',
+    key,
+    versionId,
+    first: str(first),
+    last: str(last),
+    reason,
+    reasonText: LOSS_REASONS[reason],
+    at: new Date().toISOString(),
+  };
+  await putReceipt(row);
+  appendCatalog(row);
+  return row;
 }
 
 async function confirm(state, row, lastEntry) {
+  await putReceipt(row);
+  if (env.LOGS_TEST_CRASH === 'after-receipt') process.exit(99);
   appendCatalog(row);
   state.lastCursor = lastEntry.cursor;
   state.lastSeq = lastEntry.seq;
   state.seqId = lastEntry.seqId;
   state.pending = null;
   state.lastOkAt = new Date().toISOString();
+  // Пропуск архива закрыт, если цепочка прошла через него.
+  state.archiveGaps = (state.archiveGaps ?? []).filter((g) => BigInt(g.last) > lastEntry.seq);
   saveState(state);
+}
+
+/** Пересекается ли отрезок с известным пропуском архива. */
+function inArchiveGap(state, a, b) {
+  return (state.archiveGaps ?? []).some((g) => !(BigInt(g.last) < a || BigInt(g.first) > b));
+}
+
+/** Следующий объект за разрывом в этом журнале: {key, receipt, ...отрезок}. */
+function nextBeyond(state, sid) {
+  for (const b of state.beyond ?? []) {
+    const p = parseChunkKey(b.key);
+    if (p && p.seqId === sid) return { ...b, ...p };
+  }
+  return null;
+}
+
+/**
+ * Подтверждённые квитанцией объекты, которые продолжают цепочку, принимаются
+ * по квитанции — без чтения journald (их записи там может уже не быть).
+ */
+async function adoptConfirmed(state) {
+  for (;;) {
+    const next = nextBeyond(state, state.seqId);
+    if (!next?.receipt || state.lastSeq === null || next.first !== state.lastSeq + 1n) return;
+    const row = JSON.parse(
+      (await getVersion(next.receipt.key, next.receipt.versionId)).toString('utf8'),
+    );
+    appendCatalog(row);
+    state.lastSeq = next.last;
+    if (row.lastCursor) state.lastCursor = row.lastCursor;
+    state.beyond = state.beyond.filter((b) => b.key !== next.key);
+    state.archiveGaps = (state.archiveGaps ?? []).filter((g) => BigInt(g.last) > next.last);
+    saveState(state);
+  }
 }
 
 async function run() {
@@ -341,53 +472,73 @@ async function run() {
     // 2. Новые записи.
     let written = 0;
     for (;;) {
-      const entries = await readJournal({ after: state.lastCursor });
-      if (!entries.length) break;
-      // Разрыв или смена журнала.
-      const first = entries[0];
-      if (
-        first.seqId === state.seqId &&
+      await adoptConfirmed(state);
+      const read = await readJournal({ after: state.lastCursor });
+      if (!read.length) break;
+      // Разрыв перед первой доступной записью — по отрезкам: подтверждённые
+      // порции за разрывом принимаются по квитанции; неподтверждённая, чьё
+      // начало journald уже вытеснил, сверке не поддаётся — явная отметка
+      // «не проверяемо», а не доверие; остальное — отметка потери.
+      const avail = read[0];
+      while (
+        avail.seqId === state.seqId &&
         state.lastSeq !== null &&
-        first.seq !== state.lastSeq + 1n
+        state.lastSeq + 1n < avail.seq
       ) {
-        if (first.seq > state.lastSeq + 1n) {
-          const a = state.lastSeq + 1n;
-          const b = first.seq - 1n;
-          const versionId = await storeLoss(state.seqId, a, b, 'journald-vacuumed');
-          appendCatalog({
-            kind: 'loss',
-            key: chunkKey(PREFIX, state.seqId, a, b, 'loss'),
-            versionId,
-            first: str(a),
-            last: str(b),
-            reason: 'вытеснено из journald до архивации',
-            at: new Date().toISOString(),
-          });
-          state.losses = (state.losses ?? 0) + 1;
-          console.error(`ПОТЕРЯ: записи ${a}–${b} журнала ${state.seqId} вытеснены до архивации`);
+        await adoptConfirmed(state);
+        if (state.lastSeq + 1n >= avail.seq) break;
+        const a = state.lastSeq + 1n;
+        const nb = nextBeyond(state, state.seqId);
+        let b;
+        let reason;
+        if (nb && nb.first === a && !nb.receipt) {
+          b = nb.last;
+          reason = 'archive-unverifiable';
+          state.beyond = state.beyond.filter((x) => x.key !== nb.key);
+        } else {
+          b = nb && nb.first <= avail.seq - 1n ? nb.first - 1n : avail.seq - 1n;
+          // Пропуск, известный по восстановлению, — утрата архива, а не
+          // вытеснение journald: в journald записей просто уже нет.
+          reason = inArchiveGap(state, a, b) ? 'archive-missing' : 'journald-vacuumed';
         }
+        await storeLoss(state.seqId, a, b, reason);
+        state.losses = (state.losses ?? 0) + 1;
+        state.lastSeq = b;
+        state.archiveGaps = (state.archiveGaps ?? []).filter((g) => BigInt(g.last) > b);
+        saveState(state);
+        console.error(`${LOSS_LABELS[reason]}: записи ${a}–${b} журнала ${state.seqId}`);
       }
+      // Записи, уже покрытые цепочкой (принятой порцией или отметкой), не
+      // пишутся второй раз.
+      const entries = read.filter(
+        (e) => !(e.seqId === state.seqId && state.lastSeq !== null && e.seq <= state.lastSeq),
+      );
+      if (!entries.length) {
+        state.lastCursor = read.at(-1).cursor;
+        saveState(state);
+        continue;
+      }
+      const first = entries[0];
       // Порция — только из записей одного журнала.
       const sid = first.seqId;
       const cut = entries.findIndex((e) => e.seqId !== sid);
       let slice = cut < 0 ? entries : entries.slice(0, cut);
-      // Объект за разрывом (найден при восстановлении): его отрезок читается
-      // в его границах и сверяется по исходному хешу, а новая порция
-      // обрывается перед ним — без перекрытий.
-      const next = (state.beyond ?? []).map(parseChunkKey).filter((b) => b && b.seqId === sid)[0];
+      // Неподтверждённый объект (найден при восстановлении): его отрезок
+      // читается в его границах и сверяется по содержимому; новая порция
+      // обрывается перед любым объектом за разрывом — без перекрытий.
+      const next = nextBeyond(state, sid);
       let key;
-      if (next && slice[0].seq === next.first) {
+      if (next && !next.receipt && slice[0].seq === next.first) {
         slice = slice.filter((e) => e.seq <= next.last);
         if (slice.at(-1).seq !== next.last) {
-          // Отрезок ещё не дочитан целиком (порция больше предела чтения).
           slice = await readJournal({
             from: slice[0].cursor,
             maxEntries: Number(next.last - next.first + 1n),
             maxBytes: Infinity,
           });
         }
-        key = chunkKey(PREFIX, sid, next.first, next.last);
-        state.beyond = state.beyond.filter((k) => k !== key);
+        key = next.key;
+        state.beyond = state.beyond.filter((b) => b.key !== key);
       } else {
         if (next) slice = slice.filter((e) => e.seq < next.first);
         key = chunkKey(PREFIX, sid, slice[0].seq, slice.at(-1).seq);
@@ -419,6 +570,8 @@ function catalogRow(key, entries, res) {
     count: entries.length,
     plainSha: res.plainSha,
     objSha: res.objSha,
+    firstCursor: entries[0].cursor,
+    lastCursor: entries.at(-1).cursor,
     from: entries[0].realtime,
     to: entries.at(-1).realtime,
     at: new Date().toISOString(),
@@ -428,56 +581,101 @@ function catalogRow(key, entries, res) {
 // ---------------------------------------------------------- восстановление
 
 /**
- * Состояние и каталог из S3: продолжать с конца НЕПРЕРЫВНОЙ цепочки от
- * начала архива. Объекты за разрывом не считаются продолжением.
+ * Состояние и каталог из S3.
+ *  - Граница архива — из `anchors/` (не из локального файла).
+ *  - Привязки «порция → VersionId → хеши» — только из квитанций, чья версия
+ *    порции существует. Порция без такой квитанции — неподтверждённая: её
+ *    отрезок прочитается из journald заново и сверится по содержимому;
+ *    последняя версия объекта эталоном не становится. Квитанция на
+ *    удалённую версию — свидетельство утраты в архиве. Две действующие
+ *    квитанции на отрезок — неоднозначность, остановка.
+ *  - Цепочка — от границы; пропуск в начале или середине — пропуск АРХИВА
+ *    (archiveGaps), а не потеря journald.
  */
 async function rebuildState() {
-  const start = readJson(join(STATE_DIR, 'start.json'));
-  const keys = (await listKeys(`${PREFIX}/`)).map((k) => ({ key: k, ...parseChunkKey(k) }));
-  const items = keys.filter((k) => k.seqId);
-  if (!items.length) return null;
-  // Журнал — тот, в котором записи последними (по номеру старта цепочки).
-  const bySid = new Map();
-  for (const it of items) bySid.set(it.seqId, [...(bySid.get(it.seqId) ?? []), it]);
-  const sid = start?.seqId && bySid.has(start.seqId) ? start.seqId : [...bySid.keys()].at(-1);
-  const { chain, end, beyond, overlaps } = contiguousChain(bySid.get(sid));
+  const anchors = await readAnchors();
+  if (!anchors.length) {
+    if (existsSync(join(STATE_DIR, 'start.json'))) {
+      throw new Error('граница архива есть только локально, в S3 её нет — начало не подтверждено');
+    }
+    return null;
+  }
+  const anchor = anchors.sort((a, b) => (a.at < b.at ? -1 : 1)).at(-1);
+  const sid = anchor.seqId;
+  const expectedStart = BigInt(anchor.afterSeq) + 1n;
+
+  const objectVersions = groupByKey(await listVersions(`${PREFIX}/${sid}/`));
+  const receipts = new Map();
+  const lostConfirmed = [];
+  for (const [key, versions] of groupByKey(await listVersions(`r/${sid}/`))) {
+    const r = parseReceiptKey(key);
+    if (!r) continue;
+    if (versions.length !== 1) {
+      throw new Error(
+        `НЕОДНОЗНАЧНОСТЬ: у квитанции ${key} версий ${versions.length} — нужен разбор`,
+      );
+    }
+    const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
+    if (!(objectVersions.get(range) ?? []).some((v) => v.versionId === r.versionId)) {
+      lostConfirmed.push(range);
+      continue;
+    }
+    receipts.set(range, [
+      ...(receipts.get(range) ?? []),
+      { key, versionId: versions[0].versionId },
+    ]);
+  }
+  for (const [range, list] of receipts) {
+    if (list.length > 1) {
+      throw new Error(`НЕОДНОЗНАЧНОСТЬ: на отрезок ${range} действующих квитанций ${list.length}`);
+    }
+  }
+
+  const objects = [...objectVersions.keys()]
+    .map((k) => ({ key: k, ...parseChunkKey(k) }))
+    .filter((i) => i.seqId);
+  const confirmed = objects.filter((o) => receipts.has(o.key));
+  const unconfirmed = objects.filter((o) => !receipts.has(o.key));
+  const { chain, end, beyond, overlaps, gaps } = contiguousChain(confirmed, expectedStart);
+
   const rows = [];
   for (const it of chain) {
-    const h = await headChunk(it.key);
-    rows.push({
-      kind: it.kind === 'loss' ? 'loss' : 'chunk',
-      key: it.key,
-      versionId: h.versionId,
-      first: str(it.first),
-      last: str(it.last),
-      count: h.count,
-      plainSha: h.plainSha,
-      objSha: h.objSha,
-      from: h.from ? Number(h.from) : null,
-      to: h.to ? Number(h.to) : null,
-      at: 'rebuild',
-    });
+    const [rec] = receipts.get(it.key);
+    rows.push(JSON.parse((await getVersion(rec.key, rec.versionId)).toString('utf8')));
   }
-  writeFileSync(CATALOG, rows.map((r) => JSON.stringify(r)).join('\n') + '\n');
-  // Курсор — последней настоящей порции цепочки: отметка потери курсора не
-  // имеет; journalctl ищет продолжение по номеру и после вытеснения.
-  const lastChunk = [...chain].reverse().find((it) => it.kind === 'jx');
-  const lastCursor = lastChunk ? (await headChunk(lastChunk.key)).lastCursor : start?.afterCursor;
+  writeFileSync(CATALOG, rows.length ? rows.map((r) => JSON.stringify(r)).join('\n') + '\n' : '');
+  const lastChunk = [...rows].reverse().find((r) => r.kind === 'chunk');
+  const later = [
+    ...beyond.map((b) => ({ key: b.key, first: b.first, receipt: receipts.get(b.key)[0] })),
+    ...unconfirmed
+      .filter((u) => u.first > end)
+      .map((u) => ({ key: u.key, first: u.first, receipt: null })),
+  ].sort((a, b) => (a.first < b.first ? -1 : 1));
+  const archiveGaps = gaps.map((g) => ({ first: str(g.first), last: str(g.last) }));
+  if (!gaps.length && later.length && later[0].first > end + 1n) {
+    archiveGaps.push({ first: str(end + 1n), last: str(later[0].first - 1n) });
+  }
   const state = {
     seqId: sid,
     lastSeq: end,
-    lastCursor,
+    lastCursor: lastChunk?.lastCursor ?? anchor.afterCursor,
     pending: null,
     rebuiltAt: new Date().toISOString(),
-    beyond: beyond.map((b) => b.key),
+    beyond: later.map(({ key, receipt }) => ({ key, receipt })),
     overlaps: overlaps.map((b) => b.key),
+    archiveGaps,
+    unconfirmed: unconfirmed.map((u) => u.key),
+    lostConfirmed,
   };
   saveState(state);
   console.log(
-    `восстановлено из S3: цепочка ${chain.length} объектов до ${end}` +
-      (beyond.length ? `, за разрывом ${beyond.length}` : '') +
+    `восстановлено из S3: граница после ${anchor.afterSeq}, цепочка ${chain.length} объектов до ${end}` +
+      (later.length ? `, за разрывом ${later.length}` : '') +
+      (unconfirmed.length ? `, без квитанции ${unconfirmed.length}` : '') +
+      (lostConfirmed.length ? `, УТРАЧЕНО ПОДТВЕРЖДЁННЫХ ${lostConfirmed.length}` : '') +
       (overlaps.length ? `, ПЕРЕКРЫТИЙ ${overlaps.length}` : ''),
   );
+  for (const g of archiveGaps) console.error(`ПРОПУСК В АРХИВЕ: записи ${g.first}–${g.last}`);
   return loadState();
 }
 
@@ -489,21 +687,23 @@ async function init() {
   const tail = await tailCursor();
   if (!tail) throw new Error('журнал пуст');
   const { seqId } = cursorParts(tail.cursor);
-  writeJsonAtomic(join(STATE_DIR, 'start.json'), {
+  const anchor = {
     seqId,
     afterSeq: String(tail.seq),
     afterCursor: tail.cursor,
     at: new Date().toISOString(),
     host: hostname(),
-  });
+  };
+  await putAnchor(anchor);
+  writeJsonAtomic(join(STATE_DIR, 'start.json'), anchor);
   saveState({
     seqId,
     lastSeq: tail.seq,
     lastCursor: tail.cursor,
     pending: null,
-    startedAt: new Date().toISOString(),
+    startedAt: anchor.at,
   });
-  console.log(`архив начат после записи ${tail.seq} журнала ${seqId}`);
+  console.log(`архив начат после записи ${tail.seq} журнала ${seqId}, граница закреплена в S3`);
 }
 
 function status() {
@@ -526,39 +726,37 @@ function status() {
 /**
  * Проверка архива: каждая порция каталога читается ИМЕННО своей версией
  * (VersionId), расшифровывается, исходный хеш и число записей сверяются.
- * Новая версия под тем же ключом на результат не влияет.
+ * Отдельно — посторонние версии под ключами порций (запись мимо архиватора)
+ * и неподтверждённые порции: это тоже не «всё в порядке».
  */
 async function verify() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
   const rows = loadCatalog().filter((r) => r.kind === 'chunk');
+  const state = loadState();
   const problems = [];
+  const foreign = [];
+  const byKey = groupByKey(await listVersions(`${PREFIX}/`));
   for (const r of rows) {
-    const res = await s3Object(storage, 'GET', r.key, null, {}, { versionId: r.versionId });
-    if (!res.ok) {
-      problems.push(`${r.key}@${r.versionId}: ${res.status}`);
+    const got = await plainOfVersion(r.key, r.versionId, keyMat);
+    if (!got) {
+      problems.push(`${r.key}@${r.versionId}: нет или не расшифровано`);
       continue;
     }
-    const sealed = Buffer.from(await res.arrayBuffer());
-    if (sha256Hex(sealed) !== r.objSha) {
-      problems.push(`${r.key}: хеш объекта не совпал`);
-      continue;
-    }
-    let plain;
-    try {
-      plain = open(sealed, keyMat.key);
-    } catch (error) {
-      problems.push(`${r.key}: не расшифровано (${error.message})`);
-      continue;
-    }
-    const reader = new ExportReader();
-    const n = reader.push(plain).length;
-    if (sha256Hex(plain) !== r.plainSha || n !== r.count) {
+    if (got.objSha !== r.objSha) problems.push(`${r.key}: хеш объекта не совпал`);
+    const n = new ExportReader().push(got.plain).length;
+    if (sha256Hex(got.plain) !== r.plainSha || n !== r.count) {
       problems.push(`${r.key}: исходный хеш или число записей не совпали`);
     }
+    const others = (byKey.get(r.key) ?? []).filter((v) => v.versionId !== r.versionId);
+    if (others.length) foreign.push(`${r.key}: посторонних версий ${others.length}`);
   }
-  console.log(`проверено порций: ${rows.length}, проблем: ${problems.length}`);
-  for (const p of problems) console.log(`  ${p}`);
-  if (problems.length) process.exitCode = 1;
+  const unconfirmed = state?.unconfirmed?.length ?? 0;
+  const gaps = state?.archiveGaps?.length ?? 0;
+  console.log(
+    `проверено порций: ${rows.length}, проблем: ${problems.length}, посторонних версий: ${foreign.length}, без квитанции: ${unconfirmed}, пропусков архива: ${gaps}`,
+  );
+  for (const p of [...problems, ...foreign]) console.log(`  ${p}`);
+  if (problems.length || foreign.length || gaps) process.exitCode = 1;
 }
 
 const commands = { init, run, rebuild: rebuildState, status, verify };

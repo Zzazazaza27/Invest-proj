@@ -150,6 +150,25 @@ export function open(sealed, key) {
 
 // ----------------------------------------------------------------- цепочка
 
+/** Ключ квитанции: подтверждённая привязка «отрезок → VersionId → хеши». */
+export function receiptKey(seqId, first, last, kind, versionId) {
+  return `r/${seqId}/${hex16(first)}-${hex16(last)}.${kind}/${versionId}.json`;
+}
+
+export function parseReceiptKey(key) {
+  const m = key.match(
+    /^r\/([0-9a-f]{32})\/([0-9a-f]{16})-([0-9a-f]{16})\.(jx|loss)\/([^/]+)\.json$/,
+  );
+  if (!m) return null;
+  return {
+    seqId: m[1],
+    first: BigInt(`0x${m[2]}`),
+    last: BigInt(`0x${m[3]}`),
+    kind: m[4],
+    versionId: m[5],
+  };
+}
+
 /**
  * Непрерывная цепочка от начала архива по одному журналу: порции и отметки
  * потерь, каждая следующая начинается ровно за предыдущей. Продолжать запись
@@ -157,12 +176,16 @@ export function open(sealed, key) {
  * (`beyond`) — уже записанное после пропуска: при повторном чтении их отрезки
  * сверяются по исходному хешу, а не пишутся заново.
  */
-export function contiguousChain(items) {
+export function contiguousChain(items, expectedStart = null) {
   const sorted = [...items].sort((a, b) => (a.first < b.first ? -1 : a.first > b.first ? 1 : 0));
   const chain = [];
   const beyond = [];
   const overlaps = [];
-  let end = null;
+  const gaps = [];
+  // Начало закреплено границей архива (expectedStart = первая запись после
+  // неё). Без границы первый найденный объект НЕ считается началом: утрата
+  // начальных порций иначе выглядела бы как штатное начало.
+  let end = expectedStart === null ? null : expectedStart - 1n;
   for (const it of sorted) {
     if (end === null) {
       chain.push(it);
@@ -173,8 +196,9 @@ export function contiguousChain(items) {
     } else if (it.first <= end) {
       overlaps.push(it);
     } else {
+      if (beyond.length === 0) gaps.push({ first: end + 1n, last: it.first - 1n });
       beyond.push(it);
     }
   }
-  return { chain, end, beyond, overlaps, start: chain[0]?.first ?? null };
+  return { chain, end, beyond, overlaps, gaps, start: expectedStart ?? chain[0]?.first ?? null };
 }
