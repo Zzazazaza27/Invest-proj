@@ -340,7 +340,7 @@
 | CHK-UPSTREAM-OWNER | `npm run session` | 0 | вручную | — |
 | CHK-PRE-PUSH | `npm run gate:pre-push` | 0 | вручную | — |
 | CHK-MONITOR-PULSE | `node scripts/check-monitor-pulse.mjs` | 12 | вручную | — |
-| CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 9 | вручную | — |
+| CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
 | CHK-MONITORING-ACCOUNT | `node scripts/check-monitoring-account.mjs` | 9 | вручную | — |
 

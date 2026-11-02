@@ -10,11 +10,14 @@
  *   2. передача зоны без ключа — отказ; с чужого адреса — отказ;
  *   3. изменение записи → NOTIFY → вторичный обновился без ручных действий;
  *   4. первичный остановлен → вторичный продолжает отвечать;
- *   5. по истечении SOA EXPIRE без первичного вторичный перестаёт отвечать
- *      (в опыте EXPIRE = 60 с; на рабочей зоне — недели);
- *   6. первичный поднят «на другой машине» из тех же файлов с новым адресом,
- *      serial не меньше прежнего (unixtime) → вторичный снова отвечает и
- *      получает изменения.
+ *   0. следующая версия зоны строго растёт: та же секунда, часы назад,
+ *      восстановление по последней опубликованной (scripts/lib/dns-serial.mjs);
+ *   5. по истечении SOA EXPIRE без первичного вторичный отвечает явным
+ *      SERVFAIL на свою зону, оставаясь доступным (на чужую зону — REFUSED);
+ *      в опыте EXPIRE = 60 с, на рабочей зоне — недели;
+ *   6. первичный поднят «на другой машине» из тех же файлов с новым адресом
+ *      и с часами, отстающими на час; версия берётся из последней
+ *      опубликованной → вторичный снова отвечает и получает изменения.
  *
  *   node scripts/check-dns-hidden-primary.mjs
  */
@@ -22,6 +25,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { nextSerial, SERIAL_MAX } from './lib/dns-serial.mjs';
 
 const IMAGE = 'cznic/knot:3.4';
 const NET = 'dnslab';
@@ -212,6 +216,31 @@ function cleanup() {
   rmSync(work, { recursive: true, force: true });
 }
 
+// 0. Рост версии зоны — без Docker.
+{
+  const t = Date.parse('2026-11-02T10:00:00Z');
+  const a = nextSerial({ nowMs: t, published: [] });
+  check(
+    '0. та же секунда — следующая версия больше',
+    nextSerial({ nowMs: t, published: [a] }) === a + 1,
+  );
+  check(
+    '0. часы назад на час — версия всё равно больше опубликованной',
+    nextSerial({ nowMs: t - 3_600_000, published: [a] }) === a + 1,
+  );
+  check(
+    '0. восстановление: учитывается наибольшая из записанной и отданных вторичными',
+    nextSerial({ nowMs: t, published: [a, String(a + 500), '', null, 'abc', -1] }) === a + 501,
+  );
+  let threw = false;
+  try {
+    nextSerial({ nowMs: t, published: [SERIAL_MAX] });
+  } catch {
+    threw = true;
+  }
+  check('0. выход за 32 бита — отказ, а не перенос', threw);
+}
+
 try {
   cleanup();
   mkdirSync(work, { recursive: true });
@@ -224,7 +253,9 @@ try {
 
   // Первичный: serial = unixtime, как будет у выкладки из репозитория.
   const p = setupDirs('primary');
-  let s1 = Math.floor(Date.now() / 1000);
+  // lastPublished — запись о последней выкладке (в работе — в репозитории).
+  const s1 = nextSerial();
+  let lastPublished = s1;
   writeFileSync(join(p, 'config', 'knot.conf'), primaryConf(secret));
   writeFileSync(join(p, 'zones', `${ZONE}.zone`), zoneFile(s1));
   chmodSync(join(p, 'zones'), 0o777);
@@ -270,7 +301,8 @@ try {
   check('2. контроль: с адреса вторичного и с ключом — передаётся', /192\.0\.2\.11/.test(allowed));
 
   // 3
-  const s2 = s1 + 1;
+  const s2 = nextSerial({ published: [lastPublished] });
+  lastPublished = s2;
   writeFileSync(join(p, 'zones', `${ZONE}.zone`), zoneFile(s2, 'files A 192.0.2.12\n'));
   docker('exec', 'dnslab-primary', 'knotc', '-s', '/rundir/knot.sock', 'zone-reload', ZONE);
   const t3 = Date.now();
@@ -295,17 +327,33 @@ try {
 
   // 5
   console.log(`      … жду истечения SOA EXPIRE (${EXPIRE} с)`);
-  const expired = await waitFor(
-    () => !answer(IP.secondary, `www.${ZONE}`),
-    (EXPIRE + 60) * 1000,
-    5000,
+  // Засчитывается только явный SERVFAIL на свою зону при доступном сервере:
+  // тишина или таймаут — не истечение, а сетевой сбой.
+  const statusOf = (name) =>
+    dig(IP.secondary, [name, 'SOA']).match(/status: (\w+)/)?.[1] || 'нет ответа';
+  const expired = await waitFor(() => statusOf(ZONE) === 'SERVFAIL', (EXPIRE + 60) * 1000, 5000);
+  const own = statusOf(ZONE);
+  const foreign = statusOf('not-served.example');
+  check(
+    '5. после EXPIRE вторичный отвечает на свою зону явным SERVFAIL',
+    expired && own === 'SERVFAIL',
+    `своя зона: ${own}`,
   );
-  const status = dig(IP.secondary, [`www.${ZONE}`]).match(/status: (\w+)/)?.[1] || '?';
-  check('5. после EXPIRE без первичного вторичный перестал отвечать', expired, `статус ${status}`);
+  check(
+    '5. при этом вторичный доступен: на чужую зону — REFUSED',
+    foreign === 'REFUSED',
+    `чужая зона: ${foreign}`,
+  );
 
   // 6 — «другая машина»: те же файлы, новый адрес, новый serial (unixtime)
   const p2 = setupDirs('primary2');
-  const s3 = Math.max(Math.floor(Date.now() / 1000), s2 + 1);
+  // Часы новой машины отстают на час; версии вторичных после EXPIRE не
+  // читаются — остаётся запись о последней выкладке.
+  const fromSecondaries = [serial(IP.secondary)];
+  const s3 = nextSerial({
+    nowMs: Date.now() - 3_600_000,
+    published: [lastPublished, ...fromSecondaries],
+  });
   writeFileSync(join(p2, 'config', 'knot.conf'), primaryConf(secret));
   writeFileSync(
     join(p2, 'zones', `${ZONE}.zone`),
@@ -320,7 +368,7 @@ try {
   check(
     '6. первичный на другой машине — вторичный снова отвечает и получил изменения',
     back,
-    `serial ${serial(IP.secondary)} > ${s2}`,
+    `serial ${serial(IP.secondary)}, прежний ${s2}, часы −1 ч`,
   );
 } catch (e) {
   failed++;
