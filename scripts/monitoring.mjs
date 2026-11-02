@@ -175,6 +175,7 @@ async function configure() {
   // Для «нет данных»: у каждой основной проверки и у выбранных зависимых —
   // своя тревога. nodata — важность, false — не нужна.
   const freshness = [];
+  const typeById = new Map();
   const item = async (spec) => {
     const { nodata, ...rest } = spec;
     const primary = rest.type !== 18 && rest.history !== '0';
@@ -184,6 +185,8 @@ async function configure() {
         name: rest.name,
         delay: rest.delay || '1m',
         priority: nodata || 2,
+        type: rest.type,
+        masterId: rest.master_itemid,
       });
     }
     const body = {
@@ -214,6 +217,7 @@ async function configure() {
       itemid = (await api.call('item.create', body)).itemids[0];
     }
     items.set(spec.key_, itemid);
+    typeById.set(itemid, spec.type);
     return itemid;
   };
   const trigger = async (description, expression, priority, extra = {}) => {
@@ -223,8 +227,11 @@ async function configure() {
       output: ['triggerid'],
     });
     const body = { description, expression, priority, manual_close: 1, ...extra };
-    if (found.length) await api.call('trigger.update', { triggerid: found[0].triggerid, ...body });
-    else await api.call('trigger.create', body);
+    if (found.length) {
+      await api.call('trigger.update', { triggerid: found[0].triggerid, ...body });
+      return found[0].triggerid;
+    }
+    return (await api.call('trigger.create', body)).triggerids[0];
   };
   const H = HOST;
   const AGENT = 7;
@@ -801,12 +808,36 @@ async function configure() {
       'trigger.delete',
       oldTriggers.map((t) => t.triggerid),
     );
-  for (const f of freshness) {
+  // «Нет данных» по проверкам, которые собирает агент (его собственные и
+  // зависимые от них), подчинены одной тревоге — пропаже контрольной отметки
+  // агента. Пропал агент — одно сообщение, а не по одному на проверку
+  // (выпуск W08a 2026-11-02: проба остановки агента дала 42 сообщения).
+  // Проверки самого сервера Zabbix и HTTP-проверки с сервера — независимы.
+  const viaAgent = (f) =>
+    f.type === AGENT || (f.type === DEP && typeById.get(f.masterId) === AGENT);
+  const windowOf = (f) => {
     const n = Number.parseInt(f.delay, 10) * 3;
-    const window = `${n}${f.delay.replace(/^\d+/, '')}`;
-    await trigger(`Нет данных: ${f.name}`, `nodata(/${H}/${f.key},${window})=1`, f.priority, {
-      comments:
-        'Нет измерений больше трёх интервалов — состояние неизвестно, а не «в порядке» (8.2).',
+    return `${n}${f.delay.replace(/^\d+/, '')}`;
+  };
+  const comments =
+    'Нет измерений больше трёх интервалов — состояние неизвестно, а не «в порядке» (8.2).';
+  const agentFresh = freshness.find((f) => f.key === 'agent.ping');
+  const agentTrigger = await trigger(
+    `Нет данных: ${agentFresh.name}`,
+    // Окно короче, чем у зависимых (3 интервала): отметка агента должна уйти
+    // в «проблему» раньше них, иначе зависимые успеют сработать сами.
+    `nodata(/${H}/agent.ping,2m)=1`,
+    4,
+    {
+      comments: `${comments} Агент не передаёт данные — остальные «Нет данных» по проверкам агента подавлены зависимостью.`,
+      dependencies: [],
+    },
+  );
+  for (const f of freshness) {
+    if (f.key === 'agent.ping') continue;
+    await trigger(`Нет данных: ${f.name}`, `nodata(/${H}/${f.key},${windowOf(f)})=1`, f.priority, {
+      comments,
+      dependencies: viaAgent(f) ? [{ triggerid: agentTrigger }] : [],
     });
   }
 
