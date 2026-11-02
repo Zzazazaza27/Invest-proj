@@ -163,8 +163,25 @@ services:
       - shared_preload_libraries=pg_stat_statements
       - -c
       - password_encryption=scram-sha-256
+      # Журнал без данных (блок 8, 8.4; 2026-11-02). Ошибки клиентских
+      # запросов (уровень ERROR) несут значения в самом сообщении и в
+      # DETAIL/CONTEXT — «Key (…)=(…)», «Failing row contains», «invalid input
+      # syntax: "…"»; текст запроса — в STATEMENT. Поэтому: ERROR и WARNING в
+      # журнал сервера не пишутся (код ошибки видит ядро), подробности и
+      # текст запроса отключены. Медленные запросы — по pg_stat_statements
+      # (нормализованные, без параметров), не текстом в журнале.
       - -c
-      - log_min_duration_statement=500
+      - log_min_messages=log
+      - -c
+      - log_min_error_statement=panic
+      - -c
+      - log_error_verbosity=terse
+      - -c
+      - log_min_duration_statement=-1
+      - -c
+      - log_parameter_max_length=0
+      - -c
+      - log_parameter_max_length_on_error=0
       - -c
       - log_connections=on
       - -c
