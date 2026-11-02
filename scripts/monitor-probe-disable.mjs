@@ -13,9 +13,11 @@
  *   2. учётка заблокирована (status = suspended) и рубеж сессий сдвинут
  *      (sessions_valid_from) — живые токены перестают действовать, как при
  *      блокировке из админки;
- *   3. проверка отказа: сохранённой сессией пробы `GET /v1/auth/me` → 401
- *      (рубеж в ядре кешируется до 5 с — ждём до 20 с); вход паролем пробы →
- *      отказ (403, статус учётки);
+ *   3. проверка отказа — только ожидаемые ответы (scripts/lib/monitor-probe.mjs):
+ *      сохранённой сессией `GET /v1/auth/me` → 401 unauthenticated (рубеж в
+ *      ядре кешируется до 5 с — ждём до 20 с); вход паролем пробы → 403
+ *      forbidden при статусе в базе suspended. 429, 503, 404 и прочее — НЕ
+ *      подтверждение: скрипт завершается отказом, откат кода дальше не идёт;
  *   4. сохранённая сессия пробы удалена.
  *
  *   node scripts/monitor-probe-disable.mjs
@@ -28,6 +30,7 @@ import { join, resolve } from 'node:path';
 import pg from 'pg';
 import { ROOT, loadEnv } from './lib/backup.mjs';
 import { pinnedFetch } from './lib/pinned-fetch.mjs';
+import { loginDenialVerdict, sessionDenialVerdict } from './lib/monitor-probe.mjs';
 
 loadEnv();
 const env = process.env;
@@ -78,26 +81,34 @@ await pool.query(
     WHERE id = $1`,
   [user.id],
 );
-await pool.end();
 console.log(`2. учётка заблокирована (было: ${user.status}), рубеж сессий сдвинут`);
 
-// 3. Проверка отказа.
+// 3. Проверка отказа — только ожидаемые ответы.
+const json = async (res) => {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+};
 const cookie = existsSync(sessionFile) ? readFileSync(sessionFile, 'utf8').trim() : '';
 if (cookie) {
   const end = Date.now() + 20_000;
-  let code = 0;
+  let verdict;
   while (Date.now() < end) {
-    code = (
-      await pinnedFetch(`${BASE}/v1/auth/me`, {
-        headers: { cookie },
-        signal: AbortSignal.timeout(10_000),
-      })
-    ).status;
-    if (code === 401) break;
+    const res = await pinnedFetch(`${BASE}/v1/auth/me`, {
+      headers: { cookie },
+      signal: AbortSignal.timeout(10_000),
+    });
+    verdict = sessionDenialVerdict(res.status, await json(res));
+    if (verdict.ok) break;
     await new Promise((r) => setTimeout(r, 2000));
   }
-  if (code !== 401) fail(`сохранённая сессия пробы всё ещё действует (GET /v1/auth/me → ${code})`);
-  console.log('3. сохранённая сессия пробы отклонена (401)');
+  if (!verdict.ok) {
+    await pool.end();
+    fail(`отзыв сессий НЕ подтверждён — ${verdict.reason}`);
+  }
+  console.log(`3. ${verdict.reason}`);
 } else {
   console.log('3. сохранённой сессии пробы нет — проверка сессии не требуется');
 }
@@ -107,9 +118,14 @@ const login = await pinnedFetch(`${BASE}/v1/auth/login`, {
   body: JSON.stringify({ email: expected.email, password: env.CONTROL_PROBE_PASSWORD }),
   signal: AbortSignal.timeout(10_000),
 });
-if (login.status === 200 || login.status === 201)
-  fail('вход паролем пробы прошёл — учётка не заблокирована');
-console.log(`3. вход паролем пробы отклонён (${login.status})`);
+const loginBody = await json(login);
+const [{ status: dbStatus }] = (
+  await pool.query(`SELECT status FROM identity.users WHERE id = $1`, [user.id])
+).rows;
+await pool.end();
+const loginVerdict = loginDenialVerdict(login.status, loginBody, dbStatus);
+if (!loginVerdict.ok) fail(`запрет входа НЕ подтверждён — ${loginVerdict.reason}`);
+console.log(`3. ${loginVerdict.reason}`);
 
 // 4. Сохранённая сессия больше не нужна.
 rmSync(sessionFile, { force: true });

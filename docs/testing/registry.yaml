@@ -2593,6 +2593,25 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
 
+  - id: CHK-MONITOR-PROBE-DISABLE
+    file: scripts/check-monitor-probe-disable.mjs
+    command: node scripts/check-monitor-probe-disable.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 14
+    needs: []
+    effects: ['только память']
+    studied: code
+    studiedOn: 2026-11-02
+    note: >-
+      Проверка 02.11.2026: 14/14. Мутация «отказ = любой ответ, кроме
+      200/201» (прежнее правило) — FAIL на 403 при active, step_up, без тела,
+      429, 503, 404, 401.
+    purpose: 'Отключение учётки мониторинга подтверждается только ожидаемыми ответами: вход — 403 forbidden при статусе suspended в базе, сессия — 401 unauthenticated; 429, 503, 404, 401 при входе, step_up и ответы без тела — не подтверждение.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-02
+
   - id: TOOL-MONITOR-PROBE-DISABLE
     file: scripts/monitor-probe-disable.mjs
     command: node scripts/monitor-probe-disable.mjs
@@ -3814,6 +3833,7 @@ blocks:
         CHK-MONITOR-APP-PROBE,
         CHK-MONITORING-ACCOUNT,
         CHK-MONITOR-PULSE,
+        CHK-MONITOR-PROBE-DISABLE,
         CHK-DNS-HIDDEN-PRIMARY,
         CHK-DNS-PRIMARY-APPLY,
         UNIT-CORE-MONITORING-ACCOUNT,
