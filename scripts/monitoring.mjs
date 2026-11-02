@@ -176,6 +176,7 @@ async function configure() {
   // своя тревога. nodata — важность, false — не нужна.
   const freshness = [];
   const typeById = new Map();
+  const masterById = new Map();
   const item = async (spec) => {
     const { nodata, ...rest } = spec;
     const primary = rest.type !== 18 && rest.history !== '0';
@@ -218,6 +219,7 @@ async function configure() {
     }
     items.set(spec.key_, itemid);
     typeById.set(itemid, spec.type);
+    if (spec.master_itemid) masterById.set(itemid, spec.master_itemid);
     return itemid;
   };
   const trigger = async (description, expression, priority, extra = {}) => {
@@ -813,8 +815,23 @@ async function configure() {
   // агента. Пропал агент — одно сообщение, а не по одному на проверку
   // (выпуск W08a 2026-11-02: проба остановки агента дала 42 сообщения).
   // Проверки самого сервера Zabbix и HTTP-проверки с сервера — независимы.
-  const viaAgent = (f) =>
-    f.type === AGENT || (f.type === DEP && typeById.get(f.masterId) === AGENT);
+  // Цепочку зависимых проходим до источника: зависимая от зависимой от
+  // агентской — тоже агентская (опыт 2026-11-02: «Ядро: очереди» проскочила).
+  const sourceType = (type, masterId) => {
+    let t = type;
+    let m = masterId;
+    for (let i = 0; t === DEP && m && i < 10; i++) {
+      t = typeById.get(m);
+      m = masterById.get(m);
+    }
+    return t;
+  };
+  // Тип — по самой проверке (через ключ), а не по записи: часть записей
+  // «нет данных» добавлена вручную без типа.
+  const viaAgent = (f) => {
+    const id = items.get(f.key);
+    return sourceType(typeById.get(id) ?? f.type, masterById.get(id) ?? f.masterId) === AGENT;
+  };
   const windowOf = (f) => {
     const n = Number.parseInt(f.delay, 10) * 3;
     return `${n}${f.delay.replace(/^\d+/, '')}`;
