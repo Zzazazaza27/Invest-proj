@@ -115,8 +115,16 @@ function loadCatalog() {
 }
 
 function appendCatalog(row) {
+  // Оборванная последняя строка (сбой посреди записи) не должна склеиться
+  // со следующей: иначе пропадает и новая, уже подтверждённая порция
+  // (поймано сверкой каталога с квитанциями, испытание 6).
+  let lead = '';
+  if (existsSync(CATALOG)) {
+    const text = readFileSync(CATALOG);
+    if (text.length && text[text.length - 1] !== 0x0a) lead = '\n';
+  }
   const fd = openSync(CATALOG, 'a');
-  appendFileSync(fd, `${JSON.stringify(row)}\n`);
+  appendFileSync(fd, `${lead}${JSON.stringify(row)}\n`);
   fsyncSync(fd);
   closeSync(fd);
 }
@@ -411,9 +419,34 @@ async function confirm(state, row, lastEntry) {
   saveState(state);
 }
 
-/** Пересекается ли отрезок с известным пропуском архива. */
-function inArchiveGap(state, a, b) {
-  return (state.archiveGaps ?? []).some((g) => !(BigInt(g.last) < a || BigInt(g.first) > b));
+const gapsOf = (state) =>
+  (state.archiveGaps ?? []).map((g) => ({ first: BigInt(g.first), last: BigInt(g.last) }));
+
+/** Пропуск архива, содержащий запись n. */
+function archiveGapAt(state, n) {
+  return gapsOf(state).find((g) => g.first <= n && n <= g.last) ?? null;
+}
+
+/** Ближайший пропуск архива, начинающийся после записи n. */
+function archiveGapAfter(state, n) {
+  return (
+    gapsOf(state)
+      .filter((g) => g.first > n)
+      .sort((x, y) => (x.first < y.first ? -1 : 1))[0] ?? null
+  );
+}
+
+/** Объединить пересекающиеся и смежные отрезки. */
+function mergeRanges(ranges) {
+  const sorted = [...ranges].sort((x, y) => (x.first < y.first ? -1 : 1));
+  const out = [];
+  for (const r of sorted) {
+    const last = out.at(-1);
+    if (last && r.first <= last.last + 1n) {
+      if (r.last > last.last) last.last = r.last;
+    } else out.push({ ...r });
+  }
+  return out;
 }
 
 /** Следующий объект за разрывом в этом журнале: {key, receipt, ...отрезок}. */
@@ -498,8 +531,18 @@ async function run() {
         } else {
           b = nb && nb.first <= avail.seq - 1n ? nb.first - 1n : avail.seq - 1n;
           // Пропуск, известный по восстановлению, — утрата архива, а не
-          // вытеснение journald: в journald записей просто уже нет.
-          reason = inArchiveGap(state, a, b) ? 'archive-missing' : 'journald-vacuumed';
+          // вытеснение journald: в journald записей просто уже нет. Отметка
+          // режется по границам пропуска: внутри — «утрачено в архиве»,
+          // снаружи — вытеснение journald до архивации.
+          const g = archiveGapAt(state, a);
+          if (g) {
+            if (g.last < b) b = g.last;
+            reason = 'archive-missing';
+          } else {
+            const nextGap = archiveGapAfter(state, a);
+            if (nextGap && nextGap.first <= b) b = nextGap.first - 1n;
+            reason = 'journald-vacuumed';
+          }
         }
         await storeLoss(state.seqId, a, b, reason);
         state.losses = (state.losses ?? 0) + 1;
@@ -651,10 +694,18 @@ async function rebuildState() {
       .filter((u) => u.first > end)
       .map((u) => ({ key: u.key, first: u.first, receipt: null })),
   ].sort((a, b) => (a.first < b.first ? -1 : 1));
-  const archiveGaps = gaps.map((g) => ({ first: str(g.first), last: str(g.last) }));
+  // Пропуски архива: в начале и середине — по сохранившимся объектам; за
+  // концом цепочки — по квитанциям утраченных порций (иначе утрата
+  // последних порций не видна: за ними нет объекта, на котором видно разрыв).
+  const ranges = gaps.map((g) => ({ first: g.first, last: g.last }));
   if (!gaps.length && later.length && later[0].first > end + 1n) {
-    archiveGaps.push({ first: str(end + 1n), last: str(later[0].first - 1n) });
+    ranges.push({ first: end + 1n, last: later[0].first - 1n });
   }
+  for (const key of lostConfirmed) {
+    const p = parseChunkKey(key);
+    if (p.last > end) ranges.push({ first: p.first > end ? p.first : end + 1n, last: p.last });
+  }
+  const archiveGaps = mergeRanges(ranges).map((g) => ({ first: str(g.first), last: str(g.last) }));
   const state = {
     seqId: sid,
     lastSeq: end,
@@ -731,9 +782,27 @@ function status() {
  */
 async function verify() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
-  const rows = loadCatalog().filter((r) => r.kind === 'chunk');
   const state = loadState();
+  if (!state) throw new Error('нет локального состояния и каталога — сначала rebuild');
+  const all = loadCatalog();
+  const rows = all.filter((r) => r.kind === 'chunk');
   const problems = [];
+  // Независимо от состояния: каждая квитанция в S3 — отрезок, который архив
+  // обязан покрывать подтверждённой порцией или учтённой отметкой потери.
+  // Утрата подтверждённой порции (в том числе последней) не даёт зелёного.
+  const covered = mergeRanges(all.map((r) => ({ first: BigInt(r.first), last: BigInt(r.last) })));
+  const isCovered = (a, b) => covered.some((c) => c.first <= a && b <= c.last);
+  let receiptsSeen = 0;
+  for (const [key] of groupByKey(await listVersions(`r/${state.seqId}/`))) {
+    const r = parseReceiptKey(key);
+    if (!r) continue;
+    receiptsSeen++;
+    if (!isCovered(r.first, r.last)) {
+      problems.push(
+        `отрезок ${r.first}–${r.last}: квитанция есть, в каталоге не покрыт — утрата архива`,
+      );
+    }
+  }
   const foreign = [];
   const byKey = groupByKey(await listVersions(`${PREFIX}/`));
   for (const r of rows) {
@@ -753,7 +822,7 @@ async function verify() {
   const unconfirmed = state?.unconfirmed?.length ?? 0;
   const gaps = state?.archiveGaps?.length ?? 0;
   console.log(
-    `проверено порций: ${rows.length}, проблем: ${problems.length}, посторонних версий: ${foreign.length}, без квитанции: ${unconfirmed}, пропусков архива: ${gaps}`,
+    `проверено порций: ${rows.length}, квитанций: ${receiptsSeen}, проблем: ${problems.length}, посторонних версий: ${foreign.length}, без квитанции: ${unconfirmed}, пропусков архива: ${gaps}`,
   );
   for (const p of [...problems, ...foreign]) console.log(`  ${p}`);
   if (problems.length || foreign.length || gaps) process.exitCode = 1;

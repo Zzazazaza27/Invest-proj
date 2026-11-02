@@ -25,6 +25,10 @@
  *      обнаружен и восполнен из journald;
  *  12. утрата нескольких начальных порций при уже вытесненном journald —
  *      отметка «утрачено в архиве», а не «вытеснено journald».
+ *  13–15. утрата последней порции, нескольких последних, всех порций при
+ *      сохранившихся квитанциях + потеря состояния — обнаруживается; verify
+ *      не зелёный, пока утрата не восполнена (journald хранит) или не
+ *      отмечена «утрачено в архиве» (journald вытеснен).
  * Цепочка проверяется от ЗАКРЕПЛЁННОЙ в S3 границы.
  *
  *   node scripts/check-logs-archive.mjs [--keep]
@@ -563,6 +567,107 @@ try {
   );
   await chainCheck('12');
   verifyOk('12');
+
+  // ---------------------------------------------------- 13–15: утрата конца
+  const chunksByFirst = () =>
+    catalog()
+      .filter((r) => r.kind === 'chunk')
+      .sort(byFirst);
+  const dropAll = async (rows) => {
+    for (const ch of rows) {
+      for (const v of await versionsOf(ch.key)) {
+        await rootReq('DELETE', ch.key, { versionId: v.versionId });
+      }
+    }
+  };
+  const loseState = () =>
+    inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
+  /** Каждый удалённый отрезок покрыт отметками «утрачено в архиве». */
+  const coveredByArchiveMissing = (rows) => {
+    const marks = catalog().filter((r) => r.kind === 'loss' && r.reason === 'archive-missing');
+    return rows.every((ch) =>
+      marks.some((m) => BigInt(m.first) <= BigInt(ch.first) && BigInt(ch.last) <= BigInt(m.last)),
+    );
+  };
+  const verifyRed = (name) => {
+    const v = arch('verify');
+    check(
+      `${name}: verify не зелёный, пока утрата не восполнена или не учтена`,
+      v.code !== 0 && v.out.includes('утрата архива'),
+      v.out.split('\n')[0],
+    );
+  };
+
+  console.log('\n▸ 13. Утрата последней порции + потеря состояния (journald ещё хранит)');
+  const last13 = chunksByFirst().at(-1);
+  await dropAll([last13]);
+  loseState();
+  const rb13 = arch('rebuild');
+  check(
+    'утрата последней порции обнаружена rebuild',
+    rb13.out.includes(`ПРОПУСК В АРХИВЕ: записи ${last13.first}`),
+    rb13.out.split('\n').find((l) => l.includes('ПРОПУСК')) ?? rb13.out.split('\n')[0],
+  );
+  verifyRed('13');
+  const r13 = arch('run');
+  check(
+    'восполнена из journald, без отметки потери',
+    r13.code === 0 && !/ПОТЕРЯ|ПРОПУСК АРХИВА|НЕ ПРОВЕРЯЕМО/.test(r13.out),
+    r13.out.split('\n').pop(),
+  );
+  await chainCheck('13');
+  verifyOk('13');
+
+  console.log('\n▸ 14. Утрата нескольких последних порций, journald уже вытеснен');
+  const last14 = chunksByFirst().slice(-3);
+  await dropAll(last14);
+  inCt('journalctl --rotate && journalctl --vacuum-files=1 >/dev/null 2>&1; true');
+  loseState();
+  const rb14 = arch('rebuild');
+  check(
+    'утрата последних порций обнаружена rebuild',
+    rb14.out.includes(`ПРОПУСК В АРХИВЕ: записи ${last14[0].first}`),
+    rb14.out.split('\n').find((l) => l.includes('ПРОПУСК')) ?? rb14.out.split('\n')[0],
+  );
+  verifyRed('14');
+  gen(5, 's14-after');
+  const r14 = arch('run');
+  check(
+    'отмечена как утрата АРХИВА, а не вытеснение journald',
+    r14.code === 0 && coveredByArchiveMissing(last14),
+    r14.out
+      .split('\n')
+      .filter((l) => /ПОТЕРЯ|ПРОПУСК/.test(l))
+      .join(' | ') || r14.out,
+  );
+  await chainCheck('14');
+  verifyOk('14');
+
+  console.log('\n▸ 15. Утрачены все порции, квитанции сохранились, journald вытеснен');
+  const all15 = chunksByFirst();
+  await dropAll(all15);
+  check(
+    'все объекты порций удалены (root)',
+    (await allKeys()).every((k) => !k.endsWith('.jx')),
+  );
+  inCt('journalctl --rotate && journalctl --vacuum-files=1 >/dev/null 2>&1; true');
+  loseState();
+  const rb15 = arch('rebuild');
+  check(
+    'утрата всех порций обнаружена rebuild',
+    rb15.out.includes('ПРОПУСК В АРХИВЕ') && rb15.out.includes('УТРАЧЕНО ПОДТВЕРЖДЁННЫХ'),
+    rb15.out.split('\n')[0],
+  );
+  verifyRed('15');
+  gen(5, 's15-after');
+  const r15 = arch('run');
+  check(
+    'каждая утраченная порция отмечена как утрата АРХИВА',
+    r15.code === 0 && coveredByArchiveMissing(all15),
+    `порций ${all15.length}`,
+  );
+  await chainCheck('15');
+  verifyOk('15');
 } catch (error) {
   failed++;
   console.log(`  FAIL  испытание прервано: ${error.message}`);
