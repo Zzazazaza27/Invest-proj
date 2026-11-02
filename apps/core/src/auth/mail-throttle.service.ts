@@ -48,7 +48,7 @@ export class MailThrottleService {
     } catch (error) {
       this.logger.error({
         msg: 'счётчик писем подтверждения недоступен',
-        error: error instanceof Error ? error.message : 'unknown',
+        error,
       });
       throw errors.upstreamUnavailable('mail_throttle');
     }

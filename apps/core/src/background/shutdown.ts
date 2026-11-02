@@ -17,7 +17,21 @@ export interface ShutdownOptions {
   /** Первый шаг: вывести экземпляр из готовности (блок 4.9). */
   beforeStop?: () => void;
   exit: (code: number) => void;
-  log: (message: string) => void;
+  /**
+   * Сообщение — постоянный текст; исключение — отдельным аргументом, в
+   * журнал оно идёт через безопасное преобразование (8.4), а не текстом в
+   * строке сообщения.
+   */
+  log: (message: string, error?: unknown) => void;
+}
+
+/** Связка завершения с журналом ядра: та же, что в main.ts. */
+export function shutdownLog(logger: {
+  log: (message: unknown) => void;
+  warn: (message: unknown) => void;
+}): ShutdownOptions['log'] {
+  return (message, error) =>
+    error === undefined ? logger.log(message) : logger.warn({ msg: message, error });
 }
 
 export function createShutdown(options: ShutdownOptions): (signal: string) => Promise<void> {
@@ -36,11 +50,7 @@ export function createShutdown(options: ShutdownOptions): (signal: string) => Pr
     options.log(`получен ${signal}, новая фоновая работа не захватывается`);
     await options.jobs.stop(Math.max(0, deadline - Date.now()));
     for (const close of options.closers) {
-      await close().catch((error: unknown) =>
-        options.log(
-          `ошибка при закрытии: ${error instanceof Error ? error.message : String(error)}`,
-        ),
-      );
+      await close().catch((error: unknown) => options.log('ошибка при закрытии', error));
     }
     clearTimeout(forced);
     options.exit(0);

@@ -56,7 +56,7 @@ export function registerIpCeiling(app: FastifyInstance, counters: Counters | nul
     } catch (error) {
       request.log.error({
         msg: 'потолок по адресу: счётчик недоступен, запрос отклонён',
-        error: error instanceof Error ? error.message : 'unknown',
+        error,
       });
       // Счётчик недоступен — отказ, а не проход мимо потолка.
       return reply.code(503).send({

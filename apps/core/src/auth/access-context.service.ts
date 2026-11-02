@@ -210,7 +210,7 @@ export class AccessContextService {
       this.logger.warn({
         msg: 'отметка использования контекста не записана',
         contextId,
-        error: error instanceof Error ? error.message : String(error),
+        error,
       });
     }
   }

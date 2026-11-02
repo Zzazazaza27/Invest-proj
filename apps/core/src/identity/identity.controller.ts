@@ -170,7 +170,7 @@ export class IdentityController {
       .catch((error: unknown) => {
         this.logger.warn({
           msg: 'письмо подтверждения при регистрации не отправлено',
-          reason: error instanceof Error ? error.message : 'unknown',
+          error,
           traceId: ctx.traceId,
         });
       });

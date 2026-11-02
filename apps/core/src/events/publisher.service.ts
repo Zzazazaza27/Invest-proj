@@ -301,7 +301,7 @@ export class OutboxPublisherService implements OnModuleInit {
       this.logger.error({
         msg: 'постановка доставок вебхуков не выполнена, событие в очереди повтора',
         id: event.id,
-        error: error instanceof Error ? error.message : String(error),
+        error,
       });
       return false;
     }

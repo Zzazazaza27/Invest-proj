@@ -14,7 +14,7 @@ import { runControl } from './background/readiness';
 import { Database } from './db/unit-of-work';
 import { NatsClient } from './events/nats.client';
 import { S3Service } from './storage/s3.service';
-import { createShutdown } from './background/shutdown';
+import { createShutdown, shutdownLog } from './background/shutdown';
 import { getEnv } from './config/env';
 import { ProblemDetailsFilter, problemCodeOf } from './common/problem.filter';
 import { JsonLogger, defaultMeta } from './common/logging/json-logger';
@@ -430,7 +430,7 @@ async function bootstrap(): Promise<void> {
       lifecycle = 'stopping';
     },
     exit: (code) => process.exit(code),
-    log: (message) => logger.log(message),
+    log: shutdownLog(logger),
   });
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
   process.on('SIGINT', () => void shutdown('SIGINT'));

@@ -47,7 +47,7 @@ export class LoginThrottleService {
     } catch (error) {
       this.logger.error({
         msg: 'счётчик неудачных входов недоступен',
-        error: error instanceof Error ? error.message : 'unknown',
+        error,
       });
       // Fail-closed: недоступный счётчик — отказ, а не снятие защиты.
       throw errors.upstreamUnavailable('login_throttle');
@@ -70,7 +70,7 @@ export class LoginThrottleService {
       this.logger.warn({
         msg: 'пропущенный учёт неудачного входа',
         key: this.key(indexHex),
-        error: error instanceof Error ? error.message : 'unknown',
+        error,
       });
     }
   }
@@ -85,7 +85,7 @@ export class LoginThrottleService {
       this.logger.warn({
         msg: 'счётчик неудачных входов не сброшен',
         key: this.key(indexHex),
-        error: error instanceof Error ? error.message : 'unknown',
+        error,
       });
     }
   }

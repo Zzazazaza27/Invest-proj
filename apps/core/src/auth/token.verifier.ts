@@ -78,7 +78,7 @@ export class TokenVerifier {
     } catch (error) {
       this.logger.warn({
         msg: 'токен отклонён',
-        reason: error instanceof Error ? error.message : 'unknown',
+        error,
       });
       throw errors.unauthenticated({ stage: 'oidc-verify' });
     }

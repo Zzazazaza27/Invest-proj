@@ -461,7 +461,7 @@
 | UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-READINESS | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-MONITORING-ACCOUNT | `npm run test -w apps/core` | 6 | CI | CI |
-| UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 21 | CI | CI |
+| UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 24 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |

@@ -121,7 +121,7 @@ export class ServiceAccountStateService {
       this.snapshotReadAt = Date.now();
       this.logger.error({
         msg: 'не удалось прочитать состояние сервисных аккаунтов',
-        error: error instanceof Error ? error.message : String(error),
+        error,
       });
     }
   }

@@ -312,7 +312,7 @@ export class VerificationService {
       this.logger.warn({
         msg: 'не удалось записать событие подтверждения',
         verb,
-        error: error instanceof Error ? error.message : 'unknown',
+        error,
       });
     }
   }

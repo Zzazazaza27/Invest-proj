@@ -323,7 +323,7 @@ export class SupportService {
       this.logger.warn({
         msg: 'копия обращения на служебный ящик не ушла',
         ticketId: input.ticketId,
-        reason: (error as Error).message,
+        error,
       });
     }
   }

@@ -887,7 +887,7 @@ export class TestingSessionsService {
           [sessionId, message.slice(0, 2000)],
         ),
       );
-      this.logger.warn({ msg: 'уборка сессии не выполнена', sessionId, error: message });
+      this.logger.warn({ msg: 'уборка сессии не выполнена', sessionId, error });
       throw errors.conflict(
         'Уборка остановлена: найдена связь, которую нельзя разорвать автоматически',
         {

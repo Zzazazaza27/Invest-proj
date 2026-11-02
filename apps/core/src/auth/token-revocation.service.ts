@@ -165,7 +165,7 @@ export class TokenRevocationService {
       this.snapshot ??= new Set();
       this.logger.error({
         msg: 'не удалось прочитать реестр отозванных токенов',
-        error: error instanceof Error ? error.message : String(error),
+        error,
       });
     }
   }

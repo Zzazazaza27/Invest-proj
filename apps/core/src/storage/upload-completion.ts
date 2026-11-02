@@ -469,7 +469,7 @@ export class UploadCompletion {
       uploadId: row.id,
       failures,
       unknownSince: since.toISOString(),
-      error: message,
+      error,
     });
     if (escalate) {
       return this.settle(

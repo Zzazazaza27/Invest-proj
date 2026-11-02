@@ -96,7 +96,7 @@ export class Database implements OnModuleDestroy {
   ): Promise<{ client: pg.PoolClient; release: () => void }> {
     const client = await pool.connect();
     const onError = (error: Error): void => {
-      this.logger.error({ msg: 'обрыв выданного соединения', pool: label, error: error.message });
+      this.logger.error({ msg: 'обрыв выданного соединения', pool: label, error });
     };
     client.on('error', onError);
     return {
@@ -125,7 +125,7 @@ export class Database implements OnModuleDestroy {
       this.logger.error({
         msg: 'ошибка пула соединений',
         pool: applicationName,
-        error: error.message,
+        error,
       });
     });
     return pool;

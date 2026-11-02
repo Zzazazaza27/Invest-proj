@@ -128,7 +128,7 @@ export class NatsClient implements OnModuleDestroy {
         msg:
           `стрим ${EVENT_STREAM} недоступен: события будут копиться в outbox. ` +
           'Создать стрим: node scripts/nats-init-stream.mjs',
-        error: error instanceof Error ? error.message : String(error),
+        error,
       });
       return null;
     }
@@ -146,7 +146,7 @@ export class NatsClient implements OnModuleDestroy {
     } catch (error) {
       this.logger.warn({
         msg: 'наблюдение за состоянием NATS прервано',
-        error: error instanceof Error ? error.message : String(error),
+        error,
       });
     }
   }

@@ -58,7 +58,7 @@ export class Counters {
       this.logger.error({
         msg: 'счётчики ограничений недоступны',
         // У ошибки подключения (AggregateError) сообщение пустое — берём код.
-        error: error.message || (error as Error & { code?: string }).code || error.name,
+        error,
       });
     });
     redis.on('ready', () => {

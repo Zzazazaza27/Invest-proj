@@ -169,6 +169,13 @@ export function safeFields(input: Record<string, unknown>): Record<string, unkno
       Object.assign(out, safeError(value));
       return;
     }
+    if (key === 'error' && (typeof value !== 'object' || value === null || Array.isArray(value))) {
+      // Ошибка, заранее превращённая в строку, — произвольный текст внешнего
+      // источника: по формату его не отличить от кода, маскировка известных
+      // конструкций его не очищает. Не пишется; видно, что текст был.
+      dropped.push('error(текст)');
+      return;
+    }
     if (key === 'error' && value && typeof value === 'object' && !Array.isArray(value)) {
       // Прежняя форма { message, stack }: текст не пишется, только кадры.
       const stack = (value as { stack?: unknown }).stack;

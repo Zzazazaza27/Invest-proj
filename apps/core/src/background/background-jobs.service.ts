@@ -279,7 +279,7 @@ export class BackgroundJobsService {
         this.logger.error({
           msg: 'фоновый проход не выполнен',
           job: entry.def.name,
-          error: message,
+          error,
         });
       } finally {
         if (release) await release().catch(() => undefined);

@@ -122,7 +122,7 @@ export class IdentityService {
     } catch (error) {
       this.logger.warn({
         msg: 'не удалось записать событие неудачного входа',
-        error: error instanceof Error ? error.message : 'unknown',
+        error,
       });
     }
   }
@@ -320,7 +320,7 @@ export class IdentityService {
       this.logger.warn({
         msg: 'уведомление о регистрации не ушло',
         userId,
-        reason: error instanceof Error ? error.message : 'unknown',
+        error,
       });
     }
   }
