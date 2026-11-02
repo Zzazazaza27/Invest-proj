@@ -9,7 +9,8 @@ import { createHash, createHmac } from 'node:crypto';
  * настроек (path-style, регион, кодирование ключа) вылезет не там, где его
  * ищут.
  *
- * Здесь только то, что нужно скриптам: PUT, HEAD, GET, DELETE по ключу.
+ * Здесь только то, что нужно скриптам: PUT, HEAD, GET, DELETE по ключу,
+ * с параметрами запроса (версия объекта, список ключей).
  */
 
 const ALGORITHM = 'AWS4-HMAC-SHA256';
@@ -58,9 +59,21 @@ export function storageFromEnv(env = process.env) {
  * MinIO. Каждый сегмент ключа кодируется отдельно: `encodeURIComponent` целиком
  * съел бы разделители и превратил `projects/a/b` в один сегмент.
  */
-export async function s3Object(storage, method, key, body = null, headers = {}) {
+export async function s3Object(storage, method, key, body = null, headers = {}, query = {}) {
   const encodedKey = key.split('/').map(encodeURIComponent).join('/');
   const url = new URL(`${storage.endpoint}/${storage.bucket}/${encodedKey}`);
+  // Параметры запроса (versionId, list-type, prefix…): в подписи — по
+  // алфавиту, имя и значение закодированы по правилам SigV4.
+  const enc = (v) =>
+    encodeURIComponent(v).replace(
+      /[!'()*]/g,
+      (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`,
+    );
+  const canonicalQuery = Object.keys(query)
+    .sort()
+    .map((k) => `${enc(k)}=${enc(String(query[k]))}`)
+    .join('&');
+  if (canonicalQuery) url.search = canonicalQuery;
   const payload = body ?? Buffer.alloc(0);
   const date = amzDate(new Date());
   const shortDate = date.slice(0, 8);
@@ -77,7 +90,7 @@ export async function s3Object(storage, method, key, body = null, headers = {}) 
   const canonicalRequest = [
     method,
     url.pathname,
-    '',
+    canonicalQuery,
     canonicalHeaders,
     names.join(';'),
     payloadHash,

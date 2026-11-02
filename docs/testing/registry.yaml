@@ -2569,6 +2569,27 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
 
+  - id: TOOL-LOGS-ARCHIVE
+    file: scripts/logs-archive.mjs
+    command: node scripts/logs-archive.mjs init|run|rebuild|status|verify
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [s3]
+    effects:
+      [
+        'читает journald, пишет порции журнала в бакет архива (запись без удаления), ведёт состояние и каталог в LOGS_STATE_DIR',
+      ]
+    studied: code
+    studiedOn: 2026-11-03
+    note: >-
+      W08b, на VPS ещё не установлен. Испытания — CHK-LOGS-ARCHIVE на
+      настоящем journald в контейнере.
+    purpose: 'Архиватор технических журналов (блок 8, 8.4): порции journald по номерам записей, шифрование, VersionId и хеши в каталоге, повтор по исходному хешу, продолжение с конца непрерывной цепочки, отметки потерь, проверка чтением по VersionId.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-03
+
   - id: TOOL-MONITORING
     file: scripts/monitoring.mjs
     command: node scripts/monitoring.mjs configure|status [--items]
@@ -2808,6 +2829,29 @@ checks:
     purpose: 'Технический журнал ядра без секретов до записи (8.4, 2.1-W08b): маскировка текста; поля только по перечню, отброшенные видны по имени; строка в поле error не пишется никогда (только объект исключения: класс, SQLSTATE, кадры без текста); JsonLogger; сторож исходников — подстановки в текст любого вызова журнала (logger, options.log) только из перечня, в полях нет .message/.stack/String()/JSON.stringify, error — только объект исключения; полный путь завершения процесса (Logger Nest → JsonLogger через shutdownLog) — исключение закрывающей функции без текста. Сторож проверен на исходниках f76f5de (35 находок, включая обходы Тэнка).'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
+
+  - id: CHK-LOGS-ARCHIVE
+    file: scripts/check-logs-archive.mjs
+    command: node scripts/check-logs-archive.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 33
+    needs: [docker, s3]
+    effects:
+      [
+        'временный контейнер с systemd-journald, бакет с версиями и учётка архиватора в MinIO стенда — удаляются в конце',
+      ]
+    studied: code
+    studiedOn: 2026-11-03
+    note: >-
+      Контрольный опыт 03.11.2026: при чтении последней версии вместо
+      VersionId из каталога сценарий 8 даёт FAIL (32/33); с чтением по
+      VersionId — 33/33. Первый прогон нашёл ошибку: русская причина потери
+      в метаданных S3 (заголовки только ASCII).
+    purpose: 'Архиватор журналов на настоящем journald (8.4, 2.1-W08b): порции и каталог с VersionId; падение до отправки и после «S3 принял» — повтор по исходному хешу без новой версии; потеря состояния и каталога — продолжение с конца непрерывной цепочки; разрыв в S3 — объекты за разрывом сверяются, а не дублируются; оборванная строка каталога; конфликт под тем же ключом — отказ без перезаписи; новая версия под ключом не меняет чтение подтверждённой порции; ротация без потерь; вытеснение до архивации — отметка потери.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-03
 
   - id: CHK-MONITORING-ACCOUNT
     file: scripts/check-monitoring-account.mjs
@@ -3847,6 +3891,7 @@ blocks:
         UNIT-CORE-READINESS,
         CHK-MONITOR-APP-PROBE,
         CHK-MONITORING-ACCOUNT,
+        CHK-LOGS-ARCHIVE,
         CHK-MONITOR-PULSE,
         CHK-MONITOR-PROBE-DISABLE,
         CHK-DNS-HIDDEN-PRIMARY,

@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 170; требований: 41
+- Проверок: 172; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 64
+### Зарегистрированы, но ни в наборе, ни в CI — 65
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -244,6 +244,7 @@
 - `CHK-DNS-HIDDEN-PRIMARY` — Схема «скрытый первичный + вторичные» на тестовой зоне (план независимого DNS): передача зоны только по ключу и с адреса вторичного, обновление по NOTIFY, от…
 - `CHK-DNS-PRIMARY-APPLY` — Безопасное применение зон первичного DNS: неверная зона отклоняется, рабочий файл и записанная версия не меняются, после перезапуска работает прежняя зона; с…
 - `CHK-MONITOR-APP-PROBE` — Разрешённое чтение контрольных данных прикладным путём (2.5, 8.2): обычный вход служебной учётки через публичный адрес, карточка контрольного проекта и матер…
+- `CHK-LOGS-ARCHIVE` — Архиватор журналов на настоящем journald (8.4, 2.1-W08b): порции и каталог с VersionId; падение до отправки и после «S3 принял» — повтор по исходному хешу бе…
 - `CHK-MONITORING-ACCOUNT` — Служебная учётка мониторинга — только чтение контрольных данных (2.5): контрольные карточка и файл читаются; изменение и чтение профиля, загрузка и удаление …
 
 ### Намеренно вручную — 9
@@ -304,6 +305,7 @@
 | TOOL-TEMP-STAND | `npm run temp:up` | 0 | вручную, по поводу | — |
 | TOOL-TEMP-RUN | `npm run temp:run` | 0 | вручную, по поводу | — |
 | TOOL-VITE-BUILD | `node scripts/vite-build.mjs` | 0 | вручную, по поводу | — |
+| TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify` | 0 | вручную, по поводу | — |
 | TOOL-MONITORING | `node scripts/monitoring.mjs configure|status [--items]` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-PROBE-DISABLE | `node scripts/monitor-probe-disable.mjs` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-PULSE | `node scripts/monitor-pulse.mjs` | 0 | вручную, по поводу | — |
@@ -348,6 +350,7 @@
 | CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
 | CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
+| CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 33 | вручную | — |
 | CHK-MONITORING-ACCOUNT | `node scripts/check-monitoring-account.mjs` | 9 | вручную | — |
 
 ### Гейты и статические проверки
