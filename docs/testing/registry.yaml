@@ -2601,7 +2601,10 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [docker]
-    effects: ['отправляет отметку или /fail на HEALTHCHECKS_PING_URL, если он задан; пишет pulse.json {at, ok} в MONITOR_PULSE_PUBLIC_DIR, если он задан']
+    effects:
+      [
+        'отправляет отметку или /fail на HEALTHCHECKS_PING_URL, если он задан; пишет pulse.json {at, ok} в MONITOR_PULSE_PUBLIC_DIR, если он задан',
+      ]
     studied: code
     studiedOn: 2026-11-01
     note: >-
