@@ -31,9 +31,26 @@ Beget каждую запись сверить запросом к их NS. Ра
 
 ## Проверка после восстановления
 
-Запросы — напрямую к каждому NS Beget, с VPS: со своей машины исходящие на
-порт 53 режутся. Например:
+Запрос `ANY` не выгружает зону и может вернуть неполный ответ (RFC 8482).
+Порядок:
 
-```
-docker run --rm --network host cznic/knot:3.4 kdig @ns1.beget.com 5espace.com ANY
-```
+1. **Выгрузка из панели Beget** — список всех записей зоны (делает Томас или
+   Маус через `dns/getData` API). Это основа описи.
+2. **Сверка каждого имени и типа** из выгрузки и из таблиц выше — отдельными
+   запросами к каждому NS Beget, с VPS (со своей машины исходящие на порт 53
+   режутся):
+
+   ```
+   for t in SOA NS A AAAA MX TXT CAA; do
+     docker run --rm --network host cznic/knot:3.4 kdig @ns1.beget.com 5espace.com $t +noall +answer
+   done
+   for n in www files panel mail mail._domainkey _dmarc; do
+     for t in A AAAA CNAME TXT; do
+       docker run --rm --network host cznic/knot:3.4 kdig @ns1.beget.com $n.5espace.com $t +noall +answer
+     done
+   done
+   ```
+
+3. Расхождения между выгрузкой, ответами NS и нашей стороной — разобрать
+   до перехода. **Без подтверждённых MX и почтовых TXT (SPF, DKIM, DMARC)
+   переключение не проводится.**

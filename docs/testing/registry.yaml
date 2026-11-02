@@ -2659,6 +2659,26 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
 
+  - id: CHK-DNS-PRIMARY-APPLY
+    file: scripts/check-dns-primary-apply.mjs
+    command: node scripts/check-dns-primary-apply.mjs
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 10
+    needs: [docker]
+    effects: ['временный контейнер Knot dnsapply-check и каталог; удаляются после проверки']
+    studied: code
+    studiedOn: 2026-11-02
+    note: >-
+      Проверка 02.11.2026: 10/10. Мутации: запись в рабочие каталоги до
+      проверки (прежнее поведение) — 2 FAIL (файл испорчен, после перезапуска
+      зона не работает); проверка не останавливает применение — 10/10,
+      спасает возврат прежнего комплекта (второй рубеж).
+    purpose: 'Безопасное применение зон первичного DNS: неверная зона отклоняется, рабочий файл и записанная версия не меняются, после перезапуска работает прежняя зона; следующая правильная зона применяется с ростом версии.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-02
+
   - id: TOOL-DNS-PRIMARY
     file: scripts/dns-primary.mjs
     command: node scripts/dns-primary.mjs up
@@ -2673,8 +2693,9 @@ checks:
       ]
     studied: code
     studiedOn: 2026-11-02
-    purpose: 'Скрытый первичный DNS: зоны из infra/dns/zones, строго растущая версия зоны (с учётом записанной и отдаваемой вторичными), проверка конфигурации и зон до применения, передача только DNS_TRANSFER_ALLOW.'
-    confirmation: not-run
+    purpose: 'Скрытый первичный DNS: комплект собирается и проверяется в staging, рабочие файлы меняются атомарно после проверки, при незагрузке — возврат previous; зоны из infra/dns/zones, строго растущая версия зоны (с учётом записанной и отдаваемой вторичными), проверка конфигурации и зон до применения, передача только DNS_TRANSFER_ALLOW.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-02
 
   - id: TOOL-MONITOR-PROBE-INIT
     file: scripts/monitor-probe-init.mjs
@@ -3771,6 +3792,7 @@ blocks:
         CHK-MONITORING-ACCOUNT,
         CHK-MONITOR-PULSE,
         CHK-DNS-HIDDEN-PRIMARY,
+        CHK-DNS-PRIMARY-APPLY,
         UNIT-CORE-MONITORING-ACCOUNT,
         DBT-CONCURRENCY,
         DBT-INVARIANTS,
