@@ -483,6 +483,84 @@ try {
   const lwrong = arch('verify-copy', { LOGS_PULL_TO: LPULL });
   check('копия истории не открывается ключом основного архива', lwrong.code !== 0, lwrong.out);
   inCt(`rm -rf ${LPULL}`);
+  // Живой журнал Docker: снимок до границы, проверка покрытия (замечание
+  // Тэнка: readFileSync изменяемого файла не доказывает полноту).
+  const coverOf = (out) =>
+    out.split('\n').find((l) => l.startsWith(`история: ${DOCKER_LOG}`)) ?? '';
+  const dockerLog = (name) =>
+    inCt(
+      `printf '%s\\n' '{"log":"${name} 1","time":"2026-11-01T10:00:00Z"}' '{"log":"${name} 2","time":"2026-11-01T10:05:00Z"}' > ${DOCKER_LOG}`,
+    );
+  dockerLog(`closed-${tag}`);
+  const lc = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: DOCKER_LOG });
+  check(
+    'закрытый файл: граница, строки и время записаны, покрыт целиком',
+    lc.code === 0 &&
+      /строк 2, время 2026-11-01T10:00:00Z–2026-11-01T10:05:00Z; закрыт, покрыт целиком/.test(
+        coverOf(lc.out),
+      ) &&
+      lc.out.includes('ИТОГ: история файлов покрыта полностью'),
+    coverOf(lc.out),
+  );
+  dockerLog(`cut-${tag}`);
+  inCt(`printf '%s' '{"log":"оборвано' >> ${DOCKER_LOG}`);
+  const lcut = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: DOCKER_LOG });
+  check(
+    'оборванная последняя запись — вне границы, история НЕПОЛНА (код 2)',
+    lcut.code === 2 &&
+      /строк 2,.*НЕПОЛНО: после границы \d+ байт/.test(coverOf(lcut.out)) &&
+      lcut.out.includes('локальную историю не очищать'),
+    coverOf(lcut.out),
+  );
+  dockerLog(`append-${tag}`);
+  const lapp = arch('legacy-export', {
+    ...LEG,
+    LOGS_LEGACY_FILES: DOCKER_LOG,
+    LOGS_TEST_LEGACY_MUTATE: 'append',
+  });
+  check(
+    'дописывание во время копирования: снимок до границы, хвост учтён, НЕПОЛНА',
+    lapp.code === 2 &&
+      /строк 2,.*НЕПОЛНО: после границы \d+ байт/.test(coverOf(lapp.out)) &&
+      /файлы истории: записано 1/.test(lapp.out),
+    coverOf(lapp.out),
+  );
+  dockerLog(`rotate-${tag}`);
+  const lrot = arch('legacy-export', {
+    ...LEG,
+    LOGS_LEGACY_FILES: DOCKER_LOG,
+    LOGS_TEST_LEGACY_MUTATE: 'rotate',
+  });
+  check(
+    'ротация во время копирования: обнаружена, НЕПОЛНА',
+    lrot.code === 2 && /ротация во время копирования/.test(coverOf(lrot.out)),
+    coverOf(lrot.out),
+  );
+  inCt(`rm -f ${DOCKER_LOG}.1`);
+  dockerLog(`trunc-${tag}`);
+  const ltr = arch('legacy-export', {
+    ...LEG,
+    LOGS_LEGACY_FILES: DOCKER_LOG,
+    LOGS_TEST_LEGACY_MUTATE: 'truncate',
+  });
+  check(
+    'усечение во время копирования: снимок не принят и не записан',
+    ltr.code === 2 &&
+      /снимок не принят/.test(coverOf(ltr.out)) &&
+      /файлы истории: записано 0/.test(ltr.out),
+    coverOf(ltr.out),
+  );
+  // Покрытие записано в квитанцию: источник, граница, файл (inode).
+  const rcKey = (await lkeys('rf/')).at(-1);
+  const rc = JSON.parse(await (await s3Object(lroot, 'GET', rcKey, null, {})).text());
+  check(
+    'покрытие в квитанции: путь, граница, inode, полнота',
+    rc.snapshot?.path === DOCKER_LOG &&
+      Number.isInteger(rc.snapshot?.boundary) &&
+      Number.isInteger(rc.snapshot?.ino) &&
+      typeof rc.snapshot?.complete === 'boolean',
+    JSON.stringify(rc.snapshot ?? null),
+  );
   const deny = async (who, secret, bucket) =>
     (
       await s3Object(
@@ -911,6 +989,48 @@ try {
     oE2.out.split('\n').find((l) => l.includes('файл ')) ?? copyLine(oE2.out),
   );
   inCt(`rm -rf ${FE}`);
+  // Источник отсутствует или недоступен — ошибка по этому источнику, его
+  // время успеха не обновляется; исправный источник рядом не скрывает её
+  // (замечание Тэнка: files с несуществующим каталогом давал код 0).
+  const okAt = (base) =>
+    JSON.parse(inCt(`cat ${ARCH_ENV.LOGS_STATE_DIR}/files.json`)).sources?.[base] ?? {};
+  const GONE = '/var/log/tmail-gone/mainlog';
+  const eM = filesRun({ LOGS_FILES: `${MAIL}/mainlog,${GONE}` });
+  check(
+    'несуществующий каталог источника: ошибка, у исправного — успех',
+    eM.code !== 0 &&
+      eM.out.includes(`источник ${GONE}: ОТСУТСТВУЕТ`) &&
+      okAt(GONE).state === 'missing' &&
+      okAt(GONE).lastOkAt === null &&
+      okAt(`${MAIL}/mainlog`).state === 'ok',
+    eM.out.split('\n').at(-1),
+  );
+  // Каталог есть, а файла журнала и поколений нет — ошибка пути.
+  const NOFILE = `${MAIL}/nosuchlog`;
+  const eN = filesRun({ LOGS_FILES: NOFILE });
+  check(
+    'каталог есть, журнала нет — ОТСУТСТВУЕТ',
+    eN.code !== 0 && okAt(NOFILE).state === 'missing',
+    eN.out.split('\n').at(-1),
+  );
+  // Недоступен: время успеха прежнее, не текущее. На месте каталога — файл
+  // (под root права не мешают чтению, ENOTDIR — тот же класс ошибки).
+  const prevOk = okAt(`${MAIL}/mainlog`).lastOkAt;
+  inCt(`mv ${MAIL} ${MAIL}.bak && printf x > ${MAIL}`);
+  const eU = filesRun();
+  check(
+    'источник недоступен: ошибка, время успеха не обновлено',
+    eU.code !== 0 &&
+      eU.out.includes('НЕДОСТУПЕН') &&
+      okAt(`${MAIL}/mainlog`).state === 'unavailable' &&
+      okAt(`${MAIL}/mainlog`).lastOkAt === prevOk,
+    eU.out.split('\n').at(-1),
+  );
+  inCt(`rm -f ${MAIL} && mv ${MAIL}.bak ${MAIL}`);
+  check(
+    'источник вернулся — успех',
+    filesRun().code === 0 && okAt(`${MAIL}/mainlog`).state === 'ok',
+  );
 
   // ---------------------------------------------------------- F
   console.log('\n▸ F. Поиск: архив по каталогу, свежее из journald, копия без S3');
@@ -1497,6 +1617,22 @@ try {
     Number.isInteger(mF.files?.lastOkEpoch) && val('logs.files.age', mF) < 3600,
     JSON.stringify(mF.files),
   );
+  check(
+    'все источники исправны — logs.files.bad = 0',
+    val('logs.files.bad', mF) === 0 && mF.files.sources?.every((s) => s.state === 'ok'),
+  );
+  const BOTH = { LOGS_FILES: `${MAIL}/mainlog,/var/log/tmail-gone/mainlog` };
+  arch('files', BOTH);
+  check('проход с недоступным источником', arch('run', { ...LIMIT, ...BOTH }).code === 0);
+  const mB = metrics();
+  check(
+    'недоступный источник: logs.files.bad = 1, возраст — по худшему источнику',
+    val('logs.files.bad', mB) === 1 &&
+      mB.files.lastOkEpoch === null &&
+      mB.files.sources.find((s) => s.source.includes('gone'))?.state === 'missing',
+    JSON.stringify(mB.files),
+  );
+  check('проход без него', arch('run', { ...LIMIT, ...FENV }).code === 0);
   check(
     'файлы не настроены — «неизвестно», а не возраст',
     metrics().files !== undefined && val('logs.files.age', { ...mF, files: null }) === UNKNOWN,

@@ -33,12 +33,15 @@ import {
   appendFileSync,
   closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
   openSync,
   readFileSync,
+  readSync,
   readdirSync,
   statSync,
   renameSync,
+  truncateSync,
   unlinkSync,
   writeFileSync,
   fsyncSync,
@@ -1120,16 +1123,46 @@ const fileKey = (src, sha) => `f/${src}/${sha}.fx`;
 const fileReceiptKey = (sha, versionId) => `rf/${sha}/${versionId}.json`;
 const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+/**
+ * Доступность настроенного источника: null — доступен; 'missing' — нет ни
+ * каталога, ни живого файла, ни поколений; 'unavailable' — путь есть, но
+ * прочитать нельзя (не каталог, нет прав). Код без текста ошибки.
+ */
+function sourceProblem(base) {
+  const dir = dirname(base);
+  let names;
+  try {
+    names = readdirSync(dir);
+  } catch (e) {
+    return e?.code === 'ENOENT' ? 'missing' : 'unavailable';
+  }
+  const re = new RegExp(`^${escapeRe(basename(base))}(\\.\\d+(\\.gz)?)?$`);
+  if (!names.some((n) => re.test(n))) return 'missing';
+  if (names.includes(basename(base))) {
+    try {
+      closeSync(openSync(base, 'r'));
+    } catch (e) {
+      return e?.code === 'ENOENT' ? 'missing' : 'unavailable';
+    }
+  }
+  return null;
+}
+
 /** Закрытые поколения журнала: [{path, name, gz}]. */
 function closedGenerations(base) {
   const dir = dirname(base);
-  if (!existsSync(dir)) return [];
   const re = new RegExp(`^${escapeRe(basename(base))}\\.\\d+(\\.gz)?$`);
   const oldest = Date.now() - FILES_MIN_AGE_SEC * 1000;
   return readdirSync(dir)
     .filter((name) => re.test(name))
     .map((name) => ({ name, path: join(dir, name), gz: name.endsWith('.gz') }))
-    .filter((g) => statSync(g.path).mtimeMs <= oldest)
+    .filter((g) => {
+      try {
+        return statSync(g.path).mtimeMs <= oldest;
+      } catch {
+        return false; // удалено ротацией между чтением каталога и stat
+      }
+    })
     .sort((a, b) => (a.name < b.name ? -1 : 1));
 }
 
@@ -1195,7 +1228,14 @@ async function storeFile(src, g, plain, keyMat, known) {
     size: plain.length,
     plainSha,
     objSha,
-    mtime: new Date(statSync(g.path).mtimeMs).toISOString(),
+    mtime: (() => {
+      try {
+        return new Date(statSync(g.path).mtimeMs).toISOString();
+      } catch {
+        return null; // переименовано ротацией после чтения
+      }
+    })(),
+    ...(g.snapshot ? { snapshot: g.snapshot } : {}),
     at: new Date().toISOString(),
   };
   await putObject(fileReceiptKey(plainSha, versionId), Buffer.from(JSON.stringify(body)));
@@ -1253,20 +1293,31 @@ async function legacyExport() {
     .split(',')
     .map((s) => s.trim())
     .filter(Boolean);
+  let incomplete = 0;
   if (exact.length) {
     await withLock(async () => {
       const known = await fileReceipts();
       let stored = 0;
       let same = 0;
       for (const path of exact) {
-        if (!existsSync(path)) {
+        let snap;
+        try {
+          snap = snapshotFile(path);
+        } catch (e) {
+          if (e?.code !== 'ENOENT') throw e;
           console.error(`история: файла ${path} нет`);
+          incomplete++;
           continue;
         }
-        const raw = readFileSync(path);
-        const plain = path.endsWith('.gz') ? gunzipSync(raw) : raw;
+        const { plain, cover } = snap;
+        console.log(`история: ${path}: ${coverText(cover)}`);
+        if (!cover.accepted) {
+          incomplete++;
+          continue;
+        }
+        if (!cover.complete) incomplete++;
         if (!plain.length) continue;
-        const g = { name: basename(path), path };
+        const g = { name: basename(path), path, snapshot: cover };
         if ((await storeFile(fileSource(path), g, plain, keyMat, known)) === 'same') same++;
         else stored++;
       }
@@ -1289,6 +1340,109 @@ async function legacyExport() {
       `журнал ${a.seqId}: записи ${BigInt(a.afterSeq) + 1n}–${last}, порций ${own.length - lossRows.length}, пробелов ${lossRows.length} (записей ${lost})`,
     );
   }
+  if (exact.length) {
+    console.log(
+      incomplete
+        ? `ИТОГ: история файлов НЕПОЛНА (файлов ${incomplete} из ${exact.length}) — локальную историю не очищать`
+        : `ИТОГ: история файлов покрыта полностью (${exact.length})`,
+    );
+    if (incomplete) process.exitCode = 2;
+  }
+}
+
+/** Прочитать ровно `n` байт с начала открытого файла. */
+function readPrefix(fd, n) {
+  const buf = Buffer.alloc(n);
+  let off = 0;
+  while (off < n) {
+    const got = readSync(fd, buf, off, n - off, off);
+    if (!got) break;
+    off += got;
+  }
+  return buf.subarray(0, off);
+}
+
+/** Время первой и последней строки журнала Docker json-file (поле time). */
+function lineTimes(text) {
+  const lines = text.split('\n').filter(Boolean);
+  const time = (l) => {
+    try {
+      return JSON.parse(l).time ?? null;
+    } catch {
+      return null;
+    }
+  };
+  return { lines: lines.length, first: time(lines[0] ?? ''), last: time(lines.at(-1) ?? '') };
+}
+
+/**
+ * Ограниченный снимок файла, который, возможно, ещё пишется (журнал Docker
+ * json-file до смены драйвера; замечание Тэнка: readFileSync живого файла
+ * не доказывает полноту).
+ *  - Граница — размер при открытии, урезанный до конца последней целой
+ *    строки: оборванная запись в снимок не входит.
+ *  - После чтения через тот же дескриптор проверяется, что байты до границы
+ *    не изменились (не усечён, не переписан) — иначе снимок не принят.
+ *  - Покрытие: сколько дописано после границы и указывает ли путь всё ещё
+ *    на тот же файл (ротация). Полным снимок считается, только если хвоста
+ *    нет и ротации не было — то есть файл закрыт (контейнер остановлен).
+ * Сжатое поколение (.gz) закрыто по определению: граница — весь файл.
+ */
+function snapshotFile(path) {
+  const fd = openSync(path, 'r');
+  try {
+    const st = fstatSync(fd);
+    const raw = readPrefix(fd, st.size);
+    const gz = path.endsWith('.gz');
+    const boundary = gz ? raw.length : raw.lastIndexOf(0x0a) + 1;
+    const prefix = raw.subarray(0, boundary);
+    const mutate = env.LOGS_TEST_LEGACY_MUTATE; // испытания: запись «во время копирования»
+    if (mutate === 'append') appendFileSync(path, '{"log":"дописано при копировании\\n"}\n');
+    if (mutate === 'rotate') {
+      renameSync(path, `${path}.1`);
+      writeFileSync(path, '{"log":"новый файл после ротации\\n"}\n');
+    }
+    if (mutate === 'truncate') truncateSync(path, 0);
+    const after = fstatSync(fd);
+    const stable =
+      after.size >= boundary && sha256Hex(readPrefix(fd, boundary)) === sha256Hex(prefix);
+    let samePath = false;
+    try {
+      const now = statSync(path);
+      samePath = now.ino === st.ino && now.dev === st.dev;
+    } catch {
+      samePath = false;
+    }
+    const plain = gz ? gunzipSync(prefix) : prefix;
+    const tail = Math.max(0, after.size - boundary);
+    const cover = {
+      path,
+      dev: st.dev,
+      ino: st.ino,
+      sizeAtOpen: st.size,
+      boundary,
+      tailBytes: tail,
+      rotated: !samePath,
+      accepted: stable,
+      complete: stable && tail === 0 && samePath,
+      ...(gz ? {} : lineTimes(plain.toString('utf8'))),
+      sha256: sha256Hex(plain),
+      at: new Date().toISOString(),
+    };
+    return { plain, cover };
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function coverText(c) {
+  if (!c.accepted) return 'ИЗМЕНЁН ВНУТРИ ГРАНИЦЫ (усечён или переписан) — снимок не принят';
+  const span = c.lines !== undefined ? `, строк ${c.lines}, время ${c.first}–${c.last}` : '';
+  const why = [
+    c.tailBytes ? `после границы ${c.tailBytes} байт (файл ещё пишется или запись оборвана)` : '',
+    c.rotated ? 'путь указывает на другой файл (ротация во время копирования)' : '',
+  ].filter(Boolean);
+  return `граница ${c.boundary} байт${span}; ${why.length ? `НЕПОЛНО: ${why.join('; ')}` : 'закрыт, покрыт целиком'}`;
 }
 
 async function files() {
@@ -1296,37 +1450,60 @@ async function files() {
   if (!FILES.length) throw new Error('LOGS_FILES не задан');
   await withLock(async () => {
     const known = await fileReceipts();
+    // Состояние — по каждому источнику: исправный dovecot не скрывает
+    // недоступный exim (замечание Тэнка). Время успеха обновляется только у
+    // источника, который был доступен и пройден целиком.
+    const prev = readJson(FILES_STATE)?.sources ?? {};
+    const sources = { ...prev }; // источники вне нынешнего LOGS_FILES не теряют истории
     let stored = 0;
     let same = 0;
     let unreadable = 0;
+    const bad = [];
     for (const base of FILES) {
       const src = fileSource(base);
-      for (const g of closedGenerations(base)) {
-        let plain;
+      const at = new Date().toISOString();
+      let problem = sourceProblem(base);
+      if (!problem) {
         try {
-          const raw = readFileSync(g.path);
-          plain = g.gz ? gunzipSync(raw) : raw;
-        } catch {
-          // Поколение сжимается или удаляется ротацией прямо сейчас —
-          // следующий проход прочитает его готовым.
-          unreadable++;
-          continue;
+          for (const g of closedGenerations(base)) {
+            let plain;
+            try {
+              const raw = readFileSync(g.path);
+              plain = g.gz ? gunzipSync(raw) : raw;
+            } catch (e) {
+              if (e?.code === 'EACCES' || e?.code === 'EPERM' || e?.code === 'EISDIR') {
+                problem = 'unavailable';
+                break;
+              }
+              // Поколение сжимается или удаляется ротацией прямо сейчас —
+              // следующий проход прочитает его готовым.
+              unreadable++;
+              continue;
+            }
+            if (!plain.length) continue;
+            if ((await storeFile(src, g, plain, keyMat, known)) === 'same') same++;
+            else stored++;
+          }
+        } catch (e) {
+          if (!['ENOENT', 'ENOTDIR', 'EACCES', 'EPERM'].includes(e?.code)) throw e;
+          problem = e.code === 'ENOENT' ? 'missing' : 'unavailable';
         }
-        if (!plain.length) continue;
-        if ((await storeFile(src, g, plain, keyMat, known)) === 'same') same++;
-        else stored++;
+      }
+      sources[base] = problem
+        ? { state: problem, at, lastOkAt: prev[base]?.lastOkAt ?? null }
+        : { state: 'ok', at, lastOkAt: at };
+      if (problem) {
+        bad.push(base);
+        console.error(
+          `источник ${base}: ${problem === 'missing' ? 'ОТСУТСТВУЕТ' : 'НЕДОСТУПЕН'} — время успеха не обновлено`,
+        );
       }
     }
-    writeJsonAtomic(FILES_STATE, {
-      lastOkAt: new Date().toISOString(),
-      stored,
-      same,
-      unreadable,
-      known: known.size,
-    });
+    writeJsonAtomic(FILES_STATE, { sources, stored, same, unreadable, known: known.size });
     console.log(
-      `файлы: записано ${stored}, уже в архиве ${same}, не прочитано сейчас ${unreadable}, всего в архиве ${known.size}`,
+      `файлы: записано ${stored}, уже в архиве ${same}, не прочитано сейчас ${unreadable}, всего в архиве ${known.size}, источников с ошибкой ${bad.length} из ${FILES.length}`,
     );
+    if (bad.length) process.exitCode = 1;
   });
 }
 
@@ -1545,15 +1722,26 @@ async function writeMetrics(state, failure) {
     archiveGaps: state?.archiveGaps?.length ?? 0,
     unconfirmed: state?.unconfirmed?.length ?? 0,
     archiveStartEpoch: state?.startedAt ? Math.floor(Date.parse(state.startedAt) / 1000) : null,
-    // Файлы почты: null — не настроены; lastOkEpoch null — успешного прохода
-    // ещё не было.
+    // Файлы почты: null — не настроены. По каждому настроенному источнику —
+    // состояние (ok / missing / unavailable / never — прохода ещё не было) и
+    // время успеха; lastOkEpoch — самое старое из них (null, если у
+    // какого-то источника успеха не было), bad — источников с ошибкой.
     files: FILES.length
-      ? {
-          lastOkEpoch: (() => {
-            const t = readJson(FILES_STATE)?.lastOkAt;
-            return t ? Math.floor(Date.parse(t) / 1000) : null;
-          })(),
-        }
+      ? (() => {
+          const st = readJson(FILES_STATE)?.sources ?? {};
+          const epoch = (t) => (t ? Math.floor(Date.parse(t) / 1000) : null);
+          const sources = FILES.map((base) => ({
+            source: fileSource(base),
+            state: st[base]?.state ?? 'never',
+            lastOkEpoch: epoch(st[base]?.lastOkAt),
+          }));
+          const oks = sources.map((s) => s.lastOkEpoch);
+          return {
+            lastOkEpoch: oks.includes(null) ? null : Math.min(...oks),
+            bad: sources.filter((s) => s.state === 'missing' || s.state === 'unavailable').length,
+            sources,
+          };
+        })()
       : null,
     lastHour: { ...sum, coveredSec },
     inflow: {

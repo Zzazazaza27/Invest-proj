@@ -199,6 +199,14 @@ export const LOGS_ITEMS = [
       `if (s.files === null) throw 'файлы почты не настроены'; var now = Math.floor(Date.now() / 1000); var f = obj(s.files, 'files'); var t = f.lastOkEpoch === null ? int(s.archiveStartEpoch, 'archiveStartEpoch') : int(f.lastOkEpoch, 'files.lastOkEpoch'); if (t > now + ${SKEW_SEC}) throw 'время в будущем'; return Math.max(0, now - t);`,
     ),
   },
+  {
+    key: 'logs.files.bad',
+    name: 'Журналы: источников файлов почты отсутствует или недоступно',
+    valueType: 3,
+    js: js(
+      `if (s.files === null) throw 'файлы почты не настроены'; return int(obj(s.files, 'files').bad, 'files.bad');`,
+    ),
+  },
 ];
 
 /** Тревоги: [название, выражение от H (узел), важность]. */
@@ -249,5 +257,6 @@ export function logsTriggers(H, file) {
     ['Журналы: аварийное завершение процесса', `${l('logs.crashes')}>0`, 3],
     ['Журналы: суточного снимка объёма нет больше 26 ч', `${l('logs.snapshot.age')}>93600`, 2],
     ['Журналы: файлы почты не архивируются больше 26 ч', `${l('logs.files.age')}>93600`, 2],
+    ['Журналы: источник файлов почты отсутствует или недоступен', `${l('logs.files.bad')}>0`, 3],
   ];
 }
