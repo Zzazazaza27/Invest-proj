@@ -812,42 +812,59 @@ async function configure() {
   );
 
   // ---- Архив технических журналов (W08b) -----------------------------------
-  // Файл состояния архиватора: только числа, метки и коды. Каждая зависимая
-  // проверка сама отвергает устаревший файл — «неизвестно», а не нули.
-  const logsFile = `vfs.file.contents[${ADDR.logsMetrics}]`;
-  await item({
-    name: 'Журналы: файл состояния архиватора',
-    key_: logsFile,
-    type: AGENT,
-    value_type: 4,
-    history: '0',
-  });
-  for (const x of LOGS_ITEMS) {
+  // Только там, где архив настроен (LOGS_S3_BUCKET в .env; локально —
+  // MONITOR_LOGS=1): без архиватора файла состояния нет, и проверки давали бы
+  // ложную тревогу «не обновляется». Иначе прежние проверки журналов
+  // снимаются вместе с их тревогами (переход на Garage 03.11: архив на VPS
+  // ещё не включён).
+  if (env.LOGS_S3_BUCKET || env.MONITOR_LOGS === '1') {
+    // Файл состояния архиватора: только числа, метки и коды. Каждая зависимая
+    // проверка сама отвергает устаревший файл — «неизвестно», а не нули.
+    const logsFile = `vfs.file.contents[${ADDR.logsMetrics}]`;
     await item({
-      name: x.name,
-      key_: x.key,
-      type: DEP,
-      master_itemid: items.get(logsFile),
-      value_type: x.valueType,
-      preprocessing: [step(JS, x.js)],
-      nodata: false,
+      name: 'Журналы: файл состояния архиватора',
+      key_: logsFile,
+      type: AGENT,
+      value_type: 4,
+      history: '0',
     });
-  }
-  await item({
-    name: 'Журналы: возраст файла состояния, с',
-    key_: `vfs.file.time[${ADDR.logsMetrics},modify]`,
-    type: AGENT,
-    value_type: 3,
-    preprocessing: [
-      UNSUP('missing'),
-      step(
-        JS,
-        "if (value === 'missing') return 999999; return Math.floor(Date.now() / 1000) - Number(value);",
-      ),
-    ],
-  });
-  for (const [name, expression, priority] of logsTriggers(H, ADDR.logsMetrics)) {
-    await trigger(name, expression, priority);
+    for (const x of LOGS_ITEMS) {
+      await item({
+        name: x.name,
+        key_: x.key,
+        type: DEP,
+        master_itemid: items.get(logsFile),
+        value_type: x.valueType,
+        preprocessing: [step(JS, x.js)],
+        nodata: false,
+      });
+    }
+    await item({
+      name: 'Журналы: возраст файла состояния, с',
+      key_: `vfs.file.time[${ADDR.logsMetrics},modify]`,
+      type: AGENT,
+      value_type: 3,
+      preprocessing: [
+        UNSUP('missing'),
+        step(
+          JS,
+          "if (value === 'missing') return 999999; return Math.floor(Date.now() / 1000) - Number(value);",
+        ),
+      ],
+    });
+    for (const [name, expression, priority] of logsTriggers(H, ADDR.logsMetrics)) {
+      await trigger(name, expression, priority);
+    }
+  } else {
+    const stale = (
+      await api.call('item.get', { hostids: hostid, output: ['itemid', 'key_'] })
+    ).filter((x) => x.key_.startsWith('logs.') || x.key_.includes(ADDR.logsMetrics));
+    if (stale.length)
+      await api.call(
+        'item.delete',
+        stale.map((x) => x.itemid),
+      );
+    console.log(`журналы: архив не настроен — проверки журналов сняты (${stale.length})`);
   }
 
   // ---- Сам Zabbix и контрольная отметка для пульса --------------------------------
