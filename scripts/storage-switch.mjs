@@ -21,6 +21,13 @@
  *       --save (600, не перезаписывается); значения не печатаются;
  *   node scripts/storage-switch.mjs restore <файл --save>
  *       вернуть прежние значения (отсутствовавшие — удалить).
+ *   node scripts/storage-switch.mjs quiesce [--wait-min N] [--stop]
+ *       дождаться завершения заданий, читающих настройки (копии W07,
+ *       проверка копий, прикладная проба); --stop — штатно остановить
+ *       оставшиеся. Таймеры останавливаются ДО этой команды.
+ *
+ * «apply» — замена файла настроек, не переключение компонентов: реальное
+ * переключение подтверждается их запуском и проверками.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -183,13 +190,54 @@ function consumers() {
   process.exitCode = 1;
 }
 
-const commands = { consumers, apply, restore };
+/**
+ * Задания, читающие настройки хранилища при каждом запуске. Остановка
+ * таймера не останавливает уже идущее задание, поэтому перед заменой набора
+ * они должны завершиться (или быть штатно остановлены — `--stop`): иначе
+ * работающий процесс дочитает прежний набор после переключения.
+ */
+const JOBS = [
+  'fifth-backup-set.service',
+  'fifth-backup-check.service',
+  'fifth-monitor-app-probe.service',
+];
+async function quiesce() {
+  const waitMin = Number(opt('--wait-min') ?? 15);
+  const deadline = Date.now() + waitMin * 60_000;
+  const active = () =>
+    JOBS.filter((j) =>
+      ['active', 'activating', 'deactivating', 'reloading'].includes(
+        sh('systemctl', ['show', j, '-p', 'ActiveState', '--value']) ?? '',
+      ),
+    );
+  let left = active();
+  while (left.length && Date.now() < deadline) {
+    console.log(`идут: ${left.join(', ')} — жду завершения`);
+    await new Promise((r) => setTimeout(r, 10_000));
+    left = active();
+  }
+  if (left.length && process.argv.includes('--stop')) {
+    for (const j of left) sh('systemctl', ['stop', j]);
+    left = active();
+    console.log('остановлены штатно (systemctl stop)');
+  }
+  if (left.length) {
+    console.log(`ИТОГ: задания ещё работают (${left.join(', ')}) — набор менять нельзя`);
+    process.exitCode = 1;
+    return;
+  }
+  console.log(`ИТОГ: заданий, читающих настройки хранилища, нет (${JOBS.join(', ')})`);
+}
+
+const commands = { consumers, apply, restore, quiesce };
 if (!commands[command]) {
-  console.error('команды: consumers | apply <набор> --save <файл> | restore <файл>');
+  console.error(
+    'команды: consumers | apply <набор> --save <файл> | restore <файл> | quiesce [--wait-min N] [--stop]',
+  );
   process.exit(2);
 }
 try {
-  commands[command]();
+  await commands[command]();
 } catch (e) {
   console.error(`ОШИБКА: ${e.message}`);
   process.exit(1);
