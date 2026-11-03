@@ -1,0 +1,34 @@
+# Ядро UNICORN LAUNCH на стенде.
+#
+# Запускается через scripts/dev-core.mjs, а не напрямую `node dist/main.js`:
+# переменные окружения ядро само не читает (production получает их извне), и
+# .env разбирает именно этот скрипт. EnvironmentFile здесь не годится —
+# systemd разбирает файл иначе, чем скрипт, и расхождение проявилось бы
+# молча, на отдельных значениях.
+#
+# Вывод — в journald (2.1-W08b): журнал запросов ядра идёт в общий поток,
+# оттуда в архив и поиск (`--source unicorn-core.service`). До 03.11.2026 юнит
+# стоял на VPS вручную и писал в /opt/unicorn-launch/core.log (без ротации,
+# чтение всем) — порядок перехода: docs/runbooks/core-journal.md.
+[Unit]
+Description=UNICORN LAUNCH — ядро (core)
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/unicorn-launch
+ExecStart=/usr/bin/node /opt/unicorn-launch/scripts/dev-core.mjs
+Restart=always
+RestartSec=5
+# Ядро не поднимется, пока postgres/redis/nats не готовы, — отсюда запас
+# попыток вместо отказа после первой.
+StartLimitBurst=10
+StartLimitIntervalSec=120
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=unicorn-core
+
+[Install]
+WantedBy=multi-user.target

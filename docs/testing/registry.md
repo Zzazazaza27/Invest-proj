@@ -377,7 +377,7 @@
 | PRB-MAIL-DELIVERY | `node scripts/probe-mail-delivery.mjs` | 0 | вручную | — |
 | PRB-MAIL-READINESS | `node scripts/probe-mail-readiness.mjs` | 0 | вручную | — |
 | PRB-OBJECT-VERSIONING | `node scripts/probe-object-versioning.mjs` | 10 | вручную | — |
-| PRB-BACKGROUND-JOBS | `node scripts/probe-background-jobs.mjs` | 38 | вручную | — |
+| PRB-BACKGROUND-JOBS | `node scripts/probe-background-jobs.mjs` | 45 | вручную | — |
 | PRB-VALKEY-COUNTERS | `node scripts/probe-valkey-counters.mjs` | 15 | вручную | — |
 | PRB-OUTBOX-LEASE | `node scripts/probe-outbox-lease.mjs` | 10 | вручную | — |
 | PRB-RATE-LIMIT | `node scripts/probe-rate-limit.mjs` | 0 | вручную | — |

@@ -213,11 +213,21 @@ try {
     if (/running|degraded/.test(s.stdout)) break;
     await new Promise((r) => setTimeout(r, 1000));
   }
-  // .env стенда: значения не печатаются, передаются через stdin.
+  // .env стенда: переменные архива + окружение ядра из .env машины с
+  // адресами сети стенда (ядро в контейнере ходит к базе, Valkey, NATS и
+  // MinIO по именам). Значения не печатаются, передаются через stdin.
+  const standEnv = readFileSync(resolve(ROOT, '.env'), 'utf8')
+    .split(/\r?\n/)
+    .filter((l) => !/^\s*(LOGS_|DOCKER_LOG_DRIVER)/.test(l))
+    .join('\n')
+    .replace(/(localhost|127\.0\.0\.1):5433/g, 'unicorn-postgres:5432')
+    .replace(/(localhost|127\.0\.0\.1):6380/g, 'unicorn-valkey:6379')
+    .replace(/(localhost|127\.0\.0\.1):4222/g, 'unicorn-nats:4222')
+    .replace(/(localhost|127\.0\.0\.1):9000/g, 'unicorn-minio:9000');
   sh('docker', ['exec', '-i', CT, 'sh', '-c', `cat > ${APP}/.env && chmod 600 ${APP}/.env`], {
     input: `${Object.entries(E)
       .map(([k, v]) => `${k}=${v}`)
-      .join('\n')}\n`,
+      .join('\n')}\n${standEnv}\n`,
   });
   inCt('ln -sf /usr/local/bin/node /usr/bin/node');
   if (sh('docker', ['image', 'inspect', ALPINE], { allowFail: true }).status !== 0) {
@@ -389,6 +399,88 @@ try {
     allowFail: true,
   });
   check('другое значение DOCKER_LOG_DRIVER — отказ', bad.status === 2);
+
+  // ---------------------------------------------------------- Я
+  console.log('\n▸ Я. Журнал ядра: настоящий запрос → journald → архив → поиск');
+  // Ядро из закоммиченного кода (git archive HEAD), собранное в контейнере:
+  // argon2 и sharp — родные модули Linux. scripts и infra — смонтированные.
+  const archive = spawnSync('git', ['archive', 'HEAD'], {
+    cwd: ROOT,
+    maxBuffer: 512 * 1024 * 1024,
+  });
+  sh('docker', ['exec', '-i', CT, 'tar', '-x', '-C', APP, '--exclude=scripts', '--exclude=infra'], {
+    input: archive.stdout,
+  });
+  const build = sh(
+    'docker',
+    [
+      'exec',
+      '-w',
+      APP,
+      CT,
+      'sh',
+      '-c',
+      'npm ci --no-audit --no-fund --ignore-scripts --workspace apps/core --workspace packages/contracts --include-workspace-root >/tmp/npm.log 2>&1 && npm rebuild argon2 sharp >>/tmp/npm.log 2>&1 && npm run build -w packages/contracts -w apps/core >>/tmp/npm.log 2>&1',
+    ],
+    { allowFail: true },
+  );
+  check(
+    'ядро собрано в контейнере',
+    build.status === 0,
+    build.status ? inCt('tail -3 /tmp/npm.log') : '',
+  );
+  // Юнит — ровно тот, что ляжет на VPS.
+  inCt(
+    `cp ${APP}/infra/systemd/unicorn-core.service /etc/systemd/system/ && systemctl daemon-reload && systemctl start unicorn-core`,
+  );
+  let health = '';
+  for (let i = 0; i < 60 && health !== '200'; i++) {
+    health = inCt(
+      "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4300/v1/health || true",
+    ).trim();
+    if (health !== '200') await new Promise((r) => setTimeout(r, 1000));
+  }
+  check('ядро под юнитом infra/systemd/unicorn-core.service отвечает', health === '200', health);
+  const reqId = `w08b-core-${tag}-0001`;
+  inCt(
+    `curl -s -o /dev/null -H 'X-Request-Id: ${reqId}' 'http://127.0.0.1:4300/v1/health?token=CORE_SECRET_${tag}' && sleep 1`,
+  );
+  const coreJournal = inCt('journalctl -u unicorn-core -o export --no-pager');
+  check(
+    'запрос в journald от юнита ядра: шаблон маршрута, ID запроса, без query',
+    coreJournal.includes(`"requestId":"${reqId}"`) &&
+      coreJournal.includes('"route":"/v1/health"') &&
+      coreJournal.includes('SYSLOG_IDENTIFIER=unicorn-core') &&
+      !coreJournal.includes(`CORE_SECRET_${tag}`),
+  );
+  check('файла core.log нет — вывод только в journald', !inCt(`ls ${APP}`).includes('core.log'));
+  check('проход архива', startUnit('fifth-logs-run.service') === 'success');
+  // Поиск по копии без S3: запись именно в архиве, а не в свежем journald.
+  const cpull = arch('pull', { LOGS_PROFILE: 'reader', LOGS_PULL_TO: '/tmp/corecopy' });
+  const fCore = offline(() =>
+    arch(
+      'find',
+      { LOGS_PULL_TO: '/tmp/corecopy', LOGS_S3_ACCESS_KEY_ID: '', LOGS_S3_SECRET_ACCESS_KEY: '' },
+      [
+        '--copy',
+        '/tmp/corecopy',
+        '--from',
+        new Date(Date.now() - 3600_000).toISOString(),
+        '--request-id',
+        reqId,
+      ],
+    ),
+  );
+  check(
+    'поиск по ID запроса в копии архива без S3 — найден ровно один',
+    cpull.code === 0 && fCore.code === 0 && /найдено: 1/.test(fCore.out),
+    last(fCore.out),
+  );
+  check(
+    'счётчик запросов часа учёл запрос ядра',
+    JSON.parse(inCt(`cat ${STATE}/metrics.json`)).lastHour?.requests >= 1,
+  );
+  inCt('systemctl stop unicorn-core');
 
   // ---------------------------------------------------------- H
   console.log('\n▸ H. История журнала Docker: остановка подтверждается источником');
