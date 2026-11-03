@@ -18,6 +18,7 @@ export async function garageApi(name, body, query = '') {
     method: body === undefined ? 'GET' : 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(30_000),
   });
   const text = await r.text();
   if (!r.ok) {
