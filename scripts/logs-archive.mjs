@@ -12,6 +12,7 @@
  *   node scripts/logs-archive.mjs verify-copy --to <каталог>   проверка копии без S3
  *   node scripts/logs-archive.mjs find --from <ISO> [...]   поиск (архив + свежее)
  *   node scripts/logs-archive.mjs files     закрытые поколения файловых журналов (почта)
+ *   node scripts/logs-archive.mjs legacy-export   накопленная история в отдельный бакет
  *
  * Источник — journald (`journalctl -o export`), курсоры даёт он; подтверждение
  * архива, повторы, каталог и обнаружение потерь — ответственность этого кода.
@@ -499,6 +500,26 @@ async function adoptConfirmed(state) {
   }
 }
 
+// ------------------------------------------------- граница «до записи»
+
+/**
+ * LOGS_UNTIL_CURSOR — проход не идёт дальше этой записи (выгрузка
+ * накопленной истории до границы основного архива). Внутри её нумерации —
+ * по номеру записи, в других нумерациях — по времени записи: сама запись
+ * границы могла быть уже вытеснена, а дальше границы читать нельзя.
+ */
+const UNTIL = env.LOGS_UNTIL_CURSOR || null;
+
+function untilStop() {
+  if (!UNTIL) return null;
+  const u = cursorParts(UNTIL);
+  const t = UNTIL.match(/(?:^|;)t=([0-9a-f]+)/)?.[1];
+  const ut = t ? Number(BigInt(`0x${t}`)) : null;
+  if (!u.seqId || u.seq === null || ut === null)
+    throw new Error('LOGS_UNTIL_CURSOR: не курсор journald');
+  return (e) => (e.seqId === u.seqId ? e.seq > u.seq : e.realtime !== null && e.realtime > ut);
+}
+
 // ------------------------------------------------------ нумерации journald
 
 /**
@@ -662,6 +683,19 @@ async function rebuildClosed(anchor, keyMat) {
   return rows.sort((x, y) => (BigInt(x.first) < BigInt(y.first) ? -1 : 1));
 }
 
+/**
+ * Откуда читать journald: после последней архивированной записи или, пока
+ * её нет (начало нумерации), с записи по курсору «ID + номер» включительно.
+ * `--after-cursor` с таким курсором пропускает первую найденную запись —
+ * запись 1 стала бы ложной потерей (поймано испытанием L).
+ */
+const readPos = (state) =>
+  state.lastCursor
+    ? { after: state.lastCursor }
+    : state.startCursor
+      ? { from: state.startCursor }
+      : null;
+
 async function runPass() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
   await withLock(async () => {
@@ -691,7 +725,9 @@ async function runPass() {
     let written = 0;
     for (;;) {
       await adoptConfirmed(state);
-      const read = await readJournal({ after: state.lastCursor });
+      const pos = readPos(state);
+      if (!pos) throw new Error('нет позиции чтения journald — нужен разбор');
+      const read = await readJournal({ ...pos, stop: untilStop() });
       if (!read.length) break;
       // Разрыв перед первой доступной записью — по отрезкам: подтверждённые
       // порции за разрывом принимаются по квитанции; неподтверждённая, чьё
@@ -905,7 +941,8 @@ async function rebuildState() {
     lastSeq: end,
     // У новой нумерации нет курсора границы — курсор из её ID и номера
     // (journalctl ищет по номеру; запись 0 не существует, читается с 1).
-    lastCursor: lastChunk?.lastCursor ?? anchor.afterCursor ?? `s=${sid};i=${end.toString(16)}`,
+    lastCursor: lastChunk?.lastCursor ?? anchor.afterCursor ?? null,
+    startCursor: `s=${sid};i=${(end + 1n).toString(16)}`,
     pending: null,
     rebuiltAt: new Date().toISOString(),
     startedAt: anchor.at,
@@ -1112,6 +1149,148 @@ async function fileReceipts() {
   return out;
 }
 
+/**
+ * Записать одно поколение (или файл целиком) по содержимому: уже есть —
+ * 'same'; записанная версия без квитанции подтверждается по содержимому;
+ * чужое содержимое под ключом — конфликт.
+ */
+async function storeFile(src, g, plain, keyMat, known) {
+  const plainSha = sha256Hex(plain);
+  if (known.has(plainSha)) return 'same';
+  const key = fileKey(src, plainSha);
+  // Уже записанная версия (сбой до квитанции) подтверждается по
+  // содержимому; чужое содержимое под ключом — конфликт.
+  let versionId = null;
+  let objSha = null;
+  const existing = (await listVersions(key)).filter((v) => v.key === key);
+  for (const v of existing) {
+    const got = await plainOfVersion(key, v.versionId, keyMat);
+    if (got && sha256Hex(got.plain) === plainSha) {
+      versionId = v.versionId;
+      objSha = got.objSha;
+      break;
+    }
+  }
+  if (!versionId && existing.length) {
+    throw new Error(`КОНФЛИКТ: под ${key} другое содержимое — без перезаписи, нужен разбор`);
+  }
+  if (!versionId) {
+    versionId = await putObject(key, seal(plain, keyMat.key), {
+      format: `file+${FORMAT}`,
+      source: src,
+    });
+    const got = await plainOfVersion(key, versionId, keyMat);
+    if (!got || sha256Hex(got.plain) !== plainSha) {
+      throw new Error(`${key}@${versionId}: записанное не читается в прежнем виде`);
+    }
+    objSha = got.objSha;
+    if (env.LOGS_TEST_CRASH === 'file-after-put') process.exit(96);
+  }
+  const body = {
+    kind: 'file',
+    key,
+    versionId,
+    source: src,
+    name: g.name,
+    size: plain.length,
+    plainSha,
+    objSha,
+    mtime: new Date(statSync(g.path).mtimeMs).toISOString(),
+    at: new Date().toISOString(),
+  };
+  await putObject(fileReceiptKey(plainSha, versionId), Buffer.from(JSON.stringify(body)));
+  known.set(plainSha, body);
+  console.log(`файл ${g.path}: записан (${plain.length} байт)`);
+  return 'stored';
+}
+
+// ------------------------------------------------- накопленная история
+
+/**
+ * Накопленная до W08b история — чувствительный архив (в ней могут быть
+ * секреты, писавшиеся до правки источников): отдельный бакет, свой ключ,
+ * свои учётки, обычный поиск её не видит. Окружение — LOGS_S3_* и
+ * LOGS_ARCHIVE_KEY бакета истории и свой LOGS_STATE_DIR.
+ *  - journald — с самого начала до границы основного архива включительно
+ *    (LOGS_UNTIL_CURSOR — её afterCursor), по всем нумерациям;
+ *  - LOGS_LEGACY_FILES — файлы целиком, как есть, в том числе ещё
+ *    пишущиеся (журналы Docker json-file до смены драйвера).
+ * Отчёт — покрытые интервалы и пробелы по каждой нумерации. Повтор
+ * идемпотентен; локальная очистка — не здесь и только после проверки.
+ *
+ *   node scripts/logs-archive.mjs legacy-export
+ */
+async function legacyExport() {
+  if (!UNTIL) throw new Error('нужен LOGS_UNTIL_CURSOR — курсор границы основного архива');
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  mkdirSync(STATE_DIR, { recursive: true });
+  if (!loadState() && !(await readAnchors()).length) {
+    const [first] = await readJournal({ maxEntries: 1 });
+    if (!first) throw new Error('журнал пуст');
+    const after = first.seq - 1n;
+    await putAnchor({
+      seqId: first.seqId,
+      afterSeq: str(after),
+      afterCursor: null,
+      at: new Date().toISOString(),
+      host: hostname(),
+      legacy: true,
+      until: UNTIL,
+    });
+    saveState({
+      seqId: first.seqId,
+      lastSeq: after,
+      lastCursor: null,
+      startCursor: `s=${first.seqId};i=${first.seq.toString(16)}`,
+      pending: null,
+      startedAt: new Date().toISOString(),
+    });
+    console.log(`история: начало журнала — запись ${first.seq} нумерации ${first.seqId}`);
+  }
+  await run();
+
+  const exact = (env.LOGS_LEGACY_FILES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (exact.length) {
+    await withLock(async () => {
+      const known = await fileReceipts();
+      let stored = 0;
+      let same = 0;
+      for (const path of exact) {
+        if (!existsSync(path)) {
+          console.error(`история: файла ${path} нет`);
+          continue;
+        }
+        const raw = readFileSync(path);
+        const plain = path.endsWith('.gz') ? gunzipSync(raw) : raw;
+        if (!plain.length) continue;
+        const g = { name: basename(path), path };
+        if ((await storeFile(fileSource(path), g, plain, keyMat, known)) === 'same') same++;
+        else stored++;
+      }
+      console.log(`файлы истории: записано ${stored}, уже в архиве ${same}`);
+    });
+  }
+
+  // Отчёт: покрытые интервалы и пробелы по каждой нумерации.
+  const rows = loadCatalog();
+  const anchors = (await readAnchors()).sort((a, b) => (a.at < b.at ? -1 : 1));
+  for (const a of anchors) {
+    const own = rows.filter((r) => parseChunkKey(r.key)?.seqId === a.seqId);
+    const lossRows = own.filter((r) => r.kind === 'loss');
+    const last = own.reduce(
+      (m, r) => (BigInt(r.last) > m ? BigInt(r.last) : m),
+      BigInt(a.afterSeq),
+    );
+    const lost = lossRows.reduce((n, r) => n + (BigInt(r.last) - BigInt(r.first) + 1n), 0n);
+    console.log(
+      `журнал ${a.seqId}: записи ${BigInt(a.afterSeq) + 1n}–${last}, порций ${own.length - lossRows.length}, пробелов ${lossRows.length} (записей ${lost})`,
+    );
+  }
+}
+
 async function files() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
   if (!FILES.length) throw new Error('LOGS_FILES не задан');
@@ -1134,56 +1313,8 @@ async function files() {
           continue;
         }
         if (!plain.length) continue;
-        const plainSha = sha256Hex(plain);
-        if (known.has(plainSha)) {
-          same++;
-          continue;
-        }
-        const key = fileKey(src, plainSha);
-        // Уже записанная версия (сбой до квитанции) подтверждается по
-        // содержимому; чужое содержимое под ключом — конфликт.
-        let versionId = null;
-        let objSha = null;
-        const existing = (await listVersions(key)).filter((v) => v.key === key);
-        for (const v of existing) {
-          const got = await plainOfVersion(key, v.versionId, keyMat);
-          if (got && sha256Hex(got.plain) === plainSha) {
-            versionId = v.versionId;
-            objSha = got.objSha;
-            break;
-          }
-        }
-        if (!versionId && existing.length) {
-          throw new Error(`КОНФЛИКТ: под ${key} другое содержимое — без перезаписи, нужен разбор`);
-        }
-        if (!versionId) {
-          versionId = await putObject(key, seal(plain, keyMat.key), {
-            format: `file+${FORMAT}`,
-            source: src,
-          });
-          const got = await plainOfVersion(key, versionId, keyMat);
-          if (!got || sha256Hex(got.plain) !== plainSha) {
-            throw new Error(`${key}@${versionId}: записанное не читается в прежнем виде`);
-          }
-          objSha = got.objSha;
-          if (env.LOGS_TEST_CRASH === 'file-after-put') process.exit(96);
-        }
-        const body = {
-          kind: 'file',
-          key,
-          versionId,
-          source: src,
-          name: g.name,
-          size: plain.length,
-          plainSha,
-          objSha,
-          mtime: new Date(statSync(g.path).mtimeMs).toISOString(),
-          at: new Date().toISOString(),
-        };
-        await putObject(fileReceiptKey(plainSha, versionId), Buffer.from(JSON.stringify(body)));
-        known.set(plainSha, body);
-        stored++;
-        console.log(`файл ${g.path}: записан (${plain.length} байт)`);
+        if ((await storeFile(src, g, plain, keyMat, known)) === 'same') same++;
+        else stored++;
       }
     }
     writeJsonAtomic(FILES_STATE, {
@@ -1321,13 +1452,13 @@ function journalUsage() {
 }
 
 /** Записи journald за подтверждённым курсором: очередь и её возраст. */
-async function queueAfter(cursor) {
-  if (!cursor) return null;
+async function queueAfter(pos) {
+  if (!pos) return null;
   try {
     let entries = 0;
     let bytes = 0;
     let oldest = null;
-    for (const e of await readJournal({ after: cursor, maxBytes: Infinity })) {
+    for (const e of await readJournal({ ...pos, maxBytes: Infinity })) {
       entries++;
       bytes += e.raw.length;
       if (oldest === null && e.realtime !== null) oldest = e.realtime;
@@ -1394,7 +1525,7 @@ async function writeMetrics(state, failure) {
     const xs = daily.slice(-n - 1, -1).map(([, v]) => v);
     return xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
   };
-  const queue = await queueAfter(state?.lastCursor);
+  const queue = state ? await queueAfter(readPos(state)) : null;
   writeJsonAtomic(METRICS, {
     format: 'logs-metrics/v1',
     atEpoch: Math.floor(now / 1000),
@@ -2059,8 +2190,8 @@ async function find() {
   }
   // Свежее — из journald после последней архивированной записи.
   let fresh = 0;
-  if (!copy && state.lastCursor) {
-    for (const e of await readJournal({ after: state.lastCursor, maxBytes: Infinity })) {
+  if (!copy && readPos(state)) {
+    for (const e of await readJournal({ ...readPos(state), maxBytes: Infinity })) {
       fresh++;
       take(e);
     }
@@ -2096,6 +2227,7 @@ const commands = {
   pull,
   'verify-copy': verifyCopy,
   files,
+  'legacy-export': legacyExport,
   find,
 };
 const command = process.argv[2];

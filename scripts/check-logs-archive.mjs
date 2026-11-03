@@ -56,6 +56,13 @@ const USER = `logs-w-${tag}`;
 const USER_SECRET = randomBytes(18).toString('hex');
 const READER = `logs-r-${tag}`;
 const READER_SECRET = randomBytes(18).toString('hex');
+// Бакет накопленной истории — свои учётки и ключ.
+const LBUCKET = `tech-logs-legacy-test-${tag}`;
+const LWRITER = `logs-lw-${tag}`;
+const LWRITER_SECRET = randomBytes(18).toString('hex');
+const LREADER = `logs-lr-${tag}`;
+const LREADER_SECRET = randomBytes(18).toString('hex');
+const LKEY = randomBytes(32).toString('hex');
 const IMAGE = 'fifth/journald-testbed:local';
 const NETWORK = 'unicorn-launch_default';
 
@@ -224,7 +231,7 @@ async function cleanup() {
   }
   sh('docker', ['rm', '-f', CT], { allowFail: true });
   mcRoot(
-    `mc rb --force --dangerous r/${BUCKET} >/dev/null 2>&1 || mc rb --force r/${BUCKET} >/dev/null 2>&1; mc admin user rm r ${USER} >/dev/null 2>&1; mc admin user rm r ${READER} >/dev/null 2>&1; mc admin policy rm r fifth-logs-write >/dev/null 2>&1; mc admin policy rm r fifth-logs-read >/dev/null 2>&1; true`,
+    `mc rb --force --dangerous r/${BUCKET} >/dev/null 2>&1 || mc rb --force r/${BUCKET} >/dev/null 2>&1; mc admin user rm r ${USER} >/dev/null 2>&1; mc admin user rm r ${READER} >/dev/null 2>&1; mc admin policy rm r fifth-logs-write >/dev/null 2>&1; mc admin policy rm r fifth-logs-read >/dev/null 2>&1; mc rb --force --dangerous r/${LBUCKET} >/dev/null 2>&1; mc admin user rm r ${LWRITER} >/dev/null 2>&1; mc admin user rm r ${LREADER} >/dev/null 2>&1; mc admin policy rm r fifth-logs-legacy-write >/dev/null 2>&1; mc admin policy rm r fifth-logs-legacy-read >/dev/null 2>&1; true`,
   );
 }
 
@@ -307,6 +314,11 @@ try {
         'LOGS_S3_SECRET_ACCESS_KEY',
         'LOGS_READER_ACCESS_KEY_ID',
         'LOGS_READER_SECRET_ACCESS_KEY',
+        'LOGS_LEGACY_S3_BUCKET',
+        'LOGS_LEGACY_WRITER_ACCESS_KEY_ID',
+        'LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY',
+        'LOGS_LEGACY_READER_ACCESS_KEY_ID',
+        'LOGS_LEGACY_READER_SECRET_ACCESS_KEY',
       ].flatMap((k) => ['-e', k]),
       'minio-init',
     ],
@@ -317,6 +329,11 @@ try {
         LOGS_S3_SECRET_ACCESS_KEY: USER_SECRET,
         LOGS_READER_ACCESS_KEY_ID: READER,
         LOGS_READER_SECRET_ACCESS_KEY: READER_SECRET,
+        LOGS_LEGACY_S3_BUCKET: LBUCKET,
+        LOGS_LEGACY_WRITER_ACCESS_KEY_ID: LWRITER,
+        LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY: LWRITER_SECRET,
+        LOGS_LEGACY_READER_ACCESS_KEY_ID: LREADER,
+        LOGS_LEGACY_READER_SECRET_ACCESS_KEY: LREADER_SECRET,
       },
       allowFail: true,
     },
@@ -326,7 +343,10 @@ try {
     init.status === 0 &&
       init.stdout.includes(`бакет журналов ${BUCKET} готов`) &&
       init.stdout.includes('(политика fifth-logs-write)') &&
-      init.stdout.includes('(политика fifth-logs-read)'),
+      init.stdout.includes('(политика fifth-logs-read)') &&
+      init.stdout.includes(`бакет журналов ${LBUCKET} готов`) &&
+      init.stdout.includes('(политика fifth-logs-legacy-write)') &&
+      init.stdout.includes('(политика fifth-logs-legacy-read)'),
     (init.stdout + init.stderr)
       .trim()
       .split('\n')
@@ -379,6 +399,108 @@ try {
     `порций ${c1.length}`,
   );
   verifyOk('1');
+
+  // ---------------------------------------------------------- L
+  console.log('\n▸ L. Накопленная история: свой бакет и ключ, до границы основного архива');
+  const anchorKey = (await allKeysUnder('anchors/'))[0];
+  const mainAnchor = JSON.parse(await (await rootReq('GET', anchorKey)).text());
+  const LSTATE = '/var/lib/fifth-logs-legacy-test';
+  const LEG = {
+    LOGS_S3_BUCKET: LBUCKET,
+    LOGS_S3_ACCESS_KEY_ID: LWRITER,
+    LOGS_S3_SECRET_ACCESS_KEY: LWRITER_SECRET,
+    LOGS_ARCHIVE_KEY: LKEY,
+    LOGS_STATE_DIR: LSTATE,
+    LOGS_UNTIL_CURSOR: mainAnchor.afterCursor,
+  };
+  const lroot = { ...root, bucket: LBUCKET };
+  const lkeys = async (prefix) => {
+    const r = await s3Object(lroot, 'GET', '', null, {}, { 'list-type': '2', prefix });
+    return [...(await r.text()).matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
+  };
+  // «Журнал Docker json-file» с секретом, ещё пишущийся (свежий).
+  const DOCKER_LOG = '/var/lib/docker-test/c1/c1-json.log';
+  inCt(
+    `mkdir -p /var/lib/docker-test/c1 && printf '%s\\n' '{"log":"password=${tag}"}' > ${DOCKER_LOG}`,
+  );
+  const l1 = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: DOCKER_LOG });
+  const lcat = () =>
+    inCt(`cat ${LSTATE}/catalog.jsonl 2>/dev/null || true`)
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+  const lastL = lcat().reduce((m, r) => (BigInt(r.last) > m ? BigInt(r.last) : m), 0n);
+  check(
+    'история выгружена ровно до границы основного архива включительно',
+    l1.code === 0 && lastL === BigInt(mainAnchor.afterSeq) && /журнал \w+: записи 1–/.test(l1.out),
+    `${l1.out.split('\n').find((l) => l.startsWith('журнал')) ?? l1.out.split('\n').at(-1)}; граница ${mainAnchor.afterSeq}`,
+  );
+  // Журнал контейнера без дыр в нумерации: пробелов быть не должно (первая
+  // версия теряла запись 1 — --after-cursor с курсором «ID + номер»).
+  check(
+    'с первой записи журнала, без ложных пробелов',
+    /пробелов 0 \(записей 0\)/.test(l1.out) && !lcat().some((r) => r.kind === 'loss'),
+    l1.out.split('\n').find((l) => l.startsWith('журнал')),
+  );
+  const lf = (await lkeys('f/')).filter((k) => k.includes('docker-test'));
+  const mf = (await allKeysUnder('f/')).filter((k) => k.includes('docker-test'));
+  check(
+    'журнал Docker (ещё пишущийся) — только в бакете истории',
+    lf.length === 1 && mf.length === 0,
+    `история ${lf.length}, основной ${mf.length}`,
+  );
+  const l2 = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: DOCKER_LOG });
+  check(
+    'повтор выгрузки — ничего нового',
+    l2.code === 0 &&
+      /проход: порций 0/.test(l2.out) &&
+      /файлы истории: записано 0, уже в архиве 1/.test(l2.out),
+    l2.out
+      .split('\n')
+      .filter((l) => /проход|файлы истории/.test(l))
+      .join(' | '),
+  );
+  const lv = arch('verify', LEG);
+  check(
+    'verify истории своим ключом',
+    lv.code === 0 && /ИТОГ: (данные сохранены полностью|проверка пройдена)/.test(lv.out),
+    lv.out.split('\n').find((l) => l.startsWith('ИТОГ')) ?? lv.out.split('\n')[0],
+  );
+  const LPULL = `/tmp/lpull-${tag}`;
+  const lp = arch('pull', {
+    ...LEG,
+    LOGS_S3_ACCESS_KEY_ID: LREADER,
+    LOGS_S3_SECRET_ACCESS_KEY: LREADER_SECRET,
+    LOGS_PULL_TO: LPULL,
+  });
+  check(
+    'ручная копия истории учёткой чтения истории, сходится',
+    lp.code === 0 &&
+      /файлов: 1/.test(lp.out) &&
+      /ИТОГ: (данные сохранены полностью|копия сошлась)/.test(lp.out),
+    lp.out.split('\n').at(-1),
+  );
+  const lwrong = arch('verify-copy', { LOGS_PULL_TO: LPULL });
+  check('копия истории не открывается ключом основного архива', lwrong.code !== 0, lwrong.out);
+  inCt(`rm -rf ${LPULL}`);
+  const deny = async (who, secret, bucket) =>
+    (
+      await s3Object(
+        { ...root, bucket, accessKey: who, secretKey: secret },
+        'GET',
+        '',
+        null,
+        {},
+        { 'list-type': '2' },
+      )
+    ).status === 403;
+  check(
+    'учётки разделены: основной архив не видит историю, история — основной архив',
+    (await deny(READER, READER_SECRET, LBUCKET)) &&
+      (await deny(USER, USER_SECRET, LBUCKET)) &&
+      (await deny(LREADER, LREADER_SECRET, BUCKET)) &&
+      (await deny(LWRITER, LWRITER_SECRET, BUCKET)),
+  );
 
   // ---------------------------------------------------------- 2
   console.log('\n▸ 2. Падение до отправки');
