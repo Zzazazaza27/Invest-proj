@@ -11,9 +11,9 @@
  *   - POSTGRES_PASSWORD (+ DATABASE_URL_OWNER, DATABASE_URL_TEST — пароль
  *     владельца входит в эти URL) — с ALTER ROLE в работающем postgres;
  *   - REDIS_PASSWORD, NATS_PASSWORD — конфигурация контейнеров, пересоздание;
- *   - MINIO_ROOT_PASSWORD — MinIO читает root-учётку из env при старте;
- *   - S3_ACCESS_KEY_ID → `unicorn_app` + новый S3_SECRET_ACCESS_KEY —
- *     отдельная учётка приложения, создаётся minio-init (не root!);
+ *   - S3_ACCESS_KEY_ID + S3_SECRET_ACCESS_KEY — новый ключ приложения в
+ *     Garage (D-001; формат GK + 24 hex и 64 hex): заводит garage-init,
+ *     прежний ключ удаляется через admin API;
  *   - KEYCLOAK_ADMIN_PASSWORD — bootstrap-учётка (действует на первый старт);
  *   - OIDC_CLIENT_SECRET, PAYMENT_PROVIDER_WEBHOOK_SECRET,
  *     NOMINAL_ACCOUNT_WEBHOOK_SECRET, DEV_TEST_USER_PASSWORD.
@@ -32,6 +32,7 @@ import { randomBytes } from 'node:crypto';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
+import { garageApi } from './lib/garage-admin.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ENV_PATH = join(ROOT, '.env');
@@ -44,16 +45,17 @@ function generate(bytes = 24) {
 }
 
 const text = readFileSync(ENV_PATH, 'utf8');
+// Прежний ключ приложения — удаляется из Garage после заведения нового.
+const oldAppKey = text.match(/^S3_ACCESS_KEY_ID=(.*)$/m)?.[1];
 const lines = text.split(/\r?\n/);
 
 const newValues = new Map([
   ['POSTGRES_PASSWORD', generate()],
   ['REDIS_PASSWORD', generate()],
   ['NATS_PASSWORD', generate()],
-  ['MINIO_ROOT_PASSWORD', generate()],
   ['KEYCLOAK_ADMIN_PASSWORD', generate()],
-  ['S3_ACCESS_KEY_ID', 'unicorn_app'],
-  ['S3_SECRET_ACCESS_KEY', generate()],
+  ['S3_ACCESS_KEY_ID', `GK${randomBytes(12).toString('hex')}`],
+  ['S3_SECRET_ACCESS_KEY', randomBytes(32).toString('hex')],
   ['OIDC_CLIENT_SECRET', generate()],
   ['PAYMENT_PROVIDER_WEBHOOK_SECRET', generate()],
   ['NOMINAL_ACCOUNT_WEBHOOK_SECRET', generate()],
@@ -141,8 +143,6 @@ const compose = spawnSync(
     'postgres',
     'valkey',
     'nats',
-    'minio',
-    'minio-init',
   ],
   { encoding: 'utf8', stdio: ['ignore', 'inherit', 'inherit'] },
 );
@@ -150,6 +150,23 @@ if (compose.status !== 0) {
   console.error('rotate-stand-secrets: пересоздание контейнеров не прошло — .env уже новый,');
   console.error('база на новом пароле; разбирайся вручную, бэкап старых значений в', BACKUP_PATH);
   process.exit(1);
+}
+
+// 3а. Ключ приложения в Garage: новый заводит garage-init, прежний удаляется.
+const garageInit = spawnSync(process.execPath, [join(ROOT, 'scripts', 'garage-init.mjs')], {
+  encoding: 'utf8',
+  stdio: ['ignore', 'inherit', 'inherit'],
+});
+if (garageInit.status !== 0) {
+  console.error('rotate-stand-secrets: garage-init не прошёл — ключ приложения не заведён');
+  process.exit(1);
+}
+if (/^GK[0-9a-f]{24}$/.test(oldAppKey ?? '') && oldAppKey !== newValues.get('S3_ACCESS_KEY_ID')) {
+  process.env.GARAGE_ADMIN_TOKEN ??= readFileSync(ENV_PATH, 'utf8').match(
+    /^GARAGE_ADMIN_TOKEN=(.*)$/m,
+  )?.[1];
+  await garageApi('DeleteKey', {}, `?id=${oldAppKey}`);
+  console.warn('rotate-stand-secrets: прежний ключ приложения удалён из Garage');
 }
 
 // 4. Пак редакции: новые значения обязаны попасть в редакторы Entire ДО того,

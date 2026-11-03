@@ -23,6 +23,7 @@ import { ENV_PATH, loadEnv } from './lib/backup.mjs';
 import { LOGS_ITEMS, logsTriggers } from './lib/logs-metrics-zabbix.mjs';
 import { zabbixApi } from './lib/zabbix-api.mjs';
 import { peek } from './lib/zabbix-peek.mjs';
+import { s3Object } from './lib/s3.mjs';
 
 loadEnv();
 const env = process.env;
@@ -58,7 +59,8 @@ const ADDR =
         pg: 'tcp://127.0.0.1:5433',
         redis: 'tcp://127.0.0.1:6380',
         nats: 'http://127.0.0.1:8222',
-        s3: 'http://127.0.0.1:9000',
+        // Garage (D-001): admin-порт первого узла, /health без токена.
+        garageHealth: 'http://127.0.0.1:3903/health',
         certHost: '5espace.com',
         timesync: true,
         // Файл состояния архиватора журналов (W08b) — через корень узла.
@@ -71,7 +73,7 @@ const ADDR =
         pg: 'tcp://postgres:5432',
         redis: 'tcp://valkey:6379',
         nats: 'http://nats:8222',
-        s3: 'http://minio:9000',
+        garageHealth: 'http://garage-1:3903/health',
         certHost: null,
         timesync: false,
         logsMetrics: '/monitor/logs-metrics.json',
@@ -616,7 +618,40 @@ async function configure() {
     await trigger(`${name}: нет ответа`, `count(/${H}/${key},#3,"eq",0)=3`, priority);
   };
   await simple('NATS: /healthz', `${ADDR.nats}/healthz`, 4);
-  await simple('MinIO: готовность', `${ADDR.s3}/minio/health/live`, 4);
+  // Garage (D-001): /health без токена различает три состояния — все узлы в
+  // строю (2); работает, но часть узлов недоступна — резервирование снижено
+  // (1); нет кворума — чтение и запись не работают (0, ответ 503). Узел
+  // считается недоступным примерно через 2 минуты после остановки (опыт
+  // стенда 03.11). Три узла на одном VPS — не защита от потери VPS.
+  {
+    const key = `web.page.get[${ADDR.garageHealth}]`;
+    await item({
+      name: 'Garage: состояние кластера (2 — все узлы, 1 — часть узлов, 0 — нет кворума)',
+      key_: key,
+      type: AGENT,
+      value_type: 3,
+      nodata: 4,
+      preprocessing: [
+        UNSUP(0),
+        step(
+          JS,
+          'if (!/^HTTP\\/\\S+ 200/.test(value)) return 0; return /fully operational/.test(value) ? 2 : /operational/.test(value) ? 1 : 0;',
+          2,
+          '0',
+        ),
+      ],
+    });
+    await trigger(
+      'Garage: нет кворума — чтение и запись файлов не работают',
+      `count(/${H}/${key},#3,"eq",0)=3`,
+      4,
+    );
+    await trigger(
+      'Garage: часть узлов недоступна — резервирование снижено',
+      `last(/${H}/${key})=1`,
+      3,
+    );
+  }
 
   // ---- Узел: процессор, память, диск, время --------------------------------------
   await item({
@@ -1225,18 +1260,21 @@ async function controlInit() {
     randomBytes(4096),
   ]);
   const sha256 = createHash('sha256').update(body).digest('hex');
-  execFileSync(
-    'docker',
-    [
-      'exec',
-      '-i',
-      'unicorn-minio',
-      'sh',
-      '-c',
-      `mc alias set l http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc pipe l/${bucket}/${key} >/dev/null`,
-    ],
-    { input: body },
+  // Запись в рабочее хранилище (Garage, D-001) ключом приложения.
+  const put = await s3Object(
+    {
+      endpoint: (env.S3_ENDPOINT || 'http://127.0.0.1:3900').replace(/\/+$/, ''),
+      bucket,
+      region: env.S3_REGION || 'us-east-1',
+      accessKey: env.S3_ACCESS_KEY_ID,
+      secretKey: env.S3_SECRET_ACCESS_KEY,
+    },
+    'PUT',
+    key,
+    body,
+    { 'content-type': 'application/octet-stream' },
   );
+  if (put.status !== 200) throw new Error(`контрольный объект не записан: HTTP ${put.status}`);
   psql(
     `INSERT INTO audit.control_objects (name, s3_key, size_bytes, sha256) VALUES ('probe', '${key}', ${body.length}, '${sha256}')`,
   );

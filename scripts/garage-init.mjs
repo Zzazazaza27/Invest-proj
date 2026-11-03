@@ -187,9 +187,7 @@ const origins = (
       throw new Error(`PutBucketCors: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
     say(`CORS ${files.globalAliases?.[0]}: POST с ${origins.join(', ')}`);
   } finally {
-    await api('DeleteKey', undefined, `?id=${tmp.accessKeyId}`).catch(() =>
-      api('DeleteKey', {}, `?id=${tmp.accessKeyId}`),
-    );
+    await api('DeleteKey', {}, `?id=${tmp.accessKeyId}`);
   }
 }
 
