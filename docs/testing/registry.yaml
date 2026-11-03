@@ -2590,6 +2590,29 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-03
 
+  - id: TOOL-LOGS-VOLUME
+    file: scripts/measure-logs-volume.mjs
+    command: node scripts/measure-logs-volume.mjs [--base-bytes-day N] [--base-gzip-day N] [--burst-rps R] [--burst-hours H]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker, s3]
+    effects:
+      [
+        'временный контейнер с systemd-journald и временный бакет в MinIO стенда — удаляются в конце',
+      ]
+    studied: code
+    studiedOn: 2026-11-03
+    note: >-
+      Замер 03.11.2026: запись журнала запросов ядра — 1061 байт в export,
+      53 после gzip; пара «минутная порция фона + квитанция» (5,4 КБ) —
+      20,5 КБ на диске MinIO; фон VPS 67,8 МиБ/сутки export, 6,2 МиБ/сутки в
+      архиве. Итог — docs/architecture/w08b-logs-plan.md, раздел 4.
+    purpose: 'Замер места под архив журналов (8.4, 2.1-W08b): байт на запрос ядра в journald и в архиве (служба на node, как unicorn-core), место маленьких объектов с версиями в MinIO, расчёт на сутки и год при фоне VPS и нескольких нагрузках, всплеск, число объектов в год.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-03
+
   - id: TOOL-MONITORING
     file: scripts/monitoring.mjs
     command: node scripts/monitoring.mjs configure|status [--items]
