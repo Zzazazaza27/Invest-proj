@@ -453,6 +453,13 @@ try {
       WEBHOOK_DELIVERY_MODE: 'capture',
       DATABASE_SSL: 'false',
     });
+    // Переменные других компонентов ядру не передаются: CORS хранилища
+    // (MinIO, Garage), адрес прикладной пробы, узлы Garage. Ядро их не читает,
+    // а внешние адреса в них остановили бы проверку изоляции (комплект VPS
+    // 03.11: MINIO_CORS_ALLOW_ORIGIN, MONITOR_PUBLIC_URL).
+    for (const k of Object.keys(e)) {
+      if (/^(MINIO_|MONITOR_|GARAGE_)|^S3_CORS_ALLOW_ORIGIN$/.test(k)) delete e[k];
+    }
     // Изоляция: ни одного адреса вне этой машины.
     const outside = Object.entries(e)
       .filter(([k, v]) => !/^(MAIL_|BACKUP_|SMTP_)/.test(k) && /^[a-z]+:\/\//i.test(v ?? ''))
@@ -642,7 +649,7 @@ try {
     // переходе на Garage: ссылки на файлы мало, нужно чтение).
     const control = (
       await pool.query(
-        `SELECT m.id, m.project_id, m.uploaded_by, m.size_bytes, m.content_hash
+        `SELECT m.id, m.project_id, m.uploaded_by, m.size_bytes, m.content_hash, m.s3_key
            FROM lab.project_materials m JOIN lab.projects p ON p.id = m.project_id
           WHERE m.upload_state = 'ready' AND m.s3_key IS NOT NULL AND p.deleted_at IS NULL
           ORDER BY m.uploaded_at DESC NULLS LAST`,
@@ -671,12 +678,19 @@ try {
         { headers: { cookie }, signal: AbortSignal.timeout(60_000) },
       );
       const bytes = file.status === 200 ? Buffer.from(await file.arrayBuffer()) : Buffer.alloc(0);
-      const sha = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+      const sha = createHash('sha256').update(bytes).digest('hex');
+      // Эталон — хеш в базе; у служебного контрольного материала его нет
+      // (заведён напрямую, не загрузкой) — тогда хеш объекта в каталоге
+      // комплекта на момент T.
+      const want = control.content_hash
+        ? control.content_hash.replace(/^sha256:/, '')
+        : catalog.files.objects.find((o) => o.key === control.s3_key)?.sha256;
       check(
-        'контрольное чтение материала через ядро: размер и SHA-256 как в базе',
+        'контрольное чтение материала через ядро: размер и SHA-256 как в базе (или в каталоге комплекта)',
         file.status === 200 &&
           bytes.length === Number(control.size_bytes) &&
-          sha === control.content_hash,
+          Boolean(want) &&
+          sha === want,
         `HTTP ${file.status}, ${bytes.length} байт`,
       );
     }
