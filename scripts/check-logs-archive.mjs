@@ -1792,17 +1792,37 @@ try {
     vT2.code !== 0 && vT2.out.includes('цепочка короче эталона'),
     lineOf(vT2.out, /цепочка/),
   );
+  // Регрессия (Тэнк к 065cba0): два запуска подряд — оба красные, а
+  // подтверждённая опись (эталон копии) не меняется; иначе второй сверялся бы
+  // с укороченным эталоном и давал ложный успех.
+  const manifestSha = () => inCt(`sha256sum ${REFCOPY}/MANIFEST.sealed | cut -c1-64`).trim();
+  const refSha = manifestSha();
   const pT2 = arch('pull', { ...asReaderT, LOGS_PULL_TO: REFCOPY });
   check(
     'копия: хранилище расходится с эталоном прежней копии (голова в хранилище тоже удалена)',
     pT2.code !== 0 && pT2.out.includes('расходится с эталоном прежней копии'),
     lineOf(pT2.out, /расходится|ИТОГ/),
   );
+  const pT2b = arch('pull', { ...asReaderT, LOGS_PULL_TO: REFCOPY });
+  check(
+    'второй запуск подряд — тоже НЕ сошлась, подтверждённая опись прежняя',
+    pT2b.code !== 0 &&
+      pT2b.out.includes('расходится с эталоном прежней копии') &&
+      manifestSha() === refSha &&
+      inCt(`ls ${REFCOPY}`).includes('MANIFEST.sealed.rejected'),
+    lineOf(pT2b.out, /^ИТОГ/),
+  );
   for (const s of savedTail) {
     await rootReq('PUT', s.key, {}, s.body, { 'x-amz-meta-object-sha256': s.sha });
   }
   await rootReq('PUT', 'ref/head.json', {}, refObj.body);
   verifyOk('Ц2 — хвост возвращён');
+  const pT2c = arch('pull', { ...asReaderT, LOGS_PULL_TO: REFCOPY });
+  check(
+    'после возврата хвоста — копия сошлась, опись заменена допустимым продолжением',
+    pT2c.code === 0 && !pT2c.out.includes('НЕ сошлась'),
+    lineOf(pT2c.out, /^ИТОГ/),
+  );
 
   // Ц3. Утрата эталона: без него — «НЕПРОВЕРЯЕМО», голова из хранилища не
   // подтверждена; подтверждение — опись копии на ноутбуке.

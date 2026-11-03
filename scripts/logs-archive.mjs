@@ -2624,10 +2624,25 @@ async function pull() {
     chain,
     chainNotes,
   };
+  console.log(`скачано объектов: ${downloaded}`);
+  // Подтверждённая опись — эталон копии — заменяется только допустимым
+  // продолжением цепочки. Расхождение (утрата хвоста, подмена, разрыв) не
+  // перезаписывает её: иначе следующий запуск сверялся бы с укороченным
+  // эталоном и дал ложный успех (замечание Тэнка к 065cba0). Попытка
+  // сохраняется отдельно — для разбора.
+  if (chainNotes.length) {
+    const rejected = join(to, `${MANIFEST}.rejected`);
+    writeFileSync(rejected, seal(Buffer.from(JSON.stringify(manifest)), keyMat.key));
+    for (const n of chainNotes) console.log(`  ${n}`);
+    console.log(
+      `ИТОГ: копия НЕ сошлась — подтверждённая опись и эталон прежние (${prev ? `${prev.count} звеньев` : 'первой описи нет'}); попытка — ${MANIFEST}.rejected`,
+    );
+    process.exitCode = 1;
+    return;
+  }
   const tmp = join(to, `${MANIFEST}.tmp`);
   writeFileSync(tmp, seal(Buffer.from(JSON.stringify(manifest)), keyMat.key));
   renameSync(tmp, join(to, MANIFEST));
-  console.log(`скачано объектов: ${downloaded}`);
   checkCopy(to, keyMat);
 }
 
