@@ -1,0 +1,11 @@
+# Раз в минуту: порция журналов в архив (интервал — решение 03.11, по замеру).
+[Unit]
+Description=5E logs timer: archive pass
+
+[Timer]
+OnCalendar=*:*:30
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

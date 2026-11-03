@@ -432,7 +432,9 @@ try {
   const lastL = lcat().reduce((m, r) => (BigInt(r.last) > m ? BigInt(r.last) : m), 0n);
   check(
     'история выгружена ровно до границы основного архива включительно',
-    l1.code === 0 && lastL === BigInt(mainAnchor.afterSeq) && /журнал \w+: записи 1–/.test(l1.out),
+    // Код 2: файл — не журнал Docker и не поколение, остановка источника не
+    // подтверждена; journald выгружен полностью.
+    l1.code === 2 && lastL === BigInt(mainAnchor.afterSeq) && /журнал \w+: записи 1–/.test(l1.out),
     `${l1.out.split('\n').find((l) => l.startsWith('журнал')) ?? l1.out.split('\n').at(-1)}; граница ${mainAnchor.afterSeq}`,
   );
   // Журнал контейнера без дыр в нумерации: пробелов быть не должно (первая
@@ -452,7 +454,7 @@ try {
   const l2 = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: DOCKER_LOG });
   check(
     'повтор выгрузки — ничего нового',
-    l2.code === 0 &&
+    l2.code === 2 &&
       /проход: порций 0/.test(l2.out) &&
       /файлы истории: записано 0, уже в архиве 1/.test(l2.out),
     l2.out
@@ -491,17 +493,29 @@ try {
     inCt(
       `printf '%s\\n' '{"log":"${name} 1","time":"2026-11-01T10:00:00Z"}' '{"log":"${name} 2","time":"2026-11-01T10:05:00Z"}' > ${DOCKER_LOG}`,
     );
-  dockerLog(`closed-${tag}`);
-  const lc = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: DOCKER_LOG });
+  dockerLog(`quiet-${tag}`);
+  const lq = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: DOCKER_LOG });
   check(
-    'закрытый файл: граница, строки и время записаны, покрыт целиком',
-    lc.code === 0 &&
-      /строк 2, время 2026-11-01T10:00:00Z–2026-11-01T10:05:00Z; закрыт, покрыт целиком/.test(
-        coverOf(lc.out),
-      ) &&
-      lc.out.includes('ИТОГ: история файлов покрыта полностью'),
-    coverOf(lc.out),
+    'стабильный файл без подтверждённой остановки — не «покрыт целиком» (код 2)',
+    lq.code === 2 &&
+      /строк 2, время 2026-11-01T10:00:00Z–2026-11-01T10:05:00Z; стабильный снимок до границы, НЕПОЛНО: остановка источника не подтверждена/.test(
+        coverOf(lq.out),
+      ),
+    coverOf(lq.out),
   );
+  // Поколение после ротации закрыто по имени — покрыто целиком.
+  inCt(
+    `cp ${DOCKER_LOG} ${DOCKER_LOG}.1 && printf '%s\\n' '{"log":"gen-${tag}"}' >> ${DOCKER_LOG}.1`,
+  );
+  const lc = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: `${DOCKER_LOG}.1` });
+  check(
+    'закрытое поколение: граница, строки и время записаны, покрыто целиком',
+    lc.code === 0 &&
+      /стабильный снимок, источник остановлен — покрыт целиком/.test(lc.out) &&
+      lc.out.includes('ИТОГ: история файлов покрыта полностью'),
+    lc.out.split('\n').find((l) => l.startsWith('история: /')),
+  );
+  inCt(`rm -f ${DOCKER_LOG}.1`);
   dockerLog(`cut-${tag}`);
   inCt(`printf '%s' '{"log":"оборвано' >> ${DOCKER_LOG}`);
   const lcut = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: DOCKER_LOG });

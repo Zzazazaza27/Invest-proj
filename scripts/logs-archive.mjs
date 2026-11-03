@@ -13,6 +13,8 @@
  *   node scripts/logs-archive.mjs find --from <ISO> [...]   поиск (архив + свежее)
  *   node scripts/logs-archive.mjs files     закрытые поколения файловых журналов (почта)
  *   node scripts/logs-archive.mjs legacy-export   накопленная история в отдельный бакет
+ *   node scripts/logs-archive.mjs legacy-snapshot проверенный локальный снимок без S3 (MinIO)
+ *   node scripts/logs-archive.mjs legacy-gap      известный пробел истории в покрытие
  *
  * Источник — journald (`journalctl -o export`), курсоры даёт он; подтверждение
  * архива, повторы, каталог и обнаружение потерь — ответственность этого кода.
@@ -46,8 +48,9 @@ import {
   writeFileSync,
   fsyncSync,
 } from 'node:fs';
+import { randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 import {
   ExportReader,
@@ -64,10 +67,104 @@ import {
   seal,
   sha256Hex,
 } from './lib/logs-archive.mjs';
+import { docker, ENV_PATH, parseEnvFile, TOOL_IMAGE } from './lib/backup.mjs';
 import { BASELINE_MIN_HOURS } from './lib/logs-metrics-zabbix.mjs';
 import { s3Object } from './lib/s3.mjs';
 
 const env = process.env;
+
+// ------------------------------------------------------------ окружение
+//
+// Ключи и учётки архивов живут в `.env` стенда — так они входят в комплект
+// ключей W07 (весь `.env`, зашифрованный ключом Томаса); отдельного хранения
+// нет. Юниты systemd ставят LOGS_DOTENV=1 — недостающее берётся из `.env`
+// (заданное окружением не перекрывается). На ноутбуке `--bundle <файл
+// keys/*.env.gpg> --secret-key <файл> --passphrase-file <файл>` открывает
+// комплект ключей в памяти: это и есть проверка «ключ архива открывается из
+// комплекта W07». LOGS_PROFILE выбирает набор переменных:
+//   main (по умолчанию) — запись основного архива;
+//   reader — чтение основного архива (LOGS_READER_*);
+//   legacy — запись накопленной истории (LOGS_LEGACY_WRITER_*, свой ключ и
+//            каталог состояния);
+//   legacy-reader — чтение истории (LOGS_LEGACY_READER_*).
+const argOf = (name) => {
+  const i = process.argv.indexOf(name);
+  return i > 0 ? (process.argv[i + 1] ?? null) : null;
+};
+const fill = (vars) => {
+  for (const [k, v] of Object.entries(vars)) if (env[k] === undefined && v !== '') env[k] = v;
+};
+if (env.LOGS_DOTENV === '1') fill(parseEnvFile(ENV_PATH));
+if (argOf('--bundle')) fill(openKeyBundle(argOf('--bundle')));
+const PROFILES = {
+  main: {},
+  reader: {
+    LOGS_S3_ACCESS_KEY_ID: 'LOGS_READER_ACCESS_KEY_ID',
+    LOGS_S3_SECRET_ACCESS_KEY: 'LOGS_READER_SECRET_ACCESS_KEY',
+  },
+  legacy: {
+    LOGS_S3_BUCKET: 'LOGS_LEGACY_S3_BUCKET',
+    LOGS_S3_ACCESS_KEY_ID: 'LOGS_LEGACY_WRITER_ACCESS_KEY_ID',
+    LOGS_S3_SECRET_ACCESS_KEY: 'LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY',
+    LOGS_ARCHIVE_KEY: 'LOGS_LEGACY_ARCHIVE_KEY',
+    LOGS_STATE_DIR: 'LOGS_LEGACY_STATE_DIR',
+  },
+  'legacy-reader': {
+    LOGS_S3_BUCKET: 'LOGS_LEGACY_S3_BUCKET',
+    LOGS_S3_ACCESS_KEY_ID: 'LOGS_LEGACY_READER_ACCESS_KEY_ID',
+    LOGS_S3_SECRET_ACCESS_KEY: 'LOGS_LEGACY_READER_SECRET_ACCESS_KEY',
+    LOGS_ARCHIVE_KEY: 'LOGS_LEGACY_ARCHIVE_KEY',
+  },
+};
+if (env.LOGS_PROFILE) {
+  const map = PROFILES[env.LOGS_PROFILE];
+  if (!map) throw new Error(`LOGS_PROFILE: нет профиля ${env.LOGS_PROFILE}`);
+  for (const [to, from] of Object.entries(map)) if (env[from]) env[to] = env[from];
+  if (env.LOGS_PROFILE === 'legacy' && !env.LOGS_LEGACY_STATE_DIR) {
+    env.LOGS_STATE_DIR = '/var/lib/fifth-logs-legacy';
+  }
+}
+
+/**
+ * Комплект ключей W07 (`keys/<отпечаток>.env.gpg`) открывается закрытым
+ * ключом Томаса во временном контейнере без сети; значения — только в
+ * памяти, берутся лишь LOGS_*.
+ */
+function openKeyBundle(bundle) {
+  const secretKey = argOf('--secret-key');
+  const passFile = argOf('--passphrase-file');
+  if (!secretKey || !passFile) throw new Error('--bundle требует --secret-key и --passphrase-file');
+  const r = docker(
+    [
+      'run',
+      '--rm',
+      '--network',
+      'none',
+      '-e',
+      'PASSPHRASE',
+      '-v',
+      `${resolve(secretKey)}:/in/key.asc:ro`,
+      '-v',
+      `${resolve(bundle)}:/in/bundle.gpg:ro`,
+      '--entrypoint',
+      'sh',
+      TOOL_IMAGE,
+      '-c',
+      'export GNUPGHOME=$(mktemp -d) && printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --import /in/key.asc 2>/dev/null && ' +
+        'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --decrypt /in/bundle.gpg',
+    ],
+    { env: { PASSPHRASE: readFileSync(passFile, 'utf8').trim() }, allowFail: true },
+  );
+  if (r.status !== 0) throw new Error('комплект ключей не открылся этим закрытым ключом');
+  const out = {};
+  for (const line of r.stdout.split(/\r?\n/)) {
+    const m = line.match(/^\s*(LOGS_[A-Z0-9_]+)\s*=\s*(.*)$/);
+    if (m) out[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+  console.log(`комплект ключей открыт: переменных LOGS_* ${Object.keys(out).length}`);
+  return out;
+}
+
 const STATE_DIR = env.LOGS_STATE_DIR || '/var/lib/fifth-logs';
 const PREFIX = env.LOGS_PREFIX || 'j';
 const MAX_CHUNK = Number(env.LOGS_MAX_CHUNK_BYTES || 16 * 1024 * 1024);
@@ -1289,12 +1386,14 @@ async function legacyExport() {
   }
   await run();
 
-  const exact = (env.LOGS_LEGACY_FILES || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  const exact = legacyFiles();
   let incomplete = 0;
-  if (exact.length) {
+  let total = exact.length;
+  const snapshots =
+    SNAP_DIR && existsSync(SNAP_DIR)
+      ? readdirSync(SNAP_DIR).filter((n) => n.endsWith('.cover.json'))
+      : [];
+  if (exact.length || snapshots.length) {
     await withLock(async () => {
       const known = await fileReceipts();
       let stored = 0;
@@ -1321,6 +1420,31 @@ async function legacyExport() {
         if ((await storeFile(fileSource(path), g, plain, keyMat, known)) === 'same') same++;
         else stored++;
       }
+      // Локальные снимки (порядок для MinIO): отправляются с покрытием,
+      // снятым при остановленном источнике; сверка хеша до отправки, чтение
+      // записанной версии — в storeFile. Сами снимки не удаляются.
+      for (const name of snapshots) {
+        total++;
+        const cover = JSON.parse(readFileSync(join(SNAP_DIR, name), 'utf8'));
+        const plain = readFileSync(join(SNAP_DIR, name.replace(/\.cover\.json$/, '.data')));
+        if (sha256Hex(plain) !== cover.sha256) {
+          console.error(`снимок ${cover.path}: ХЕШ НЕ СОВПАЛ — снимок испорчен, не отправлен`);
+          incomplete++;
+          continue;
+        }
+        if (!cover.complete) incomplete++;
+        const g = {
+          name: basename(cover.path),
+          path: cover.path,
+          snapshot: { ...cover, via: 'local-snapshot' },
+        };
+        const r = await storeFile(fileSource(cover.path), g, plain, keyMat, known);
+        if (r === 'same') same++;
+        else stored++;
+        console.log(
+          `снимок ${cover.path}: в архиве, хеш сверен (${coverText(cover)}); локальный снимок сохранён до подтверждения архива`,
+        );
+      }
       console.log(`файлы истории: записано ${stored}, уже в архиве ${same}`);
     });
   }
@@ -1340,14 +1464,166 @@ async function legacyExport() {
       `журнал ${a.seqId}: записи ${BigInt(a.afterSeq) + 1n}–${last}, порций ${own.length - lossRows.length}, пробелов ${lossRows.length} (записей ${lost})`,
     );
   }
-  if (exact.length) {
+  const gaps = await knownGaps();
+  for (const g of gaps) {
     console.log(
-      incomplete
-        ? `ИТОГ: история файлов НЕПОЛНА (файлов ${incomplete} из ${exact.length}) — локальную историю не очищать`
-        : `ИТОГ: история файлов покрыта полностью (${exact.length})`,
+      `известный пробел: ${g.source} до ${g.until} — ${g.reason}; восстановление не обещается`,
+    );
+  }
+  if (total || gaps.length) {
+    const extra = gaps.length ? `; известных пробелов до выгрузки: ${gaps.length}` : '';
+    console.log(
+      !total
+        ? `ИТОГ: файлов в этом прогоне нет${extra}`
+        : incomplete
+          ? `ИТОГ: история файлов НЕПОЛНА (файлов ${incomplete} из ${total})${extra} — локальную историю не очищать`
+          : `ИТОГ: история файлов покрыта полностью (${total})${extra}`,
     );
     if (incomplete) process.exitCode = 2;
   }
+}
+
+const SNAP_DIR = env.LOGS_LEGACY_SNAPSHOT_DIR || null;
+const legacyFiles = () =>
+  (env.LOGS_LEGACY_FILES || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+/** Атомарная запись байтов: временный файл + fsync + переименование. */
+function writeBytesAtomic(path, bytes) {
+  const tmp = `${path}.tmp`;
+  const fd = openSync(tmp, 'w', 0o600);
+  writeFileSync(fd, bytes);
+  fsyncSync(fd);
+  closeSync(fd);
+  renameSync(tmp, path);
+}
+
+/**
+ * Проверенный локальный снимок без S3 — порядок для самого MinIO (замечание
+ * Тэнка 03.11): после остановки MinIO приёмник архива недоступен. Остановка
+ * контейнера → этот снимок (граница, покрытие, подтверждение остановки) →
+ * запуск прежнего контейнера → `legacy-export` с тем же
+ * LOGS_LEGACY_SNAPSHOT_DIR отправляет и сверяет → только затем пересоздание.
+ * Снимок пишется в каталог с правами 700 и не удаляется этой программой.
+ *
+ *   LOGS_LEGACY_FILES=<путь> LOGS_LEGACY_SNAPSHOT_DIR=<каталог> \
+ *     node scripts/logs-archive.mjs legacy-snapshot
+ */
+async function legacySnapshot() {
+  if (!SNAP_DIR) throw new Error('нужен LOGS_LEGACY_SNAPSHOT_DIR');
+  const exact = legacyFiles();
+  if (!exact.length) throw new Error('нужен LOGS_LEGACY_FILES');
+  mkdirSync(SNAP_DIR, { recursive: true, mode: 0o700 });
+  let incomplete = 0;
+  for (const path of exact) {
+    const { plain, cover } = snapshotFile(path);
+    console.log(`снимок: ${path}: ${coverText(cover)}`);
+    if (!cover.accepted) {
+      incomplete++;
+      continue;
+    }
+    if (!cover.complete) incomplete++;
+    const base = join(SNAP_DIR, fileSource(path));
+    writeBytesAtomic(`${base}.data`, plain);
+    if (sha256Hex(readFileSync(`${base}.data`)) !== cover.sha256) {
+      throw new Error(`снимок ${path}: записанное не совпало с прочитанным`);
+    }
+    writeJsonAtomic(`${base}.cover.json`, cover);
+  }
+  console.log(
+    incomplete
+      ? `ИТОГ: локальный снимок НЕПОЛОН (файлов ${incomplete} из ${exact.length}) — пересоздавать нельзя`
+      : `ИТОГ: локальный снимок проверен, источники остановлены (${exact.length}); хранить до подтверждения архива`,
+  );
+  if (incomplete) process.exitCode = 2;
+}
+
+/**
+ * Известный пробел истории, возникший до выгрузки (например, журнал
+ * контейнера, удалённый пересозданием): фиксируется в бакете истории
+ * `gaps/<источник>.json` и попадает в итоговое покрытие. Восстановление не
+ * обещается. Повтор с тем же описанием — без изменений, с другим —
+ * конфликт.
+ *
+ *   LOGS_GAP_SOURCE=docker:unicorn-postgres LOGS_GAP_UNTIL=<ISO> \
+ *   LOGS_GAP_REASON='…' node scripts/logs-archive.mjs legacy-gap
+ */
+async function legacyGap() {
+  const source = env.LOGS_GAP_SOURCE;
+  const until = env.LOGS_GAP_UNTIL;
+  const reason = env.LOGS_GAP_REASON;
+  if (!source || !until || !reason) {
+    throw new Error('нужны LOGS_GAP_SOURCE, LOGS_GAP_UNTIL, LOGS_GAP_REASON');
+  }
+  if (Number.isNaN(Date.parse(until))) throw new Error('LOGS_GAP_UNTIL: нужна дата ISO');
+  const key = `gaps/${fileSource(source)}.json`;
+  const body = { source, until, reason };
+  const existing = (await listVersions(key)).filter((v) => v.key === key);
+  for (const v of existing) {
+    const got = JSON.parse((await getVersion(key, v.versionId)).toString('utf8'));
+    if (got.source === source && got.until === until && got.reason === reason) {
+      console.log(`пробел ${source}: уже записан`);
+      return;
+    }
+  }
+  if (existing.length) throw new Error(`КОНФЛИКТ: под ${key} другое описание — без перезаписи`);
+  await putObject(key, Buffer.from(JSON.stringify({ ...body, at: new Date().toISOString() })));
+  console.log(`пробел ${source}: записан (до ${until})`);
+}
+
+/**
+ * Заготовка переменных архива для `.env` стенда — в файл вне Git с пометкой
+ * «не применён», права 600; значения не печатаются. Имена бакетов и учёток
+ * постоянные, секреты и ключи — случайные. Существующий файл не
+ * перезаписывается.
+ *
+ *   node scripts/logs-archive.mjs secrets-draft --to <файл>
+ */
+function secretsDraft() {
+  const to = argOf('--to');
+  if (!to) throw new Error('нужен --to <файл вне Git>');
+  if (existsSync(to)) throw new Error(`${to} уже есть — не перезаписываю`);
+  const s = () => randomBytes(24).toString('base64url');
+  const k = () => randomBytes(32).toString('hex');
+  const vars = {
+    DOCKER_LOG_DRIVER: 'journald',
+    LOGS_S3_ENDPOINT: 'http://127.0.0.1:9000',
+    LOGS_S3_BUCKET: 'tech-logs',
+    LOGS_S3_ACCESS_KEY_ID: 'fifth-logs-writer',
+    LOGS_S3_SECRET_ACCESS_KEY: s(),
+    LOGS_READER_ACCESS_KEY_ID: 'fifth-logs-reader',
+    LOGS_READER_SECRET_ACCESS_KEY: s(),
+    LOGS_ARCHIVE_KEY: k(),
+    LOGS_LEGACY_S3_BUCKET: 'tech-logs-legacy',
+    LOGS_LEGACY_WRITER_ACCESS_KEY_ID: 'fifth-logs-legacy-writer',
+    LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY: s(),
+    LOGS_LEGACY_READER_ACCESS_KEY_ID: 'fifth-logs-legacy-reader',
+    LOGS_LEGACY_READER_SECRET_ACCESS_KEY: s(),
+    LOGS_LEGACY_ARCHIVE_KEY: k(),
+    LOGS_FILES: '/var/log/exim4/mainlog,/var/log/dovecot.log',
+    LOGS_JOURNAL_MAX_BYTES: String(4 * 1024 ** 3),
+  };
+  const fd = openSync(to, 'wx', 0o600);
+  writeFileSync(
+    fd,
+    `# Технические журналы W08b — НЕ ПРИМЕНЁН (${new Date().toISOString().slice(0, 10)}).\n` +
+      '# Дописать в .env VPS по docs/runbooks/w08b-vps-apply.md, затем пометку снять.\n' +
+      `${Object.entries(vars)
+        .map(([n, v]) => `${n}=${v}`)
+        .join('\n')}\n`,
+  );
+  closeSync(fd);
+  console.log(`заготовка: ${to} (переменных ${Object.keys(vars).length}, значения не печатаются)`);
+}
+
+async function knownGaps() {
+  const out = [];
+  for (const [key, versions] of groupByKey(await listVersions('gaps/'))) {
+    out.push(JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8')));
+  }
+  return out;
 }
 
 /** Прочитать ровно `n` байт с начала открытого файла. */
@@ -1391,6 +1667,7 @@ function lineTimes(text) {
 function snapshotFile(path) {
   const fd = openSync(path, 'r');
   try {
+    const before = sourceState(path);
     const st = fstatSync(fd);
     const raw = readPrefix(fd, st.size);
     const gz = path.endsWith('.gz');
@@ -1415,8 +1692,21 @@ function snapshotFile(path) {
     }
     const plain = gz ? gunzipSync(prefix) : prefix;
     const tail = Math.max(0, after.size - boundary);
+    // Остановка подтверждается источником до и после чтения, а не выводится
+    // из неизменности байтов: работающий контейнер мог просто молчать.
+    const afterSrc = sourceState(path);
+    const sourceStopped =
+      before.stopped === true &&
+      afterSrc.stopped === true &&
+      before.finishedAt === afterSrc.finishedAt
+        ? true
+        : before.stopped === false || afterSrc.stopped === false
+          ? false
+          : null;
+    const snapshotStable = stable && tail === 0 && samePath;
     const cover = {
       path,
+      source: { kind: before.kind, ...(before.id ? { id: before.id } : {}) },
       dev: st.dev,
       ino: st.ino,
       sizeAtOpen: st.size,
@@ -1424,7 +1714,9 @@ function snapshotFile(path) {
       tailBytes: tail,
       rotated: !samePath,
       accepted: stable,
-      complete: stable && tail === 0 && samePath,
+      snapshotStable,
+      sourceStopped,
+      complete: snapshotStable && sourceStopped === true,
       ...(gz ? {} : lineTimes(plain.toString('utf8'))),
       sha256: sha256Hex(plain),
       at: new Date().toISOString(),
@@ -1435,6 +1727,33 @@ function snapshotFile(path) {
   }
 }
 
+/**
+ * Состояние источника файла. Журнал Docker json-file
+ * (`…/containers/<id>/<id>-json.log`) — по `docker inspect`: остановлен ли
+ * контейнер и когда (смена времени остановки между проверками — его
+ * запускали). Поколение после ротации (`.N`, `.N.gz`) закрыто по имени.
+ * Прочее — остановка не подтверждена (null).
+ */
+const DOCKER_LOG_RE = /\/containers\/([0-9a-f]{64})\/\1-json\.log$/;
+function sourceState(path) {
+  const m = path.match(DOCKER_LOG_RE);
+  if (!m) return { kind: 'file', stopped: /\.\d+(\.gz)?$/.test(path) ? true : null };
+  const r = spawnSync(
+    env.LOGS_DOCKER_BIN || 'docker',
+    ['inspect', '--format', '{{.State.Running}} {{.State.FinishedAt}}', m[1]],
+    { encoding: 'utf8' },
+  );
+  const id = m[1].slice(0, 12);
+  if (r.status !== 0) return { kind: 'docker', id, stopped: null };
+  const [running, finishedAt] = r.stdout.trim().split(' ');
+  return {
+    kind: 'docker',
+    id,
+    stopped: running === 'false' ? true : running === 'true' ? false : null,
+    finishedAt,
+  };
+}
+
 function coverText(c) {
   if (!c.accepted) return 'ИЗМЕНЁН ВНУТРИ ГРАНИЦЫ (усечён или переписан) — снимок не принят';
   const span = c.lines !== undefined ? `, строк ${c.lines}, время ${c.first}–${c.last}` : '';
@@ -1442,7 +1761,15 @@ function coverText(c) {
     c.tailBytes ? `после границы ${c.tailBytes} байт (файл ещё пишется или запись оборвана)` : '',
     c.rotated ? 'путь указывает на другой файл (ротация во время копирования)' : '',
   ].filter(Boolean);
-  return `граница ${c.boundary} байт${span}; ${why.length ? `НЕПОЛНО: ${why.join('; ')}` : 'закрыт, покрыт целиком'}`;
+  const head = `граница ${c.boundary} байт${span}`;
+  if (why.length) return `${head}; НЕПОЛНО: ${why.join('; ')}`;
+  if (c.sourceStopped === true)
+    return `${head}; стабильный снимок, источник остановлен — покрыт целиком`;
+  return `${head}; стабильный снимок до границы, НЕПОЛНО: ${
+    c.sourceStopped === false
+      ? 'источник работает (контейнер запущен) — полнота не доказана'
+      : 'остановка источника не подтверждена'
+  }`;
 }
 
 async function files() {
@@ -2198,11 +2525,6 @@ function checkCopy(to, keyMat) {
 
 // ----------------------------------------------------------------- поиск
 
-const argOf = (name) => {
-  const i = process.argv.indexOf(name);
-  return i > 0 ? (process.argv[i + 1] ?? null) : null;
-};
-
 /** Время ISO → микросекунды journald; неверное значение — ошибка, не «всё». */
 function micros(name, fallback) {
   const v = argOf(name);
@@ -2407,7 +2729,13 @@ async function find() {
 
 const commands = {
   init,
-  run,
+  // По таймеру: занятая блокировка (идёт files или pack) — пропуск минуты,
+  // а не отказ; застревание видит тревога отставания архива.
+  run: () =>
+    run().catch((error) => {
+      if (!String(error?.message).startsWith('проход уже идёт')) throw error;
+      console.log(`проход пропущен: ${error.message}`);
+    }),
   rebuild: rebuildState,
   status,
   verify,
@@ -2416,6 +2744,9 @@ const commands = {
   'verify-copy': verifyCopy,
   files,
   'legacy-export': legacyExport,
+  'legacy-snapshot': legacySnapshot,
+  'legacy-gap': legacyGap,
+  'secrets-draft': secretsDraft,
   find,
 };
 const command = process.argv[2];

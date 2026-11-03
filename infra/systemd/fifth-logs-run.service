@@ -1,0 +1,15 @@
+# Архив технических журналов 5Э (блок 8, 8.4; 2.1-W08b): один проход —
+# новые записи journald → порции в бакет tech-logs, состояние для Zabbix.
+# Окружение — из .env стенда (LOGS_DOTENV=1): ключ и учётки входят в
+# комплект ключей W07.
+[Unit]
+Description=5E logs: archive pass
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/unicorn-launch
+Environment=LOGS_DOTENV=1
+ExecStart=/usr/bin/node scripts/logs-archive.mjs run
+TimeoutStartSec=50

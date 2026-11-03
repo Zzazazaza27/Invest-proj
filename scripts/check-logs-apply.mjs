@@ -1,0 +1,689 @@
+#!/usr/bin/env node
+/**
+ * Испытания применения W08b (блок 8, 8.4) — то, что ляжет на VPS, на
+ * локальном стенде, без VPS.
+ *
+ * Контейнер с systemd, journald и своим Docker Engine
+ * (infra/testbed/journald-docker.Dockerfile) в сети стенда; каталог
+ * `/opt/unicorn-launch` как на VPS (scripts и infra из репозитория, свой
+ * `.env` с LOGS_*); бакеты и учётки заводит настоящий шаг minio-init.
+ *   U. юниты fifth-logs-* из infra/systemd: окружение из .env, проход,
+ *      файлы почты, пакеты, таймеры; занятая блокировка — пропуск, не отказ;
+ *   J. лимиты journald (infra/journald): действуют, штатный перезапуск
+ *      нумерацию не меняет;
+ *   D. драйвер journald: записи контейнера в архиве и в поиске по имени
+ *      контейнера; дополнение compose подключается только переменной;
+ *   H. история журнала Docker: работающий молчащий контейнер — снимок
+ *      стабилен, но не «покрыт целиком»; остановленный — покрыт;
+ *   M. порядок для MinIO: остановка → локальный снимок без S3 → отправка и
+ *      сверка после возврата S3; снимок не удаляется; порча снимка видна;
+ *   G. известный пробел (журнал postgres до 02.11) в итоговом покрытии;
+ *   C. журнал запросов Caddy без query, cookie, авторизации и заголовков;
+ *   K. ключ архива из комплекта ключей W07: копия открывается ключом из
+ *      комплекта, чужой комплект — нет.
+ *
+ *   node scripts/check-logs-apply.mjs [--keep]
+ */
+import { spawnSync } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { docker as dockerTool, loadEnv, ROOT, TOOL_IMAGE } from './lib/backup.mjs';
+import { s3Object } from './lib/s3.mjs';
+
+loadEnv();
+const keep = process.argv.includes('--keep');
+const tag = randomBytes(3).toString('hex');
+const CT = `jap-${tag}`;
+const BASE_IMAGE = 'fifth/journald-testbed:local';
+const IMAGE = 'fifth/journald-docker-testbed:local';
+const NETWORK = 'unicorn-launch_default';
+const APP = '/opt/unicorn-launch';
+const STATE = '/var/lib/fifth-logs';
+const ALPINE = 'alpine:3.20';
+const CADDY = 'caddy:2.11.4';
+
+const secret = () => randomBytes(18).toString('hex');
+const E = {
+  LOGS_S3_ENDPOINT: 'http://unicorn-minio:9000',
+  LOGS_S3_BUCKET: `tech-logs-apply-${tag}`,
+  LOGS_S3_ACCESS_KEY_ID: `logs-w-${tag}`,
+  LOGS_S3_SECRET_ACCESS_KEY: secret(),
+  LOGS_READER_ACCESS_KEY_ID: `logs-r-${tag}`,
+  LOGS_READER_SECRET_ACCESS_KEY: secret(),
+  LOGS_ARCHIVE_KEY: randomBytes(32).toString('hex'),
+  LOGS_LEGACY_S3_BUCKET: `tech-logs-legacy-apply-${tag}`,
+  LOGS_LEGACY_WRITER_ACCESS_KEY_ID: `logs-lw-${tag}`,
+  LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY: secret(),
+  LOGS_LEGACY_READER_ACCESS_KEY_ID: `logs-lr-${tag}`,
+  LOGS_LEGACY_READER_SECRET_ACCESS_KEY: secret(),
+  LOGS_LEGACY_ARCHIVE_KEY: randomBytes(32).toString('hex'),
+  LOGS_FILES: '/var/log/tmail/mainlog',
+  LOGS_FILES_MIN_AGE_SEC: '0',
+};
+
+const root = {
+  endpoint: `http://127.0.0.1:${process.env.S3_PORT || 9000}`,
+  bucket: E.LOGS_S3_BUCKET,
+  region: process.env.S3_REGION || 'us-east-1',
+  accessKey: process.env.MINIO_ROOT_USER,
+  secretKey: process.env.MINIO_ROOT_PASSWORD,
+};
+
+let passed = 0;
+let failed = 0;
+const check = (name, ok, details = '') => {
+  if (ok) passed++;
+  else failed++;
+  console.log(`  ${ok ? 'OK  ' : 'FAIL'}  ${name}${details ? ` — ${details}` : ''}`);
+};
+
+function sh(cmd, args, { env = {}, allowFail = false, input } = {}) {
+  const r = spawnSync(cmd, args, {
+    encoding: 'utf8',
+    env: { ...process.env, ...env, MSYS_NO_PATHCONV: '1' },
+    input,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  if (r.status !== 0 && !allowFail) {
+    throw new Error(
+      `${cmd} ${args.slice(0, 3).join(' ')}: ${(r.stderr || r.stdout).trim().split('\n').pop()}`,
+    );
+  }
+  return r;
+}
+const inCt = (script, opts = {}) => sh('docker', ['exec', CT, 'sh', '-c', script], opts).stdout;
+const last = (out) => out.trim().split('\n').at(-1);
+const line = (out, re) => out.split('\n').find((l) => re.test(l)) ?? last(out);
+
+/** Архиватор как на VPS: из /opt/unicorn-launch, окружение из .env. */
+function arch(command, extra = {}, args = []) {
+  const env = { LOGS_DOTENV: '1', ...extra };
+  const r = sh(
+    'docker',
+    [
+      'exec',
+      '-w',
+      APP,
+      ...Object.keys(env).flatMap((k) => ['-e', k]),
+      CT,
+      'node',
+      'scripts/logs-archive.mjs',
+      command,
+      ...args,
+    ],
+    { env, allowFail: true },
+  );
+  return { code: r.status, out: `${r.stdout}${r.stderr}`.trim() };
+}
+
+/** Запуск юнита и его итог (Result) — как таймер на VPS. */
+function startUnit(unit) {
+  sh('docker', ['exec', CT, 'systemctl', 'start', unit], { allowFail: true });
+  return inCt(`systemctl show -p Result --value ${unit}`).trim();
+}
+
+function mcRoot(script) {
+  return sh('docker', [
+    'exec',
+    'unicorn-minio',
+    'sh',
+    '-c',
+    `mc alias set r http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && ${script}; mc alias rm r >/dev/null`,
+  ]);
+}
+
+const containerLog = (name) => inCt(`docker inspect -f '{{.LogPath}}' ${name}`).trim();
+const offline = (fn) => {
+  sh('docker', ['network', 'disconnect', NETWORK, CT]);
+  try {
+    return fn();
+  } finally {
+    sh('docker', ['network', 'connect', NETWORK, CT]);
+  }
+};
+
+const tmpDirs = [];
+async function cleanup() {
+  for (const d of tmpDirs) rmSync(d, { recursive: true, force: true });
+  sh('docker', ['rm', '-f', `caddy-apply-${tag}`], { allowFail: true });
+  if (keep) {
+    console.log(
+      `\n(--keep: оставлены контейнер ${CT}, бакеты ${E.LOGS_S3_BUCKET}, ${E.LOGS_LEGACY_S3_BUCKET})`,
+    );
+    return;
+  }
+  sh('docker', ['rm', '-f', CT], { allowFail: true });
+  mcRoot(
+    [E.LOGS_S3_BUCKET, E.LOGS_LEGACY_S3_BUCKET]
+      .map((b) => `mc rb --force --dangerous r/${b} >/dev/null 2>&1`)
+      .concat(
+        [
+          E.LOGS_S3_ACCESS_KEY_ID,
+          E.LOGS_READER_ACCESS_KEY_ID,
+          E.LOGS_LEGACY_WRITER_ACCESS_KEY_ID,
+          E.LOGS_LEGACY_READER_ACCESS_KEY_ID,
+        ].map((u) => `mc admin user rm r ${u} >/dev/null 2>&1`),
+        [
+          'fifth-logs-write',
+          'fifth-logs-read',
+          'fifth-logs-legacy-write',
+          'fifth-logs-legacy-read',
+        ].map((p) => `mc admin policy rm r ${p} >/dev/null 2>&1`),
+      )
+      .join('; ') + '; true',
+  );
+}
+
+console.log(`=== ПРИМЕНЕНИЕ W08b: испытания (${tag}) ===`);
+try {
+  // ---------------------------------------------------------- стенд
+  for (const [image, file] of [
+    [BASE_IMAGE, 'journald.Dockerfile'],
+    [IMAGE, 'journald-docker.Dockerfile'],
+  ]) {
+    if (sh('docker', ['image', 'inspect', image], { allowFail: true }).status !== 0) {
+      sh('docker', ['build', '-q', '-t', image, '-f', `infra/testbed/${file}`, 'infra/testbed']);
+    }
+  }
+  sh('docker', [
+    'run',
+    '-d',
+    '--name',
+    CT,
+    '--network',
+    NETWORK,
+    '--privileged',
+    '--cgroupns=host',
+    '-v',
+    '/sys/fs/cgroup:/sys/fs/cgroup:rw',
+    '--tmpfs',
+    '/run',
+    '--tmpfs',
+    '/run/lock',
+    '-v',
+    `${resolve(ROOT, 'scripts')}:${APP}/scripts:ro`,
+    '-v',
+    `${resolve(ROOT, 'infra')}:${APP}/infra:ro`,
+    IMAGE,
+  ]);
+  for (let i = 0; i < 40; i++) {
+    const s = sh('docker', ['exec', CT, 'systemctl', 'is-system-running'], { allowFail: true });
+    if (/running|degraded/.test(s.stdout)) break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  // .env стенда: значения не печатаются, передаются через stdin.
+  sh('docker', ['exec', '-i', CT, 'sh', '-c', `cat > ${APP}/.env && chmod 600 ${APP}/.env`], {
+    input: `${Object.entries(E)
+      .map(([k, v]) => `${k}=${v}`)
+      .join('\n')}\n`,
+  });
+  inCt('ln -sf /usr/local/bin/node /usr/bin/node');
+  if (sh('docker', ['image', 'inspect', ALPINE], { allowFail: true }).status !== 0) {
+    sh('docker', ['pull', '-q', ALPINE]);
+  }
+  const saved = spawnSync('docker', ['save', ALPINE], { maxBuffer: 256 * 1024 * 1024 });
+  sh('docker', ['exec', '-i', CT, 'docker', 'load'], { input: saved.stdout });
+  const keys = Object.keys(E).filter(
+    (k) => !k.startsWith('LOGS_FILES') && k !== 'LOGS_S3_ENDPOINT',
+  );
+  const init = sh(
+    'docker',
+    [
+      'compose',
+      '-f',
+      'infra/docker-compose.yml',
+      '--env-file',
+      '.env',
+      '-p',
+      'unicorn-launch',
+      'run',
+      '--rm',
+      '--no-deps',
+      ...keys.flatMap((k) => ['-e', k]),
+      'minio-init',
+    ],
+    { env: E, allowFail: true },
+  );
+  check(
+    'minio-init: бакеты архива и истории с учётками',
+    init.status === 0 &&
+      init.stdout.includes(`бакет журналов ${E.LOGS_S3_BUCKET} готов`) &&
+      init.stdout.includes(`бакет журналов ${E.LOGS_LEGACY_S3_BUCKET} готов`),
+  );
+
+  // ---------------------------------------------------------- U
+  console.log('\n▸ U. Юниты systemd из infra/systemd, окружение из .env');
+  inCt(
+    `cp ${APP}/infra/systemd/fifth-logs-* /etc/systemd/system/ && systemctl daemon-reload && mkdir -p /var/log/tmail && printf 'живой\\n' > /var/log/tmail/mainlog && printf 'поколение ${tag}\\n' > /var/log/tmail/mainlog.1`,
+  );
+  const vr = sh(
+    'docker',
+    ['exec', CT, 'sh', '-c', 'systemd-analyze verify /etc/systemd/system/fifth-logs-*'],
+    { allowFail: true },
+  );
+  check(
+    'systemd-analyze verify: юниты без ошибок',
+    vr.status === 0,
+    (vr.stdout + vr.stderr).trim().split('\n')[0],
+  );
+  check('init архива окружением из .env', arch('init').code === 0);
+  inCt('for i in $(seq 1 20); do echo "apply u $i" | systemd-cat -t w08b-apply; done; sleep 1');
+  check(
+    'fifth-logs-run.service: проход успешен',
+    startUnit('fifth-logs-run.service') === 'success',
+  );
+  const m1 = JSON.parse(inCt(`cat ${STATE}/metrics.json`));
+  check(
+    'состояние для Zabbix — по пути агента VPS; файлы почты до первого прохода — «не было»',
+    m1.run?.ok === true && m1.files?.sources?.[0]?.state === 'never',
+    JSON.stringify(m1.run),
+  );
+  check(
+    'fifth-logs-files.service: поколение почты в архиве',
+    startUnit('fifth-logs-files.service') === 'success' &&
+      JSON.parse(inCt(`cat ${STATE}/files.json`)).stored === 1,
+  );
+  check('fifth-logs-pack.service: успешен', startUnit('fifth-logs-pack.service') === 'success');
+  inCt('systemctl enable --now fifth-logs-run.timer fifth-logs-files.timer fifth-logs-pack.timer');
+  const timers = inCt(
+    'systemctl list-timers --all --no-legend | grep -c fifth-logs || true',
+  ).trim();
+  check('таймеры включены (3)', timers === '3', `таймеров ${timers}`);
+  // Блокировку держит «другой проход» (живой процесс) — минута пропускается.
+  inCt(`sleep 30 >/dev/null 2>&1 & echo $! > ${STATE}/lock`);
+  const busy = arch('run');
+  check(
+    'занятая блокировка — проход пропущен с кодом 0, не отказ',
+    busy.code === 0 && busy.out.includes('проход пропущен'),
+    last(busy.out),
+  );
+  inCt(`kill $(cat ${STATE}/lock) 2>/dev/null; rm -f ${STATE}/lock`);
+
+  // ---------------------------------------------------------- J
+  console.log('\n▸ J. Лимиты journald');
+  // ID нумерации — из курсора (s=…); поля __SEQNUM_ID в journald 252 нет.
+  const sid = () =>
+    inCt(
+      "journalctl -n 1 -o export --no-pager | grep -a '^__CURSOR=' | sed 's/^__CURSOR=s=\\([0-9a-f]*\\);.*/\\1/'",
+    ).trim();
+  const sidBefore = sid();
+  check('ID нумерации прочитан', /^[0-9a-f]{32}$/.test(sidBefore), sidBefore);
+  inCt(
+    `mkdir -p /etc/systemd/journald.conf.d && cp ${APP}/infra/journald/50-fifth.conf /etc/systemd/journald.conf.d/ && systemctl restart systemd-journald && sleep 1 && echo after-restart | systemd-cat -t w08b-apply && sleep 1`,
+  );
+  const cfg = inCt('systemd-analyze cat-config systemd/journald.conf');
+  check(
+    'настройки действуют: SystemMaxUse=4G, SystemKeepFree=15G',
+    /SystemMaxUse=4G/.test(cfg) && /SystemKeepFree=15G/.test(cfg),
+  );
+  check(
+    'штатный перезапуск journald — нумерация прежняя',
+    sid() === sidBefore,
+    `${sidBefore} → ${sid()}`,
+  );
+  check('проход после перезапуска', startUnit('fifth-logs-run.service') === 'success');
+
+  // ---------------------------------------------------------- D
+  console.log('\n▸ D. Драйвер journald для контейнеров');
+  const probe = `probe-${tag}`;
+  inCt(
+    `docker run --rm --name ${probe} --log-driver journald ${ALPINE} echo marker-${tag} && sleep 1`,
+  );
+  check(
+    'запись контейнера в journald с CONTAINER_NAME',
+    inCt(`journalctl CONTAINER_NAME=${probe} -o cat --no-pager`).includes(`marker-${tag}`),
+  );
+  startUnit('fifth-logs-run.service');
+  const fD = arch('find', { LOGS_PROFILE: 'reader' }, [
+    '--from',
+    new Date(Date.now() - 3600_000).toISOString(),
+    '--source',
+    probe,
+  ]);
+  check(
+    'поиск по имени контейнера учёткой чтения — из архива',
+    fD.code === 0 && /найдено: 1/.test(fD.out) && !/порций архива: 0/.test(fD.out),
+    last(fD.out),
+  );
+  // Те же файлы, что у команд стенда: scripts/infra.mjs подключает
+  // дополнение journald только при DOCKER_LOG_DRIVER=journald.
+  const services = (driver) => {
+    const r = sh(
+      process.execPath,
+      [
+        'scripts/infra.mjs',
+        'compose',
+        '--profile',
+        'web',
+        '--profile',
+        'monitoring',
+        '--profile',
+        'monitoring-host',
+        'config',
+        '--format',
+        'json',
+      ],
+      { env: { DOCKER_LOG_DRIVER: driver } },
+    );
+    return Object.entries(JSON.parse(r.stdout).services).filter(
+      ([, s]) => s.restart === 'unless-stopped',
+    );
+  };
+  const vps = services('journald');
+  const local = services('');
+  check(
+    'DOCKER_LOG_DRIVER=journald — у всех постоянных сервисов VPS journald',
+    vps.length >= 8 && vps.every(([, s]) => s.logging?.driver === 'journald'),
+    vps.map(([n, s]) => `${n}:${s.logging?.driver}`).join(' '),
+  );
+  // Без переменной определение сервисов прежнее: выкладка (web:up) не
+  // пересоздаёт контейнер и не удаляет его журнал до выгрузки.
+  check(
+    'без переменной — основной compose без logging, пересоздания нет',
+    local.length === vps.length && local.every(([, s]) => s.logging === undefined),
+  );
+  const bad = sh(process.execPath, ['scripts/infra.mjs', 'compose', 'config'], {
+    env: { DOCKER_LOG_DRIVER: 'syslog' },
+    allowFail: true,
+  });
+  check('другое значение DOCKER_LOG_DRIVER — отказ', bad.status === 2);
+
+  // ---------------------------------------------------------- H
+  console.log('\n▸ H. История журнала Docker: остановка подтверждается источником');
+  const anchorKey = (
+    await (
+      await s3Object(root, 'GET', '', null, {}, { 'list-type': '2', prefix: 'anchors/' })
+    ).text()
+  ).match(/<Key>([^<]+)<\/Key>/)?.[1];
+  const anchor = JSON.parse(await (await s3Object(root, 'GET', anchorKey)).text());
+  const LEG = { LOGS_PROFILE: 'legacy', LOGS_UNTIL_CURSOR: anchor.afterCursor };
+  const quiet = `quiet-${tag}`;
+  inCt(
+    `docker run -d --name ${quiet} ${ALPINE} sh -c 'echo q1; echo q2; sleep 600' >/dev/null && sleep 2`,
+  );
+  const qLog = containerLog(quiet);
+  const h1 = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: qLog });
+  check(
+    'работающий молчащий контейнер: снимок стабилен, но НЕПОЛНА (код 2)',
+    h1.code === 2 &&
+      /стабильный снимок до границы, НЕПОЛНО: источник работает/.test(h1.out) &&
+      h1.out.includes('локальную историю не очищать'),
+    line(h1.out, /^история: \//),
+  );
+  inCt(`docker stop -t 1 ${quiet} >/dev/null`);
+  const h2 = arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: qLog });
+  check(
+    'остановленный контейнер (docker inspect): покрыт целиком',
+    h2.code === 0 &&
+      /источник остановлен — покрыт целиком/.test(h2.out) &&
+      h2.out.includes('ИТОГ: история файлов покрыта полностью'),
+    line(h2.out, /^история: \//),
+  );
+
+  // ---------------------------------------------------------- M
+  console.log('\n▸ M. Порядок для MinIO: локальный снимок без S3, отправка после возврата');
+  const SNAP = '/var/lib/fifth-logs-snapshot';
+  const mc = `minio-like-${tag}`;
+  inCt(
+    `docker run -d --name ${mc} ${ALPINE} sh -c 'echo m1; echo m2; echo m3; sleep 600' >/dev/null && sleep 2`,
+  );
+  const mLog = containerLog(mc);
+  const mRun = arch('legacy-snapshot', {
+    ...LEG,
+    LOGS_LEGACY_FILES: mLog,
+    LOGS_LEGACY_SNAPSHOT_DIR: `${SNAP}-run`,
+  });
+  check(
+    'снимок работающего контейнера — НЕПОЛОН, «пересоздавать нельзя»',
+    mRun.code === 2 && mRun.out.includes('пересоздавать нельзя'),
+    last(mRun.out),
+  );
+  inCt(`docker stop -t 1 ${mc} >/dev/null`);
+  // S3 недоступен — как при остановленном MinIO.
+  const [mOff, mOffExport] = offline(() => [
+    arch('legacy-snapshot', { ...LEG, LOGS_LEGACY_FILES: mLog, LOGS_LEGACY_SNAPSHOT_DIR: SNAP }),
+    arch('legacy-export', { ...LEG, LOGS_LEGACY_FILES: mLog }),
+  ]);
+  check(
+    'без S3: локальный снимок проверен, источник остановлен',
+    mOff.code === 0 && mOff.out.includes('ИТОГ: локальный снимок проверен'),
+    last(mOff.out),
+  );
+  check(
+    'без S3 выгрузка в архив невозможна — отказ, не успех',
+    mOffExport.code !== 0,
+    last(mOffExport.out),
+  );
+  check(
+    'снимок: данные и покрытие, каталог только для root',
+    inCt(`stat -c %a ${SNAP}; ls ${SNAP}`).includes('700') &&
+      /\.data/.test(inCt(`ls ${SNAP}`)) &&
+      /\.cover\.json/.test(inCt(`ls ${SNAP}`)),
+  );
+  inCt(`docker start ${mc} >/dev/null`); // прежний контейнер снова работает
+  const mSend = arch('legacy-export', { ...LEG, LOGS_LEGACY_SNAPSHOT_DIR: SNAP });
+  check(
+    'после возврата: снимок отправлен, хеш сверен, покрытие — с остановки',
+    mSend.code === 0 &&
+      /в архиве, хеш сверен .*источник остановлен — покрыт целиком/.test(mSend.out) &&
+      mSend.out.includes('ИТОГ: история файлов покрыта полностью'),
+    line(mSend.out, /^снимок /),
+  );
+  check(
+    'локальный снимок не удалён до подтверждения архива',
+    /\.data/.test(inCt(`ls ${SNAP}`)) && mSend.out.includes('локальный снимок сохранён'),
+  );
+  const lver = arch('verify', { LOGS_PROFILE: 'legacy' });
+  check('verify истории после отправки снимка', lver.code === 0, line(lver.out, /^ИТОГ/));
+  inCt(`f=$(ls ${SNAP}/*.data); node ${APP}/scripts/lib/flip-byte.mjs "$f" 3`);
+  const mBad = arch('legacy-export', { ...LEG, LOGS_LEGACY_SNAPSHOT_DIR: SNAP });
+  check(
+    'испорченный снимок не отправляется, итог НЕПОЛНА',
+    mBad.code === 2 && mBad.out.includes('ХЕШ НЕ СОВПАЛ'),
+    line(mBad.out, /ХЕШ|ИТОГ/),
+  );
+
+  // ---------------------------------------------------------- G
+  console.log('\n▸ G. Известный пробел в итоговом покрытии');
+  const GAP = {
+    LOGS_GAP_SOURCE: 'docker:unicorn-postgres',
+    LOGS_GAP_UNTIL: '2026-11-02T20:07:17Z',
+    LOGS_GAP_REASON: 'журнал json-file удалён пересозданием контейнера 02.11 (правка секретов)',
+  };
+  const g1 = arch('legacy-gap', { LOGS_PROFILE: 'legacy', ...GAP });
+  const g2 = arch('legacy-gap', { LOGS_PROFILE: 'legacy', ...GAP });
+  const g3 = arch('legacy-gap', { LOGS_PROFILE: 'legacy', ...GAP, LOGS_GAP_REASON: 'другое' });
+  check(
+    'пробел записан; повтор — без изменений; другое описание — КОНФЛИКТ',
+    g1.code === 0 && g2.out.includes('уже записан') && g3.code !== 0 && g3.out.includes('КОНФЛИКТ'),
+  );
+  const gr = arch('legacy-export', LEG);
+  check(
+    'итоговое покрытие называет пробел, восстановления не обещает',
+    gr.out.includes('известный пробел: docker:unicorn-postgres до 2026-11-02T20:07:17Z') &&
+      gr.out.includes('восстановление не обещается') &&
+      /ИТОГ: .*известных пробелов до выгрузки: 1/.test(gr.out),
+    line(gr.out, /^ИТОГ/),
+  );
+
+  // ---------------------------------------------------------- C
+  console.log('\n▸ C. Журнал запросов Caddy');
+  const cdir = mkdtempSync(join(tmpdir(), 'caddy-apply-'));
+  tmpDirs.push(cdir);
+  sh('docker', ['pull', '-q', CADDY], { allowFail: true });
+  writeFileSync(
+    join(cdir, 'Caddyfile'),
+    [
+      '{',
+      '\tauto_https off',
+      '}',
+      'import /etc/caddy/repo/access-log.caddy',
+      ':8080 {',
+      '\timport fifth_access_log',
+      '\theader Set-Cookie "sid=CADDY_SECRET_5"',
+      '\trespond "ok"',
+      '}',
+      '',
+    ].join('\n'),
+  );
+  sh('docker', [
+    'run',
+    '-d',
+    '--name',
+    `caddy-apply-${tag}`,
+    '-v',
+    `${cdir}:/etc/caddy/t:ro`,
+    '-v',
+    `${resolve(ROOT, 'infra', 'caddy')}:/etc/caddy/repo:ro`,
+    CADDY,
+    'caddy',
+    'run',
+    '--config',
+    '/etc/caddy/t/Caddyfile',
+  ]);
+  await new Promise((r) => setTimeout(r, 2000));
+  sh('docker', [
+    'exec',
+    `caddy-apply-${tag}`,
+    'wget',
+    '-q',
+    '-O',
+    '/dev/null',
+    '--header',
+    'Cookie: s=CADDY_SECRET_2',
+    '--header',
+    'Authorization: Bearer CADDY_SECRET_3',
+    '--header',
+    'Referer: https://x/?t=CADDY_SECRET_4',
+    'http://127.0.0.1:8080/reset?token=CADDY_SECRET_1&x=1',
+  ]);
+  const clog = sh('docker', ['logs', `caddy-apply-${tag}`]).stderr;
+  const access = clog.split('\n').filter((l) => l.includes('"handled request"'));
+  check(
+    'запрос в журнале: метод, путь, статус; query удалён',
+    access.length === 1 &&
+      /"method":"GET"/.test(access[0]) &&
+      /"uri":"\/reset\?\[query-removed\]"/.test(access[0]) &&
+      /"status":200/.test(access[0]),
+    access[0]?.slice(0, 160),
+  );
+  check(
+    'секретов (query, cookie, авторизация, referer, set-cookie) в журнале нет',
+    !/CADDY_SECRET/.test(clog),
+  );
+  const cval = sh(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '-v',
+      `${resolve(ROOT, 'infra', 'caddy')}:/etc/caddy/repo:ro`,
+      '--entrypoint',
+      'sh',
+      CADDY,
+      '-c',
+      "printf 'import /etc/caddy/repo/files.caddy\\n' > /tmp/C && caddy validate --config /tmp/C --adapter caddyfile 2>&1 | tail -1",
+    ],
+    { allowFail: true },
+  );
+  check(
+    'files.caddy сам по себе (без сниппета) — конфигурация верна',
+    /Valid configuration/.test(cval.stdout),
+    last(cval.stdout),
+  );
+  // Блок журнала в files.caddy — тот же, что в сниппете (там он вписан, а не
+  // импортирован: файл приезжает выкладкой раньше правки Caddyfile).
+  const logBlock = (file) =>
+    readFileSync(resolve(ROOT, 'infra', 'caddy', file), 'utf8')
+      .match(/\tlog \{[\s\S]*?\n\t*\}\n\t*\}/)?.[0]
+      ?.replace(/^\t+/gm, '');
+  check(
+    'фильтр журнала в files.caddy совпадает со сниппетом',
+    Boolean(logBlock('files.caddy')) && logBlock('files.caddy') === logBlock('access-log.caddy'),
+  );
+
+  // ---------------------------------------------------------- K
+  console.log('\n▸ K. Ключ архива из комплекта ключей W07');
+  const kdir = mkdtempSync(join(tmpdir(), 'logs-keys-'));
+  tmpDirs.push(kdir);
+  const pull = arch('pull', { LOGS_PROFILE: 'reader', LOGS_PULL_TO: '/tmp/kcopy' });
+  check('копия архива учёткой чтения', pull.code === 0, last(pull.out));
+  sh('docker', ['cp', `${CT}:/tmp/kcopy`, join(kdir, 'copy')]);
+  const keysDir = join(ROOT, '.local', 'backup-keys-local-stand');
+  if (!existsSync(join(keysDir, 'recipient.asc'))) {
+    check(
+      'пара ключей стенда .local/backup-keys-local-stand есть',
+      false,
+      'нет — K не проверяется',
+    );
+  } else {
+    // Комплект ключей так же, как его шифрует backup.mjs: весь .env, gpg.
+    const bundle = (name, archiveKey) => {
+      const r = dockerTool(
+        [
+          'run',
+          '--rm',
+          '-i',
+          '--entrypoint',
+          'sh',
+          '-v',
+          `${join(keysDir, 'recipient.asc')}:/in/recipient.asc:ro`,
+          TOOL_IMAGE,
+          '-c',
+          'export GNUPGHOME=$(mktemp -d) && gpg -q --batch --import /in/recipient.asc 2>/dev/null && ' +
+            'gpg -q --batch --trust-model always --encrypt --armor ' +
+            '--recipient "$(gpg --batch --list-keys --with-colons | awk -F: \'/^fpr/{print $10; exit}\')" --output -',
+        ],
+        { input: `DATABASE_URL=postgres://x\nLOGS_ARCHIVE_KEY=${archiveKey}\n` },
+      );
+      writeFileSync(join(kdir, name), r.stdout);
+      return join(kdir, name);
+    };
+    const hostCopy = (bundleFile) => {
+      const env = Object.fromEntries(
+        Object.entries(process.env).filter(([k]) => !k.startsWith('LOGS_')),
+      );
+      const r = spawnSync(
+        process.execPath,
+        [
+          join(ROOT, 'scripts', 'logs-archive.mjs'),
+          'verify-copy',
+          '--to',
+          join(kdir, 'copy'),
+          '--bundle',
+          bundleFile,
+          '--secret-key',
+          join(keysDir, 'secret-key.asc'),
+          '--passphrase-file',
+          join(keysDir, 'passphrase.txt'),
+        ],
+        { encoding: 'utf8', env },
+      );
+      return { code: r.status, out: `${r.stdout}${r.stderr}`.trim() };
+    };
+    const kOk = hostCopy(bundle('keys-ok.env.gpg', E.LOGS_ARCHIVE_KEY));
+    check(
+      'комплект открыт закрытым ключом, ключ из него открывает копию',
+      kOk.code === 0 &&
+        kOk.out.includes('комплект ключей открыт') &&
+        /ИТОГ: данные сохранены полностью/.test(kOk.out),
+      line(kOk.out, /^ИТОГ|ОШИБКА/),
+    );
+    const kBad = hostCopy(bundle('keys-bad.env.gpg', randomBytes(32).toString('hex')));
+    check(
+      'комплект с другим ключом копию не открывает',
+      kBad.code !== 0,
+      line(kBad.out, /^ИТОГ|ОШИБКА/),
+    );
+    check('значения ключей в выводе не печатаются', !kOk.out.includes(E.LOGS_ARCHIVE_KEY));
+  }
+} catch (error) {
+  failed++;
+  console.log(`  FAIL  испытание прервано: ${error.message}`);
+} finally {
+  await cleanup();
+}
+console.log(`\nИтог: пройдено ${passed}, провалено ${failed}`);
+process.exit(failed ? 1 : 0);

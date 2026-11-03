@@ -1,0 +1,26 @@
+# Журналы контейнеров в journald (2.1-W08b) — дополнение к docker-compose.yml.
+#
+# Подключает scripts/infra.mjs, когда в .env стоит DOCKER_LOG_DRIVER=journald
+# (на VPS); для ручных команд — `node scripts/infra.mjs compose …`. Без
+# переменной основной файл не меняется, поэтому выкладка ничего не
+# пересоздаёт: смена драйвера пересоздаёт контейнер, а пересоздание удаляет
+# прежний журнал json-file. Порядок смены по контейнерам (остановка →
+# выгрузка → пересоздание) — docs/runbooks/w08b-vps-apply.md. Локально и в CI
+# не подключается: Docker Desktop journald не поддерживает.
+#
+# Записи контейнера в journald несут CONTAINER_NAME — по нему их видят архив
+# и поиск (`find --source unicorn-postgres`).
+
+x-journald: &journald
+  logging:
+    driver: journald
+
+services:
+  web: *journald
+  postgres: *journald
+  valkey: *journald
+  nats: *journald
+  minio: *journald
+  zabbix-server-host: *journald
+  zabbix-web: *journald
+  zabbix-agent2-host: *journald

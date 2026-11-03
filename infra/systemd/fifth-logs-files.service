@@ -1,0 +1,11 @@
+# Архив технических журналов 5Э (2.1-W08b): закрытые поколения журналов
+# почты (LOGS_FILES). Отсутствующий или недоступный источник — отказ.
+[Unit]
+Description=5E logs: mail log generations
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/unicorn-launch
+Environment=LOGS_DOTENV=1
+ExecStart=/usr/bin/node scripts/logs-archive.mjs files
+TimeoutStartSec=10min

@@ -15,9 +15,11 @@
  * сообщается вслух, а не молчанием.
  *
  * Запуск: node scripts/infra.mjs up | down | reset [доп. аргументы compose]
+ *         node scripts/infra.mjs compose <любая команда compose>
+ * DOCKER_LOG_DRIVER=journald (.env VPS) подключает infra/docker-compose.journald.yml.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,6 +28,7 @@ import { PORTS } from './lib/ports.mjs';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ENV_PATH = join(ROOT, '.env');
 const COMPOSE_PATH = join(ROOT, 'infra', 'docker-compose.yml');
+const JOURNALD_PATH = join(ROOT, 'infra', 'docker-compose.journald.yml');
 
 /**
  * Боевое ли это окружение.
@@ -54,6 +57,9 @@ const COMMANDS = {
   // открытым лишний слушатель без надобности — это расширять периметр даром.
   'mail-up': ['--profile', 'full', 'up', '-d', 'mailpit'],
   'mail-down': ['--profile', 'full', 'stop', 'mailpit'],
+  // Любая команда compose с теми же файлами, что у остальных команд (в том
+  // числе дополнение journald) — для ручных шагов на VPS.
+  compose: [],
 };
 
 const [command, ...rest] = process.argv.slice(2);
@@ -76,6 +82,23 @@ if (existsSync(ENV_PATH)) {
 }
 
 args.push('-f', COMPOSE_PATH);
+
+// Журналы контейнеров в journald (2.1-W08b): дополнение подключается только
+// при DOCKER_LOG_DRIVER=journald (окружение или .env). Без него основной файл
+// не меняется и выкладка ничего не пересоздаёт; с ним — драйвер у всех
+// команд стенда одинаковый, ручной `docker compose -f …` его бы потерял.
+const logDriver =
+  process.env.DOCKER_LOG_DRIVER ??
+  (existsSync(ENV_PATH)
+    ? readFileSync(ENV_PATH, 'utf8')
+        .match(/^DOCKER_LOG_DRIVER=(.*)$/m)?.[1]
+        ?.trim()
+    : undefined);
+if (logDriver === 'journald') args.push('-f', JOURNALD_PATH);
+else if (logDriver) {
+  console.error(`infra: DOCKER_LOG_DRIVER=${logDriver} — допустимо только journald или пусто`);
+  process.exit(2);
+}
 
 args.push(...tail, ...rest);
 

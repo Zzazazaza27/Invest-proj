@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 173; требований: 41
+- Проверок: 174; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 65
+### Зарегистрированы, но ни в наборе, ни в CI — 66
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -245,6 +245,7 @@
 - `CHK-DNS-PRIMARY-APPLY` — Безопасное применение зон первичного DNS: неверная зона отклоняется, рабочий файл и записанная версия не меняются, после перезапуска работает прежняя зона; с…
 - `CHK-MONITOR-APP-PROBE` — Разрешённое чтение контрольных данных прикладным путём (2.5, 8.2): обычный вход служебной учётки через публичный адрес, карточка контрольного проекта и матер…
 - `CHK-LOGS-ARCHIVE` — Архиватор журналов на настоящем journald (8.4, 2.1-W08b): бакет и учётки — настоящим minio-init по infra/minio/policies; учётка записи пишет, но не удаляет о…
+- `CHK-LOGS-APPLY` — Применение W08b (8.4) без VPS: юниты fifth-logs-run/files/pack из infra/systemd проходят systemd-analyze verify и работают с окружением из .env (LOGS_DOTENV)…
 - `CHK-MONITORING-ACCOUNT` — Служебная учётка мониторинга — только чтение контрольных данных (2.5): контрольные карточка и файл читаются; изменение и чтение профиля, загрузка и удаление …
 
 ### Намеренно вручную — 9
@@ -305,7 +306,7 @@
 | TOOL-TEMP-STAND | `npm run temp:up` | 0 | вручную, по поводу | — |
 | TOOL-TEMP-RUN | `npm run temp:run` | 0 | вручную, по поводу | — |
 | TOOL-VITE-BUILD | `node scripts/vite-build.mjs` | 0 | вручную, по поводу | — |
-| TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export` | 0 | вручную, по поводу | — |
+| TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export|legacy-snapshot|legacy-gap|secrets-draft --to <файл>` | 0 | вручную, по поводу | — |
 | TOOL-LOGS-VOLUME | `node scripts/measure-logs-volume.mjs [--base-bytes-day N] [--base-gzip-day N] [--burst-rps R] [--burst-hours H]` | 0 | вручную, по поводу | — |
 | TOOL-MONITORING | `node scripts/monitoring.mjs configure|status [--items]` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-PROBE-DISABLE | `node scripts/monitor-probe-disable.mjs` | 0 | вручную, по поводу | — |
@@ -351,7 +352,8 @@
 | CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
 | CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
-| CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 194 | вручную | — |
+| CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 209 | вручную | — |
+| CHK-LOGS-APPLY | `node scripts/check-logs-apply.mjs` | 36 | вручную | — |
 | CHK-MONITORING-ACCOUNT | `node scripts/check-monitoring-account.mjs` | 9 | вручную | — |
 
 ### Гейты и статические проверки
@@ -375,7 +377,7 @@
 | PRB-MAIL-DELIVERY | `node scripts/probe-mail-delivery.mjs` | 0 | вручную | — |
 | PRB-MAIL-READINESS | `node scripts/probe-mail-readiness.mjs` | 0 | вручную | — |
 | PRB-OBJECT-VERSIONING | `node scripts/probe-object-versioning.mjs` | 10 | вручную | — |
-| PRB-BACKGROUND-JOBS | `node scripts/probe-background-jobs.mjs` | 36 | вручную | — |
+| PRB-BACKGROUND-JOBS | `node scripts/probe-background-jobs.mjs` | 38 | вручную | — |
 | PRB-VALKEY-COUNTERS | `node scripts/probe-valkey-counters.mjs` | 15 | вручную | — |
 | PRB-OUTBOX-LEASE | `node scripts/probe-outbox-lease.mjs` | 10 | вручную | — |
 | PRB-RATE-LIMIT | `node scripts/probe-rate-limit.mjs` | 0 | вручную | — |

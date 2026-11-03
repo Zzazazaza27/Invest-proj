@@ -1,0 +1,13 @@
+# Архив технических журналов 5Э (2.1-W08b): суточные пакеты закрытых суток
+# и суточный снимок объёма.
+[Unit]
+Description=5E logs: daily packs
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/unicorn-launch
+Environment=LOGS_DOTENV=1
+ExecStart=/usr/bin/node scripts/logs-archive.mjs pack
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=1h

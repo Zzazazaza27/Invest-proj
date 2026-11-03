@@ -1,0 +1,29 @@
+# Журнал запросов Caddy (блок 8, 8.4; 2.1-W08b): JSON в stderr → journald
+# (юнит caddy), оттуда — в архив журналов.
+#
+# Подключается в /etc/caddy/Caddyfile ПЕРВЫМ импортом, сразу после
+# глобальных настроек (сниппет должен быть объявлен до использования):
+#   import /opt/unicorn-launch/infra/caddy/access-log.caddy
+# и строкой `import fifth_access_log` в каждом блоке сайта Caddyfile.
+# files.caddy содержит тот же блок вписанным (он приезжает выкладкой раньше
+# правки Caddyfile); испытание сверяет, что блоки одинаковы.
+#
+# Секрет убирается в источнике, до записи (раздел 1 плана W08b):
+#   * query целиком — в нём бывают одноразовые токены (ссылки восстановления,
+#     подтверждения почты); путь остаётся;
+#   * заголовки запроса целиком — Cookie, Authorization, Referer (с его
+#     query); заголовки ответа целиком — Set-Cookie.
+# Остаются: время, адрес клиента, метод, хост, путь, протокол, статус,
+# размер, длительность. Проверка — scripts/check-logs-apply.mjs.
+
+(fifth_access_log) {
+	log {
+		output stderr
+		format filter {
+			wrap json
+			request>uri regexp \?.*$ ?[query-removed]
+			request>headers delete
+			resp_headers delete
+		}
+	}
+}

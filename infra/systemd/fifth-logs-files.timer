@@ -1,0 +1,10 @@
+# Раз в час: закрытые поколения журналов почты (ротация — раз в сутки).
+[Unit]
+Description=5E logs timer: mail log generations
+
+[Timer]
+OnCalendar=*-*-* *:25:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

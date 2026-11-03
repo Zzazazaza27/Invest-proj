@@ -22,6 +22,21 @@
 # `handle /<бакет>` по образцу ниже, со своим Origin.
 
 files.5espace.com {
+	# Журнал запросов без query и заголовков (2.1-W08b) — тот же блок, что в
+	# access-log.caddy (испытание check-logs-apply сверяет их). Не import
+	# сниппета: этот файл приезжает выкладкой раньше правки Caddyfile, и
+	# перезапуск Caddy в этом промежутке не должен падать на неизвестном
+	# сниппете.
+	log {
+		output stderr
+		format filter {
+			wrap json
+			request>uri regexp \?.*$ ?[query-removed]
+			request>headers delete
+			resp_headers delete
+		}
+	}
+
 	# Рабочий бакет ↔ рабочий кабинет.
 	@prod_origin header Origin https://5espace.com
 

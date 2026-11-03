@@ -1,0 +1,11 @@
+# Раз в сутки, после полуночи UTC: пакет закрытых суток.
+[Unit]
+Description=5E logs timer: daily packs
+
+[Timer]
+OnCalendar=*-*-* 00:20:00
+Persistent=true
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target
