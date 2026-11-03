@@ -203,20 +203,43 @@ check(
 );
 
 console.warn('▸ Право загрузки держит форма, а не CORS');
-const unsigned = await postForm(sign('unsigned'), pdf(), {
+// Отказ — это ошибка 4xx И отсутствие объекта. Код ответа у хранилищ разный:
+// MinIO отвечал 403, Garage на чужой тип и истёкшую форму — 400
+// InvalidRequest; смысл проверки не в коде, а в том, что объекта нет.
+const refused = async (r, objectKey) =>
+  r.status >= 400 && r.status < 500 && !(await s3.headObject(objectKey)).exists;
+const unsignedForm = sign('unsigned');
+const unsigned = await postForm(unsignedForm, pdf(), {
   drop: ['policy', 'x-amz-signature', 'x-amz-credential', 'x-amz-algorithm', 'x-amz-date'],
 });
-check('без подписи — отказ', unsigned.status >= 400, `HTTP ${unsigned.status} ${unsigned.code}`);
+check(
+  'без подписи — отказ, объекта нет',
+  await refused(unsigned, unsignedForm.fields.key),
+  `HTTP ${unsigned.status} ${unsigned.code}`,
+);
 const forged = sign('forged');
 forged.fields['x-amz-signature'] = '0'.repeat(64);
 const bad = await postForm(forged, pdf());
-check('с поддельной подписью — отказ', bad.status === 403, `HTTP ${bad.status} ${bad.code}`);
+check(
+  'с поддельной подписью — отказ, объекта нет',
+  await refused(bad, forged.fields.key),
+  `HTTP ${bad.status} ${bad.code}`,
+);
 const typeForm = sign('type2');
 typeForm.fields['Content-Type'] = 'text/html';
 const typed = await postForm(typeForm, pdf(), { type: 'text/html' });
-check('чужой тип — отказ', typed.status === 403, `HTTP ${typed.status} ${typed.code}`);
-const big = await postForm(sign('big', { maxBytes: 100 }), pdf(400));
-check('сверх размера формы — отказ', big.status === 400, `HTTP ${big.status} ${big.code}`);
+check(
+  'чужой тип — отказ, объекта нет',
+  await refused(typed, typeForm.fields.key),
+  `HTTP ${typed.status} ${typed.code}`,
+);
+const bigForm = sign('big', { maxBytes: 100 });
+const big = await postForm(bigForm, pdf(400));
+check(
+  'сверх размера формы — отказ, объекта нет',
+  await refused(big, bigForm.fields.key),
+  `HTTP ${big.status} ${big.code}`,
+);
 const shortForm = s3.presignUpload({
   key: key('short'),
   contentType: 'application/pdf',
@@ -226,7 +249,11 @@ const shortForm = s3.presignUpload({
 console.warn('  ·     ждём истечения формы на 60 с…');
 await new Promise((r) => setTimeout(r, 65_000));
 const late = await postForm(shortForm, pdf());
-check('после срока формы — отказ', late.status === 403, `HTTP ${late.status} ${late.code}`);
+check(
+  'после срока формы — отказ, объекта нет',
+  await refused(late, shortForm.fields.key),
+  `HTTP ${late.status} ${late.code}`,
+);
 console.warn('▸ Настоящие пределы размера');
 // Наибольший разрешённый материал проходит через вход целиком. Проверка на
 // уменьшенном пределе это не ловила: «520MB» у Caddy — десятичные мегабайты,

@@ -2590,6 +2590,28 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-03
 
+  - id: TOOL-GARAGE-INIT
+    file: scripts/garage-init.mjs
+    command: node scripts/garage-init.mjs [--status]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker, s3]
+    effects:
+      [
+        'соединяет узлы Garage стенда, задаёт раскладку, заводит бакеты (файлы, архив событий, журналы), ключи из .env и права, CORS бакета файлов (временный ключ владельца удаляется); идемпотентно',
+      ]
+    studied: code
+    studiedOn: 2026-11-03
+    note: >-
+      Переход с MinIO на Garage (D-001; docs/architecture/garage-migration-plan.md).
+      Регион Garage — ru-central1, как S3_REGION стенда и VPS: при другом
+      регионе подписи клиентов отвергаются (AuthorizationHeaderMalformed).
+    purpose: 'Замена шага minio-init для Garage v2.4.1 через admin API v2: три узла в раскладке одной зоны, бакеты, импорт ключей формата Garage, права «чтение+запись» ядру и архиву событий только на свой бакет, «только чтение» копиям W07, журналы — запись и отдельное чтение; CORS бакета файлов; --status — все узлы в строю с ролью.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-03
+
   - id: TOOL-LOGS-VOLUME
     file: scripts/measure-logs-volume.mjs
     command: node scripts/measure-logs-volume.mjs [--base-bytes-day N] [--base-gzip-day N] [--burst-rps R] [--burst-hours H]

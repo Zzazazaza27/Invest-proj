@@ -39,6 +39,7 @@ import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
+import { garageSetKeyPermissions } from './lib/garage-admin.mjs';
 import { CORE_URL } from './lib/ports.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -503,23 +504,31 @@ try {
   );
   check('чужой вызов не завершил загрузку', (await row(i.materialId)).upload_state === 'pending');
 
-  // L. Неизвестный результат и эскалация. Ключ длиннее предела S3: хранилище
-  // отвечает ошибкой, а не 404 — отсутствие файла этим не подтверждается.
+  // L. Неизвестный результат и эскалация. Хранилище отвечает ОТКАЗОМ, а не
+  // 404: на время вызова у ключа ядра снято право чтения бакета (admin API
+  // Garage) — отсутствие файла этим не подтверждается. Прежний приём (ключ
+  // длиннее предела S3) работал только на MinIO: Garage такой ключ не
+  // отвергает, а честно отвечает «объекта нет».
   console.warn('▸ L. Неизвестный результат, повторы и «требует вмешательства»');
-  const badKey = `projects/${projectId}/materials/deck/${'x'.repeat(1100)}/upload`;
   const unknownCase = async (label, setup) => {
     const bytes = pdf(label);
     const t = await ticket(bytes, label);
-    await sql(
-      `UPDATE lab.project_materials SET upload_key = $2, next_check_at = now() ${setup}
-        WHERE id = $1`,
-      [t.materialId, badKey],
-    );
-    const outcome = await completion.complete(t.materialId, {
-      executor: 'reconcile',
-      actorId: null,
-      traceId: `w03-${label}`,
-    });
+    await sql(`UPDATE lab.project_materials SET next_check_at = now() ${setup} WHERE id = $1`, [
+      t.materialId,
+    ]);
+    const bucket = process.env.S3_BUCKET;
+    const appKey = process.env.S3_ACCESS_KEY_ID;
+    await garageSetKeyPermissions(bucket, appKey, { read: true }, false);
+    let outcome;
+    try {
+      outcome = await completion.complete(t.materialId, {
+        executor: 'reconcile',
+        actorId: null,
+        traceId: `w03-${label}`,
+      });
+    } finally {
+      await garageSetKeyPermissions(bucket, appKey, { read: true }, true);
+    }
     return { outcome, row: await row(t.materialId), id: t.materialId };
   };
   const first = await unknownCase('L1', '');

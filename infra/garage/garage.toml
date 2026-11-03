@@ -1,0 +1,32 @@
+# Garage — файловое хранилище 5Э (D-001, 2.1.2; переход с MinIO).
+#
+# MVP: три узла на одном VPS, три копии каждого объекта, режим consistent,
+# принудительная запись данных и метаданных на диск. Три узла на одном
+# сервере — три копии на одном диске: от потери VPS или диска они НЕ
+# защищают; это делают копии W07 вне VPS и, позже, разнесение узлов.
+#
+# Секреты — не здесь: rpc_secret и admin_token приходят из окружения
+# контейнера (GARAGE_RPC_SECRET, GARAGE_ADMIN_TOKEN — из .env стенда).
+# Раскладка, бакеты и ключи — scripts/garage-init.mjs через admin API.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "lmdb"
+metadata_fsync = true
+data_fsync = true
+
+replication_factor = 3
+consistency_mode = "consistent"
+
+rpc_bind_addr = "[::]:3901"
+
+[s3_api]
+# Регион прежний (S3_REGION стенда и VPS — ru-central1): подпись клиентов и
+# форм не меняется.
+s3_region = "ru-central1"
+api_bind_addr = "[::]:3900"
+# Только адреса с бакетом в пути (S3_FORCE_PATH_STYLE=true).
+root_domain = ".s3.garage.invalid"
+
+[admin]
+api_bind_addr = "[::]:3903"

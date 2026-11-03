@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 174; требований: 41
+- Проверок: 175; требований: 41
 
 ## Что защищено без участия человека
 
@@ -307,6 +307,7 @@
 | TOOL-TEMP-RUN | `npm run temp:run` | 0 | вручную, по поводу | — |
 | TOOL-VITE-BUILD | `node scripts/vite-build.mjs` | 0 | вручную, по поводу | — |
 | TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export|legacy-snapshot|legacy-gap|secrets-draft --to <файл>` | 0 | вручную, по поводу | — |
+| TOOL-GARAGE-INIT | `node scripts/garage-init.mjs [--status]` | 0 | вручную, по поводу | — |
 | TOOL-LOGS-VOLUME | `node scripts/measure-logs-volume.mjs [--base-bytes-day N] [--base-gzip-day N] [--burst-rps R] [--burst-hours H]` | 0 | вручную, по поводу | — |
 | TOOL-MONITORING | `node scripts/monitoring.mjs configure|status [--items]` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-PROBE-DISABLE | `node scripts/monitor-probe-disable.mjs` | 0 | вручную, по поводу | — |

@@ -296,6 +296,51 @@ services:
       timeout: 5s
       retries: 20
 
+  # Garage — файловое хранилище (D-001; переход с MinIO, план
+  # docs/architecture/garage-migration-plan.md). Три узла, три копии; на одном
+  # сервере это НЕ защита от потери сервера (см. infra/garage/garage.toml).
+  # S3 и admin API публикуются на петле только у первого узла; узлы между
+  # собой — по RPC в сети compose. Раскладку, бакеты и ключи заводит
+  # scripts/garage-init.mjs. Образ закреплён дайджестом (v2.4.1).
+  garage-1: &garage
+    image: dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020
+    container_name: unicorn-garage-1
+    restart: unless-stopped
+    command: ['/garage', 'server']
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-}
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garage1meta:/var/lib/garage/meta
+      - garage1data:/var/lib/garage/data
+    ports:
+      - '127.0.0.1:${GARAGE_S3_PORT:-3900}:3900'
+      - '127.0.0.1:${GARAGE_ADMIN_PORT:-3903}:3903'
+    healthcheck:
+      test: ['CMD', '/garage', 'status']
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
+  garage-2:
+    <<: *garage
+    container_name: unicorn-garage-2
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garage2meta:/var/lib/garage/meta
+      - garage2data:/var/lib/garage/data
+    ports: []
+
+  garage-3:
+    <<: *garage
+    container_name: unicorn-garage-3
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garage3meta:/var/lib/garage/meta
+      - garage3data:/var/lib/garage/data
+    ports: []
+
   minio:
     image: minio/minio:RELEASE.2024-12-18T13-15-44Z
     container_name: unicorn-minio
@@ -712,5 +757,11 @@ volumes:
   # сообщения не смешивались с рабочими.
   natstestdata:
   miniodata:
+  garage1meta:
+  garage1data:
+  garage2meta:
+  garage2data:
+  garage3meta:
+  garage3data:
   # Хранилище копий базы по умолчанию (BACKUP_PGBACKREST_DIR не задан).
   pgbackrest:
