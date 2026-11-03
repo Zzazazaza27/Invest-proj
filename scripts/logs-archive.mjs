@@ -812,6 +812,23 @@ function untilStop() {
   return (e) => (e.seqId === u.seqId ? e.seq > u.seq : e.realtime !== null && e.realtime > ut);
 }
 
+/**
+ * Граница прохода — последняя запись журнала на момент его начала. Без неё
+ * проход догоняет собственный след: запись в S3 порождает строки журнала
+ * узла Garage (драйвер journald), они читаются как новые и дают новую
+ * порцию, и так до таймаута службы (VPS, 03.11: порции по 8 записей). Всё,
+ * что появилось после начала, забирает следующий проход.
+ */
+function passStop(tail) {
+  const until = untilStop();
+  if (!tail) return until;
+  return (e) =>
+    Boolean(until?.(e)) ||
+    (e.seqId === tail.seqId
+      ? e.seq > tail.seq
+      : e.realtime !== null && tail.realtime !== null && e.realtime > tail.realtime);
+}
+
 // ------------------------------------------------------ нумерации journald
 
 /**
@@ -1020,13 +1037,15 @@ async function runPass() {
       console.log(`повтор ${p.key}: ${res.reused ? 'уже в архиве' : 'записан'}`);
     }
 
-    // 2. Новые записи.
+    // 2. Новые записи — до конца журнала на начало прохода.
+    const caughtUpAt = new Date(nowMs()).toISOString();
+    const stop = passStop(await tailCursor());
     let written = 0;
     for (;;) {
       await adoptConfirmed(state);
       const pos = readPos(state);
       if (!pos) throw new Error('нет позиции чтения journald — нужен разбор');
-      const read = await readJournal({ ...pos, stop: untilStop() });
+      const read = await readJournal({ ...pos, stop });
       if (!read.length) break;
       // Разрыв перед первой доступной записью — по отрезкам: подтверждённые
       // порции за разрывом принимаются по квитанции; неподтверждённая, чьё
@@ -1123,10 +1142,16 @@ async function runPass() {
       tally(state, slice);
       await confirm(state, catalogRow(key, slice, res), slice.at(-1));
       written++;
+      if (env.LOGS_TEST_ECHO) {
+        // Испытания: след записи в журнале, как у узла Garage на journald.
+        if (written > 3) process.exit(94);
+        spawnSync('sh', ['-c', 'echo w08b-echo | systemd-cat -t w08b-echo; sleep 0.3']);
+      }
     }
-    // Журнал дочитан до конца — момент нужен пакетам: сутки закрыты, если
-    // после их конца архиватор дочитал журнал (записи суток уже в архиве).
-    state.caughtUpAt = new Date(nowMs()).toISOString();
+    // Журнал дочитан до границы прохода — момент нужен пакетам: сутки
+    // закрыты, если архиватор дочитал журнал, начатый после их конца (записи
+    // суток уже в архиве). Поэтому момент — начало прохода, а не его конец.
+    state.caughtUpAt = caughtUpAt;
     saveState(state);
     await writeMetrics(state, null);
     console.log(`проход: порций ${written}, последняя запись ${state.lastSeq ?? '—'}`);

@@ -643,6 +643,23 @@ try {
   );
   verifyOk('3');
 
+  // ---------------------------------------------------------- 3а
+  console.log('\n▸ 3а. Проход не догоняет собственный след');
+  gen(15, 's3a');
+  const r3a = arch('run', { LOGS_TEST_ECHO: '1' });
+  check(
+    'след записи в журнале не продлевает проход: проход завершён сам',
+    r3a.code === 0 && r3a.out.includes('проход: порций'),
+    `код ${r3a.code}: ${r3a.out.split('\n')[0]}`,
+  );
+  const r3b = arch('run');
+  check(
+    'след забрал следующий проход',
+    r3b.code === 0 && r3b.out.includes('проход: порций 1,'),
+    r3b.out.split('\n')[0],
+  );
+  verifyOk('3а');
+
   // ---------------------------------------------------------- 4
   console.log('\n▸ 4. Потеря локального состояния и каталога');
   inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
