@@ -39,6 +39,48 @@ const NODES = (env.GARAGE_NODES || 'unicorn-garage-1,unicorn-garage-2,unicorn-ga
 const CAPACITY = Number(env.GARAGE_NODE_CAPACITY_BYTES || 20 * 1024 ** 3);
 const ZONE = env.GARAGE_ZONE || 'vps';
 
+// Заготовка переменных для .env VPS — в файл вне Git с пометкой «не
+// применён», права 600; значения не печатаются, существующий файл не
+// перезаписывается. Ключи — формат Garage.
+//   node scripts/garage-init.mjs --secrets-draft <файл>
+const draftIdx = process.argv.indexOf('--secrets-draft');
+if (draftIdx > 0) {
+  const { randomBytes } = await import('node:crypto');
+  const { closeSync, existsSync, openSync, writeFileSync } = await import('node:fs');
+  const to = process.argv[draftIdx + 1];
+  if (!to || existsSync(to)) {
+    console.error(`--secrets-draft: нужен новый файл (${to ?? 'не задан'})`);
+    process.exit(2);
+  }
+  const gk = () => `GK${randomBytes(12).toString('hex')}`;
+  const sec = () => randomBytes(32).toString('hex');
+  const vars = {
+    GARAGE_RPC_SECRET: sec(),
+    GARAGE_ADMIN_TOKEN: randomBytes(32).toString('base64url'),
+    S3_ENDPOINT: 'http://localhost:3900',
+    S3_ACCESS_KEY_ID: gk(),
+    S3_SECRET_ACCESS_KEY: sec(),
+    ARCHIVE_S3_BUCKET: 'unicorn-launch-archive',
+    ARCHIVE_S3_ACCESS_KEY_ID: gk(),
+    ARCHIVE_S3_SECRET_ACCESS_KEY: sec(),
+    BACKUP_S3_ACCESS_KEY_ID: gk(),
+    BACKUP_S3_SECRET_ACCESS_KEY: sec(),
+    S3_CORS_ALLOW_ORIGIN: 'https://5espace.com',
+  };
+  const fd = openSync(to, 'wx', 0o600);
+  writeFileSync(
+    fd,
+    `# Garage (D-001) — НЕ ПРИМЕНЁН (${new Date().toISOString().slice(0, 10)}). Заменяет одноимённые\n` +
+      '# строки .env VPS в окне переключения (docs/architecture/garage-migration-plan.md).\n' +
+      `${Object.entries(vars)
+        .map(([k, v]) => `${k}=${v}`)
+        .join('\n')}\n`,
+  );
+  closeSync(fd);
+  console.log(`заготовка: ${to} (переменных ${Object.keys(vars).length}, значения не печатаются)`);
+  process.exit(0);
+}
+
 if (!TOKEN) {
   console.error('GARAGE_ADMIN_TOKEN не задан');
   process.exit(2);
