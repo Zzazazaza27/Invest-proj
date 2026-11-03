@@ -34,6 +34,7 @@ import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
 import pg from 'pg';
 import { ROOT, TOOL_IMAGE, docker } from './lib/backup.mjs';
+import { GARAGE_IMAGE, garageKeyPair } from './lib/garage-admin.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n, d) => (args.includes(n) ? args[args.indexOf(n) + 1] : d);
@@ -66,8 +67,9 @@ const PG = `fifth-restore-pg-${tag}`;
 const S3 = `fifth-restore-s3-${tag}`;
 const PG_PORT = 55432;
 const S3_PORT = 59000;
+// Ожидание без async внутри синхронного шага площадки.
+const spawnSyncSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const CORE_PORT = 4390;
-const MINIO_IMAGE = 'minio/minio:RELEASE.2024-12-18T13-15-44Z';
 
 let passed = 0;
 let failed = 0;
@@ -92,6 +94,8 @@ const timed = async (name, fn) => {
 };
 
 let core;
+// Вывод ядра площадки — в подробности отказа (без него причина 500 не видна).
+let coreLog = [];
 async function cleanup() {
   if (core) core.kill();
   if (keep) {
@@ -269,12 +273,26 @@ try {
   });
 
   // ----------------------------------------------------------- 3. файлы
-  const restoredKeys = await timed('Файлы', () => {
+  const restored = await timed('Файлы', () => {
+    // Чистое хранилище — Garage (D-001), как рабочее: один узел, одна копия
+    // (площадка временная), ключ — новый, только на этой площадке.
     docker(['volume', 'create', `${S3}-data`]);
-    const s3env = {
-      MINIO_ROOT_USER: env.MINIO_ROOT_USER,
-      MINIO_ROOT_PASSWORD: env.MINIO_ROOT_PASSWORD,
-    };
+    writeFileSync(
+      join(from, '.restore-garage.toml'),
+      [
+        'metadata_dir = "/var/lib/garage/meta"',
+        'data_dir = "/var/lib/garage/data"',
+        'db_engine = "lmdb"',
+        'replication_factor = 1',
+        'rpc_bind_addr = "[::]:3901"',
+        '[s3_api]',
+        `s3_region = "${env.S3_REGION || 'us-east-1'}"`,
+        'api_bind_addr = "[::]:3900"',
+        'root_domain = ".s3.garage.invalid"',
+        '',
+      ].join('\n'),
+    );
+    const garageEnv = { GARAGE_RPC_SECRET: randomBytes(32).toString('hex') };
     docker(
       [
         'run',
@@ -284,18 +302,41 @@ try {
         '--network',
         NET,
         '-e',
-        'MINIO_ROOT_USER',
-        '-e',
-        'MINIO_ROOT_PASSWORD',
+        'GARAGE_RPC_SECRET',
         '-p',
-        `127.0.0.1:${S3_PORT}:9000`,
+        `127.0.0.1:${S3_PORT}:3900`,
         '-v',
-        `${S3}-data:/data`,
-        MINIO_IMAGE,
+        `${join(from, '.restore-garage.toml')}:/etc/garage.toml:ro`,
+        '-v',
+        `${S3}-data:/var/lib/garage`,
+        GARAGE_IMAGE,
+        '/garage',
         'server',
-        '/data',
       ],
-      { env: s3env },
+      { env: garageEnv },
+    );
+    const garage = (...cmd) => docker(['exec', S3, '/garage', ...cmd]).stdout.trim();
+    let nodeId = '';
+    for (let i = 0; i < 30 && !nodeId; i++) {
+      nodeId = docker(['exec', S3, '/garage', 'node', 'id', '-q'], { allowFail: true })
+        .stdout.trim()
+        .split('@')[0];
+      if (!nodeId) spawnSyncSleep(1000);
+    }
+    garage('layout', 'assign', '-z', 'restore', '-c', '10G', nodeId);
+    garage('layout', 'apply', '--version', '1');
+    const restoreKey = garageKeyPair(randomBytes);
+    garage('bucket', 'create', catalog.files.bucket);
+    garage('key', 'import', '--yes', '-n', 'restore', restoreKey.id, restoreKey.secret);
+    garage(
+      'bucket',
+      'allow',
+      '--read',
+      '--write',
+      '--owner',
+      catalog.files.bucket,
+      '--key',
+      restoreKey.id,
     );
     const rc = {
       BACKUP_FILES_CRYPT_PASS: env.BACKUP_FILES_CRYPT_PASS,
@@ -305,10 +346,10 @@ try {
       RCLONE_CONFIG_SRC_FILENAME_ENCRYPTION: 'standard',
       RCLONE_CONFIG_SRC_DIRECTORY_NAME_ENCRYPTION: 'true',
       RCLONE_CONFIG_DST_TYPE: 's3',
-      RCLONE_CONFIG_DST_PROVIDER: 'Minio',
-      RCLONE_CONFIG_DST_ENDPOINT: `http://${S3}:9000`,
-      RCLONE_CONFIG_DST_ACCESS_KEY_ID: env.MINIO_ROOT_USER,
-      RCLONE_CONFIG_DST_SECRET_ACCESS_KEY: env.MINIO_ROOT_PASSWORD,
+      RCLONE_CONFIG_DST_PROVIDER: 'Other',
+      RCLONE_CONFIG_DST_ENDPOINT: `http://${S3}:3900`,
+      RCLONE_CONFIG_DST_ACCESS_KEY_ID: restoreKey.id,
+      RCLONE_CONFIG_DST_SECRET_ACCESS_KEY: restoreKey.secret,
       RCLONE_CONFIG_DST_REGION: env.S3_REGION || 'us-east-1',
     };
     const lists = join(from, '.restore-lists');
@@ -322,7 +363,6 @@ try {
       'export RCLONE_CONFIG_SRC_PASSWORD="$(printf %s "$BACKUP_FILES_CRYPT_PASS" | rclone obscure -)"',
       'export RCLONE_CONFIG_SRC_PASSWORD2="$(printf %s "$BACKUP_FILES_CRYPT_SALT" | rclone obscure -)"',
       'for i in $(seq 1 30); do rclone lsd DST: >/dev/null 2>&1 && break; sleep 1; done',
-      `rclone mkdir "DST:${catalog.files.bucket}"`,
       // Каждый объект — из своей версии в копии (путь из каталога) под свой ключ.
       `TAB="$(printf '\\t')"; while IFS="$TAB" read -r path key; do ` +
         `rclone copyto "SRC:$path" "DST:${catalog.files.bucket}/$key" --size-only; ` +
@@ -384,7 +424,7 @@ try {
       missing: missing.length,
       mismatch: mismatch.length,
     };
-    return new Set(got.keys());
+    return { keys: new Set(got.keys()), restoreKey };
   });
 
   // ------------------------------------------------------------ 4. ядро
@@ -403,10 +443,10 @@ try {
       PUBLIC_BASE_URL: `http://127.0.0.1:${CORE_PORT}`,
       S3_ENDPOINT: `http://127.0.0.1:${S3_PORT}`,
       S3_PUBLIC_ENDPOINT: '',
-      // Учётки приложения в чистом хранилище нет — на площадке проверки
-      // ядро ходит в него под root восстановленного MinIO.
-      S3_ACCESS_KEY_ID: env.MINIO_ROOT_USER,
-      S3_SECRET_ACCESS_KEY: env.MINIO_ROOT_PASSWORD,
+      // Ключ приложения рабочего хранилища здесь не заведён — на площадке
+      // проверки ядро ходит в чистый Garage её собственным ключом.
+      S3_ACCESS_KEY_ID: restored.restoreKey.id,
+      S3_SECRET_ACCESS_KEY: restored.restoreKey.secret,
       REDIS_URL: '',
       NATS_URL: '',
       MAIL_TRANSPORT: 'none',
@@ -437,6 +477,7 @@ try {
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     const log = [];
+    coreLog = log;
     core.stdout.on('data', (d) => log.push(String(d)));
     core.stderr.on('data', (d) => log.push(String(d)));
     let up = false;
@@ -560,7 +601,15 @@ try {
       check(
         'свой профиль читается, email расшифрован ядром',
         me.status === 200 && body.emailMasked === expected,
-        me.status,
+        me.status === 200
+          ? ''
+          : `${me.status}; ядро: ${coreLog
+              .join('')
+              .split('\n')
+              .filter((l) => /error|ERROR|Error/.test(l))
+              .slice(-3)
+              .join(' | ')
+              .slice(0, 600)}`,
       );
       // Ядро площадки проверки на петле этой машины: TLS процессу на 127.0.0.1
       // ничего не защищает, а правило смотрит на схему.
@@ -577,7 +626,7 @@ try {
         `SELECT id, s3_key FROM lab.project_materials WHERE upload_state = 'ready' AND s3_key IS NOT NULL`,
       )
     ).rows;
-    const noFile = ready.filter((m) => !restoredKeys.has(m.s3_key));
+    const noFile = ready.filter((m) => !restored.keys.has(m.s3_key));
     check(
       `готовые материалы ссылаются на восстановленные файлы (${ready.length})`,
       noFile.length === 0,
@@ -595,7 +644,7 @@ try {
         )
       ).rows;
       const falseReady = now.filter(
-        (m) => m.upload_state === 'ready' && !restoredKeys.has(m.s3_key),
+        (m) => m.upload_state === 'ready' && !restored.keys.has(m.s3_key),
       );
       check(
         `незавершённые загрузки (${pendingIds.length}) не стали готовыми без файла`,

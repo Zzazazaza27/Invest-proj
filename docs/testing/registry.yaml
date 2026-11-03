@@ -2612,6 +2612,29 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-03
 
+  - id: TOOL-STORAGE-MIGRATE
+    file: scripts/storage-migrate.mjs
+    command: node scripts/storage-migrate.mjs --from minio|garage --to garage|minio [--dry-run] [--sync]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [s3, db]
+    effects:
+      [
+        'копирует текущие объекты бакета файлов из одного хранилища в другое (MinIO ↔ Garage); ничего не удаляет; отчёт в out/storage-migrate/',
+      ]
+    studied: code
+    studiedOn: 2026-11-03
+    note: >-
+      Репетиция на стенде 03.11.2026: 390 объектов (524 МБ) MinIO → Garage при
+      остановленном ядре и выключенных учётках записи MinIO; первый запуск
+      оборвался на объекте 500 МиБ — добавлен повтор записи, итог решает
+      сверка SHA-256 по прочитанному обратно.
+    purpose: 'Перенос файлов при переходе на Garage и возврате (D-001): каждый объект источника → приёмник со сверкой SHA-256 по прочитанному обратно и сохранением типа; совпадающий — пропуск, другой — конфликт (с --sync — перезапись для возврата); повторный список источника после переноса тот же; каждый ключ из базы (материалы, обложки, аватары) есть в приёмнике; незавершённые загрузки и лишнее в приёмнике — списком.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-03
+
   - id: TOOL-LOGS-VOLUME
     file: scripts/measure-logs-volume.mjs
     command: node scripts/measure-logs-volume.mjs [--base-bytes-day N] [--base-gzip-day N] [--burst-rps R] [--burst-hours H]

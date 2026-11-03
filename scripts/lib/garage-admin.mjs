@@ -50,3 +50,15 @@ export async function garageSetKeyPermissions(alias, accessKeyId, permissions, a
     permissions: { read: false, write: false, owner: false, ...permissions },
   });
 }
+
+/** Образ Garage — тот же, что в infra/docker-compose.yml (D-001, v2.4.1). */
+export const GARAGE_IMAGE =
+  'dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020';
+
+/** Новый ключ формата Garage: GK + 24 hex и секрет 64 hex. */
+export function garageKeyPair(randomBytes) {
+  return {
+    id: `GK${randomBytes(12).toString('hex')}`,
+    secret: randomBytes(32).toString('hex'),
+  };
+}
