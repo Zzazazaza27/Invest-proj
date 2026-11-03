@@ -388,6 +388,30 @@ function hashBackup(paths, network, id, type = 'sha256') {
   return map;
 }
 
+/** SHA-256 содержимого объектов источника (скачивая): ключ → хеш. */
+function sourceSha256(keys, network, id) {
+  if (!keys.length) return new Map();
+  const c = cfg();
+  writeFileSync(join(c.state, `srchash-${id}.txt`), keys.join('\n') + '\n');
+  const out = rclone(
+    [
+      'hashsum',
+      'sha256',
+      '--download',
+      `SRC:${c.bucket}`,
+      '--files-from-raw',
+      `/backup/state/srchash-${id}.txt`,
+    ],
+    { network },
+  ).stdout;
+  const map = new Map();
+  for (const line of out.split('\n')) {
+    const m = line.match(/^([0-9a-f]{64})\s+(.+)$/);
+    if (m) map.set(m[2], m[1]);
+  }
+  return map;
+}
+
 /** Все пути версий, когда-либо записанные в индекс копии. */
 function indexedPaths() {
   const c = cfg();
@@ -479,6 +503,34 @@ async function set() {
       if (pause) await new Promise((r) => setTimeout(r, pause));
       const index = readIndex();
       const plan = planObjects(index, atT);
+      // Другая метка версии (ETag) ещё не значит другое содержимое: при
+      // переносе хранилища объект, записанный в MinIO по частям, получает в
+      // Garage ETag-MD5 (переход 03.11, control/probe-v1). Решает SHA-256
+      // содержимого источника против сохранённого в копии.
+      if (plan.immutableChanged.length) {
+        const sums = sourceSha256(
+          plan.immutableChanged.map((o) => o.key),
+          network,
+          id,
+        );
+        const sameContent = plan.immutableChanged.filter(
+          (o) => sums.get(o.key) && sums.get(o.key) === index.get(o.key)?.sha256,
+        );
+        if (sameContent.length) {
+          console.log(
+            `метка версии другая, содержимое то же (SHA-256): ${sameContent.length} — копия не повторяется`,
+          );
+          // Новая метка — в индекс: следующие запуски не скачивают объект снова.
+          appendIndex(
+            sameContent.map((o) => ({
+              ...index.get(o.key),
+              size: o.size,
+              version: objectVersion(o),
+            })),
+          );
+        }
+        plan.immutableChanged = plan.immutableChanged.filter((o) => !sameContent.includes(o));
+      }
       if (plan.immutableChanged.length) {
         throw new Error(
           `готовый объект изменился под прежним ключом (2.1.2), прежняя копия сохранена: ` +
