@@ -45,7 +45,12 @@ import { runInNewContext } from 'node:vm';
 import { loadEnv, ROOT } from './lib/backup.mjs';
 import { garageApi } from './lib/garage-admin.mjs';
 import { PORTS } from './lib/ports.mjs';
-import { contiguousChain, parseChunkKey, receiptKey } from './lib/logs-archive.mjs';
+import {
+  contiguousChain,
+  newJournalStart,
+  parseChunkKey,
+  receiptKey,
+} from './lib/logs-archive.mjs';
 import { LOGS_ITEMS, logsTriggers } from './lib/logs-metrics-zabbix.mjs';
 import { s3Object } from './lib/s3.mjs';
 
@@ -285,6 +290,16 @@ console.log(`=== АРХИВАТОР ЖУРНАЛОВ: испытания (${tag}
     100n,
   );
   check('цепочка 100–119 от границы 100 — без пропусков', ok.gaps.length === 0 && ok.end === 119n);
+  // Граница новой нумерации journald: на VPS счёт продолжается (после 3780
+  // первая запись новой — 3781), испытательный journald начинает с 1.
+  check(
+    'новая нумерация продолжает счёт — граница после последней записи прежней, без ложной потери',
+    newJournalStart(3780n, 3781n) === 3780n,
+  );
+  check(
+    'новая нумерация с записи 1 — граница после 0; пропуск в начале — потеря',
+    newJournalStart(3780n, 1n) === 0n && newJournalStart(3780n, 5n) === 0n,
+  );
 }
 
 try {

@@ -226,3 +226,16 @@ export function contiguousChain(items, expectedStart = null) {
   }
   return { chain, end, beyond, overlaps, gaps, start: expectedStart ?? chain[0]?.first ?? null };
 }
+
+/**
+ * Граница новой нумерации journald: первая доступная запись идёт сразу за
+ * последней записью прежней — счёт продолжен (так на VPS), граница «после
+ * последней записи прежней», потерь нет; иначе счёт начат заново — граница
+ * «после записи 0», пропуск в начале — учтённая потеря.
+ */
+export function newJournalStart(prevLast, firstSeq) {
+  if (prevLast !== null && prevLast !== undefined && firstSeq !== undefined && firstSeq !== null) {
+    if (BigInt(firstSeq) === BigInt(prevLast) + 1n) return BigInt(prevLast);
+  }
+  return 0n;
+}

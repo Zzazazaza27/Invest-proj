@@ -61,6 +61,7 @@ import {
   contiguousChain,
   cursorParts,
   parseChunkKey,
+  newJournalStart,
   parseReceiptKey,
   receiptKey,
   open,
@@ -868,14 +869,18 @@ async function fillRange(sid, a, b, keyMat, holeReason) {
 
 /**
  * Новая нумерация journald (seqnum_id): journald заводит её после аварийной
- * остановки, номера записей начинаются с 1. Для неё закрепляется своя
- * граница «после записи 0» — пропуск в начале станет учтённой потерей, а не
- * молчаливым началом. Прежняя нумерация к этому моменту дочитана (export
+ * остановки. Номера записей в ней либо начинаются с 1 (испытательный
+ * journald), либо ПРОДОЛЖАЮТ счёт прежней (VPS, 03.11: после записи 3780
+ * нумерации 17fa… первая запись новой — 3781). Граница — по первой
+ * доступной записи новой нумерации: она идёт сразу за последней записью
+ * прежней — продолжение, граница «после последней записи прежней»; иначе —
+ * граница «после записи 0», и пропуск в начале станет учтённой потерей, а не
+ * молчаливым началом (newJournalStart). Прежняя нумерация к этому моменту дочитана (export
  * идёт по времени); её пропуски архива дочитываются из journald по курсору
  * или отмечаются утратой. Возврат к более старой нумерации — две нумерации
  * пишутся вперемешку: остановка, нужен разбор.
  */
-async function switchJournal(state, sid, keyMat) {
+async function switchJournal(state, sid, keyMat, firstSeq) {
   const anchors = await readAnchors();
   const known = anchors.find((x) => x.seqId === sid);
   const current = anchors.find((x) => x.seqId === state.seqId);
@@ -890,7 +895,7 @@ async function switchJournal(state, sid, keyMat) {
   if (!known) {
     await putAnchor({
       seqId: sid,
-      afterSeq: '0',
+      afterSeq: str(newJournalStart(state.lastSeq, firstSeq)),
       afterCursor: null,
       at: new Date().toISOString(),
       host: hostname(),
@@ -901,7 +906,7 @@ async function switchJournal(state, sid, keyMat) {
     `новая нумерация журнала ${sid}; прежняя ${state.seqId} дочитана до ${state.lastSeq}`,
   );
   state.seqId = sid;
-  state.lastSeq = BigInt(known?.afterSeq ?? '0');
+  state.lastSeq = BigInt(known?.afterSeq ?? str(newJournalStart(state.lastSeq, firstSeq)));
   state.archiveGaps = [];
   state.beyond = (state.beyond ?? []).filter((x) => parseChunkKey(x.key)?.seqId === sid);
   saveState(state);
@@ -1029,7 +1034,7 @@ async function runPass() {
       // «не проверяемо», а не доверие; остальное — отметка потери.
       const avail = read[0];
       if (avail.seqId !== state.seqId) {
-        await switchJournal(state, avail.seqId, keyMat);
+        await switchJournal(state, avail.seqId, keyMat, avail.seq);
         continue;
       }
       while (

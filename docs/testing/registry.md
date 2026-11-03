@@ -351,7 +351,7 @@
 | CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
 | CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
-| CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 226 | вручную | — |
+| CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 228 | вручную | — |
 | CHK-LOGS-APPLY | `node scripts/check-logs-apply.mjs` | 36 | вручную | — |
 | CHK-MONITORING-ACCOUNT | `node scripts/check-monitoring-account.mjs` | 9 | вручную | — |
 
