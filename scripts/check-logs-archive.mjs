@@ -584,8 +584,12 @@ try {
     coverOf(ltr.out),
   );
   // Покрытие записано в квитанцию: источник, граница, файл (inode).
-  const rcKey = (await lkeys('rf/')).at(-1);
-  const rc = JSON.parse(await (await s3Object(lroot, 'GET', rcKey, null, {})).text());
+  // Ключи квитанций — по хешу, поэтому нужная ищется по содержимому.
+  const fileRcs = [];
+  for (const k of await lkeys('rf/')) {
+    fileRcs.push(JSON.parse(await (await s3Object(lroot, 'GET', k, null, {})).text()));
+  }
+  const rc = fileRcs.find((r) => r.snapshot?.path === DOCKER_LOG) ?? {};
   check(
     'покрытие в квитанции: путь, граница, inode, полнота',
     rc.snapshot?.path === DOCKER_LOG &&
@@ -659,6 +663,14 @@ try {
     r3b.out.split('\n')[0],
   );
   verifyOk('3а');
+  gen(15, 's3v');
+  const r3v = arch('verify', { LOGS_TEST_VERIFY_RACE: '1' });
+  check(
+    'проход во время проверки не даёт ложного «цепочка короче эталона»',
+    r3v.code === 0 && !r3v.out.includes('короче эталона'),
+    r3v.out.split('\n').at(-2) ?? '',
+  );
+  verifyOk('3а — после прохода');
 
   // ---------------------------------------------------------- 4
   console.log('\n▸ 4. Потеря локального состояния и каталога');

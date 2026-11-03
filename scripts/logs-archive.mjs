@@ -1386,6 +1386,16 @@ async function verify() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
   const state = loadState();
   if (!state) throw new Error('нет локального состояния и каталога — сначала rebuild');
+  // Проверка идёт рядом с таймерными проходами и может длиться минуты.
+  // Эталон — до чтения хранилища: цепочка обязана его содержать, а звенья,
+  // появившиеся за время проверки, идут за ним и разрывом не считаются.
+  const reference = loadChain();
+  const anchors = await readAnchors();
+  const receiptKeys = new Map();
+  for (const a of anchors) {
+    receiptKeys.set(a.seqId, groupByKey(await listVersions(`r/${a.seqId}/`)));
+  }
+  // Каталог — после списка квитанций: в нём есть всё, что в списке.
   const all = loadCatalog();
   const rows = all.filter((r) => r.kind === 'chunk');
   const problems = [];
@@ -1395,13 +1405,12 @@ async function verify() {
   // Номера записей сравнимы только внутри одной нумерации journald — всё
   // считается по каждой границе отдельно.
   let receiptsSeen = 0;
-  const anchors = await readAnchors();
   for (const a of anchors) {
     const sid = a.seqId;
     const own = all.filter((r) => parseChunkKey(r.key)?.seqId === sid);
     const covered = mergeRanges(own.map((r) => ({ first: BigInt(r.first), last: BigInt(r.last) })));
     const isCovered = (x, y) => covered.some((c) => c.first <= x && y <= c.last);
-    for (const [key] of groupByKey(await listVersions(`r/${sid}/`))) {
+    for (const [key] of receiptKeys.get(sid)) {
       const r = parseReceiptKey(key);
       if (!r) continue;
       receiptsSeen++;
@@ -1421,7 +1430,14 @@ async function verify() {
   if (anchors.length > 1) console.log(`нумераций журнала: ${anchors.length}`);
   // Цепочка квитанций против эталона (голова и число звеньев).
   const walk = await walkChain(keyMat);
-  const chainCheck = chainProblems(walk, loadChain());
+  if (env.LOGS_TEST_VERIFY_RACE) {
+    // Испытания: проход таймера во время проверки.
+    spawnSync(process.execPath, [process.argv[1], 'run'], {
+      env: { ...env, LOGS_TEST_VERIFY_RACE: '' },
+      stdio: 'ignore',
+    });
+  }
+  const chainCheck = chainProblems(walk, reference);
   problems.push(...chainCheck.problems);
   for (const r of rows) {
     const got = await plainOfVersion(r.key, r.versionId, keyMat);
