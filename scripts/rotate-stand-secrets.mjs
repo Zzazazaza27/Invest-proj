@@ -127,14 +127,14 @@ console.warn('rotate-stand-secrets: пароль владельца БД сме�
 // 3. Пересоздание контейнеров с новым env. postgres пересоздаётся тоже —
 //    его env должен соответствовать фактическому паролю (healthcheck, будущие
 //    ALTER); volume уже инициализирован, initdb не повторяется.
+//    Через scripts/infra.mjs: те же файлы compose, что у стенда, включая
+//    дополнение journald на VPS (2.1-W08b), — иначе пересоздание вернуло бы
+//    контейнеры на json-file.
 const compose = spawnSync(
-  'docker',
+  process.execPath,
   [
+    join(ROOT, 'scripts', 'infra.mjs'),
     'compose',
-    '--env-file',
-    ENV_PATH,
-    '-f',
-    join(ROOT, 'infra', 'docker-compose.yml'),
     'up',
     '-d',
     '--force-recreate',
