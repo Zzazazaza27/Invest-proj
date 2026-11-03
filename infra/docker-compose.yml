@@ -343,6 +343,19 @@ services:
       ARCHIVE_S3_SECRET_ACCESS_KEY: ${ARCHIVE_S3_SECRET_ACCESS_KEY:-}
       BACKUP_S3_ACCESS_KEY_ID: ${BACKUP_S3_ACCESS_KEY_ID:-}
       BACKUP_S3_SECRET_ACCESS_KEY: ${BACKUP_S3_SECRET_ACCESS_KEY:-}
+      # Архив технических журналов (W08b): не заданы — шаг пропускается.
+      LOGS_S3_BUCKET: ${LOGS_S3_BUCKET:-}
+      LOGS_S3_ACCESS_KEY_ID: ${LOGS_S3_ACCESS_KEY_ID:-}
+      LOGS_S3_SECRET_ACCESS_KEY: ${LOGS_S3_SECRET_ACCESS_KEY:-}
+      LOGS_READER_ACCESS_KEY_ID: ${LOGS_READER_ACCESS_KEY_ID:-}
+      LOGS_READER_SECRET_ACCESS_KEY: ${LOGS_READER_SECRET_ACCESS_KEY:-}
+      LOGS_LEGACY_S3_BUCKET: ${LOGS_LEGACY_S3_BUCKET:-}
+      LOGS_LEGACY_WRITER_ACCESS_KEY_ID: ${LOGS_LEGACY_WRITER_ACCESS_KEY_ID:-}
+      LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY: ${LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY:-}
+      LOGS_LEGACY_READER_ACCESS_KEY_ID: ${LOGS_LEGACY_READER_ACCESS_KEY_ID:-}
+      LOGS_LEGACY_READER_SECRET_ACCESS_KEY: ${LOGS_LEGACY_READER_SECRET_ACCESS_KEY:-}
+    volumes:
+      - ./minio/policies:/policies:ro
     entrypoint:
       - /bin/sh
       - -c
@@ -410,6 +423,34 @@ services:
           mc admin policy attach local unicorn-backup-read --user "$$BACKUP_S3_ACCESS_KEY_ID"
           echo "учётка копирования $$BACKUP_S3_ACCESS_KEY_ID готова (политика unicorn-backup-read, только чтение)"
         fi
+        # Архив технических журналов (блок 8, 8.4, 2.1-W08b): свой бакет с
+        # версиями. Архиватор пишет и читает, но не удаляет (Deny удаления
+        # объектов и версий, версионирования, жизненного цикла, политики);
+        # поиск и ручная копия только читают. Накопленная до W08b история —
+        # отдельный бакет со своими учётками (чувствительный архив). Политики
+        # — файлы infra/minio/policies, имя бакета подставляется вместо BUCKET.
+        logs_account() {
+          p=$$(cat "/policies/$$3.json")
+          printf '%s' "$${p//BUCKET/$$1}" > "/tmp/$$2.json"
+          mc admin user add local "$$4" "$$5"
+          mc admin policy detach local "$$2" --user "$$4" || true
+          mc admin policy rm local "$$2" || true
+          mc admin policy create local "$$2" "/tmp/$$2.json"
+          mc admin policy attach local "$$2" --user "$$4"
+          echo "учётка $$4 готова (политика $$2)"
+        }
+        # бакет, имя политик, ключ и секрет записи, ключ и секрет чтения
+        logs_bucket() {
+          [ -n "$$1" ] || return 0
+          mc mb --ignore-existing "local/$$1"
+          mc anonymous set none "local/$$1"
+          mc version enable "local/$$1"
+          if [ -n "$$3" ] && [ -n "$$4" ]; then logs_account "$$1" "$$2-write" logs-write "$$3" "$$4"; fi
+          if [ -n "$$5" ] && [ -n "$$6" ]; then logs_account "$$1" "$$2-read" logs-read "$$5" "$$6"; fi
+          echo "бакет журналов $$1 готов"
+        }
+        logs_bucket "$$LOGS_S3_BUCKET" fifth-logs "$$LOGS_S3_ACCESS_KEY_ID" "$$LOGS_S3_SECRET_ACCESS_KEY" "$$LOGS_READER_ACCESS_KEY_ID" "$$LOGS_READER_SECRET_ACCESS_KEY"
+        logs_bucket "$$LOGS_LEGACY_S3_BUCKET" fifth-logs-legacy "$$LOGS_LEGACY_WRITER_ACCESS_KEY_ID" "$$LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY" "$$LOGS_LEGACY_READER_ACCESS_KEY_ID" "$$LOGS_LEGACY_READER_SECRET_ACCESS_KEY"
         echo "бакет $$S3_BUCKET готов"
     restart: 'no'
 

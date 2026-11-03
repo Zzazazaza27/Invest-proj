@@ -54,6 +54,8 @@ const CT = `jtb-${tag}`;
 const BUCKET = `tech-logs-test-${tag}`;
 const USER = `logs-w-${tag}`;
 const USER_SECRET = randomBytes(18).toString('hex');
+const READER = `logs-r-${tag}`;
+const READER_SECRET = randomBytes(18).toString('hex');
 const IMAGE = 'fifth/journald-testbed:local';
 const NETWORK = 'unicorn-launch_default';
 
@@ -215,8 +217,6 @@ function verifyOk(name) {
   );
 }
 
-let readerCreated = null;
-
 async function cleanup() {
   if (keep) {
     console.log(`\n(--keep: оставлены контейнер ${CT}, бакет ${BUCKET})`);
@@ -224,7 +224,7 @@ async function cleanup() {
   }
   sh('docker', ['rm', '-f', CT], { allowFail: true });
   mcRoot(
-    `mc rb --force --dangerous r/${BUCKET} >/dev/null 2>&1 || mc rb --force r/${BUCKET} >/dev/null 2>&1; mc admin user rm r ${USER} >/dev/null 2>&1; mc admin policy rm r ${USER} >/dev/null 2>&1; ${readerCreated ? `mc admin user rm r ${readerCreated} >/dev/null 2>&1; mc admin policy rm r ${readerCreated} >/dev/null 2>&1;` : ''} true`,
+    `mc rb --force --dangerous r/${BUCKET} >/dev/null 2>&1 || mc rb --force r/${BUCKET} >/dev/null 2>&1; mc admin user rm r ${USER} >/dev/null 2>&1; mc admin user rm r ${READER} >/dev/null 2>&1; mc admin policy rm r fifth-logs-write >/dev/null 2>&1; mc admin policy rm r fifth-logs-read >/dev/null 2>&1; true`,
   );
 }
 
@@ -286,51 +286,84 @@ try {
     if (s === 'running' || s === 'degraded') break;
     await new Promise((r) => setTimeout(r, 1000));
   }
-  const policy = JSON.stringify({
-    Version: '2012-10-17',
-    Statement: [
-      {
-        Effect: 'Allow',
-        Action: [
-          's3:PutObject',
-          's3:GetObject',
-          's3:GetObjectVersion',
-          's3:ListBucket',
-          's3:ListBucketVersions',
-          's3:GetBucketLocation',
-        ],
-        Resource: [`arn:aws:s3:::${BUCKET}`, `arn:aws:s3:::${BUCKET}/*`],
-      },
-      {
-        Effect: 'Deny',
-        Action: [
-          's3:DeleteObject',
-          's3:DeleteObjectVersion',
-          's3:PutBucketVersioning',
-          's3:PutLifecycleConfiguration',
-          's3:DeleteBucket',
-          's3:PutBucketPolicy',
-        ],
-        Resource: [`arn:aws:s3:::${BUCKET}`, `arn:aws:s3:::${BUCKET}/*`],
-      },
-    ],
-  });
-  sh('docker', ['exec', '-i', 'unicorn-minio', 'sh', '-c', `cat > /tmp/p-${tag}.json`], {
-    input: policy,
-  });
-  sh(
+  // Бакет и учётки заводит НАСТОЯЩИЙ шаг стенда minio-init по политикам
+  // infra/minio/policies — испытывается то, что применится на VPS.
+  const init = sh(
     'docker',
     [
-      'exec',
-      '-e',
-      'US',
-      'unicorn-minio',
-      'sh',
-      '-c',
-      `mc alias set r http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc mb -q r/${BUCKET} >/dev/null && mc version enable r/${BUCKET} >/dev/null && mc admin policy create r ${USER} /tmp/p-${tag}.json >/dev/null && mc admin user add r ${USER} "$US" >/dev/null && mc admin policy attach r ${USER} --user ${USER} >/dev/null; rm -f /tmp/p-${tag}.json; mc alias rm r >/dev/null`,
+      'compose',
+      '-f',
+      'infra/docker-compose.yml',
+      '--env-file',
+      '.env',
+      '-p',
+      'unicorn-launch',
+      'run',
+      '--rm',
+      '--no-deps',
+      ...[
+        'LOGS_S3_BUCKET',
+        'LOGS_S3_ACCESS_KEY_ID',
+        'LOGS_S3_SECRET_ACCESS_KEY',
+        'LOGS_READER_ACCESS_KEY_ID',
+        'LOGS_READER_SECRET_ACCESS_KEY',
+      ].flatMap((k) => ['-e', k]),
+      'minio-init',
     ],
-    { env: { US: USER_SECRET } },
+    {
+      env: {
+        LOGS_S3_BUCKET: BUCKET,
+        LOGS_S3_ACCESS_KEY_ID: USER,
+        LOGS_S3_SECRET_ACCESS_KEY: USER_SECRET,
+        LOGS_READER_ACCESS_KEY_ID: READER,
+        LOGS_READER_SECRET_ACCESS_KEY: READER_SECRET,
+      },
+      allowFail: true,
+    },
   );
+  check(
+    'minio-init: бакет журналов с версиями, учётки записи и чтения',
+    init.status === 0 &&
+      init.stdout.includes(`бакет журналов ${BUCKET} готов`) &&
+      init.stdout.includes('(политика fifth-logs-write)') &&
+      init.stdout.includes('(политика fifth-logs-read)'),
+    (init.stdout + init.stderr)
+      .trim()
+      .split('\n')
+      .filter((l) => /журнал|политика|ERROR|ошибк/i.test(l))
+      .join(' | '),
+  );
+  // Права: запись без удаления и без управления бакетом; чтение — только чтение.
+  const asUser = (who, secret) => ({ ...root, accessKey: who, secretKey: secret });
+  const wr = asUser(USER, USER_SECRET);
+  const rd = asUser(READER, READER_SECRET);
+  const put = await s3Object(wr, 'PUT', 'probe/права', Buffer.from('x'));
+  const vid = put.headers.get('x-amz-version-id');
+  const denied = async (who, method, key, body = null, query = {}) =>
+    (await s3Object(who, method, key, body, {}, query)).status === 403;
+  check(
+    'учётка записи: пишет; удалить объект и версию, выключить версии — нельзя',
+    put.status === 200 &&
+      Boolean(vid) &&
+      (await denied(wr, 'DELETE', 'probe/права')) &&
+      (await denied(wr, 'DELETE', 'probe/права', null, { versionId: vid })) &&
+      (await denied(
+        wr,
+        'PUT',
+        '',
+        Buffer.from(
+          '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Suspended</Status></VersioningConfiguration>',
+        ),
+        { versioning: '' },
+      )),
+  );
+  check(
+    'учётка чтения: читает; писать и удалять — нельзя',
+    (await s3Object(rd, 'GET', 'probe/права', null, {}, { versionId: vid })).status === 200 &&
+      (await denied(rd, 'PUT', 'probe/чтение', Buffer.from('x'))) &&
+      (await denied(rd, 'DELETE', 'probe/права', null, { versionId: vid })),
+  );
+  await rootReq('DELETE', 'probe/права', { versionId: vid });
   console.log(`стенд: ${CT}, бакет ${BUCKET} (версии включены), учётка без удаления`);
 
   // ---------------------------------------------------------- 1
@@ -513,41 +546,6 @@ try {
 
   // ---------------------------------------------------------- P
   console.log('\n▸ P. Суточные пакеты и ручная копия (учётка только на чтение)');
-  const READER = `logs-r-${tag}`;
-  const READER_SECRET = randomBytes(18).toString('hex');
-  const readerPolicy = JSON.stringify({
-    Version: '2012-10-17',
-    Statement: [
-      {
-        Effect: 'Allow',
-        Action: [
-          's3:GetObject',
-          's3:GetObjectVersion',
-          's3:ListBucket',
-          's3:ListBucketVersions',
-          's3:GetBucketLocation',
-        ],
-        Resource: [`arn:aws:s3:::${BUCKET}`, `arn:aws:s3:::${BUCKET}/*`],
-      },
-    ],
-  });
-  sh('docker', ['exec', '-i', 'unicorn-minio', 'sh', '-c', `cat > /tmp/pr-${tag}.json`], {
-    input: readerPolicy,
-  });
-  sh(
-    'docker',
-    [
-      'exec',
-      '-e',
-      'RS',
-      'unicorn-minio',
-      'sh',
-      '-c',
-      `mc alias set r http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc admin policy create r ${READER} /tmp/pr-${tag}.json >/dev/null && mc admin user add r ${READER} "$RS" >/dev/null && mc admin policy attach r ${READER} --user ${READER} >/dev/null; rm -f /tmp/pr-${tag}.json; mc alias rm r >/dev/null`,
-    ],
-    { env: { RS: READER_SECRET } },
-  );
-  readerCreated = READER;
   const asReader = { LOGS_S3_ACCESS_KEY_ID: READER, LOGS_S3_SECRET_ACCESS_KEY: READER_SECRET };
   const PULL = `/tmp/pull-${tag}`;
   const pull = () => arch('pull', { ...asReader, LOGS_PULL_TO: PULL });
