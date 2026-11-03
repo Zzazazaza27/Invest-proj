@@ -10,6 +10,7 @@
  *   node scripts/logs-archive.mjs pack      суточные пакеты закрытых суток
  *   node scripts/logs-archive.mjs pull --to <каталог>   ручная копия (добавочно)
  *   node scripts/logs-archive.mjs verify-copy --to <каталог>   проверка копии без S3
+ *   node scripts/logs-archive.mjs find --from <ISO> [...]   поиск (архив + свежее)
  *
  * Источник — journald (`journalctl -o export`), курсоры даёт он; подтверждение
  * архива, повторы, каталог и обнаружение потерь — ответственность этого кода.
@@ -25,7 +26,7 @@
  * LOGS_STATE_DIR, LOGS_PREFIX (j), LOGS_JOURNAL_ARGS (доп. аргументы
  * journalctl, через пробел), LOGS_MAX_CHUNK_BYTES.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import {
   appendFileSync,
   closeSync,
@@ -42,6 +43,7 @@ import { hostname } from 'node:os';
 import { join } from 'node:path';
 import {
   ExportReader,
+  exportFields,
   FORMAT,
   archiveKey,
   chunkKey,
@@ -482,7 +484,7 @@ async function adoptConfirmed(state) {
   }
 }
 
-async function run() {
+async function runPass() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
   await withLock(async () => {
     let state = loadState();
@@ -502,6 +504,7 @@ async function run() {
         throw new Error(`незавершённая порция ${p.key} не читается в прежнем виде — нужен разбор`);
       }
       const res = await storeChunk(p.key, entries, keyMat);
+      tally(state, entries);
       await confirm(state, catalogRow(p.key, entries, res), entries.at(-1));
       console.log(`повтор ${p.key}: ${res.reused ? 'уже в архиве' : 'записан'}`);
     }
@@ -600,6 +603,7 @@ async function run() {
       if (env.LOGS_TEST_CRASH === 'after-pending') process.exit(97);
       const res = await storeChunk(key, slice, keyMat);
       if (env.LOGS_TEST_CRASH === 'after-put') process.exit(98);
+      tally(state, slice);
       await confirm(state, catalogRow(key, slice, res), slice.at(-1));
       written++;
     }
@@ -607,8 +611,25 @@ async function run() {
     // после их конца архиватор дочитал журнал (записи суток уже в архиве).
     state.caughtUpAt = new Date(nowMs()).toISOString();
     saveState(state);
+    await writeMetrics(state, null);
     console.log(`проход: порций ${written}, последняя запись ${state.lastSeq ?? '—'}`);
   });
+}
+
+/** Проход + файл состояния для Zabbix и при сбое (кроме «проход уже идёт»). */
+async function run() {
+  try {
+    await runPass();
+  } catch (error) {
+    if (!String(error?.message).startsWith('проход уже идёт')) {
+      try {
+        await writeMetrics(loadState(), failureCode(error));
+      } catch {
+        /* состояние для наблюдения не записалось — Zabbix увидит устаревание */
+      }
+    }
+    throw error;
+  }
 }
 
 function catalogRow(key, entries, res) {
@@ -854,6 +875,221 @@ async function verify() {
   if (failedCheck) process.exitCode = 1;
 }
 
+// --------------------------------------------------------- наблюдение
+
+/**
+ * Файл состояния для Zabbix (как сигналы W07): только числа, метки
+ * источников и коды — без текстов ошибок и сообщений журнала. Пишется после
+ * каждого прохода, в том числе неудачного. Zabbix считает файл старше 5 минут
+ * «неизвестно», а не нулями.
+ */
+const METRICS = join(STATE_DIR, 'metrics.json');
+/** Суточные снимки объёма — отдельно от состояния прохода (его можно потерять). */
+const SNAPSHOTS = join(STATE_DIR, 'snapshots.json');
+const MIN_US = 60_000_000;
+const HOUR_US = 3_600_000_000;
+
+/** Метка для счётчика: имя источника или код, но не текст. */
+const label = (s) =>
+  String(s)
+    .replace(/[^\w.@:-]/g, '_')
+    .slice(0, 64);
+
+const emptyBucket = () => ({
+  bytes: 0,
+  requests: 0,
+  s5xx: 0,
+  fail2xx: 0,
+  oom: 0,
+  crashes: 0,
+  suppressed: 0,
+  errors: {},
+  codes: {},
+});
+
+/**
+ * Счётчики по минутам времени записи (последний час) и объём по часам
+ * (31 сутки). Считаются при подтверждении порции и сохраняются вместе с её
+ * курсором — повтор после сбоя не считает дважды.
+ */
+function tally(state, entries) {
+  const minutes = (state.minutes ??= {});
+  const hours = (state.hours ??= {});
+  for (const e of entries) {
+    if (e.realtime === null) continue;
+    const f = exportFields(e.raw);
+    const b = (minutes[Math.floor(e.realtime / MIN_US)] ??= emptyBucket());
+    const hk = Math.floor(e.realtime / HOUR_US);
+    hours[hk] = (hours[hk] ?? 0) + e.raw.length;
+    b.bytes += e.raw.length;
+    const msg = f.MESSAGE ?? '';
+    let m = null;
+    try {
+      m = msg.startsWith('{') ? JSON.parse(msg) : null;
+    } catch {
+      /* не JSON */
+    }
+    if (m && m.ctx === 'http' && typeof m.status === 'number') {
+      b.requests++;
+      if (m.status >= 500) b.s5xx++;
+      else if (m.status < 300 && m.code) b.fail2xx++;
+    }
+    const isError = m ? ['error', 'fatal'].includes(m.level) : Number(f.PRIORITY ?? 6) <= 3;
+    if (isError) {
+      const k = label(m?.component ?? sourceOf(f));
+      b.errors[k] = (b.errors[k] ?? 0) + 1;
+      if (m?.code) b.codes[label(m.code)] = (b.codes[label(m.code)] ?? 0) + 1;
+    }
+    if (/Out of memory|invoked oom-killer|oom-kill/i.test(msg)) b.oom++;
+    if (/Main process exited, code=(dumped|killed)|core dumped/.test(msg)) b.crashes++;
+    const sup = msg.match(/^Suppressed (\d+) messages/);
+    if (sup) b.suppressed += Number(sup[1]);
+  }
+  const nowUs = Date.now() * 1000;
+  for (const k of Object.keys(minutes)) {
+    if (Number(k) < Math.floor((nowUs - HOUR_US) / MIN_US)) delete minutes[k];
+  }
+  for (const k of Object.keys(hours)) {
+    if (Number(k) < Math.floor((nowUs - 31 * 24 * HOUR_US) / HOUR_US)) delete hours[k];
+  }
+}
+
+/** Код сбоя прохода — для сигнала; текст ошибки в файл не попадает. */
+function failureCode(error) {
+  const m = String(error?.message ?? '');
+  if (m.includes('КОНФЛИКТ')) return 'conflict';
+  if (m.includes('НЕОДНОЗНАЧНОСТЬ')) return 'ambiguity';
+  if (/S3|fetch failed|ECONN|ETIMEDOUT|ENOTFOUND/.test(m) || error?.cause?.code) return 's3';
+  if (m.includes('journalctl')) return 'journal';
+  if (m.includes('не начат')) return 'not-started';
+  return 'other';
+}
+
+/** Занятость journald, байт (`journalctl --disk-usage`). */
+function journalUsage() {
+  const r = spawnSync('journalctl', ['--disk-usage', ...JOURNAL_ARGS], { encoding: 'utf8' });
+  const m = (r.stdout ?? '').match(/take up ([\d.]+)([BKMGT])/);
+  if (!m) return null;
+  return Math.round(Number(m[1]) * 1024 ** 'BKMGT'.indexOf(m[2]));
+}
+
+/** Записи journald за подтверждённым курсором: очередь и её возраст. */
+async function queueAfter(cursor) {
+  if (!cursor) return null;
+  try {
+    let entries = 0;
+    let bytes = 0;
+    let oldest = null;
+    for (const e of await readJournal({ after: cursor, maxBytes: Infinity })) {
+      entries++;
+      bytes += e.raw.length;
+      if (oldest === null && e.realtime !== null) oldest = e.realtime;
+    }
+    return { entries, bytes, oldestEpoch: oldest === null ? null : Math.floor(oldest / 1e6) };
+  } catch {
+    return null;
+  }
+}
+
+async function writeMetrics(state, failure) {
+  const now = Date.now();
+  const nowUs = now * 1000;
+  const sum = emptyBucket();
+  for (const [k, b] of Object.entries(state?.minutes ?? {})) {
+    if (Number(k) * MIN_US < nowUs - HOUR_US) continue;
+    for (const n of ['bytes', 'requests', 's5xx', 'fail2xx', 'oom', 'crashes', 'suppressed']) {
+      sum[n] += b[n];
+    }
+    for (const n of ['errors', 'codes']) {
+      for (const [x, v] of Object.entries(b[n])) sum[n][x] = (sum[n][x] ?? 0) + v;
+    }
+  }
+  // Приток: последний час и среднее по завершённым часам за 7 суток.
+  const nowHour = Math.floor(nowUs / HOUR_US);
+  const past = Object.entries(state?.hours ?? {})
+    .map(([k, v]) => [Number(k), v])
+    .filter(([k]) => k < nowHour && k >= nowHour - 168);
+  const avgHour = past.length
+    ? Math.round(past.reduce((n, [, v]) => n + v, 0) / past.length)
+    : null;
+  const usage = journalUsage();
+  const limit = env.LOGS_JOURNAL_MAX_BYTES ? Number(env.LOGS_JOURNAL_MAX_BYTES) : null;
+  const rate = Math.max(sum.bytes, avgHour ?? 0);
+  const rows = loadCatalog();
+  const losses = rows.filter((r) => r.kind === 'loss');
+  const byReason = {};
+  for (const r of losses) byReason[r.reason] = (byReason[r.reason] ?? 0) + 1;
+  const snaps = readJson(SNAPSHOTS);
+  const daily = Object.entries(snaps?.daily ?? {}).sort();
+  const avgDays = (n) => {
+    const xs = daily.slice(-n - 1, -1).map(([, v]) => v);
+    return xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : null;
+  };
+  const queue = await queueAfter(state?.lastCursor);
+  writeJsonAtomic(METRICS, {
+    format: 'logs-metrics/v1',
+    atEpoch: Math.floor(now / 1000),
+    run: { ok: !failure, failure: failure ?? null },
+    lastOkEpoch: state?.lastOkAt ? Math.floor(Date.parse(state.lastOkAt) / 1000) : null,
+    caughtUpEpoch: state?.caughtUpAt ? Math.floor(Date.parse(state.caughtUpAt) / 1000) : null,
+    queue: queue && {
+      ...queue,
+      lagSec:
+        queue.oldestEpoch === null ? 0 : Math.max(0, Math.floor(now / 1000) - queue.oldestEpoch),
+    },
+    losses: {
+      segments: losses.length,
+      records: str(losses.reduce((n, r) => n + (BigInt(r.last) - BigInt(r.first) + 1n), 0n)),
+      byReason,
+    },
+    archiveGaps: state?.archiveGaps?.length ?? 0,
+    unconfirmed: state?.unconfirmed?.length ?? 0,
+    lastHour: sum,
+    inflow: { lastHourBytes: sum.bytes, avg7dHourBytes: avgHour },
+    journald: {
+      usageBytes: usage,
+      limitBytes: limit,
+      // Запас до вытеснения неархивированного: при остановке архива это
+      // время, за которое journald заполнится текущим притоком.
+      fillHours:
+        usage !== null && limit && rate ? Math.round(((limit - usage) / rate) * 10) / 10 : null,
+    },
+    snapshot: snaps?.lastAt
+      ? {
+          lastEpoch: Math.floor(Date.parse(snaps.lastAt) / 1000),
+          lastDay: daily.at(-1)?.[0] ?? null,
+          lastDayBytes: daily.at(-1)?.[1] ?? null,
+          avg7dDayBytes: avgDays(7),
+          avg30dDayBytes: avgDays(30),
+        }
+      : null,
+  });
+}
+
+/** Снимок объёма суток по источникам — объектом в архиве и в файле снимков. */
+async function putVolumeSnapshot(sid, day, parts) {
+  const bySource = {};
+  let total = 0;
+  let entries = 0;
+  for (const p of parts) {
+    for (const e of new ExportReader().push(p.plain)) {
+      const k = label(sourceOf(exportFields(e.raw)));
+      bySource[k] = (bySource[k] ?? 0) + e.raw.length;
+      total += e.raw.length;
+      entries++;
+    }
+  }
+  await putObject(
+    `volume/${sid}/${day}.json`,
+    Buffer.from(JSON.stringify({ day, total, entries, bySource })),
+  );
+  const snaps = readJson(SNAPSHOTS) ?? { daily: {} };
+  snaps.daily[day] = total;
+  for (const d of Object.keys(snaps.daily).sort().slice(0, -40)) delete snaps.daily[d];
+  snaps.lastAt = new Date().toISOString();
+  writeJsonAtomic(SNAPSHOTS, snaps);
+}
+
 // ------------------------------------------------------------- пакеты
 
 const DAY_MS = 86_400_000;
@@ -947,6 +1183,7 @@ async function pack() {
           }),
         ),
       );
+      await putVolumeSnapshot(state.seqId, day, parts);
       made++;
       console.log(`пакет ${day}: порций ${parts.length}`);
     }
@@ -996,7 +1233,7 @@ function packParts(to, p, keyMat) {
       problems.push(`пакет ${p.day}: порция ${c.key} не сошлась`);
       continue;
     }
-    parts.set(`${c.key}@${c.versionId}`, c);
+    parts.set(`${c.key}@${c.versionId}`, { ...c, plain: part.plain });
   }
   return { problem: problems.join('; ') || null, parts };
 }
@@ -1207,6 +1444,187 @@ function checkCopy(to, keyMat) {
   if (failedCheck) process.exitCode = 1;
 }
 
+// ----------------------------------------------------------------- поиск
+
+const argOf = (name) => {
+  const i = process.argv.indexOf(name);
+  return i > 0 ? (process.argv[i + 1] ?? null) : null;
+};
+
+/** Время ISO → микросекунды journald; неверное значение — ошибка, не «всё». */
+function micros(name, fallback) {
+  const v = argOf(name);
+  if (v === null) return fallback;
+  const ms = Date.parse(v);
+  if (Number.isNaN(ms)) throw new Error(`${name}: нужно время ISO, например 2026-11-03T10:00:00Z`);
+  return ms * 1000;
+}
+
+const sourceOf = (f) => f.CONTAINER_NAME || f._SYSTEMD_UNIT || f.SYSLOG_IDENTIFIER || '?';
+
+/** Фильтр записи: источник; ID запроса и код — по полям JSON-сообщения. */
+function matcher({ source, requestId, code }) {
+  return (f) => {
+    if (source && ![f.CONTAINER_NAME, f._SYSTEMD_UNIT, f.SYSLOG_IDENTIFIER].includes(source)) {
+      return false;
+    }
+    if (!requestId && !code) return true;
+    let m = null;
+    try {
+      m = (f.MESSAGE ?? '').startsWith('{') ? JSON.parse(f.MESSAGE) : null;
+    } catch {
+      /* не JSON — ID запроса и кода нет */
+    }
+    if (!m) return false;
+    if (requestId && m.requestId !== requestId) return false;
+    if (code && m.code !== code && String(m.status ?? '') !== code) return false;
+    return true;
+  };
+}
+
+/**
+ * Поиск по журналам за интервал.
+ *
+ *   node scripts/logs-archive.mjs find --from <ISO> [--to <ISO>] [--source <имя>]
+ *        [--request-id <id>] [--code <код или HTTP-статус>] [--limit N] [--copy <каталог>]
+ *
+ * Архивное — по каталогу: каждая порция, пересекающая интервал, читается
+ * ИМЕННО своей версией и сверяется по исходному хешу (учётка только на
+ * чтение); свежее, ещё не ушедшее в архив, — из journald после курсора
+ * архиватора. С `--copy` — только по ручной копии на ноутбуке, без S3 и
+ * journald. Учтённые потери, задевающие интервал, называются; порция,
+ * которая не прочиталась или не сошлась, делает поиск неполным (код 1).
+ * Накопленная до W08b история сюда не входит (чувствительный архив).
+ */
+async function find() {
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  const fromUs = micros('--from', null);
+  if (fromUs === null) throw new Error('нужен --from <ISO>');
+  const toUs = micros('--to', Date.now() * 1000);
+  if (toUs < fromUs) throw new Error('--to раньше --from');
+  const limit = Number(argOf('--limit') ?? 1000);
+  const match = matcher({
+    source: argOf('--source'),
+    requestId: argOf('--request-id'),
+    code: argOf('--code'),
+  });
+  const copy = argOf('--copy');
+
+  // Порции и отметки потерь: из каталога сервера или из описи копии.
+  let rows;
+  let plainOf;
+  let state = null;
+  if (copy) {
+    let manifest;
+    try {
+      manifest = JSON.parse(open(readFileSync(join(copy, MANIFEST)), keyMat.key).toString('utf8'));
+    } catch {
+      throw new Error(`опись копии ${MANIFEST} отсутствует, испорчена или другой ключ`);
+    }
+    const fromPacks = new Map();
+    for (const p of manifest.packs) {
+      for (const [k, c] of packParts(copy, p, keyMat).parts) fromPacks.set(k, c.plain);
+    }
+    // Квитанция на версию, которой нет в копии, но отрезок покрыт другой
+    // порцией или отметкой потери, — не пропуск поиска (как в verify-copy).
+    const has = (r) => fromPacks.has(`${r.key}@${r.versionId}`) || existsSync(chunkFile(copy, r));
+    const covered = mergeRanges(
+      manifest.receipts
+        .filter((r) => r.kind === 'loss' || has(r))
+        .map((r) => ({ first: BigInt(r.first), last: BigInt(r.last) })),
+    );
+    rows = manifest.receipts.filter(
+      (r) =>
+        r.kind !== 'chunk' ||
+        has(r) ||
+        !covered.some((c) => c.first <= BigInt(r.first) && BigInt(r.last) <= c.last),
+    );
+    plainOf = async (r) => {
+      const packed = fromPacks.get(`${r.key}@${r.versionId}`);
+      if (packed) return packed;
+      const local = chunkFile(copy, r);
+      if (!existsSync(local)) return null;
+      try {
+        const plain = open(readFileSync(local), keyMat.key);
+        return sha256Hex(plain) === r.plainSha ? plain : null;
+      } catch {
+        return null;
+      }
+    };
+  } else {
+    state = loadState();
+    if (!state) throw new Error('нет каталога архиватора — поиск по архиву невозможен');
+    rows = loadCatalog();
+    plainOf = async (r) => {
+      const got = await plainOfVersion(r.key, r.versionId, keyMat);
+      return got && sha256Hex(got.plain) === r.plainSha ? got.plain : null;
+    };
+  }
+  const chunks = rows
+    .filter((r) => r.kind === 'chunk')
+    .sort((a, b) => (BigInt(a.first) < BigInt(b.first) ? -1 : 1));
+  const hit = chunks.filter((r) => r.from <= toUs && r.to >= fromUs);
+  // Записи интервала лежат по номерам между последней порцией, целиком
+  // раньше интервала, и первой, целиком позже; потери в этом отрезке
+  // задевают интервал.
+  const before = chunks.filter((r) => r.to < fromUs).at(-1);
+  const after = chunks.find((r) => r.from > toUs);
+  const lo = before ? BigInt(before.last) : -1n;
+  const hi = after ? BigInt(after.first) : null;
+  const losses = rows.filter(
+    (r) => r.kind === 'loss' && BigInt(r.last) > lo && (hi === null || BigInt(r.first) < hi),
+  );
+
+  const found = [];
+  const problems = [];
+  // Одна запись может оказаться и в двух порциях (повтор после разбора):
+  // выдаётся один раз — по номеру.
+  const seen = new Set();
+  const take = (e) => {
+    if (e.realtime === null || e.realtime < fromUs || e.realtime > toUs) return;
+    if (seen.has(e.seq)) return;
+    seen.add(e.seq);
+    const f = exportFields(e.raw);
+    if (match(f))
+      found.push({ t: e.realtime, seq: e.seq, source: sourceOf(f), msg: f.MESSAGE ?? '' });
+  };
+  for (const r of hit) {
+    const plain = await plainOf(r);
+    if (!plain) {
+      problems.push(`порция ${r.first}–${r.last}: не прочитана или не сошлась с хешем`);
+      continue;
+    }
+    for (const e of new ExportReader().push(plain)) take(e);
+  }
+  // Свежее — из journald после последней архивированной записи.
+  let fresh = 0;
+  if (!copy && state.lastCursor) {
+    for (const e of await readJournal({ after: state.lastCursor, maxBytes: Infinity })) {
+      fresh++;
+      take(e);
+    }
+  }
+
+  found.sort((a, b) => (a.seq < b.seq ? -1 : 1));
+  for (const x of found.slice(0, limit)) {
+    // Управляющие символы (переводы строк, ESC) — пробелом: одна запись — одна строка.
+    const msg = [...x.msg].map((c) => (c.charCodeAt(0) < 32 || c === '\x7f' ? ' ' : c)).join('');
+    console.log(`${new Date(Math.floor(x.t / 1000)).toISOString()}  ${x.source}  ${msg}`);
+  }
+  console.log(
+    `найдено: ${found.length}${found.length > limit ? ` (показаны первые ${limit})` : ''}; порций архива: ${hit.length}${copy ? ' (копия)' : `, свежих записей journald: ${fresh}`}; учтённых потерь в интервале: ${losses.length}; проблем: ${problems.length}`,
+  );
+  for (const l of losses)
+    console.log(
+      `  потеря ${l.first}–${l.last} (${l.reason}): записи интервала могли быть утрачены`,
+    );
+  for (const p of problems) console.log(`  ${p}`);
+  if (problems.length) {
+    console.log('ИТОГ: поиск НЕПОЛОН');
+    process.exitCode = 1;
+  }
+}
+
 const commands = {
   init,
   run,
@@ -1216,6 +1634,7 @@ const commands = {
   pack,
   pull,
   'verify-copy': verifyCopy,
+  find,
 };
 const command = process.argv[2];
 if (!commands[command]) {

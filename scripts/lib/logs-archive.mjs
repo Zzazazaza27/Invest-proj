@@ -96,6 +96,30 @@ function toEntry(raw, fields) {
   };
 }
 
+/**
+ * Все поля одной записи (её исходные байты) — для поиска. Двоичные поля
+ * (MESSAGE с переводом строки или управляющими символами) — как текст UTF-8.
+ */
+export function exportFields(raw) {
+  const fields = {};
+  let pos = 0;
+  while (pos < raw.length && raw[pos] !== 0x0a) {
+    const nl = raw.indexOf(0x0a, pos);
+    if (nl < 0) break;
+    const line = raw.subarray(pos, nl);
+    const eq = line.indexOf(0x3d);
+    if (eq >= 0) {
+      fields[line.subarray(0, eq).toString('latin1')] = line.subarray(eq + 1).toString('utf8');
+      pos = nl + 1;
+    } else {
+      const size = Number(raw.readBigUInt64LE(nl + 1));
+      fields[line.toString('latin1')] = raw.subarray(nl + 9, nl + 9 + size).toString('utf8');
+      pos = nl + 9 + size + 1;
+    }
+  }
+  return fields;
+}
+
 /** Курсор journald: s=<seqnum_id>;i=<seqnum hex>;… */
 export function cursorParts(cursor) {
   const map = Object.fromEntries(

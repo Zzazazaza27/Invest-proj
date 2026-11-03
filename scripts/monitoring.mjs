@@ -20,6 +20,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { ENV_PATH, loadEnv } from './lib/backup.mjs';
+import { LOGS_ITEMS, logsTriggers } from './lib/logs-metrics-zabbix.mjs';
 import { zabbixApi } from './lib/zabbix-api.mjs';
 import { peek } from './lib/zabbix-peek.mjs';
 
@@ -60,6 +61,8 @@ const ADDR =
         s3: 'http://127.0.0.1:9000',
         certHost: '5espace.com',
         timesync: true,
+        // Файл состояния архиватора журналов (W08b) — через корень узла.
+        logsMetrics: '/rootfs/var/lib/fifth-logs/metrics.json',
       }
     : {
         coreInternal: 'http://host.docker.internal:4400',
@@ -71,6 +74,7 @@ const ADDR =
         s3: 'http://minio:9000',
         certHost: null,
         timesync: false,
+        logsMetrics: '/monitor/logs-metrics.json',
       };
 
 // --------------------------------------------------------- предобработка
@@ -771,6 +775,45 @@ async function configure() {
       comments: 'Таймер fifth-backup-check не работал дольше 15 минут: сигналы W07 не обновляются.',
     },
   );
+
+  // ---- Архив технических журналов (W08b) -----------------------------------
+  // Файл состояния архиватора: только числа, метки и коды. Каждая зависимая
+  // проверка сама отвергает устаревший файл — «неизвестно», а не нули.
+  const logsFile = `vfs.file.contents[${ADDR.logsMetrics}]`;
+  await item({
+    name: 'Журналы: файл состояния архиватора',
+    key_: logsFile,
+    type: AGENT,
+    value_type: 4,
+    history: '0',
+  });
+  for (const x of LOGS_ITEMS) {
+    await item({
+      name: x.name,
+      key_: x.key,
+      type: DEP,
+      master_itemid: items.get(logsFile),
+      value_type: x.valueType,
+      preprocessing: [step(JS, x.js)],
+      nodata: false,
+    });
+  }
+  await item({
+    name: 'Журналы: возраст файла состояния, с',
+    key_: `vfs.file.time[${ADDR.logsMetrics},modify]`,
+    type: AGENT,
+    value_type: 3,
+    preprocessing: [
+      UNSUP('missing'),
+      step(
+        JS,
+        "if (value === 'missing') return 999999; return Math.floor(Date.now() / 1000) - Number(value);",
+      ),
+    ],
+  });
+  for (const [name, expression, priority] of logsTriggers(H, ADDR.logsMetrics)) {
+    await trigger(name, expression, priority);
+  }
 
   // ---- Сам Zabbix и контрольная отметка для пульса --------------------------------
   await item({

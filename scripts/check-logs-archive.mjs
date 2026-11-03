@@ -41,8 +41,10 @@
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
+import { runInNewContext } from 'node:vm';
 import { loadEnv, ROOT } from './lib/backup.mjs';
 import { contiguousChain, parseChunkKey } from './lib/logs-archive.mjs';
+import { LOGS_ITEMS } from './lib/logs-metrics-zabbix.mjs';
 import { s3Object } from './lib/s3.mjs';
 
 loadEnv();
@@ -106,7 +108,7 @@ const ARCH_ENV = {
   LOGS_MAX_CHUNK_BYTES: '6000',
 };
 
-function arch(command, extra = {}) {
+function arch(command, extra = {}, args = []) {
   const env = { ...ARCH_ENV, ...extra };
   const r = sh(
     'docker',
@@ -117,6 +119,7 @@ function arch(command, extra = {}) {
       'node',
       '/src/scripts/logs-archive.mjs',
       command,
+      ...args,
     ],
     { env, allowFail: true },
   );
@@ -628,9 +631,7 @@ try {
     `скачано ${downloadedOf(p3.out)}, порций в каталоге ${fresh}`,
   );
   // Порча копии на ноутбуке.
-  inCt(
-    `f=$(ls ${PULL}/packs/*.pack | head -1); printf 'X' | dd of="$f" bs=1 seek=40 conv=notrunc 2>/dev/null`,
-  );
+  inCt(`f=$(ls ${PULL}/packs/*.pack | head -1); node /src/scripts/lib/flip-byte.mjs "$f" 40`);
   const p4 = pull();
   check(
     'порча байта копии пакета обнаружена',
@@ -670,7 +671,7 @@ try {
     copyLine(o7.out),
   );
   // Порча описи обнаруживается (она зашифрована ключом архива).
-  inCt(`printf 'X' | dd of=${PULL}/MANIFEST.sealed bs=1 seek=30 conv=notrunc 2>/dev/null`);
+  inCt(`node /src/scripts/lib/flip-byte.mjs ${PULL}/MANIFEST.sealed 30`);
   const o8 = offline(PULL);
   check('порча описи копии обнаружена', o8.code !== 0 && o8.out.includes('опись копии'), o8.out);
   inCt(`rm -rf ${PULL}`);
@@ -686,9 +687,7 @@ try {
   // Обратная проверка: без исправного пакета та же порция — утрата архива.
   const PK = `/tmp/pk-${tag}`;
   arch('pull', { ...asReader, LOGS_PULL_TO: PK });
-  inCt(
-    `f=$(ls ${PK}/packs/*.pack | head -1); printf 'X' | dd of="$f" bs=1 seek=40 conv=notrunc 2>/dev/null`,
-  );
+  inCt(`f=$(ls ${PK}/packs/*.pack | head -1); node /src/scripts/lib/flip-byte.mjs "$f" 40`);
   const oPk = offline(PK);
   check(
     'исчезнувшую порцию покрывал именно пакет: при порче пакета — утрата',
@@ -698,6 +697,90 @@ try {
       copyLine(oPk.out),
   );
   inCt(`rm -rf ${PK}`);
+
+  // ---------------------------------------------------------- F
+  console.log('\n▸ F. Поиск: архив по каталогу, свежее из journald, копия без S3');
+  const emit = (n, obj) =>
+    inCt(
+      `for i in $(seq 1 ${n}); do echo '${JSON.stringify(obj)}' | systemd-cat -t w08b-json; done; sleep 1`,
+    );
+  const findOut = (args, extra = {}) => arch('find', { ...asReader, ...extra }, args.split(' '));
+  const foundOf = (out) => Number(out.match(/найдено: (\d+)/)?.[1] ?? -1);
+  const tF = new Date().toISOString();
+  emit(3, { requestId: `A-${tag}`, code: 'ok' });
+  emit(2, { requestId: `B-${tag}`, code: `conflict-${tag}`, status: 409 });
+  check('проход', arch('run').code === 0);
+  emit(2, { requestId: `C-${tag}`, code: 'ok' });
+  const fA = findOut(`--from ${tF} --request-id A-${tag}`);
+  check(
+    'по ID запроса — из архива, ровно свои записи',
+    fA.code === 0 && foundOf(fA.out) === 3 && !/порций архива: 0/.test(fA.out),
+    fA.out.split('\n').at(-1),
+  );
+  const fC = findOut(`--from ${tF} --request-id C-${tag}`);
+  check(
+    'свежие, ещё не в архиве — из journald',
+    fC.code === 0 && foundOf(fC.out) === 2 && !/свежих записей journald: 0/.test(fC.out),
+    fC.out.split('\n').at(-1),
+  );
+  const fB = findOut(`--from ${tF} --code conflict-${tag}`);
+  const f409 = findOut(`--from ${tF} --code 409 --source w08b-json`);
+  check(
+    'по коду результата и по HTTP-статусу',
+    foundOf(fB.out) === 2 && foundOf(f409.out) === 2,
+    `${foundOf(fB.out)} / ${foundOf(f409.out)}`,
+  );
+  const fS = findOut(`--from ${tF} --source w08b-json`);
+  check('по источнику — все 7', foundOf(fS.out) === 7, fS.out.split('\n').at(-1));
+  const fW = findOut(
+    `--from ${new Date(Date.now() + 3_600_000).toISOString()} --to ${new Date(Date.now() + 7_200_000).toISOString()} --request-id A-${tag}`,
+  );
+  check(
+    'вне интервала — ничего',
+    fW.code === 0 && foundOf(fW.out) === 0,
+    fW.out.split('\n').at(-1),
+  );
+  // Порция, удалённая из архива в P (её точная версия — только в пакете),
+  // задевает интервал раньше tF: поиск на сервере неполон и называет её.
+  const fLost = findOut(`--from ${new Date(Date.parse(tF) - 3_600_000).toISOString()} --to ${tF}`);
+  check(
+    'утраченная в архиве порция в интервале — поиск НЕПОЛОН, порция названа',
+    fLost.code !== 0 &&
+      fLost.out.includes(`порция ${packedFirst.first}–${packedFirst.last}: не прочитана`),
+    fLost.out
+      .split('\n')
+      .filter((l) => l.includes('порция') || l.startsWith('ИТОГ'))
+      .join(' | '),
+  );
+  const fBad = findOut('--from вчера');
+  check('неверное время — отказ, а не поиск по всему', fBad.code !== 0, fBad.out);
+  // По копии на ноутбуке, без S3 и journald.
+  check('проход', arch('run').code === 0);
+  const FC = `/tmp/fc-${tag}`;
+  arch('pull', { ...asReader, LOGS_PULL_TO: FC });
+  sh('docker', ['network', 'disconnect', NETWORK, CT]);
+  let fCopy;
+  try {
+    fCopy = findOut(`--copy ${FC} --from ${tF} --source w08b-json`, {
+      LOGS_S3_ACCESS_KEY_ID: '',
+      LOGS_S3_SECRET_ACCESS_KEY: '',
+    });
+  } finally {
+    sh('docker', ['network', 'connect', NETWORK, CT]);
+  }
+  check(
+    'по копии без S3 — те же 7',
+    fCopy.code === 0 && foundOf(fCopy.out) === 7 && fCopy.out.includes('(копия)'),
+    fCopy.out.split('\n').at(-1),
+  );
+  inCt(`for f in ${FC}/chunks/*; do node /src/scripts/lib/flip-byte.mjs "$f" 40; done`);
+  const fBroken = findOut(`--copy ${FC} --from ${tF} --source w08b-json`);
+  check(
+    'испорченная порция копии — поиск НЕПОЛОН, а не «ничего не найдено»',
+    fBroken.code !== 0 && fBroken.out.includes('ИТОГ: поиск НЕПОЛОН'),
+    fBroken.out.split('\n').at(-1),
+  );
+  inCt(`rm -rf ${FC}`);
 
   // ---------------------------------------------------------- 11
   console.log('\n▸ 11. Утрата первой порции архива + потеря состояния (journald ещё хранит)');
@@ -728,6 +811,7 @@ try {
 
   // ---------------------------------------------------------- 10
   console.log('\n▸ 10. Вытеснение до архивации');
+  const t10 = new Date().toISOString();
   gen(20, 's10-lost');
   inCt('journalctl --rotate && journalctl --vacuum-files=1 >/dev/null 2>&1; true');
   gen(5, 's10-after');
@@ -740,6 +824,17 @@ try {
   check(
     'в каталоге — отметка потери journald-vacuumed',
     catalog().some((r) => r.kind === 'loss' && r.reason === 'journald-vacuumed'),
+  );
+  const f10 = findOut(`--from ${t10} --source w08b-test`);
+  check(
+    'поиск по интервалу с вытесненными записями называет потерю',
+    f10.code === 0 &&
+      /учтённых потерь в интервале: [1-9]/.test(f10.out) &&
+      f10.out.includes('journald-vacuumed'),
+    f10.out
+      .split('\n')
+      .filter((l) => /найдено|потеря/.test(l))
+      .join(' | '),
   );
   await chainCheck('10');
   verifyOk('10');
@@ -901,6 +996,126 @@ try {
   await chainCheck('15');
   verifyOk('15');
   pullCase('15-после', expectAfterRun());
+
+  // ---------------------------------------------------------- M
+  console.log('\n▸ M. Файл состояния для Zabbix: счётчики, очередь, подавление, без текстов');
+  const metrics = () => JSON.parse(inCt(`cat ${ARCH_ENV.LOGS_STATE_DIR}/metrics.json`));
+  const LIMIT = { LOGS_JOURNAL_MAX_BYTES: String(4 * 1024 ** 3) };
+  const emitRaw = (n, text, ident) =>
+    inCt(`for i in $(seq 1 ${n}); do echo '${text}' | systemd-cat -t ${ident}; done; sleep 1`);
+  const http = (o) =>
+    JSON.stringify({ level: 'log', component: 'core', ctx: 'http', result: 'ok', ...o });
+  emitRaw(3, http({ status: 200 }), 'm-core');
+  emitRaw(2, http({ level: 'error', status: 503, code: 'internal', result: 'error' }), 'm-core');
+  emitRaw(1, http({ status: 200, code: `refused-${tag}` }), 'm-core');
+  emitRaw(1, `Out of memory: Killed process 4242 (node-${tag})`, 'kernel');
+  emitRaw(1, `fifth-${tag}.service: Main process exited, code=dumped, status=6/ABRT`, 'systemd');
+  check('проход', arch('run', LIMIT).code === 0);
+  const m1 = metrics();
+  const h = m1.lastHour;
+  check(
+    'счётчики часа — ровно по записям: запросы, 5xx, отказ внутри 2xx, ошибки по компонентам и кодам',
+    h.requests === 6 &&
+      h.s5xx === 2 &&
+      h.fail2xx === 1 &&
+      h.errors.core === 2 &&
+      h.codes.internal === 2,
+    JSON.stringify({ r: h.requests, s5xx: h.s5xx, f2xx: h.fail2xx, e: h.errors, c: h.codes }),
+  );
+  check('OOM и аварийное завершение', h.oom === 1 && h.crashes === 1, `${h.oom} / ${h.crashes}`);
+  // Предобработка Zabbix на этом файле: свежий — значения, устаревший —
+  // ошибка («неизвестно»), а не нули. Код — ES5 (Duktape).
+  // Выполняется код предобработки из scripts/lib/logs-metrics-zabbix.mjs
+  // (константы репозитория), а не данные извне — так его выполнит Zabbix.
+  // Отдельный контекст без доступа к модулям — как песочница Zabbix.
+  const zbx = (x, s) => runInNewContext(`(function (value) { ${x.js} })`, {})(JSON.stringify(s));
+  const byKey = Object.fromEntries(LOGS_ITEMS.map((x) => [x.key, x]));
+  const vals = Object.fromEntries(LOGS_ITEMS.map((x) => [x.key, zbx(x, m1)]));
+  check(
+    'Zabbix: значения из свежего файла',
+    vals['logs.run.failure'] === '' &&
+      vals['logs.queue.lag'] === 0 &&
+      vals['logs.http.requests'] === 6 &&
+      vals['logs.http.5xx_share'] === 33.3 &&
+      vals['logs.errors.total'] === 2 &&
+      vals['logs.oom'] === 1 &&
+      vals['logs.crashes'] === 1 &&
+      vals['logs.snapshot.age'] < 3600,
+    JSON.stringify(vals),
+  );
+  const stale = { ...m1, atEpoch: m1.atEpoch - 600 };
+  const staleOut = LOGS_ITEMS.filter((x) => {
+    try {
+      zbx(x, stale);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  check(
+    'Zabbix: устаревший файл — каждая проверка «неизвестно», не нули',
+    staleOut.length === 0,
+    staleOut.map((x) => x.key).join(', '),
+  );
+  check(
+    'Zabbix: код предобработки без синтаксиса новее ES5',
+    LOGS_ITEMS.every((x) => !/=>|`|\blet\b|\bconst\b/.test(x.js)) &&
+      byKey['logs.queue.lag'] !== undefined,
+  );
+  check(
+    'очередь пуста после прохода, журнал и запас времени посчитаны',
+    m1.run.ok &&
+      m1.queue.entries === 0 &&
+      m1.journald.usageBytes > 0 &&
+      m1.journald.fillHours > 0 &&
+      m1.inflow.lastHourBytes > 0,
+    JSON.stringify({ q: m1.queue, j: m1.journald }),
+  );
+  check(
+    'потери и пропуски архива — числами',
+    m1.losses.segments > 0 && m1.archiveGaps === 0 && m1.losses.byReason['archive-missing'] > 0,
+    JSON.stringify(m1.losses),
+  );
+  const vol = await allKeysUnder('volume/');
+  const volBody = vol.length ? JSON.parse(await (await rootReq('GET', vol[0])).text()) : null;
+  check(
+    'суточный снимок объёма по источникам — объектом в архиве, его время в состоянии',
+    volBody?.bySource?.['w08b-test'] > 0 && m1.snapshot?.lastDayBytes === volBody.total,
+    `${vol.join(', ')}; ${JSON.stringify(m1.snapshot)}`,
+  );
+  // Недоступный S3: проход не удался, очередь растёт, текста ошибки нет.
+  gen(10, 'mS3');
+  const down = arch('run', { ...LIMIT, LOGS_S3_ENDPOINT: 'http://127.0.0.1:1' });
+  const m2 = metrics();
+  check(
+    'S3 недоступен: сбой с кодом s3, очередь и её возраст видны',
+    down.code !== 0 &&
+      !m2.run.ok &&
+      m2.run.failure === 's3' &&
+      m2.queue.entries >= 10 &&
+      m2.queue.lagSec >= 0,
+    JSON.stringify({ run: m2.run, q: m2.queue }),
+  );
+  const raw2 = JSON.stringify(m2);
+  check(
+    'в файле нет текстов ошибок и сообщений журнала',
+    !/fetch failed|127\.0\.0\.1|ECONN|Killed process|Main process|ABRT|refused-/.test(raw2),
+    raw2.length > 0 ? 'проверены fetch failed, адрес, ECONN, тексты записей' : '',
+  );
+  check(
+    'S3 вернулся — проход догоняет',
+    arch('run', LIMIT).code === 0 && metrics().queue.entries === 0,
+  );
+  // Подавление частоты journald.
+  inCt(
+    `mkdir -p /etc/systemd/journald.conf.d && printf '[Journal]\\nRateLimitIntervalSec=1s\\nRateLimitBurst=5\\n' > /etc/systemd/journald.conf.d/rl.conf && systemctl restart systemd-journald && printf '[Service]\\nType=oneshot\\nExecStart=/bin/sh -c "for i in $$(seq 1 100); do echo spam $$i; done; sleep 2; echo after"\\n' > /etc/systemd/system/m-spam.service && systemctl daemon-reload && systemctl start m-spam; sleep 1; rm -f /etc/systemd/journald.conf.d/rl.conf`,
+  );
+  check('проход', arch('run', LIMIT).code === 0);
+  check(
+    'подавление journald посчитано',
+    metrics().lastHour.suppressed > 0,
+    `подавлено ${metrics().lastHour.suppressed}`,
+  );
 } catch (error) {
   failed++;
   console.log(`  FAIL  испытание прервано: ${error.message}`);
