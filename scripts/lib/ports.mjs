@@ -106,7 +106,7 @@ export const PORTS = {
   s3: port('S3_PORT', 9000),
   s3Console: port('S3_CONSOLE_PORT', 9001),
   /** Garage (D-001): S3 API и admin API первого узла. */
-  garageS3: port('GARAGE_S3_PORT', 3900),
+  garageS3: port('GARAGE_S3_PORT', 9000),
   garageAdmin: port('GARAGE_ADMIN_PORT', 3903),
   /** Keycloak (профиль `idp`, поднимается отдельно). */
   keycloak: port('KEYCLOAK_PORT', 8081),

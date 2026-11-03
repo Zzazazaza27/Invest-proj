@@ -2612,6 +2612,29 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-03
 
+  - id: TOOL-STORAGE-SWITCH
+    file: scripts/storage-switch.mjs
+    command: node scripts/storage-switch.mjs consumers | apply <набор> --save <файл> | restore <файл>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects:
+      [
+        'apply/restore — атомарно меняет переменные набора в .env, прежние значения сохраняет в файл 600; consumers — только чтение',
+      ]
+    studied: code
+    studiedOn: 2026-11-03
+    note: >-
+      Замечание Тэнка 03.11: потребители хранилища не переключаются раньше
+      окна. Стенд 03.11: до окна (garage-init --keys-file, перезапуск ядра,
+      комплект W07) — «все — MinIO», комплект 390 файлов из MinIO; после
+      apply — «все — Garage», комплект 486 файлов из Garage.
+    purpose: 'Переключение хранилища MinIO ↔ Garage одним набором настроек (D-001): куда смотрит каждый потребитель — ядро (кто отвечает на порт S3_ENDPOINT, ключ), Caddy (files.caddy), копии W07 (BACKUP_S3_SOURCE_ENDPOINT, ключ), архив событий; ядро, запущенное раньше изменения .env; таймеры; итог «все — MinIO / все — Garage / РАЗНОБОЙ»; apply и restore набора окна.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-03
+
   - id: TOOL-STORAGE-MIGRATE
     file: scripts/storage-migrate.mjs
     command: node scripts/storage-migrate.mjs --from minio|garage --to garage|minio [--dry-run] [--sync]

@@ -24,6 +24,11 @@
  *
  * Пробные объекты кладутся под префикс `w06-probe/` и не удаляются: удаление
  * объектов — не дело этого прогона (2.1.2).
+ *
+ * `--quick` — для рабочего сервера (после переключения хранилища): без
+ * файла 500 МиБ и тела сверх предела Caddy; небольшая загрузка формой,
+ * чтение тем же содержимым, отказы формы и закрытость входа; созданные
+ * объекты (`files-check/`) удаляются в конце и проверяется, что их нет.
  */
 import http from 'node:http';
 import https from 'node:https';
@@ -126,7 +131,15 @@ function check(name, ok, detail = '') {
   console.warn(`  ${ok ? 'OK  ' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
 }
 
-const key = (label) => `w06-probe/${label}-${Date.now()}`;
+// --quick — для рабочего сервера: без файла 500 МиБ и предела Caddy, свои
+// пробные объекты удаляются в конце (просьба Томаса не копить пробные данные).
+const QUICK = process.argv.includes('--quick');
+const created = [];
+const key = (label) => {
+  const k = `${QUICK ? 'files-check' : 'w06-probe'}/${label}-${Date.now()}`;
+  created.push(k);
+  return k;
+};
 const pdf = (n = 64) => Buffer.concat([Buffer.from('%PDF-1.4 '), Buffer.alloc(n, 'x')]);
 
 async function postForm(
@@ -195,6 +208,14 @@ check('PDF по действующей форме принят', ok.status === 2
 check('ответ разрешает читать только своему сайту', ok.acao === ALLOWED, ok.acao ?? '—');
 check('без разрешения на куки', !ok.acac, ok.acac ?? '—');
 check('объект в хранилище', (await s3.headObject(okKey)).exists);
+if (QUICK) {
+  const back = await s3.getObject(okKey);
+  check(
+    'объект читается тем же содержимым',
+    Boolean(back) && Buffer.compare(back.body, pdf()) === 0,
+    back ? `${back.body.length} байт` : 'нет объекта',
+  );
+}
 const foreign = await postForm(sign('foreign'), pdf(), { origin: FOREIGN });
 check(
   'чужой сайт ответа не получает (CORS не авторизация: форма своя — объект принят)',
@@ -254,28 +275,34 @@ check(
   await refused(late, shortForm.fields.key),
   `HTTP ${late.status} ${late.code}`,
 );
-console.warn('▸ Настоящие пределы размера');
-// Наибольший разрешённый материал проходит через вход целиком. Проверка на
-// уменьшенном пределе это не ловила: «520MB» у Caddy — десятичные мегабайты,
-// меньше 500 МиБ контракта (замечание Тэнка при приёмке W06).
-const maxKey = key('max');
-const atMax = await streamForm(sign('max', { key: maxKey, maxBytes: MAX_FILE }), MAX_FILE);
-check(
-  `наибольший разрешённый файл (${MAX_FILE} байт) принят`,
-  atMax.status === 204,
-  `HTTP ${atMax.status} ${atMax.code}`,
-);
-const stored = await s3.headObject(maxKey);
-check('и сохранён целиком', stored.exists && stored.sizeBytes === MAX_FILE, `${stored.sizeBytes}`);
-const over = await streamForm(
-  sign('over', { maxBytes: CADDY_MAX + 16 * 1024 * 1024 }),
-  CADDY_MAX + 1024 * 1024,
-);
-check(
-  `сверх предела тела Caddy (${CADDY_MAX} байт) — 413`,
-  over.status === 413,
-  `HTTP ${over.status}`,
-);
+if (!QUICK) {
+  console.warn('▸ Настоящие пределы размера');
+  // Наибольший разрешённый материал проходит через вход целиком. Проверка на
+  // уменьшенном пределе это не ловила: «520MB» у Caddy — десятичные мегабайты,
+  // меньше 500 МиБ контракта (замечание Тэнка при приёмке W06).
+  const maxKey = key('max');
+  const atMax = await streamForm(sign('max', { key: maxKey, maxBytes: MAX_FILE }), MAX_FILE);
+  check(
+    `наибольший разрешённый файл (${MAX_FILE} байт) принят`,
+    atMax.status === 204,
+    `HTTP ${atMax.status} ${atMax.code}`,
+  );
+  const stored = await s3.headObject(maxKey);
+  check(
+    'и сохранён целиком',
+    stored.exists && stored.sizeBytes === MAX_FILE,
+    `${stored.sizeBytes}`,
+  );
+  const over = await streamForm(
+    sign('over', { maxBytes: CADDY_MAX + 16 * 1024 * 1024 }),
+    CADDY_MAX + 1024 * 1024,
+  );
+  check(
+    `сверх предела тела Caddy (${CADDY_MAX} байт) — 413`,
+    over.status === 413,
+    `HTTP ${over.status}`,
+  );
+}
 
 console.warn('▸ Закрыто всё, кроме приёма формы');
 const closed = [
@@ -300,6 +327,14 @@ for (const [method, path, label] of closed) {
   check(`${label} — 404`, r.status === 404, `${method} ${path} → ${r.status}`);
 }
 check('объект после попытки удаления на месте', (await s3.headObject(okKey)).exists);
+
+if (QUICK) {
+  console.warn('▸ Уборка пробных объектов');
+  for (const k of created) await s3.deleteObject(k).catch(() => undefined);
+  const left = [];
+  for (const k of created) if ((await s3.headObject(k)).exists) left.push(k);
+  check(`пробные объекты удалены (${created.length})`, left.length === 0, left.join(', '));
+}
 
 console.warn(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===\n`);
 process.exit(failed > 0 ? 1 : 0);

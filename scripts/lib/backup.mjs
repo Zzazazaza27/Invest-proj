@@ -47,7 +47,6 @@ import { fileURLToPath } from 'node:url';
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const TOOL_IMAGE = 'unicorn/postgres:16';
 export const PG_CONTAINER = 'unicorn-postgres';
-export const STORAGE_CONTAINER = 'unicorn-garage-1';
 
 // ----------------------------------------------------------------- окружение
 
@@ -129,11 +128,11 @@ export function docker(args, { env, input, allowFail = false, timeoutMs = 3_600_
   return result;
 }
 
-/** Сеть compose стенда (по первому узлу Garage). */
+/** Сеть compose стенда (по контейнеру базы — он есть при любом хранилище). */
 export function standNetwork() {
   const out = docker([
     'inspect',
-    STORAGE_CONTAINER,
+    PG_CONTAINER,
     '-f',
     '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}',
   ]).stdout.trim();
@@ -187,9 +186,12 @@ export function rclone(
   ].join('\n');
   const env = {
     RCLONE_CONFIG_SRC_TYPE: 's3',
-    // Рабочее хранилище — Garage (D-001): S3 API первого узла в сети стенда.
+    // Источник — ТОЛЬКО из настройки: адрес в сети стенда меняется в окне
+    // переключения хранилища вместе с ключом (BACKUP_S3_SOURCE_ENDPOINT:
+    // MinIO — http://minio:9000, Garage — http://garage-1:3900), а не
+    // выкладкой кода. Провайдер Other — для обоих.
     RCLONE_CONFIG_SRC_PROVIDER: 'Other',
-    RCLONE_CONFIG_SRC_ENDPOINT: process.env.BACKUP_S3_SOURCE_ENDPOINT || 'http://garage-1:3900',
+    RCLONE_CONFIG_SRC_ENDPOINT: process.env.BACKUP_S3_SOURCE_ENDPOINT || 'http://minio:9000',
     RCLONE_CONFIG_SRC_ACCESS_KEY_ID: process.env.BACKUP_S3_ACCESS_KEY_ID,
     RCLONE_CONFIG_SRC_SECRET_ACCESS_KEY: process.env.BACKUP_S3_SECRET_ACCESS_KEY,
     RCLONE_CONFIG_SRC_REGION: process.env.S3_REGION || 'us-east-1',

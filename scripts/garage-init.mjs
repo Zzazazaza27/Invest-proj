@@ -23,12 +23,15 @@
  */
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { loadEnv } from './lib/backup.mjs';
-import { garageApi } from './lib/garage-admin.mjs';
+import { loadEnv, parseEnvFile } from './lib/backup.mjs';
+import { applyKeysFile, garageApi } from './lib/garage-admin.mjs';
 import { PORTS } from './lib/ports.mjs';
 import { s3Object } from './lib/s3.mjs';
 
 loadEnv();
+// До окна переноса ключи и бакеты Garage — из отдельного файла, не из .env.
+const keysFile = applyKeysFile(process.argv, parseEnvFile);
+if (keysFile) console.log(`ключи Garage — из ${keysFile}; рабочий .env для них не используется`);
 const env = process.env;
 const TOKEN = env.GARAGE_ADMIN_TOKEN;
 const NODES = (env.GARAGE_NODES || 'unicorn-garage-1,unicorn-garage-2,unicorn-garage-3')
@@ -39,45 +42,61 @@ const NODES = (env.GARAGE_NODES || 'unicorn-garage-1,unicorn-garage-2,unicorn-ga
 const CAPACITY = Number(env.GARAGE_NODE_CAPACITY_BYTES || 20 * 1024 ** 3);
 const ZONE = env.GARAGE_ZONE || 'vps';
 
-// Заготовка переменных для .env VPS — в файл вне Git с пометкой «не
-// применён», права 600; значения не печатаются, существующий файл не
-// перезаписывается. Ключи — формат Garage.
-//   node scripts/garage-init.mjs --secrets-draft <файл>
+// Заготовка переменных для VPS — два файла вне Git с пометкой «не
+// применён», права 600; значения не печатаются, существующие не
+// перезаписываются. Ключи — формат Garage.
+//   <префикс>-pre.env    — дописывается в .env ДО окна: потребители
+//                          хранилища (ядро, W07, архив событий, Caddy) этих
+//                          переменных не читают;
+//   <префикс>-window.env — ключи Garage: до окна — только --keys-file для
+//                          garage-init и переноса; в .env — в окне
+//                          (storage-switch apply).
+//   node scripts/garage-init.mjs --secrets-draft <префикс>
 const draftIdx = process.argv.indexOf('--secrets-draft');
 if (draftIdx > 0) {
   const { randomBytes } = await import('node:crypto');
   const { closeSync, existsSync, openSync, writeFileSync } = await import('node:fs');
-  const to = process.argv[draftIdx + 1];
-  if (!to || existsSync(to)) {
-    console.error(`--secrets-draft: нужен новый файл (${to ?? 'не задан'})`);
+  const prefix = process.argv[draftIdx + 1];
+  const files = { pre: `${prefix}-pre.env`, window: `${prefix}-window.env` };
+  if (!prefix || Object.values(files).some((p) => existsSync(p))) {
+    console.error(`--secrets-draft: нужен новый префикс (${prefix ?? 'не задан'})`);
     process.exit(2);
   }
   const gk = () => `GK${randomBytes(12).toString('hex')}`;
   const sec = () => randomBytes(32).toString('hex');
-  const vars = {
-    GARAGE_RPC_SECRET: sec(),
-    GARAGE_ADMIN_TOKEN: randomBytes(32).toString('base64url'),
-    S3_ENDPOINT: 'http://localhost:3900',
-    S3_ACCESS_KEY_ID: gk(),
-    S3_SECRET_ACCESS_KEY: sec(),
-    ARCHIVE_S3_BUCKET: 'unicorn-launch-archive',
-    ARCHIVE_S3_ACCESS_KEY_ID: gk(),
-    ARCHIVE_S3_SECRET_ACCESS_KEY: sec(),
-    BACKUP_S3_ACCESS_KEY_ID: gk(),
-    BACKUP_S3_SECRET_ACCESS_KEY: sec(),
-    S3_CORS_ALLOW_ORIGIN: 'https://5espace.com',
+  const sets = {
+    pre: {
+      GARAGE_RPC_SECRET: sec(),
+      GARAGE_ADMIN_TOKEN: randomBytes(32).toString('base64url'),
+      GARAGE_S3_PORT: '3900',
+      S3_CORS_ALLOW_ORIGIN: 'https://5espace.com',
+    },
+    window: {
+      GARAGE_S3_PORT: '9000',
+      S3_ACCESS_KEY_ID: gk(),
+      S3_SECRET_ACCESS_KEY: sec(),
+      ARCHIVE_S3_BUCKET: 'unicorn-launch-archive',
+      ARCHIVE_S3_ACCESS_KEY_ID: gk(),
+      ARCHIVE_S3_SECRET_ACCESS_KEY: sec(),
+      BACKUP_S3_ACCESS_KEY_ID: gk(),
+      BACKUP_S3_SECRET_ACCESS_KEY: sec(),
+      BACKUP_S3_SOURCE_ENDPOINT: 'http://garage-1:3900',
+    },
   };
-  const fd = openSync(to, 'wx', 0o600);
-  writeFileSync(
-    fd,
-    `# Garage (D-001) — НЕ ПРИМЕНЁН (${new Date().toISOString().slice(0, 10)}). Заменяет одноимённые\n` +
-      '# строки .env VPS в окне переключения (docs/architecture/garage-migration-plan.md).\n' +
-      `${Object.entries(vars)
-        .map(([k, v]) => `${k}=${v}`)
-        .join('\n')}\n`,
-  );
-  closeSync(fd);
-  console.log(`заготовка: ${to} (переменных ${Object.keys(vars).length}, значения не печатаются)`);
+  const day = new Date().toISOString().slice(0, 10);
+  for (const [name, vars] of Object.entries(sets)) {
+    const fd = openSync(files[name], 'wx', 0o600);
+    writeFileSync(
+      fd,
+      `# Garage (D-001), ${name === 'pre' ? 'до окна' : 'в окне'} — НЕ ПРИМЕНЁН (${day}).\n` +
+        '# Порядок — docs/architecture/garage-migration-plan.md.\n' +
+        `${Object.entries(vars)
+          .map(([k, v]) => `${k}=${v}`)
+          .join('\n')}\n`,
+    );
+    closeSync(fd);
+  }
+  console.log(`заготовка: ${files.pre}, ${files.window} (значения не печатаются)`);
   process.exit(0);
 }
 
@@ -213,7 +232,8 @@ const origins = (
     );
     const r = await s3Object(
       {
-        endpoint: (env.S3_ENDPOINT || `http://127.0.0.1:${PORTS.garageS3}`).replace(/\/+$/, ''),
+        // Прямо в Garage (его порт), а не по S3_ENDPOINT: до окна там MinIO.
+        endpoint: `http://127.0.0.1:${PORTS.garageS3}`,
         bucket: files.globalAliases?.[0],
         region: env.S3_REGION || 'us-east-1',
         accessKey: tmp.accessKeyId,

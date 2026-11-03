@@ -100,8 +100,9 @@ function initSecrets() {
     BACKUP_PGBACKREST_CIPHER_PASS: gen,
     BACKUP_FILES_CRYPT_PASS: gen,
     BACKUP_FILES_CRYPT_SALT: gen,
-    BACKUP_S3_ACCESS_KEY_ID: () => 'unicorn_backup',
-    BACKUP_S3_SECRET_ACCESS_KEY: gen,
+    // Ключ копий в Garage (D-001): формат GK + 24 hex и 64 hex.
+    BACKUP_S3_ACCESS_KEY_ID: () => `GK${randomBytes(12).toString('hex')}`,
+    BACKUP_S3_SECRET_ACCESS_KEY: () => randomBytes(32).toString('hex'),
   };
   const added = [];
   let text = readFileSync(ENV_PATH, 'utf8');

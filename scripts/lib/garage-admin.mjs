@@ -62,3 +62,19 @@ export function garageKeyPair(randomBytes) {
     secret: randomBytes(32).toString('hex'),
   };
 }
+
+/**
+ * Набор переменных Garage из отдельного файла (`--keys-file`): до окна
+ * переноса Garage настраивается и наполняется им, а рабочий .env — и вместе
+ * с ним ядро, копии W07, архив событий — остаётся на прежнем хранилище.
+ * Значения файла перекрывают окружение только этого процесса.
+ */
+export function applyKeysFile(argv, parseEnvFile) {
+  const i = argv.indexOf('--keys-file');
+  if (i < 0) return null;
+  const path = argv[i + 1];
+  const vars = parseEnvFile(path);
+  if (!Object.keys(vars).length) throw new Error(`--keys-file: пусто или нет файла (${path})`);
+  Object.assign(process.env, vars);
+  return path;
+}

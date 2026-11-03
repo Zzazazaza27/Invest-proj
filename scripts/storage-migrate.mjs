@@ -29,11 +29,14 @@ import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import pg from 'pg';
-import { loadEnv, ROOT } from './lib/backup.mjs';
+import { loadEnv, parseEnvFile, ROOT } from './lib/backup.mjs';
+import { applyKeysFile } from './lib/garage-admin.mjs';
 import { PORTS } from './lib/ports.mjs';
 import { s3Object } from './lib/s3.mjs';
 
 loadEnv();
+// Ключ Garage до окна — из отдельного файла (--keys-file): в .env ещё MinIO.
+applyKeysFile(process.argv, parseEnvFile);
 const env = process.env;
 const arg = (n) => {
   const i = process.argv.indexOf(n);

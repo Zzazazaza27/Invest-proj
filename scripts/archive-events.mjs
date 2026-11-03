@@ -92,7 +92,9 @@ const BATCH = 5_000;
 // копии базы W07.
 const S3 = {
   endpoint: (process.env.S3_ENDPOINT ?? '').replace(/\/+$/, ''),
-  bucket: process.env.ARCHIVE_S3_BUCKET ?? '',
+  // До переключения на Garage — прежний бакет файлов (префикс archive/ и
+  // политика MinIO); ARCHIVE_S3_BUCKET ставится в окне вместе с ключом.
+  bucket: process.env.ARCHIVE_S3_BUCKET || process.env.S3_BUCKET || '',
   region: process.env.S3_REGION ?? 'us-east-1',
   accessKey: process.env.ARCHIVE_S3_ACCESS_KEY_ID ?? '',
   secretKey: process.env.ARCHIVE_S3_SECRET_ACCESS_KEY ?? '',

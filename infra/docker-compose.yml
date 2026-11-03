@@ -315,7 +315,10 @@ services:
       - garage1meta:/var/lib/garage/meta
       - garage1data:/var/lib/garage/data
     ports:
-      - '127.0.0.1:${GARAGE_S3_PORT:-3900}:3900'
+      # S3 на петле: после переключения — порт прежнего MinIO (9000), чтобы
+      # адрес у ядра и Caddy не менялся; до окна переноса на VPS —
+      # GARAGE_S3_PORT=3900 рядом с работающим MinIO.
+      - '127.0.0.1:${GARAGE_S3_PORT:-9000}:3900'
       - '127.0.0.1:${GARAGE_ADMIN_PORT:-3903}:3903'
     healthcheck:
       test: ['CMD', '/garage', 'status']
@@ -341,9 +344,13 @@ services:
       - garage3data:/var/lib/garage/data
     ports: []
 
+  # MinIO — прежнее хранилище (D-001: заменено Garage). Только профиль
+  # minio-legacy: перенос данных, возврат и уборка; обычный подъём стенда его
+  # не запускает (порт 9000 у Garage).
   minio:
     image: minio/minio:RELEASE.2024-12-18T13-15-44Z
     container_name: unicorn-minio
+    profiles: ['minio-legacy']
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -375,6 +382,7 @@ services:
   minio-init:
     image: minio/mc:RELEASE.2024-11-21T17-21-54Z
     container_name: unicorn-minio-init
+    profiles: ['minio-legacy']
     depends_on:
       minio:
         condition: service_healthy
