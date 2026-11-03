@@ -28,7 +28,7 @@
  *        [--secret-key <файл>] [--passphrase-file <файл>] [--keep]
  */
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
@@ -527,6 +527,7 @@ try {
     let indexOk = 0;
     const broken = [];
     let candidate = null;
+    const emails = new Map(); // id → email: вход для контрольного чтения
     for (const u of users) {
       try {
         const email = u.email_ciphertext
@@ -544,6 +545,7 @@ try {
         opened += 1;
         if (email && u.email_hmac && crypto.blindIndex(email, 'email').equals(u.email_hmac))
           indexOk += 1;
+        if (email && u.status === 'active' && !u.deleted_at) emails.set(u.id, email);
         if (email && !candidate && u.status === 'active' && !u.deleted_at)
           candidate = { id: u.id, email };
       } catch (error) {
@@ -635,6 +637,49 @@ try {
         .map((m) => m.id)
         .join(', '),
     );
+    // Контрольное чтение через ядро: загрузивший входит и получает байты
+    // готового материала — размер и SHA-256 как в базе (замечание Тэнка при
+    // переходе на Garage: ссылки на файлы мало, нужно чтение).
+    const control = (
+      await pool.query(
+        `SELECT m.id, m.project_id, m.uploaded_by, m.size_bytes, m.content_hash
+           FROM lab.project_materials m JOIN lab.projects p ON p.id = m.project_id
+          WHERE m.upload_state = 'ready' AND m.s3_key IS NOT NULL AND p.deleted_at IS NULL
+          ORDER BY m.uploaded_at DESC NULLS LAST`,
+      )
+    ).rows.find((m) => emails.has(m.uploaded_by));
+    if (!control) {
+      check('контрольное чтение материала через ядро — есть кому читать', ready.length === 0);
+    } else {
+      const password = randomBytes(18).toString('base64url');
+      await pool.query('UPDATE identity.users SET password_hash = $1 WHERE id = $2', [
+        await argon2.hash(password, { type: argon2.argon2id }),
+        control.uploaded_by,
+      ]);
+      // Ядро площадки проверки на петле этой машины.
+      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
+      const login = await fetch(`http://127.0.0.1:${CORE_PORT}/v1/auth/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ email: emails.get(control.uploaded_by), password }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      const cookie = (login.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
+      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
+      const file = await fetch(
+        `http://127.0.0.1:${CORE_PORT}/v1/projects/${control.project_id}/materials/${control.id}/content`,
+        { headers: { cookie }, signal: AbortSignal.timeout(60_000) },
+      );
+      const bytes = file.status === 200 ? Buffer.from(await file.arrayBuffer()) : Buffer.alloc(0);
+      const sha = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+      check(
+        'контрольное чтение материала через ядро: размер и SHA-256 как в базе',
+        file.status === 200 &&
+          bytes.length === Number(control.size_bytes) &&
+          sha === control.content_hash,
+        `HTTP ${file.status}, ${bytes.length} байт`,
+      );
+    }
     const pendingIds = catalog.pendingUploads.map((p) => p.id);
     if (pendingIds.length) {
       const now = (

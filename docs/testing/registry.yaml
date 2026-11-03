@@ -284,7 +284,7 @@ checks:
     kind: check
     level: сквозной
     runner: manual
-    asserts: 20
+    asserts: 21
     needs: [docker]
     effects:
       [
