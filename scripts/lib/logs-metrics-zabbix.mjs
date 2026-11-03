@@ -190,6 +190,15 @@ export const LOGS_ITEMS = [
       `var now = Math.floor(Date.now() / 1000); var t = s.snapshot ? int(obj(s.snapshot, 'snapshot').lastEpoch, 'snapshot.lastEpoch') : int(s.archiveStartEpoch, 'archiveStartEpoch'); if (t > now + ${SKEW_SEC}) throw 'время снимка в будущем'; return Math.max(0, now - t);`,
     ),
   },
+  {
+    key: 'logs.files.age',
+    name: 'Журналы: время без успешной архивации файлов почты, с',
+    valueType: 3,
+    // Успешного прохода ещё не было — время от начала архива.
+    js: js(
+      `if (s.files === null) throw 'файлы почты не настроены'; var now = Math.floor(Date.now() / 1000); var f = obj(s.files, 'files'); var t = f.lastOkEpoch === null ? int(s.archiveStartEpoch, 'archiveStartEpoch') : int(f.lastOkEpoch, 'files.lastOkEpoch'); if (t > now + ${SKEW_SEC}) throw 'время в будущем'; return Math.max(0, now - t);`,
+    ),
+  },
 ];
 
 /** Тревоги: [название, выражение от H (узел), важность]. */
@@ -239,5 +248,6 @@ export function logsTriggers(H, file) {
     ['Журналы: нехватка памяти (OOM)', `${l('logs.oom')}>0`, 3],
     ['Журналы: аварийное завершение процесса', `${l('logs.crashes')}>0`, 3],
     ['Журналы: суточного снимка объёма нет больше 26 ч', `${l('logs.snapshot.age')}>93600`, 2],
+    ['Журналы: файлы почты не архивируются больше 26 ч', `${l('logs.files.age')}>93600`, 2],
   ];
 }

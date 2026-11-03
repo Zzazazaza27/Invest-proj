@@ -39,7 +39,7 @@
  *   node scripts/check-logs-archive.mjs [--keep]
  */
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { loadEnv, ROOT } from './lib/backup.mjs';
@@ -698,6 +698,100 @@ try {
   );
   inCt(`rm -rf ${PK}`);
 
+  // ---------------------------------------------------------- E
+  console.log('\n▸ E. Файлы почты: закрытые поколения, без повторов по содержимому');
+  const MAIL = '/var/log/tmail';
+  const FENV = { LOGS_FILES: `${MAIL}/mainlog` };
+  const SRC = 'var_log_tmail_mainlog';
+  const sha = (text) => createHash('sha256').update(text).digest('hex');
+  const filesRun = (extra = {}) => arch('files', { ...FENV, ...extra });
+  const storedOf = (out) => Number(out.match(/записано (\d+)/)?.[1] ?? -1);
+  const fileKeys = async () => (await allKeysUnder('f/')).filter((k) => k.endsWith('.fx'));
+  const old = (p) => `touch -d '-1 hour' ${p}`;
+  const T = {
+    live: `живой ${tag}\n`,
+    g1: `поколение 1 ${tag}\n`.repeat(50),
+    g2: `поколение 2 ${tag}\n`.repeat(50),
+    fresh: `свежее ${tag}\n`,
+    g4: `поколение 4 ${tag}\n`.repeat(20),
+  };
+  inCt(
+    `mkdir -p ${MAIL} && cd ${MAIL} && printf '%s' '${T.live}' > mainlog && printf '%s' '${T.g1}' > mainlog.1 && printf '%s' '${T.g2}' | gzip -c > mainlog.2.gz && printf '%s' '${T.fresh}' > mainlog.5 && printf 'x' > mainlog.bak && : > mainlog.6 && ${old('mainlog.1')} && ${old('mainlog.2.gz')} && ${old('mainlog.6')}`,
+  );
+  const e1 = filesRun();
+  const k1 = await fileKeys();
+  check(
+    'закрытые поколения (.1, .2.gz) записаны; живой, свежий, пустой и посторонний — нет',
+    e1.code === 0 &&
+      storedOf(e1.out) === 2 &&
+      k1.length === 2 &&
+      k1.includes(`f/${SRC}/${sha(T.g1)}.fx`) &&
+      k1.includes(`f/${SRC}/${sha(T.g2)}.fx`),
+    `${e1.out.split('\n').at(-1)}; ${k1.length} объектов`,
+  );
+  const e2 = filesRun();
+  check(
+    'повтор — ничего нового',
+    e2.code === 0 && storedOf(e2.out) === 0,
+    e2.out.split('\n').at(-1),
+  );
+  // Ротация: .2.gz → .3.gz, .1 → .2.gz (сжатие), живой → .1, новый живой.
+  inCt(
+    `cd ${MAIL} && mv mainlog.2.gz mainlog.3.gz && gzip -c mainlog.1 > mainlog.2.gz && rm mainlog.1 && mv mainlog mainlog.1 && printf 'новый' > mainlog && ${old('mainlog.1')} && ${old('mainlog.2.gz')} && ${old('mainlog.3.gz')}`,
+  );
+  const e3 = filesRun();
+  check(
+    'после ротации записан только бывший живой; переименованные и сжатые узнаны по содержимому',
+    e3.code === 0 && storedOf(e3.out) === 1 && (await fileKeys()).length === 3,
+    e3.out.split('\n').at(-1),
+  );
+  // Конфликт: под ключом будущего поколения — чужое содержимое.
+  const k4 = `f/${SRC}/${sha(T.g4)}.fx`;
+  await rootReq('PUT', k4, {}, Buffer.from('чужое'));
+  inCt(`cd ${MAIL} && printf '%s' '${T.g4}' > mainlog.4 && ${old('mainlog.4')}`);
+  const e4 = filesRun();
+  check(
+    'чужое содержимое под ключом — КОНФЛИКТ без перезаписи',
+    e4.code !== 0 && e4.out.includes('КОНФЛИКТ') && (await versionsOf(k4)).length === 1,
+    e4.out.split('\n').find((l) => l.includes('КОНФЛИКТ')) ?? e4.out,
+  );
+  for (const v of await versionsOf(k4)) await rootReq('DELETE', k4, { versionId: v.versionId });
+  // Падение после записи, до квитанции: повтор подтверждает по содержимому.
+  const e5 = filesRun({ LOGS_TEST_CRASH: 'file-after-put' });
+  const e6 = filesRun();
+  check(
+    'падение после записи, до квитанции — повтор без второй версии',
+    e5.code === 96 &&
+      e6.code === 0 &&
+      storedOf(e6.out) === 1 &&
+      (await versionsOf(k4)).length === 1,
+    `код ${e5.code}; ${e6.out.split('\n').at(-1)}; версий ${(await versionsOf(k4)).length}`,
+  );
+  // verify здесь красный из-за порции, удалённой в P (восполняется в 11), —
+  // проверяются только файлы: все 4 прочитаны, проблем по ним нет.
+  const vE = arch('verify');
+  check(
+    'verify проверяет и файлы',
+    /файлов: 4/.test(vE.out) && !/^\s+файл /m.test(vE.out),
+    vE.out.split('\n')[0],
+  );
+  const FE = `/tmp/fe-${tag}`;
+  const pE = arch('pull', { ...asReader, LOGS_PULL_TO: FE });
+  const oE = offline(FE);
+  check(
+    'файлы в ручной копии; проверка копии без S3 их сверяет',
+    pE.code === 0 && /файлов: 4/.test(pE.out) && oE.code === 0 && /файлов: 4/.test(oE.out),
+    copyLine(oE.out),
+  );
+  inCt(`node /src/scripts/lib/flip-byte.mjs $(ls ${FE}/files/* | head -1) 40`);
+  const oE2 = offline(FE);
+  check(
+    'порча файла в копии обнаружена',
+    oE2.code !== 0 && oE2.out.includes('копия не сошлась с квитанцией'),
+    oE2.out.split('\n').find((l) => l.includes('файл ')) ?? copyLine(oE2.out),
+  );
+  inCt(`rm -rf ${FE}`);
+
   // ---------------------------------------------------------- F
   console.log('\n▸ F. Поиск: архив по каталогу, свежее из journald, копия без S3');
   const emit = (n, obj) =>
@@ -1275,6 +1369,34 @@ try {
     metrics().lastHour.suppressed > 0,
     `подавлено ${metrics().lastHour.suppressed}`,
   );
+  // Свежесть файлов почты в файле состояния и в Zabbix.
+  check('проход с настроенными файлами', arch('run', { ...LIMIT, ...FENV }).code === 0);
+  const mF = metrics();
+  check(
+    'файлы почты: время последнего успешного прохода в состоянии, Zabbix — возраст',
+    Number.isInteger(mF.files?.lastOkEpoch) && val('logs.files.age', mF) < 3600,
+    JSON.stringify(mF.files),
+  );
+  check(
+    'файлы не настроены — «неизвестно», а не возраст',
+    metrics().files !== undefined && val('logs.files.age', { ...mF, files: null }) === UNKNOWN,
+  );
+
+  // ---------------------------------------------------- E2: утрата файла
+  console.log('\n▸ E2. Утрата файла почты в архиве');
+  const lostFile = (await fileKeys())[0];
+  for (const v of await versionsOf(lostFile)) {
+    await rootReq('DELETE', lostFile, { versionId: v.versionId });
+  }
+  const vE2 = arch('verify');
+  check(
+    'verify: утрата файла — НЕ пройдена',
+    vE2.code !== 0 &&
+      vE2.out.includes('утрата архива') &&
+      vE2.out.includes('ИТОГ: проверка НЕ пройдена'),
+    vE2.out.split('\n').find((l) => l.includes('файл ')) ?? vE2.out.split('\n')[0],
+  );
+  pullCase('E2', 'red');
 } catch (error) {
   failed++;
   console.log(`  FAIL  испытание прервано: ${error.message}`);

@@ -11,6 +11,7 @@
  *   node scripts/logs-archive.mjs pull --to <каталог>   ручная копия (добавочно)
  *   node scripts/logs-archive.mjs verify-copy --to <каталог>   проверка копии без S3
  *   node scripts/logs-archive.mjs find --from <ISO> [...]   поиск (архив + свежее)
+ *   node scripts/logs-archive.mjs files     закрытые поколения файловых журналов (почта)
  *
  * Источник — journald (`journalctl -o export`), курсоры даёт он; подтверждение
  * архива, повторы, каталог и обнаружение потерь — ответственность этого кода.
@@ -34,13 +35,16 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  readdirSync,
+  statSync,
   renameSync,
   unlinkSync,
   writeFileSync,
   fsyncSync,
 } from 'node:fs';
 import { hostname } from 'node:os';
-import { join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
+import { gunzipSync } from 'node:zlib';
 import {
   ExportReader,
   exportFields,
@@ -850,10 +854,11 @@ async function verify() {
     const others = (byKey.get(r.key) ?? []).filter((v) => v.versionId !== r.versionId);
     if (others.length) foreign.push(`${r.key}: посторонних версий ${others.length}`);
   }
+  const filesSeen = await verifyFiles(keyMat, problems, foreign);
   const unconfirmed = state?.unconfirmed?.length ?? 0;
   const gaps = state?.archiveGaps?.length ?? 0;
   console.log(
-    `проверено порций: ${rows.length}, квитанций: ${receiptsSeen}, проблем: ${problems.length}, посторонних версий: ${foreign.length}, без квитанции: ${unconfirmed}, пропусков архива: ${gaps}`,
+    `проверено порций: ${rows.length}, квитанций: ${receiptsSeen}, файлов: ${filesSeen}, проблем: ${problems.length}, посторонних версий: ${foreign.length}, без квитанции: ${unconfirmed}, пропусков архива: ${gaps}`,
   );
   for (const p of [...problems, ...foreign]) console.log(`  ${p}`);
   const failedCheck = problems.length || foreign.length || gaps;
@@ -875,6 +880,166 @@ async function verify() {
         : 'ИТОГ: данные сохранены полностью',
   );
   if (failedCheck) process.exitCode = 1;
+}
+
+// ---------------------------------------------------------- файлы почты
+
+/**
+ * Файловые журналы (exim, dovecot) — закрытыми поколениями после ротации:
+ * `<журнал>.N` и `<журнал>.N.gz`, не моложе LOGS_FILES_MIN_AGE_SEC (10 мин);
+ * изменяющийся файл не копируется. LOGS_FILES — пути журналов через запятую,
+ * например `/var/log/exim4/mainlog,/var/log/dovecot.log`.
+ *
+ * Поколение узнаётся по СОДЕРЖИМОМУ (SHA-256 после распаковки): ротация
+ * переименовывает `.1` в `.2.gz`, и это то же поколение — второй раз не
+ * пишется. Объект `f/<журнал>/<хеш>.fx` шифруется как порции; квитанция
+ * `rf/<хеш>/<VersionId>.json` пишется после чтения записанной версии и сверки
+ * хеша. Под ключом объекта чужое содержимое — конфликт, без перезаписи.
+ */
+const FILES = (env.LOGS_FILES || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const FILES_MIN_AGE_SEC = Number(env.LOGS_FILES_MIN_AGE_SEC ?? 600);
+const FILES_STATE = join(STATE_DIR, 'files.json');
+const fileSource = (base) => base.replace(/^\/+/, '').replace(/[^\w.-]/g, '_');
+const fileKey = (src, sha) => `f/${src}/${sha}.fx`;
+const fileReceiptKey = (sha, versionId) => `rf/${sha}/${versionId}.json`;
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** Закрытые поколения журнала: [{path, name, gz}]. */
+function closedGenerations(base) {
+  const dir = dirname(base);
+  if (!existsSync(dir)) return [];
+  const re = new RegExp(`^${escapeRe(basename(base))}\\.\\d+(\\.gz)?$`);
+  const oldest = Date.now() - FILES_MIN_AGE_SEC * 1000;
+  return readdirSync(dir)
+    .filter((name) => re.test(name))
+    .map((name) => ({ name, path: join(dir, name), gz: name.endsWith('.gz') }))
+    .filter((g) => statSync(g.path).mtimeMs <= oldest)
+    .sort((a, b) => (a.name < b.name ? -1 : 1));
+}
+
+/** Квитанции файлов из S3: хеш → тело квитанции. */
+async function fileReceipts() {
+  const out = new Map();
+  for (const [key, versions] of groupByKey(await listVersions('rf/'))) {
+    if (versions.length !== 1) {
+      throw new Error(`НЕОДНОЗНАЧНОСТЬ: у квитанции ${key} версий ${versions.length}`);
+    }
+    const body = JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8'));
+    if (key !== fileReceiptKey(body.plainSha, body.versionId)) {
+      throw new Error(`квитанция ${key}: содержимое не совпадает с именем`);
+    }
+    out.set(body.plainSha, body);
+  }
+  return out;
+}
+
+async function files() {
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  if (!FILES.length) throw new Error('LOGS_FILES не задан');
+  await withLock(async () => {
+    const known = await fileReceipts();
+    let stored = 0;
+    let same = 0;
+    let unreadable = 0;
+    for (const base of FILES) {
+      const src = fileSource(base);
+      for (const g of closedGenerations(base)) {
+        let plain;
+        try {
+          const raw = readFileSync(g.path);
+          plain = g.gz ? gunzipSync(raw) : raw;
+        } catch {
+          // Поколение сжимается или удаляется ротацией прямо сейчас —
+          // следующий проход прочитает его готовым.
+          unreadable++;
+          continue;
+        }
+        if (!plain.length) continue;
+        const plainSha = sha256Hex(plain);
+        if (known.has(plainSha)) {
+          same++;
+          continue;
+        }
+        const key = fileKey(src, plainSha);
+        // Уже записанная версия (сбой до квитанции) подтверждается по
+        // содержимому; чужое содержимое под ключом — конфликт.
+        let versionId = null;
+        let objSha = null;
+        const existing = (await listVersions(key)).filter((v) => v.key === key);
+        for (const v of existing) {
+          const got = await plainOfVersion(key, v.versionId, keyMat);
+          if (got && sha256Hex(got.plain) === plainSha) {
+            versionId = v.versionId;
+            objSha = got.objSha;
+            break;
+          }
+        }
+        if (!versionId && existing.length) {
+          throw new Error(`КОНФЛИКТ: под ${key} другое содержимое — без перезаписи, нужен разбор`);
+        }
+        if (!versionId) {
+          versionId = await putObject(key, seal(plain, keyMat.key), {
+            format: `file+${FORMAT}`,
+            source: src,
+          });
+          const got = await plainOfVersion(key, versionId, keyMat);
+          if (!got || sha256Hex(got.plain) !== plainSha) {
+            throw new Error(`${key}@${versionId}: записанное не читается в прежнем виде`);
+          }
+          objSha = got.objSha;
+          if (env.LOGS_TEST_CRASH === 'file-after-put') process.exit(96);
+        }
+        const body = {
+          kind: 'file',
+          key,
+          versionId,
+          source: src,
+          name: g.name,
+          size: plain.length,
+          plainSha,
+          objSha,
+          mtime: new Date(statSync(g.path).mtimeMs).toISOString(),
+          at: new Date().toISOString(),
+        };
+        await putObject(fileReceiptKey(plainSha, versionId), Buffer.from(JSON.stringify(body)));
+        known.set(plainSha, body);
+        stored++;
+        console.log(`файл ${g.path}: записан (${plain.length} байт)`);
+      }
+    }
+    writeJsonAtomic(FILES_STATE, {
+      lastOkAt: new Date().toISOString(),
+      stored,
+      same,
+      unreadable,
+      known: known.size,
+    });
+    console.log(
+      `файлы: записано ${stored}, уже в архиве ${same}, не прочитано сейчас ${unreadable}, всего в архиве ${known.size}`,
+    );
+  });
+}
+
+/** Проверка файлов архива: каждая квитанция — своей версией, хеши. */
+async function verifyFiles(keyMat, problems, foreign) {
+  const known = await fileReceipts();
+  const byKey = groupByKey(await listVersions('f/'));
+  for (const r of known.values()) {
+    const got = await plainOfVersion(r.key, r.versionId, keyMat);
+    if (!got) {
+      problems.push(`файл ${r.source}/${r.name}: версии нет или не расшифрована — утрата архива`);
+      continue;
+    }
+    if (got.objSha !== r.objSha || sha256Hex(got.plain) !== r.plainSha) {
+      problems.push(`файл ${r.source}/${r.name}: хеш не совпал`);
+    }
+    const others = (byKey.get(r.key) ?? []).filter((v) => v.versionId !== r.versionId);
+    if (others.length) foreign.push(`${r.key}: посторонних версий ${others.length}`);
+  }
+  return known.size;
 }
 
 // --------------------------------------------------------- наблюдение
@@ -1073,6 +1238,16 @@ async function writeMetrics(state, failure) {
     archiveGaps: state?.archiveGaps?.length ?? 0,
     unconfirmed: state?.unconfirmed?.length ?? 0,
     archiveStartEpoch: state?.startedAt ? Math.floor(Date.parse(state.startedAt) / 1000) : null,
+    // Файлы почты: null — не настроены; lastOkEpoch null — успешного прохода
+    // ещё не было.
+    files: FILES.length
+      ? {
+          lastOkEpoch: (() => {
+            const t = readJson(FILES_STATE)?.lastOkAt;
+            return t ? Math.floor(Date.parse(t) / 1000) : null;
+          })(),
+        }
+      : null,
     lastHour: { ...sum, coveredSec },
     inflow: {
       lastHourBytes: hourComplete ? sum.bytes : null,
@@ -1238,6 +1413,7 @@ function copyDir() {
 
 const packFile = (to, p) => join(to, 'packs', `${p.day}.${p.versionId}.pack`);
 const chunkFile = (to, r) => join(to, 'chunks', `${r.key.split('/').pop()}.${r.versionId}`);
+const copyFile = (to, r) => join(to, 'files', `${r.plainSha}.${r.versionId}`);
 
 /** Пакет из локального файла: проверенные порции `key@versionId` или проблема. */
 function packParts(to, p, keyMat) {
@@ -1339,8 +1515,19 @@ async function pull() {
     writeFileSync(chunkFile(to, r), sealed);
     downloaded++;
   }
+  // Файлы почты — все квитанции; версии, которой нет, проверка копии
+  // назовёт утратой.
+  mkdirSync(join(to, 'files'), { recursive: true });
+  const fileList = [...(await fileReceipts()).values()];
+  for (const r of fileList) {
+    if (existsSync(copyFile(to, r))) continue;
+    const sealed = await getVersion(r.key, r.versionId);
+    if (!sealed) continue;
+    writeFileSync(copyFile(to, r), sealed);
+    downloaded++;
+  }
 
-  const manifest = { at: new Date().toISOString(), anchor, receipts, packs };
+  const manifest = { at: new Date().toISOString(), anchor, receipts, packs, files: fileList };
   const tmp = join(to, `${MANIFEST}.tmp`);
   writeFileSync(tmp, seal(Buffer.from(JSON.stringify(manifest)), keyMat.key));
   renameSync(tmp, join(to, MANIFEST));
@@ -1418,6 +1605,26 @@ function checkCopy(to, keyMat) {
     viaChunk++;
   }
 
+  // Файлы почты: каждый по квитанции — есть в копии и сходится.
+  const fileList = manifest.files ?? [];
+  for (const r of fileList) {
+    const local = copyFile(to, r);
+    if (!existsSync(local)) {
+      problems.push(`файл ${r.source}/${r.name}: нет в копии — утрата архива`);
+      continue;
+    }
+    const sealed = readFileSync(local);
+    let plain = null;
+    try {
+      plain = open(sealed, keyMat.key);
+    } catch {
+      /* ниже — проблема */
+    }
+    if (!plain || sha256Hex(sealed) !== r.objSha || sha256Hex(plain) !== r.plainSha) {
+      problems.push(`файл ${r.source}/${r.name}: копия не сошлась с квитанцией`);
+    }
+  }
+
   // Покрытие от границы до последней ожидаемой записи (по всем квитанциям).
   const covered = mergeRanges([...ok, ...lost]);
   const isCovered = (a, b) => covered.some((c) => c.first <= a && b <= c.last);
@@ -1450,6 +1657,7 @@ function checkCopy(to, keyMat) {
     from: str(start),
     to: str(expectedEnd),
     packs: packs.length,
+    files: fileList.length,
     chunksViaPack: viaPack,
     chunksSeparate: viaChunk,
     chunksAbsent: absent.length,
@@ -1460,7 +1668,7 @@ function checkCopy(to, keyMat) {
   };
   writeFileSync(join(to, 'PULLED.json'), JSON.stringify(summary, null, 2));
   console.log(
-    `копия: записи ${summary.from}–${summary.to}, пакетов: ${packs.length}, порций из пакетов: ${viaPack}, отдельно: ${viaChunk}, нет в копии: ${absent.length}, пропусков: ${gaps.length}, проблем: ${problems.length}`,
+    `копия: записи ${summary.from}–${summary.to}, пакетов: ${packs.length}, порций из пакетов: ${viaPack}, отдельно: ${viaChunk}, нет в копии: ${absent.length}, файлов: ${fileList.length}, пропусков: ${gaps.length}, проблем: ${problems.length}`,
   );
   for (const p of [...gaps.map((g) => `пропуск ${g}`), ...problems]) console.log(`  ${p}`);
   const failedCheck = gaps.length || problems.length;
@@ -1668,6 +1876,7 @@ const commands = {
   pack,
   pull,
   'verify-copy': verifyCopy,
+  files,
   find,
 };
 const command = process.argv[2];
