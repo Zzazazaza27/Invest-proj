@@ -1380,6 +1380,91 @@ try {
     metrics().files !== undefined && val('logs.files.age', { ...mF, files: null }) === UNKNOWN,
   );
 
+  // ---------------------------------------------------- S: новая нумерация
+  console.log('\n▸ S. Новая нумерация journald (аварийная остановка journald)');
+  const sidNow = () => JSON.parse(inCt(`cat ${ARCH_ENV.LOGS_STATE_DIR}/state.json`)).seqId;
+  const anchorsAll = async () => {
+    const out = [];
+    for (const k of await allKeysUnder('anchors/')) {
+      out.push(JSON.parse(await (await rootReq('GET', k)).text()));
+    }
+    return out;
+  };
+  check('проход', arch('run').code === 0);
+  const oldSid = sidNow();
+  inCt(
+    'd=$(ls -d /var/log/journal/*); systemctl kill -s KILL systemd-journald; sleep 1; mv $d/system.journal $d/system.journal~; systemctl restart systemd-journald; sleep 1',
+  );
+  const tS = new Date().toISOString();
+  gen(10, 'sS');
+  const rS = arch('run');
+  const newSid = sidNow();
+  const aS = await anchorsAll();
+  const newAnchor = aS.find((a) => a.seqId === newSid);
+  check(
+    'новая нумерация: своя граница «после записи 0» в S3, прежняя указана',
+    rS.code === 0 &&
+      newSid !== oldSid &&
+      rS.out.includes('новая нумерация журнала') &&
+      aS.length === 2 &&
+      newAnchor?.afterSeq === '0' &&
+      newAnchor?.after?.seqId === oldSid,
+    `${rS.out.split('\n').find((l) => l.includes('нумерация')) ?? rS.out.split('\n').at(-1)}; границ ${aS.length}`,
+  );
+  const ofSid = (sid) => catalog().filter((r) => r.key.includes(`/${sid}/`));
+  check(
+    'порции новой нумерации с записи 1, без ложной потери в начале',
+    ofSid(newSid).some((r) => r.kind === 'chunk' && r.first === '1') &&
+      !ofSid(newSid).some((r) => r.kind === 'loss'),
+    ofSid(newSid)
+      .map((r) => `${r.kind} ${r.first}–${r.last}`)
+      .join(', '),
+  );
+  verifyOk('S');
+  pullCase('S', expectAfterRun());
+  const fS2 = findOut(`--from ${tS} --source w08b-test`);
+  check(
+    'поиск через смену нумерации',
+    fS2.code === 0 && foundOf(fS2.out) === 10,
+    fS2.out.split('\n').at(-1),
+  );
+  // Потеря состояния: rebuild собирает обе нумерации.
+  loseState();
+  const rbS = arch('rebuild');
+  check(
+    'rebuild: каталог по обеим нумерациям',
+    rbS.code === 0 && ofSid(oldSid).length > 0 && ofSid(newSid).length > 0 && sidNow() === newSid,
+    rbS.out.split('\n')[0],
+  );
+  verifyOk('S-rebuild');
+  // Утрата порции прежней нумерации, journald её ещё хранит: дочитывается
+  // по курсору из ID нумерации и номера, без отметки потери.
+  const oldLast = ofSid(oldSid)
+    .filter((r) => r.kind === 'chunk')
+    .sort(byFirst)
+    .at(-1);
+  await dropAll([oldLast]);
+  loseState();
+  const rbS2 = arch('rebuild');
+  check(
+    'утраченная порция прежней нумерации восполнена из journald',
+    rbS2.code === 0 &&
+      rbS2.out.includes(`восполнено из journald: записи ${oldLast.first}`) &&
+      !ofSid(oldSid).some(
+        (r) =>
+          r.kind === 'loss' &&
+          BigInt(r.first) <= BigInt(oldLast.last) &&
+          BigInt(oldLast.first) <= BigInt(r.last),
+      ),
+    rbS2.out
+      .split('\n')
+      .filter((l) => /восполнено|ПОТЕРЯ|ПРОПУСК/.test(l))
+      .join(' | ') || rbS2.out,
+  );
+  check('проход', arch('run').code === 0);
+  verifyOk('S-восполнение');
+  pullCase('S-восполнение', expectAfterRun());
+
   // ---------------------------------------------------- E2: утрата файла
   console.log('\n▸ E2. Утрата файла почты в архиве');
   const lostFile = (await fileKeys())[0];

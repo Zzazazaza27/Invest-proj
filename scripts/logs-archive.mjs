@@ -177,7 +177,13 @@ function withLock(fn) {
  * Прочитать записи: после курсора (`after`) или начиная с него (`from`),
  * не больше `maxEntries` и (кроме первой) не больше `maxBytes` байт.
  */
-function readJournal({ after = null, from = null, maxEntries = Infinity, maxBytes = MAX_CHUNK }) {
+function readJournal({
+  after = null,
+  from = null,
+  maxEntries = Infinity,
+  maxBytes = MAX_CHUNK,
+  stop = null,
+}) {
   const args = ['-o', 'export', '--no-pager', ...JOURNAL_ARGS];
   if (after) args.push('--after-cursor', after);
   else if (from) args.push('--cursor', from);
@@ -192,7 +198,11 @@ function readJournal({ after = null, from = null, maxEntries = Infinity, maxByte
     child.stdout.on('data', (chunk) => {
       if (stopped) return;
       for (const e of reader.push(chunk)) {
-        if (entries.length >= maxEntries || (entries.length && bytes + e.raw.length > maxBytes)) {
+        if (
+          entries.length >= maxEntries ||
+          (entries.length && bytes + e.raw.length > maxBytes) ||
+          (stop && stop(e))
+        ) {
           stopped = true;
           child.kill();
           break;
@@ -489,6 +499,169 @@ async function adoptConfirmed(state) {
   }
 }
 
+// ------------------------------------------------------ нумерации journald
+
+/**
+ * Записи одной нумерации `sid` с номерами a..b (b = null — до её конца)
+ * из journald, через курсор из ID нумерации и номера — в архив: подряд
+ * идущие — порциями с квитанциями, дыры — отметками потерь с причиной
+ * `holeReason(x, y)`. Возвращает строки каталога.
+ */
+async function fillRange(sid, a, b, keyMat, holeReason) {
+  const entries = (
+    await readJournal({
+      from: `s=${sid};i=${a.toString(16)}`,
+      maxBytes: Infinity,
+      stop: (e) => e.seqId !== sid || (b !== null && e.seq > b),
+    })
+  ).filter((e) => e.seqId === sid && e.seq >= a && (b === null || e.seq <= b));
+  const rows = [];
+  let expected = a;
+  let run = [];
+  let bytes = 0;
+  const flush = async () => {
+    if (!run.length) return;
+    const key = chunkKey(PREFIX, sid, run[0].seq, run.at(-1).seq);
+    const res = await storeChunk(key, run, keyMat);
+    const row = catalogRow(key, run, res);
+    await putReceipt(row);
+    rows.push(row);
+    run = [];
+    bytes = 0;
+  };
+  for (const e of entries) {
+    if (e.seq > expected) {
+      await flush();
+      // В тихом журнале (b = null) дыра в начале хвоста — вытеснение до
+      // архивации; внутри известного отрезка причину даёт вызывающий.
+      rows.push(await storeLoss(sid, expected, e.seq - 1n, holeReason(expected, e.seq - 1n)));
+    }
+    if (run.length && bytes + e.raw.length > MAX_CHUNK) await flush();
+    run.push(e);
+    bytes += e.raw.length;
+    expected = e.seq + 1n;
+  }
+  await flush();
+  if (b !== null && expected <= b)
+    rows.push(await storeLoss(sid, expected, b, holeReason(expected, b)));
+  for (const r of rows) {
+    console.error(
+      r.kind === 'loss'
+        ? `${LOSS_LABELS[r.reason]}: записи ${r.first}–${r.last} журнала ${sid}`
+        : `восполнено из journald: записи ${r.first}–${r.last} журнала ${sid}`,
+    );
+  }
+  return rows;
+}
+
+/**
+ * Новая нумерация journald (seqnum_id): journald заводит её после аварийной
+ * остановки, номера записей начинаются с 1. Для неё закрепляется своя
+ * граница «после записи 0» — пропуск в начале станет учтённой потерей, а не
+ * молчаливым началом. Прежняя нумерация к этому моменту дочитана (export
+ * идёт по времени); её пропуски архива дочитываются из journald по курсору
+ * или отмечаются утратой. Возврат к более старой нумерации — две нумерации
+ * пишутся вперемешку: остановка, нужен разбор.
+ */
+async function switchJournal(state, sid, keyMat) {
+  const anchors = await readAnchors();
+  const known = anchors.find((x) => x.seqId === sid);
+  const current = anchors.find((x) => x.seqId === state.seqId);
+  if (known && current && known.at < current.at) {
+    throw new Error(
+      `НЕОДНОЗНАЧНОСТЬ: нумерации журнала ${state.seqId} и ${sid} идут вперемешку — нужен разбор`,
+    );
+  }
+  for (const g of state.archiveGaps ?? []) {
+    await fillRange(state.seqId, BigInt(g.first), BigInt(g.last), keyMat, () => 'archive-missing');
+  }
+  if (!known) {
+    await putAnchor({
+      seqId: sid,
+      afterSeq: '0',
+      afterCursor: null,
+      at: new Date().toISOString(),
+      host: hostname(),
+      after: { seqId: state.seqId, lastSeq: str(state.lastSeq) },
+    });
+  }
+  console.log(
+    `новая нумерация журнала ${sid}; прежняя ${state.seqId} дочитана до ${state.lastSeq}`,
+  );
+  state.seqId = sid;
+  state.lastSeq = BigInt(known?.afterSeq ?? '0');
+  state.archiveGaps = [];
+  state.beyond = (state.beyond ?? []).filter((x) => parseChunkKey(x.key)?.seqId === sid);
+  saveState(state);
+}
+
+/** Квитанции нумерации: действующие (версия порции есть) и утраченные. */
+async function receiptsOf(sid) {
+  const objectVersions = groupByKey(await listVersions(`${PREFIX}/${sid}/`));
+  const receipts = new Map();
+  const lostConfirmed = [];
+  for (const [key, versions] of groupByKey(await listVersions(`r/${sid}/`))) {
+    const r = parseReceiptKey(key);
+    if (!r) continue;
+    if (versions.length !== 1) {
+      throw new Error(
+        `НЕОДНОЗНАЧНОСТЬ: у квитанции ${key} версий ${versions.length} — нужен разбор`,
+      );
+    }
+    const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
+    if (!(objectVersions.get(range) ?? []).some((v) => v.versionId === r.versionId)) {
+      lostConfirmed.push(range);
+      continue;
+    }
+    receipts.set(range, [
+      ...(receipts.get(range) ?? []),
+      { key, versionId: versions[0].versionId },
+    ]);
+  }
+  for (const [range, list] of receipts) {
+    if (list.length > 1) {
+      throw new Error(`НЕОДНОЗНАЧНОСТЬ: на отрезок ${range} действующих квитанций ${list.length}`);
+    }
+  }
+  return { objectVersions, receipts, lostConfirmed };
+}
+
+/**
+ * Закрытая (не текущая) нумерация при восстановлении: строки каталога по
+ * действующим квитанциям; непокрытое от границы до последней квитанции
+ * дочитывается из journald или отмечается утратой архива (была квитанция)
+ * либо «не проверяемо» (квитанции не было); записи за последней квитанцией,
+ * которые journald ещё хранит, архивируются.
+ */
+async function rebuildClosed(anchor, keyMat) {
+  const sid = anchor.seqId;
+  const start = BigInt(anchor.afterSeq) + 1n;
+  const { receipts, lostConfirmed } = await receiptsOf(sid);
+  const rows = [];
+  for (const [, [rec]] of receipts) {
+    rows.push(JSON.parse((await getVersion(rec.key, rec.versionId)).toString('utf8')));
+  }
+  const lost = lostConfirmed.map((k) => parseChunkKey(k));
+  const maxLast = [...rows.map((r) => BigInt(r.last)), ...lost.map((l) => l.last)].reduce(
+    (m, x) => (x > m ? x : m),
+    start - 1n,
+  );
+  const covered = mergeRanges(rows.map((r) => ({ first: BigInt(r.first), last: BigInt(r.last) })));
+  const holes = [];
+  let at = start;
+  for (const c of covered) {
+    if (c.last < start) continue;
+    if (c.first > at) holes.push({ first: at, last: c.first - 1n });
+    if (c.last + 1n > at) at = c.last + 1n;
+  }
+  if (at <= maxLast) holes.push({ first: at, last: maxLast });
+  const reason = (x, y) =>
+    lost.some((l) => l.first <= y && x <= l.last) ? 'archive-missing' : 'archive-unverifiable';
+  for (const h of holes) rows.push(...(await fillRange(sid, h.first, h.last, keyMat, reason)));
+  rows.push(...(await fillRange(sid, maxLast + 1n, null, keyMat, () => 'journald-vacuumed')));
+  return rows.sort((x, y) => (BigInt(x.first) < BigInt(y.first) ? -1 : 1));
+}
+
 async function runPass() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
   await withLock(async () => {
@@ -525,6 +698,10 @@ async function runPass() {
       // начало journald уже вытеснил, сверке не поддаётся — явная отметка
       // «не проверяемо», а не доверие; остальное — отметка потери.
       const avail = read[0];
+      if (avail.seqId !== state.seqId) {
+        await switchJournal(state, avail.seqId, keyMat);
+        continue;
+      }
       while (
         avail.seqId === state.seqId &&
         state.lastSeq !== null &&
@@ -677,36 +854,18 @@ async function rebuildState() {
     }
     return null;
   }
-  const anchor = anchors.sort((a, b) => (a.at < b.at ? -1 : 1)).at(-1);
+  anchors.sort((a, b) => (a.at < b.at ? -1 : 1));
+  // Закрытые нумерации — по своим квитанциям и journald; текущая — ниже,
+  // цепочкой от своей границы.
+  const closedRows = [];
+  for (const a of anchors.slice(0, -1)) {
+    closedRows.push(...(await rebuildClosed(a, archiveKey(env.LOGS_ARCHIVE_KEY))));
+  }
+  const anchor = anchors.at(-1);
   const sid = anchor.seqId;
   const expectedStart = BigInt(anchor.afterSeq) + 1n;
 
-  const objectVersions = groupByKey(await listVersions(`${PREFIX}/${sid}/`));
-  const receipts = new Map();
-  const lostConfirmed = [];
-  for (const [key, versions] of groupByKey(await listVersions(`r/${sid}/`))) {
-    const r = parseReceiptKey(key);
-    if (!r) continue;
-    if (versions.length !== 1) {
-      throw new Error(
-        `НЕОДНОЗНАЧНОСТЬ: у квитанции ${key} версий ${versions.length} — нужен разбор`,
-      );
-    }
-    const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
-    if (!(objectVersions.get(range) ?? []).some((v) => v.versionId === r.versionId)) {
-      lostConfirmed.push(range);
-      continue;
-    }
-    receipts.set(range, [
-      ...(receipts.get(range) ?? []),
-      { key, versionId: versions[0].versionId },
-    ]);
-  }
-  for (const [range, list] of receipts) {
-    if (list.length > 1) {
-      throw new Error(`НЕОДНОЗНАЧНОСТЬ: на отрезок ${range} действующих квитанций ${list.length}`);
-    }
-  }
+  const { objectVersions, receipts, lostConfirmed } = await receiptsOf(sid);
 
   const objects = [...objectVersions.keys()]
     .map((k) => ({ key: k, ...parseChunkKey(k) }))
@@ -720,7 +879,8 @@ async function rebuildState() {
     const [rec] = receipts.get(it.key);
     rows.push(JSON.parse((await getVersion(rec.key, rec.versionId)).toString('utf8')));
   }
-  writeFileSync(CATALOG, rows.length ? rows.map((r) => JSON.stringify(r)).join('\n') + '\n' : '');
+  const all = [...closedRows, ...rows];
+  writeFileSync(CATALOG, all.length ? all.map((r) => JSON.stringify(r)).join('\n') + '\n' : '');
   const lastChunk = [...rows].reverse().find((r) => r.kind === 'chunk');
   const later = [
     ...beyond.map((b) => ({ key: b.key, first: b.first, receipt: receipts.get(b.key)[0] })),
@@ -743,7 +903,9 @@ async function rebuildState() {
   const state = {
     seqId: sid,
     lastSeq: end,
-    lastCursor: lastChunk?.lastCursor ?? anchor.afterCursor,
+    // У новой нумерации нет курсора границы — курсор из её ID и номера
+    // (journalctl ищет по номеру; запись 0 не существует, читается с 1).
+    lastCursor: lastChunk?.lastCursor ?? anchor.afterCursor ?? `s=${sid};i=${end.toString(16)}`,
     pending: null,
     rebuiltAt: new Date().toISOString(),
     startedAt: anchor.at,
@@ -825,19 +987,33 @@ async function verify() {
   // Независимо от состояния: каждая квитанция в S3 — отрезок, который архив
   // обязан покрывать подтверждённой порцией или учтённой отметкой потери.
   // Утрата подтверждённой порции (в том числе последней) не даёт зелёного.
-  const covered = mergeRanges(all.map((r) => ({ first: BigInt(r.first), last: BigInt(r.last) })));
-  const isCovered = (a, b) => covered.some((c) => c.first <= a && b <= c.last);
+  // Номера записей сравнимы только внутри одной нумерации journald — всё
+  // считается по каждой границе отдельно.
   let receiptsSeen = 0;
-  for (const [key] of groupByKey(await listVersions(`r/${state.seqId}/`))) {
-    const r = parseReceiptKey(key);
-    if (!r) continue;
-    receiptsSeen++;
-    if (!isCovered(r.first, r.last)) {
-      problems.push(
-        `отрезок ${r.first}–${r.last}: квитанция есть, в каталоге не покрыт — утрата архива`,
-      );
+  const anchors = await readAnchors();
+  for (const a of anchors) {
+    const sid = a.seqId;
+    const own = all.filter((r) => parseChunkKey(r.key)?.seqId === sid);
+    const covered = mergeRanges(own.map((r) => ({ first: BigInt(r.first), last: BigInt(r.last) })));
+    const isCovered = (x, y) => covered.some((c) => c.first <= x && y <= c.last);
+    for (const [key] of groupByKey(await listVersions(`r/${sid}/`))) {
+      const r = parseReceiptKey(key);
+      if (!r) continue;
+      receiptsSeen++;
+      if (!isCovered(r.first, r.last)) {
+        problems.push(
+          `отрезок ${r.first}–${r.last} журнала ${sid}: квитанция есть, в каталоге не покрыт — утрата архива`,
+        );
+      }
+    }
+    // Каталог нумерации непрерывен от её границы.
+    const start = BigInt(a.afterSeq) + 1n;
+    const tail = covered.filter((c) => c.last >= start);
+    if (tail.length > 1 || (tail.length && tail[0].first > start)) {
+      problems.push(`журнал ${sid}: каталог прерывается после границы ${a.afterSeq}`);
     }
   }
+  if (anchors.length > 1) console.log(`нумераций журнала: ${anchors.length}`);
   const foreign = [];
   const byKey = groupByKey(await listVersions(`${PREFIX}/`));
   for (const r of rows) {
@@ -1276,7 +1452,7 @@ async function writeMetrics(state, failure) {
 }
 
 /** Снимок объёма суток по источникам — объектом в архиве и в файле снимков. */
-async function putVolumeSnapshot(sid, day, parts) {
+async function putVolumeSnapshot(day, parts) {
   const bySource = {};
   let total = 0;
   let entries = 0;
@@ -1289,7 +1465,7 @@ async function putVolumeSnapshot(sid, day, parts) {
     }
   }
   await putObject(
-    `volume/${sid}/${day}.json`,
+    `volume/${day}.json`,
     Buffer.from(JSON.stringify({ day, total, entries, bySource })),
   );
   const snaps = readJson(SNAPSHOTS) ?? { daily: {} };
@@ -1330,8 +1506,9 @@ function parsePack(plain) {
   return manifest.map((m) => ({ ...m, plain: body.subarray(m.offset, m.offset + m.length) }));
 }
 
-const packKey = (sid, day) => `p/${sid}/${day}.pack`;
-const packReceiptKey = (sid, day, versionId) => `pr/${sid}/${day}/${versionId}.json`;
+// Пакет — на сутки, по всем нумерациям журнала сразу.
+const packKey = (day) => `p/${day}.pack`;
+const packReceiptKey = (day, versionId) => `pr/${day}/${versionId}.json`;
 
 /**
  * Собрать пакеты закрытых суток (UTC). Сутки закрыты, когда архиватор дочитал
@@ -1354,9 +1531,7 @@ async function pack() {
         byDay.set(d, [...(byDay.get(d) ?? []), r]);
       }
     }
-    const existing = new Set(
-      (await listVersions(`pr/${state.seqId}/`)).map((v) => v.key.split('/')[2]),
-    );
+    const existing = new Set((await listVersions('pr/')).map((v) => v.key.split('/')[1]));
     let made = 0;
     for (const [day, list] of [...byDay].sort()) {
       if (existing.has(day)) continue;
@@ -1370,10 +1545,10 @@ async function pack() {
       }
       const plain = buildPack(parts);
       const sealed = seal(plain, keyMat.key);
-      const key = packKey(state.seqId, day);
+      const key = packKey(day);
       const versionId = await putObject(key, sealed, { format: `pack+${FORMAT}` });
       await putObject(
-        packReceiptKey(state.seqId, day, versionId),
+        packReceiptKey(day, versionId),
         Buffer.from(
           JSON.stringify({
             day,
@@ -1392,7 +1567,7 @@ async function pack() {
           }),
         ),
       );
-      await putVolumeSnapshot(state.seqId, day, parts);
+      await putVolumeSnapshot(day, parts);
       made++;
       console.log(`пакет ${day}: порций ${parts.length}`);
     }
@@ -1465,31 +1640,35 @@ async function pull() {
   mkdirSync(join(to, 'packs'), { recursive: true });
   mkdirSync(join(to, 'chunks'), { recursive: true });
 
-  const anchors = await readAnchors();
+  const anchors = (await readAnchors()).sort((a, b) => (a.at < b.at ? -1 : 1));
   if (!anchors.length) throw new Error('в S3 нет границы архива');
-  const anchor = anchors.sort((a, b) => (a.at < b.at ? -1 : 1)).at(-1);
-  const sid = anchor.seqId;
 
+  // Квитанции всех нумераций journald, включая квитанции на отсутствующие
+  // версии — свидетельство утраты.
   const receipts = [];
-  for (const [key, versions] of groupByKey(await listVersions(`r/${sid}/`))) {
-    const r = parseReceiptKey(key);
-    if (!r) continue;
-    if (versions.length !== 1)
-      throw new Error(`НЕОДНОЗНАЧНОСТЬ: у квитанции ${key} версий ${versions.length}`);
-    const body = JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8'));
-    const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
-    if (
-      body.key !== range ||
-      body.versionId !== r.versionId ||
-      BigInt(body.first) !== r.first ||
-      BigInt(body.last) !== r.last
-    ) {
-      throw new Error(`квитанция ${key}: содержимое не совпадает с именем`);
+  const versions = new Map();
+  for (const { seqId: sid } of anchors) {
+    for (const [k, v] of groupByKey(await listVersions(`${PREFIX}/${sid}/`))) versions.set(k, v);
+    for (const [key, list] of groupByKey(await listVersions(`r/${sid}/`))) {
+      const r = parseReceiptKey(key);
+      if (!r) continue;
+      if (list.length !== 1)
+        throw new Error(`НЕОДНОЗНАЧНОСТЬ: у квитанции ${key} версий ${list.length}`);
+      const body = JSON.parse((await getVersion(key, list[0].versionId)).toString('utf8'));
+      const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
+      if (
+        body.key !== range ||
+        body.versionId !== r.versionId ||
+        BigInt(body.first) !== r.first ||
+        BigInt(body.last) !== r.last
+      ) {
+        throw new Error(`квитанция ${key}: содержимое не совпадает с именем`);
+      }
+      receipts.push(body);
     }
-    receipts.push(body);
   }
   const packs = [];
-  for (const [key, versions] of groupByKey(await listVersions(`pr/${sid}/`))) {
+  for (const [key, versions] of groupByKey(await listVersions('pr/'))) {
     if (versions.length !== 1) throw new Error(`НЕОДНОЗНАЧНОСТЬ: квитанция пакета ${key}`);
     packs.push(JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8')));
   }
@@ -1505,7 +1684,6 @@ async function pull() {
     }
     for (const k of packParts(to, p, keyMat).parts.keys()) inPacks.add(k);
   }
-  const versions = groupByKey(await listVersions(`${PREFIX}/${sid}/`));
   for (const r of receipts) {
     if (r.kind !== 'chunk' || inPacks.has(`${r.key}@${r.versionId}`)) continue;
     if (existsSync(chunkFile(to, r))) continue;
@@ -1527,7 +1705,7 @@ async function pull() {
     downloaded++;
   }
 
-  const manifest = { at: new Date().toISOString(), anchor, receipts, packs, files: fileList };
+  const manifest = { at: new Date().toISOString(), anchors, receipts, packs, files: fileList };
   const tmp = join(to, `${MANIFEST}.tmp`);
   writeFileSync(tmp, seal(Buffer.from(JSON.stringify(manifest)), keyMat.key));
   renameSync(tmp, join(to, MANIFEST));
@@ -1554,7 +1732,8 @@ function checkCopy(to, keyMat) {
   } catch {
     throw new Error(`опись копии ${MANIFEST} отсутствует, испорчена или другой ключ`);
   }
-  const { anchor, receipts, packs } = manifest;
+  const { receipts, packs } = manifest;
+  const anchors = manifest.anchors ?? [manifest.anchor];
   const problems = [];
   const fromPacks = new Map();
   for (const p of packs) {
@@ -1570,7 +1749,11 @@ function checkCopy(to, keyMat) {
   let viaPack = 0;
   let viaChunk = 0;
   for (const r of receipts) {
-    const range = { first: BigInt(r.first), last: BigInt(r.last) };
+    const range = {
+      sid: parseChunkKey(r.key)?.seqId,
+      first: BigInt(r.first),
+      last: BigInt(r.last),
+    };
     if (r.kind === 'loss') {
       lost.push({ ...range, reason: r.reason });
       continue;
@@ -1625,37 +1808,45 @@ function checkCopy(to, keyMat) {
     }
   }
 
-  // Покрытие от границы до последней ожидаемой записи (по всем квитанциям).
-  const covered = mergeRanges([...ok, ...lost]);
-  const isCovered = (a, b) => covered.some((c) => c.first <= a && b <= c.last);
-  for (const r of absent) {
-    if (!isCovered(BigInt(r.first), BigInt(r.last))) {
-      problems.push(
-        `отрезок ${r.first}–${r.last}: квитанция есть, порции нет ни отдельно, ни в пакете — утрата архива`,
-      );
-    }
-  }
-  const start = BigInt(anchor.afterSeq) + 1n;
-  const expectedEnd = receipts.reduce(
-    (m, r) => (BigInt(r.last) > m ? BigInt(r.last) : m),
-    start - 1n,
-  );
+  // Покрытие — по каждой нумерации journald отдельно: от её границы до
+  // последней ожидаемой записи (по всем квитанциям этой нумерации).
   const gaps = [];
-  let at = start;
-  for (const c of covered) {
-    if (c.first > at) gaps.push(`${at}–${c.first - 1n}`);
-    if (c.last + 1n > at) at = c.last + 1n;
+  const journals = [];
+  for (const a of anchors) {
+    const sid = a.seqId;
+    const own = (list) => list.filter((x) => x.sid === sid);
+    const covered = mergeRanges([...own(ok), ...own(lost)]);
+    const isCovered = (x, y) => covered.some((c) => c.first <= x && y <= c.last);
+    for (const r of absent) {
+      if (parseChunkKey(r.key)?.seqId !== sid) continue;
+      if (!isCovered(BigInt(r.first), BigInt(r.last))) {
+        problems.push(
+          `отрезок ${r.first}–${r.last}: квитанция есть, порции нет ни отдельно, ни в пакете — утрата архива`,
+        );
+      }
+    }
+    const start = BigInt(a.afterSeq) + 1n;
+    const expectedEnd = receipts
+      .filter((r) => parseChunkKey(r.key)?.seqId === sid)
+      .reduce((m, r) => (BigInt(r.last) > m ? BigInt(r.last) : m), start - 1n);
+    let at = start;
+    for (const c of covered) {
+      if (c.last < start) continue;
+      if (c.first > at) gaps.push(`${at}–${c.first - 1n}${anchors.length > 1 ? ` (${sid})` : ''}`);
+      if (c.last + 1n > at) at = c.last + 1n;
+    }
+    if (at <= expectedEnd) {
+      gaps.push(`${at}–${expectedEnd}${anchors.length > 1 ? ` (${sid})` : ''}`);
+    }
+    journals.push({ seqId: sid, from: str(start), to: str(expectedEnd) });
   }
-  if (at <= expectedEnd) gaps.push(`${at}–${expectedEnd}`);
 
   const lostRecords = lost.reduce((n, r) => n + (r.last - r.first + 1n), 0n);
   const byReason = {};
   for (const r of lost) byReason[r.reason] = (byReason[r.reason] ?? 0) + 1;
   const summary = {
     at: new Date().toISOString(),
-    seqId: anchor.seqId,
-    from: str(start),
-    to: str(expectedEnd),
+    journals,
     packs: packs.length,
     files: fileList.length,
     chunksViaPack: viaPack,
@@ -1668,7 +1859,7 @@ function checkCopy(to, keyMat) {
   };
   writeFileSync(join(to, 'PULLED.json'), JSON.stringify(summary, null, 2));
   console.log(
-    `копия: записи ${summary.from}–${summary.to}, пакетов: ${packs.length}, порций из пакетов: ${viaPack}, отдельно: ${viaChunk}, нет в копии: ${absent.length}, файлов: ${fileList.length}, пропусков: ${gaps.length}, проблем: ${problems.length}`,
+    `копия: записи ${journals.map((j) => `${j.from}–${j.to}`).join(', ')}, пакетов: ${packs.length}, порций из пакетов: ${viaPack}, отдельно: ${viaChunk}, нет в копии: ${absent.length}, файлов: ${fileList.length}, пропусков: ${gaps.length}, проблем: ${problems.length}`,
   );
   for (const p of [...gaps.map((g) => `пропуск ${g}`), ...problems]) console.log(`  ${p}`);
   const failedCheck = gaps.length || problems.length;
@@ -1808,14 +1999,41 @@ async function find() {
   const hit = chunks.filter((r) => r.from <= toUs && r.to >= fromUs);
   // Записи интервала лежат по номерам между последней порцией, целиком
   // раньше интервала, и первой, целиком позже; потери в этом отрезке
-  // задевают интервал.
-  const before = chunks.filter((r) => r.to < fromUs).at(-1);
-  const after = chunks.find((r) => r.from > toUs);
-  const lo = before ? BigInt(before.last) : -1n;
-  const hi = after ? BigInt(after.first) : null;
-  const losses = rows.filter(
-    (r) => r.kind === 'loss' && BigInt(r.last) > lo && (hi === null || BigInt(r.first) < hi),
-  );
+  // задевают интервал. Номера сравнимы только внутри нумерации journald —
+  // по каждой отдельно; нумерация целиком до интервала (следующая уже шла
+  // до его начала) или целиком после него не рассматривается.
+  const bySid = new Map();
+  for (const r of rows) {
+    const sid = parseChunkKey(r.key)?.seqId;
+    bySid.set(sid, [...(bySid.get(sid) ?? []), r]);
+  }
+  const firstTime = (sid) =>
+    Math.min(
+      ...bySid
+        .get(sid)
+        .filter((r) => r.kind === 'chunk')
+        .map((r) => r.from),
+      Infinity,
+    );
+  const sids = [...bySid.keys()].sort((a, b) => firstTime(a) - firstTime(b));
+  const has = (list, test) =>
+    list.some((s) => bySid.get(s).some((r) => r.kind === 'chunk' && test(r)));
+  const losses = [];
+  sids.forEach((sid, i) => {
+    if (has(sids.slice(i + 1), (r) => r.to < fromUs)) return;
+    if (has(sids.slice(0, i), (r) => r.from > toUs)) return;
+    const own = bySid.get(sid);
+    const ch = chunks.filter((r) => own.includes(r));
+    const before = ch.filter((r) => r.to < fromUs).at(-1);
+    const after = ch.find((r) => r.from > toUs);
+    const lo = before ? BigInt(before.last) : -1n;
+    const hi = after ? BigInt(after.first) : null;
+    losses.push(
+      ...own.filter(
+        (r) => r.kind === 'loss' && BigInt(r.last) > lo && (hi === null || BigInt(r.first) < hi),
+      ),
+    );
+  });
 
   const found = [];
   const problems = [];
@@ -1824,8 +2042,9 @@ async function find() {
   const seen = new Set();
   const take = (e) => {
     if (e.realtime === null || e.realtime < fromUs || e.realtime > toUs) return;
-    if (seen.has(e.seq)) return;
-    seen.add(e.seq);
+    const id = `${e.seqId}:${e.seq}`;
+    if (seen.has(id)) return;
+    seen.add(id);
     const f = exportFields(e.raw);
     if (match(f))
       found.push({ t: e.realtime, seq: e.seq, source: sourceOf(f), msg: f.MESSAGE ?? '' });
@@ -1847,7 +2066,7 @@ async function find() {
     }
   }
 
-  found.sort((a, b) => (a.seq < b.seq ? -1 : 1));
+  found.sort((a, b) => a.t - b.t);
   for (const x of found.slice(0, limit)) {
     // Управляющие символы (переводы строк, ESC) — пробелом: одна запись — одна строка.
     const msg = [...x.msg].map((c) => (c.charCodeAt(0) < 32 || c === '\x7f' ? ' ' : c)).join('');
