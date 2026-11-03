@@ -9,6 +9,7 @@
  *   node scripts/logs-archive.mjs verify    каждая порция — своей версией; вердикт
  *   node scripts/logs-archive.mjs pack      суточные пакеты закрытых суток
  *   node scripts/logs-archive.mjs pull --to <каталог>   ручная копия (добавочно)
+ *   node scripts/logs-archive.mjs verify-copy --to <каталог>   проверка копии без S3
  *
  * Источник — journald (`journalctl -o export`), курсоры даёт он; подтверждение
  * архива, повторы, каталог и обнаружение потерь — ответственность этого кода.
@@ -955,20 +956,65 @@ async function pack() {
 
 // ------------------------------------------------------------- скачивание
 
+const MANIFEST = 'MANIFEST.sealed';
+
+function copyDir() {
+  const i = process.argv.indexOf('--to');
+  const to = i > 0 ? process.argv[i + 1] : env.LOGS_PULL_TO || null;
+  if (!to) throw new Error('нужен --to <каталог>');
+  return to;
+}
+
+const packFile = (to, p) => join(to, 'packs', `${p.day}.${p.versionId}.pack`);
+const chunkFile = (to, r) => join(to, 'chunks', `${r.key.split('/').pop()}.${r.versionId}`);
+
+/** Пакет из локального файла: проверенные порции `key@versionId` или проблема. */
+function packParts(to, p, keyMat) {
+  const local = packFile(to, p);
+  if (!existsSync(local)) return { missing: true, parts: new Map() };
+  const sealed = readFileSync(local);
+  if (sha256Hex(sealed) !== p.objSha) {
+    return { problem: `пакет ${p.day}: хеш файла не совпал (порча копии)`, parts: new Map() };
+  }
+  let list;
+  try {
+    const plain = open(sealed, keyMat.key);
+    if (sha256Hex(plain) !== p.plainSha) throw new Error('исходный хеш');
+    list = parsePack(plain);
+  } catch {
+    return { problem: `пакет ${p.day}: не расшифрован или не сошёлся`, parts: new Map() };
+  }
+  const parts = new Map();
+  const problems = [];
+  for (const c of p.chunks) {
+    const part = list.find((x) => x.key === c.key && x.versionId === c.versionId);
+    if (
+      !part ||
+      sha256Hex(part.plain) !== c.plainSha ||
+      new ExportReader().push(part.plain).length !== c.count
+    ) {
+      problems.push(`пакет ${p.day}: порция ${c.key} не сошлась`);
+      continue;
+    }
+    parts.set(`${c.key}@${c.versionId}`, c);
+  }
+  return { problem: problems.join('; ') || null, parts };
+}
+
 /**
- * Ручная копия на ноутбук. Работает по S3 (граница, квитанции порций,
- * потерь и пакетов), а не по каталогу сервера: добавочно качает пакеты,
- * которых нет, и подтверждённые порции, ещё не вошедшие в пакет. Всё
- * скачанное — зашифрованным, как в архиве; проверка — расшифровкой в памяти
- * до исходного хеша и числа записей каждой порции.
+ * Ручная копия на ноутбук. Состав берётся из S3 — граница и ВСЕ квитанции
+ * порций и потерь, включая квитанции на версии, которых в архиве уже нет
+ * (это свидетельство утраты, а не мусор). Добавочно качаются пакеты и
+ * подтверждённые порции, которых нет ни в копии, ни в её исправных пакетах.
+ * Опись копии (граница, квитанции, пакеты) сохраняется рядом, зашифрованной
+ * ключом архива, и вердикт выносит проверка ЛОКАЛЬНОЙ копии — та же, что
+ * `verify-copy` без доступа к S3.
  *
  *   node scripts/logs-archive.mjs pull --to <каталог>
  */
 async function pull() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
-  const i = process.argv.indexOf('--to');
-  const to = i > 0 ? process.argv[i + 1] : env.LOGS_PULL_TO || null;
-  if (!to) throw new Error('нужен --to <каталог>');
+  const to = copyDir();
   mkdirSync(join(to, 'packs'), { recursive: true });
   mkdirSync(join(to, 'chunks'), { recursive: true });
 
@@ -977,17 +1023,24 @@ async function pull() {
   const anchor = anchors.sort((a, b) => (a.at < b.at ? -1 : 1)).at(-1);
   const sid = anchor.seqId;
 
-  // Квитанции порций и потерь; действующая — чья версия объекта есть.
-  const objectVersions = groupByKey(await listVersions(`${PREFIX}/${sid}/`));
   const receipts = [];
-  for (const [key] of groupByKey(await listVersions(`r/${sid}/`))) {
+  for (const [key, versions] of groupByKey(await listVersions(`r/${sid}/`))) {
     const r = parseReceiptKey(key);
     if (!r) continue;
+    if (versions.length !== 1)
+      throw new Error(`НЕОДНОЗНАЧНОСТЬ: у квитанции ${key} версий ${versions.length}`);
+    const body = JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8'));
     const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
-    if (!(objectVersions.get(range) ?? []).some((v) => v.versionId === r.versionId)) continue;
-    receipts.push({ ...r, range, key });
+    if (
+      body.key !== range ||
+      body.versionId !== r.versionId ||
+      BigInt(body.first) !== r.first ||
+      BigInt(body.last) !== r.last
+    ) {
+      throw new Error(`квитанция ${key}: содержимое не совпадает с именем`);
+    }
+    receipts.push(body);
   }
-  // Пакеты по их квитанциям.
   const packs = [];
   for (const [key, versions] of groupByKey(await listVersions(`pr/${sid}/`))) {
     if (versions.length !== 1) throw new Error(`НЕОДНОЗНАЧНОСТЬ: квитанция пакета ${key}`);
@@ -995,67 +1048,84 @@ async function pull() {
   }
 
   let downloaded = 0;
-  const problems = [];
-  const coveredByPack = new Set();
+  const inPacks = new Set();
   for (const p of packs) {
-    const local = join(to, 'packs', `${p.day}.${p.versionId}.pack`);
-    if (!existsSync(local)) {
+    if (!existsSync(packFile(to, p))) {
       const sealed = await getVersion(p.key, p.versionId);
-      if (!sealed) {
-        problems.push(`пакет ${p.day}: версии нет в архиве`);
-        continue;
-      }
-      writeFileSync(local, sealed);
+      if (!sealed) continue; // проверка копии назовёт отсутствие
+      writeFileSync(packFile(to, p), sealed);
       downloaded++;
     }
-    const sealed = readFileSync(local);
-    if (sha256Hex(sealed) !== p.objSha) {
-      problems.push(`пакет ${p.day}: хеш файла не совпал (порча копии)`);
-      continue;
-    }
-    let parts;
-    try {
-      parts = parsePack(open(sealed, keyMat.key));
-    } catch (error) {
-      problems.push(`пакет ${p.day}: не расшифрован (${error.message})`);
-      continue;
-    }
-    for (const c of p.chunks) {
-      const part = parts.find((x) => x.key === c.key && x.versionId === c.versionId);
-      if (
-        !part ||
-        sha256Hex(part.plain) !== c.plainSha ||
-        new ExportReader().push(part.plain).length !== c.count
-      ) {
-        problems.push(`пакет ${p.day}: порция ${c.key} не сошлась`);
-        continue;
-      }
-      coveredByPack.add(`${c.key}@${c.versionId}`);
-    }
+    for (const k of packParts(to, p, keyMat).parts.keys()) inPacks.add(k);
+  }
+  const versions = groupByKey(await listVersions(`${PREFIX}/${sid}/`));
+  for (const r of receipts) {
+    if (r.kind !== 'chunk' || inPacks.has(`${r.key}@${r.versionId}`)) continue;
+    if (existsSync(chunkFile(to, r))) continue;
+    if (!(versions.get(r.key) ?? []).some((v) => v.versionId === r.versionId)) continue;
+    const sealed = await getVersion(r.key, r.versionId);
+    if (!sealed) continue;
+    writeFileSync(chunkFile(to, r), sealed);
+    downloaded++;
   }
 
-  const ranges = [];
-  let lossRecords = 0n;
-  let losses = 0;
+  const manifest = { at: new Date().toISOString(), anchor, receipts, packs };
+  const tmp = join(to, `${MANIFEST}.tmp`);
+  writeFileSync(tmp, seal(Buffer.from(JSON.stringify(manifest)), keyMat.key));
+  renameSync(tmp, join(to, MANIFEST));
+  console.log(`скачано объектов: ${downloaded}`);
+  checkCopy(to, keyMat);
+}
+
+/**
+ * Проверка ручной копии ТОЛЬКО по локальным файлам и ключу — S3 не нужен.
+ * Ожидаемый состав — все квитанции описи до последней ожидаемой записи.
+ * Каждый отрезок покрыт точной подтверждённой порцией (отдельным файлом или
+ * внутри исправного пакета) либо учтённой отметкой потери; иначе — утрата.
+ *
+ *   node scripts/logs-archive.mjs verify-copy --to <каталог>
+ */
+function verifyCopy() {
+  checkCopy(copyDir(), archiveKey(env.LOGS_ARCHIVE_KEY));
+}
+
+function checkCopy(to, keyMat) {
+  let manifest;
+  try {
+    manifest = JSON.parse(open(readFileSync(join(to, MANIFEST)), keyMat.key).toString('utf8'));
+  } catch {
+    throw new Error(`опись копии ${MANIFEST} отсутствует, испорчена или другой ключ`);
+  }
+  const { anchor, receipts, packs } = manifest;
+  const problems = [];
+  const fromPacks = new Map();
+  for (const p of packs) {
+    const res = packParts(to, p, keyMat);
+    if (res.missing) problems.push(`пакет ${p.day}: файла нет в копии`);
+    if (res.problem) problems.push(res.problem);
+    for (const [k, c] of res.parts) fromPacks.set(k, c);
+  }
+
+  const ok = [];
+  const lost = [];
+  const absent = [];
+  let viaPack = 0;
+  let viaChunk = 0;
   for (const r of receipts) {
+    const range = { first: BigInt(r.first), last: BigInt(r.last) };
     if (r.kind === 'loss') {
-      ranges.push({ first: r.first, last: r.last });
-      losses++;
-      lossRecords += r.last - r.first + 1n;
+      lost.push({ ...range, reason: r.reason });
       continue;
     }
-    if (coveredByPack.has(`${r.range}@${r.versionId}`)) {
-      ranges.push({ first: r.first, last: r.last });
+    if (fromPacks.has(`${r.key}@${r.versionId}`)) {
+      ok.push(range);
+      viaPack++;
       continue;
     }
-    const row = JSON.parse(
-      (await getVersion(r.key, (await listVersions(r.key))[0].versionId)).toString('utf8'),
-    );
-    const local = join(to, 'chunks', `${r.range.split('/').pop()}.${r.versionId}`);
+    const local = chunkFile(to, r);
     if (!existsSync(local)) {
-      const sealed = await getVersion(r.range, r.versionId);
-      writeFileSync(local, sealed);
-      downloaded++;
+      absent.push(r);
+      continue;
     }
     const sealed = readFileSync(local);
     let plain = null;
@@ -1066,54 +1136,87 @@ async function pull() {
     }
     if (
       !plain ||
-      sha256Hex(sealed) !== row.objSha ||
-      sha256Hex(plain) !== row.plainSha ||
-      new ExportReader().push(plain).length !== row.count
+      sha256Hex(sealed) !== r.objSha ||
+      sha256Hex(plain) !== r.plainSha ||
+      new ExportReader().push(plain).length !== r.count
     ) {
-      problems.push(`порция ${r.range}: копия не сошлась с квитанцией`);
+      problems.push(`порция ${r.key}: копия не сошлась с квитанцией`);
       continue;
     }
-    ranges.push({ first: r.first, last: r.last });
+    ok.push(range);
+    viaChunk++;
   }
 
-  // Непрерывность от границы до последней квитанции.
-  const merged = mergeRanges(ranges);
+  // Покрытие от границы до последней ожидаемой записи (по всем квитанциям).
+  const covered = mergeRanges([...ok, ...lost]);
+  const isCovered = (a, b) => covered.some((c) => c.first <= a && b <= c.last);
+  for (const r of absent) {
+    if (!isCovered(BigInt(r.first), BigInt(r.last))) {
+      problems.push(
+        `отрезок ${r.first}–${r.last}: квитанция есть, порции нет ни отдельно, ни в пакете — утрата архива`,
+      );
+    }
+  }
   const start = BigInt(anchor.afterSeq) + 1n;
+  const expectedEnd = receipts.reduce(
+    (m, r) => (BigInt(r.last) > m ? BigInt(r.last) : m),
+    start - 1n,
+  );
   const gaps = [];
   let at = start;
-  for (const m of merged) {
-    if (m.first > at) gaps.push(`${at}–${m.first - 1n}`);
-    if (m.last + 1n > at) at = m.last + 1n;
+  for (const c of covered) {
+    if (c.first > at) gaps.push(`${at}–${c.first - 1n}`);
+    if (c.last + 1n > at) at = c.last + 1n;
   }
+  if (at <= expectedEnd) gaps.push(`${at}–${expectedEnd}`);
+
+  const lostRecords = lost.reduce((n, r) => n + (r.last - r.first + 1n), 0n);
+  const byReason = {};
+  for (const r of lost) byReason[r.reason] = (byReason[r.reason] ?? 0) + 1;
   const summary = {
     at: new Date().toISOString(),
-    seqId: sid,
+    seqId: anchor.seqId,
     from: str(start),
-    to: str(at - 1n),
+    to: str(expectedEnd),
     packs: packs.length,
-    downloaded,
-    losses,
-    lossRecords: str(lossRecords),
+    chunksViaPack: viaPack,
+    chunksSeparate: viaChunk,
+    chunksAbsent: absent.length,
+    losses: lost.length,
+    lossRecords: str(lostRecords),
     gaps,
     problems,
   };
   writeFileSync(join(to, 'PULLED.json'), JSON.stringify(summary, null, 2));
   console.log(
-    `скачано объектов: ${downloaded}, пакетов: ${packs.length}, записи ${summary.from}–${summary.to}, пропусков: ${gaps.length}, проблем: ${problems.length}`,
+    `копия: записи ${summary.from}–${summary.to}, пакетов: ${packs.length}, порций из пакетов: ${viaPack}, отдельно: ${viaChunk}, нет в копии: ${absent.length}, пропусков: ${gaps.length}, проблем: ${problems.length}`,
   );
   for (const p of [...gaps.map((g) => `пропуск ${g}`), ...problems]) console.log(`  ${p}`);
   const failedCheck = gaps.length || problems.length;
   console.log(
     failedCheck
       ? 'ИТОГ: копия НЕ сошлась'
-      : losses
-        ? `ИТОГ: копия сошлась, есть учтённые потери — отрезков ${losses}, записей ${lossRecords}; утраченное не восстановлено`
+      : lost.length
+        ? `ИТОГ: копия сошлась, есть учтённые потери — отрезков ${lost.length}, записей ${lostRecords} (${Object.entries(
+            byReason,
+          )
+            .map(([k, v]) => `${k}: ${v}`)
+            .join(', ')}); утраченное не восстановлено`
         : 'ИТОГ: данные сохранены полностью',
   );
   if (failedCheck) process.exitCode = 1;
 }
 
-const commands = { init, run, rebuild: rebuildState, status, verify, pack, pull };
+const commands = {
+  init,
+  run,
+  rebuild: rebuildState,
+  status,
+  verify,
+  pack,
+  pull,
+  'verify-copy': verifyCopy,
+};
 const command = process.argv[2];
 if (!commands[command]) {
   console.error(`команды: ${Object.keys(commands).join(', ')}`);

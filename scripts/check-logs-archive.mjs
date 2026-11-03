@@ -29,6 +29,11 @@
  *      сохранившихся квитанциях + потеря состояния — обнаруживается; verify
  *      не зелёный, пока утрата не восполнена (journald хранит) или не
  *      отмечена «утрачено в архиве» (journald вытеснен).
+ *   P. суточные пакеты и ручная копия под учёткой чтения: добавочно, порча
+ *      копии и описи, посторонняя версия пакета, исчезнувшая порция доступна
+ *      из пакета; копия проверяется и без доступа к S3 (сеть отключена).
+ *  В 12–15 копия скачивается и до восполнения (вердикт «НЕ сошлась», утрата
+ *  названа), и после (тот же вердикт, что у verify).
  * Цепочка проверяется от ЗАКРЕПЛЁННОЙ в S3 границы.
  *
  *   node scripts/check-logs-archive.mjs [--keep]
@@ -544,6 +549,47 @@ try {
   const PULL = `/tmp/pull-${tag}`;
   const pull = () => arch('pull', { ...asReader, LOGS_PULL_TO: PULL });
   const downloadedOf = (out) => Number(out.match(/скачано объектов: (\d+)/)?.[1] ?? -1);
+  const verdictOf = (out) => out.split('\n').find((l) => l.startsWith('ИТОГ:')) ?? '';
+  const copyLine = (out) => out.split('\n').find((l) => l.startsWith('копия:')) ?? out;
+  /** Проверка копии без S3: сеть контейнера отключена, учётки в окружении нет. */
+  const offline = (dir) => {
+    sh('docker', ['network', 'disconnect', NETWORK, CT]);
+    try {
+      return arch('verify-copy', {
+        LOGS_PULL_TO: dir,
+        LOGS_S3_ACCESS_KEY_ID: '',
+        LOGS_S3_SECRET_ACCESS_KEY: '',
+      });
+    } finally {
+      sh('docker', ['network', 'connect', NETWORK, CT]);
+    }
+  };
+  const WANT = {
+    full: 'данные сохранены полностью',
+    loss: 'есть учтённые потери',
+    red: 'копия НЕ сошлась',
+  };
+  /** Скачивание в новый каталог + та же проверка без S3; ожидаемый вердикт. */
+  const pullCase = (name, expect) => {
+    const dir = `/tmp/pc-${tag}-${name}`;
+    const p = arch('pull', { ...asReader, LOGS_PULL_TO: dir });
+    const v = verdictOf(p.out);
+    check(
+      `${name}: копия — ${WANT[expect]}`,
+      v.includes(WANT[expect]) &&
+        (expect === 'red' ? p.code !== 0 && p.out.includes('утрата архива') : p.code === 0),
+      `${copyLine(p.out)} | ${v}`,
+    );
+    const o = offline(dir);
+    check(
+      `${name}: без доступа к S3 копия даёт тот же вердикт`,
+      o.code === p.code && verdictOf(o.out) === v,
+      verdictOf(o.out) || o.out.split('\n')[0],
+    );
+    inCt(`rm -rf ${dir}`);
+    return p;
+  };
+  const expectAfterRun = () => (catalog().some((r) => r.kind === 'loss') ? 'loss' : 'full');
   // «Завтра»: архиватор дочитал журнал после конца суток — сутки закрыты.
   const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
   check('проход «завтра»', arch('run', { LOGS_TEST_NOW: tomorrow }).code === 0);
@@ -616,11 +662,45 @@ try {
     Buffer.from('x'),
   );
   check('учётка чтения: запись запрещена', rw.status === 403, `HTTP ${rw.status}`);
+  // Опись на ноутбуке: без S3 та же копия даёт тот же вердикт.
+  const o7 = offline(PULL);
+  check(
+    'копия без доступа к S3: состав и вердикт по локальной описи',
+    o7.code === 0 && verdictOf(o7.out) === verdictOf(p6.out),
+    copyLine(o7.out),
+  );
+  // Порча описи обнаруживается (она зашифрована ключом архива).
+  inCt(`printf 'X' | dd of=${PULL}/MANIFEST.sealed bs=1 seek=30 conv=notrunc 2>/dev/null`);
+  const o8 = offline(PULL);
+  check('порча описи копии обнаружена', o8.code !== 0 && o8.out.includes('опись копии'), o8.out);
   inCt(`rm -rf ${PULL}`);
+  // Исходная порция исчезла, но её точная версия — в исправном пакете.
+  const byFirst = (a, b) => (BigInt(a.first) < BigInt(b.first) ? -1 : 1);
+  const packedFirst = catalog()
+    .filter((r) => r.kind === 'chunk')
+    .sort(byFirst)[0];
+  for (const v of await versionsOf(packedFirst.key)) {
+    await rootReq('DELETE', packedFirst.key, { versionId: v.versionId });
+  }
+  pullCase('P-пакет', 'full');
+  // Обратная проверка: без исправного пакета та же порция — утрата архива.
+  const PK = `/tmp/pk-${tag}`;
+  arch('pull', { ...asReader, LOGS_PULL_TO: PK });
+  inCt(
+    `f=$(ls ${PK}/packs/*.pack | head -1); printf 'X' | dd of="$f" bs=1 seek=40 conv=notrunc 2>/dev/null`,
+  );
+  const oPk = offline(PK);
+  check(
+    'исчезнувшую порцию покрывал именно пакет: при порче пакета — утрата',
+    oPk.code !== 0 &&
+      oPk.out.includes(`отрезок ${packedFirst.first}–${packedFirst.last}: квитанция есть`),
+    oPk.out.split('\n').find((l) => l.includes(`отрезок ${packedFirst.first}`)) ??
+      copyLine(oPk.out),
+  );
+  inCt(`rm -rf ${PK}`);
 
   // ---------------------------------------------------------- 11
   console.log('\n▸ 11. Утрата первой порции архива + потеря состояния (journald ещё хранит)');
-  const byFirst = (a, b) => (BigInt(a.first) < BigInt(b.first) ? -1 : 1);
   const firstChunk = catalog()
     .filter((r) => r.kind === 'chunk')
     .sort(byFirst)[0];
@@ -675,6 +755,14 @@ try {
       await rootReq('DELETE', ch.key, { versionId: v.versionId });
     }
   }
+  // Удалённые начальные порции (кроме восполненной в 11) — точными версиями в
+  // пакете: на копии данные есть, утраты нет (journald при этом вытеснен).
+  const p12 = pullCase('12-до', expectAfterRun());
+  check(
+    '12: удалённые порции доступны из пакета',
+    !p12.out.includes('утрата архива'),
+    copyLine(p12.out),
+  );
   inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
   const r12 = arch('run');
   check(
@@ -700,6 +788,7 @@ try {
   );
   await chainCheck('12');
   verifyOk('12');
+  pullCase('12-после', expectAfterRun());
 
   // ---------------------------------------------------- 13–15: утрата конца
   const chunksByFirst = () =>
@@ -742,6 +831,7 @@ try {
     rb13.out.split('\n').find((l) => l.includes('ПРОПУСК')) ?? rb13.out.split('\n')[0],
   );
   verifyRed('13');
+  pullCase('13-до', 'red');
   const r13 = arch('run');
   check(
     'восполнена из journald, без отметки потери',
@@ -750,6 +840,7 @@ try {
   );
   await chainCheck('13');
   verifyOk('13');
+  pullCase('13-после', expectAfterRun());
 
   console.log('\n▸ 14. Утрата нескольких последних порций, journald уже вытеснен');
   const last14 = chunksByFirst().slice(-3);
@@ -763,6 +854,7 @@ try {
     rb14.out.split('\n').find((l) => l.includes('ПРОПУСК')) ?? rb14.out.split('\n')[0],
   );
   verifyRed('14');
+  pullCase('14-до', 'red');
   gen(5, 's14-after');
   const r14 = arch('run');
   check(
@@ -775,6 +867,7 @@ try {
   );
   await chainCheck('14');
   verifyOk('14');
+  pullCase('14-после', expectAfterRun());
 
   console.log('\n▸ 15. Утрачены все порции, квитанции сохранились, journald вытеснен');
   const all15 = chunksByFirst();
@@ -792,6 +885,12 @@ try {
     rb15.out.split('\n')[0],
   );
   verifyRed('15');
+  const p15 = pullCase('15-до', 'red');
+  check(
+    '15: порции из пакета остались доступны, утрата — только за пакетом',
+    !/порций из пакетов: 0,/.test(p15.out),
+    copyLine(p15.out),
+  );
   gen(5, 's15-after');
   const r15 = arch('run');
   check(
@@ -801,6 +900,7 @@ try {
   );
   await chainCheck('15');
   verifyOk('15');
+  pullCase('15-после', expectAfterRun());
 } catch (error) {
   failed++;
   console.log(`  FAIL  испытание прервано: ${error.message}`);
