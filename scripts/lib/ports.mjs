@@ -102,9 +102,8 @@ export const PORTS = {
   /** NATS: клиентский порт и порт мониторинга. */
   nats: port('NATS_PORT', 4222),
   natsMonitor: port('NATS_MONITOR_PORT', 8222),
-  /** MinIO: S3-совместимый API и веб-консоль. */
+  /** S3 API хранилища (Garage, D-001; прежде MinIO) — петля стенда. */
   s3: port('S3_PORT', 9000),
-  s3Console: port('S3_CONSOLE_PORT', 9001),
   /** Garage (D-001): S3 API и admin API первого узла. */
   garageS3: port('GARAGE_S3_PORT', 9000),
   garageAdmin: port('GARAGE_ADMIN_PORT', 3903),

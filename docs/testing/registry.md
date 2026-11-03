@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 177; требований: 41
+- Проверок: 173; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 66
+### Зарегистрированы, но ни в наборе, ни в CI — 65
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -198,7 +198,6 @@
 - `PRB-EVENT-VERSIONS` — Проверка нумерации версий событий агрегата.
 - `PRB-IP-CEILING-TTL` — Проверка того, что потолок частоты по адресу не может «залипнуть» навсегда.
 - `PRB-MAIL-READINESS` — Зонд готовности домена к почте: MX, SPF, DKIM, DMARC, PTR и сам релей.
-- `PRB-OBJECT-VERSIONING` — Зонд версионирования хранилища (Ф29, остаток SEC-04).
 - `PRB-BACKGROUND-JOBS` — Общий механизм фоновой работы ядра — проверка фактом на PostgreSQL и процессах core: аренда, advisory-блокировка, выключатель, роли запуска.
 - `PRB-VALKEY-COUNTERS` — Общие счётчики ограничений на Valkey — проверка фактом: окно, обрыв, неизвестный результат, отказ без обхода.
 - `PRB-OUTBOX-LEASE` — Проверка очереди outbox: аренда между экземплярами и повтор рассылки.
@@ -308,9 +307,6 @@
 | TOOL-VITE-BUILD | `node scripts/vite-build.mjs` | 0 | вручную, по поводу | — |
 | TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export|legacy-snapshot|legacy-gap|secrets-draft --to <файл>` | 0 | вручную, по поводу | — |
 | TOOL-GARAGE-INIT | `node scripts/garage-init.mjs [--status]` | 0 | вручную, по поводу | — |
-| TOOL-STORAGE-SWITCH | `node scripts/storage-switch.mjs consumers | apply <набор> --save <файл> | restore <файл>` | 0 | вручную, по поводу | — |
-| TOOL-STORAGE-MIGRATE | `node scripts/storage-migrate.mjs --from minio|garage --to garage|minio [--dry-run] [--sync]` | 0 | вручную, по поводу | — |
-| TOOL-LOGS-VOLUME | `node scripts/measure-logs-volume.mjs [--base-bytes-day N] [--base-gzip-day N] [--burst-rps R] [--burst-hours H]` | 0 | вручную, по поводу | — |
 | TOOL-MONITORING | `node scripts/monitoring.mjs configure|status [--items]` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-PROBE-DISABLE | `node scripts/monitor-probe-disable.mjs` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-PULSE | `node scripts/monitor-pulse.mjs` | 0 | вручную, по поводу | — |
@@ -355,7 +351,7 @@
 | CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
 | CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
-| CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 209 | вручную | — |
+| CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 224 | вручную | — |
 | CHK-LOGS-APPLY | `node scripts/check-logs-apply.mjs` | 36 | вручную | — |
 | CHK-MONITORING-ACCOUNT | `node scripts/check-monitoring-account.mjs` | 9 | вручную | — |
 
@@ -379,7 +375,6 @@
 | PRB-IP-CEILING-TTL | `node scripts/probe-ip-ceiling-ttl.mjs` | 9 | вручную | — |
 | PRB-MAIL-DELIVERY | `node scripts/probe-mail-delivery.mjs` | 0 | вручную | — |
 | PRB-MAIL-READINESS | `node scripts/probe-mail-readiness.mjs` | 0 | вручную | — |
-| PRB-OBJECT-VERSIONING | `node scripts/probe-object-versioning.mjs` | 10 | вручную | — |
 | PRB-BACKGROUND-JOBS | `node scripts/probe-background-jobs.mjs` | 45 | вручную | — |
 | PRB-VALKEY-COUNTERS | `node scripts/probe-valkey-counters.mjs` | 15 | вручную | — |
 | PRB-OUTBOX-LEASE | `node scripts/probe-outbox-lease.mjs` | 10 | вручную | — |

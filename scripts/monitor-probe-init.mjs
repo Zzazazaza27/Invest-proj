@@ -23,12 +23,12 @@
  *   node scripts/monitor-probe-init.mjs
  */
 import argon2 from 'argon2';
-import { execFileSync } from 'node:child_process';
 import { createCipheriv, createHash, createHmac, randomBytes } from 'node:crypto';
 import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import pg from 'pg';
 import { ENV_PATH, ROOT, loadEnv } from './lib/backup.mjs';
+import { s3Object } from './lib/s3.mjs';
 
 loadEnv();
 const env = process.env;
@@ -173,26 +173,31 @@ try {
     sha256 = createHash('sha256').update(body).digest('hex');
     const key = 'control/app-probe-v1.pdf';
     const bucket = env.S3_BUCKET || 'unicorn-launch';
-    execFileSync(
-      'docker',
-      [
-        'exec',
-        '-i',
-        'unicorn-minio',
-        'sh',
-        '-c',
-        `cat > /tmp/app-probe.pdf && mc alias set l http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && mc cp -q --attr "Content-Type=application/pdf" /tmp/app-probe.pdf l/${bucket}/${key} >/dev/null`,
-      ],
-      { input: body },
+    // Запись в рабочее хранилище (Garage, D-001) ключом приложения.
+    const put = await s3Object(
+      {
+        endpoint: (env.S3_ENDPOINT || 'http://127.0.0.1:9000').replace(/\/+$/, ''),
+        bucket,
+        region: env.S3_REGION || 'us-east-1',
+        accessKey: env.S3_ACCESS_KEY_ID,
+        secretKey: env.S3_SECRET_ACCESS_KEY,
+      },
+      'PUT',
+      key,
+      body,
+      { 'content-type': 'application/pdf' },
     );
+    if (put.status !== 200) throw new Error(`контрольный файл не записан: HTTP ${put.status}`);
+    // Хеш содержимого — как у обычной загрузки: по нему сверяет и проверка
+    // восстановления комплекта.
     [material] = await sql(
       `INSERT INTO lab.project_materials
-         (id, project_id, type, version, s3_key, size_bytes, uploaded_at, uploaded_by,
-          upload_state, visibility, upload_file_name)
-       VALUES (public.uuid_generate_v7(), $1, 'deck', 1, $2, $3, now(), $4, 'ready', 'investors',
-               'Контрольный материал.pdf')
+         (id, project_id, type, version, s3_key, size_bytes, content_hash, uploaded_at,
+          uploaded_by, upload_state, visibility, upload_file_name)
+       VALUES (public.uuid_generate_v7(), $1, 'deck', 1, $2, $3, $5, now(), $4, 'ready',
+               'investors', 'Контрольный материал.pdf')
        RETURNING id, s3_key, size_bytes`,
-      [project.id, key, body.length, ownerId],
+      [project.id, key, body.length, ownerId, `sha256:${sha256}`],
     );
     await sql(
       `INSERT INTO audit.control_objects (name, s3_key, size_bytes, sha256)

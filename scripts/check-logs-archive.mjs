@@ -43,7 +43,9 @@ import { createHash, randomBytes } from 'node:crypto';
 import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { loadEnv, ROOT } from './lib/backup.mjs';
-import { contiguousChain, parseChunkKey } from './lib/logs-archive.mjs';
+import { garageApi } from './lib/garage-admin.mjs';
+import { PORTS } from './lib/ports.mjs';
+import { contiguousChain, parseChunkKey, receiptKey } from './lib/logs-archive.mjs';
 import { LOGS_ITEMS, logsTriggers } from './lib/logs-metrics-zabbix.mjs';
 import { s3Object } from './lib/s3.mjs';
 
@@ -52,26 +54,32 @@ const keep = process.argv.includes('--keep');
 const tag = randomBytes(3).toString('hex');
 const CT = `jtb-${tag}`;
 const BUCKET = `tech-logs-test-${tag}`;
-const USER = `logs-w-${tag}`;
-const USER_SECRET = randomBytes(18).toString('hex');
-const READER = `logs-r-${tag}`;
-const READER_SECRET = randomBytes(18).toString('hex');
+// Ключи Garage (D-001): GK + 24 hex и секрет 64 hex.
+const gk = () => `GK${randomBytes(12).toString('hex')}`;
+const gsec = () => randomBytes(32).toString('hex');
+const USER = gk();
+const USER_SECRET = gsec();
+const READER = gk();
+const READER_SECRET = gsec();
 // Бакет накопленной истории — свои учётки и ключ.
 const LBUCKET = `tech-logs-legacy-test-${tag}`;
-const LWRITER = `logs-lw-${tag}`;
-const LWRITER_SECRET = randomBytes(18).toString('hex');
-const LREADER = `logs-lr-${tag}`;
-const LREADER_SECRET = randomBytes(18).toString('hex');
+const LWRITER = gk();
+const LWRITER_SECRET = gsec();
+const LREADER = gk();
+const LREADER_SECRET = gsec();
+// Ключ владельца обоих бакетов — только для порчи данных испытаниями.
+const ROOT_KEY = gk();
+const ROOT_SECRET = gsec();
 const LKEY = randomBytes(32).toString('hex');
 const IMAGE = 'fifth/journald-testbed:local';
 const NETWORK = 'unicorn-launch_default';
 
 const root = {
-  endpoint: `http://127.0.0.1:${process.env.S3_PORT || 9000}`,
+  endpoint: `http://127.0.0.1:${PORTS.garageS3}`,
   bucket: BUCKET,
   region: process.env.S3_REGION || 'us-east-1',
-  accessKey: process.env.MINIO_ROOT_USER,
-  secretKey: process.env.MINIO_ROOT_PASSWORD,
+  accessKey: ROOT_KEY,
+  secretKey: ROOT_SECRET,
 };
 
 let passed = 0;
@@ -96,19 +104,9 @@ function sh(cmd, args, { env = {}, allowFail = false, input } = {}) {
   return r;
 }
 
-/** Действия root в MinIO — внутри контейнера MinIO, секреты из его окружения. */
-function mcRoot(script) {
-  return sh('docker', [
-    'exec',
-    'unicorn-minio',
-    'sh',
-    '-c',
-    `mc alias set r http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && ${script}; mc alias rm r >/dev/null`,
-  ]);
-}
-
 const ARCH_ENV = {
-  LOGS_S3_ENDPOINT: 'http://unicorn-minio:9000',
+  LOGS_S3_ENDPOINT: 'http://unicorn-garage-1:3900',
+  LOGS_S3_REGION: process.env.S3_REGION || 'us-east-1',
   LOGS_S3_BUCKET: BUCKET,
   LOGS_S3_ACCESS_KEY_ID: USER,
   LOGS_S3_SECRET_ACCESS_KEY: USER_SECRET,
@@ -149,15 +147,15 @@ async function rootReq(method, key, query = {}, body = null, headers = {}) {
   return s3Object(root, method, key, body, headers, query);
 }
 
-async function versionsOf(key) {
-  const r = await rootReq('GET', '', { versions: '', prefix: key });
-  const xml = await r.text();
-  return [...xml.matchAll(/<Version>([\s\S]*?)<\/Version>/g)]
-    .map((m) => ({
-      key: m[1].match(/<Key>([^<]+)<\/Key>/)?.[1],
-      versionId: m[1].match(/<VersionId>([^<]+)<\/VersionId>/)?.[1],
-    }))
-    .filter((v) => v.key === key);
+/**
+ * Объект под ключом: [] или [{key, versionId, body}] — версий у Garage нет,
+ * «версия» — SHA-256 байтов (как у архиватора).
+ */
+async function versionsOf(key, store = root) {
+  const r = await s3Object(store, 'GET', key);
+  if (r.status !== 200) return [];
+  const body = Buffer.from(await r.arrayBuffer());
+  return [{ key, versionId: createHash('sha256').update(body).digest('hex'), body }];
 }
 
 async function allKeysUnder(prefix) {
@@ -230,9 +228,40 @@ async function cleanup() {
     return;
   }
   sh('docker', ['rm', '-f', CT], { allowFail: true });
-  mcRoot(
-    `mc rb --force --dangerous r/${BUCKET} >/dev/null 2>&1 || mc rb --force r/${BUCKET} >/dev/null 2>&1; mc admin user rm r ${USER} >/dev/null 2>&1; mc admin user rm r ${READER} >/dev/null 2>&1; mc admin policy rm r fifth-logs-write >/dev/null 2>&1; mc admin policy rm r fifth-logs-read >/dev/null 2>&1; mc rb --force --dangerous r/${LBUCKET} >/dev/null 2>&1; mc admin user rm r ${LWRITER} >/dev/null 2>&1; mc admin user rm r ${LREADER} >/dev/null 2>&1; mc admin policy rm r fifth-logs-legacy-write >/dev/null 2>&1; mc admin policy rm r fifth-logs-legacy-read >/dev/null 2>&1; true`,
-  );
+  // Бакеты опустошаются ключом владельца и удаляются, ключи — через admin API.
+  for (const b of [BUCKET, LBUCKET]) {
+    try {
+      const store = { ...root, bucket: b };
+      let token = null;
+      do {
+        const r = await s3Object(
+          store,
+          'GET',
+          '',
+          null,
+          {},
+          {
+            'list-type': '2',
+            ...(token ? { 'continuation-token': token } : {}),
+          },
+        );
+        const xml = await r.text();
+        for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
+          await s3Object(store, 'DELETE', m[1].replace(/&amp;/g, '&'));
+        }
+        token = /<IsTruncated>true/.test(xml)
+          ? xml.match(/<NextContinuationToken>([^<]+)</)?.[1]
+          : null;
+      } while (token);
+      const info = await garageApi('GetBucketInfo', undefined, `?globalAlias=${b}`);
+      await garageApi('DeleteBucket', {}, `?id=${info.id}`);
+    } catch {
+      /* бакета нет — уже убран */
+    }
+  }
+  for (const k of [USER, READER, LWRITER, LREADER, ROOT_KEY]) {
+    await garageApi('DeleteKey', {}, `?id=${k}`).catch(() => undefined);
+  }
 }
 
 console.log(`=== АРХИВАТОР ЖУРНАЛОВ: испытания (${tag}) ===`);
@@ -293,98 +322,73 @@ try {
     if (s === 'running' || s === 'degraded') break;
     await new Promise((r) => setTimeout(r, 1000));
   }
-  // Бакет и учётки заводит НАСТОЯЩИЙ шаг стенда minio-init по политикам
-  // infra/minio/policies — испытывается то, что применится на VPS.
-  const init = sh(
-    'docker',
-    [
-      'compose',
-      '-f',
-      'infra/docker-compose.yml',
-      '--env-file',
-      '.env',
-      '-p',
-      'unicorn-launch',
-      'run',
-      '--rm',
-      '--no-deps',
-      ...[
-        'LOGS_S3_BUCKET',
-        'LOGS_S3_ACCESS_KEY_ID',
-        'LOGS_S3_SECRET_ACCESS_KEY',
-        'LOGS_READER_ACCESS_KEY_ID',
-        'LOGS_READER_SECRET_ACCESS_KEY',
-        'LOGS_LEGACY_S3_BUCKET',
-        'LOGS_LEGACY_WRITER_ACCESS_KEY_ID',
-        'LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY',
-        'LOGS_LEGACY_READER_ACCESS_KEY_ID',
-        'LOGS_LEGACY_READER_SECRET_ACCESS_KEY',
-      ].flatMap((k) => ['-e', k]),
-      'minio-init',
-    ],
-    {
-      env: {
-        LOGS_S3_BUCKET: BUCKET,
-        LOGS_S3_ACCESS_KEY_ID: USER,
-        LOGS_S3_SECRET_ACCESS_KEY: USER_SECRET,
-        LOGS_READER_ACCESS_KEY_ID: READER,
-        LOGS_READER_SECRET_ACCESS_KEY: READER_SECRET,
-        LOGS_LEGACY_S3_BUCKET: LBUCKET,
-        LOGS_LEGACY_WRITER_ACCESS_KEY_ID: LWRITER,
-        LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY: LWRITER_SECRET,
-        LOGS_LEGACY_READER_ACCESS_KEY_ID: LREADER,
-        LOGS_LEGACY_READER_SECRET_ACCESS_KEY: LREADER_SECRET,
-      },
-      allowFail: true,
+  // Бакеты и ключи заводит НАСТОЯЩИЙ шаг стенда garage-init (Garage, D-001) —
+  // испытывается то, что применится на VPS.
+  const init = sh(process.execPath, ['scripts/garage-init.mjs'], {
+    env: {
+      LOGS_S3_BUCKET: BUCKET,
+      LOGS_S3_ACCESS_KEY_ID: USER,
+      LOGS_S3_SECRET_ACCESS_KEY: USER_SECRET,
+      LOGS_READER_ACCESS_KEY_ID: READER,
+      LOGS_READER_SECRET_ACCESS_KEY: READER_SECRET,
+      LOGS_LEGACY_S3_BUCKET: LBUCKET,
+      LOGS_LEGACY_WRITER_ACCESS_KEY_ID: LWRITER,
+      LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY: LWRITER_SECRET,
+      LOGS_LEGACY_READER_ACCESS_KEY_ID: LREADER,
+      LOGS_LEGACY_READER_SECRET_ACCESS_KEY: LREADER_SECRET,
     },
-  );
+    allowFail: true,
+  });
   check(
-    'minio-init: бакет журналов с версиями, учётки записи и чтения',
+    'garage-init: бакеты журналов и истории, ключи записи и чтения',
     init.status === 0 &&
-      init.stdout.includes(`бакет журналов ${BUCKET} готов`) &&
-      init.stdout.includes('(политика fifth-logs-write)') &&
-      init.stdout.includes('(политика fifth-logs-read)') &&
-      init.stdout.includes(`бакет журналов ${LBUCKET} готов`) &&
-      init.stdout.includes('(политика fifth-logs-legacy-write)') &&
-      init.stdout.includes('(политика fifth-logs-legacy-read)'),
+      init.stdout.includes(`бакет ${BUCKET}: создан`) &&
+      init.stdout.includes(`бакет ${LBUCKET}: создан`) &&
+      init.stdout.includes(`права записи журналов на ${BUCKET}: read+write`) &&
+      init.stdout.includes(`права чтения журналов на ${BUCKET}: read`),
     (init.stdout + init.stderr)
       .trim()
       .split('\n')
-      .filter((l) => /журнал|политика|ERROR|ошибк/i.test(l))
+      .filter((l) => /журнал|бакет|ОШИБ|Error/i.test(l))
       .join(' | '),
   );
-  // Права: запись без удаления и без управления бакетом; чтение — только чтение.
+  // Ключ владельца обоих бакетов — для порчи данных испытаниями.
+  await garageApi('ImportKey', {
+    accessKeyId: ROOT_KEY,
+    secretAccessKey: ROOT_SECRET,
+    name: `logs-test-root-${tag}`,
+  });
+  for (const b of [BUCKET, LBUCKET]) {
+    const info = await garageApi('GetBucketInfo', undefined, `?globalAlias=${b}`);
+    await garageApi('AllowBucketKey', {
+      bucketId: info.id,
+      accessKeyId: ROOT_KEY,
+      permissions: { read: true, write: true, owner: true },
+    });
+  }
+  // Права по фактам Garage: ключ записи пишет и читает свой бакет, а право
+  // записи включает удаление — подмену и удаление архив обнаруживает, а не
+  // запрещает; ключ чтения только читает; чужой бакет не виден.
   const asUser = (who, secret) => ({ ...root, accessKey: who, secretKey: secret });
   const wr = asUser(USER, USER_SECRET);
   const rd = asUser(READER, READER_SECRET);
   const put = await s3Object(wr, 'PUT', 'probe/права', Buffer.from('x'));
-  const vid = put.headers.get('x-amz-version-id');
   const denied = async (who, method, key, body = null, query = {}) =>
     (await s3Object(who, method, key, body, {}, query)).status === 403;
   check(
-    'учётка записи: пишет; удалить объект и версию, выключить версии — нельзя',
+    'ключ чтения: читает; писать и удалять — нельзя',
     put.status === 200 &&
-      Boolean(vid) &&
-      (await denied(wr, 'DELETE', 'probe/права')) &&
-      (await denied(wr, 'DELETE', 'probe/права', null, { versionId: vid })) &&
-      (await denied(
-        wr,
-        'PUT',
-        '',
-        Buffer.from(
-          '<VersioningConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/"><Status>Suspended</Status></VersioningConfiguration>',
-        ),
-        { versioning: '' },
-      )),
-  );
-  check(
-    'учётка чтения: читает; писать и удалять — нельзя',
-    (await s3Object(rd, 'GET', 'probe/права', null, {}, { versionId: vid })).status === 200 &&
+      (await s3Object(rd, 'GET', 'probe/права')).status === 200 &&
       (await denied(rd, 'PUT', 'probe/чтение', Buffer.from('x'))) &&
-      (await denied(rd, 'DELETE', 'probe/права', null, { versionId: vid })),
+      (await denied(rd, 'DELETE', 'probe/права')),
   );
-  await rootReq('DELETE', 'probe/права', { versionId: vid });
-  console.log(`стенд: ${CT}, бакет ${BUCKET} (версии включены), учётка без удаления`);
+  const del = await s3Object(wr, 'DELETE', 'probe/права');
+  check(
+    'ключ записи: удаление разрешено (Garage) — защита архива обнаружением',
+    del.status === 204,
+    `HTTP ${del.status}`,
+  );
+  console.log(`стенд: ${CT}, бакет ${BUCKET} (Garage, без версий)`);
 
   // ---------------------------------------------------------- 1
   console.log('\n▸ 1. Обычный проход');
@@ -619,8 +623,8 @@ try {
     r3.out.split('\n')[0],
   );
   check(
-    'версий у ключа по-прежнему одна',
-    before.length === 1 && (await versionsOf(pendingKey)).length === 1,
+    'объект под ключом — прежнее содержимое (повтор не перезаписал)',
+    before.length === 1 && (await versionsOf(pendingKey))[0]?.versionId === before[0].versionId,
   );
   verifyOk('3');
 
@@ -642,9 +646,7 @@ try {
   const mid = catalog()
     .filter((r) => r.kind === 'chunk')
     .at(Math.floor(catalog().length / 2));
-  for (const v of await versionsOf(mid.key)) {
-    await rootReq('DELETE', mid.key, { versionId: v.versionId });
-  }
+  await rootReq('DELETE', mid.key);
   check(
     'порция из середины удалена (root)',
     (await versionsOf(mid.key)).length === 0,
@@ -670,39 +672,26 @@ try {
   verifyOk('6');
 
   // ---------------------------------------------------------- 8
-  console.log('\n▸ 8. Новая версия под тем же ключом — и потеря каталога');
+  console.log('\n▸ 8. Перезапись объекта под ключом (Garage: запретить нельзя — обнаружить)');
   gen(10, 's8');
   check('проход', arch('run').code === 0);
   const k = catalog().at(-1);
-  const versionA = k.versionId;
-  // root кладёт под тот же ключ другую порцию — новая версия B, даже с
-  // «правильным» исходным хешем в метаданных.
+  const [original8] = await versionsOf(k.key);
+  // Ключ записи может перезаписать порцию — даже с «правильным» исходным
+  // хешем в метаданных.
   const rogue = await rootReq('PUT', k.key, {}, Buffer.from('чужая порция'), {
     'x-amz-meta-plain-sha256': k.plainSha,
+    'x-amz-meta-object-sha256': k.objSha,
   });
-  const versionB = rogue.headers.get('x-amz-version-id');
-  check('версия B под тем же ключом (root)', rogue.ok && (await versionsOf(k.key)).length === 2);
+  check('порция перезаписана (ключ владельца)', rogue.ok);
   const v8 = arch('verify');
   check(
-    'verify: подтверждённая порция читается версией A, B — посторонняя',
-    v8.out.includes('проблем: 0') && v8.out.includes('посторонних версий: 1'),
-    v8.out.split('\n')[0],
+    'verify: перезапись обнаружена — порция не та, что в квитанции',
+    v8.code !== 0 && v8.out.includes(`${k.key}@${k.versionId}: нет или не расшифровано`),
+    v8.out.split('\n').find((l) => l.includes(k.key)) ?? v8.out.split('\n')[0],
   );
-  inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
-  const rb8 = arch('rebuild');
-  const k8 = catalog().find((r) => r.key === k.key);
-  check(
-    'rebuild после потери каталога: привязка — снова A, а не последняя B',
-    rb8.code === 0 && k8?.versionId === versionA,
-    `в каталоге: ${k8?.versionId === versionA ? 'A' : k8?.versionId === versionB ? 'B' : 'нет'}`,
-  );
-  const v8b = arch('verify');
-  check(
-    'verify после rebuild: проблем 0, B по-прежнему посторонняя',
-    v8b.out.includes('проблем: 0') && v8b.out.includes('посторонних версий: 1'),
-    v8b.out.split('\n')[0],
-  );
-  await rootReq('DELETE', k.key, { versionId: versionB });
+  await rootReq('PUT', k.key, {}, original8.body, { 'x-amz-meta-object-sha256': k.objSha });
+  verifyOk('8 — исходная порция возвращена');
 
   // ---------------------------------------------------------- 7
   console.log('\n▸ 7. Конфликт: под ключом только чужая порция');
@@ -711,15 +700,14 @@ try {
   gen(10, 's7');
   check('проход', arch('run').code === 0);
   const c = catalog().at(-1);
-  for (const v of await versionsOf(c.key)) {
-    await rootReq('DELETE', c.key, { versionId: v.versionId });
-  }
+  await rootReq('DELETE', c.key);
   const rogue7 = await rootReq('PUT', c.key, {}, Buffer.from('чужая порция'), {
     'x-amz-meta-plain-sha256': c.plainSha,
   });
+  const rogueSha7 = createHash('sha256').update(Buffer.from('чужая порция')).digest('hex');
   check(
-    'под ключом только чужая версия (root)',
-    rogue7.ok && (await versionsOf(c.key)).length === 1,
+    'под ключом чужая порция (ключ владельца)',
+    rogue7.ok && (await versionsOf(c.key))[0]?.versionId === rogueSha7,
   );
   const st = JSON.parse(stateBefore);
   st.pending = { key: c.key, firstCursor: c.firstCursor, count: c.count, plainSha: c.plainSha };
@@ -735,8 +723,8 @@ try {
     r7.code !== 0 && r7.out.includes('КОНФЛИКТ'),
     r7.out.split('\n').pop(),
   );
-  check('конфликт: без перезаписи', (await versionsOf(c.key)).length === 1);
-  await rootReq('DELETE', c.key, { versionId: rogue7.headers.get('x-amz-version-id') });
+  check('конфликт: без перезаписи', (await versionsOf(c.key))[0]?.versionId === rogueSha7);
+  await rootReq('DELETE', c.key);
   inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
   const r7b = arch('run');
   check(
@@ -857,13 +845,25 @@ try {
     p5.code === 0 && downloadedOf(p5.out) === 1,
     p5.out.split('\n').at(-1),
   );
-  // Посторонняя версия под ключом пакета не меняет чтение по квитанции.
+  // Перезапись пакета (Garage: запретить нельзя) обнаруживается: пакет не
+  // тот, что в квитанции; после возврата исходного — копия снова сходится.
   const packObj = (await allKeysUnder('p/'))[0];
+  const [packOrig] = await versionsOf(packObj);
   await rootReq('PUT', packObj, {}, Buffer.from('чужой пакет'));
+  inCt(`rm -f ${PULL}/packs/*.pack`);
+  const p6bad = pull();
+  check(
+    'перезапись пакета обнаружена — копия НЕ сошлась, пакет назван',
+    p6bad.code !== 0 && p6bad.out.includes('пакет'),
+    p6bad.out.split('\n').find((l) => l.includes('пакет ')) ?? p6bad.out.split('\n').at(-1),
+  );
+  await rootReq('PUT', packObj, {}, packOrig.body, {
+    'x-amz-meta-object-sha256': packOrig.versionId,
+  });
   inCt(`rm -f ${PULL}/packs/*.pack`);
   const p6 = pull();
   check(
-    'новая версия под ключом пакета: копия по квитанции сошлась',
+    'исходный пакет возвращён — копия сошлась',
     p6.code === 0 && p6.out.includes('ИТОГ: данные сохранены полностью'),
     p6.out.split('\n').at(-1),
   );
@@ -892,9 +892,7 @@ try {
   const packedFirst = catalog()
     .filter((r) => r.kind === 'chunk')
     .sort(byFirst)[0];
-  for (const v of await versionsOf(packedFirst.key)) {
-    await rootReq('DELETE', packedFirst.key, { versionId: v.versionId });
-  }
+  await rootReq('DELETE', packedFirst.key);
   pullCase('P-пакет', 'full');
   // Обратная проверка: без исправного пакета та же порция — утрата архива.
   const PK = `/tmp/pk-${tag}`;
@@ -967,7 +965,7 @@ try {
     e4.code !== 0 && e4.out.includes('КОНФЛИКТ') && (await versionsOf(k4)).length === 1,
     e4.out.split('\n').find((l) => l.includes('КОНФЛИКТ')) ?? e4.out,
   );
-  for (const v of await versionsOf(k4)) await rootReq('DELETE', k4, { versionId: v.versionId });
+  await rootReq('DELETE', k4);
   // Падение после записи, до квитанции: повтор подтверждает по содержимому.
   const e5 = filesRun({ LOGS_TEST_CRASH: 'file-after-put' });
   const e6 = filesRun();
@@ -1139,9 +1137,7 @@ try {
     'первая порция начинается сразу за границей',
     BigInt(firstChunk.first) === (await anchorStart()),
   );
-  for (const v of await versionsOf(firstChunk.key)) {
-    await rootReq('DELETE', firstChunk.key, { versionId: v.versionId });
-  }
+  await rootReq('DELETE', firstChunk.key);
   inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/state.json ${ARCH_ENV.LOGS_STATE_DIR}/catalog.jsonl`);
   const r11 = arch('run');
   check(
@@ -1194,9 +1190,7 @@ try {
     .sort(byFirst)
     .slice(0, 3);
   for (const ch of firstThree) {
-    for (const v of await versionsOf(ch.key)) {
-      await rootReq('DELETE', ch.key, { versionId: v.versionId });
-    }
+    await rootReq('DELETE', ch.key);
   }
   // Удалённые начальные порции (кроме восполненной в 11) — точными версиями в
   // пакете: на копии данные есть, утраты нет (journald при этом вытеснен).
@@ -1240,9 +1234,7 @@ try {
       .sort(byFirst);
   const dropAll = async (rows) => {
     for (const ch of rows) {
-      for (const v of await versionsOf(ch.key)) {
-        await rootReq('DELETE', ch.key, { versionId: v.versionId });
-      }
+      await rootReq('DELETE', ch.key);
     }
   };
   const loseState = () =>
@@ -1737,12 +1729,111 @@ try {
   verifyOk('S-восполнение');
   pullCase('S-восполнение', expectAfterRun());
 
+  // ------------------------------------- Ц: цепочка квитанций и эталон
+  // Garage не запрещает перезапись и удаление (D-001) — архив их обнаруживает:
+  // квитанции подписаны ключом архива и связаны в цепочку, её голова —
+  // эталон в состоянии архиватора и в описи копии (замечания Тэнка 03.11).
+  console.log('\n▸ Ц. Цепочка квитанций: подмена с квитанцией, утрата хвоста, утрата эталона');
+  const hex = (b) => createHash('sha256').update(b).digest('hex');
+  const rk = (r) => {
+    const p = parseChunkKey(r.key);
+    return receiptKey(p.seqId, p.first, p.last, p.kind, r.versionId);
+  };
+  const lineOf = (out, re) => out.split('\n').find((l) => re.test(l)) ?? out.split('\n').at(-1);
+  gen(20, 'tc');
+  check('проход', arch('run').code === 0);
+
+  // Ц1. Порция и её квитанция заменены согласованно — без ключа архива.
+  const t1 = catalog()
+    .filter((r) => r.kind === 'chunk')
+    .at(-1);
+  const [o1] = await versionsOf(t1.key);
+  const [q1] = await versionsOf(rk(t1));
+  const forged = Buffer.from('подложная порция');
+  await rootReq('PUT', t1.key, {}, forged, { 'x-amz-meta-object-sha256': hex(forged) });
+  await rootReq(
+    'PUT',
+    rk(t1),
+    {},
+    Buffer.from(JSON.stringify({ ...JSON.parse(q1.body.toString('utf8')), objSha: hex(forged) })),
+  );
+  const vT1 = arch('verify');
+  check(
+    'подмена порции вместе с квитанцией обнаружена — подпись не сошлась',
+    vT1.code !== 0 && vT1.out.includes('без подписи ключом архива'),
+    lineOf(vT1.out, /подписи/),
+  );
+  await rootReq('PUT', t1.key, {}, o1.body, { 'x-amz-meta-object-sha256': o1.versionId });
+  await rootReq('PUT', rk(t1), {}, q1.body);
+  verifyOk('Ц1 — подлинные порция и квитанция возвращены');
+
+  // Ц2. Удаление хвоста вместе с квитанциями: VPS видит по эталону, копия —
+  // по эталону прежней копии (голову в хранилище тоже можно удалить).
+  const REFCOPY = `/tmp/refcopy-${tag}`;
+  const asReaderT = { LOGS_S3_ACCESS_KEY_ID: READER, LOGS_S3_SECRET_ACCESS_KEY: READER_SECRET };
+  arch('pull', { ...asReaderT, LOGS_PULL_TO: REFCOPY });
+  check('копия с эталоном цепочки', inCt(`ls ${REFCOPY}`).includes('MANIFEST.sealed'));
+  const tail = catalog()
+    .filter((r) => r.kind === 'chunk')
+    .slice(-2);
+  const savedTail = [];
+  for (const r of tail) {
+    for (const key of [r.key, rk(r)]) {
+      const [o] = await versionsOf(key);
+      savedTail.push({ key, body: o.body, sha: o.versionId });
+      await rootReq('DELETE', key);
+    }
+  }
+  const [refObj] = await versionsOf('ref/head.json');
+  await rootReq('DELETE', 'ref/head.json');
+  const vT2 = arch('verify');
+  check(
+    'удаление хвоста с квитанциями обнаружено — цепочка короче эталона',
+    vT2.code !== 0 && vT2.out.includes('цепочка короче эталона'),
+    lineOf(vT2.out, /цепочка/),
+  );
+  const pT2 = arch('pull', { ...asReaderT, LOGS_PULL_TO: REFCOPY });
+  check(
+    'копия: хранилище расходится с эталоном прежней копии (голова в хранилище тоже удалена)',
+    pT2.code !== 0 && pT2.out.includes('расходится с эталоном прежней копии'),
+    lineOf(pT2.out, /расходится|ИТОГ/),
+  );
+  for (const s of savedTail) {
+    await rootReq('PUT', s.key, {}, s.body, { 'x-amz-meta-object-sha256': s.sha });
+  }
+  await rootReq('PUT', 'ref/head.json', {}, refObj.body);
+  verifyOk('Ц2 — хвост возвращён');
+
+  // Ц3. Утрата эталона: без него — «НЕПРОВЕРЯЕМО», голова из хранилища не
+  // подтверждена; подтверждение — опись копии на ноутбуке.
+  arch('pull', { ...asReaderT, LOGS_PULL_TO: REFCOPY });
+  inCt(`rm -f ${ARCH_ENV.LOGS_STATE_DIR}/chain.json`);
+  const vT3 = arch('verify');
+  check(
+    'эталона нет — НЕПРОВЕРЯЕМО, а не зелёный',
+    vT3.code !== 0 && vT3.out.includes('ИТОГ: НЕПРОВЕРЯЕМО — эталона состава нет'),
+    lineOf(vT3.out, /^ИТОГ/),
+  );
+  const rbT3 = arch('rebuild');
+  const vT3b = arch('verify');
+  check(
+    'rebuild без эталона: голова из хранилища не подтверждена — НЕПРОВЕРЯЕМО',
+    rbT3.out.includes('ЭТАЛОН УТРАЧЕН') && vT3b.out.includes('ИТОГ: НЕПРОВЕРЯЕМО'),
+    lineOf(vT3b.out, /^ИТОГ/),
+  );
+  const rbT3c = arch('rebuild', {}, ['--reference', REFCOPY]);
+  check(
+    'rebuild --reference: эталон — из описи копии, цепочка сошлась',
+    rbT3c.code === 0 && rbT3c.out.includes('эталон цепочки — из описи копии'),
+    lineOf(rbT3c.out, /эталон/),
+  );
+  verifyOk('Ц3 — эталон из копии');
+  inCt(`rm -rf ${REFCOPY}`);
+
   // ---------------------------------------------------- E2: утрата файла
   console.log('\n▸ E2. Утрата файла почты в архиве');
   const lostFile = (await fileKeys())[0];
-  for (const v of await versionsOf(lostFile)) {
-    await rootReq('DELETE', lostFile, { versionId: v.versionId });
-  }
+  await rootReq('DELETE', lostFile);
   const vE2 = arch('verify');
   check(
     'verify: утрата файла — НЕ пройдена',

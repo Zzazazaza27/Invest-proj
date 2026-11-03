@@ -6,7 +6,7 @@
  * Контейнер с systemd, journald и своим Docker Engine
  * (infra/testbed/journald-docker.Dockerfile) в сети стенда; каталог
  * `/opt/unicorn-launch` как на VPS (scripts и infra из репозитория, свой
- * `.env` с LOGS_*); бакеты и учётки заводит настоящий шаг minio-init.
+ * `.env` с LOGS_*); бакеты и ключи заводит настоящий шаг garage-init (Garage, D-001).
  *   U. юниты fifth-logs-* из infra/systemd: окружение из .env, проход,
  *      файлы почты, пакеты, таймеры; занятая блокировка — пропуск, не отказ;
  *   J. лимиты journald (infra/journald): действуют, штатный перезапуск
@@ -30,6 +30,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { docker as dockerTool, loadEnv, ROOT, TOOL_IMAGE } from './lib/backup.mjs';
+import { garageApi } from './lib/garage-admin.mjs';
+import { PORTS } from './lib/ports.mjs';
 import { s3Object } from './lib/s3.mjs';
 
 loadEnv();
@@ -44,19 +46,24 @@ const STATE = '/var/lib/fifth-logs';
 const ALPINE = 'alpine:3.20';
 const CADDY = 'caddy:2.11.4';
 
-const secret = () => randomBytes(18).toString('hex');
+// Ключи Garage (D-001): GK + 24 hex и секрет 64 hex.
+const secret = () => randomBytes(32).toString('hex');
+const gk = () => `GK${randomBytes(12).toString('hex')}`;
+const ROOT_KEY = gk();
+const ROOT_SECRET = secret();
 const E = {
-  LOGS_S3_ENDPOINT: 'http://unicorn-minio:9000',
+  LOGS_S3_ENDPOINT: 'http://unicorn-garage-1:3900',
+  LOGS_S3_REGION: process.env.S3_REGION || 'us-east-1',
   LOGS_S3_BUCKET: `tech-logs-apply-${tag}`,
-  LOGS_S3_ACCESS_KEY_ID: `logs-w-${tag}`,
+  LOGS_S3_ACCESS_KEY_ID: gk(),
   LOGS_S3_SECRET_ACCESS_KEY: secret(),
-  LOGS_READER_ACCESS_KEY_ID: `logs-r-${tag}`,
+  LOGS_READER_ACCESS_KEY_ID: gk(),
   LOGS_READER_SECRET_ACCESS_KEY: secret(),
   LOGS_ARCHIVE_KEY: randomBytes(32).toString('hex'),
   LOGS_LEGACY_S3_BUCKET: `tech-logs-legacy-apply-${tag}`,
-  LOGS_LEGACY_WRITER_ACCESS_KEY_ID: `logs-lw-${tag}`,
+  LOGS_LEGACY_WRITER_ACCESS_KEY_ID: gk(),
   LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY: secret(),
-  LOGS_LEGACY_READER_ACCESS_KEY_ID: `logs-lr-${tag}`,
+  LOGS_LEGACY_READER_ACCESS_KEY_ID: gk(),
   LOGS_LEGACY_READER_SECRET_ACCESS_KEY: secret(),
   LOGS_LEGACY_ARCHIVE_KEY: randomBytes(32).toString('hex'),
   LOGS_FILES: '/var/log/tmail/mainlog',
@@ -64,11 +71,11 @@ const E = {
 };
 
 const root = {
-  endpoint: `http://127.0.0.1:${process.env.S3_PORT || 9000}`,
+  endpoint: `http://127.0.0.1:${PORTS.garageS3}`,
   bucket: E.LOGS_S3_BUCKET,
   region: process.env.S3_REGION || 'us-east-1',
-  accessKey: process.env.MINIO_ROOT_USER,
-  secretKey: process.env.MINIO_ROOT_PASSWORD,
+  accessKey: ROOT_KEY,
+  secretKey: ROOT_SECRET,
 };
 
 let passed = 0;
@@ -124,16 +131,6 @@ function startUnit(unit) {
   return inCt(`systemctl show -p Result --value ${unit}`).trim();
 }
 
-function mcRoot(script) {
-  return sh('docker', [
-    'exec',
-    'unicorn-minio',
-    'sh',
-    '-c',
-    `mc alias set r http://127.0.0.1:9000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null && ${script}; mc alias rm r >/dev/null`,
-  ]);
-}
-
 const containerLog = (name) => inCt(`docker inspect -f '{{.LogPath}}' ${name}`).trim();
 const offline = (fn) => {
   sh('docker', ['network', 'disconnect', NETWORK, CT]);
@@ -155,25 +152,46 @@ async function cleanup() {
     return;
   }
   sh('docker', ['rm', '-f', CT], { allowFail: true });
-  mcRoot(
-    [E.LOGS_S3_BUCKET, E.LOGS_LEGACY_S3_BUCKET]
-      .map((b) => `mc rb --force --dangerous r/${b} >/dev/null 2>&1`)
-      .concat(
-        [
-          E.LOGS_S3_ACCESS_KEY_ID,
-          E.LOGS_READER_ACCESS_KEY_ID,
-          E.LOGS_LEGACY_WRITER_ACCESS_KEY_ID,
-          E.LOGS_LEGACY_READER_ACCESS_KEY_ID,
-        ].map((u) => `mc admin user rm r ${u} >/dev/null 2>&1`),
-        [
-          'fifth-logs-write',
-          'fifth-logs-read',
-          'fifth-logs-legacy-write',
-          'fifth-logs-legacy-read',
-        ].map((p) => `mc admin policy rm r ${p} >/dev/null 2>&1`),
-      )
-      .join('; ') + '; true',
-  );
+  // Бакеты опустошаются ключом владельца и удаляются, ключи — admin API Garage.
+  for (const b of [E.LOGS_S3_BUCKET, E.LOGS_LEGACY_S3_BUCKET]) {
+    try {
+      const store = { ...root, bucket: b };
+      let token = null;
+      do {
+        const r = await s3Object(
+          store,
+          'GET',
+          '',
+          null,
+          {},
+          {
+            'list-type': '2',
+            ...(token ? { 'continuation-token': token } : {}),
+          },
+        );
+        const xml = await r.text();
+        for (const m of xml.matchAll(/<Key>([^<]+)<\/Key>/g)) {
+          await s3Object(store, 'DELETE', m[1].replace(/&amp;/g, '&'));
+        }
+        token = /<IsTruncated>true/.test(xml)
+          ? xml.match(/<NextContinuationToken>([^<]+)</)?.[1]
+          : null;
+      } while (token);
+      const info = await garageApi('GetBucketInfo', undefined, `?globalAlias=${b}`);
+      await garageApi('DeleteBucket', {}, `?id=${info.id}`);
+    } catch {
+      /* бакета нет — уже убран */
+    }
+  }
+  for (const k of [
+    E.LOGS_S3_ACCESS_KEY_ID,
+    E.LOGS_READER_ACCESS_KEY_ID,
+    E.LOGS_LEGACY_WRITER_ACCESS_KEY_ID,
+    E.LOGS_LEGACY_READER_ACCESS_KEY_ID,
+    ROOT_KEY,
+  ]) {
+    await garageApi('DeleteKey', {}, `?id=${k}`).catch(() => undefined);
+  }
 }
 
 console.log(`=== ПРИМЕНЕНИЕ W08b: испытания (${tag}) ===`);
@@ -223,7 +241,7 @@ try {
     .replace(/(localhost|127\.0\.0\.1):5433/g, 'unicorn-postgres:5432')
     .replace(/(localhost|127\.0\.0\.1):6380/g, 'unicorn-valkey:6379')
     .replace(/(localhost|127\.0\.0\.1):4222/g, 'unicorn-nats:4222')
-    .replace(/(localhost|127\.0\.0\.1):9000/g, 'unicorn-minio:9000');
+    .replace(/(localhost|127\.0\.0\.1):9000/g, 'unicorn-garage-1:3900');
   sh('docker', ['exec', '-i', CT, 'sh', '-c', `cat > ${APP}/.env && chmod 600 ${APP}/.env`], {
     input: `${Object.entries(E)
       .map(([k, v]) => `${k}=${v}`)
@@ -235,33 +253,28 @@ try {
   }
   const saved = spawnSync('docker', ['save', ALPINE], { maxBuffer: 256 * 1024 * 1024 });
   sh('docker', ['exec', '-i', CT, 'docker', 'load'], { input: saved.stdout });
-  const keys = Object.keys(E).filter(
-    (k) => !k.startsWith('LOGS_FILES') && k !== 'LOGS_S3_ENDPOINT',
-  );
-  const init = sh(
-    'docker',
-    [
-      'compose',
-      '-f',
-      'infra/docker-compose.yml',
-      '--env-file',
-      '.env',
-      '-p',
-      'unicorn-launch',
-      'run',
-      '--rm',
-      '--no-deps',
-      ...keys.flatMap((k) => ['-e', k]),
-      'minio-init',
-    ],
-    { env: E, allowFail: true },
-  );
+  // Бакеты и ключи журналов — шаг стенда garage-init, как на VPS.
+  const init = sh(process.execPath, ['scripts/garage-init.mjs'], { env: E, allowFail: true });
   check(
-    'minio-init: бакеты архива и истории с учётками',
+    'garage-init: бакеты архива и истории с ключами',
     init.status === 0 &&
-      init.stdout.includes(`бакет журналов ${E.LOGS_S3_BUCKET} готов`) &&
-      init.stdout.includes(`бакет журналов ${E.LOGS_LEGACY_S3_BUCKET} готов`),
+      init.stdout.includes(`бакет ${E.LOGS_S3_BUCKET}: создан`) &&
+      init.stdout.includes(`бакет ${E.LOGS_LEGACY_S3_BUCKET}: создан`),
   );
+  // Ключ владельца — только для чтения границы и уборки испытанием.
+  await garageApi('ImportKey', {
+    accessKeyId: ROOT_KEY,
+    secretAccessKey: ROOT_SECRET,
+    name: `logs-apply-root-${tag}`,
+  });
+  for (const b of [E.LOGS_S3_BUCKET, E.LOGS_LEGACY_S3_BUCKET]) {
+    const info = await garageApi('GetBucketInfo', undefined, `?globalAlias=${b}`);
+    await garageApi('AllowBucketKey', {
+      bucketId: info.id,
+      accessKeyId: ROOT_KEY,
+      permissions: { read: true, write: true, owner: true },
+    });
+  }
 
   // ---------------------------------------------------------- U
   console.log('\n▸ U. Юниты systemd из infra/systemd, окружение из .env');

@@ -48,7 +48,7 @@ import {
   writeFileSync,
   fsyncSync,
 } from 'node:fs';
-import { randomBytes } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 import { hostname } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { gunzipSync } from 'node:zlib';
@@ -173,7 +173,8 @@ const JOURNAL_ARGS = (env.LOGS_JOURNAL_ARGS || '').split(' ').filter(Boolean);
 const storage = {
   endpoint: (env.LOGS_S3_ENDPOINT || '').replace(/\/+$/, ''),
   bucket: env.LOGS_S3_BUCKET || '',
-  region: env.LOGS_S3_REGION || 'us-east-1',
+  // Регион хранилища стенда (Garage — ru-central1, D-001).
+  region: env.LOGS_S3_REGION || env.S3_REGION || 'us-east-1',
   accessKey: env.LOGS_S3_ACCESS_KEY_ID || '',
   secretKey: env.LOGS_S3_SECRET_ACCESS_KEY || '',
 };
@@ -263,6 +264,11 @@ function withLock(fn) {
   closeSync(fd);
   return Promise.resolve()
     .then(fn)
+    .then(async (result) => {
+      // Голова цепочки — в хранилище, для копии на ноутбуке.
+      if (loadChain()) await publishRef();
+      return result;
+    })
     .finally(() => {
       try {
         unlinkSync(LOCK);
@@ -344,6 +350,15 @@ async function s3(method, key, { body = null, headers = {}, query = {} } = {}) {
   return s3Object(storage, method, key, body, headers, query);
 }
 
+/*
+ * Хранилище — Garage (D-001): версий объектов нет, условной записи «только
+ * если объекта нет» нет, право записи включает удаление (проверено 03.11 на
+ * v2.4.1 и v2.5.0). Поэтому «версия» объекта здесь — SHA-256 его байтов:
+ * запись возвращает её, чтение по ней отдаёт объект, только если хеш
+ * совпал, — перезаписанный объект читается как утраченный. Перезапись и
+ * удаление не предотвращаются, а обнаруживаются: квитанции подписаны и
+ * связаны в цепочку, её голова — эталон состава (ниже).
+ */
 async function putObject(key, body, metadata = {}) {
   // Метаданные объекта идут заголовками HTTP — только ASCII (испытание 10:
   // причина потери по-русски роняла запись). Описания — в каталоге.
@@ -354,46 +369,58 @@ async function putObject(key, body, metadata = {}) {
     Object.entries(metadata).map(([k, v]) => [`x-amz-meta-${k}`, String(v)]),
   );
   headers['content-type'] = 'application/octet-stream';
+  // Метка содержимого — подсказка для восстановления состояния (какая
+  // квитанция действующая); доказательство — только чтение и сверка.
+  headers['x-amz-meta-object-sha256'] = sha256Hex(body);
   const r = await s3('PUT', key, { body, headers });
   if (!r.ok) throw new Error(`S3 PUT ${key}: ${r.status}`);
-  const versionId = r.headers.get('x-amz-version-id');
-  if (!versionId) throw new Error(`S3 не вернул VersionId для ${key}: версии бакета выключены?`);
+  // Записанное — ровно эти байты: чтение обратно и сверка.
+  const versionId = sha256Hex(body);
+  if (!(await getVersion(key, versionId))) {
+    throw new Error(`${key}: записанное не читается в прежнем виде`);
+  }
   return versionId;
 }
 
-async function getVersion(key, versionId) {
-  const r = await s3('GET', key, { query: { versionId } });
+/**
+ * Объект по ключу; с versionId (SHA-256 байтов) — только если содержимое
+ * то же, иначе null (объект удалён или перезаписан).
+ */
+async function getVersion(key, versionId = null) {
+  const r = await s3('GET', key);
   if (r.status === 404) return null;
-  if (!r.ok) throw new Error(`S3 GET ${key}@${versionId}: ${r.status}`);
-  return Buffer.from(await r.arrayBuffer());
+  if (!r.ok) throw new Error(`S3 GET ${key}: ${r.status}`);
+  const body = Buffer.from(await r.arrayBuffer());
+  if (versionId && sha256Hex(body) !== versionId) return null;
+  return body;
 }
 
-/** Все версии под префиксом: [{key, versionId, latest}] (удаления не входят). */
+/** Метка SHA-256 объекта из метаданных (HEAD) или null — подсказка, не доказательство. */
+async function shaHint(key) {
+  const r = await s3('HEAD', key);
+  return r.ok ? r.headers.get('x-amz-meta-object-sha256') : null;
+}
+
+/** Объекты под префиксом: [{key, versionId: null}] — версий у хранилища нет. */
 async function listVersions(prefix) {
   const out = [];
-  let marker = null;
-  let vmarker = null;
+  let token = null;
   for (;;) {
     const query = {
-      versions: '',
+      'list-type': '2',
       prefix,
-      ...(marker ? { 'key-marker': marker } : {}),
-      ...(vmarker ? { 'version-id-marker': vmarker } : {}),
+      ...(token ? { 'continuation-token': token } : {}),
     };
     const r = await s3('GET', '', { query });
-    if (!r.ok) throw new Error(`S3 LIST VERSIONS ${prefix}: ${r.status}`);
+    if (!r.ok) throw new Error(`S3 LIST ${prefix}: ${r.status}`);
     const xml = await r.text();
-    for (const m of xml.matchAll(/<Version>([\s\S]*?)<\/Version>/g)) {
-      out.push({
-        key: m[1].match(/<Key>([^<]+)<\/Key>/)?.[1],
-        versionId: m[1].match(/<VersionId>([^<]+)<\/VersionId>/)?.[1],
-        latest: /<IsLatest>true<\/IsLatest>/.test(m[1]),
-      });
+    for (const m of xml.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      const key = m[1].match(/<Key>([^<]+)<\/Key>/)?.[1]?.replace(/&amp;/g, '&');
+      out.push({ key, versionId: null, latest: true });
     }
     if (!/<IsTruncated>true<\/IsTruncated>/.test(xml)) break;
-    marker = xml.match(/<NextKeyMarker>([^<]+)<\/NextKeyMarker>/)?.[1] ?? null;
-    vmarker = xml.match(/<NextVersionIdMarker>([^<]+)<\/NextVersionIdMarker>/)?.[1] ?? null;
-    if (!marker) break;
+    token = xml.match(/<NextContinuationToken>([^<]+)<\/NextContinuationToken>/)?.[1] ?? null;
+    if (!token) break;
   }
   return out;
 }
@@ -413,19 +440,189 @@ const groupByKey = (versions) => {
  */
 async function putAnchor(anchor) {
   const key = `anchors/${anchor.seqId}.json`;
-  const versions = (await listVersions(key)).filter((v) => v.key === key);
-  if (versions.length) throw new Error(`граница архива ${anchor.seqId} уже закреплена`);
-  await putObject(key, Buffer.from(JSON.stringify(anchor)));
+  if (await getVersion(key)) throw new Error(`граница архива ${anchor.seqId} уже закреплена`);
+  await putChained(key, anchor);
+}
+
+// ------------------------------------------------------ цепочка квитанций
+
+/**
+ * Квитанции (граница, порции, потери, файлы почты, пакеты, известные
+ * пробелы) — звенья одной цепочки: у каждой `prev` — голова цепочки до неё и
+ * `mac` — HMAC-SHA256 ключом, производным от ключа архива. Подменить объект
+ * вместе с квитанцией без ключа нельзя незаметно: MAC не сойдётся.
+ *
+ * Эталон состава — голова цепочки (контрольный хеш) и число звеньев:
+ * `chain.json` в состоянии архиватора (основной) и опись копии на ноутбуке.
+ * Удаление в середине — разрыв, удаление хвоста вместе с квитанциями —
+ * цепочка короче эталона. Эталона нет или он восстановлен из самого
+ * хранилища — «НЕПРОВЕРЯЕМО», без угадывания (замечания Тэнка 03.11).
+ * Голова, подписанная, лежит и в хранилище (`ref/head.json`) — для копии на
+ * ноутбуке; её откат злоумышленником ловят прежняя опись копии и эталон VPS.
+ */
+const CHAIN = join(STATE_DIR, 'chain.json');
+const CHAINED = ['anchors/', 'r/', 'rf/', 'pr/', 'gaps/'];
+const GENESIS = sha256Hex(Buffer.from('fifth-logs-chain/v1'));
+const REF_KEY = 'ref/head.json';
+const canonical = (o) =>
+  JSON.stringify(
+    Object.keys(o)
+      .filter((k) => k !== 'mac')
+      .sort()
+      .reduce((acc, k) => ({ ...acc, [k]: o[k] }), {}),
+  );
+function macOf(body, keyMat) {
+  const macKey = createHmac('sha256', keyMat.key).update('fifth-logs/receipt-mac/v1').digest();
+  return createHmac('sha256', macKey).update(canonical(body)).digest('hex');
+}
+const linkOf = (prev, mac) => sha256Hex(Buffer.from(`${prev}:${mac}`));
+const loadChain = () => readJson(CHAIN);
+const saveChain = (c) => writeJsonAtomic(CHAIN, { ...c, at: new Date().toISOString() });
+
+/**
+ * Записать звено цепочки. Ключ уже занят нашей подписанной квитанцией —
+ * повтор после сбоя: если она продолжает голову, голова сдвигается. Чужое
+ * (неподписанное) содержимое под ключом — конфликт, без перезаписи.
+ */
+async function putChained(key, body) {
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  let chain = loadChain();
+  if (!chain) {
+    // Новая цепочка — только в пустом архиве; иначе эталон утрачен, и
+    // продолжать от начала значило бы развилку: сначала rebuild.
+    for (const p of CHAINED) {
+      if ((await listVersions(p)).length) {
+        throw new Error('эталона цепочки нет, а в архиве квитанции есть — сначала rebuild');
+      }
+    }
+    chain = { head: GENESIS, count: 0, trusted: true, source: 'архиватор' };
+  }
+  const existing = await getVersion(key);
+  if (existing) {
+    let b = null;
+    try {
+      b = JSON.parse(existing.toString('utf8'));
+    } catch {
+      /* ниже — конфликт */
+    }
+    if (!b?.mac || b.mac !== macOf(b, keyMat)) {
+      throw new Error(`КОНФЛИКТ: под ${key} квитанция без подписи ключом архива — без перезаписи`);
+    }
+    if (b.prev === chain.head) {
+      saveChain({ ...chain, head: linkOf(chain.head, b.mac), count: chain.count + 1 });
+    }
+    return b;
+  }
+  const signed = { ...body, prev: chain.head };
+  signed.mac = macOf(signed, keyMat);
+  await putObject(key, Buffer.from(JSON.stringify(signed)));
+  if (env.LOGS_TEST_CRASH === 'after-chained-put') process.exit(95);
+  saveChain({ ...chain, head: linkOf(chain.head, signed.mac), count: chain.count + 1 });
+  return signed;
+}
+
+/** Квитанция для восстановления: только подписанная, иначе остановка. */
+async function receiptBody(key) {
+  const b = await chainedBody(key, archiveKey(env.LOGS_ARCHIVE_KEY));
+  if (!b) throw new Error(`квитанция ${key}: без подписи ключом архива — нужен разбор`);
+  return b;
+}
+
+/** Подписанная квитанция по ключу или null (нет / не наша подпись). */
+async function chainedBody(key, keyMat) {
+  const raw = await getVersion(key);
+  if (!raw) return null;
+  try {
+    const b = JSON.parse(raw.toString('utf8'));
+    return b.mac && b.mac === macOf(b, keyMat) ? b : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Цепочка в хранилище от начала: голова, число звеньев, головы по порядку,
+ * неподписанные квитанции, развилки и квитанции вне цепочки (за разрывом).
+ */
+async function walkChain(keyMat) {
+  const byPrev = new Map();
+  const bad = [];
+  const forks = [];
+  const keys = [];
+  for (const p of CHAINED) for (const v of await listVersions(p)) keys.push(v.key);
+  for (const key of keys) {
+    const b = await chainedBody(key, keyMat);
+    if (!b) {
+      bad.push(key);
+      continue;
+    }
+    if (byPrev.has(b.prev)) forks.push(key);
+    else byPrev.set(b.prev, { key, b });
+  }
+  const heads = [GENESIS];
+  const visited = new Set();
+  let head = GENESIS;
+  for (;;) {
+    const n = byPrev.get(head);
+    if (!n) break;
+    visited.add(n.key);
+    head = linkOf(head, n.b.mac);
+    heads.push(head);
+  }
+  const outside = keys.filter((k) => !visited.has(k) && !bad.includes(k) && !forks.includes(k));
+  return { head, count: heads.length - 1, heads, bad, forks, outside, total: keys.length };
+}
+
+/** Сверка цепочки хранилища с эталоном: {problems, unverifiable}. */
+function chainProblems(w, ref) {
+  const problems = [];
+  if (w.bad.length) {
+    problems.push(
+      `квитанций без подписи ключом архива: ${w.bad.length} (${w.bad.slice(0, 3).join(', ')})`,
+    );
+  }
+  if (w.forks.length) problems.push(`развилка цепочки: ${w.forks.slice(0, 3).join(', ')}`);
+  if (w.outside.length) {
+    problems.push(`квитанций за разрывом цепочки: ${w.outside.length} — звено утрачено`);
+  }
+  if (!ref) return { problems, unverifiable: 'эталона состава нет' };
+  if (w.count < ref.count) {
+    problems.push(
+      `цепочка короче эталона: ${w.count} из ${ref.count} звеньев — утрачены квитанции (в том числе хвост)`,
+    );
+  } else if (w.heads[ref.count] !== ref.head) {
+    problems.push('цепочка не совпала с эталоном по контрольному хешу — подмена');
+  }
+  if (!ref.trusted) {
+    return {
+      problems,
+      unverifiable: `эталон ${ref.source ?? 'не подтверждён'} — не подтверждён копией`,
+    };
+  }
+  return { problems, unverifiable: null };
+}
+
+/** Голова цепочки — в хранилище, подписанной (для копии на ноутбуке). */
+async function publishRef() {
+  const chain = loadChain();
+  if (!chain) return;
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  const cur = await chainedBody(REF_KEY, keyMat);
+  if (cur && cur.head === chain.head) return;
+  const ref = { head: chain.head, count: chain.count, at: new Date().toISOString() };
+  ref.mac = macOf(ref, keyMat);
+  await putObject(REF_KEY, Buffer.from(JSON.stringify(ref)));
 }
 
 async function readAnchors() {
   const byKey = groupByKey(await listVersions('anchors/'));
   const out = [];
-  for (const [key, versions] of byKey) {
-    if (versions.length !== 1) {
-      throw new Error(`НЕОДНОЗНАЧНОСТЬ: у границы ${key} версий ${versions.length} — нужен разбор`);
-    }
-    out.push(JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8')));
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  for (const [key] of byKey) {
+    const b = await chainedBody(key, keyMat);
+    if (!b)
+      throw new Error(`НЕОДНОЗНАЧНОСТЬ: граница ${key} без подписи ключом архива — нужен разбор`);
+    out.push(b);
   }
   return out;
 }
@@ -440,10 +637,7 @@ async function readAnchors() {
  */
 async function putReceipt(row) {
   const p = parseChunkKey(row.key);
-  const key = receiptKey(p.seqId, p.first, p.last, p.kind, row.versionId);
-  const existing = (await listVersions(key)).filter((v) => v.key === key);
-  if (existing.length) return;
-  await putObject(key, Buffer.from(JSON.stringify(row)));
+  await putChained(receiptKey(p.seqId, p.first, p.last, p.kind, row.versionId), row);
 }
 
 // ------------------------------------------------------------- проход
@@ -472,14 +666,13 @@ async function plainOfVersion(key, versionId, keyMat) {
 async function storeChunk(key, entries, keyMat) {
   const plain = buildPlain(entries);
   const plainSha = sha256Hex(plain);
-  const versions = (await listVersions(key)).filter((v) => v.key === key);
-  for (const v of versions) {
-    const got = await plainOfVersion(key, v.versionId, keyMat);
+  // Под ключом уже есть объект (повтор после сбоя или чужая запись):
+  // принимается только то же содержимое.
+  if (await getVersion(key)) {
+    const got = await plainOfVersion(key, null, keyMat);
     if (got && sha256Hex(got.plain) === plainSha) {
-      return { versionId: v.versionId, plainSha, objSha: got.objSha, reused: true };
+      return { versionId: got.objSha, plainSha, objSha: got.objSha, reused: true };
     }
-  }
-  if (versions.length) {
     throw new Error(`КОНФЛИКТ ${key}: в архиве другая порция с тем же отрезком — без перезаписи`);
   }
   const sealed = seal(plain, keyMat.key);
@@ -508,10 +701,10 @@ const LOSS_LABELS = {
 
 async function storeLoss(seqId, first, last, reason) {
   const key = chunkKey(PREFIX, seqId, first, last, 'loss');
-  const versions = (await listVersions(key)).filter((v) => v.key === key);
-  const versionId =
-    versions[0]?.versionId ??
-    (await putObject(key, Buffer.alloc(0), { format: 'loss/v1', reason }));
+  const existing = await getVersion(key);
+  const versionId = existing
+    ? sha256Hex(existing)
+    : await putObject(key, Buffer.alloc(0), { format: 'loss/v1', reason });
   const row = {
     kind: 'loss',
     key,
@@ -588,9 +781,7 @@ async function adoptConfirmed(state) {
   for (;;) {
     const next = nextBeyond(state, state.seqId);
     if (!next?.receipt || state.lastSeq === null || next.first !== state.lastSeq + 1n) return;
-    const row = JSON.parse(
-      (await getVersion(next.receipt.key, next.receipt.versionId)).toString('utf8'),
-    );
+    const row = await receiptBody(next.receipt.key);
     appendCatalog(row);
     state.lastSeq = next.last;
     if (row.lastCursor) state.lastCursor = row.lastCursor;
@@ -730,7 +921,10 @@ async function receiptsOf(sid) {
       );
     }
     const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
-    if (!(objectVersions.get(range) ?? []).some((v) => v.versionId === r.versionId)) {
+    // Квитанция действующая, если объект под ключом есть и его метка
+    // содержимого — та, что в квитанции; иначе объект утрачен или заменён
+    // (например, восполнен из journald заново). Доказательство — verify.
+    if (!objectVersions.has(range) || (await shaHint(range)) !== r.versionId) {
       lostConfirmed.push(range);
       continue;
     }
@@ -760,7 +954,7 @@ async function rebuildClosed(anchor, keyMat) {
   const { receipts, lostConfirmed } = await receiptsOf(sid);
   const rows = [];
   for (const [, [rec]] of receipts) {
-    rows.push(JSON.parse((await getVersion(rec.key, rec.versionId)).toString('utf8')));
+    rows.push(await receiptBody(rec.key));
   }
   const lost = lostConfirmed.map((k) => parseChunkKey(k));
   const maxLast = [...rows.map((r) => BigInt(r.last)), ...lost.map((l) => l.last)].reduce(
@@ -983,6 +1177,7 @@ function catalogRow(key, entries, res) {
  *    (archiveGaps), а не потеря journald.
  */
 async function rebuildState() {
+  await restoreChain();
   const anchors = await readAnchors();
   if (!anchors.length) {
     if (existsSync(join(STATE_DIR, 'start.json'))) {
@@ -1013,7 +1208,7 @@ async function rebuildState() {
   const rows = [];
   for (const it of chain) {
     const [rec] = receipts.get(it.key);
-    rows.push(JSON.parse((await getVersion(rec.key, rec.versionId)).toString('utf8')));
+    rows.push(await receiptBody(rec.key));
   }
   const all = [...closedRows, ...rows];
   writeFileSync(CATALOG, all.length ? all.map((r) => JSON.stringify(r)).join('\n') + '\n' : '');
@@ -1064,6 +1259,48 @@ async function rebuildState() {
   return loadState();
 }
 
+/**
+ * Эталон цепочки при восстановлении. Есть `chain.json` — остаётся. Нет —
+ * голова берётся из хранилища, но НЕ подтверждена: verify скажет
+ * «НЕПРОВЕРЯЕМО». С `--reference <каталог копии>` (или
+ * LOGS_REFERENCE_COPY) эталон — из описи копии на ноутбуке: цепочка
+ * хранилища обязана содержать его голову на его месте.
+ */
+async function restoreChain() {
+  const refDir = argOf('--reference') ?? env.LOGS_REFERENCE_COPY ?? null;
+  if (loadChain() && !refDir) return;
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  const w = await walkChain(keyMat);
+  if (!w.count) return;
+  if (refDir) {
+    let m;
+    try {
+      m = JSON.parse(open(readFileSync(join(refDir, MANIFEST)), keyMat.key).toString('utf8'));
+    } catch {
+      throw new Error(`эталон: опись копии ${refDir} не открывается`);
+    }
+    const ref = m.reference;
+    if (!ref || w.count < ref.count || w.heads[ref.count] !== ref.head) {
+      throw new Error(
+        `эталон копии (${ref?.count ?? '?'} звеньев) не совпал с цепочкой хранилища (${w.count}) — утрата или подмена`,
+      );
+    }
+    saveChain({
+      head: w.head,
+      count: w.count,
+      trusted: true,
+      source: `опись копии от ${m.at}`,
+      verifiedUpTo: ref.count,
+    });
+    console.log(`эталон цепочки — из описи копии: ${ref.count} звеньев сошлись, всего ${w.count}`);
+    return;
+  }
+  saveChain({ head: w.head, count: w.count, trusted: false, source: 'восстановлен из хранилища' });
+  console.error(
+    `ЭТАЛОН УТРАЧЕН: голова цепочки взята из хранилища (${w.count} звеньев) — не подтверждена; сверить: rebuild --reference <копия>`,
+  );
+}
+
 // ------------------------------------------------------------------ init
 
 async function init() {
@@ -1109,10 +1346,11 @@ function status() {
 }
 
 /**
- * Проверка архива: каждая порция каталога читается ИМЕННО своей версией
- * (VersionId), расшифровывается, исходный хеш и число записей сверяются.
- * Отдельно — посторонние версии под ключами порций (запись мимо архиватора)
- * и неподтверждённые порции: это тоже не «всё в порядке».
+ * Проверка архива: каждая порция каталога читается и сверяется по SHA-256
+ * объекта из квитанции (перезаписанный объект — утрата), расшифровывается,
+ * исходный хеш и число записей сверяются; цепочка квитанций — подписи,
+ * разрывы и голова против эталона. Эталона нет или он не подтверждён —
+ * «НЕПРОВЕРЯЕМО».
  */
 async function verify() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
@@ -1151,8 +1389,10 @@ async function verify() {
     }
   }
   if (anchors.length > 1) console.log(`нумераций журнала: ${anchors.length}`);
-  const foreign = [];
-  const byKey = groupByKey(await listVersions(`${PREFIX}/`));
+  // Цепочка квитанций против эталона (голова и число звеньев).
+  const walk = await walkChain(keyMat);
+  const chainCheck = chainProblems(walk, loadChain());
+  problems.push(...chainCheck.problems);
   for (const r of rows) {
     const got = await plainOfVersion(r.key, r.versionId, keyMat);
     if (!got) {
@@ -1164,17 +1404,15 @@ async function verify() {
     if (sha256Hex(got.plain) !== r.plainSha || n !== r.count) {
       problems.push(`${r.key}: исходный хеш или число записей не совпали`);
     }
-    const others = (byKey.get(r.key) ?? []).filter((v) => v.versionId !== r.versionId);
-    if (others.length) foreign.push(`${r.key}: посторонних версий ${others.length}`);
   }
-  const filesSeen = await verifyFiles(keyMat, problems, foreign);
+  const filesSeen = await verifyFiles(keyMat, problems);
   const unconfirmed = state?.unconfirmed?.length ?? 0;
   const gaps = state?.archiveGaps?.length ?? 0;
   console.log(
-    `проверено порций: ${rows.length}, квитанций: ${receiptsSeen}, файлов: ${filesSeen}, проблем: ${problems.length}, посторонних версий: ${foreign.length}, без квитанции: ${unconfirmed}, пропусков архива: ${gaps}`,
+    `проверено порций: ${rows.length}, квитанций: ${receiptsSeen}, звеньев цепочки: ${walk.count}, файлов: ${filesSeen}, проблем: ${problems.length}, без квитанции: ${unconfirmed}, пропусков архива: ${gaps}`,
   );
-  for (const p of [...problems, ...foreign]) console.log(`  ${p}`);
-  const failedCheck = problems.length || foreign.length || gaps;
+  for (const p of problems) console.log(`  ${p}`);
+  const failedCheck = problems.length || gaps;
   // Два разных успеха (Тэнк 2026-11-03): согласованность архива с учтёнными
   // потерями не означает, что данные сохранены полностью.
   const losses = all.filter((r) => r.kind === 'loss');
@@ -1184,15 +1422,17 @@ async function verify() {
   console.log(
     failedCheck
       ? 'ИТОГ: проверка НЕ пройдена'
-      : losses.length
-        ? `ИТОГ: проверка пройдена, есть учтённые потери — отрезков ${losses.length}, записей ${lostRecords} (${Object.entries(
-            byReason,
-          )
-            .map(([k, v]) => `${k}: ${v}`)
-            .join(', ')}); утраченное не восстановлено`
-        : 'ИТОГ: данные сохранены полностью',
+      : chainCheck.unverifiable
+        ? `ИТОГ: НЕПРОВЕРЯЕМО — ${chainCheck.unverifiable}`
+        : losses.length
+          ? `ИТОГ: проверка пройдена, есть учтённые потери — отрезков ${losses.length}, записей ${lostRecords} (${Object.entries(
+              byReason,
+            )
+              .map(([k, v]) => `${k}: ${v}`)
+              .join(', ')}); утраченное не восстановлено`
+          : 'ИТОГ: данные сохранены полностью',
   );
-  if (failedCheck) process.exitCode = 1;
+  if (failedCheck || chainCheck.unverifiable) process.exitCode = 1;
 }
 
 // ---------------------------------------------------------- файлы почты
@@ -1266,11 +1506,10 @@ function closedGenerations(base) {
 /** Квитанции файлов из S3: хеш → тело квитанции. */
 async function fileReceipts() {
   const out = new Map();
-  for (const [key, versions] of groupByKey(await listVersions('rf/'))) {
-    if (versions.length !== 1) {
-      throw new Error(`НЕОДНОЗНАЧНОСТЬ: у квитанции ${key} версий ${versions.length}`);
-    }
-    const body = JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8'));
+  const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
+  for (const [key] of groupByKey(await listVersions('rf/'))) {
+    const body = await chainedBody(key, keyMat);
+    if (!body) throw new Error(`квитанция ${key}: без подписи ключом архива — нужен разбор`);
     if (key !== fileReceiptKey(body.plainSha, body.versionId)) {
       throw new Error(`квитанция ${key}: содержимое не совпадает с именем`);
     }
@@ -1292,16 +1531,15 @@ async function storeFile(src, g, plain, keyMat, known) {
   // содержимому; чужое содержимое под ключом — конфликт.
   let versionId = null;
   let objSha = null;
-  const existing = (await listVersions(key)).filter((v) => v.key === key);
-  for (const v of existing) {
-    const got = await plainOfVersion(key, v.versionId, keyMat);
+  const existing = await getVersion(key);
+  if (existing) {
+    const got = await plainOfVersion(key, null, keyMat);
     if (got && sha256Hex(got.plain) === plainSha) {
-      versionId = v.versionId;
+      versionId = got.objSha;
       objSha = got.objSha;
-      break;
     }
   }
-  if (!versionId && existing.length) {
+  if (!versionId && existing) {
     throw new Error(`КОНФЛИКТ: под ${key} другое содержимое — без перезаписи, нужен разбор`);
   }
   if (!versionId) {
@@ -1335,8 +1573,7 @@ async function storeFile(src, g, plain, keyMat, known) {
     ...(g.snapshot ? { snapshot: g.snapshot } : {}),
     at: new Date().toISOString(),
   };
-  await putObject(fileReceiptKey(plainSha, versionId), Buffer.from(JSON.stringify(body)));
-  known.set(plainSha, body);
+  known.set(plainSha, await putChained(fileReceiptKey(plainSha, versionId), body));
   console.log(`файл ${g.path}: записан (${plain.length} байт)`);
   return 'stored';
 }
@@ -1569,7 +1806,8 @@ async function legacyGap() {
     }
   }
   if (existing.length) throw new Error(`КОНФЛИКТ: под ${key} другое описание — без перезаписи`);
-  await putObject(key, Buffer.from(JSON.stringify({ ...body, at: new Date().toISOString() })));
+  // Звено цепочки истории — пробел входит в подтверждённый состав.
+  await withLock(() => putChained(key, { ...body, at: new Date().toISOString() }));
   console.log(`пробел ${source}: записан (до ${until})`);
 }
 
@@ -1585,21 +1823,23 @@ function secretsDraft() {
   const to = argOf('--to');
   if (!to) throw new Error('нужен --to <файл вне Git>');
   if (existsSync(to)) throw new Error(`${to} уже есть — не перезаписываю`);
-  const s = () => randomBytes(24).toString('base64url');
+  // Ключи Garage (D-001): GK + 24 hex и секрет 64 hex.
+  const s = () => randomBytes(32).toString('hex');
+  const gk = () => `GK${randomBytes(12).toString('hex')}`;
   const k = () => randomBytes(32).toString('hex');
   const vars = {
     DOCKER_LOG_DRIVER: 'journald',
     LOGS_S3_ENDPOINT: 'http://127.0.0.1:9000',
     LOGS_S3_BUCKET: 'tech-logs',
-    LOGS_S3_ACCESS_KEY_ID: 'fifth-logs-writer',
+    LOGS_S3_ACCESS_KEY_ID: gk(),
     LOGS_S3_SECRET_ACCESS_KEY: s(),
-    LOGS_READER_ACCESS_KEY_ID: 'fifth-logs-reader',
+    LOGS_READER_ACCESS_KEY_ID: gk(),
     LOGS_READER_SECRET_ACCESS_KEY: s(),
     LOGS_ARCHIVE_KEY: k(),
     LOGS_LEGACY_S3_BUCKET: 'tech-logs-legacy',
-    LOGS_LEGACY_WRITER_ACCESS_KEY_ID: 'fifth-logs-legacy-writer',
+    LOGS_LEGACY_WRITER_ACCESS_KEY_ID: gk(),
     LOGS_LEGACY_WRITER_SECRET_ACCESS_KEY: s(),
-    LOGS_LEGACY_READER_ACCESS_KEY_ID: 'fifth-logs-legacy-reader',
+    LOGS_LEGACY_READER_ACCESS_KEY_ID: gk(),
     LOGS_LEGACY_READER_SECRET_ACCESS_KEY: s(),
     LOGS_LEGACY_ARCHIVE_KEY: k(),
     LOGS_FILES: '/var/log/exim4/mainlog,/var/log/dovecot.log',
@@ -1835,9 +2075,8 @@ async function files() {
 }
 
 /** Проверка файлов архива: каждая квитанция — своей версией, хеши. */
-async function verifyFiles(keyMat, problems, foreign) {
+async function verifyFiles(keyMat, problems) {
   const known = await fileReceipts();
-  const byKey = groupByKey(await listVersions('f/'));
   for (const r of known.values()) {
     const got = await plainOfVersion(r.key, r.versionId, keyMat);
     if (!got) {
@@ -1847,8 +2086,6 @@ async function verifyFiles(keyMat, problems, foreign) {
     if (got.objSha !== r.objSha || sha256Hex(got.plain) !== r.plainSha) {
       problems.push(`файл ${r.source}/${r.name}: хеш не совпал`);
     }
-    const others = (byKey.get(r.key) ?? []).filter((v) => v.versionId !== r.versionId);
-    if (others.length) foreign.push(`${r.key}: посторонних версий ${others.length}`);
   }
   return known.size;
 }
@@ -2193,26 +2430,21 @@ async function pack() {
       const sealed = seal(plain, keyMat.key);
       const key = packKey(day);
       const versionId = await putObject(key, sealed, { format: `pack+${FORMAT}` });
-      await putObject(
-        packReceiptKey(day, versionId),
-        Buffer.from(
-          JSON.stringify({
-            day,
-            key,
-            versionId,
-            objSha: sha256Hex(sealed),
-            plainSha: sha256Hex(plain),
-            chunks: parts.map((p) => ({
-              key: p.row.key,
-              versionId: p.row.versionId,
-              first: p.row.first,
-              last: p.row.last,
-              count: p.row.count,
-              plainSha: p.row.plainSha,
-            })),
-          }),
-        ),
-      );
+      await putChained(packReceiptKey(day, versionId), {
+        day,
+        key,
+        versionId,
+        objSha: sha256Hex(sealed),
+        plainSha: sha256Hex(plain),
+        chunks: parts.map((p) => ({
+          key: p.row.key,
+          versionId: p.row.versionId,
+          first: p.row.first,
+          last: p.row.last,
+          count: p.row.count,
+          plainSha: p.row.plainSha,
+        })),
+      });
       await putVolumeSnapshot(day, parts);
       made++;
       console.log(`пакет ${day}: порций ${parts.length}`);
@@ -2292,15 +2524,12 @@ async function pull() {
   // Квитанции всех нумераций journald, включая квитанции на отсутствующие
   // версии — свидетельство утраты.
   const receipts = [];
-  const versions = new Map();
   for (const { seqId: sid } of anchors) {
-    for (const [k, v] of groupByKey(await listVersions(`${PREFIX}/${sid}/`))) versions.set(k, v);
-    for (const [key, list] of groupByKey(await listVersions(`r/${sid}/`))) {
+    for (const [key] of groupByKey(await listVersions(`r/${sid}/`))) {
       const r = parseReceiptKey(key);
       if (!r) continue;
-      if (list.length !== 1)
-        throw new Error(`НЕОДНОЗНАЧНОСТЬ: у квитанции ${key} версий ${list.length}`);
-      const body = JSON.parse((await getVersion(key, list[0].versionId)).toString('utf8'));
+      const body = await chainedBody(key, keyMat);
+      if (!body) throw new Error(`квитанция ${key}: без подписи ключом архива — нужен разбор`);
       const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
       if (
         body.key !== range ||
@@ -2314,9 +2543,10 @@ async function pull() {
     }
   }
   const packs = [];
-  for (const [key, versions] of groupByKey(await listVersions('pr/'))) {
-    if (versions.length !== 1) throw new Error(`НЕОДНОЗНАЧНОСТЬ: квитанция пакета ${key}`);
-    packs.push(JSON.parse((await getVersion(key, versions[0].versionId)).toString('utf8')));
+  for (const [key] of groupByKey(await listVersions('pr/'))) {
+    const body = await chainedBody(key, keyMat);
+    if (!body) throw new Error(`квитанция пакета ${key}: без подписи ключом архива`);
+    packs.push(body);
   }
 
   let downloaded = 0;
@@ -2333,7 +2563,6 @@ async function pull() {
   for (const r of receipts) {
     if (r.kind !== 'chunk' || inPacks.has(`${r.key}@${r.versionId}`)) continue;
     if (existsSync(chunkFile(to, r))) continue;
-    if (!(versions.get(r.key) ?? []).some((v) => v.versionId === r.versionId)) continue;
     const sealed = await getVersion(r.key, r.versionId);
     if (!sealed) continue;
     writeFileSync(chunkFile(to, r), sealed);
@@ -2351,7 +2580,50 @@ async function pull() {
     downloaded++;
   }
 
-  const manifest = { at: new Date().toISOString(), anchors, receipts, packs, files: fileList };
+  // Эталон копии: цепочка хранилища, сверенная с опубликованной головой
+  // (ref/head.json) и с эталоном прежней копии — откат головы или утрата
+  // хвоста видны здесь, даже если голову в хранилище подменили на старую.
+  const walk = await walkChain(keyMat);
+  const chainNotes = chainProblems(walk, null).problems;
+  const published = await chainedBody(REF_KEY, keyMat);
+  if (
+    published &&
+    (walk.count < published.count || walk.heads[published.count] !== published.head)
+  ) {
+    chainNotes.push(
+      `цепочка хранилища (${walk.count}) не содержит опубликованную голову (${published.count}) — утрата или подмена`,
+    );
+  }
+  let prev = null;
+  try {
+    prev = JSON.parse(
+      open(readFileSync(join(to, MANIFEST)), keyMat.key).toString('utf8'),
+    ).reference;
+  } catch {
+    /* первой копии нет */
+  }
+  if (prev && (walk.count < prev.count || walk.heads[prev.count] !== prev.head)) {
+    chainNotes.push(
+      `цепочка хранилища (${walk.count}) расходится с эталоном прежней копии (${prev.count}) — утрата или подмена`,
+    );
+  }
+  const chain = [];
+  for (const p of CHAINED) {
+    for (const v of await listVersions(p)) {
+      const b = await chainedBody(v.key, keyMat);
+      if (b) chain.push({ key: v.key, body: b });
+    }
+  }
+  const manifest = {
+    at: new Date().toISOString(),
+    anchors,
+    receipts,
+    packs,
+    files: fileList,
+    reference: { head: walk.head, count: walk.count },
+    chain,
+    chainNotes,
+  };
   const tmp = join(to, `${MANIFEST}.tmp`);
   writeFileSync(tmp, seal(Buffer.from(JSON.stringify(manifest)), keyMat.key));
   renameSync(tmp, join(to, MANIFEST));
@@ -2380,7 +2652,28 @@ function checkCopy(to, keyMat) {
   }
   const { receipts, packs } = manifest;
   const anchors = manifest.anchors ?? [manifest.anchor];
-  const problems = [];
+  const problems = [...(manifest.chainNotes ?? [])];
+  // Цепочка по описи: подписи и голова против эталона копии.
+  if (manifest.reference) {
+    const byPrev = new Map();
+    for (const { body } of manifest.chain ?? []) {
+      if (body.mac !== macOf(body, keyMat)) problems.push('опись: звено без подписи ключом архива');
+      else byPrev.set(body.prev, body);
+    }
+    let head = GENESIS;
+    let n = 0;
+    for (let b = byPrev.get(head); b; b = byPrev.get(head)) {
+      head = linkOf(head, b.mac);
+      n++;
+    }
+    if (n !== manifest.reference.count || head !== manifest.reference.head) {
+      problems.push(
+        `опись: цепочка (${n}) не сошлась с эталоном копии (${manifest.reference.count})`,
+      );
+    }
+  } else {
+    problems.push('опись без эталона цепочки — копия старого формата, НЕПРОВЕРЯЕМО');
+  }
   const fromPacks = new Map();
   for (const p of packs) {
     const res = packParts(to, p, keyMat);

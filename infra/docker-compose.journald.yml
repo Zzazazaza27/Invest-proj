@@ -20,7 +20,9 @@ services:
   postgres: *journald
   valkey: *journald
   nats: *journald
-  minio: *journald
+  garage-1: *journald
+  garage-2: *journald
+  garage-3: *journald
   zabbix-server-host: *journald
   zabbix-web: *journald
   zabbix-agent2-host: *journald
