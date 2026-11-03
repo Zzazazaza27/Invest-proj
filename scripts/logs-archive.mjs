@@ -56,6 +56,7 @@ import {
   seal,
   sha256Hex,
 } from './lib/logs-archive.mjs';
+import { BASELINE_MIN_HOURS } from './lib/logs-metrics-zabbix.mjs';
 import { s3Object } from './lib/s3.mjs';
 
 const env = process.env;
@@ -741,6 +742,7 @@ async function rebuildState() {
     lastCursor: lastChunk?.lastCursor ?? anchor.afterCursor,
     pending: null,
     rebuiltAt: new Date().toISOString(),
+    startedAt: anchor.at,
     beyond: later.map(({ key, receipt }) => ({ key, receipt })),
     overlaps: overlaps.map((b) => b.key),
     archiveGaps,
@@ -913,6 +915,10 @@ const emptyBucket = () => ({
  * курсором — повтор после сбоя не считает дважды.
  */
 function tally(state, entries) {
+  // С какого момента идёт счёт: до часа счёта значения часа неполные, до
+  // 72 часов база среднего притока не готова (счёт сбрасывается вместе с
+  // потерей состояния).
+  state.countingSince ??= new Date().toISOString();
   const minutes = (state.minutes ??= {});
   const hours = (state.hours ??= {});
   for (const e of entries) {
@@ -1004,17 +1010,39 @@ async function writeMetrics(state, failure) {
       for (const [x, v] of Object.entries(b[n])) sum[n][x] = (sum[n][x] ?? 0) + v;
     }
   }
-  // Приток: последний час и среднее по завершённым часам за 7 суток.
+  // Счёт идёт с countingSince: раньше этого момента записи не считались, и
+  // ноль там — «не измерено», а не «притока не было».
+  const since = state?.countingSince ? Date.parse(state.countingSince) * 1000 : null;
+  const coveredSec = since === null ? 0 : Math.min(3600, Math.floor((nowUs - since) / 1e6));
+  const hourComplete = coveredSec >= 3600;
+  // Среднее за час — по ВСЕМ завершённым часам окна (час без записей — ноль
+  // притока), окно не раньше начала счёта; база готова от 72 часов.
   const nowHour = Math.floor(nowUs / HOUR_US);
-  const past = Object.entries(state?.hours ?? {})
-    .map(([k, v]) => [Number(k), v])
-    .filter(([k]) => k < nowHour && k >= nowHour - 168);
-  const avgHour = past.length
-    ? Math.round(past.reduce((n, [, v]) => n + v, 0) / past.length)
-    : null;
+  const firstHour = since === null ? nowHour : Math.max(Math.ceil(since / HOUR_US), nowHour - 168);
+  const baselineHours = Math.max(0, nowHour - firstHour);
+  const baselineReady = baselineHours >= BASELINE_MIN_HOURS;
+  let pastSum = 0;
+  for (const [k, v] of Object.entries(state?.hours ?? {})) {
+    if (Number(k) >= firstHour && Number(k) < nowHour) pastSum += v;
+  }
+  const avgHour = baselineReady ? Math.round(pastSum / baselineHours) : null;
   const usage = journalUsage();
   const limit = env.LOGS_JOURNAL_MAX_BYTES ? Number(env.LOGS_JOURNAL_MAX_BYTES) : null;
-  const rate = Math.max(sum.bytes, avgHour ?? 0);
+  // Запас: причина, если не вычислен. Скорость — измеренная (полный час или
+  // готовая база); нулевая измеренная скорость — «притока нет», запас не
+  // ограничен, но это не число.
+  const rates = [hourComplete ? sum.bytes : null, avgHour].filter((x) => x !== null);
+  const rate = rates.length ? Math.max(...rates) : null;
+  const fillState =
+    usage === null
+      ? 'no-usage'
+      : !limit
+        ? 'no-limit'
+        : rate === null
+          ? 'no-rate'
+          : rate === 0
+            ? 'no-inflow'
+            : 'ok';
   const rows = loadCatalog();
   const losses = rows.filter((r) => r.kind === 'loss');
   const byReason = {};
@@ -1044,15 +1072,21 @@ async function writeMetrics(state, failure) {
     },
     archiveGaps: state?.archiveGaps?.length ?? 0,
     unconfirmed: state?.unconfirmed?.length ?? 0,
-    lastHour: sum,
-    inflow: { lastHourBytes: sum.bytes, avg7dHourBytes: avgHour },
+    archiveStartEpoch: state?.startedAt ? Math.floor(Date.parse(state.startedAt) / 1000) : null,
+    lastHour: { ...sum, coveredSec },
+    inflow: {
+      lastHourBytes: hourComplete ? sum.bytes : null,
+      avg7dHourBytes: avgHour,
+      baselineHours,
+      baselineReady,
+    },
     journald: {
       usageBytes: usage,
       limitBytes: limit,
       // Запас до вытеснения неархивированного: при остановке архива это
       // время, за которое journald заполнится текущим притоком.
-      fillHours:
-        usage !== null && limit && rate ? Math.round(((limit - usage) / rate) * 10) / 10 : null,
+      fillState,
+      fillHours: fillState === 'ok' ? Math.round(((limit - usage) / rate) * 10) / 10 : null,
     },
     snapshot: snaps?.lastAt
       ? {

@@ -44,7 +44,7 @@ import { resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { loadEnv, ROOT } from './lib/backup.mjs';
 import { contiguousChain, parseChunkKey } from './lib/logs-archive.mjs';
-import { LOGS_ITEMS } from './lib/logs-metrics-zabbix.mjs';
+import { LOGS_ITEMS, logsTriggers } from './lib/logs-metrics-zabbix.mjs';
 import { s3Object } from './lib/s3.mjs';
 
 loadEnv();
@@ -1030,46 +1030,205 @@ try {
   // Отдельный контекст без доступа к модулям — как песочница Zabbix.
   const zbx = (x, s) => runInNewContext(`(function (value) { ${x.js} })`, {})(JSON.stringify(s));
   const byKey = Object.fromEntries(LOGS_ITEMS.map((x) => [x.key, x]));
-  const vals = Object.fromEntries(LOGS_ITEMS.map((x) => [x.key, zbx(x, m1)]));
-  check(
-    'Zabbix: значения из свежего файла',
-    vals['logs.run.failure'] === '' &&
-      vals['logs.queue.lag'] === 0 &&
-      vals['logs.http.requests'] === 6 &&
-      vals['logs.http.5xx_share'] === 33.3 &&
-      vals['logs.errors.total'] === 2 &&
-      vals['logs.oom'] === 1 &&
-      vals['logs.crashes'] === 1 &&
-      vals['logs.snapshot.age'] < 3600,
-    JSON.stringify(vals),
-  );
-  const stale = { ...m1, atEpoch: m1.atEpoch - 600 };
-  const staleOut = LOGS_ITEMS.filter((x) => {
+  const UNKNOWN = Symbol('неизвестно');
+  /** Значение проверки или UNKNOWN (ошибка предобработки → «не поддерживается»). */
+  const val = (key, s) => {
     try {
-      zbx(x, stale);
-      return true;
+      return zbx(byKey[key], s);
     } catch {
-      return false;
+      return UNKNOWN;
     }
-  });
+  };
+  const show = (v) => (v === UNKNOWN ? 'неизвестно' : JSON.stringify(v));
+  // Счёт только что начат: час не полон, база не накоплена — это не нули.
   check(
-    'Zabbix: устаревший файл — каждая проверка «неизвестно», не нули',
-    staleOut.length === 0,
-    staleOut.map((x) => x.key).join(', '),
-  );
-  check(
-    'Zabbix: код предобработки без синтаксиса новее ES5',
-    LOGS_ITEMS.every((x) => !/=>|`|\blet\b|\bconst\b/.test(x.js)) &&
-      byKey['logs.queue.lag'] !== undefined,
-  );
-  check(
-    'очередь пуста после прохода, журнал и запас времени посчитаны',
+    'счёт начат меньше часа назад: приток часа и база — «не измерено», запас — без скорости',
     m1.run.ok &&
       m1.queue.entries === 0 &&
       m1.journald.usageBytes > 0 &&
-      m1.journald.fillHours > 0 &&
-      m1.inflow.lastHourBytes > 0,
-    JSON.stringify({ q: m1.queue, j: m1.journald }),
+      m1.inflow.lastHourBytes === null &&
+      m1.inflow.baselineReady === false &&
+      m1.journald.fillState === 'no-rate' &&
+      m1.journald.fillHours === null,
+    JSON.stringify({ q: m1.queue, i: m1.inflow, j: m1.journald }),
+  );
+  const fresh1 = {
+    'logs.file.problem': '',
+    'logs.run.failure': '',
+    'logs.queue.lag': 0,
+    'logs.http.requests': 6,
+    'logs.http.5xx_share': 33.3,
+    'logs.errors.total': 2,
+    'logs.oom': 1,
+    'logs.crashes': 1,
+    'logs.inflow.hour': UNKNOWN,
+    'logs.inflow.avg7d': UNKNOWN,
+    'logs.journald.fill_state': 'no-rate',
+    'logs.journald.fill_hours': UNKNOWN,
+  };
+  const bad1 = Object.entries(fresh1).filter(([k, v]) => val(k, m1) !== v);
+  check(
+    'Zabbix: свежий файл — значения; неполный час и ненакопленная база — «неизвестно»',
+    bad1.length === 0 && val('logs.snapshot.age', m1) < 3600,
+    bad1.map(([k, v]) => `${k}: ${show(val(k, m1))} вместо ${show(v)}`).join('; ') || 'сошлось',
+  );
+  // Испорченное время файла — каждая проверка «неизвестно», и файл назван
+  // ошибочным отдельной проверкой (случаи Тэнка + нецелое и старое время).
+  const now = Math.floor(Date.now() / 1000);
+  const { atEpoch: _drop, ...noTime } = m1;
+  const badFiles = {
+    'без времени': noTime,
+    'время текстом': { ...m1, atEpoch: 'not-a-time' },
+    'время на сутки вперёд': { ...m1, atEpoch: now + 86400 },
+    'время нецелое': { ...m1, atEpoch: now + 0.5 },
+    'время null': { ...m1, atEpoch: null },
+    устаревший: { ...m1, atEpoch: now - 600 },
+    'другой формат': { ...m1, format: 'logs-metrics/v0' },
+  };
+  for (const [name, s] of Object.entries(badFiles)) {
+    const leaked = LOGS_ITEMS.filter(
+      (x) => x.key !== 'logs.file.problem' && val(x.key, s) !== UNKNOWN,
+    );
+    const problem = val('logs.file.problem', s);
+    check(
+      `Zabbix: ${name} — все проверки «неизвестно», ошибка файла названа`,
+      leaked.length === 0 && typeof problem === 'string' && problem.length > 0,
+      leaked.map((x) => `${x.key}=${show(val(x.key, s))}`).join(', ') || problem,
+    );
+  }
+  const skew = { ...m1, atEpoch: now + 60 };
+  check(
+    'Zabbix: расхождение часов в пределах допуска — файл принят',
+    val('logs.file.problem', skew) === '' && val('logs.http.requests', skew) === 6,
+  );
+  // Неизвестное не подменяется числами; ноль измеренного притока — число.
+  const j = (o) => ({ ...m1, journald: { ...m1.journald, ...o } });
+  const inf = (o) => ({ ...m1, inflow: { ...m1.inflow, ...o } });
+  const cases = [
+    [
+      'нет лимита journald',
+      j({ fillState: 'no-limit', fillHours: null }),
+      'logs.journald.fill_hours',
+      UNKNOWN,
+    ],
+    [
+      'нет лимита journald — состояние',
+      j({ fillState: 'no-limit', fillHours: null }),
+      'logs.journald.fill_state',
+      'no-limit',
+    ],
+    [
+      'притока нет при исправном измерении',
+      j({ fillState: 'no-inflow', fillHours: null }),
+      'logs.journald.fill_state',
+      'no-inflow',
+    ],
+    [
+      'притока нет — запас не число',
+      j({ fillState: 'no-inflow', fillHours: null }),
+      'logs.journald.fill_hours',
+      UNKNOWN,
+    ],
+    [
+      'занятость не прочитана',
+      j({ usageBytes: null, fillState: 'no-usage', fillHours: null }),
+      'logs.journald.usage',
+      UNKNOWN,
+    ],
+    ['запас вычислен', j({ fillState: 'ok', fillHours: 30 }), 'logs.journald.fill_hours', 30],
+    [
+      'запас «ok», но числа нет',
+      j({ fillState: 'ok', fillHours: null }),
+      'logs.journald.fill_hours',
+      UNKNOWN,
+    ],
+    [
+      'база не накоплена',
+      inf({ avg7dHourBytes: null, baselineReady: false, baselineHours: 5 }),
+      'logs.inflow.avg7d',
+      UNKNOWN,
+    ],
+    [
+      'база не накоплена — часов',
+      inf({ avg7dHourBytes: null, baselineReady: false, baselineHours: 5 }),
+      'logs.inflow.baseline_hours',
+      5,
+    ],
+    [
+      'база готова',
+      inf({ avg7dHourBytes: 900, baselineReady: true, baselineHours: 96 }),
+      'logs.inflow.avg7d',
+      900,
+    ],
+    ['измеренный ноль притока за полный час', inf({ lastHourBytes: 0 }), 'logs.inflow.hour', 0],
+    [
+      'запросов нет — доля 5xx не определена',
+      { ...m1, lastHour: { ...m1.lastHour, requests: 0, s5xx: 0 } },
+      'logs.http.5xx_share',
+      UNKNOWN,
+    ],
+    [
+      'запросов нет — их число ноль',
+      { ...m1, lastHour: { ...m1.lastHour, requests: 0, s5xx: 0 } },
+      'logs.http.requests',
+      0,
+    ],
+    ['очередь не прочитана', { ...m1, queue: null }, 'logs.queue.lag', UNKNOWN],
+    ['счётчик текстом', { ...m1, lastHour: { ...m1.lastHour, oom: '1' } }, 'logs.oom', UNKNOWN],
+    [
+      'снимка нет — время от начала архива',
+      { ...m1, snapshot: null, archiveStartEpoch: now - 7200 },
+      'logs.snapshot.age',
+      7200,
+    ],
+    [
+      'снимка нет и начало неизвестно',
+      { ...m1, snapshot: null, archiveStartEpoch: null },
+      'logs.snapshot.age',
+      UNKNOWN,
+    ],
+  ];
+  const badCases = cases.filter(([, s, k, want]) => {
+    const got = val(k, s);
+    return want === 7200 ? !(got >= 7200 && got <= 7205) : got !== want;
+  });
+  check(
+    `Zabbix: неизвестное не подменяется числами (${cases.length} случаев)`,
+    badCases.length === 0,
+    badCases.map(([n, s, k]) => `${n}: ${k}=${show(val(k, s))}`).join('; ') || 'сошлось',
+  );
+  check(
+    'Zabbix: тревога роста требует готовой базы',
+    /logs\.inflow\.baseline_hours\)>=72/.test(
+      logsTriggers('h', 'f').find(([n]) => n.includes('втрое'))[1],
+    ),
+  );
+  check(
+    'Zabbix: код предобработки без синтаксиса новее ES5',
+    LOGS_ITEMS.every((x) => !/=>|`|\blet\b|\bconst\b/.test(x.js)),
+  );
+  // Полный час счёта и накопленная база (начало счёта сдвинуто на 96 ч назад).
+  inCt(
+    `node -e "const f='${ARCH_ENV.LOGS_STATE_DIR}/state.json';const fs=require('fs');const s=JSON.parse(fs.readFileSync(f));s.countingSince=new Date(Date.now()-96*3600e3).toISOString();fs.writeFileSync(f,JSON.stringify(s))"`,
+  );
+  check('проход', arch('run', LIMIT).code === 0);
+  const m3 = metrics();
+  check(
+    'полный час и база 96 ч: приток и среднее — числа, запас вычислен',
+    Number.isInteger(m3.inflow.lastHourBytes) &&
+      m3.inflow.baselineReady === true &&
+      m3.inflow.baselineHours >= 95 &&
+      Number.isInteger(m3.inflow.avg7dHourBytes) &&
+      m3.journald.fillState === 'ok' &&
+      m3.journald.fillHours > 0 &&
+      val('logs.inflow.avg7d', m3) === m3.inflow.avg7dHourBytes,
+    JSON.stringify({ i: m3.inflow, j: m3.journald }),
+  );
+  check(
+    'без лимита journald — «запас не вычисляется», а не огромное число',
+    arch('run').code === 0 &&
+      metrics().journald.fillState === 'no-limit' &&
+      val('logs.journald.fill_hours', metrics()) === UNKNOWN,
   );
   check(
     'потери и пропуски архива — числами',

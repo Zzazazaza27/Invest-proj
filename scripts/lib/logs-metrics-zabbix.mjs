@@ -1,124 +1,194 @@
 /**
  * Проверки Zabbix по файлу состояния архиватора журналов (8.4, 2.1-W08b).
  *
- * Каждая зависимая проверка разбирает файл сама: файл старше
- * `STALE_SEC` — ошибка предобработки, проверка «не поддерживается», то есть
- * «неизвестно», а не прежние нули; об устаревании сообщает отдельная тревога
- * по возрасту файла. Код предобработки — ES5 (движок Duktape в Zabbix 7).
+ * Каждая зависимая проверка разбирает файл сама и отвергает его, если он не
+ * JSON, другого формата, время записи не целое число секунд, впереди часов
+ * Zabbix больше чем на `SKEW_SEC` или старше `STALE_SEC`. Отвергнутый файл и
+ * отсутствующее значение — ошибка предобработки: проверка «не
+ * поддерживается», то есть «неизвестно». Числа вместо неизвестного не
+ * подставляются (замечание Тэнка к ec3653d). Что именно не так с файлом,
+ * показывает отдельная проверка `logs.file.problem` со своей тревогой: свежая
+ * дата изменения файла не подтверждает его содержимое.
+ *
+ * Код предобработки — ES5 (движок Duktape в Zabbix 7).
  */
 export const STALE_SEC = 300;
+export const SKEW_SEC = 120;
+export const BASELINE_MIN_HOURS = 72;
+const FILL_STATES = ['ok', 'no-inflow', 'no-rate', 'no-limit', 'no-usage'];
 
-const head = `var s = JSON.parse(value); if (Math.floor(Date.now() / 1000) - s.atEpoch > ${STALE_SEC}) throw 'файл состояния устарел';`;
+const LIB = [
+  'function chk(value) {',
+  "  var s; try { s = JSON.parse(value); } catch (e) { throw 'файл не JSON'; }",
+  "  if (!s || typeof s !== 'object') throw 'файл не объект';",
+  "  if (s.format !== 'logs-metrics/v1') throw 'неизвестный формат файла';",
+  '  var t = s.atEpoch; var now = Math.floor(Date.now() / 1000);',
+  "  if (typeof t !== 'number' || !isFinite(t) || Math.floor(t) !== t) throw 'время файла некорректно';",
+  `  if (t > now + ${SKEW_SEC}) throw 'время файла в будущем';`,
+  `  if (now - t > ${STALE_SEC}) throw 'файл состояния устарел';`,
+  '  return s;',
+  '}',
+  "function int(v, what) { if (typeof v !== 'number' || !isFinite(v) || Math.floor(v) !== v || v < 0) throw 'нет значения: ' + what; return v; }",
+  "function num(v, what) { if (typeof v !== 'number' || !isFinite(v)) throw 'нет значения: ' + what; return v; }",
+  "function obj(v, what) { if (!v || typeof v !== 'object') throw 'нет значения: ' + what; return v; }",
+  'function hour(s) { return obj(s.lastHour, "lastHour"); }',
+].join(' ');
+
+const js = (body) => `${LIB} var s = chk(value); ${body}`;
 
 /** valueType: 0 — дробное, 3 — целое, 1 — строка. */
 export const LOGS_ITEMS = [
   {
+    key: 'logs.file.problem',
+    name: 'Журналы: ошибка файла состояния (пусто — файл исправен)',
+    valueType: 1,
+    // Единственная проверка, которая не отвергает файл, а называет причину.
+    js: `${LIB} try { chk(value); return ''; } catch (e) { return String(e); }`,
+  },
+  {
     key: 'logs.run.failure',
     name: 'Журналы: сбой прохода (код)',
     valueType: 1,
-    js: `${head} return s.run.failure || '';`,
+    js: js(
+      "var r = obj(s.run, 'run'); if (typeof r.ok !== 'boolean') throw 'нет значения: run.ok'; if (r.failure === null) return ''; if (typeof r.failure !== 'string' || !/^[a-z-]{1,32}$/.test(r.failure)) throw 'нет значения: run.failure'; return r.failure;",
+    ),
   },
   {
     key: 'logs.queue.lag',
     name: 'Журналы: отставание архива, с',
     valueType: 3,
-    js: `${head} if (!s.queue) throw 'очередь не прочитана'; return s.queue.lagSec;`,
+    js: js("return int(obj(s.queue, 'очередь').lagSec, 'queue.lagSec');"),
   },
   {
     key: 'logs.queue.entries',
     name: 'Журналы: записей за курсором',
     valueType: 3,
-    js: `${head} if (!s.queue) throw 'очередь не прочитана'; return s.queue.entries;`,
+    js: js("return int(obj(s.queue, 'очередь').entries, 'queue.entries');"),
   },
   {
     key: 'logs.losses.segments',
     name: 'Журналы: учтённых потерь, отрезков',
     valueType: 3,
-    js: `${head} return s.losses.segments;`,
+    js: js("return int(obj(s.losses, 'losses').segments, 'losses.segments');"),
   },
   {
     key: 'logs.archive.gaps',
-    name: 'Журналы: пропусков архива',
+    name: 'Журналы: пропусков архива и неподтверждённых порций',
     valueType: 3,
-    js: `${head} return s.archiveGaps + s.unconfirmed;`,
+    js: js("return int(s.archiveGaps, 'archiveGaps') + int(s.unconfirmed, 'unconfirmed');"),
+  },
+  {
+    key: 'logs.hour.covered',
+    name: 'Журналы: охват счётчиков часа, с',
+    valueType: 3,
+    js: js("return int(hour(s).coveredSec, 'lastHour.coveredSec');"),
   },
   {
     key: 'logs.journald.suppressed',
     name: 'Журналы: подавлено journald за час',
     valueType: 3,
-    js: `${head} return s.lastHour.suppressed;`,
+    js: js("return int(hour(s).suppressed, 'lastHour.suppressed');"),
+  },
+  {
+    key: 'logs.journald.fill_state',
+    name: 'Журналы: запас journald — состояние расчёта',
+    valueType: 1,
+    js: js(
+      `var j = obj(s.journald, 'journald'); if (${JSON.stringify(FILL_STATES)}.indexOf(j.fillState) < 0) throw 'нет значения: journald.fillState'; return j.fillState;`,
+    ),
   },
   {
     key: 'logs.journald.fill_hours',
     name: 'Журналы: запас journald до заполнения, ч',
     valueType: 0,
-    js: `${head} return s.journald.fillHours === null ? 999999 : s.journald.fillHours;`,
+    js: js(
+      "var j = obj(s.journald, 'journald'); if (j.fillState !== 'ok') throw 'запас не вычислен: ' + j.fillState; var h = num(j.fillHours, 'journald.fillHours'); if (h < 0) throw 'нет значения: journald.fillHours'; return h;",
+    ),
   },
   {
     key: 'logs.journald.usage',
     name: 'Журналы: занято journald, байт',
     valueType: 3,
-    js: `${head} if (s.journald.usageBytes === null) throw 'занятость не прочитана'; return s.journald.usageBytes;`,
+    js: js("return int(obj(s.journald, 'journald').usageBytes, 'journald.usageBytes');"),
   },
   {
     key: 'logs.inflow.hour',
-    name: 'Журналы: приток за час, байт',
+    name: 'Журналы: приток за полный час, байт',
     valueType: 3,
-    js: `${head} return s.inflow.lastHourBytes;`,
+    js: js(
+      "var f = obj(s.inflow, 'inflow'); if (f.lastHourBytes === null) throw 'час счёта не полон'; return int(f.lastHourBytes, 'inflow.lastHourBytes');",
+    ),
   },
   {
     key: 'logs.inflow.avg7d',
-    name: 'Журналы: средний приток за час (7 суток), байт',
+    name: 'Журналы: средний приток за час (до 7 суток), байт',
     valueType: 3,
-    js: `${head} return s.inflow.avg7dHourBytes === null ? 0 : s.inflow.avg7dHourBytes;`,
+    js: js(
+      "var f = obj(s.inflow, 'inflow'); if (f.baselineReady !== true || f.avg7dHourBytes === null) throw 'база сравнения не накоплена'; return int(f.avg7dHourBytes, 'inflow.avg7dHourBytes');",
+    ),
+  },
+  {
+    key: 'logs.inflow.baseline_hours',
+    name: 'Журналы: часов в базе сравнения притока',
+    valueType: 3,
+    js: js("return int(obj(s.inflow, 'inflow').baselineHours, 'inflow.baselineHours');"),
   },
   {
     key: 'logs.http.requests',
     name: 'Журналы: запросов ядра за час',
     valueType: 3,
-    js: `${head} return s.lastHour.requests;`,
+    js: js("return int(hour(s).requests, 'lastHour.requests');"),
   },
   {
     key: 'logs.http.5xx_share',
     name: 'Журналы: доля 5xx за час, %',
     valueType: 0,
-    js: `${head} var h = s.lastHour; return h.requests ? Math.round((1000 * h.s5xx) / h.requests) / 10 : 0;`,
+    js: js(
+      "var h = hour(s); var n = int(h.requests, 'lastHour.requests'); var e = int(h.s5xx, 'lastHour.s5xx'); if (!n) throw 'запросов за час нет — доля не определена'; return Math.round((1000 * e) / n) / 10;",
+    ),
   },
   {
     key: 'logs.http.fail2xx',
     name: 'Журналы: отказов внутри 2xx за час',
     valueType: 3,
-    js: `${head} return s.lastHour.fail2xx;`,
+    js: js("return int(hour(s).fail2xx, 'lastHour.fail2xx');"),
   },
   {
     key: 'logs.errors.total',
     name: 'Журналы: ошибок за час',
     valueType: 3,
-    js: `${head} var n = 0; for (var k in s.lastHour.errors) n += s.lastHour.errors[k]; return n;`,
+    js: js(
+      "var e = obj(hour(s).errors, 'lastHour.errors'); var n = 0; for (var k in e) n += int(e[k], 'lastHour.errors'); return n;",
+    ),
   },
   {
     key: 'logs.errors.by',
     name: 'Журналы: ошибки за час по компонентам и кодам',
     valueType: 1,
-    js: `${head} var p = []; var e = s.lastHour.errors; var c = s.lastHour.codes; for (var k in e) p.push(k + ': ' + e[k]); for (var x in c) p.push('код ' + x + ': ' + c[x]); return p.join(', ');`,
+    js: js(
+      "var h = hour(s); var e = obj(h.errors, 'lastHour.errors'); var c = obj(h.codes, 'lastHour.codes'); var p = []; for (var k in e) p.push(k + ': ' + int(e[k], 'lastHour.errors')); for (var x in c) p.push('код ' + x + ': ' + int(c[x], 'lastHour.codes')); return p.join(', ');",
+    ),
   },
   {
     key: 'logs.oom',
     name: 'Журналы: нехватка памяти (OOM) за час',
     valueType: 3,
-    js: `${head} return s.lastHour.oom;`,
+    js: js("return int(hour(s).oom, 'lastHour.oom');"),
   },
   {
     key: 'logs.crashes',
     name: 'Журналы: аварийных завершений за час',
     valueType: 3,
-    js: `${head} return s.lastHour.crashes;`,
+    js: js("return int(hour(s).crashes, 'lastHour.crashes');"),
   },
   {
     key: 'logs.snapshot.age',
-    name: 'Журналы: возраст суточного снимка объёма, с',
+    name: 'Журналы: время без суточного снимка объёма, с',
     valueType: 3,
-    js: `${head} return s.snapshot ? Math.floor(Date.now() / 1000) - s.snapshot.lastEpoch : 999999;`,
+    // Снимка ещё не было — время от начала архива: тоже измеренная величина.
+    js: js(
+      `var now = Math.floor(Date.now() / 1000); var t = s.snapshot ? int(obj(s.snapshot, 'snapshot').lastEpoch, 'snapshot.lastEpoch') : int(s.archiveStartEpoch, 'archiveStartEpoch'); if (t > now + ${SKEW_SEC}) throw 'время снимка в будущем'; return Math.max(0, now - t);`,
+    ),
   },
 ];
 
@@ -131,15 +201,33 @@ export function logsTriggers(H, file) {
       `last(/${H}/vfs.file.time[${file},modify])>${STALE_SEC}`,
       3,
     ],
+    [
+      'Журналы: файл состояния некорректен или устарел по содержимому',
+      `length(${l('logs.file.problem')})>0`,
+      3,
+    ],
     ['Журналы: проход архиватора не удался', `length(${l('logs.run.failure')})>0`, 3],
     ['Журналы: архив отстаёт больше 5 минут', `${l('logs.queue.lag')}>300`, 3],
     ['Журналы: новая учтённая потеря', `change(/${H}/logs.losses.segments)>0`, 3],
     ['Журналы: пропуск архива не закрыт', `${l('logs.archive.gaps')}>0`, 4],
     ['Журналы: journald подавляет записи', `${l('logs.journald.suppressed')}>0`, 2],
-    ['Журналы: journald заполнится меньше чем за 48 ч', `${l('logs.journald.fill_hours')}<48`, 3],
+    [
+      // Без «запас вычислен» прежняя тревога висела бы, когда значение стало
+      // неизвестным: Zabbix не закрывает тревогу по неподдерживаемой проверке.
+      'Журналы: journald заполнится меньше чем за 48 ч',
+      `${l('logs.journald.fill_hours')}<48 and ${l('logs.journald.fill_state')}="ok"`,
+      3,
+    ],
+    [
+      // Нет лимита или занятости — запас нельзя вычислить; нет измеренной
+      // скорости дольше 90 минут (первый час счёта — норма) — тоже.
+      'Журналы: запас journald не вычисляется',
+      `find(/${H}/logs.journald.fill_state,,"regexp","^no-(usage|limit)$")=1 or count(/${H}/logs.journald.fill_state,90m,"eq","no-rate")>=85`,
+      2,
+    ],
     [
       'Журналы: приток за час втрое выше среднего',
-      `${l('logs.inflow.hour')}>3*${l('logs.inflow.avg7d')} and ${l('logs.inflow.hour')}>=104857600`,
+      `${l('logs.inflow.hour')}>3*${l('logs.inflow.avg7d')} and ${l('logs.inflow.hour')}>=104857600 and ${l('logs.inflow.baseline_hours')}>=${BASELINE_MIN_HOURS}`,
       2,
     ],
     [
