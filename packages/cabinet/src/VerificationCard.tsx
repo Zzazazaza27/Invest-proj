@@ -1,14 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import {
-  Badge,
-  Button,
-  Card,
-  EmptyState,
-  ErrorState,
-  Field,
-  LoadingState,
-  Stack,
-} from '@fifth/ui';
+import { Badge, Button, Card, EmptyState, ErrorState, Field, LoadingState, Stack } from '@fifth/ui';
 import type { KycVerification } from '@fifth/contracts';
 
 /**
