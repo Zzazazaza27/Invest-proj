@@ -101,6 +101,19 @@ try {
     reload.out.slice(0, 90),
   );
 
+  // Подмена: метки на месте, но core указывает на другой образ.
+  const idOf = (ref) => docker('image', 'inspect', ref, '--format', '{{.Id}}');
+  const realCore = idOf(`fifth/core:${A}`);
+  docker('tag', `fifth/web:${A}`, `fifth/core:${A}`);
+  check('контроль: метка core указывает на другой образ', idOf(`fifth/core:${A}`) !== realCore);
+  const spoofed = kit('load', '--build', A);
+  const ids = JSON.parse(readFileSync(join(KITS, A, 'local-images.json'), 'utf8'));
+  check(
+    'загрузка вернула образ комплекта, подмена не принята как эталон',
+    spoofed.code === 0 && idOf(`fifth/core:${A}`) === realCore && ids.core === realCore,
+    spoofed.out.slice(0, 90),
+  );
+
   console.log('\n▸ Сбой сверки после обновления');
   check('следующий комплект скачан', kit('pack', '--build', C, '--from', FROM).code === 0);
   const bad = install(C, A, { FIFTH_TEST_VERIFY_FAIL: '1' });

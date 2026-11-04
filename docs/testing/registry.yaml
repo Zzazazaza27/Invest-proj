@@ -2895,7 +2895,7 @@ checks:
     kind: check
     level: сквозной
     runner: manual
-    asserts: 19
+    asserts: 21
     needs: [docker, s3]
     effects:
       ['временная среда test-75, комплекты в .local/check-release-pins-kits; удаляются прогоном']

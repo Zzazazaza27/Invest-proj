@@ -283,13 +283,10 @@ async function check() {
 async function load() {
   const build = needBuild();
   await readKit(build);
-  // Содержимое подтверждено хешем архива из манифеста, поэтому имя образа здесь — метка.
+  // Архив загружается всегда: существующая метка ничего не доказывает, под ней может
+  // быть другой образ. Хеш архива сверен с манифестом, загрузка переставляет метки.
+  run('docker', ['load', '-i', join(kitDir(build), 'images.tar')]);
   const tagOf = (c) => `fifth/${c}:${build}`;
-  const known = (ref) =>
-    spawnSync('docker', ['image', 'inspect', ref], { stdio: 'ignore' }).status === 0;
-  if (!COMPONENTS.every((c) => known(tagOf(c)))) {
-    run('docker', ['load', '-i', join(kitDir(build), 'images.tar')]);
-  }
   const local = {};
   for (const c of COMPONENTS) {
     local[c] = run('docker', ['image', 'inspect', tagOf(c), '--format', '{{.Id}}']);
