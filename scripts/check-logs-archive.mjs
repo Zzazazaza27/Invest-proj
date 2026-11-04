@@ -46,10 +46,13 @@ import { loadEnv, ROOT } from './lib/backup.mjs';
 import { garageApi } from './lib/garage-admin.mjs';
 import { PORTS } from './lib/ports.mjs';
 import {
+  archiveKey,
   contiguousChain,
   newJournalStart,
+  open,
   parseChunkKey,
   receiptKey,
+  seal,
 } from './lib/logs-archive.mjs';
 import { LOGS_ITEMS, logsTriggers } from './lib/logs-metrics-zabbix.mjs';
 import { s3Object } from './lib/s3.mjs';
@@ -842,6 +845,10 @@ try {
   arch('run');
   gen(15, 'pull-race2');
   const raceDir = `/tmp/pr-${tag}`;
+  const chunksNow = () => catalog().filter((r) => r.kind === 'chunk');
+  const lastSeq = () => chunksNow().reduce((m, r) => (BigInt(r.last) > m ? BigInt(r.last) : m), 0n);
+  const copyEnd = (out) => BigInt([...copyLine(out).matchAll(/(\d+)–(\d+)/g)].at(-1)?.[2] ?? -1);
+  const seqBefore = lastSeq();
   const pRace = arch('pull', {
     ...asReader,
     LOGS_PULL_TO: raceDir,
@@ -854,6 +861,71 @@ try {
     'проход во время pull не даёт ложного расхождения',
     pRace.code === 0 && !verdictOf(pRace.out).includes('НЕ сошлась'),
     `${verdictOf(pRace.out)} ${pRace.out.split('\n').find((l) => /опись:|голову/.test(l)) ?? ''}`,
+  );
+  // Единый снимок (замечание Тэнка): порция, записанная проходом во время
+  // скачивания, не входит ни в состав копии, ни в её эталон.
+  const seqAfter = lastSeq();
+  check(
+    'проход записал порцию во время скачивания',
+    seqAfter > seqBefore,
+    `${seqBefore} → ${seqAfter}`,
+  );
+  const oRace = offline(raceDir);
+  check(
+    'копия без S3: снимок сошёлся, новая порция в него не вошла',
+    oRace.code === 0 && copyEnd(oRace.out) === seqBefore,
+    `${copyLine(oRace.out)} | ${oRace.out.split('\n').find((l) => l.includes('опись:')) ?? ''}`,
+  );
+  // Неудачная попытка: порция снимка недоступна — опись прежняя.
+  const raceSha = () => inCt(`sha256sum ${raceDir}/MANIFEST.sealed | cut -c1-64`).trim();
+  const raceConfirmed = raceSha();
+  const newest = chunksNow().find((r) => BigInt(r.last) === seqAfter);
+  const [newestObj] = await versionsOf(newest.key);
+  await rootReq('DELETE', newest.key);
+  const pBad = arch('pull', { ...asReader, LOGS_PULL_TO: raceDir });
+  check(
+    'порция снимка недоступна — попытка красная, подтверждённая опись прежняя',
+    pBad.code !== 0 &&
+      verdictOf(pBad.out).includes('НЕ сошлась') &&
+      raceSha() === raceConfirmed &&
+      inCt(`ls ${raceDir}`).includes('MANIFEST.sealed.rejected'),
+    verdictOf(pBad.out),
+  );
+  const oBad = offline(raceDir);
+  check(
+    'после неудачной попытки копия без S3 — прежний снимок, зелёный',
+    oBad.code === 0 && copyEnd(oBad.out) === seqBefore,
+    copyLine(oBad.out),
+  );
+  await rootReq('PUT', newest.key, {}, newestObj.body, {
+    'x-amz-meta-object-sha256': newestObj.versionId,
+  });
+  const pNext = arch('pull', { ...asReader, LOGS_PULL_TO: raceDir });
+  check(
+    'следующий pull забрал новую порцию, след попытки убран',
+    pNext.code === 0 &&
+      copyEnd(pNext.out) === seqAfter &&
+      !inCt(`ls ${raceDir}`).includes('rejected'),
+    copyLine(pNext.out),
+  );
+  const oNext = offline(raceDir);
+  check(
+    'новая опись без S3 сошлась',
+    oNext.code === 0 && copyEnd(oNext.out) === seqAfter,
+    copyLine(oNext.out),
+  );
+  // Воспроизведение Тэнка: цепочка подтверждает порции, а состав копии пуст.
+  const copyKey = archiveKey(ARCH_ENV.LOGS_ARCHIVE_KEY).key;
+  const sealedManifest = Buffer.from(inCt(`base64 -w0 ${raceDir}/MANIFEST.sealed`), 'base64');
+  const emptied = { ...JSON.parse(open(sealedManifest, copyKey).toString('utf8')), receipts: [] };
+  sh('docker', ['exec', '-i', CT, 'sh', '-c', `base64 -d > ${raceDir}/MANIFEST.sealed`], {
+    input: seal(Buffer.from(JSON.stringify(emptied)), copyKey).toString('base64'),
+  });
+  const oEmpty = offline(raceDir);
+  check(
+    'цепочка подтверждает порции, состав пуст — копия НЕ сошлась',
+    oEmpty.code !== 0 && oEmpty.out.includes('не учтено в составе копии'),
+    oEmpty.out.split('\n').find((l) => l.includes('опись:')) ?? verdictOf(oEmpty.out),
   );
   inCt(`rm -rf ${raceDir}`);
   // «Завтра»: архиватор дочитал журнал после конца суток — сутки закрыты.

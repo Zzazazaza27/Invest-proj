@@ -43,6 +43,7 @@ import {
   readdirSync,
   statSync,
   renameSync,
+  rmSync,
   truncateSync,
   unlinkSync,
   writeFileSync,
@@ -2552,14 +2553,47 @@ function packParts(to, p, keyMat) {
   return { problem: problems.join('; ') || null, parts };
 }
 
+/** Состав копии по звеньям цепочки: границы, квитанции порций, пакетов, файлов. */
+function chainComposition(links) {
+  const under = (p) => links.filter((l) => l.key.startsWith(p)).map((l) => l.body);
+  return {
+    anchors: under('anchors/'),
+    receipts: under('r/'),
+    packs: under('pr/'),
+    files: under('rf/'),
+  };
+}
+
+/** Имя квитанции сходится с её содержимым — иначе разбор, а не копия. */
+function assertReceiptName({ key, body }) {
+  let same = true;
+  if (key.startsWith('r/')) {
+    const r = parseReceiptKey(key);
+    same =
+      r &&
+      body.key === chunkKey(PREFIX, r.seqId, r.first, r.last, r.kind) &&
+      body.versionId === r.versionId &&
+      BigInt(body.first) === r.first &&
+      BigInt(body.last) === r.last;
+  } else if (key.startsWith('rf/')) {
+    same = key === fileReceiptKey(body.plainSha, body.versionId);
+  }
+  if (!same) throw new Error(`квитанция ${key}: содержимое не совпадает с именем`);
+}
+
 /**
- * Ручная копия на ноутбук. Состав берётся из S3 — граница и ВСЕ квитанции
- * порций и потерь, включая квитанции на версии, которых в архиве уже нет
- * (это свидетельство утраты, а не мусор). Добавочно качаются пакеты и
- * подтверждённые порции, которых нет ни в копии, ни в её исправных пакетах.
- * Опись копии (граница, квитанции, пакеты) сохраняется рядом, зашифрованной
- * ключом архива, и вердикт выносит проверка ЛОКАЛЬНОЙ копии — та же, что
- * `verify-copy` без доступа к S3.
+ * Ручная копия на ноутбук — единый снимок. Один обход цепочки выбирает голову,
+ * и всё, что в цепочке до неё, составляет копию: границы, квитанции порций и
+ * потерь (включая квитанции на версии, которых в архиве уже нет — это
+ * свидетельство утраты, а не мусор), пакеты, файлы. Рядом идут проходы
+ * таймера: записанное после выбранной головы забирает следующий pull
+ * (замечание Тэнка: квитанции до скачивания, цепочка после — и копия
+ * подтверждала порции, которых в ней нет).
+ *
+ * Добавочно качаются пакеты и подтверждённые порции, которых нет ни в копии,
+ * ни в её исправных пакетах. Вердикт выносит проверка ЛОКАЛЬНОЙ копии — та
+ * же, что `verify-copy` без доступа к S3, — и только зелёный вердикт заменяет
+ * подтверждённую опись.
  *
  *   node scripts/logs-archive.mjs pull --to <каталог>
  */
@@ -2568,78 +2602,20 @@ async function pull() {
   const to = copyDir();
   mkdirSync(join(to, 'packs'), { recursive: true });
   mkdirSync(join(to, 'chunks'), { recursive: true });
-
-  const anchors = (await readAnchors()).sort((a, b) => (a.at < b.at ? -1 : 1));
-  if (!anchors.length) throw new Error('в S3 нет границы архива');
-
-  // Квитанции всех нумераций journald, включая квитанции на отсутствующие
-  // версии — свидетельство утраты.
-  const receipts = [];
-  for (const { seqId: sid } of anchors) {
-    for (const [key] of groupByKey(await listVersions(`r/${sid}/`))) {
-      const r = parseReceiptKey(key);
-      if (!r) continue;
-      const body = await chainedBody(key, keyMat);
-      if (!body) throw new Error(`квитанция ${key}: без подписи ключом архива — нужен разбор`);
-      const range = chunkKey(PREFIX, sid, r.first, r.last, r.kind);
-      if (
-        body.key !== range ||
-        body.versionId !== r.versionId ||
-        BigInt(body.first) !== r.first ||
-        BigInt(body.last) !== r.last
-      ) {
-        throw new Error(`квитанция ${key}: содержимое не совпадает с именем`);
-      }
-      receipts.push(body);
-    }
-  }
-  const packs = [];
-  for (const [key] of groupByKey(await listVersions('pr/'))) {
-    const body = await chainedBody(key, keyMat);
-    if (!body) throw new Error(`квитанция пакета ${key}: без подписи ключом архива`);
-    packs.push(body);
-  }
-
-  let downloaded = 0;
-  const inPacks = new Set();
-  for (const p of packs) {
-    if (!existsSync(packFile(to, p))) {
-      const sealed = await getVersion(p.key, p.versionId);
-      if (!sealed) continue; // проверка копии назовёт отсутствие
-      writeFileSync(packFile(to, p), sealed);
-      downloaded++;
-    }
-    for (const k of packParts(to, p, keyMat).parts.keys()) inPacks.add(k);
-  }
-  for (const r of receipts) {
-    if (r.kind !== 'chunk' || inPacks.has(`${r.key}@${r.versionId}`)) continue;
-    if (existsSync(chunkFile(to, r))) continue;
-    const sealed = await getVersion(r.key, r.versionId);
-    if (!sealed) continue;
-    writeFileSync(chunkFile(to, r), sealed);
-    downloaded++;
-  }
-  // Файлы почты — все квитанции; версии, которой нет, проверка копии
-  // назовёт утратой.
   mkdirSync(join(to, 'files'), { recursive: true });
-  const fileList = [...(await fileReceipts()).values()];
-  for (const r of fileList) {
-    if (existsSync(copyFile(to, r))) continue;
-    const sealed = await getVersion(r.key, r.versionId);
-    if (!sealed) continue;
-    writeFileSync(copyFile(to, r), sealed);
-    downloaded++;
-  }
 
-  // Эталон копии: цепочка хранилища, сверенная с опубликованной головой
-  // (ref/head.json) и с эталоном прежней копии — откат головы или утрата
-  // хвоста видны здесь, даже если голову в хранилище подменили на старую.
-  // Голова — до обхода: рядом идут проходы таймера, и голова, прочитанная
-  // после, опередила бы цепочку без всякой утраты. Звенья описи — из того же
-  // обхода, что и эталон копии.
+  // Снимок. Опубликованная голова — до обхода: прочитанная после, она
+  // опередила бы цепочку без всякой утраты.
   const published = await chainedBody(REF_KEY, keyMat);
   const walk = await walkChain(keyMat);
-  testPassDuringRead();
+  walk.links.forEach(assertReceiptName);
+  const { anchors, receipts, packs, files: fileList } = chainComposition(walk.links);
+  anchors.sort((a, b) => (a.at < b.at ? -1 : 1));
+  if (!anchors.length) throw new Error('в S3 нет границы архива');
+
+  // Сверка снимка с опубликованной головой (ref/head.json) и с эталоном
+  // прежней копии: откат головы или утрата хвоста видны здесь, даже если
+  // голову в хранилище подменили на старую.
   const chainNotes = chainProblems(walk, null).problems;
   if (
     published &&
@@ -2662,6 +2638,37 @@ async function pull() {
       `цепочка хранилища (${walk.count}) расходится с эталоном прежней копии (${prev.count}) — утрата или подмена`,
     );
   }
+
+  let downloaded = 0;
+  const inPacks = new Set();
+  for (const p of packs) {
+    if (!existsSync(packFile(to, p))) {
+      const sealed = await getVersion(p.key, p.versionId);
+      if (!sealed) continue; // проверка копии назовёт отсутствие
+      writeFileSync(packFile(to, p), sealed);
+      downloaded++;
+    }
+    for (const k of packParts(to, p, keyMat).parts.keys()) inPacks.add(k);
+  }
+  testPassDuringRead();
+  for (const r of receipts) {
+    if (r.kind !== 'chunk' || inPacks.has(`${r.key}@${r.versionId}`)) continue;
+    if (existsSync(chunkFile(to, r))) continue;
+    const sealed = await getVersion(r.key, r.versionId);
+    if (!sealed) continue;
+    writeFileSync(chunkFile(to, r), sealed);
+    downloaded++;
+  }
+  // Файлы почты — все квитанции; версии, которой нет, проверка копии
+  // назовёт утратой.
+  for (const r of fileList) {
+    if (existsSync(copyFile(to, r))) continue;
+    const sealed = await getVersion(r.key, r.versionId);
+    if (!sealed) continue;
+    writeFileSync(copyFile(to, r), sealed);
+    downloaded++;
+  }
+
   const manifest = {
     at: new Date().toISOString(),
     anchors,
@@ -2673,30 +2680,31 @@ async function pull() {
     chainNotes,
   };
   console.log(`скачано объектов: ${downloaded}`);
-  // Подтверждённая опись — эталон копии — заменяется только допустимым
-  // продолжением цепочки. Расхождение (утрата хвоста, подмена, разрыв) не
-  // перезаписывает её: иначе следующий запуск сверялся бы с укороченным
-  // эталоном и дал ложный успех (замечание Тэнка к 065cba0). Попытка
-  // сохраняется отдельно — для разбора.
-  if (chainNotes.length) {
-    const rejected = join(to, `${MANIFEST}.rejected`);
+  console.log(`снимок: звеньев цепочки ${walk.count}; записанное позже заберёт следующий pull`);
+  // Подтверждённая опись — эталон копии — заменяется только сошедшейся
+  // копией, продолжающей цепочку. Иначе следующий запуск сверялся бы с
+  // негодным эталоном и мог дать ложный успех (замечание Тэнка к 065cba0).
+  // Попытка сохраняется отдельно — для разбора.
+  const rejected = join(to, `${MANIFEST}.rejected`);
+  const { failed, summary } = checkManifest(to, manifest, keyMat);
+  if (failed) {
     writeFileSync(rejected, seal(Buffer.from(JSON.stringify(manifest)), keyMat.key));
-    for (const n of chainNotes) console.log(`  ${n}`);
     console.log(
-      `ИТОГ: копия НЕ сошлась — подтверждённая опись и эталон прежние (${prev ? `${prev.count} звеньев` : 'первой описи нет'}); попытка — ${MANIFEST}.rejected`,
+      `подтверждённая опись и эталон прежние (${prev ? `${prev.count} звеньев` : 'первой описи нет'}); попытка — ${MANIFEST}.rejected`,
     );
-    process.exitCode = 1;
     return;
   }
   const tmp = join(to, `${MANIFEST}.tmp`);
   writeFileSync(tmp, seal(Buffer.from(JSON.stringify(manifest)), keyMat.key));
   renameSync(tmp, join(to, MANIFEST));
-  checkCopy(to, keyMat);
+  rmSync(rejected, { force: true });
+  writeFileSync(join(to, 'PULLED.json'), JSON.stringify(summary, null, 2));
 }
 
 /**
  * Проверка ручной копии ТОЛЬКО по локальным файлам и ключу — S3 не нужен.
- * Ожидаемый состав — все квитанции описи до последней ожидаемой записи.
+ * Ожидаемый состав — все квитанции цепочки до головы описи: квитанция,
+ * не учтённая в составе, — красный вердикт, а не молчание.
  * Каждый отрезок покрыт точной подтверждённой порцией (отдельным файлом или
  * внутри исправного пакета) либо учтённой отметкой потери; иначе — утрата.
  *
@@ -2707,35 +2715,79 @@ function verifyCopy() {
 }
 
 function checkCopy(to, keyMat) {
+  // Первая попытка не сошлась — подтверждённой описи нет, а вердикт есть.
+  const attempt = join(to, `${MANIFEST}.rejected`);
+  const file =
+    !existsSync(join(to, MANIFEST)) && existsSync(attempt) ? attempt : join(to, MANIFEST);
   let manifest;
   try {
-    manifest = JSON.parse(open(readFileSync(join(to, MANIFEST)), keyMat.key).toString('utf8'));
+    manifest = JSON.parse(open(readFileSync(file), keyMat.key).toString('utf8'));
   } catch {
     throw new Error(`опись копии ${MANIFEST} отсутствует, испорчена или другой ключ`);
   }
+  if (file === attempt) {
+    manifest.chainNotes = [
+      ...(manifest.chainNotes ?? []),
+      'подтверждённой описи нет — проверена неудачная попытка',
+    ];
+  }
+  const { summary } = checkManifest(to, manifest, keyMat);
+  if (file !== attempt) writeFileSync(join(to, 'PULLED.json'), JSON.stringify(summary, null, 2));
+}
+
+/** Состав описи против цепочки до её головы: ни лишнего, ни неучтённого. */
+function compositionProblems(manifest, links) {
+  const want = chainComposition(links);
+  const problems = [];
+  const parts = [
+    ['границ', manifest.anchors ?? [manifest.anchor], want.anchors],
+    ['квитанций порций', manifest.receipts, want.receipts],
+    ['квитанций пакетов', manifest.packs, want.packs],
+    ['квитанций файлов', manifest.files ?? [], want.files],
+  ];
+  for (const [name, listed, chained] of parts) {
+    const macs = (list) => new Set(list.map((x) => x.mac));
+    const [have, expected] = [macs(listed), macs(chained)];
+    const missing = chained.filter((x) => !have.has(x.mac)).length;
+    const extra = listed.filter((x) => !expected.has(x.mac)).length;
+    if (missing) problems.push(`опись: ${name} из цепочки не учтено в составе копии: ${missing}`);
+    if (extra) problems.push(`опись: ${name} в составе копии вне цепочки: ${extra}`);
+  }
+  return problems;
+}
+
+/** Вердикт по описи и локальным файлам: {failed, summary}. */
+function checkManifest(to, manifest, keyMat) {
   const { receipts, packs } = manifest;
   const anchors = manifest.anchors ?? [manifest.anchor];
   const problems = [...(manifest.chainNotes ?? [])];
-  // Цепочка по описи: подписи и голова против эталона копии.
+  // Цепочка по описи: подписи, голова против эталона копии, и состав копии
+  // против цепочки — каждая квитанция до головы учтена.
   if (manifest.reference) {
     const byPrev = new Map();
-    for (const { body } of manifest.chain ?? []) {
+    for (const link of manifest.chain ?? []) {
+      const { body } = link;
       if (body.mac !== macOf(body, keyMat)) problems.push('опись: звено без подписи ключом архива');
-      else byPrev.set(body.prev, body);
+      else byPrev.set(body.prev, link);
     }
     let head = GENESIS;
-    let n = 0;
-    for (let b = byPrev.get(head); b; b = byPrev.get(head)) {
-      head = linkOf(head, b.mac);
-      n++;
+    const links = [];
+    for (let l = byPrev.get(head); l; l = byPrev.get(head)) {
+      head = linkOf(head, l.body.mac);
+      links.push(l);
     }
-    if (n !== manifest.reference.count || head !== manifest.reference.head) {
+    if (links.length !== manifest.reference.count || head !== manifest.reference.head) {
       problems.push(
-        `опись: цепочка (${n}) не сошлась с эталоном копии (${manifest.reference.count})`,
+        `опись: цепочка (${links.length}) не сошлась с эталоном копии (${manifest.reference.count})`,
       );
     }
+    problems.push(...compositionProblems(manifest, links));
   } else {
     problems.push('опись без эталона цепочки — копия старого формата, НЕПРОВЕРЯЕМО');
+  }
+  const known = new Set(anchors.map((a) => a.seqId));
+  for (const sid of new Set(receipts.map((r) => parseChunkKey(r.key)?.seqId))) {
+    if (!known.has(sid)) problems.push(`опись: нумерация ${sid} — квитанции есть, границы нет`);
   }
   const fromPacks = new Map();
   for (const p of packs) {
@@ -2859,7 +2911,6 @@ function checkCopy(to, keyMat) {
     gaps,
     problems,
   };
-  writeFileSync(join(to, 'PULLED.json'), JSON.stringify(summary, null, 2));
   console.log(
     `копия: записи ${journals.map((j) => `${j.from}–${j.to}`).join(', ')}, пакетов: ${packs.length}, порций из пакетов: ${viaPack}, отдельно: ${viaChunk}, нет в копии: ${absent.length}, файлов: ${fileList.length}, пропусков: ${gaps.length}, проблем: ${problems.length}`,
   );
@@ -2877,6 +2928,7 @@ function checkCopy(to, keyMat) {
         : 'ИТОГ: данные сохранены полностью',
   );
   if (failedCheck) process.exitCode = 1;
+  return { failed: Boolean(failedCheck), summary };
 }
 
 // ----------------------------------------------------------------- поиск
