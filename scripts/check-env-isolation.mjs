@@ -152,7 +152,9 @@ try {
     '/live и /ready отвечают на служебном порту',
     sa.code === 0 && sa.json?.live === true && sa.json?.ready === true,
   );
-  const web = await fetch('http://127.0.0.1:18171/v1/health').then((r) => r.json());
+  const web = JSON.parse(
+    docker('exec', `fifth-${A}-web`, 'wget', '-qO-', 'http://127.0.0.1/v1/health').out,
+  );
   check('ядро отвечает через статику своей среды', web.service === 'fifth-core');
   const inspect = docker('inspect', `fifth-${A}-core`, '--format', '{{.Config.Healthcheck.Test}}');
   check('проверка контейнера — /live, а не /v1/health', inspect.out.includes('core-health.mjs'));

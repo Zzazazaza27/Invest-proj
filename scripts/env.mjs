@@ -108,13 +108,13 @@ const hex = (n) => randomBytes(n).toString('hex');
 /** Настройки и секреты среды. Секрет — отдельный файл, в настройках только путь. */
 function writeSettings(id, { address, keys }) {
   const n = names(id);
-  const secretsDir = join(n.dir, 'secrets');
-  mkdirSync(secretsDir, { recursive: true });
+  const mountDir = join(n.dir, 'secrets');
+  mkdirSync(mountDir, { recursive: true });
   const secret = {};
   const put = (name, value) => {
     secret[name] = value;
-    writeFileSync(join(secretsDir, name), `${value}\n`);
-    chmodSync(join(secretsDir, name), 0o444);
+    writeFileSync(join(mountDir, name), `${value}\n`);
+    chmodSync(join(mountDir, name), 0o444);
   };
   const pg = (user, password) => `postgres://${user}:${password}@postgres:5432/fifth_element`;
   const roles = {
@@ -159,14 +159,14 @@ function writeSettings(id, { address, keys }) {
   put('S3_SECRET_ACCESS_KEY', keys.app.secretAccessKey);
   put('ARCHIVE_S3_SECRET_ACCESS_KEY', keys.archive.secretAccessKey);
   writeFileSync(
-    join(secretsDir, 'valkey.conf'),
+    join(mountDir, 'valkey.conf'),
     `requirepass ${redis}\nappendonly yes\nmaxmemory-policy noeviction\ndir /data\n`,
   );
   writeFileSync(
-    join(secretsDir, 'nats.conf'),
+    join(mountDir, 'nats.conf'),
     `jetstream { store_dir: "/data" }\nhttp_port: 8222\nauthorization { user: "fifth", password: "${nats}" }\n`,
   );
-  for (const f of ['valkey.conf', 'nats.conf']) chmodSync(join(secretsDir, f), 0o444);
+  for (const f of ['valkey.conf', 'nats.conf']) chmodSync(join(mountDir, f), 0o444);
 
   const skipFile = new Set(['POSTGRES_PASSWORD']);
   const lines = [
@@ -354,6 +354,8 @@ async function create(id) {
       `FIFTH_WEB_IMAGE=${images.web}`,
       `FIFTH_POSTGRES_IMAGE=${images.postgres}`,
       `FIFTH_WEB_PORT=${port}`,
+      // Роль IdP создаёт скрипт инициализации образа; значение своё у каждой среды.
+      `FIFTH_KEYCLOAK_DB_PASSWORD=${hex(24)}`,
       `FIFTH_STORAGE_NETWORK=${STORAGE_NETWORK}`,
       '',
     ].join('\n'),
