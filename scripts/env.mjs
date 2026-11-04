@@ -136,6 +136,8 @@ function writeSettings(id, { address, keys, filesUrl }) {
   const n = names(id);
   const mountDir = join(n.dir, 'secrets');
   mkdirSync(mountDir, { recursive: true });
+  // Читают службы контейнеров под своими пользователями: права не зависят от umask.
+  chmodSync(mountDir, 0o755);
   const secret = {};
   const put = (name, value) => {
     secret[name] = value;
