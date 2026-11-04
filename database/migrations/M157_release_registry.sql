@@ -84,9 +84,13 @@ GRANT SELECT ON ALL TABLES IN SCHEMA ops TO app_readonly;
 GRANT SELECT ON public.schema_migrations TO app_release;
 
 ALTER TABLE ops.installations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ops.installations FORCE ROW LEVEL SECURITY;
 ALTER TABLE ops.installation_targets ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ops.installation_targets FORCE ROW LEVEL SECURITY;
 ALTER TABLE ops.installation_events ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ops.installation_events FORCE ROW LEVEL SECURITY;
 ALTER TABLE ops.instances ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ops.instances FORCE ROW LEVEL SECURITY;
 
 CREATE POLICY installations_release ON ops.installations TO app_release USING (true) WITH CHECK (true);
 CREATE POLICY targets_release ON ops.installation_targets TO app_release USING (true) WITH CHECK (true);

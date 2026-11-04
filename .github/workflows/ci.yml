@@ -335,10 +335,13 @@ jobs:
       # Образы собираются один раз, здесь. Комплект берёт именно их по дайджесту:
       # задание kit ниже не пересобирает, а разрешает выпуск проверенного.
       - name: Сборка
+        env:
+          # Метка привязывает пакет GHCR к репозиторию: без неё токену CI отказано в записи.
+          SOURCE: org.opencontainers.image.source=https://github.com/rebel-diesel/fifth-element
         run: |
-          docker build --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/core.Dockerfile -t fifth/core:ci .
-          docker build --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/web.Dockerfile -t fifth/web:ci .
-          docker build -t fifth/postgres:ci infra/postgres
+          docker build --label "$SOURCE" --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/core.Dockerfile -t fifth/core:ci .
+          docker build --label "$SOURCE" --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/web.Dockerfile -t fifth/web:ci .
+          docker build --label "$SOURCE" -t fifth/postgres:ci infra/postgres
       - name: Образ ядра содержит сборку
         run: docker run --rm fifth/core:ci test -f apps/core/dist/main.js
       - name: Кандидаты в GHCR
