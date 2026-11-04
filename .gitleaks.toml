@@ -1,5 +1,5 @@
 # Конфигурация секрет-скана. Гейт CI: 0 находок (RULES.md §3).
-title = "UNICORN LAUNCH gitleaks"
+title = "Пятый элемент gitleaks"
 
 [extend]
 useDefault = true

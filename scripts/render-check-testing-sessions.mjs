@@ -15,7 +15,7 @@
  *   7. завершение просмотра закрывает контекст.
  *
  * Снимки — `out/render-testing-sessions/`.
- * Запуск: UNICORN_ENTRY=web node scripts/render-check-testing-sessions.mjs
+ * Запуск: FIFTH_ENTRY=web node scripts/render-check-testing-sessions.mjs
  */
 import { chromium } from 'playwright';
 import pg from 'pg';
@@ -62,7 +62,7 @@ function loadDotEnv() {
 }
 
 const ADMIN = {
-  email: 'demo-admin@unicorn.local',
+  email: 'demo-admin@fifth.local',
   password: process.env.DEMO_USER_PASSWORD ?? process.env.DEV_TEST_USER_PASSWORD ?? '',
 };
 
@@ -159,7 +159,7 @@ try {
 
   const stored = await cabinetPage.evaluate(() =>
     // eslint-disable-next-line no-undef -- исполняется в браузере
-    window.sessionStorage.getItem('unicorn.test-context'),
+    window.sessionStorage.getItem('fifth.test-context'),
   );
   expect('Контекст живёт в состоянии ВКЛАДКИ', Boolean(stored), stored ? 'sessionStorage' : 'нет');
 
@@ -180,7 +180,7 @@ try {
       // держит прогон до общего таймаута шага, и причина остаётся неясной.
       signal: AbortSignal.timeout(15_000),
       // eslint-disable-next-line no-undef -- исполняется в браузере
-      headers: { 'X-Unicorn-Context': window.sessionStorage.getItem('unicorn.test-context') },
+      headers: { 'X-Fifth-Context': window.sessionStorage.getItem('fifth.test-context') },
     });
     return response.json();
   });
@@ -266,7 +266,7 @@ try {
         'Content-Type': 'application/json',
         'X-CSRF-Token': csrf,
         // eslint-disable-next-line no-undef -- исполняется в браузере
-        'X-Unicorn-Context': window.sessionStorage.getItem('unicorn.test-context'),
+        'X-Fifth-Context': window.sessionStorage.getItem('fifth.test-context'),
       },
       body: JSON.stringify({ displayName: 'Попытка изменения из просмотра' }),
     });
@@ -361,7 +361,7 @@ try {
   // просто не рисовалась — вкладка оставалась в режиме просмотра молча.
   await secondView.evaluate(() => {
     // eslint-disable-next-line no-undef -- исполняется в браузере
-    window.sessionStorage.setItem('unicorn.test-context', '00000000-0000-4000-8000-000000000000');
+    window.sessionStorage.setItem('fifth.test-context', '00000000-0000-4000-8000-000000000000');
   });
   await secondView.reload({ waitUntil: 'networkidle' });
   await secondView.waitForTimeout(2500);

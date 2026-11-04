@@ -156,7 +156,7 @@ describe('Транспорт: заголовки и учётные данные'
 describe('Обработка ошибок RFC 9457', () => {
   it('превращает problem+json в типизированную ApiError', async () => {
     const problem = {
-      type: 'https://unicorn.vc/problems/kyc_required',
+      type: 'https://5espace.com/problems/kyc_required',
       title: 'Требуется верификация',
       status: 403,
       code: 'kyc_required',
@@ -183,7 +183,7 @@ describe('Обработка ошибок RFC 9457', () => {
       fetchImpl: (async () =>
         jsonResponse(
           {
-            type: 'https://unicorn.vc/problems/step_up_required',
+            type: 'https://5espace.com/problems/step_up_required',
             title: 'Нужен второй фактор',
             status: 403,
             code: 'step_up_required',

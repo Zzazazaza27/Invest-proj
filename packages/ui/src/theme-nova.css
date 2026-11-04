@@ -9,8 +9,8 @@
  * что все они читают те же самые переменные.
  *
  * Подключение:
- *   import '@unicorn/ui/tokens.css';
- *   import '@unicorn/ui/theme-nova.css';
+ *   import '@fifth/ui/tokens.css';
+ *   import '@fifth/ui/theme-nova.css';
  *   document.documentElement.dataset.brand = 'nova';
  *
  * Правило прежнее: магических значений в компонентах нет. Всё, что добавляет
@@ -27,7 +27,7 @@
  *
  * Импорт живёт ЗДЕСЬ, а не в семи приложениях: шрифт — часть темы, и
  * подключать его отдельной строкой в каждом фронтенде значит семь мест, где
- * его можно забыть. Зависимость объявлена у `@unicorn/ui`.
+ * его можно забыть. Зависимость объявлена у `@fifth/ui`.
  */
 @import '@fontsource-variable/manrope/index.css';
 

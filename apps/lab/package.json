@@ -1,5 +1,5 @@
 {
-  "name": "@unicorn/lab",
+  "name": "@fifth/lab",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,10 +11,10 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@unicorn/api-client": "*",
-    "@unicorn/cabinet": "*",
-    "@unicorn/contracts": "*",
-    "@unicorn/ui": "*",
+    "@fifth/api-client": "*",
+    "@fifth/cabinet": "*",
+    "@fifth/contracts": "*",
+    "@fifth/ui": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^7.18.0"

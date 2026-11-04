@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import type { AdminUserPage, AdminUserRow } from '@unicorn/contracts';
+import type { AdminUserPage, AdminUserRow } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import {
   Avatar,

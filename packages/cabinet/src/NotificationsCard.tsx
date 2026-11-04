@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Card, EmptyState, ErrorState, LoadingState, Stack } from '@unicorn/ui';
-import type { Notification, NotificationPreference } from '@unicorn/contracts';
+import { Badge, Card, EmptyState, ErrorState, LoadingState, Stack } from '@fifth/ui';
+import type { Notification, NotificationPreference } from '@fifth/contracts';
 
 /**
  * Уведомления и их настройки.

@@ -22,7 +22,7 @@
  * фикстура окружения, минуя правило регистрации, но не отменяя его.
  *
  * Хранилище логинов в этой системе — адрес: короткое имя дополняется доменом
- * `unicorn.local`. Форма входа в кабинете делает то же самое, поэтому в поле
+ * `fifth.local`. Форма входа в кабинете делает то же самое, поэтому в поле
  * достаточно ввести `ssurgut`.
  *
  * Использование: node scripts/dev-seed-test-user.mjs
@@ -43,7 +43,7 @@ if (process.env.NODE_ENV === 'production') {
 }
 
 const LOGIN = 'ssurgut';
-const EMAIL = `${LOGIN}@unicorn.local`;
+const EMAIL = `${LOGIN}@fifth.local`;
 const PASSWORD = process.env.DEV_TEST_USER_PASSWORD ?? '';
 if (!PASSWORD) {
   console.error(

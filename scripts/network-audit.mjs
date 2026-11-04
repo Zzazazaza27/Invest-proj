@@ -291,7 +291,7 @@ async function identifyApi(res) {
   if (!res.ok) return false;
   try {
     const body = await res.clone().json();
-    return body?.service === 'unicorn-launch-core';
+    return body?.service === 'fifth-core';
   } catch {
     return false;
   }
@@ -316,7 +316,7 @@ async function checkLiveApi(apiBase) {
     fail(
       'MEDIUM',
       'live-api',
-      `На ${apiBase} отвечает ПОСТОРОННИЙ сервис (HTTP ${res.status}), не unicorn-launch-core. ` +
+      `На ${apiBase} отвечает ПОСТОРОННИЙ сервис (HTTP ${res.status}), не fifth-core. ` +
         'Живая проверка не выполнена; проверь занятость порта перед запуском core.',
     );
     return;

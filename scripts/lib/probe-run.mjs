@@ -16,7 +16,7 @@
  *      для разбора, и по ним видно, чей это запуск.
  *
  * Всё три даёт тестовая сессия. Прогон открывает её на время работы и шлёт
- * её идентификатор заголовком `X-Unicorn-Run`; сервер проверяет, что такой
+ * её идентификатор заголовком `X-Fifth-Run`; сервер проверяет, что такой
  * запуск действительно идёт, назначает происхождение и записывает созданное
  * за сессией — В ТОЙ ЖЕ транзакции, что и сам человек. Между «создал» и
  * «записал за собой» окна нет: упасть в нём невозможно.
@@ -103,7 +103,7 @@ export async function startProbeRun(probeId) {
 
   const login = await call('/v1/auth/login', {
     method: 'POST',
-    body: { email: 'demo-admin@unicorn.local', password },
+    body: { email: 'demo-admin@fifth.local', password },
   });
   if (login.status !== 200 && login.status !== 201) {
     console.warn(`  (учёт запуска выключен: вход администратора дал ${login.status})`);
@@ -141,7 +141,7 @@ export async function startProbeRun(probeId) {
 
     /** Заголовки регистрации: происхождение и доказательство права на него. */
     headers() {
-      return { 'X-Unicorn-Origin': PROBE_ORIGIN, 'X-Unicorn-Run': runToken };
+      return { 'X-Fifth-Origin': PROBE_ORIGIN, 'X-Fifth-Run': runToken };
     },
 
     /**

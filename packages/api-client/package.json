@@ -1,5 +1,5 @@
 {
-  "name": "@unicorn/api-client",
+  "name": "@fifth/api-client",
   "private": true,
   "version": "0.1.0",
   "description": "Типизированный HTTP-клиент /v1. Без React и без зависимостей от бэкенда",
@@ -17,7 +17,7 @@
     "build": "tsc -p tsconfig.build.json"
   },
   "dependencies": {
-    "@unicorn/contracts": "*",
+    "@fifth/contracts": "*",
     "zod": "^4.4.3"
   },
   "devDependencies": {

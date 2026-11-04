@@ -1,5 +1,5 @@
 /**
- * Раннер миграций UNICORN LAUNCH.
+ * Раннер миграций Пятый элемент.
  *
  * Свойства, ради которых он написан руками, а не взят готовым:
  *  - advisory-лок на весь прогон: два параллельных деплоя не применят одну
@@ -66,7 +66,7 @@ async function main(): Promise<void> {
   const client = new pg.Client({
     connectionString: ownerConnectionString(),
     ssl: sslConfig(),
-    application_name: 'unicorn-migrate',
+    application_name: 'fifth-migrate',
   });
   await client.connect();
 

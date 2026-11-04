@@ -46,8 +46,8 @@ describe('Конфигурация: fail-closed в production', () => {
         ...BASE_ENV,
         NODE_ENV: 'production',
         AUTH_MODE: 'local',
-        CORS_ALLOWED_ORIGINS: 'https://app.unicorn.vc',
-        CORE_PUBLIC_URL: 'https://api.unicorn.vc',
+        CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
+        CORE_PUBLIC_URL: 'https://api.5espace.test',
         KMS_MODE: 'kms',
       }),
     ).toThrow(/AUTH_MODE/);
@@ -59,10 +59,10 @@ describe('Конфигурация: fail-closed в production', () => {
         ...BASE_ENV,
         NODE_ENV: 'production',
         AUTH_MODE: 'oidc',
-        OIDC_ISSUER: 'https://id.unicorn.vc',
+        OIDC_ISSUER: 'https://id.5espace.test',
         OIDC_AUDIENCE: 'core',
-        CORS_ALLOWED_ORIGINS: 'https://app.unicorn.vc',
-        CORE_PUBLIC_URL: 'https://api.unicorn.vc',
+        CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
+        CORE_PUBLIC_URL: 'https://api.5espace.test',
         KMS_MODE: 'local',
       }),
     ).toThrow(/KMS_MODE/);
@@ -78,18 +78,18 @@ describe('Конфигурация: fail-closed в production', () => {
         ...BASE_ENV,
         NODE_ENV: 'production',
         AUTH_MODE: 'oidc',
-        OIDC_ISSUER: 'https://id.unicorn.vc',
+        OIDC_ISSUER: 'https://id.5espace.test',
         OIDC_AUDIENCE: 'core',
         KMS_MODE: 'kms',
-        CORE_PUBLIC_URL: 'https://api.unicorn.vc',
-        CORS_ALLOWED_ORIGINS: 'http://app.unicorn.vc',
+        CORE_PUBLIC_URL: 'https://api.5espace.test',
+        CORS_ALLOWED_ORIGINS: 'http://app.5espace.test',
       }),
     ).toThrow(/https/);
   });
 
   it('OIDC без audience не запускается: чужой токен был бы принят', () => {
     expect(() =>
-      loadEnv({ ...BASE_ENV, AUTH_MODE: 'oidc', OIDC_ISSUER: 'https://id.unicorn.vc' }),
+      loadEnv({ ...BASE_ENV, AUTH_MODE: 'oidc', OIDC_ISSUER: 'https://id.5espace.test' }),
     ).toThrow(/OIDC_AUDIENCE/);
   });
 
@@ -290,11 +290,11 @@ describe('Проверка токена', () => {
     Object.assign(process.env, BASE_ENV, {
       NODE_ENV: 'production',
       AUTH_MODE: 'oidc',
-      OIDC_ISSUER: 'https://id.unicorn.vc',
+      OIDC_ISSUER: 'https://id.5espace.test',
       OIDC_AUDIENCE: 'core',
       KMS_MODE: 'kms',
-      CORE_PUBLIC_URL: 'https://api.unicorn.vc',
-      CORS_ALLOWED_ORIGINS: 'https://app.unicorn.vc',
+      CORE_PUBLIC_URL: 'https://api.5espace.test',
+      CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
     });
     resetEnvCache();
     try {
@@ -339,9 +339,9 @@ describe('Транспорт до внутренних систем в productio
     // собираются ссылки в письмах, Ф51). Когда-то здесь стояло только имя
     // PUBLIC_BASE_URL при несуществующей тогда переменной, и набор оставался
     // зелёным потому, что проверял текст ошибки, а не факт отказа.
-    CORE_PUBLIC_URL: 'https://unicorn.example.org',
-    PUBLIC_BASE_URL: 'https://unicorn.example.org',
-    CORS_ALLOWED_ORIGINS: 'https://unicorn.example.org',
+    CORE_PUBLIC_URL: 'https://fifth.example.org',
+    PUBLIC_BASE_URL: 'https://fifth.example.org',
+    CORS_ALLOWED_ORIGINS: 'https://fifth.example.org',
     DATABASE_SSL: 'true',
     // Задаётся явно: по умолчанию режим доставки — capture, а в production
     // он запрещён (M128). Правило пришло позже этой фикстуры, и позитивный
@@ -577,11 +577,11 @@ describe('Реконнесанс-поверхность (SEC-21)', () => {
     KMS_MODE: 'kms',
     SESSION_COOKIE_NAME: '__Host-ul_session',
     CSRF_COOKIE_NAME: '__Host-ul_csrf',
-    CORE_PUBLIC_URL: 'https://unicorn.example.org',
+    CORE_PUBLIC_URL: 'https://fifth.example.org',
     // Адрес, по которому платформу открывает человек: из него собираются
     // ссылки в письмах, и в production он обязан быть https (Ф51).
-    PUBLIC_BASE_URL: 'https://unicorn.example.org',
-    CORS_ALLOWED_ORIGINS: 'https://unicorn.example.org',
+    PUBLIC_BASE_URL: 'https://fifth.example.org',
+    CORS_ALLOWED_ORIGINS: 'https://fifth.example.org',
     DATABASE_SSL: 'true',
     REDIS_URL: 'rediss://cache.internal:6379',
     REDIS_PASSWORD: 'p'.repeat(24),
@@ -768,7 +768,7 @@ describe('Классы ограничения частоты (Ф52)', () => {
 
 describe('Происхождение записи из заголовка (M127)', () => {
   /*
-   * Заголовок «X-Unicorn-Origin» — единственный способ назвать запись следом
+   * Заголовок «X-Fifth-Origin» — единственный способ назвать запись следом
    * прогона, и он приходит ОТ КЛИЕНТА. Значит вопрос не «удобно ли это», а
    * «что будет, если так назовётся посторонний».
    *
@@ -779,7 +779,7 @@ describe('Происхождение записи из заголовка (M127)
    * списка.
    */
   const withHeader = (value: string) =>
-    ({ headers: { 'x-unicorn-origin': value } }) as unknown as Parameters<
+    ({ headers: { 'x-fifth-origin': value } }) as unknown as Parameters<
       typeof originFromRequest
     >[0];
 
@@ -802,9 +802,9 @@ describe('Происхождение записи из заголовка (M127)
     OIDC_AUDIENCE: 'unicorn',
     KMS_MODE: 'kms',
     KMS_KEY_ID: 'arn:aws:kms:ru-central1:1:key/abc',
-    CORS_ALLOWED_ORIGINS: 'https://app.unicorn.vc',
-    CORE_PUBLIC_URL: 'https://api.unicorn.vc',
-    PUBLIC_BASE_URL: 'https://app.unicorn.vc',
+    CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
+    CORE_PUBLIC_URL: 'https://api.5espace.test',
+    PUBLIC_BASE_URL: 'https://app.5espace.test',
     SESSION_COOKIE_NAME: '__Host-ul_session',
     CSRF_COOKIE_NAME: '__Host-ul_csrf',
     DATABASE_SSL: 'true',

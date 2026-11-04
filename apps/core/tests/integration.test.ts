@@ -5,7 +5,7 @@ import {
   CreateWebhookRequestSchema,
   INTEGRATION_SCOPES,
   IntegrationTokenRequestSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { resetEnvCache } from '../src/config/env';
 import { parseOrThrow } from '../src/common/validation';
 import { decodeIntegrationCursor, encodeIntegrationCursor } from '../src/common/keyset-cursor';

@@ -5,7 +5,7 @@ import {
   EmailVerifyRequestSchema,
   PasswordForgotRequestSchema,
   PasswordResetRequestSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { Ctx, Public } from '../auth/guards';
 import { errors } from '../common/errors';
 import { parseOrThrow } from '../common/validation';

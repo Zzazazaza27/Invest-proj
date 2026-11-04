@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { SKIN_IDS, type SkinId } from '@unicorn/contracts';
+import { SKIN_IDS, type SkinId } from '@fifth/contracts';
 import {
   ALERT_TONES,
   Alert,
@@ -20,7 +20,7 @@ import {
   Select,
   TextArea,
   Toast,
-} from '@unicorn/ui';
+} from '@fifth/ui';
 import { api } from '../api';
 import { problemText } from '../lib/format';
 import { Avatar } from './users-shared';
@@ -31,16 +31,16 @@ import { ButtonRoles } from './ui-catalog-roles';
  * «Элементы интерфейса» — рабочий каталог для оценки скина.
  *
  * Страница ничего не решает и ничего не чинит: она показывает, как ТЕКУЩИЕ
- * элементы админки и `@unicorn/ui` выглядят в выбранном скине, рядом друг с
+ * элементы админки и `@fifth/ui` выглядят в выбранном скине, рядом друг с
  * другом и на двух подложках — фоне страницы и карточке. Сливание, ради
  * которого она заведена, видно только так.
  *
  * Скин меняется ТОЛЬКО у блока образцов: атрибут `data-brand` на обёртке, без
  * смены темы приложения и без сохранения выбора. Список скинов — `SKINS` из
- * `@unicorn/ui`; значения цветов читаются из выбранной темы в браузере, а
+ * `@fifth/ui`; значения цветов читаются из выбранной темы в браузере, а
  * список токенов — из самих файлов темы. Ни одного цвета здесь не зашито.
  *
- * Ограничение, о котором надо помнить: образцы `@unicorn/ui` показаны ВНУТРИ
+ * Ограничение, о котором надо помнить: образцы `@fifth/ui` показаны ВНУТРИ
  * админки, и общие правила её `styles.css` (для button, input, table)
  * действуют и на них. В кабинетах они могут выглядеть чуть иначе.
  */
@@ -838,7 +838,7 @@ function ButtonsTable() {
                   <ScenePreview
                     title={`Пример: ${UI_ROLE[variant].toLowerCase()} кнопка (общий набор)`}
                     render={() => (
-                      <Scene action={{ set: 'ui', variant, label: `@unicorn/ui · ${variant}` }} />
+                      <Scene action={{ set: 'ui', variant, label: `@fifth/ui · ${variant}` }} />
                     )}
                   />
                 </td>
@@ -1061,7 +1061,7 @@ function FieldsBlock({ where }: { where: 'page' | 'card' }) {
 /* --------------------------------------------------------------- статусы */
 
 /**
- * Строки выровнены по смыслу. Тона `@unicorn/ui` берутся из перечней пакета
+ * Строки выровнены по смыслу. Тона `@fifth/ui` берутся из перечней пакета
  * (BADGE_TONES, ALERT_TONES) — здесь только сопоставление с админкой.
  */
 const STATUS_ROWS: {

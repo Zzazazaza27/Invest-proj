@@ -63,7 +63,7 @@ export default defineConfig(({ mode }) => {
     // которое ESM не принимает. Vite не пре-бандлит связанные пакеты по
     // умолчанию и подаёт их браузеру как есть — тот падает на именованном
     // экспорте из CJS-модуля. Явное включение возвращает шаг преобразования.
-    optimizeDeps: { include: ['@unicorn/api-client', '@unicorn/contracts'] },
+    optimizeDeps: { include: ['@fifth/api-client', '@fifth/contracts'] },
     server: { port, strictPort: true, host: '127.0.0.1' },
     preview: { port, strictPort: true, host: '127.0.0.1' },
     // Карты исходников НЕ публикуются: они восстанавливают исходный TypeScript,

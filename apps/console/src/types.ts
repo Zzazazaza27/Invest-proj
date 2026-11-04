@@ -1,4 +1,4 @@
-import type { UnicornApi } from '@unicorn/api-client';
+import type { FifthApi } from '@fifth/api-client';
 
 /**
  * Описание операции API в терминах формы.
@@ -57,7 +57,7 @@ export interface Notebook {
 }
 
 export interface RunContext {
-  api: UnicornApi;
+  api: FifthApi;
   notebook: Notebook;
   /** Перечитать текущего пользователя (после входа, выхода, выдачи роли). */
   refreshSession: () => Promise<void>;

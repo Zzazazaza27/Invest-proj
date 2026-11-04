@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Field, Input, Stack } from '@unicorn/ui';
-import type { BugContext, CreateSupportTicketRequest } from '@unicorn/contracts';
+import { Button, Field, Input, Stack } from '@fifth/ui';
+import type { BugContext, CreateSupportTicketRequest } from '@fifth/contracts';
 
 /**
  * Сообщение об ошибке от человека, а не от системы.

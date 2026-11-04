@@ -1,4 +1,4 @@
-import { ApiError, UnicornApi } from '@unicorn/api-client';
+import { ApiError, FifthApi } from '@fifth/api-client';
 
 /**
  * Единственное место консоли, которое знает про HTTP.
@@ -71,7 +71,7 @@ export function readCsrfCookie(): string | null {
   return null;
 }
 
-export const api = new UnicornApi({
+export const api = new FifthApi({
   baseUrl: BASE_URL,
   // Токен сессии живёт в httpOnly-cookie и этому коду недоступен: сюда попадает
   // только CSRF-токен по схеме double-submit.

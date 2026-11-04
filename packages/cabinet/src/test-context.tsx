@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { CurrentContext } from '@unicorn/contracts';
+import type { CurrentContext } from '@fifth/contracts';
 
 /**
  * Тестовая вкладка: контекст доступа и плашка над кабинетом.
@@ -16,13 +16,13 @@ import type { CurrentContext } from '@unicorn/contracts';
  * страницы возьмёт контекст уже из состояния вкладки.
  */
 
-const STORAGE_KEY = 'unicorn.test-context';
+const STORAGE_KEY = 'fifth.test-context';
 const HASH_KEY = 'ctx';
 /**
  * Откуда в админке открыли просмотр (`#…&back=/admin/users/…`). Нужен, чтобы
  * «Завершить просмотр» вернул туда же, а не на первую страницу админки.
  */
-const BACK_KEY = 'unicorn.test-context.back';
+const BACK_KEY = 'fifth.test-context.back';
 const HASH_BACK = 'back';
 
 /**

@@ -16,7 +16,7 @@ import { ApiError, api } from '../api';
  * дополняется доменом здесь, на границе интерфейса, а сервер по-прежнему
  * получает адрес и ничего не знает про эту подстановку.
  */
-const INTERNAL_DOMAIN = 'unicorn.local';
+const INTERNAL_DOMAIN = 'fifth.local';
 
 function toAddress(input: string): string {
   const value = input.trim();

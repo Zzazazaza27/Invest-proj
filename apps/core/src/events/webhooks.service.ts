@@ -7,7 +7,7 @@ import {
   verbAllowedByScopes,
   type WebhookCreated,
   type WebhookEndpoint,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { errors } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';

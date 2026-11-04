@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef } from 'react';
-import { Button, type ButtonVariant } from '@unicorn/ui';
+import { Button, type ButtonVariant } from '@fifth/ui';
 
 /**
  * Окно со сценой. Раньше сцена раскрывалась строкой внутри таблицы — без
@@ -20,7 +20,7 @@ export function SceneModal({
   children: React.ReactNode;
 }) {
   const titleId = useId();
-  // Button из @unicorn/ui не пробрасывает ref — крестик находится по id.
+  // Button из @fifth/ui не пробрасывает ref — крестик находится по id.
   const closeId = `${titleId}-close`;
   // Страница передаёт новую функцию при каждой перерисовке; эффект открытия
   // не должен из-за этого перезапускаться и заново ставить фокус.

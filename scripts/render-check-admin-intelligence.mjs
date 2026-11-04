@@ -13,7 +13,7 @@
  * ходит в интернет, поэтому по умолчанию выключен; импортированные записи —
  * настоящие данные и НЕ удаляются.
  *
- * Запуск: UNICORN_ENTRY=web node scripts/render-check-admin-intelligence.mjs
+ * Запуск: FIFTH_ENTRY=web node scripts/render-check-admin-intelligence.mjs
  */
 import { chromium } from 'playwright';
 import pg from 'pg';

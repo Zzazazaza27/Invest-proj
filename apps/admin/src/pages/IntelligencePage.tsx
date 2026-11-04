@@ -28,7 +28,7 @@ import {
   type IntelType,
   type IntelVerification,
 } from '../api';
-import { Markdown } from '@unicorn/ui';
+import { Markdown } from '@fifth/ui';
 import { formatDate, problemText } from '../lib/format';
 
 /**

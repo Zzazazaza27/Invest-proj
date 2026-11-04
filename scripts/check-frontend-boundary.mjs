@@ -36,7 +36,7 @@ const FORBIDDEN_CASES = [
 /** Импорт, который обязан быть разрешён: иначе правило просто запрещает всё. */
 const ALLOWED_CASE = {
   name: 'контракты',
-  code: "import { API_VERSION } from '@unicorn/contracts';\nexport const x = API_VERSION;\n",
+  code: "import { API_VERSION } from '@fifth/contracts';\nexport const x = API_VERSION;\n",
 };
 
 // Консоль разработки — такой же фронтенд с точки зрения границы: она обращается

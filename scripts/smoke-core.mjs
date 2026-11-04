@@ -75,7 +75,7 @@ console.warn('\n=== ДЫМОВАЯ ПРОВЕРКА CORE ===\n');
 {
   const { response, json } = await req('/v1/health');
   check('health отвечает 200', response.status === 200);
-  check('сигнатура сервиса присутствует', json?.service === 'unicorn-launch-core');
+  check('сигнатура сервиса присутствует', json?.service === 'fifth-core');
   check('база данных доступна', json?.checks?.database === 'ok');
 
   const required = {

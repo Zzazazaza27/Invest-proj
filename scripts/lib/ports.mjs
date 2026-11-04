@@ -142,7 +142,7 @@ export const FRONTENDS = {
  * Адрес приложения для браузерных прогонов.
  *
  * По умолчанию — прямой dev-сервер на своём порту. Если задана переменная
- * `UNICORN_ENTRY=web`, все прогоны идут через ЕДИНУЮ ТОЧКУ ВХОДА — тот же
+ * `FIFTH_ENTRY=web`, все прогоны идут через ЕДИНУЮ ТОЧКУ ВХОДА — тот же
  * адрес, что видит человек.
  *
  * Переключатель один на все проверки не для удобства: на едином адресе
@@ -154,7 +154,7 @@ export const FRONTENDS = {
 export function frontendUrl(key) {
   const entry = FRONTENDS[key];
   if (!entry) throw new Error(`неизвестный фронтенд: ${key}`);
-  if ((process.env.UNICORN_ENTRY ?? '').toLowerCase() === 'web') return publicUrl(key);
+  if ((process.env.FIFTH_ENTRY ?? '').toLowerCase() === 'web') return publicUrl(key);
   return `http://127.0.0.1:${entry.port}${entry.basePath}`;
 }
 
@@ -178,7 +178,7 @@ export function publicUrl(key) {
  * не уходит в прямой запрос, и проверка падает не там, где сломано.
  */
 export const CORE_URL =
-  (process.env.UNICORN_ENTRY ?? '').toLowerCase() === 'web'
+  (process.env.FIFTH_ENTRY ?? '').toLowerCase() === 'web'
     ? PORTS.web === 80
       ? 'http://127.0.0.1'
       : `http://127.0.0.1:${PORTS.web}`

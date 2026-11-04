@@ -13,9 +13,9 @@ import {
   Skeleton,
   Stack,
   UI_KEYFRAMES,
-} from '@unicorn/ui';
-import { ProjectCard } from '@unicorn/cabinet';
-import type { LandingBlock, ProjectTeaser } from '@unicorn/contracts';
+} from '@fifth/ui';
+import { ProjectCard } from '@fifth/cabinet';
+import type { LandingBlock, ProjectTeaser } from '@fifth/contracts';
 import { api, mediaUrl } from './api';
 import { useAsync } from './useAsync';
 

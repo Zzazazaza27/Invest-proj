@@ -51,7 +51,7 @@ export function applyPlatformSkin(envApiBase?: string, timeoutMs = 1500): Promis
     .finally(() => root.removeAttribute('data-skin-pending'));
 }
 
-const STORAGE_KEY = 'unicorn.platform-skin';
+const STORAGE_KEY = 'fifth.platform-skin';
 
 // Хранилище браузера бывает недоступно (приватный режим, запрет сайта) —
 // тогда просто нет запасного значения.

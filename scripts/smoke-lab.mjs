@@ -68,7 +68,7 @@ const CSRF_COOKIE = process.env.CSRF_COOKIE_NAME ?? 'ul_csrf';
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL_OWNER,
   max: 4,
-  application_name: 'unicorn-smoke-lab',
+  application_name: 'fifth-smoke-lab',
 });
 
 async function sql(text, params = []) {

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { CatalogQuery, ProjectTeaser, TaxonomyNode } from '@unicorn/contracts';
+import type { CatalogQuery, ProjectTeaser, TaxonomyNode } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { Database } from '../db/unit-of-work';
 

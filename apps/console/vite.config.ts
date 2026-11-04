@@ -32,7 +32,7 @@ export default defineConfig(({ mode }) => {
     plugins: [react()],
     // Пакеты монорепо собираются в CommonJS: их потребляет и ядро на NestJS,
     // которое ESM не принимает. Явное включение возвращает шаг преобразования.
-    optimizeDeps: { include: ['@unicorn/api-client', '@unicorn/contracts'] },
+    optimizeDeps: { include: ['@fifth/api-client', '@fifth/contracts'] },
     server: { port, strictPort: true, host: '127.0.0.1' },
     preview: { port, strictPort: true, host: '127.0.0.1' },
     // Карты исходников не публикуются — по той же причине, что и в кабинетах

@@ -20,7 +20,7 @@ export function getPool(): pg.Pool {
       connectionString: testConnectionString(),
       ssl: sslConfig(),
       max: 12,
-      application_name: 'unicorn-db-tests',
+      application_name: 'fifth-db-tests',
     });
   }
   return pool;
@@ -79,7 +79,7 @@ export async function createScratchDatabase(name: string): Promise<{
     connectionString: url.href,
     ssl: sslConfig(),
     max: 12,
-    application_name: `unicorn-db-tests-${name}`,
+    application_name: `fifth-db-tests-${name}`,
   });
   return {
     pool: scratchPool,

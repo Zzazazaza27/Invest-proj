@@ -1,6 +1,6 @@
 import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import { connect, headers as natsHeaders, type JetStreamClient, type NatsConnection } from 'nats';
-import { EVENT_STREAM } from '@unicorn/contracts';
+import { EVENT_STREAM } from '@fifth/contracts';
 import { getEnv } from '../config/env';
 
 /**
@@ -51,7 +51,7 @@ export class NatsClient implements OnModuleDestroy {
     const hdrs = natsHeaders();
     // Ключ агрегата в заголовке: потребитель по нему восстанавливает порядок,
     // не разбирая полезную нагрузку.
-    hdrs.append('Unicorn-Aggregate-Key', options.messageKey);
+    hdrs.append('Fifth-Aggregate-Key', options.messageKey);
 
     const ack = await js.publish(subject, Buffer.from(JSON.stringify(payload), 'utf8'), {
       // Дедупликация на стороне стрима: повторная публикация того же события
@@ -79,7 +79,7 @@ export class NatsClient implements OnModuleDestroy {
     try {
       this.connection = await connect({
         servers: env.NATS_URL,
-        name: 'unicorn-launch-core',
+        name: 'fifth-core',
         // Пароль передаётся параметром, а не частью адреса: в URL он утёк бы
         // в логи подключения и в текст ошибок.
         ...(env.NATS_USER ? { user: env.NATS_USER, pass: env.NATS_PASSWORD } : {}),

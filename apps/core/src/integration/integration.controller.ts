@@ -6,7 +6,7 @@ import {
   UuidSchema,
   WebhookCreatedSchema,
   WebhookEndpointSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import type { FastifyRequest } from 'fastify';
 import { Public, ServiceAuth } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';

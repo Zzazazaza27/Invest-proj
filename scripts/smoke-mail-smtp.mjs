@@ -120,8 +120,8 @@ const body = [
 ].join('\n');
 
 const data = [
-  'From: no-reply@unicorn.local',
-  'To: inbox@unicorn.local',
+  'From: no-reply@fifth.local',
+  'To: inbox@fifth.local',
   `Subject: =?UTF-8?B?${Buffer.from(subject, 'utf8').toString('base64')}?=`,
   'MIME-Version: 1.0',
   'Content-Type: text/plain; charset=utf-8',
@@ -136,7 +136,7 @@ const data = [
 // пустым отчётом: упавший процесс не отличить от упавшего окружения.
 let delivery = null;
 try {
-  await smtpDeliver(local(), { from: 'no-reply@unicorn.local', to: 'inbox@unicorn.local', data });
+  await smtpDeliver(local(), { from: 'no-reply@fifth.local', to: 'inbox@fifth.local', data });
 } catch (error) {
   delivery = error instanceof Error ? error.message : String(error);
 }
@@ -178,8 +178,8 @@ await expectReject(
   '6. перевод строки в адресе получателя отвергнут',
   () =>
     smtpDeliver(local(), {
-      from: 'no-reply@unicorn.local',
-      to: 'inbox@unicorn.local>\r\nRCPT TO:<attacker@example.com',
+      from: 'no-reply@fifth.local',
+      to: 'inbox@fifth.local>\r\nRCPT TO:<attacker@example.com',
       data,
     }),
   (m) => m.includes('недопустимый адрес'),
@@ -189,8 +189,8 @@ await expectReject(
   '7. перевод строки в адресе отправителя отвергнут',
   () =>
     smtpDeliver(local(), {
-      from: 'no-reply@unicorn.local\r\nBcc: attacker@example.com',
-      to: 'inbox@unicorn.local',
+      from: 'no-reply@fifth.local\r\nBcc: attacker@example.com',
+      to: 'inbox@fifth.local',
       data,
     }),
   (m) => m.includes('недопустимый адрес'),
@@ -250,8 +250,8 @@ await withFakeRelay(
       '10. релей без STARTTLS не обслуживается открытым текстом',
       () =>
         smtpDeliver(local({ port, security: 'starttls' }), {
-          from: 'no-reply@unicorn.local',
-          to: 'inbox@unicorn.local',
+          from: 'no-reply@fifth.local',
+          to: 'inbox@fifth.local',
           data,
         }),
       (m) => m.includes('не предлагает STARTTLS'),
@@ -274,8 +274,8 @@ await withFakeRelay(
       '11. дописанные в открытый канал команды рвут STARTTLS',
       () =>
         smtpDeliver(local({ port, security: 'starttls' }), {
-          from: 'no-reply@unicorn.local',
-          to: 'inbox@unicorn.local',
+          from: 'no-reply@fifth.local',
+          to: 'inbox@fifth.local',
           data,
         }),
       (m) => m.includes('непрочитанные данные'),
@@ -289,8 +289,8 @@ const unreachable = await expectReject(
   '12. недоступный релей даёт отказ, а не тихий успех',
   () =>
     smtpDeliver(local({ port: 9, security: 'tls', user: 'sender', password: secret }), {
-      from: 'no-reply@unicorn.local',
-      to: 'inbox@unicorn.local',
+      from: 'no-reply@fifth.local',
+      to: 'inbox@fifth.local',
       data,
     }),
   (m) => m.length > 0,
@@ -309,7 +309,7 @@ check(
 // запросом к ядру, а письма ищутся в том же приёмнике.
 
 const suffix = randomUUID().slice(0, 8);
-const email = `smoke-mail-${suffix}@unicorn.local`;
+const email = `smoke-mail-${suffix}@fifth.local`;
 const registered = await fetch(`${CORE_URL}/v1/auth/register`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },

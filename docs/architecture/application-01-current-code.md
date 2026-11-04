@@ -911,7 +911,7 @@ API — `admin.controller.ts:108-149`: `GET/POST plans`, `PATCH plans/:id`
 **Создания сезона нет ни в API, ни в UI** — только `M011_seeds.sql:77` и
 скрипты (`scripts/dev-stand.mjs:199`, `seed-demo.mjs:470`, `smoke-*.mjs`).
 
-### 9.8. Имя продукта «UNICORN LAUNCH» — где видно пользователю
+### 9.8. Имя продукта «Пятый элемент» — где видно пользователю
 
 Для этапа 1. Видимые места: `<title>` семи приложений
 (`apps/{admin,web-public,auth,console,expert,investor,lab}/index.html:13`);
@@ -926,10 +926,10 @@ API — `admin.controller.ts:108-149`: `GET/POST plans`, `PATCH plans/:id`
 
 Favicon `packages/ui/public/favicon.svg` текста не содержит.
 
-Внутренние идентификаторы (не трогать по плану): `@unicorn/*` в
-`package.json` пакетов; `unicorn-launch-core` (`apps/core/src/db/unit-of-work.ts:46,94`,
+Внутренние идентификаторы (не трогать по плану): `@fifth/*` в
+`package.json` пакетов; `fifth-core` (`apps/core/src/db/unit-of-work.ts:46,94`,
 `events/nats.client.ts:67`, `health/health.controller.ts:28`); база URI проблем
-`https://unicorn.vc/problems` (`packages/contracts/src/common/problem.ts:63`,
+`https://5espace.com/problems` (`packages/contracts/src/common/problem.ts:63`,
 `apps/core/src/main.ts:274`, `cache/ip-ceiling.ts:83,97`); БД `unicorn_launch`,
 роль `unicorn_owner`, бакет `unicorn-launch` (`.env.example:71-100,152`); realm
 и clientId (`realm-launch.json:2,28`); каталог `/opt/unicorn-launch`

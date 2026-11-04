@@ -4,7 +4,7 @@ import {
   type Notification,
   type NotificationPreference,
   type UserDevice,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 

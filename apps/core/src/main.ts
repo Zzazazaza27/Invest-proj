@@ -333,7 +333,7 @@ async function bootstrap(): Promise<void> {
       'retry-after': true,
     },
     errorResponseBuilder: (_request, context) => ({
-      type: 'https://unicorn.vc/problems/rate_limited',
+      type: 'https://5espace.com/problems/rate_limited',
       title: 'Слишком много запросов',
       status: 429,
       code: 'rate_limited',

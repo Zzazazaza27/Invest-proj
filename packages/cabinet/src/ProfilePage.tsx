@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ContextualImage } from './test-context';
-import { Badge, Button, Card, ErrorState, Field, Input, LoadingState, Stack } from '@unicorn/ui';
-import type { MyProfile } from '@unicorn/contracts';
-import { AVATAR_LIMITS } from '@unicorn/contracts';
+import { Badge, Button, Card, ErrorState, Field, Input, LoadingState, Stack } from '@fifth/ui';
+import type { MyProfile } from '@fifth/contracts';
+import { AVATAR_LIMITS } from '@fifth/contracts';
 
 /**
  * «Мой профиль» — один экран на все кабинеты.

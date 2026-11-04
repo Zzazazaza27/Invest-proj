@@ -12,8 +12,8 @@ import {
   PageHeading,
   Stack,
   formatMoney,
-} from '@unicorn/ui';
-import type { ProjectFull, ProjectSummary, TaxonomyNode } from '@unicorn/contracts';
+} from '@fifth/ui';
+import type { ProjectFull, ProjectSummary, TaxonomyNode } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
 

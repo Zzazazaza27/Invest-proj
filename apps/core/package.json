@@ -1,8 +1,8 @@
 {
-  "name": "@unicorn/core",
+  "name": "@fifth/core",
   "private": true,
   "version": "0.1.0",
-  "description": "UNICORN LAUNCH core — модульный монолит NestJS: единственный владелец БД и бизнес-правил",
+  "description": "Пятый элемент core — модульный монолит NestJS: единственный владелец БД и бизнес-правил",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
@@ -19,7 +19,7 @@
     "@nestjs/common": "^11.1.29",
     "@nestjs/core": "^11.1.29",
     "@nestjs/platform-fastify": "^11.1.29",
-    "@unicorn/contracts": "*",
+    "@fifth/contracts": "*",
     "argon2": "^0.41.1",
     "ioredis": "5.11.1",
     "jose": "^5.9.6",

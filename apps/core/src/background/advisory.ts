@@ -37,7 +37,7 @@ export const pgAdvisoryLocks: AdvisoryLockProvider = {
     const client = new pg.Client({
       connectionString: env.DATABASE_URL,
       ssl: env.DATABASE_SSL === 'true' ? { rejectUnauthorized: true } : false,
-      application_name: 'unicorn-launch-core-bg-lock',
+      application_name: 'fifth-core-bg-lock',
       keepAlive: true,
       connectionTimeoutMillis: 5_000,
     });

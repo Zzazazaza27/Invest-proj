@@ -137,7 +137,7 @@ try {
   console.warn('\n=== РАЗДЕЛ «ПОЛЬЗОВАТЕЛИ»: API ===\n');
 
   const admin = makeClient();
-  await admin.login('demo-admin@unicorn.local', DEMO_PASSWORD);
+  await admin.login('demo-admin@fifth.local', DEMO_PASSWORD);
 
   // ------------------------------------------------------------ [1] список
   console.warn('[1] Страница списка');
@@ -172,7 +172,7 @@ try {
     `по запросу «%» найдено ${wildcard.json?.total} (не должно быть всех)`,
   );
 
-  const byEmail = await admin.call(q({ field: 'email', q: 'demo-admin@unicorn.local' }));
+  const byEmail = await admin.call(q({ field: 'email', q: 'demo-admin@fifth.local' }));
   check(
     'Поиск по адресу находит ровно одного',
     byEmail.json?.total === 1 && byEmail.json.items[0].displayName.includes('Соколова'),
@@ -322,7 +322,7 @@ try {
   const reveal = await admin.call(`/v1/admin/users/${adminId}/contacts/reveal`, { method: 'POST' });
   check(
     'Контакт раскрывается по явному действию',
-    reveal.status === 200 && reveal.json?.email === 'demo-admin@unicorn.local',
+    reveal.status === 200 && reveal.json?.email === 'demo-admin@fifth.local',
     `HTTP ${reveal.status}, ${reveal.json?.email}`,
   );
   const after = await sql(
@@ -353,7 +353,7 @@ try {
   check('Аноним не видит список', anon.status === 401, `HTTP ${anon.status}`);
 
   const founder = makeClient();
-  await founder.login('demo-founder-aero@unicorn.local', DEMO_PASSWORD);
+  await founder.login('demo-founder-aero@fifth.local', DEMO_PASSWORD);
   const founderList = await founder.call('/v1/admin/users');
   const founderCard = await founder.call(`/v1/admin/users/${adminId}`);
   const founderReveal = await founder.call(`/v1/admin/users/${adminId}/contacts/reveal`, {
@@ -370,13 +370,13 @@ try {
   // Роль организатора удалена в 2.1-W05; вторая неадминская роль — инвестор,
   // и раздел ему закрыт так же, как основателю.
   const investor = makeClient();
-  await investor.login('demo-investor@unicorn.local', DEMO_PASSWORD);
+  await investor.login('demo-investor@fifth.local', DEMO_PASSWORD);
   const investorList = await investor.call('/v1/admin/users');
   check('Инвестору закрыт список', investorList.status === 403, `HTTP ${investorList.status}`);
 
   // ------------------------------------------------- [8] блокировка аккаунта
   console.warn('\n[8] Блокировка и снятие блокировки');
-  const victimEmail = 'demo-investor-trial@unicorn.local';
+  const victimEmail = 'demo-investor-trial@fifth.local';
   const victim = makeClient();
   await victim.login(victimEmail, DEMO_PASSWORD);
   const meBefore = await victim.call('/v1/auth/me');

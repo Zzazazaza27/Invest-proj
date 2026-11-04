@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { UI_SKIN_FLAG, type FeatureFlag } from '@unicorn/contracts';
-import { PromptDialog } from '@unicorn/ui';
+import { UI_SKIN_FLAG, type FeatureFlag } from '@fifth/contracts';
+import { PromptDialog } from '@fifth/ui';
 import { api } from '../api';
 import { formatDate, problemText } from '../lib/format';
 

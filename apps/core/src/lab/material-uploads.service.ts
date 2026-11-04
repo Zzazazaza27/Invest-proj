@@ -1,5 +1,5 @@
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
-import type { UploadableMaterialType } from '@unicorn/contracts';
+import type { UploadableMaterialType } from '@fifth/contracts';
 import { randomUUID } from 'node:crypto';
 import { AuditRepository } from '../audit/audit.repository';
 import { BackgroundJobsService } from '../background/background-jobs.service';

@@ -164,7 +164,7 @@ if (outcome.result === 'passed') await run.cleanup();
 
 **Контекст доступа — запись на сервере, а не второй токен.** Платформа
 проверяет токен ИНИЦИАТОРА обычным порядком, затем видит заголовок
-`X-Unicorn-Context` и подставляет действующего пользователя. Токен участнику
+`X-Fifth-Context` и подставляет действующего пользователя. Токен участнику
 не выпускается — поэтому схема не упирается во внешнего поставщика входа.
 
 Условия действительности контекста (все проверяются прогоном
@@ -229,7 +229,7 @@ if (outcome.result === 'passed') await run.cleanup();
 
 ```bash
 npm run check:testing-sessions                                  # границы доверия (API)
-UNICORN_ENTRY=web node scripts/render-check-testing-sessions.mjs # интерфейс и вкладки
+FIFTH_ENTRY=web node scripts/render-check-testing-sessions.mjs # интерфейс и вкладки
 node scripts/scenario-round-review.mjs                          # сценарий на механизме
 node scripts/scenario-round-review.mjs --keep                   # не убирать за собой
 ```

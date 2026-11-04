@@ -10,9 +10,9 @@ import {
   Input,
   Select,
   Stack,
-} from '@unicorn/ui';
-import type { ServiceCountry } from '@unicorn/contracts';
-import { SessionCheckFailed, classifySessionFailure, type SessionFailure } from '@unicorn/cabinet';
+} from '@fifth/ui';
+import type { ServiceCountry } from '@fifth/contracts';
+import { SessionCheckFailed, classifySessionFailure, type SessionFailure } from '@fifth/cabinet';
 import { ApiError, api, setCsrf } from './api';
 import { cabinetUrl, cabinetsForRoles, type Cabinet } from './routing';
 import './auth.css';
@@ -57,7 +57,7 @@ const LOCALE = 'ru-RU' as const;
 /**
  * Внутренний домен служебных учётных записей.
  *
- * Служебные и демонстрационные учётки заводятся как `имя@unicorn.local`, и вводить
+ * Служебные и демонстрационные учётки заводятся как `имя@fifth.local`, и вводить
  * домен руками каждый раз незачем — кабинеты дополняют короткое имя сами
  * (`apps/lab/src/App.tsx`). Экран входа обязан вести себя так же: иначе
  * `demo-admin` уходит на сервер как есть, отвергается проверкой адреса, и
@@ -65,7 +65,7 @@ const LOCALE = 'ru-RU' as const;
  *
  * На обычные адреса это не влияет: в них уже есть `@`.
  */
-const INTERNAL_DOMAIN = 'unicorn.local';
+const INTERNAL_DOMAIN = 'fifth.local';
 
 function toAddress(value: string): string {
   const trimmed = value.trim();

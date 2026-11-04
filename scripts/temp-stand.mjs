@@ -243,7 +243,7 @@ async function up() {
 
   console.warn('\n  Запуск прогона на временном контуре:');
   console.warn(
-    `    UNICORN_ENTRY=web WEB_PORT=${WEB_PORT} CORE_PORT=${CORE_PORT} \\\n` +
+    `    FIFTH_ENTRY=web WEB_PORT=${WEB_PORT} CORE_PORT=${CORE_PORT} \\\n` +
       '      node scripts/render-check-<имя>.mjs\n',
   );
   console.warn(`  Погасить: node scripts/temp-stand.mjs down\n`);

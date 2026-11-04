@@ -60,7 +60,7 @@ export function registerIpCeiling(app: FastifyInstance, counters: Counters | nul
       });
       // Счётчик недоступен — отказ, а не проход мимо потолка.
       return reply.code(503).send({
-        type: 'https://unicorn.vc/problems/dependency_unavailable',
+        type: 'https://5espace.com/problems/dependency_unavailable',
         title: 'Сервис временно недоступен',
         status: 503,
         code: 'dependency_unavailable',
@@ -74,7 +74,7 @@ export function registerIpCeiling(app: FastifyInstance, counters: Counters | nul
         .code(429)
         .header('retry-after', String(retryAfter))
         .send({
-          type: 'https://unicorn.vc/problems/rate_limited',
+          type: 'https://5espace.com/problems/rate_limited',
           title: 'Слишком много запросов',
           status: 429,
           code: 'rate_limited',

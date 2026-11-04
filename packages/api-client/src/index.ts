@@ -74,7 +74,7 @@ import {
   type UpdateSupportTicketRequest,
   type StartKycRequest,
   type UpdateProjectRequest,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { z } from 'zod';
 import { ApiClient, type ClientOptions } from './client';
 
@@ -91,7 +91,7 @@ export { ApiClient, ApiError, type AuthMode, type ClientOptions } from './client
  * `/v1` как угодно, ориентируясь на `GET /v1/openapi.json`
  * (docs/frontend-replacement-guide.md).
  */
-export class UnicornApi {
+export class FifthApi {
   readonly http: ApiClient;
 
   constructor(options: ClientOptions) {
@@ -723,7 +723,7 @@ export class UnicornApi {
    * «Мой профиль» — то, чем человек распоряжается сам.
    *
    * Группа общая для всех кабинетов: профиль один, и расходиться клиентам
-   * здесь нельзя. Экран живёт в `@unicorn/cabinet` и получает эти методы
+   * здесь нельзя. Экран живёт в `@fifth/cabinet` и получает эти методы
    * портом — сам он в сеть не ходит.
    */
   /**
@@ -899,16 +899,16 @@ export class UnicornApi {
 }
 
 /** Клиент для веб-фронтендов: сессия в httpOnly-cookie + CSRF-токен. */
-export function createWebClient(baseUrl: string, csrfToken: string | null = null): UnicornApi {
-  return new UnicornApi({ baseUrl, auth: { kind: 'cookie', csrfToken } });
+export function createWebClient(baseUrl: string, csrfToken: string | null = null): FifthApi {
+  return new FifthApi({ baseUrl, auth: { kind: 'cookie', csrfToken } });
 }
 
 /** Клиент для мобильных и сторонних приложений: OAuth PKCE + Bearer. */
-export function createBearerClient(baseUrl: string, getToken: () => string | null): UnicornApi {
-  return new UnicornApi({ baseUrl, auth: { kind: 'bearer', getToken } });
+export function createBearerClient(baseUrl: string, getToken: () => string | null): FifthApi {
+  return new FifthApi({ baseUrl, auth: { kind: 'bearer', getToken } });
 }
 
 /** Клиент без аутентификации: только публичные эндпоинты. */
-export function createPublicClient(baseUrl: string): UnicornApi {
-  return new UnicornApi({ baseUrl, auth: { kind: 'none' } });
+export function createPublicClient(baseUrl: string): FifthApi {
+  return new FifthApi({ baseUrl, auth: { kind: 'none' } });
 }

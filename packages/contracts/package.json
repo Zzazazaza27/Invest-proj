@@ -1,5 +1,5 @@
 {
-  "name": "@unicorn/contracts",
+  "name": "@fifth/contracts",
   "private": true,
   "version": "0.1.0",
   "description": "Единственный источник правды контрактов: zod-схемы DTO, событий и кодов ошибок",

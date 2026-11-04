@@ -256,7 +256,7 @@ export type Notification = z.infer<typeof NotificationSchema>;
 
 export const HealthSchema = z.object({
   /** Сигнатура сервиса: по ней внешние проверки отличают наш API от чужого. */
-  service: z.literal('unicorn-launch-core'),
+  service: z.literal('fifth-core'),
   status: z.enum(['ok', 'degraded']),
   version: z.string(),
   checks: z.record(z.string(), z.enum(['ok', 'fail'])),

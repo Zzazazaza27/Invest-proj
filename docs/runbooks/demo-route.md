@@ -94,7 +94,7 @@ dev-серверы Vite: локальная раздача устроена ро
 Браузерные прогоны умеют ходить через единый адрес:
 
 ```bash
-UNICORN_ENTRY=web node scripts/render-check-first-tier.mjs
+FIFTH_ENTRY=web node scripts/render-check-first-tier.mjs
 ```
 
 Без переменной они идут по dev-портам — так проверяется другой режим, и оба

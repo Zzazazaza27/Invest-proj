@@ -30,7 +30,7 @@
 | `apps/admin`      | 5177     | Admin-lite (allowlist/VPN)                                     |
 
 **Единственный шов между фронтом и бэком — HTTP `/v1` и пакет
-`@unicorn/api-client`, типы которого выводятся из `@unicorn/contracts`.**
+`@fifth/api-client`, типы которого выводятся из `@fifth/contracts`.**
 Ни одного другого канала не существует:
 
 - фронтенд не импортирует ни строки из `apps/core` и `database` — это

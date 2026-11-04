@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Восстановимый комплект демонстрационных данных UNICORN LAUNCH.
+ * Восстановимый комплект демонстрационных данных Пятый элемент.
  *
  * Задача не в том, чтобы «налить данных один раз». Комплект должен полностью
  * восстанавливать наполнение после переустановки приложения, очистки БД или
@@ -290,7 +290,7 @@ function materialKey(project, material) {
 
 async function upsertPerson(person) {
   const id = userId(person.key);
-  const email = `${person.login}@unicorn.local`;
+  const email = `${person.login}@fifth.local`;
   const hash = await argon2.hash(PASSWORD, ARGON2_OPTIONS);
   const contact = sealContact(email);
 
@@ -302,8 +302,11 @@ async function upsertPerson(person) {
        (id, email_ciphertext, contact_wrapped_dek, email_hmac, password_hash,
         display_name, primary_role, status, locale, origin)
      VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending_consents', 'ru-RU', 'seed_demo')
-     ON CONFLICT (id) DO UPDATE SET password_hash = EXCLUDED.password_hash,
-                                    display_name  = EXCLUDED.display_name`,
+     ON CONFLICT (id) DO UPDATE SET password_hash       = EXCLUDED.password_hash,
+                                    display_name        = EXCLUDED.display_name,
+                                    email_ciphertext    = EXCLUDED.email_ciphertext,
+                                    contact_wrapped_dek = EXCLUDED.contact_wrapped_dek,
+                                    email_hmac          = EXCLUDED.email_hmac`,
     [
       id,
       contact.ciphertext,
@@ -501,7 +504,7 @@ async function load() {
       subject: 'Фильтр по стадии сбрасывается при переходе на вторую страницу',
       body: 'Выбрал стадию «MVP», пролистал каталог — на второй странице снова показываются все проекты.',
       context: {
-        url: 'https://demo.unicorn.local/investor/catalog',
+        url: 'https://demo.fifth.local/investor/catalog',
         viewport: '1440x900',
         locale: 'ru-RU',
         appVersion: 'demo',

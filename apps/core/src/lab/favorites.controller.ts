@@ -1,5 +1,5 @@
 import { Controller, Delete, Get, Param, Put } from '@nestjs/common';
-import { FavoriteProjectSchema, UuidSchema } from '@unicorn/contracts';
+import { FavoriteProjectSchema, UuidSchema } from '@fifth/contracts';
 import { Ctx } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';

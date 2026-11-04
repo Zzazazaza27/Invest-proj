@@ -1,4 +1,4 @@
-# UNICORN LAUNCH
+# Пятый элемент
 
 Платформа проектов и людей вокруг них. Основатели ведут проекты, загружают
 материалы и сами решают, кому проект открыть; каталог показывает тизеры всем.
@@ -43,8 +43,8 @@
 ## Главный принцип структуры: фронтенд заменяем
 
 Фронтенд **полностью отделён** от бэкенда и заменяем целиком или по частям.
-Единственный шов — HTTP `/v1` и пакет `@unicorn/api-client`, типы которого
-выведены из `@unicorn/contracts`. Подробности и инструкция по замене —
+Единственный шов — HTTP `/v1` и пакет `@fifth/api-client`, типы которого
+выведены из `@fifth/contracts`. Подробности и инструкция по замене —
 [ADR-002](./docs/architecture/ADR-002-replaceable-frontend.md) и
 [`docs/frontend-replacement-guide.md`](./docs/frontend-replacement-guide.md).
 
@@ -55,9 +55,9 @@
 Фронтенды (6 независимых SPA)  ──HTTP /v1──►  apps/core (NestJS)  ──►  PostgreSQL 16
       │                                             │                   NATS JetStream
       └── зависят только от:                        └── не знает про React,
-          @unicorn/contracts                            не рендерит HTML
-          @unicorn/api-client
-          @unicorn/ui
+          @fifth/contracts                            не рендерит HTML
+          @fifth/api-client
+          @fifth/ui
 ```
 
 ---

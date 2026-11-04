@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Button, Card, ErrorState, LoadingState, Select, Stack } from '@unicorn/ui';
-import { ProjectCard } from '@unicorn/cabinet';
-import type { PreviewAudience, ProjectFull, ViewPreview } from '@unicorn/contracts';
+import { Badge, Button, Card, ErrorState, LoadingState, Select, Stack } from '@fifth/ui';
+import { ProjectCard } from '@fifth/cabinet';
+import type { PreviewAudience, ProjectFull, ViewPreview } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import { S } from '../strings';
 

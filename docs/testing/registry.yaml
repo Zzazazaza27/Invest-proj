@@ -447,7 +447,7 @@ checks:
     asserts: 30
     needs: [db, core]
     effects:
-      ['создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin', 'за собой не убирает']
+      ['создаёт пользователя через /v1/auth/register БЕЗ X-Fifth-Origin', 'за собой не убирает']
     studied: code
     studiedOn: 2026-09-22
     purpose: '«Мой профиль» — проверка API (этап 6.4). Проверяется то, что нельзя увидеть с экрана и что дороже всего стоит при ошибке: смена пароля требует знания текущего и прекращает ВСЕ сессии; подтверждённые данные через профиль '
@@ -913,7 +913,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'создаёт пользователя через /v1/auth/register БЕЗ X-Fifth-Origin',
         'часть созданного убирает, учётные записи оставляет',
       ]
     studied: code
@@ -1118,7 +1118,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'создаёт пользователя через /v1/auth/register БЕЗ X-Fifth-Origin',
         'часть созданного убирает, учётные записи оставляет',
       ]
     studied: code
@@ -1186,7 +1186,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'создаёт пользователя через /v1/auth/register БЕЗ X-Fifth-Origin',
         'часть созданного убирает, учётные записи оставляет',
       ]
     studied: code
@@ -1237,7 +1237,7 @@ checks:
 
   - id: RND-ADMIN-INTELLIGENCE
     file: scripts/render-check-admin-intelligence.mjs
-    command: UNICORN_ENTRY=web node scripts/render-check-admin-intelligence.mjs
+    command: FIFTH_ENTRY=web node scripts/render-check-admin-intelligence.mjs
     kind: render
     level: сквозной
     runner: manual
@@ -1275,7 +1275,7 @@ checks:
     studiedOn: 2026-09-22
     note: >-
       Один из двух браузерных проходов, помечающих свои записи
-      (X-Unicorn-Origin: render_check). Остальные этого не делают, и их
+      (X-Fifth-Origin: render_check). Остальные этого не делают, и их
       пользователи неотличимы от настоящих.
     purpose: 'Браузерный проход: раздел «Пользователи» и карточка человека (этап 6.5). Проверяется то, ради чего раздел и делался, — что администратор может сделать работу целиком, не открывая ни базу, ни служебную консоль: 1. найти ч'
     confirmation: confirmed-by-run
@@ -1462,7 +1462,7 @@ checks:
 
   - id: RND-UPLOAD-OPERATIONS
     file: scripts/render-check-upload-operations.mjs
-    command: UNICORN_ENTRY=web node scripts/render-check-upload-operations.mjs
+    command: FIFTH_ENTRY=web node scripts/render-check-upload-operations.mjs
     kind: render
     level: сквозной
     runner: manual
@@ -1781,7 +1781,7 @@ checks:
     studiedOn: 2026-09-22
     note: >-
       комплект демонстрационных данных; восстановим из ФАЙЛОВ, а не разово налит — от него зависит SMK-DEMO
-    purpose: 'Восстановимый комплект демонстрационных данных UNICORN LAUNCH. Задача не в том, чтобы «налить данных один раз». Комплект должен полностью восстанавливать наполнение после переустановки приложения, очистки БД или развёрты'
+    purpose: 'Восстановимый комплект демонстрационных данных Пятый элемент. Задача не в том, чтобы «налить данных один раз». Комплект должен полностью восстанавливать наполнение после переустановки приложения, очистки БД или развёрты'
     confirmation: reviewed-in-code
 
   - id: SMK-ADMIN-ROLES
@@ -1794,7 +1794,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -1817,7 +1817,7 @@ checks:
     studied: code
     studiedOn: 2026-09-22
     effects: ['только читает через клиент пакета — своих записей не создаёт']
-    purpose: 'Проверка соответствия `@unicorn/api-client` живому серверу. Пакет существует ровно для одного: расхождение сервера с контрактом должно обнаруживаться сразу, а не превращаться в `undefined` в глубине интерфейса. Но сам па'
+    purpose: 'Проверка соответствия `@fifth/api-client` живому серверу. Пакет существует ровно для одного: расхождение сервера с контрактом должно обнаруживаться сразу, а не превращаться в `undefined` в глубине интерфейса. Но сам па'
     confirmation: reviewed-in-code
 
   - id: SMK-AUTH-RECOVERY
@@ -1830,7 +1830,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -1848,7 +1848,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -1866,7 +1866,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -1911,7 +1911,7 @@ checks:
     needs: [db, core, nats]
     effects:
       [
-        'создаёт пользователя через /v1/auth/register БЕЗ X-Unicorn-Origin',
+        'создаёт пользователя через /v1/auth/register БЕЗ X-Fifth-Origin',
         'создаёт стрим, потребителя и подписку в NATS и БД',
         'за собой не убирает',
       ]
@@ -1934,7 +1934,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -1956,7 +1956,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -1978,7 +1978,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -1996,7 +1996,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -2019,7 +2019,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ заголовка X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -2060,7 +2060,7 @@ checks:
     needs: [db, core]
     effects:
       [
-        'создаёт пользователей через /v1/auth/register БЕЗ X-Unicorn-Origin — записи неотличимы от людей',
+        'создаёт пользователей через /v1/auth/register БЕЗ X-Fifth-Origin — записи неотличимы от людей',
         'за собой не убирает',
       ]
     studied: code
@@ -2305,7 +2305,7 @@ checks:
     studied: code
     studiedOn: 2026-10-29
     effects: ['работает в транзакции с ROLLBACK — следов не оставляет']
-    purpose: 'M087 (5.7.1): режим видимости проекта и предикат аудитории. Матрица предикат × режим × зритель совпадает с `projectAudience()` в @unicorn/contracts; grant — набор разрешений (profile, materials, extended); исключение сильнее режима и grant; допуска по роли нет (2.1-W05); удалённые роли и удалённые части разрешения (раунд, паспорт) не принимаются.'
+    purpose: 'M087 (5.7.1): режим видимости проекта и предикат аудитории. Матрица предикат × режим × зритель совпадает с `projectAudience()` в @fifth/contracts; grant — набор разрешений (profile, materials, extended); исключение сильнее режима и grant; допуска по роли нет (2.1-W05); удалённые роли и удалённые части разрешения (раунд, паспорт) не принимаются.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
@@ -4024,7 +4024,7 @@ suites:
       - RND-PROFILE
     note: >-
       Браузерные прогоны требуют поднятого стенда (`npm run stand:up`) и
-      переменной `UNICORN_ENTRY=web`.
+      переменной `FIFTH_ENTRY=web`.
 
   isolated:
     title: Разрушительные проверки в изоляции

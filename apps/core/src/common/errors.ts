@@ -1,4 +1,4 @@
-import { ERROR_STATUS, ErrorCode, problemTypeUri, type ErrorCodeValue } from '@unicorn/contracts';
+import { ERROR_STATUS, ErrorCode, problemTypeUri, type ErrorCodeValue } from '@fifth/contracts';
 
 /**
  * Доменная ошибка приложения.

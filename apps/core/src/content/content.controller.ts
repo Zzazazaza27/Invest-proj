@@ -15,7 +15,7 @@ import {
   UpsertTextEntrySchema,
   UuidSchema,
   WithdrawLandingBlockSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { z } from 'zod';
 import { Ctx, Public, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';

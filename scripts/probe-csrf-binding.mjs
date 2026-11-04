@@ -142,7 +142,7 @@ async function post(sessionCookie, csrfCookie, csrfHeader) {
 // Контроль: подпись зависит от владельца, а не от совпадения строк.
 {
   const signature = createHmac('sha256', process.env.CSRF_SIGNING_KEY ?? '')
-    .update('unicorn-csrf.v1.не-тот-пользователь.nonce')
+    .update('fifth-csrf.v1.не-тот-пользователь.nonce')
     .digest('base64url');
   const token = `nonce.${signature}`;
   const response = await post(alice.session, `${CSRF_COOKIE}=${token}`, token);

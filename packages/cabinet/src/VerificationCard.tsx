@@ -8,8 +8,8 @@ import {
   Field,
   LoadingState,
   Stack,
-} from '@unicorn/ui';
-import type { KycVerification } from '@unicorn/contracts';
+} from '@fifth/ui';
+import type { KycVerification } from '@fifth/contracts';
 
 /**
  * Верификация личности.
@@ -20,7 +20,7 @@ import type { KycVerification } from '@unicorn/contracts';
  * пойти основателю было некуда. Обязательный шаг существовал в API и
  * отсутствовал в кабинете, то есть человек упирался в стену без выхода.
  *
- * Блок общий (`@unicorn/cabinet`): требования к подтверждению личности у
+ * Блок общий (`@fifth/cabinet`): требования к подтверждению личности у
  * основателя и инвестора одни и те же, расходиться этим экранам нельзя.
  * Набор видов проверки задаётся кабинетом: основателю нужна личность,
  * инвестору — ещё статус инвестора и квалификация.

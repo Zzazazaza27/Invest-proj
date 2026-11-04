@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ContextualImage } from '@unicorn/cabinet';
-import { Button, Card, Stack } from '@unicorn/ui';
-import { MEDIA_LIMITS, type ProjectMedia, type ProjectMediaKind } from '@unicorn/contracts';
+import { ContextualImage } from '@fifth/cabinet';
+import { Button, Card, Stack } from '@fifth/ui';
+import { MEDIA_LIMITS, type ProjectMedia, type ProjectMediaKind } from '@fifth/contracts';
 import { ApiError, api, mediaUrl } from '../api';
 import { S } from '../strings';
 

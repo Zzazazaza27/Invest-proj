@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
-import { RoleSchema, type Role } from '@unicorn/contracts';
+import { RoleSchema, type Role } from '@fifth/contracts';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 

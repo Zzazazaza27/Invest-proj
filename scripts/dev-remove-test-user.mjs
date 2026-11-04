@@ -53,7 +53,7 @@ const LOGIN = valueOf('--login') ?? 'ssurgut';
  * остаётся в журнале аудита: он не переписывается.
  */
 const REASSIGN_TO = valueOf('--reassign-to');
-const EMAIL = LOGIN.includes('@') ? LOGIN : `${LOGIN}@unicorn.local`;
+const EMAIL = LOGIN.includes('@') ? LOGIN : `${LOGIN}@fifth.local`;
 
 /**
  * Что не удаляется никогда: `audit.events` связана hash-chain, и вырезанная
@@ -186,7 +186,7 @@ const soleFounderProjects = projects.rows.filter((p) => p.founders === 1).length
 
 let heirId = null;
 if (REASSIGN_TO) {
-  const heirEmail = REASSIGN_TO.includes('@') ? REASSIGN_TO : `${REASSIGN_TO}@unicorn.local`;
+  const heirEmail = REASSIGN_TO.includes('@') ? REASSIGN_TO : `${REASSIGN_TO}@fifth.local`;
   const heir = await pool.query(
     `SELECT u.id FROM identity.users u
        JOIN identity.user_roles r ON r.user_id = u.id AND r.role = 'admin'

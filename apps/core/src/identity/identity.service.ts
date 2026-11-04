@@ -7,7 +7,7 @@ import {
   type CurrentUser,
   type RegisterRequest,
   type Role,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { randomBytes } from 'node:crypto';
 import { errors } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button, Card, Stack } from '@unicorn/ui';
+import { Button, Card, Stack } from '@fifth/ui';
 
 /**
  * Проверка сессии: три исхода вместо двух.

@@ -9,7 +9,7 @@
     "lib": ["ES2023", "DOM"],
     "verbatimModuleSyntax": false,
     "isolatedModules": false,
-    "paths": { "@unicorn/contracts": ["../contracts/src/index.ts"] }
+    "paths": { "@fifth/contracts": ["../contracts/src/index.ts"] }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]
 }

@@ -15,7 +15,7 @@
  * учётные записи нельзя — ими пользуется приёмка.
  *
  * Снимки — `out/render-admin-users/`.
- * Запуск: UNICORN_ENTRY=web node scripts/render-check-admin-users.mjs
+ * Запуск: FIFTH_ENTRY=web node scripts/render-check-admin-users.mjs
  */
 import { chromium } from 'playwright';
 import pg from 'pg';
@@ -78,12 +78,12 @@ function loadDotEnv() {
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL_OWNER,
   max: 2,
-  application_name: 'unicorn-render-admin-users',
+  application_name: 'fifth-render-admin-users',
 });
 const sql = async (text, params = []) => (await pool.query(text, params)).rows;
 
 const ADMIN = {
-  email: 'demo-admin@unicorn.local',
+  email: 'demo-admin@fifth.local',
   password: process.env.DEMO_USER_PASSWORD ?? process.env.DEV_TEST_USER_PASSWORD ?? '',
 };
 

@@ -1,5 +1,5 @@
 {
-  "name": "@unicorn/investor",
+  "name": "@fifth/investor",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -11,12 +11,12 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@unicorn/api-client": "*",
-    "@unicorn/contracts": "*",
-    "@unicorn/ui": "*",
+    "@fifth/api-client": "*",
+    "@fifth/contracts": "*",
+    "@fifth/ui": "*",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "@unicorn/cabinet": "*"
+    "@fifth/cabinet": "*"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",

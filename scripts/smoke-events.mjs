@@ -381,7 +381,7 @@ for (const [label, url] of [
   const { response } = await api('/v1/integration/webhooks', {
     method: 'POST',
     body: {
-      url: 'https://example.org/unicorn-hook',
+      url: 'https://example.org/fifth-hook',
       subscribedVerbs: ['lab.listing.published'],
     },
   });
@@ -408,7 +408,7 @@ let webhookId;
     `INSERT INTO integration.webhook_endpoints
        (id, service_account_id, url, subscribed_verbs, secret_ciphertext, secret_kms_key_id,
         secret_fingerprint)
-     VALUES (public.uuid_generate_v7(), $1, 'https://example.org/unicorn-hook',
+     VALUES (public.uuid_generate_v7(), $1, 'https://example.org/fifth-hook',
              ARRAY['lab.listing.published', 'lab.listing.unpublished'], $2,
              'local/webhook_secrets/v1', $3)
      RETURNING id`,

@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react';
 import { Link, NavLink, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
-import { Button, Icon, NovaTopBar, UI_KEYFRAMES } from '@unicorn/ui';
+import { Button, Icon, NovaTopBar, UI_KEYFRAMES } from '@fifth/ui';
 import {
   ProfileLink,
   ProfilePage,
@@ -8,7 +8,7 @@ import {
   useScrollToTopOnChange,
   useSessionCheck,
   type ProfilePort,
-} from '@unicorn/cabinet';
+} from '@fifth/cabinet';
 import { api } from './api';
 import { LoginPage } from './pages/LoginPage';
 import { IntegrationsPage } from './pages/IntegrationsPage';

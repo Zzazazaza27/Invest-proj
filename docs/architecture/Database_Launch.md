@@ -233,7 +233,7 @@ CREATE TABLE identity.investor_profiles (
 | Согласия на публичность | `identity.publication_consents` | Шоу публикует только при активном scope |
 | Сервисные клиенты | `integration.service_accounts` + client_credentials + mTLS | Capital/Шоу — новые строки, не новый код |
 | Внешние ссылки | `integration.external_refs` | Маппинг «проект Launch ↔ листинг Capital» при пути B |
-| OIDC | issuer `id.unicorn.vc`, claim `roles` | Capital/Шоу — OAuth-клиенты, аккаунты едины |
+| OIDC | issuer `id.5espace.test`, claim `roles` | Capital/Шоу — OAuth-клиенты, аккаунты едины |
 | Регулируемые сделки | `investments.investment_agreements/tranches` + `billing.commission_accruals` | Capital получает агрегированную историю только через API/события |
 
 ---
@@ -1510,7 +1510,7 @@ VALUES
 
 **Capital как отдельный сервис (путь B):**
 1. Строка в `integration.service_accounts` (scopes: `graduates:read`, `passport:read`, `listing:create`, `deals:read`) + mTLS.
-2. Подписка на разрешённые subjects стрима `LAUNCH` (`lab.*`, агрегаты `investment.*`/`billing.*`) или webhook; OIDC-клиент на `id.unicorn.vc`; маппинг — `integration.external_refs`.
+2. Подписка на разрешённые subjects стрима `LAUNCH` (`lab.*`, агрегаты `investment.*`/`billing.*`) или webhook; OIDC-клиент на `id.5espace.test`; маппинг — `integration.external_refs`.
 
 **Медиаконтур Шоу:**
 1. `integration.service_accounts` (scope `show:read`) + консьюмер `lab.consent.*`.

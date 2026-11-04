@@ -163,7 +163,7 @@ check('основатель попал в свой кабинет', page.url().i
 check('в адресе кабинета нет порта', !new URL(page.url()).port, page.url());
 
 console.warn('\n[6] Короткое имя учётной записи принимается');
-// Служебные учётки заводятся как `имя@unicorn.local`, и кабинеты дополняют
+// Служебные учётки заводятся как `имя@fifth.local`, и кабинеты дополняют
 // домен сами. Экран входа обязан вести себя так же: иначе верно введённый
 // `demo-admin` отвергается проверкой адреса, и человек видит «проверьте
 // заполнение полей» на правильном логине.
@@ -192,7 +192,7 @@ const wrongPassword = (await p2.locator('[role="alert"]').first().textContent())
 // Адрес обязан быть СИНТАКСИЧЕСКИ верным, иначе сервер ответит отказом
 // валидации, и сравнение сравнивало бы не то: разница текстов означала бы
 // «неверный формат», а не «такого аккаунта нет».
-await p2.locator('#email').fill('no-such-account-91745@unicorn.local');
+await p2.locator('#email').fill('no-such-account-91745@fifth.local');
 await p2.getByRole('button', { name: 'Войти' }).first().click();
 await p2.waitForTimeout(1500);
 const noAccount = (await p2.locator('[role="alert"]').first().textContent()) ?? '';
@@ -269,7 +269,7 @@ console.warn(
 
 if (mailOff) {
   // Форма остаётся на экране восстановления: второй адрес вводится туда же.
-  const unknown = await requestLink('no-such-account-91745@unicorn.local');
+  const unknown = await requestLink('no-such-account-91745@fifth.local');
   check(
     'без почты экран говорит, что восстановление недоступно',
     known.alert.includes('Восстановление пароля пока недоступно'),
@@ -295,7 +295,7 @@ if (mailOff) {
 } else {
   await p3.getByRole('button', { name: 'Забыли пароль?' }).click();
   await p3.waitForTimeout(300);
-  const unknown = await requestLink('no-such-account-91745@unicorn.local');
+  const unknown = await requestLink('no-such-account-91745@fifth.local');
   // Разные сообщения здесь — это перечисление пользователей, причём удобнее
   // формы входа: пароль не нужен вовсе.
   check(

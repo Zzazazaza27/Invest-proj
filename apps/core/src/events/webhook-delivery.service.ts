@@ -99,7 +99,7 @@ export class WebhookDeliveryService implements OnModuleInit {
    *
    * `FOR UPDATE SKIP LOCKED` отпускал строку вместе с транзакцией — то есть ДО
    * самого HTTP-запроса, и второй экземпляр отправлял ту же доставку
-   * одновременно. Заголовок `Unicorn-Event-Id` помогает получателю
+   * одновременно. Заголовок `Fifth-Event-Id` помогает получателю
    * дедуплицировать, но перекладывать гарантию на чужую систему нельзя:
    * побочный эффект у неё настоящий (SEC-19).
    *
@@ -201,9 +201,9 @@ export class WebhookDeliveryService implements OnModuleInit {
         allowedAddresses,
         headers: {
           'Content-Type': 'application/json',
-          'Unicorn-Signature': signDelivery(secret, timestamp, body),
-          'Unicorn-Event-Id': item.event_id,
-          'Unicorn-Event-Type': item.event_type,
+          'Fifth-Signature': signDelivery(secret, timestamp, body),
+          'Fifth-Event-Id': item.event_id,
+          'Fifth-Event-Type': item.event_type,
           'X-Request-Id': traceId,
         },
         body,

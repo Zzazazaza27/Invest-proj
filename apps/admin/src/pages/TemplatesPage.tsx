@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { NotificationTemplate } from '@unicorn/contracts';
+import type { NotificationTemplate } from '@fifth/contracts';
 import { api } from '../api';
 import { problemText } from '../lib/format';
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { Alert, Button } from '@unicorn/ui';
-import type { AdminUserCard } from '@unicorn/contracts';
+import { Alert, Button } from '@fifth/ui';
+import type { AdminUserCard } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import {
   Avatar,

@@ -1,5 +1,5 @@
 import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
-import { RoleSchema, UuidSchema } from '@unicorn/contracts';
+import { RoleSchema, UuidSchema } from '@fifth/contracts';
 import { z } from 'zod';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';

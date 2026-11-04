@@ -3,7 +3,7 @@ import {
   ProblemDetailsSchema,
   type ErrorCodeValue,
   type ProblemDetails,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import type { z } from 'zod';
 
 /**
@@ -149,7 +149,7 @@ export class ApiClient {
   async resolveFileUrl(path: string): Promise<string> {
     const url = this.#buildUrl(path);
     if (!this.#contextId) return url;
-    const headers = new Headers({ 'X-Unicorn-Context': this.#contextId });
+    const headers = new Headers({ 'X-Fifth-Context': this.#contextId });
     const response = await this.#fetch(url, {
       method: 'GET',
       headers,
@@ -255,7 +255,7 @@ export class ApiClient {
 
     // Контекст ставится ДО выбора способа аутентификации и независимо от
     // него: он не заменяет вход, а уточняет, от чьего лица выполнить запрос.
-    if (this.#contextId) headers.set('X-Unicorn-Context', this.#contextId);
+    if (this.#contextId) headers.set('X-Fifth-Context', this.#contextId);
 
     let credentials: RequestCredentials = 'omit';
     if (this.#auth.kind === 'cookie') {

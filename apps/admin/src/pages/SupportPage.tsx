@@ -1,5 +1,5 @@
-import { SupportCard, type SupportPort } from '@unicorn/cabinet';
-import type { SupportTicketStatus } from '@unicorn/contracts';
+import { SupportCard, type SupportPort } from '@fifth/cabinet';
+import type { SupportTicketStatus } from '@fifth/contracts';
 import { api } from '../api';
 
 /**

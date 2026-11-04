@@ -10,7 +10,7 @@ import {
   type RequestUpload,
   type UpdateProjectRequest,
   type UploadTicket,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { AppError, errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { getEnv } from '../config/env';

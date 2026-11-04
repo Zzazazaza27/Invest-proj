@@ -110,7 +110,7 @@ const result = spawnSync(process.execPath, [target, ...process.argv.slice(3)], {
   stdio: 'inherit',
   env: {
     ...process.env,
-    UNICORN_ENTRY: 'web',
+    FIFTH_ENTRY: 'web',
     WEB_PORT,
     CORE_PORT,
     // И прямой доступ к базе тоже во временную: предусловия прогонов пишутся

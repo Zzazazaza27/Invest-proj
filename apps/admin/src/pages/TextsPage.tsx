@@ -5,8 +5,8 @@ import {
   type TextEntry,
   type TextNamespace,
   type TextVersion,
-} from '@unicorn/contracts';
-import { Markdown, PromptDialog } from '@unicorn/ui';
+} from '@fifth/contracts';
+import { Markdown, PromptDialog } from '@fifth/ui';
 import { api } from '../api';
 import { formatDate, problemText } from '../lib/format';
 

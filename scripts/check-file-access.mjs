@@ -62,7 +62,7 @@ const S3_BUCKET = process.env.S3_BUCKET ?? 'unicorn-launch';
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL_OWNER ?? process.env.DATABASE_URL,
-  application_name: 'unicorn-check-file-access',
+  application_name: 'fifth-check-file-access',
 });
 
 let passed = 0;

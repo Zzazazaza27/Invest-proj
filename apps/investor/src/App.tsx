@@ -8,15 +8,15 @@ import {
   NovaTopBar,
   OfflineBanner,
   UI_KEYFRAMES,
-} from '@unicorn/ui';
-import type { CurrentUser } from '@unicorn/contracts';
+} from '@fifth/ui';
+import type { CurrentUser } from '@fifth/contracts';
 import {
   SessionCheckFailed,
   TestContextBanner,
   decideAccess,
   hrefFor,
   useSessionCheck,
-} from '@unicorn/cabinet';
+} from '@fifth/cabinet';
 import { api, setCsrf, testContextId, testContextPort } from './api';
 
 /**

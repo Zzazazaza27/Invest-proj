@@ -9,7 +9,7 @@ import {
   LogoutResultSchema,
   RegisterRequestSchema,
   type LogoutResult,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { z } from 'zod';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
@@ -50,14 +50,14 @@ import { TestingSessionsService } from '../testing/testing-sessions.service';
  *
  * ПЕРВАЯ ВЕРСИЯ ВЕРИЛА ЗАГОЛОВКУ. Проверялись окружение и список значений —
  * и этого казалось достаточно. Опыт показал обратное: обычный клиент без
- * всякой авторизации регистрировался с `X-Unicorn-Origin: render_check`, и
+ * всякой авторизации регистрировался с `X-Fifth-Origin: render_check`, и
  * его запись становилась следом прогона. То есть посторонний мог подвести
  * СВОЮ учётную запись под уборку — или, наоборот, спрятать её из списка.
  * Разрешённое значение заголовка не полномочие.
  *
  * ТЕПЕРЬ ОПАСНОЕ ПРОИСХОЖДЕНИЕ ТРЕБУЕТ ДОКАЗАТЕЛЬСТВА. `render_check` и
  * `load_test` — единственные значения, которые уборка вправе удалять, и
- * назначаются они только вместе с `X-Unicorn-Run`: идентификатором ДЕЙСТВУЮЩЕЙ
+ * назначаются они только вместе с `X-Fifth-Run`: идентификатором ДЕЙСТВУЮЩЕЙ
  * тестовой сессии. Завести её может лишь администратор с полномочием
  * `testing.sessions.manage`, и она же становится владельцем записи. Остальные
  * значения (`seed_*`, `staff_check`) уборке не подлежат и остаются как были.
@@ -67,7 +67,7 @@ const SAFE_ORIGINS = new Set(['seed_demo', 'seed_acceptance', 'staff_check']);
 
 export function originFromRequest(request: AuthenticatedRequest): string | undefined {
   if (getEnv().isProduction) return undefined;
-  const raw = request.headers['x-unicorn-origin'];
+  const raw = request.headers['x-fifth-origin'];
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (typeof value !== 'string') return undefined;
   if (SAFE_ORIGINS.has(value)) return value;
@@ -86,7 +86,7 @@ export function originFromRequest(request: AuthenticatedRequest): string | undef
  */
 export function runTokenFromRequest(request: AuthenticatedRequest): string | undefined {
   if (getEnv().isProduction) return undefined;
-  const raw = request.headers['x-unicorn-run'];
+  const raw = request.headers['x-fifth-run'];
   const value = Array.isArray(raw) ? raw[0] : raw;
   if (typeof value !== 'string') return undefined;
   // Длина и алфавит — как у выдаваемого секрета: мусор до базы не доходит.
@@ -95,7 +95,7 @@ export function runTokenFromRequest(request: AuthenticatedRequest): string | und
 
 /** Происхождение, которое просит клиент, если оно вообще подлежит уборке. */
 export function cleanableOriginRequested(request: AuthenticatedRequest): string | undefined {
-  const raw = request.headers['x-unicorn-origin'];
+  const raw = request.headers['x-fifth-origin'];
   const value = Array.isArray(raw) ? raw[0] : raw;
   return typeof value === 'string' && CLEANABLE_ORIGINS.has(value) ? value : undefined;
 }

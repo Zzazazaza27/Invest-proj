@@ -7,7 +7,7 @@ import {
   type ProjectAccessEntry,
   type ProjectAccessList,
   type ProjectVisibility,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { CryptoService } from '../crypto/crypto.service';

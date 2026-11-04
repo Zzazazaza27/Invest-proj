@@ -6,7 +6,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
-import { ErrorCode, problemTypeUri, type ProblemDetails } from '@unicorn/contracts';
+import { ErrorCode, problemTypeUri, type ProblemDetails } from '@fifth/contracts';
 import { AppError } from './errors';
 import { safeError } from './logging/safe-log';
 

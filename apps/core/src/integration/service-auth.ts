@@ -8,7 +8,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
-import { INTEGRATION_SCOPES, type IntegrationScope } from '@unicorn/contracts';
+import { INTEGRATION_SCOPES, type IntegrationScope } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { addressInCidrs } from '../events/ip-classifier';
 import { getEnv } from '../config/env';
@@ -65,7 +65,7 @@ interface TokenPayload {
 }
 
 /** Отдельный контекст подписи: токен интеграции не проверится как токен сессии. */
-const SIGNATURE_CONTEXT = 'unicorn-integration-token.v1';
+const SIGNATURE_CONTEXT = 'fifth-integration-token.v1';
 
 export function issueServiceToken(input: {
   serviceAccountId: string;

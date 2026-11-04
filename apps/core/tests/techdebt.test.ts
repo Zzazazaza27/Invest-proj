@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PROJECT_TRANSITIONS, UpsertNotificationTemplateSchema } from '@unicorn/contracts';
+import { PROJECT_TRANSITIONS, UpsertNotificationTemplateSchema } from '@fifth/contracts';
 import { assertNoPersonalPlaceholders } from '../src/admin/templates.service';
 import { collectRoutes, routesToPaths } from '../src/health/openapi.routes';
 import { Public, Roles } from '../src/auth/guards';

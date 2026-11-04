@@ -99,7 +99,7 @@ function makeClient() {
     if (method !== 'GET' && state.csrf) {
       all['X-CSRF-Token'] = state.csrf.split('=').slice(1).join('=');
     }
-    if (context) all['X-Unicorn-Context'] = context;
+    if (context) all['X-Fifth-Context'] = context;
     const response = await fetch(`${BASE}${path}`, {
       method,
       headers: all,
@@ -131,7 +131,7 @@ function makeClient() {
  */
 export async function startSession(title, options = {}) {
   const admin = makeClient();
-  const email = options.adminEmail ?? 'demo-admin@unicorn.local';
+  const email = options.adminEmail ?? 'demo-admin@fifth.local';
   const password =
     options.adminPassword ??
     process.env.DEMO_USER_PASSWORD ??

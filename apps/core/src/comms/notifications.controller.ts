@@ -6,7 +6,7 @@ import {
   UpdatePreferencesRequestSchema,
   UserDeviceSchema,
   UuidSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { z } from 'zod';
 import { Ctx } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { UpdateFeatureFlagRequestSchema } from '@unicorn/contracts';
+import { UpdateFeatureFlagRequestSchema } from '@fifth/contracts';
 import { parseOrThrow } from '../src/common/validation';
 
 /**

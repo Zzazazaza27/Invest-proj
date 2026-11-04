@@ -57,10 +57,10 @@ export const ErrorCodeSchema = z.enum(
 );
 
 /** База URI для `type`. Документация по коду доступна человеку и машине. */
-export const PROBLEM_TYPE_BASE = 'https://unicorn.vc/problems';
+export const PROBLEM_TYPE_BASE = 'https://5espace.com/problems';
 
 export const ProblemDetailsSchema = z.object({
-  /** URI вида https://unicorn.vc/problems/<code> */
+  /** URI вида https://5espace.com/problems/<code> */
   type: z.url(),
   /** Короткий человекочитаемый заголовок, не зависящий от конкретного случая. */
   title: z.string(),

@@ -17,7 +17,7 @@
  * учётных записей только открывается экран.
  *
  * Снимки — `out/render-profile/`.
- * Запуск: UNICORN_ENTRY=web node scripts/render-check-profile.mjs
+ * Запуск: FIFTH_ENTRY=web node scripts/render-check-profile.mjs
  */
 import { chromium } from 'playwright';
 import sharp from 'sharp';
@@ -282,7 +282,7 @@ try {
   // Кабинет инвестора после 2.1-W05 — оболочка «в разработке» без шапки с
   // профилем: проверять в нём профиль нечего, пока кабинет не вернётся.
   for (const [name, url, who] of [
-    ['администратора', ADMIN_URL, { email: 'demo-admin@unicorn.local', password: DEMO_PASSWORD }],
+    ['администратора', ADMIN_URL, { email: 'demo-admin@fifth.local', password: DEMO_PASSWORD }],
   ]) {
     const tab = await browser.newContext({ viewport: { width: 1280, height: 1000 } });
     const cabinet = await tab.newPage();

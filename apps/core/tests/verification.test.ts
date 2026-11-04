@@ -35,12 +35,12 @@ const PROD_ENV: NodeJS.ProcessEnv = {
   ...BASE_ENV,
   NODE_ENV: 'production',
   AUTH_MODE: 'oidc',
-  OIDC_ISSUER: 'https://id.unicorn.vc',
+  OIDC_ISSUER: 'https://id.5espace.test',
   OIDC_AUDIENCE: 'unicorn-launch',
   KMS_MODE: 'kms',
   KMS_KEY_ID: 'arn:aws:kms:ru-central1:1:key/abc',
-  CORS_ALLOWED_ORIGINS: 'https://app.unicorn.vc',
-  CORE_PUBLIC_URL: 'https://api.unicorn.vc',
+  CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
+  CORE_PUBLIC_URL: 'https://api.5espace.test',
   DATABASE_SSL: 'true',
   REDIS_URL: 'rediss://127.0.0.1:6379',
   REDIS_PASSWORD: 'r'.repeat(32),
@@ -56,7 +56,7 @@ const PROD_ENV: NodeJS.ProcessEnv = {
   WEBHOOK_DELIVERY_MODE: 'live',
   SESSION_COOKIE_NAME: '__Host-ul_session',
   CSRF_COOKIE_NAME: '__Host-ul_csrf',
-  PUBLIC_BASE_URL: 'https://app.unicorn.vc',
+  PUBLIC_BASE_URL: 'https://app.5espace.test',
 };
 
 describe('Почтовый транспорт: fail-closed в production', () => {
@@ -70,7 +70,7 @@ describe('Почтовый транспорт: fail-closed в production', () =>
     // Проверка безусловна и в том случае, когда почта выключена: привязать её
     // к включённому транспорту значило бы, что она не сработает никогда —
     // единственный существующий транспорт в production и так запрещён.
-    expect(() => loadEnv({ ...PROD_ENV, PUBLIC_BASE_URL: 'http://app.unicorn.vc' })).toThrow(
+    expect(() => loadEnv({ ...PROD_ENV, PUBLIC_BASE_URL: 'http://app.5espace.test' })).toThrow(
       /PUBLIC_BASE_URL/,
     );
   });
@@ -162,7 +162,7 @@ describe('SMTP-транспорт: конфигурация fail-closed', () => 
     expect(
       loadEnv({
         ...prodSmtp,
-        MAIL_SMTP_USER: 'no-reply@unicorn.vc',
+        MAIL_SMTP_USER: 'no-reply@5espace.com',
         MAIL_SMTP_PASSWORD: 'p'.repeat(24),
         MAIL_SMTP_PORT: '2525',
       }).MAIL_SMTP_PORT,
@@ -177,7 +177,7 @@ describe('SMTP-транспорт: конфигурация fail-closed', () => 
 });
 
 describe('Сборка письма', () => {
-  const LETTER = { from: 'no-reply@unicorn.local', to: 'user@example.com' };
+  const LETTER = { from: 'no-reply@fifth.local', to: 'user@example.com' };
 
   it('кириллическая тема кодируется по RFC 2047', () => {
     const message = buildMessage({ ...LETTER, subject: 'Подтверждение адреса', text: 'ссылка' });

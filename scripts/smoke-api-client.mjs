@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Проверка соответствия `@unicorn/api-client` живому серверу.
+ * Проверка соответствия `@fifth/api-client` живому серверу.
  *
  * Пакет существует ровно для одного: расхождение сервера с контрактом должно
  * обнаруживаться сразу, а не превращаться в `undefined` в глубине интерфейса.
@@ -16,7 +16,7 @@
  *
  * Запуск: node scripts/smoke-api-client.mjs (нужен core на 4300)
  */
-import { UnicornApi } from '../packages/api-client/dist/index.js';
+import { FifthApi } from '../packages/api-client/dist/index.js';
 import { randomUUID } from 'node:crypto';
 
 import { API_BASE_URL } from './lib/ports.mjs';
@@ -55,13 +55,13 @@ function describe(value) {
 
 console.warn('\n=== ПРОВЕРКА КЛИЕНТА ПРОТИВ ЖИВОГО API ===\n');
 
-const api = new UnicornApi({ baseUrl: BASE, auth: { kind: 'none' }, timeoutMs: 10_000 });
+const api = new FifthApi({ baseUrl: BASE, auth: { kind: 'none' }, timeoutMs: 10_000 });
 
 console.warn('[1] Публичные методы');
 await probe(
   'health',
   () => api.health(),
-  (r) => r.service === 'unicorn-launch-core',
+  (r) => r.service === 'fifth-core',
 );
 await probe(
   'taxonomy',
@@ -91,7 +91,7 @@ console.warn('\n[2] Методы, требующие сессии');
 
   let cookies = '';
   let csrf = null;
-  const authed = new UnicornApi({
+  const authed = new FifthApi({
     baseUrl: BASE,
     auth: { kind: 'cookie', csrfToken: null },
     timeoutMs: 10_000,
@@ -181,7 +181,7 @@ await probe(
   // недетерминирована, — а то, что клиент ВСЕГДА передаёт сигнал прерывания и
   // прерывает зависший запрос. Ответ подменяем на никогда не завершающийся.
   let sawSignal = false;
-  const hanging = new UnicornApi({
+  const hanging = new FifthApi({
     baseUrl: BASE,
     auth: { kind: 'none' },
     timeoutMs: 300,

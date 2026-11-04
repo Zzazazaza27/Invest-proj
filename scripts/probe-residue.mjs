@@ -51,7 +51,7 @@ const PROBE_ORIGINS = ['render_check', 'load_test', 'test_session'];
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL_OWNER ?? process.env.DATABASE_URL,
-  application_name: 'unicorn-probe-residue',
+  application_name: 'fifth-probe-residue',
 });
 const sql = async (text, params = []) => (await pool.query(text, params)).rows;
 
@@ -102,7 +102,7 @@ try {
    * Единственное основание здесь — происхождение АВТОРА строки
    * (`identity.users.origin`). До M136 это происхождение можно было
    * подделать: клиент объявлял свои записи тестовыми заголовком
-   * `X-Unicorn-Origin`, и сервер верил. Значит про строки, заведённые
+   * `X-Fifth-Origin`, и сервер верил. Значит про строки, заведённые
    * раньше, «это след прогона» — предположение, а не доказательство.
    *
    * Поэтому перечень называется тем, чем является: кандидатами. Удалять

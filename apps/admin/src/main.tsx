@@ -2,12 +2,12 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
-import '@unicorn/ui/tokens.css';
+import '@fifth/ui/tokens.css';
 // Брендовая тема платформы: палитра, шрифт Manrope (тянется самой темой) и
 // крупные формы. Включается атрибутом `data-brand="nova"` в `index.html`;
 // убрать её — снять атрибут и этот импорт.
-import '@unicorn/ui/theme-nova.css';
-import { applyPlatformSkin } from '@unicorn/ui';
+import '@fifth/ui/theme-nova.css';
+import { applyPlatformSkin } from '@fifth/ui';
 
 import './styles.css';
 

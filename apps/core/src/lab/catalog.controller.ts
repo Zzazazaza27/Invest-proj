@@ -5,7 +5,7 @@ import {
   PublicViewSchema,
   TaxonomyNodeSchema,
   UuidSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { Ctx, Public } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';

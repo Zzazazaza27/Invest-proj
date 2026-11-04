@@ -13,13 +13,13 @@ import {
   Stack,
   TrustStrip,
   UI_KEYFRAMES,
-} from '@unicorn/ui';
+} from '@fifth/ui';
 import type {
   CreateSupportTicketRequest,
   CurrentUser,
   ProjectFull,
   SupportTicketStatus,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { api, setCsrf, testContextId, testContextPort } from './api';
 import {
   BugReportWidget,
@@ -36,12 +36,12 @@ import {
   hrefFor,
   useSessionCheck,
   TestContextBanner,
-} from '@unicorn/cabinet';
+} from '@fifth/cabinet';
 import type {
   AddEntityMemberRequest,
   CreateEntityRequest,
   NotificationPreference,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { ProjectsPage } from './pages/ProjectsPage';
 import { ProjectPage } from './pages/ProjectPage';
 import { GlossaryPage } from './pages/GlossaryPage';
@@ -61,7 +61,7 @@ import { OperationsProvider } from './operations';
 /**
  * Транспорт для общих блоков кабинета.
  *
- * Пакет `@unicorn/cabinet` намеренно не знает про HTTP: сюда передаются три
+ * Пакет `@fifth/cabinet` намеренно не знает про HTTP: сюда передаются три
  * функции, и граница «в сеть — только через свой клиент» видна в сигнатуре.
  */
 const notificationsPort = {
@@ -147,7 +147,7 @@ function profileHref(): string {
 
 /**
  * «Мой профиль»: имя, аватар и пароль. Экран общий для всех кабинетов
- * (`@unicorn/cabinet`), сюда приходит только транспорт.
+ * (`@fifth/cabinet`), сюда приходит только транспорт.
  */
 const profilePort: ProfilePort = {
   load: () => api.profile.me(),

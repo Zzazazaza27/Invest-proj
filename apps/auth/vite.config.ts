@@ -64,7 +64,7 @@ export default defineConfig(({ mode }) => {
     publicDir: resolve(ROOT, 'packages', 'ui', 'public'),
     define: { __CABINET_PORTS__: JSON.stringify(cabinetPorts) },
     plugins: [react()],
-    optimizeDeps: { include: ['@unicorn/api-client', '@unicorn/contracts'] },
+    optimizeDeps: { include: ['@fifth/api-client', '@fifth/contracts'] },
     server: { port, strictPort: true, host: '127.0.0.1' },
     preview: { port, strictPort: true, host: '127.0.0.1' },
     // Карты исходников не публикуются (SEC-13).

@@ -10,7 +10,7 @@ import {
   type PublicView,
   type ViewMaterial,
   type ViewPreview,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 

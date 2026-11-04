@@ -7,7 +7,7 @@ import {
   UI_SKIN_FLAG,
   type Features,
   type SkinId,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { Public } from '../auth/guards';
 import { Database } from '../db/unit-of-work';
 

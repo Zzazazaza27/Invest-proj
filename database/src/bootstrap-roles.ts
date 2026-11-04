@@ -123,7 +123,7 @@ async function main(): Promise<void> {
   const client = new pg.Client({
     connectionString: ownerConnectionString(),
     ssl: sslConfig(),
-    application_name: 'unicorn-bootstrap-roles',
+    application_name: 'fifth-bootstrap-roles',
   });
   await client.connect();
 

@@ -335,7 +335,7 @@ async function probeRelay(host, port) {
       buffer += chunk.toString('utf8');
       if (!banner && buffer.includes('\r\n')) {
         banner = buffer.split('\r\n')[0];
-        socket.write('EHLO probe.unicorn.local\r\n');
+        socket.write('EHLO probe.fifth.local\r\n');
         buffer = '';
         return;
       }

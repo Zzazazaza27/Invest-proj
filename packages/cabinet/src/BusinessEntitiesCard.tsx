@@ -9,14 +9,14 @@ import {
   Input,
   LoadingState,
   Stack,
-} from '@unicorn/ui';
+} from '@fifth/ui';
 import type {
   AddEntityMemberRequest,
   BusinessEntity,
   CreateEntityRequest,
   EntityMember,
   KybVerification,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 
 /**
  * Юрлица и проверка KYB.
@@ -25,7 +25,7 @@ import type {
  * представлять компанию на платформе без проверенного юрлица нельзя. То есть
  * обязательный шаг существовал в API и отсутствовал в продукте.
  *
- * Блок общий (`@unicorn/cabinet`): требования к раскрытию бенефициаров у
+ * Блок общий (`@fifth/cabinet`): требования к раскрытию бенефициаров у
  * основателя и инвестора одни и те же, и расходиться этим экранам нельзя —
  * расхождение здесь означает разное раскрытие для разных ролей.
  *

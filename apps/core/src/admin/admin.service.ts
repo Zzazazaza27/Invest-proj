@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { type FeatureFlag, type SkinId, type UiSkin, UI_SKIN_FLAG } from '@unicorn/contracts';
+import { type FeatureFlag, type SkinId, type UiSkin, UI_SKIN_FLAG } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { mapDbErrors } from '../common/db-errors';
 import { AuditRepository } from '../audit/audit.repository';

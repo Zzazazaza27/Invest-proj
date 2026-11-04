@@ -3,7 +3,7 @@ import {
   CatalogQuerySchema,
   CreateProjectRequestSchema,
   RequestUploadSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { loadEnv, resetEnvCache } from '../src/config/env';
 import { parseOrThrow } from '../src/common/validation';
 import { decodeCursor, encodeCursor } from '../src/lab/catalog.service';
@@ -84,11 +84,11 @@ describe('Конфигурация хранилища', () => {
         ...S3_ENV,
         NODE_ENV: 'production',
         AUTH_MODE: 'oidc',
-        OIDC_ISSUER: 'https://id.unicorn.vc',
+        OIDC_ISSUER: 'https://id.5espace.test',
         OIDC_AUDIENCE: 'launch',
         KMS_MODE: 'kms',
-        CORS_ALLOWED_ORIGINS: 'https://app.unicorn.vc',
-        CORE_PUBLIC_URL: 'https://api.unicorn.vc',
+        CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
+        CORE_PUBLIC_URL: 'https://api.5espace.test',
       }),
     ).toThrow(/https/);
   });

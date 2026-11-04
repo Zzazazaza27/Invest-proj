@@ -9,8 +9,8 @@ import {
   Input,
   LoadingState,
   Stack,
-} from '@unicorn/ui';
-import type { GrantPermission, ProjectAccessEntry, ProjectAccessList } from '@unicorn/contracts';
+} from '@fifth/ui';
+import type { GrantPermission, ProjectAccessEntry, ProjectAccessList } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import { S } from '../strings';
 

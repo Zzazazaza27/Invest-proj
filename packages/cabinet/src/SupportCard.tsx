@@ -9,8 +9,8 @@ import {
   Input,
   LoadingState,
   Stack,
-} from '@unicorn/ui';
-import type { SupportTicket, SupportTicketDetail, SupportTicketStatus } from '@unicorn/contracts';
+} from '@fifth/ui';
+import type { SupportTicket, SupportTicketDetail, SupportTicketStatus } from '@fifth/contracts';
 
 /**
  * Поддержка: обращения и переписка внутри них.

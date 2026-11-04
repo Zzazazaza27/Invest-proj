@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
-import { uuidv7 } from '@unicorn/contracts';
+import { uuidv7 } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { MailThrottleService } from '../auth/mail-throttle.service';
 import { SessionEpochService } from '../auth/session-epoch.service';

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Button, Card, EmptyState, ErrorState, LoadingState, Markdown, Stack } from '@unicorn/ui';
-import type { TextsResponse } from '@unicorn/contracts';
+import { Button, Card, EmptyState, ErrorState, LoadingState, Markdown, Stack } from '@fifth/ui';
+import type { TextsResponse } from '@fifth/contracts';
 import { api } from '../api';
 import { S } from '../strings';
 

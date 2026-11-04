@@ -4,7 +4,7 @@ import {
   type LandingBlock,
   type LandingLocale,
   type PublishLandingBlock,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { errors } from '../common/errors';
 import { Database, type RequestContext } from '../db/unit-of-work';

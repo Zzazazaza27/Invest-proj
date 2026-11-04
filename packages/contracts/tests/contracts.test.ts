@@ -167,7 +167,7 @@ describe('Коды ошибок', () => {
   });
 
   it('type — валидный URI', () => {
-    expect(problemTypeUri(ErrorCode.NOT_FOUND)).toBe('https://unicorn.vc/problems/not_found');
+    expect(problemTypeUri(ErrorCode.NOT_FOUND)).toBe('https://5espace.com/problems/not_found');
   });
 });
 

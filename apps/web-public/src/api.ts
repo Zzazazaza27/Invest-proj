@@ -1,4 +1,4 @@
-import { UnicornApi } from '@unicorn/api-client';
+import { FifthApi } from '@fifth/api-client';
 
 /**
  * Единственная точка связи витрины с бэкендом.
@@ -45,7 +45,7 @@ if (
   throw new Error('VITE_API_BASE_URL обязателен: адрес API не может выводиться из адреса страницы');
 }
 
-export const api = new UnicornApi({
+export const api = new FifthApi({
   baseUrl,
   auth: { kind: 'none' },
   // Витрина — первое, что видит человек. Запрос, висящий дольше десяти секунд,
@@ -53,7 +53,7 @@ export const api = new UnicornApi({
   timeoutMs: 10_000,
 });
 
-export { ApiError } from '@unicorn/api-client';
+export { ApiError } from '@fifth/api-client';
 
 /**
  * Адрес изображения проекта.

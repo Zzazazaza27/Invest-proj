@@ -1,7 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
 import { DiscoveryService } from '@nestjs/core';
-import * as contracts from '@unicorn/contracts';
-import { API_VERSION, INTEGRATION_SCOPES } from '@unicorn/contracts';
+import * as contracts from '@fifth/contracts';
+import { API_VERSION, INTEGRATION_SCOPES } from '@fifth/contracts';
 import { z } from 'zod';
 import { Ctx, Public } from '../auth/guards';
 import { errors } from '../common/errors';
@@ -16,7 +16,7 @@ import {
 /**
  * Машиночитаемое описание API.
  *
- * Схемы НЕ описываются здесь заново: они выводятся из `@unicorn/contracts` —
+ * Схемы НЕ описываются здесь заново: они выводятся из `@fifth/contracts` —
  * тех же самых объектов, которыми сервер валидирует запросы. Ручной OpenAPI
  * расходится с реальностью на первом же изменении и становится вреднее, чем
  * его отсутствие: клиент верит документу, а сервер живёт по коду.
@@ -104,7 +104,7 @@ export function buildOpenApiDocument(
       title: 'Пятый элемент — API',
       version: API_VERSION,
       description:
-        'Типы запросов и ответов, выведенные из @unicorn/contracts — тех же схем, ' +
+        'Типы запросов и ответов, выведенные из @fifth/contracts — тех же схем, ' +
         'которыми сервер валидирует вход, и перечень маршрутов, снятый с графа ' +
         'контроллеров вместе с требованиями доступа. Связь конкретного маршрута ' +
         'с конкретной схемой тела не выводится: валидация вызывается внутри ' +

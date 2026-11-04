@@ -8,7 +8,7 @@ import {
   type ChangePassword,
   type MediaUploadTicket,
   type MyProfile,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { SessionEpochService } from '../auth/session-epoch.service';
 import { LoginThrottleService } from '../auth/login-throttle.service';

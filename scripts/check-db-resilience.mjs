@@ -185,7 +185,7 @@ async function severConnections() {
   const { rowCount } = await admin.query(
     `SELECT pg_terminate_backend(pid) FROM pg_stat_activity
       WHERE datname = $1 AND pid <> pg_backend_pid()
-        AND application_name LIKE 'unicorn-launch-%'`,
+        AND application_name LIKE 'fifth-core%'`,
     [TEST_DB],
   );
   return rowCount ?? 0;
@@ -198,7 +198,7 @@ async function setConnectionLimit(limit) {
 async function connectionsOfCore() {
   const { rows } = await admin.query(
     `SELECT count(*)::int AS n FROM pg_stat_activity
-      WHERE datname = $1 AND application_name LIKE 'unicorn-launch-%'`,
+      WHERE datname = $1 AND application_name LIKE 'fifth-core%'`,
     [TEST_DB],
   );
   return rows[0].n;
@@ -491,7 +491,7 @@ try {
     while (Date.now() < until && !victim) {
       const { rows } = await admin.query(
         `SELECT pid FROM pg_stat_activity
-          WHERE datname = $1 AND application_name LIKE 'unicorn-launch-%'
+          WHERE datname = $1 AND application_name LIKE 'fifth-core%'
             AND wait_event_type = 'Lock'`,
         [TEST_DB],
       );

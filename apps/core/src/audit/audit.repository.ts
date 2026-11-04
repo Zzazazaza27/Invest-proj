@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { uuidv7 } from '@unicorn/contracts';
+import { uuidv7 } from '@fifth/contracts';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { errors } from '../common/errors';
 

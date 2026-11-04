@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Badge, Card, Field, Input, Stack } from '@unicorn/ui';
-import type { AdminUserSummary, StaffCapability } from '@unicorn/contracts';
+import { Badge, Card, Field, Input, Stack } from '@fifth/ui';
+import type { AdminUserSummary, StaffCapability } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 
 /**

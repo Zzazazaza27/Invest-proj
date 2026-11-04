@@ -21,7 +21,7 @@
 | Отставание от `main` | **2 коммит(ов)** |
 | Аптайм | up 7 hours, 28 minutes |
 | Службы | active active active |
-| Health | {"service":"unicorn-launch-core","status":"ok","version":"0.1.0","checks":{"database":"ok"}} |
+| Health | {"service":"fifth-core","status":"ok","version":"0.1.0","checks":{"database":"ok"}} |
 
 ### Контейнеры
 

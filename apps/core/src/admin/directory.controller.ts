@@ -1,5 +1,5 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { AdminProjectSummarySchema } from '@unicorn/contracts';
+import { AdminProjectSummarySchema } from '@fifth/contracts';
 import { Ctx, Roles } from '../auth/guards';
 import type { RequestContext } from '../db/unit-of-work';
 import { DirectoryService } from './directory.service';

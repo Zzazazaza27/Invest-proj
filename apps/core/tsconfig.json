@@ -14,7 +14,7 @@
     "verbatimModuleSyntax": false,
     "isolatedModules": false,
     "paths": {
-      "@unicorn/contracts": ["../../packages/contracts/src/index.ts"]
+      "@fifth/contracts": ["../../packages/contracts/src/index.ts"]
     }
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"]

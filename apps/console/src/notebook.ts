@@ -1,6 +1,6 @@
 import type { Notebook } from './types';
 
-const STORAGE_KEY = 'unicorn-console-notebook';
+const STORAGE_KEY = 'fifth-console-notebook';
 
 /**
  * Блокнот идентификаторов сквозного прогона.

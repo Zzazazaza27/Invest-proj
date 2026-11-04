@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { type Role } from '@unicorn/contracts';
+import { type Role } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { SessionEpochService } from '../auth/session-epoch.service';
 import { errors } from '../common/errors';

@@ -6,8 +6,8 @@ import type {
   AdminUserListQuery,
   AdminUserPage,
   AdminUserRow,
-} from '@unicorn/contracts';
-import { AdminUserListQuerySchema, PROBE_ORIGINS } from '@unicorn/contracts';
+} from '@fifth/contracts';
+import { AdminUserListQuerySchema, PROBE_ORIGINS } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { CryptoService } from '../crypto/crypto.service';
 import { errors } from '../common/errors';

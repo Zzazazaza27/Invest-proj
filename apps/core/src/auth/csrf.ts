@@ -18,7 +18,7 @@ import { getEnv } from '../config/env';
  * Что схема по-прежнему НЕ закрывает: кражу самого токена вместе с сессией.
  * Это другой класс угрозы (XSS), и лечится он не здесь.
  */
-const CSRF_CONTEXT = 'unicorn-csrf.v1';
+const CSRF_CONTEXT = 'fifth-csrf.v1';
 
 export function issueCsrfToken(subject: string): string {
   const nonce = randomBytes(16).toString('base64url');

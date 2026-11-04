@@ -7,7 +7,7 @@ import {
   SupportTicketSchema,
   UpdateSupportTicketRequestSchema,
   UuidSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { Ctx } from '../auth/guards';

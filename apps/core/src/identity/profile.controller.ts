@@ -9,7 +9,7 @@ import {
   RequestAvatarUploadSchema,
   UpdateMyProfileSchema,
   UuidSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { Ctx } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';

@@ -72,7 +72,7 @@ export class Database implements OnModuleDestroy {
   constructor() {
     const env = getEnv();
     this.statementTimeoutMs = env.DATABASE_STATEMENT_TIMEOUT_MS;
-    this.pool = this.createPool(env.DATABASE_URL, 'unicorn-launch-core', env.DATABASE_POOL_MAX);
+    this.pool = this.createPool(env.DATABASE_URL, 'fifth-core', env.DATABASE_POOL_MAX);
   }
 
   /**
@@ -153,7 +153,7 @@ export class Database implements OnModuleDestroy {
     }
     // Пул сервисной роли меньше пользовательского: это редкие команды, а не
     // поток запросов, и лишние соединения занимали бы слоты БД впустую.
-    const pool = this.createPool(url, `unicorn-launch-${role}`, SERVICE_POOL_MAX);
+    const pool = this.createPool(url, `fifth-core-${role}`, SERVICE_POOL_MAX);
     this.servicePools.set(role, pool);
     return pool;
   }

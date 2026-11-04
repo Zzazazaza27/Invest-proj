@@ -1,4 +1,4 @@
-# PostgreSQL 16 для UNICORN LAUNCH.
+# PostgreSQL 16 для Пятый элемент.
 #
 # Требования Database_Launch.md §1: pgcrypto, pgvector (HNSW, vector(1536)),
 # pg_partman 5.x, генерация UUIDv7.

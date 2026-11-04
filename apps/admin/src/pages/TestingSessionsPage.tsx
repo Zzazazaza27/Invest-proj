@@ -4,8 +4,8 @@ import type {
   TestingSession,
   TestingSessionCard,
   TestingSessionStatus,
-} from '@unicorn/contracts';
-import { TESTING_RESULT_LABEL, TESTING_STATUS_LABEL } from '@unicorn/contracts';
+} from '@fifth/contracts';
+import { TESTING_RESULT_LABEL, TESTING_STATUS_LABEL } from '@fifth/contracts';
 import type { z } from 'zod';
 import { api } from '../api';
 import { backHere } from './users-shared';

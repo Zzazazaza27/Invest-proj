@@ -1,4 +1,4 @@
-import { MATERIAL_UPLOAD_RULES, type UploadableMaterialType } from '@unicorn/contracts';
+import { MATERIAL_UPLOAD_RULES, type UploadableMaterialType } from '@fifth/contracts';
 
 /**
  * Лимиты и MIME — из контрактов (MATERIAL_UPLOAD_RULES): один источник правды

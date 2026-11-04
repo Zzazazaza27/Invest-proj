@@ -1,5 +1,5 @@
 {
-  "name": "@unicorn/cabinet",
+  "name": "@fifth/cabinet",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -17,8 +17,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@unicorn/contracts": "*",
-    "@unicorn/ui": "*"
+    "@fifth/contracts": "*",
+    "@fifth/ui": "*"
   },
   "peerDependencies": {
     "react": "^18.3.1"

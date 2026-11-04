@@ -53,7 +53,7 @@
 - **RND-TESTING-SESSIONS** — Браузерный проход: тестовые сессии и просмотр кабинета (этап 6.5).
 - **RND-PROFILE** — Браузерный проход: «Мой профиль» во всех кабинетах (этап 6.7).
 
-> Браузерные прогоны требуют поднятого стенда (`npm run stand:up`) и переменной `UNICORN_ENTRY=web`.
+> Браузерные прогоны требуют поднятого стенда (`npm run stand:up`) и переменной `FIFTH_ENTRY=web`.
 
 ### `npm run suite:isolated` — Разрушительные проверки в изоляции
 
@@ -225,7 +225,7 @@
 - `RND-WEB-PUBLIC` — Проверка витрины в РЕАЛЬНОМ рендере (`RULES.md` §2).
 - `TOOL-SECURITY-AUDIT-FULL` — Глобальный аудит: все гейты качества и безопасности одним прогоном.
 - `SMK-ADMIN-ROLES` — Живой прогон Ф9c: управление ролями и машиночитаемое описание API.
-- `SMK-API-CLIENT` — Проверка соответствия `@unicorn/api-client` живому серверу.
+- `SMK-API-CLIENT` — Проверка соответствия `@fifth/api-client` живому серверу.
 - `SMK-AUTH-RECOVERY` — Живой прогон восстановления пароля и подтверждения адреса (Ф51).
 - `SMK-CONTENT` — Живой прогон: управление контентом публичной витрины (M048/M049).
 - `SMK-CORE` — Дымовая проверка живого core.
@@ -391,7 +391,7 @@
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
 | RND-ADMIN-COUNTRIES | `npm run temp:run -- scripts/render-check-admin-countries.mjs` | 12 | вручную | временный контур · — |
-| RND-ADMIN-INTELLIGENCE | `UNICORN_ENTRY=web node scripts/render-check-admin-intelligence.mjs` | 27 | вручную | — |
+| RND-ADMIN-INTELLIGENCE | `FIFTH_ENTRY=web node scripts/render-check-admin-intelligence.mjs` | 27 | вручную | — |
 | RND-ADMIN-USERS | `node scripts/render-check-admin-users.mjs` | 40 | вручную | `suite:regression` |
 | RND-ADMIN | `node scripts/render-check-admin.mjs` | 32 | вручную | — |
 | RND-AUTH | `node scripts/render-check-auth.mjs` | 26 | вручную | — |
@@ -403,7 +403,7 @@
 | RND-MEDIA-EMBEDDING | `node scripts/render-check-media-embedding.mjs` | 12 | вручную | — |
 | RND-PROFILE | `node scripts/render-check-profile.mjs` | 17 | вручную | `suite:regression` |
 | RND-PROJECT-MEDIA | `node scripts/render-check-project-media.mjs` | 16 | вручную | — |
-| RND-UPLOAD-OPERATIONS | `UNICORN_ENTRY=web node scripts/render-check-upload-operations.mjs` | 48 | вручную | — |
+| RND-UPLOAD-OPERATIONS | `FIFTH_ENTRY=web node scripts/render-check-upload-operations.mjs` | 48 | вручную | — |
 | RND-PROJECT-PAGE | `node scripts/render-check-project-page.mjs` | 15 | вручную | — |
 | RND-SUPPORT | `node scripts/render-check-support.mjs` | 26 | вручную | — |
 | RND-TESTING-SESSIONS | `node scripts/render-check-testing-sessions.mjs` | 27 | вручную | `suite:regression` |

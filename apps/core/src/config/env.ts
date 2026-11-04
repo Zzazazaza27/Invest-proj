@@ -187,7 +187,7 @@ const RawEnvSchema = z.object({
   // Остальной код о выборе не знает — он работает с портом MailTransport.
   MAIL_TRANSPORT: z.enum(['none', 'file', 'smtp']).default('none'),
   MAIL_OUTBOX_DIR: z.string().default('var/mail'),
-  MAIL_FROM: z.string().default('no-reply@unicorn.local'),
+  MAIL_FROM: z.string().default('no-reply@fifth.local'),
   /**
    * Релей, через который уходят письма (`MAIL_TRANSPORT=smtp`).
    *

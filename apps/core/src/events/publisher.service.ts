@@ -1,6 +1,6 @@
 import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { uuidv7 } from '@unicorn/contracts';
+import { uuidv7 } from '@fifth/contracts';
 import { BackgroundJobsService } from '../background/background-jobs.service';
 import { resultOf } from '../background/job';
 import { getEnv } from '../config/env';

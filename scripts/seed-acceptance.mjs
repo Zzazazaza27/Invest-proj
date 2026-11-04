@@ -93,7 +93,7 @@ function makePassword() {
 }
 
 async function upsertUser({ login, displayName, roles, primaryRole }) {
-  const email = `${login}@unicorn.local`;
+  const email = `${login}@fifth.local`;
   const password = makePassword();
   const hash = await argon2.hash(password, ARGON2_OPTIONS);
   const [found] = await sql('SELECT id FROM identity.users WHERE email_hmac = $1', [
@@ -210,7 +210,7 @@ async function demoPeople() {
   const rows = [];
   for (const person of all) {
     const [found] = await sql('SELECT id FROM identity.users WHERE email_hmac = $1', [
-      blindIndex(`${person.login}@unicorn.local`),
+      blindIndex(`${person.login}@fifth.local`),
     ]);
     if (found) rows.push(person);
   }
@@ -282,7 +282,7 @@ npm run stand:up
 
 ## Учётные записи
 
-Логин можно вводить коротким: домен \`unicorn.local\` подставляется сам.
+Логин можно вводить коротким: домен \`fifth.local\` подставляется сам.
 
 ### Обстановка приёмки — у каждого свой пароль
 

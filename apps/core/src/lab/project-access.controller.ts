@@ -5,7 +5,7 @@ import {
   ProjectAccessEntrySchema,
   ProjectAccessListSchema,
   UuidSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import type { RequestContext } from '../db/unit-of-work';

@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { AdminProjectSummary } from '@unicorn/contracts';
+import type { AdminProjectSummary } from '@fifth/contracts';
 import { Database, type RequestContext } from '../db/unit-of-work';
 
 /**

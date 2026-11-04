@@ -22,18 +22,18 @@ apps/web-public   apps/lab   apps/investor   apps/expert   apps/admin
 ## 2. Единственный шов
 
 ```
-фронтенд ──HTTP──► https://api.unicorn.vc/v1 ──► apps/core
+фронтенд ──HTTP──► https://api.5espace.test/v1 ──► apps/core
              ▲
-             └── @unicorn/api-client (типы из @unicorn/contracts)
+             └── @fifth/api-client (типы из @fifth/contracts)
 ```
 
 Разрешённые зависимости фронтенда на монорепо:
 
 | Пакет                 | Что даёт                                      | Обязателен?                               |
 | --------------------- | --------------------------------------------- | ----------------------------------------- |
-| `@unicorn/contracts`  | zod-схемы запросов/ответов, типы, коды ошибок | нет — можно сгенерировать свои из OpenAPI |
-| `@unicorn/api-client` | типизированный клиент на `fetch`, без React   | нет — можно писать запросы руками         |
-| `@unicorn/ui`         | дизайн-токены и примитивы                     | нет                                       |
+| `@fifth/contracts`  | zod-схемы запросов/ответов, типы, коды ошибок | нет — можно сгенерировать свои из OpenAPI |
+| `@fifth/api-client` | типизированный клиент на `fetch`, без React   | нет — можно писать запросы руками         |
+| `@fifth/ui`         | дизайн-токены и примитивы                     | нет                                       |
 
 **Всё три — опциональны.** Обязателен только HTTP-контракт `/v1`.
 
@@ -59,7 +59,7 @@ npm run build                 # остальное собирается — пр
 1. Создать новый `apps/investor` на любом стеке (Next.js, Nuxt, SvelteKit,
    Remix, Astro, нативный мобильный клиент, десктоп).
 2. Указать базовый URL API: `VITE_API_BASE_URL` (или свой аналог) →
-   `https://api.unicorn.vc/v1`.
+   `https://api.5espace.test/v1`.
 3. Добавить Origin нового фронта в `CORS_ALLOWED_ORIGINS` бэкенда.
 4. Если workspace называется иначе — поправить массив `workspaces` в корневом
    `package.json`.
@@ -92,7 +92,7 @@ rm -rf apps/web-public apps/lab apps/investor apps/expert apps/admin
 | Режим  | Кому                          | Как                                                                                                                                                                    |
 | ------ | ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Cookie | Веб-фронтенды                 | `__Host-ul_session` — httpOnly, `Secure`, `SameSite=Strict`. Плюс double-submit CSRF-токен в заголовке `X-CSRF-Token` для небезопасных методов. Токен недоступен из JS |
-| Bearer | Мобильные и сторонние клиенты | OAuth 2.1 Authorization Code + PKCE напрямую к IdP `https://id.unicorn.vc`, затем `Authorization: Bearer <access_token>`                                               |
+| Bearer | Мобильные и сторонние клиенты | OAuth 2.1 Authorization Code + PKCE напрямую к IdP `https://id.5espace.test`, затем `Authorization: Bearer <access_token>`                                               |
 
 > **Статус этого режима.** Ветка Bearer/OIDC **НЕ проверена против реального
 > IdP end-to-end**: ядро принимает и валидирует JWT (issuer, audience,

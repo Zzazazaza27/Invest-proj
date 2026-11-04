@@ -80,7 +80,7 @@ function makeClient() {
     if (method !== 'GET' && csrf && state.csrf) {
       headers['X-CSRF-Token'] = state.csrf.split('=').slice(1).join('=');
     }
-    if (context) headers['X-Unicorn-Context'] = context;
+    if (context) headers['X-Fifth-Context'] = context;
     const response = await fetch(`${BASE}${path}`, {
       method,
       headers,
@@ -121,7 +121,7 @@ try {
   console.warn('\n=== ТЕСТОВЫЕ СЕССИИ: ГРАНИЦЫ ДОВЕРИЯ ===\n');
 
   const admin = makeClient();
-  await admin.login('demo-admin@unicorn.local', DEMO_PASSWORD);
+  await admin.login('demo-admin@fifth.local', DEMO_PASSWORD);
   const whoAmI = await admin.call('/v1/auth/me');
   const adminId = whoAmI.json?.id ?? null;
   check('администратор вошёл', whoAmI.status === 200 && Boolean(adminId));
@@ -246,7 +246,7 @@ try {
 
   // Второй вход тем же администратором = другая сессия. Контекст к ней не привязан.
   const secondSession = makeClient();
-  await secondSession.login('demo-admin@unicorn.local', DEMO_PASSWORD);
+  await secondSession.login('demo-admin@fifth.local', DEMO_PASSWORD);
   const fromOtherSession = await secondSession.call('/v1/auth/me', { context: contextId });
   check(
     'из другой сессии того же администратора контекст не открывается',
@@ -257,7 +257,7 @@ try {
   // Другой человек: чужой контекст ему не открывается. Демо-организатор удалён
   // в 2.1-W05 — берётся инвестор комплекта.
   const stranger = makeClient();
-  await stranger.login('demo-investor@unicorn.local', DEMO_PASSWORD);
+  await stranger.login('demo-investor@fifth.local', DEMO_PASSWORD);
   const fromStranger = await stranger.call('/v1/auth/me', { context: contextId });
   check(
     'чужой контекст не открывается',
@@ -360,7 +360,7 @@ try {
    *
    * Первая версия доверяла заголовку: разрешённое значение — значит
    * происхождение назначено. Опыт показал, чего это стоит: обычный клиент
-   * БЕЗ всякой авторизации регистрировался с X-Unicorn-Origin: render_check
+   * БЕЗ всякой авторизации регистрировался с X-Fifth-Origin: render_check
    * и становился следом прогона — то есть мог подвести свою запись под
    * уборку или спрятать её из списка.
    *
@@ -404,8 +404,8 @@ try {
   }
 
   const owned = await registerProbe(`Учёт запуска ${Date.now()}`, {
-    'X-Unicorn-Origin': 'render_check',
-    'X-Unicorn-Run': runToken,
+    'X-Fifth-Origin': 'render_check',
+    'X-Fifth-Run': runToken,
   });
   check(
     'с действующим запуском происхождение назначается',
@@ -424,7 +424,7 @@ try {
   );
 
   const stranger2 = await registerProbe(`Посторонний ${Date.now()}`, {
-    'X-Unicorn-Origin': 'render_check',
+    'X-Fifth-Origin': 'render_check',
   });
   check(
     'без идентификатора запуска пометка НЕ назначается',
@@ -443,8 +443,8 @@ try {
    * запуска (M136).
    */
   const byId = await registerProbe(`Самозванец по идентификатору ${Date.now()}`, {
-    'X-Unicorn-Origin': 'render_check',
-    'X-Unicorn-Run': sessionId,
+    'X-Fifth-Origin': 'render_check',
+    'X-Fifth-Run': sessionId,
   });
   check(
     'знание идентификатора запуска права не даёт',
@@ -463,8 +463,8 @@ try {
   );
 
   const fake = await registerProbe(`Выдуманный запуск ${Date.now()}`, {
-    'X-Unicorn-Origin': 'render_check',
-    'X-Unicorn-Run': '00000000-0000-4000-8000-000000000000',
+    'X-Fifth-Origin': 'render_check',
+    'X-Fifth-Run': '00000000-0000-4000-8000-000000000000',
   });
   check('несуществующий запуск пометки не даёт', fake.origin === 'self_registration', fake.origin);
 
@@ -650,7 +650,7 @@ try {
 
   await admin.call('/v1/auth/logout', { method: 'POST' });
   const adminAgain = makeClient();
-  await adminAgain.login('demo-admin@unicorn.local', DEMO_PASSWORD);
+  await adminAgain.login('demo-admin@fifth.local', DEMO_PASSWORD);
   const afterLogout = await adminAgain.call('/v1/auth/me', { context: freshCtx });
   check(
     'после выхода инициатора контекст мёртв',

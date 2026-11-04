@@ -7,7 +7,7 @@ import { AuditRepository } from '../audit/audit.repository';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { AccessContextService } from '../auth/access-context.service';
-import type { TestingSession } from '@unicorn/contracts';
+import type { TestingSession } from '@fifth/contracts';
 
 /** Происхождения, которые считаются следом прогона (M127). */
 const PROBE_ORIGINS = new Set(['render_check', 'load_test', 'test_session']);

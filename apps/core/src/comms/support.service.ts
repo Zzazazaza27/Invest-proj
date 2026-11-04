@@ -7,7 +7,7 @@ import {
   type SupportTicketDetail,
   type SupportTicketKind,
   type SupportTicketStatus,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';

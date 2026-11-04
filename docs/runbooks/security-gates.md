@@ -71,7 +71,7 @@ node scripts/network-audit.mjs --api https://api.stage.unicorn.vc
 
 Скрипт различает «наш core не запущен» и «на порту чужой сервис»: живая
 проверка засчитывается только если `/v1/health` возвращает
-`{"service":"unicorn-launch-core"}`. Чужой 404 зелёным статусом не становится.
+`{"service":"fifth-core"}`. Чужой 404 зелёным статусом не становится.
 
 ### Ручные проверки, которые скрипт не покрывает
 
@@ -97,7 +97,7 @@ done; echo
 TLS staging/production (проверка версии и шифров):
 
 ```bash
-docker run --rm drwetter/testssl.sh --quiet --color 0 https://api.unicorn.vc
+docker run --rm drwetter/testssl.sh --quiet --color 0 https://api.5espace.test
 ```
 
 ---

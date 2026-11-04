@@ -10,7 +10,7 @@ import {
 import { Reflector } from '@nestjs/core';
 import { timingSafeEqual } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
-import { RoleSchema, type Role } from '@unicorn/contracts';
+import { RoleSchema, type Role } from '@fifth/contracts';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 import type { RequestContext } from '../db/unit-of-work';
@@ -327,7 +327,8 @@ export class AuthGuard implements CanActivate {
    * весь origin, и переключение в одной вкладке меняло бы личность во всех.
    */
   private extractContextId(request: AuthenticatedRequest): string | null {
-    const raw = request.headers['x-unicorn-context'];
+    // Старая вкладка шлёт прежний заголовок: принимаем оба один выпуск (W09, P4).
+    const raw = request.headers['x-fifth-context'] ?? request.headers['x-unicorn-context'];
     if (typeof raw !== 'string') return null;
     const value = raw.trim();
     return value.length > 0 ? value : null;

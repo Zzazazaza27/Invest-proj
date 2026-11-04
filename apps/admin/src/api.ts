@@ -8,8 +8,8 @@ import {
   UiSkinSchema,
   type SkinId,
   type UiSkin,
-} from '@unicorn/contracts';
-import { ApiClient, ApiError } from '@unicorn/api-client';
+} from '@fifth/contracts';
+import { ApiClient, ApiError } from '@fifth/api-client';
 import {
   AuthSessionSchema,
   FeatureFlagSchema,
@@ -62,7 +62,7 @@ import {
   ServiceCountrySchema,
   type ServiceCountry,
   type UpdateServiceCountryRequest,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { z } from 'zod';
 
 /**
@@ -862,7 +862,7 @@ export const api = {
    *
    * Те же маршруты, что и у остальных кабинетов: профиль один на человека, и
    * администратор здесь ничем не особенный. Экран тоже общий —
-   * `@unicorn/cabinet`, а это только транспорт.
+   * `@fifth/cabinet`, а это только транспорт.
    */
   myProfile(): Promise<MyProfile> {
     return client.request({ method: 'GET', path: '/v1/me/profile', schema: MyProfileSchema });

@@ -628,7 +628,7 @@ is_active, valid_from, created_by, created_at, reason)`, один активны
 **Тексты и числа.** Интерфейс подставляет значения в переводимые шаблоны
 (`S.limits.free('{amount}')`, `content.texts` для админских подсказок);
 строк «5 млн» в коде нет; форматирование — `formatMoney(amount, currency,
-locale)` из `@unicorn/ui`; расчёт — в минорных единицах (`BigInt`) как
+locale)` из `@fifth/ui`; расчёт — в минорных единицах (`BigInt`) как
 сегодня в `checkSubmission` (`applications.service.ts:776-779, 834-836`).
 
 **Первый выпуск**: один рынок `ru`, только RUB, `fx.mode='none'`; экран

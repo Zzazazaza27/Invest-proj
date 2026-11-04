@@ -83,14 +83,14 @@ export default tseslint.config(
         {
           patterns: [
             {
-              group: ['**/apps/core/**', '@unicorn/core', '@unicorn/core/*'],
+              group: ['**/apps/core/**', '@fifth/core', '@fifth/core/*'],
               message:
-                'Фронтенд не импортирует бэкенд. Разрешены только @unicorn/contracts, @unicorn/api-client, @unicorn/ui.',
+                'Фронтенд не импортирует бэкенд. Разрешены только @fifth/contracts, @fifth/api-client, @fifth/ui.',
             },
             {
               group: ['**/database/**', 'pg', 'pg-*', 'nats', 'bullmq', 'ioredis'],
               message:
-                'Фронтенд не имеет доступа к БД, очередям и шине. Только HTTP /v1 через @unicorn/api-client.',
+                'Фронтенд не имеет доступа к БД, очередям и шине. Только HTTP /v1 через @fifth/api-client.',
             },
           ],
         },
@@ -115,12 +115,12 @@ export default tseslint.config(
                 '**/apps/admin/**',
                 '**/apps/console/**',
                 '**/apps/auth/**',
-                '@unicorn/ui',
-                '@unicorn/ui/*',
+                '@fifth/ui',
+                '@fifth/ui/*',
                 'react',
                 'react-dom',
               ],
-              message: 'Бэкенд не зависит от фронтенда. Общий язык — только @unicorn/contracts.',
+              message: 'Бэкенд не зависит от фронтенда. Общий язык — только @fifth/contracts.',
             },
           ],
         },

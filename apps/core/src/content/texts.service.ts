@@ -8,7 +8,7 @@ import {
   type TextsResponse,
   type TextVersion,
   type UpsertTextEntry,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';

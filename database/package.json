@@ -1,9 +1,9 @@
 {
-  "name": "@unicorn/database",
+  "name": "@fifth/database",
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Схема БД UNICORN LAUNCH: миграции, RLS-политики, сиды, негативные тесты",
+  "description": "Схема БД Пятый элемент: миграции, RLS-политики, сиды, негативные тесты",
   "scripts": {
     "migrate": "node --experimental-strip-types src/migrate.ts",
     "migrate:status": "node --experimental-strip-types src/migrate.ts --status",

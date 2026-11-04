@@ -1,5 +1,5 @@
 import { Controller, Get } from '@nestjs/common';
-import { HealthSchema, type Health } from '@unicorn/contracts';
+import { HealthSchema, type Health } from '@fifth/contracts';
 import { Public } from '../auth/guards';
 import { Database } from '../db/unit-of-work';
 
@@ -25,7 +25,7 @@ export class HealthController {
     const status = Object.values(checks).every((v) => v === 'ok') ? 'ok' : 'degraded';
 
     return HealthSchema.parse({
-      service: 'unicorn-launch-core',
+      service: 'fifth-core',
       status,
       version: process.env.APP_VERSION ?? '0.1.0',
       checks,

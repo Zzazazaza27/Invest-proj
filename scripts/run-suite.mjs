@@ -237,7 +237,7 @@ for (const id of suite.members) {
 
   const started = Date.now();
   const env = { ...process.env };
-  if (item.kind === 'render') env.UNICORN_ENTRY = 'web';
+  if (item.kind === 'render') env.FIFTH_ENTRY = 'web';
   const [cmd, ...args] = item.command.split(' ');
   const run = spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8', env, shell: true });
   const ms = Date.now() - started;

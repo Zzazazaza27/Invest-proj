@@ -9,8 +9,8 @@ import {
   Input,
   LoadingState,
   Stack,
-} from '@unicorn/ui';
-import type { AdminUserSummary } from '@unicorn/contracts';
+} from '@fifth/ui';
+import type { AdminUserSummary } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import { CapabilitiesSection } from './StaffAccessSections';
 

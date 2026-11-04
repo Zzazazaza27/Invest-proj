@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { FavoriteProject } from '@unicorn/contracts';
+import type { FavoriteProject } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { Database, type RequestContext } from '../db/unit-of-work';
 

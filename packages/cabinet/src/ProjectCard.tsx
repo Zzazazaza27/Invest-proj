@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ContextualImage } from './test-context';
-import { Badge, Button, Card, EmptyState, Stack } from '@unicorn/ui';
-import type { InvestorView, PublicView } from '@unicorn/contracts';
+import { Badge, Button, Card, EmptyState, Stack } from '@fifth/ui';
+import type { InvestorView, PublicView } from '@fifth/contracts';
 
 /**
  * Представление проекта — ОДНО на все три поверхности (этап 7.3).

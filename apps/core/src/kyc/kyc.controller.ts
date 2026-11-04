@@ -10,7 +10,7 @@ import {
   StartKybRequestSchema,
   StartKycRequestSchema,
   UuidSchema,
-} from '@unicorn/contracts';
+} from '@fifth/contracts';
 import { z } from 'zod';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
