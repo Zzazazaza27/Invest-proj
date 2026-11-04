@@ -55,18 +55,18 @@
 
 1. **До выкладки** записать в `/root/log-secrets-before.txt`: полный SHA
    выпуска на VPS (`git rev-parse HEAD` — это `<P>` для возврата) и команду
-   postgres (`docker inspect unicorn-postgres --format '{{json .Config.Cmd}}'`).
+   postgres (`docker inspect fifth-postgres --format '{{json .Config.Cmd}}'`).
    Затем выкладка (`npm run deploy`, с `PUBLIC_PIN`, пока DNS не восстановлен)
    — она обновляет файлы, но контейнеры не трогает.
-2. nginx: `docker restart unicorn-web` (шаблон собирается при старте; перерыв —
+2. nginx: `docker restart fifth-web` (шаблон собирается при старте; перерыв —
    секунды). Проверка: запрос с искусственным токеном в query → в `docker
-logs unicorn-web` его нет; `/`, `/login/`, `/v1/health` — 200.
-3. PostgreSQL: `cd /opt/unicorn-launch && node scripts/infra.mjs up --no-deps
+logs fifth-web` его нет; `/`, `/login/`, `/v1/health` — 200.
+3. PostgreSQL: `cd /opt/fifth-element && node scripts/infra.mjs up --no-deps
 postgres` — пересоздание только этого контейнера (перезапуск базы,
    ~10 с; ядро переподключается). Проверка: `pg_settings` — шесть значений
    выше; `/ready` ядра — ready; архив журнала идёт (`backup.mjs check`);
    ошибка с искусственным значением во временной таблице → в `docker logs
-unicorn-postgres` значения нет.
+fifth-postgres` значения нет.
 4. Zabbix: открытых проблем по ядру, базе и резервированию нет.
 
 **Возврат (временный, до исправляющего выпуска).** Критерий: сайт, вход или
@@ -75,7 +75,7 @@ unicorn-postgres` значения нет.
 1. Рабочая копия VPS целиком на прежний выпуск: `git reset --hard <P>`, где
    `<P>` — полный SHA из `/root/log-secrets-before.txt` (шаг 1). Правка не
    меняет код приложений, поэтому собранные `dist` остаются верными.
-2. Контейнеры — из этих же файлов: `docker restart unicorn-web`, затем
+2. Контейнеры — из этих же файлов: `docker restart fifth-web`, затем
    `node scripts/infra.mjs up --no-deps postgres`. Проверка: `git status`
    чистый, `git rev-parse HEAD` = `<P>`, команда `postgres` в `docker inspect`
    совпадает с записанной в шаге 1, `/`, `/login/`, `/v1/health` — 200,

@@ -24,7 +24,7 @@ const DRY = process.argv.includes('--dry-run');
 
 const HOST = 'root@193.233.217.210';
 const KEY = resolve(homedir(), '.ssh', 'launchbridge_ed25519');
-const APP_DIR = '/opt/unicorn-launch';
+const APP_DIR = '/opt/fifth-element';
 const PUBLIC_URL = process.env.STAND_PUBLIC_URL ?? 'https://5espace.com';
 
 /** Команда на сервере. Пустая строка вместо падения: недоступный стенд — тоже факт. */

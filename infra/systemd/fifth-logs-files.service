@@ -5,7 +5,7 @@ Description=5E logs: mail log generations
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/unicorn-launch
+WorkingDirectory=/opt/fifth-element
 Environment=LOGS_DOTENV=1
 ExecStart=/usr/bin/node scripts/logs-archive.mjs files
 TimeoutStartSec=10min

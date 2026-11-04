@@ -6,7 +6,7 @@
 ## Что не так (чтение VPS 2026-11-03)
 
 Юнит `unicorn-core` поставлен на VPS вручную 21.08 и пишет вывод ядра в
-`/opt/unicorn-launch/core.log` (`StandardOutput=append`):
+`/opt/fifth-element/core.log` (`StandardOutput=append`):
 
 - файл читают все пользователи сервера (права 644);
 - ротации нет, 13 МБ и растёт;
@@ -32,10 +32,10 @@
 | #   | Шаг                                                                                                                                                                   | Проверка                                                                                                             | Если не прошла                                  |
 | --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
 | 0   | Код с юнитом на VPS (выкладка); копия прежнего юнита: `cp /etc/systemd/system/unicorn-core.service /root/unicorn-core.service.bak-2026-11-03`                         | файл копии есть                                                                                                      | не начинать                                     |
-| 1   | Закрыть чтение сразу: `chmod 600 /opt/unicorn-launch/core.log`                                                                                                        | `stat -c %a` — 600; ядро пишет дальше (root)                                                                         | —                                               |
+| 1   | Закрыть чтение сразу: `chmod 600 /opt/fifth-element/core.log`                                                                                                        | `stat -c %a` — 600; ядро пишет дальше (root)                                                                         | —                                               |
 | 2   | `cp infra/systemd/unicorn-core.service /etc/systemd/system/`, `systemctl daemon-reload`, `systemctl restart unicorn-core`                                             | `/live`, `/ready`; маршруты сайта 200                                                                                | вернуть копию юнита, `daemon-reload`, `restart` |
 | 3   | Настоящий запрос: `curl -H 'X-Request-Id: <свой>' 'https://5espace.com/v1/health?probe=<случайное>'`                                                                  | `journalctl -u unicorn-core` — запись с этим ID и `"route":"/v1/health"`, значения `probe` нет; `core.log` не растёт | шаг 2 «если не прошла»                          |
-| 4   | Прежний файл — чувствительная история: `install -d -m 700 /root/sensitive-history`, `mv /opt/unicorn-launch/core.log /root/sensitive-history/core.log.1`, `chmod 600` | файла в каталоге приложения нет; в `/root/sensitive-history` — 600                                                   | —                                               |
+| 4   | Прежний файл — чувствительная история: `install -d -m 700 /root/sensitive-history`, `mv /opt/fifth-element/core.log /root/sensitive-history/core.log.1`, `chmod 600` | файла в каталоге приложения нет; в `/root/sensitive-history` — 600                                                   | —                                               |
 
 `core.log.1` — закрытое поколение: архиватор примет его как «покрыт целиком»
 и выгрузит в бакет истории вместе с остальной накопленной историей, когда

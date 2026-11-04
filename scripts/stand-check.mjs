@@ -79,21 +79,21 @@ if (names.length === 0) {
   bad('ни одного контейнера — Docker выключен или инфраструктура не поднята');
 } else {
   const wanted = [
-    'unicorn-postgres',
-    'unicorn-valkey',
-    'unicorn-nats',
-    'unicorn-garage-1',
-    'unicorn-garage-2',
-    'unicorn-garage-3',
+    'fifth-postgres',
+    'fifth-valkey',
+    'fifth-nats',
+    'fifth-garage-1',
+    'fifth-garage-2',
+    'fifth-garage-3',
   ];
   for (const want of wanted) {
     const row = names.find((n) => n.startsWith(want));
     if (row) ok(row.replace('\t', ' — '));
     else bad(`${want} не работает`);
   }
-  const web = names.find((n) => n.startsWith('unicorn-web'));
+  const web = names.find((n) => n.startsWith('fifth-web'));
   if (web) ok(web.replace('\t', ' — '));
-  else bad('unicorn-web не работает: единого адреса нет');
+  else bad('fifth-web не работает: единого адреса нет');
 }
 
 // -------------------------------------------------------- процессы хоста

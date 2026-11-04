@@ -46,7 +46,7 @@ const NO_VERIFY = process.argv.includes('--no-verify');
 
 const HOST = 'root@193.233.217.210';
 const KEY = resolve(homedir(), '.ssh', 'launchbridge_ed25519');
-const APP_DIR = '/opt/unicorn-launch';
+const APP_DIR = '/opt/fifth-element';
 // Адрес стенда — из окружения: смена домена не требует правки скрипта.
 const PUBLIC_URL = process.env.STAND_PUBLIC_URL ?? 'https://5espace.com';
 const ROUTES = ['/', '/login/', '/lab/', '/investor/', '/admin/', '/v1/health'];
@@ -201,12 +201,12 @@ const stamp = new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 const dump = `/root/backups/${database}_${stamp}.dump`;
 remote('mkdir -p /root/backups');
 remote(dumpCommand(database));
-remote(`docker cp unicorn-postgres:/tmp/deploy.dump ${dump}`);
+remote(`docker cp fifth-postgres:/tmp/deploy.dump ${dump}`);
 
 // Дамп без проверки — не страховка, а её видимость: битый файл ничем не
 // отличается от целого, пока не понадобится.
 const tables = remote(
-  `docker exec unicorn-postgres pg_restore --list /tmp/deploy.dump | grep -c 'TABLE DATA'`,
+  `docker exec fifth-postgres pg_restore --list /tmp/deploy.dump | grep -c 'TABLE DATA'`,
   { allowFail: true },
 );
 if (!tables || Number(tables) < 10) {

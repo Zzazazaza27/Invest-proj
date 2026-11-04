@@ -19,7 +19,7 @@
  *     запуска контейнера — снова 200.
  *
  * Нужны: собранный core, поднятый стенд (ядро на CORE_URL), контейнер
- * `unicorn-valkey`. Прогон останавливает Valkey на несколько секунд и
+ * `fifth-valkey`. Прогон останавливает Valkey на несколько секунд и
  * поднимает обратно при любом исходе; ключи прогона убирает.
  *
  * Запуск: node scripts/probe-valkey-counters.mjs
@@ -94,7 +94,7 @@ try {
 } catch (error) {
   check('прогон выполнен', false, error instanceof Error ? error.stack : String(error));
 } finally {
-  docker(['start', 'unicorn-valkey'], true);
+  docker(['start', 'fifth-valkey'], true);
   await waitValkey();
   const keys = await admin.keys(`${PREFIX}*`).catch(() => []);
   if (keys.length > 0) await admin.del(...keys).catch(() => undefined);
@@ -199,7 +199,7 @@ async function outageScenario() {
   console.warn('\n▸ Отказ Valkey на живом ядре');
   const before = await status(`${BASE}/v1/catalog`);
   check('до отказа ядро отвечает', before !== 0 && before < 500, `HTTP ${before}`);
-  docker(['stop', 'unicorn-valkey']);
+  docker(['stop', 'fifth-valkey']);
   await sleep(1_000);
   const plain = await status(`${BASE}/v1/catalog`);
   check('обычный запрос при отказе — 503, не обход', plain === 503, `HTTP ${plain}`);
@@ -209,7 +209,7 @@ async function outageScenario() {
     body: JSON.stringify({ email: 'probe@example.invalid', password: 'x'.repeat(12) }),
   });
   check('вход при отказе — 503, не обход', login === 503, `HTTP ${login}`);
-  docker(['start', 'unicorn-valkey']);
+  docker(['start', 'fifth-valkey']);
   await waitValkey();
   let back = 0;
   for (let attempt = 0; attempt < 20 && (back === 0 || back >= 500); attempt += 1) {

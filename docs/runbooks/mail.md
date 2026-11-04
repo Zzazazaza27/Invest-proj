@@ -60,7 +60,7 @@ node scripts/probe-mail-readiness.mjs --domain <домен> --ip 193.233.217.210
 её результат ничего не говорит о сервере.
 
 ```bash
-ssh root@193.233.217.210 'cd /opt/unicorn-launch && git pull --ff-only &&   node scripts/probe-mail-readiness.mjs --domain <домен> --ip 193.233.217.210   --relay smtp.timeweb.ru:2525 --outbound'
+ssh root@193.233.217.210 'cd /opt/fifth-element && git pull --ff-only &&   node scripts/probe-mail-readiness.mjs --domain <домен> --ip 193.233.217.210   --relay smtp.timeweb.ru:2525 --outbound'
 ```
 
 Проверка содержательная: направление считается рабочим, только когда сервер
@@ -165,7 +165,7 @@ node scripts/smoke-mail-smtp.mjs      # 17 проверок
 ## Чего этот раннбук не закрывает
 
 - **HestiaCP не установлена** (задача ТЗ №1). Её установщик занимает 80/443 и
-  8080, а они заняты Caddy и `unicorn-web`; без `--force` установщик удаляет
+  8080, а они заняты Caddy и `fifth-web`; без `--force` установщик удаляет
   ufw или прерывается. Решение за владельцем.
 - **Приём почты платформой** (IMAP, ящики сотрудников) — это функция
   провайдера или панели, а не приложения: платформа письма только отправляет.

@@ -117,7 +117,7 @@ NODE_ENV=test npm run db:migrate
 прогоны делят одно окно. `security-audit-full.mjs` выдерживает паузы сам.
 Счётчик теперь общий (Valkey), поэтому перезапуск ядра окно НЕ обнуляет —
 сбросить вёдра локально можно только руками:
-`docker exec unicorn-valkey valkey-cli -a "$REDIS_PASSWORD" FLUSHDB`.
+`docker exec fifth-valkey valkey-cli -a "$REDIS_PASSWORD" FLUSHDB`.
 
 Запуск ядра и живая проверка:
 

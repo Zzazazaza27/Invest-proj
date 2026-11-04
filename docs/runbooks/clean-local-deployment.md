@@ -7,7 +7,7 @@
 нуля, все проверки зелёные).
 
 **Область.** Только локальные базы проекта `fifth_element` и `fifth_element_test`
-на `localhost:5433` (контейнер `unicorn-postgres`) и бакет `unicorn-launch`
+на `localhost:5433` (контейнер `fifth-postgres`) и бакет `unicorn-launch`
 локального MinIO. Базы `postgres` и `keycloak`, роли, расширения, секреты,
 конфигурация подключения и удалённый стенд **не трогаются**. Если строка
 подключения указывает не на localhost или ведёт в другую базу — скрипт
@@ -104,7 +104,7 @@ npm run dev -w apps/admin     # админка            → http://127.0.0.1:5
 
 ```bash
 export MC_HOST_local="http://$MINIO_ROOT_USER:$MINIO_ROOT_PASSWORD@127.0.0.1:9000"
-docker exec -e MC_HOST_local="$MC_HOST_local" unicorn-minio \
+docker exec -e MC_HOST_local="$MC_HOST_local" fifth-minio \
   sh -lc 'mc ls --recursive local/unicorn-launch | wc -l;
           mc rm --recursive --force local/unicorn-launch/projects/;
           mc rm --recursive --force local/unicorn-launch/investments/'

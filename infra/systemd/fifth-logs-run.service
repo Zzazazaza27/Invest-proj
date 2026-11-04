@@ -9,7 +9,7 @@ Wants=docker.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/unicorn-launch
+WorkingDirectory=/opt/fifth-element
 Environment=LOGS_DOTENV=1
 ExecStart=/usr/bin/node scripts/logs-archive.mjs run
 TimeoutStartSec=50

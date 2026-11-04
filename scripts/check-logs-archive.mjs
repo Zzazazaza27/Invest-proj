@@ -80,7 +80,7 @@ const ROOT_KEY = gk();
 const ROOT_SECRET = gsec();
 const LKEY = randomBytes(32).toString('hex');
 const IMAGE = 'fifth/journald-testbed:local';
-const NETWORK = 'unicorn-launch_default';
+const NETWORK = 'fifth_default';
 
 const root = {
   endpoint: `http://127.0.0.1:${PORTS.garageS3}`,
@@ -113,7 +113,7 @@ function sh(cmd, args, { env = {}, allowFail = false, input } = {}) {
 }
 
 const ARCH_ENV = {
-  LOGS_S3_ENDPOINT: 'http://unicorn-garage-1:3900',
+  LOGS_S3_ENDPOINT: 'http://fifth-garage-1:3900',
   LOGS_S3_REGION: process.env.S3_REGION || 'us-east-1',
   LOGS_S3_BUCKET: BUCKET,
   LOGS_S3_ACCESS_KEY_ID: USER,

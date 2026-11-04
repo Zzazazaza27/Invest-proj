@@ -103,7 +103,7 @@ export const RENAMED_DATABASES = {
 const ENV_BACKUP = '.env.before-db-rename';
 const PSQL =
   "PGPASSWORD=$(grep -m1 '^POSTGRES_PASSWORD=' .env | cut -d= -f2-) " +
-  'docker exec -e PGPASSWORD unicorn-postgres psql -U unicorn_owner -d postgres -v ON_ERROR_STOP=1 -tA';
+  'docker exec -e PGPASSWORD fifth-postgres psql -U unicorn_owner -d postgres -v ON_ERROR_STOP=1 -tA';
 
 /** Имена баз во всех `DATABASE_URL*` из `.env` сервера. */
 function envDatabaseNames(ops) {
@@ -151,7 +151,7 @@ function alterDatabaseName(ops, from, to) {
 export function dumpCommand(database) {
   return (
     `PGPASSWORD=$(grep -m1 '^POSTGRES_PASSWORD=' .env | cut -d= -f2-) ` +
-    `docker exec -e PGPASSWORD -i unicorn-postgres pg_dump -U unicorn_owner ` +
+    `docker exec -e PGPASSWORD -i fifth-postgres pg_dump -U unicorn_owner ` +
     `-d ${database} --format=custom -f /tmp/deploy.dump`
   );
 }
@@ -344,10 +344,10 @@ export function runRelease({ ops, before, head, publicUrl, routes }) {
     // nginx же читает конфигурацию только при старте. Без явного reload новый
     // console.conf приехал бы файлом, но не применился: ровно так 2026-09-13
     // консоль осталась открытой при обновлённом коде.
-    const confOk = remote('docker exec unicorn-web nginx -t', { allowFail: true });
+    const confOk = remote('docker exec fifth-web nginx -t', { allowFail: true });
     if (confOk === null)
       throw new Error('конфигурация nginx не проходит проверку — reload отменён');
-    remote('docker exec unicorn-web nginx -s reload');
+    remote('docker exec fifth-web nginx -s reload');
     log.ok('ядро и прокси подняты, конфигурация nginx перечитана');
 
     log.step('Проверка снаружи');

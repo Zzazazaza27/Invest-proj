@@ -1,7 +1,7 @@
 # Вход файлов: files.5espace.com (блок 4, «Вход и файлы MVP»; работа 2.1-W06).
 #
 # Подключается в /etc/caddy/Caddyfile строкой
-#   import /opt/unicorn-launch/infra/caddy/files.caddy
+#   import /opt/fifth-element/infra/caddy/files.caddy
 # и требует общего предела передачи в глобальных настройках (там же, первым
 # блоком файла) — см. docs/runbooks/files-endpoint.md:
 #   { servers { timeouts { read_body 90m } } }

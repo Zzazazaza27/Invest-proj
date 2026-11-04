@@ -19,7 +19,7 @@
  *   Пригодным комплект становится только после проверки всех частей — файл
  *   READY; команда скачивания берёт только такие.
  *
- * Инструменты (pgBackRest, rclone, gpg) — из образа базы `unicorn/postgres:16`:
+ * Инструменты (pgBackRest, rclone, gpg) — из образа базы `fifth/postgres:16`:
  * одна версия и на сервере, и на площадке проверки.
  *
  * Секреты не печатаются: в контейнеры уходят переменными окружения процесса
@@ -45,8 +45,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-export const TOOL_IMAGE = 'unicorn/postgres:16';
-export const PG_CONTAINER = 'unicorn-postgres';
+export const TOOL_IMAGE = 'fifth/postgres:16';
+export const PG_CONTAINER = 'fifth-postgres';
 
 // ----------------------------------------------------------------- окружение
 

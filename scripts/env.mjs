@@ -32,7 +32,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
 const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
-const STORAGE_NETWORK = process.env.FIFTH_STORAGE_NETWORK || 'unicorn-launch_default';
+const STORAGE_NETWORK = process.env.FIFTH_STORAGE_NETWORK || 'fifth_default';
 const STORAGE_ENDPOINT = process.env.FIFTH_STORAGE_ENDPOINT || 'http://garage-1:3900';
 const STORAGE_ENDPOINT_HOST =
   process.env.FIFTH_STORAGE_ENDPOINT_HOST ||

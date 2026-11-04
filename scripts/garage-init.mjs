@@ -34,7 +34,7 @@ const keysFile = applyKeysFile(process.argv, parseEnvFile);
 if (keysFile) console.log(`ключи Garage — из ${keysFile}; рабочий .env для них не используется`);
 const env = process.env;
 const TOKEN = env.GARAGE_ADMIN_TOKEN;
-const NODES = (env.GARAGE_NODES || 'unicorn-garage-1,unicorn-garage-2,unicorn-garage-3')
+const NODES = (env.GARAGE_NODES || 'fifth-garage-1,fifth-garage-2,fifth-garage-3')
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);

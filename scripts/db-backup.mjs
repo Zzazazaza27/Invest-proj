@@ -84,7 +84,7 @@ const owner = new URL(OWNER_URL);
 const ownerUser = owner.username;
 const ownerPassword = decodeURIComponent(owner.password);
 const database = owner.pathname.replace(/^\//, '') || 'fifth_element';
-const CONTAINER = process.env.POSTGRES_CONTAINER ?? 'unicorn-postgres';
+const CONTAINER = process.env.POSTGRES_CONTAINER ?? 'fifth-postgres';
 
 const stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+$/, '');
 const name = label ? `${stamp}-${label}.dump` : `${stamp}.dump`;

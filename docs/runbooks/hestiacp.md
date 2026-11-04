@@ -140,7 +140,7 @@ node scripts/probe-mail-readiness.mjs --domain vgorkakh.ru --ip 193.233.217.210 
   --relay mail.vgorkakh.ru:587 --direct
 
 # исходящие порты с самого сервера
-ssh -i .ssh/SERG root@193.233.217.210 'cd /opt/unicorn-launch && \
+ssh -i .ssh/SERG root@193.233.217.210 'cd /opt/fifth-element && \
   node scripts/probe-mail-readiness.mjs --domain vgorkakh.ru --outbound'
 
 # настоящая отправка через свой сервер

@@ -1255,7 +1255,7 @@ async function controlInit() {
       [
         'exec',
         '-i',
-        'unicorn-postgres',
+        'fifth-postgres',
         'psql',
         '-X',
         '-v',

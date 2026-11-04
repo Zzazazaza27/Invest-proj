@@ -1836,7 +1836,7 @@ async function legacySnapshot() {
  * обещается. Повтор с тем же описанием — без изменений, с другим —
  * конфликт.
  *
- *   LOGS_GAP_SOURCE=docker:unicorn-postgres LOGS_GAP_UNTIL=<ISO> \
+ *   LOGS_GAP_SOURCE=docker:fifth-postgres LOGS_GAP_UNTIL=<ISO> \
  *   LOGS_GAP_REASON='…' node scripts/logs-archive.mjs legacy-gap
  */
 async function legacyGap() {

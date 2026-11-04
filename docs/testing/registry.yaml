@@ -1059,7 +1059,7 @@ checks:
     effects:
       [
         'свои ключи probe-valkey:* в Valkey, убирает в finally',
-        'рвёт соединения Valkey и останавливает контейнер unicorn-valkey на несколько секунд',
+        'рвёт соединения Valkey и останавливает контейнер fifth-valkey на несколько секунд',
       ]
     studied: code
     studiedOn: 2026-10-29
@@ -2587,6 +2587,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-04
 
+  - id: TOOL-RENAME-STAND
+    file: scripts/rename-stand.mjs
+    command: node scripts/rename-stand.mjs copy|back
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects: ['копирует тома прежнего проекта Compose в новый; прежние тома не меняет']
+    studied: code
+    studiedOn: 2026-11-04
+    note: >-
+      Переход W09d. Репетиция на локальном стенде 04.11: 11 томов, данные и Garage на месте.
+    purpose: 'Docker не переименовывает тома; данные сохраняются копией со сверкой.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-04
+
   - id: TOOL-ENV
     file: scripts/env.mjs
     command: node scripts/env.mjs create|status|stop|start|seed|destroy <среда>
@@ -2980,7 +2997,7 @@ checks:
     needs: [docker, s3]
     effects:
       [
-        'временный контейнер с systemd-journald и своим Docker Engine (infra/testbed/journald-docker.Dockerfile), каталог /opt/unicorn-launch как на VPS со своим .env; бакеты и учётки — шаг стенда minio-init; временный контейнер Caddy; в конце бакеты, учётки и политики fifth-logs-* удаляются',
+        'временный контейнер с systemd-journald и своим Docker Engine (infra/testbed/journald-docker.Dockerfile), каталог /opt/fifth-element как на VPS со своим .env; бакеты и учётки — шаг стенда minio-init; временный контейнер Caddy; в конце бакеты, учётки и политики fifth-logs-* удаляются',
       ]
     studied: code
     studiedOn: 2026-11-03

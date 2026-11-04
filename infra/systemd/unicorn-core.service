@@ -8,7 +8,7 @@
 #
 # Вывод — в journald (2.1-W08b): журнал запросов ядра идёт в общий поток,
 # оттуда в архив и поиск (`--source unicorn-core.service`). До 03.11.2026 юнит
-# стоял на VPS вручную и писал в /opt/unicorn-launch/core.log (без ротации,
+# стоял на VPS вручную и писал в /opt/fifth-element/core.log (без ротации,
 # чтение всем) — порядок перехода: docs/runbooks/core-journal.md.
 [Unit]
 Description=UNICORN LAUNCH — ядро (core)
@@ -18,8 +18,8 @@ Requires=docker.service
 
 [Service]
 Type=simple
-WorkingDirectory=/opt/unicorn-launch
-ExecStart=/usr/bin/node /opt/unicorn-launch/scripts/dev-core.mjs
+WorkingDirectory=/opt/fifth-element
+ExecStart=/usr/bin/node /opt/fifth-element/scripts/dev-core.mjs
 Restart=always
 RestartSec=5
 # Ядро не поднимется, пока postgres/redis/nats не готовы, — отсюда запас

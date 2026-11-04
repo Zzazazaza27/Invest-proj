@@ -3,7 +3,7 @@
 #
 # Подключается в /etc/caddy/Caddyfile ПЕРВЫМ импортом, сразу после
 # глобальных настроек (сниппет должен быть объявлен до использования):
-#   import /opt/unicorn-launch/infra/caddy/access-log.caddy
+#   import /opt/fifth-element/infra/caddy/access-log.caddy
 # и строкой `import fifth_access_log` в каждом блоке сайта Caddyfile.
 # files.caddy содержит тот же блок вписанным (он приезжает выкладкой раньше
 # правки Caddyfile); испытание сверяет, что блоки одинаковы.

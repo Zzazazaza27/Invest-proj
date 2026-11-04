@@ -932,7 +932,7 @@ Favicon `packages/ui/public/favicon.svg` текста не содержит.
 `https://5espace.com/problems` (`packages/contracts/src/common/problem.ts:63`,
 `apps/core/src/main.ts:274`, `cache/ip-ceiling.ts:83,97`); БД `unicorn_launch`,
 роль `unicorn_owner`, бакет `unicorn-launch` (`.env.example:71-100,152`); realm
-и clientId (`realm-launch.json:2,28`); каталог `/opt/unicorn-launch`
+и clientId (`realm-launch.json:2,28`); каталог `/opt/fifth-element`
 (`scripts/deploy.mjs:38`).
 
 ### 9.9. Документация и скрипты

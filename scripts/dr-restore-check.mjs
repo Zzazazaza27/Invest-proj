@@ -57,7 +57,7 @@ function loadDotEnv() {
   }
 }
 
-const CONTAINER = process.env.POSTGRES_CONTAINER ?? 'unicorn-postgres';
+const CONTAINER = process.env.POSTGRES_CONTAINER ?? 'fifth-postgres';
 const SOURCE_DB = 'fifth_element';
 const RESTORE_DB = `fifth_element_restore_check`;
 const OWNER_URL = process.env.DATABASE_URL_OWNER;

@@ -8,7 +8,7 @@
 #
 # Все порты биндятся ТОЛЬКО на 127.0.0.1 — контейнеры не торчат в сеть.
 
-name: unicorn-launch
+name: fifth
 
 services:
   # Единая точка входа: витрина, кабинеты и API на одном адресе без портов.
@@ -21,7 +21,7 @@ services:
   # прокси не нужен, и поднимать его при каждом `infra:up` незачем.
   web:
     image: nginx:1.27-alpine
-    container_name: unicorn-web
+    container_name: fifth-web
     restart: unless-stopped
     profiles: ['web']
     ports:
@@ -75,7 +75,7 @@ services:
   # контейнер. Конфигурацию работающего nginx править не пришлось.
   web-test:
     image: nginx:1.27-alpine
-    container_name: unicorn-web-test
+    container_name: fifth-web-test
     profiles: ['testing']
     restart: 'no'
     ports:
@@ -100,8 +100,8 @@ services:
     build:
       context: ./postgres
       dockerfile: Dockerfile
-    image: unicorn/postgres:16
-    container_name: unicorn-postgres
+    image: fifth/postgres:16
+    container_name: fifth-postgres
     restart: unless-stopped
     # tini процессом №1 (2.1-W07). Без него фоновый процесс асинхронного
     # архива pgBackRest после отсоединения доставался PostgreSQL как дочерний,
@@ -213,7 +213,7 @@ services:
   # Данные — только временные счётчики: новый том, перенос не нужен.
   valkey:
     image: valkey/valkey:8.1.11
-    container_name: unicorn-valkey
+    container_name: fifth-valkey
     restart: unless-stopped
     command:
       - valkey-server
@@ -237,7 +237,7 @@ services:
 
   nats:
     image: nats:2.10-alpine
-    container_name: unicorn-nats
+    container_name: fifth-nats
     restart: unless-stopped
     command:
       - '-js'
@@ -272,7 +272,7 @@ services:
   # устойчивости и поднимается ими же.
   nats-test:
     image: nats:2.10-alpine
-    container_name: unicorn-nats-test
+    container_name: fifth-nats-test
     profiles: ['testing']
     restart: 'no'
     command:
@@ -304,7 +304,7 @@ services:
   # scripts/garage-init.mjs. Образ закреплён дайджестом (v2.4.1).
   garage-1: &garage
     image: dxflrs/garage:v2.4.1@sha256:9c96caa2612d3411acc5b0e6701fb238dbfba33e533a6d7d3d811a4b12d0d020
-    container_name: unicorn-garage-1
+    container_name: fifth-garage-1
     restart: unless-stopped
     command: ['/garage', 'server']
     environment:
@@ -328,7 +328,7 @@ services:
 
   garage-2:
     <<: *garage
-    container_name: unicorn-garage-2
+    container_name: fifth-garage-2
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage2meta:/var/lib/garage/meta
@@ -337,7 +337,7 @@ services:
 
   garage-3:
     <<: *garage
-    container_name: unicorn-garage-3
+    container_name: fifth-garage-3
     volumes:
       - ./garage/garage.toml:/etc/garage.toml:ro
       - garage3meta:/var/lib/garage/meta
@@ -350,8 +350,8 @@ services:
   # проверено фактом (Keycloak падал с «password authentication failed for user
   # keycloak»). Идемпотентно: повторный запуск обновляет пароль той же роли.
   keycloak-db-init:
-    image: unicorn/postgres:16
-    container_name: unicorn-keycloak-db-init
+    image: fifth/postgres:16
+    container_name: fifth-keycloak-db-init
     depends_on:
       postgres:
         condition: service_healthy
@@ -389,7 +389,7 @@ services:
   # подписи живут в БД Keycloak, а не в fifth_element.
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
-    container_name: unicorn-keycloak
+    container_name: fifth-keycloak
     restart: unless-stopped
     command: ['start-dev', '--import-realm', '--http-port=8080']
     environment:
@@ -420,7 +420,7 @@ services:
 
   mailpit:
     image: axllent/mailpit:v1.21
-    container_name: unicorn-mailpit
+    container_name: fifth-mailpit
     restart: unless-stopped
     ports:
       - '127.0.0.1:${SMTP_PORT:-1025}:1025'
@@ -435,8 +435,8 @@ services:
   # роль в том же PostgreSQL: попадает в копии W07. Наружу не публикуется
   # ничего: веб и приём от агента — только на петле узла.
   zabbix-db-init:
-    image: unicorn/postgres:16
-    container_name: unicorn-zabbix-db-init
+    image: fifth/postgres:16
+    container_name: fifth-zabbix-db-init
     profiles: ['monitoring']
     depends_on:
       postgres:
@@ -479,7 +479,7 @@ services:
   # разрешены только сети Docker (веб-интерфейс).
   zabbix-server: &zabbix-server
     image: zabbix/zabbix-server-pgsql:alpine-7.0.31
-    container_name: unicorn-zabbix-server
+    container_name: fifth-zabbix-server
     profiles: ['monitoring-local']
     restart: unless-stopped
     depends_on:
@@ -524,7 +524,7 @@ services:
 
   zabbix-web:
     image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.31
-    container_name: unicorn-zabbix-web
+    container_name: fifth-zabbix-web
     profiles: ['monitoring']
     restart: unless-stopped
     depends_on:
@@ -553,7 +553,7 @@ services:
 
   zabbix-agent2: &zabbix-agent
     image: zabbix/zabbix-agent2:alpine-7.0.31
-    container_name: unicorn-zabbix-agent
+    container_name: fifth-zabbix-agent
     profiles: ['monitoring-local']
     restart: unless-stopped
     depends_on:
@@ -578,7 +578,7 @@ services:
 
   zabbix-agent2-host:
     <<: *zabbix-agent
-    container_name: unicorn-zabbix-agent-host
+    container_name: fifth-zabbix-agent-host
     profiles: ['monitoring-host']
     network_mode: host
     depends_on:

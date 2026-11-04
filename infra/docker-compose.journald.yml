@@ -9,7 +9,7 @@
 # не подключается: Docker Desktop journald не поддерживает.
 #
 # Записи контейнера в journald несут CONTAINER_NAME — по нему их видят архив
-# и поиск (`find --source unicorn-postgres`).
+# и поиск (`find --source fifth-postgres`).
 
 x-journald: &journald
   logging:

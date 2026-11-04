@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 180; требований: 41
+- Проверок: 181; требований: 41
 
 ## Что защищено без участия человека
 
@@ -310,6 +310,7 @@
 | TOOL-VITE-BUILD | `node scripts/vite-build.mjs` | 0 | вручную, по поводу | — |
 | TOOL-KIT | `node scripts/kit.mjs manifest|fetch|pack|load|check --build <номер>` | 0 | вручную, по поводу | — |
 | TOOL-RELEASE | `node scripts/release.mjs install|verify|replay|recover <среда>` | 0 | вручную, по поводу | — |
+| TOOL-RENAME-STAND | `node scripts/rename-stand.mjs copy|back` | 0 | вручную, по поводу | — |
 | TOOL-ENV | `node scripts/env.mjs create|status|stop|start|seed|destroy <среда>` | 0 | вручную, по поводу | — |
 | TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export|legacy-snapshot|legacy-gap|secrets-draft --to <файл>` | 0 | вручную, по поводу | — |
 | TOOL-GARAGE-INIT | `node scripts/garage-init.mjs [--status]` | 0 | вручную, по поводу | — |

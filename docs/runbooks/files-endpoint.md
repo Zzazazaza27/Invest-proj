@@ -20,7 +20,7 @@
 
 ## Шаги на сервере
 
-1. Копия: `cp -p /opt/unicorn-launch/.env /root/backups/env-before-w06-<время>`,
+1. Копия: `cp -p /opt/fifth-element/.env /root/backups/env-before-w06-<время>`,
    `cp -p /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak-<дата>`.
 2. `.env` ядра — дописать:
    - `S3_PUBLIC_ENDPOINT=https://files.5espace.com`
@@ -31,7 +31,7 @@
 4. Caddyfile:
    - первым блоком файла — глобальные настройки:
      `{ servers { timeouts { read_body 90m } } }`;
-   - в конце — `import /opt/unicorn-launch/infra/caddy/files.caddy`;
+   - в конце — `import /opt/fifth-element/infra/caddy/files.caddy`;
    - `caddy validate --config /etc/caddy/Caddyfile`, затем
      `systemctl reload caddy`. Сертификат для `files` Caddy получит сам.
 5. `systemctl restart unicorn-core`, health — 200.

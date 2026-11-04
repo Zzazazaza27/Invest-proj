@@ -113,7 +113,7 @@ const alter = spawnSync(
   [
     'exec',
     '-i',
-    'unicorn-postgres',
+    'fifth-postgres',
     'sh',
     '-c',
     'PGPASSWORD="$POSTGRES_PASSWORD" psql -v ON_ERROR_STOP=1 -U unicorn_owner -d fifth_element -f -',

@@ -111,7 +111,7 @@ docker run --rm drwetter/testssl.sh --quiet --color 0 https://api.5espace.test
 production вместе с образом.
 
 ```bash
-docker exec -e PGPASSWORD=<пароль> unicorn-postgres \
+docker exec -e PGPASSWORD=<пароль> fifth-postgres \
   psql -U unicorn_owner -d fifth_element -c "SELECT 1"
 ```
 

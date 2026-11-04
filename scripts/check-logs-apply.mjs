@@ -5,7 +5,7 @@
  *
  * Контейнер с systemd, journald и своим Docker Engine
  * (infra/testbed/journald-docker.Dockerfile) в сети стенда; каталог
- * `/opt/unicorn-launch` как на VPS (scripts и infra из репозитория, свой
+ * `/opt/fifth-element` как на VPS (scripts и infra из репозитория, свой
  * `.env` с LOGS_*); бакеты и ключи заводит настоящий шаг garage-init (Garage, D-001).
  *   U. юниты fifth-logs-* из infra/systemd: окружение из .env, проход,
  *      файлы почты, пакеты, таймеры; занятая блокировка — пропуск, не отказ;
@@ -40,8 +40,8 @@ const tag = randomBytes(3).toString('hex');
 const CT = `jap-${tag}`;
 const BASE_IMAGE = 'fifth/journald-testbed:local';
 const IMAGE = 'fifth/journald-docker-testbed:local';
-const NETWORK = 'unicorn-launch_default';
-const APP = '/opt/unicorn-launch';
+const NETWORK = 'fifth_default';
+const APP = '/opt/fifth-element';
 const STATE = '/var/lib/fifth-logs';
 const ALPINE = 'alpine:3.20';
 const CADDY = 'caddy:2.11.4';
@@ -52,7 +52,7 @@ const gk = () => `GK${randomBytes(12).toString('hex')}`;
 const ROOT_KEY = gk();
 const ROOT_SECRET = secret();
 const E = {
-  LOGS_S3_ENDPOINT: 'http://unicorn-garage-1:3900',
+  LOGS_S3_ENDPOINT: 'http://fifth-garage-1:3900',
   LOGS_S3_REGION: process.env.S3_REGION || 'us-east-1',
   LOGS_S3_BUCKET: `tech-logs-apply-${tag}`,
   LOGS_S3_ACCESS_KEY_ID: gk(),
@@ -104,7 +104,7 @@ const inCt = (script, opts = {}) => sh('docker', ['exec', CT, 'sh', '-c', script
 const last = (out) => out.trim().split('\n').at(-1);
 const line = (out, re) => out.split('\n').find((l) => re.test(l)) ?? last(out);
 
-/** Архиватор как на VPS: из /opt/unicorn-launch, окружение из .env. */
+/** Архиватор как на VPS: из /opt/fifth-element, окружение из .env. */
 function arch(command, extra = {}, args = []) {
   const env = { LOGS_DOTENV: '1', ...extra };
   const r = sh(
@@ -238,10 +238,10 @@ try {
     .split(/\r?\n/)
     .filter((l) => !/^\s*(LOGS_|DOCKER_LOG_DRIVER)/.test(l))
     .join('\n')
-    .replace(/(localhost|127\.0\.0\.1):5433/g, 'unicorn-postgres:5432')
-    .replace(/(localhost|127\.0\.0\.1):6380/g, 'unicorn-valkey:6379')
-    .replace(/(localhost|127\.0\.0\.1):4222/g, 'unicorn-nats:4222')
-    .replace(/(localhost|127\.0\.0\.1):9000/g, 'unicorn-garage-1:3900');
+    .replace(/(localhost|127\.0\.0\.1):5433/g, 'fifth-postgres:5432')
+    .replace(/(localhost|127\.0\.0\.1):6380/g, 'fifth-valkey:6379')
+    .replace(/(localhost|127\.0\.0\.1):4222/g, 'fifth-nats:4222')
+    .replace(/(localhost|127\.0\.0\.1):9000/g, 'fifth-garage-1:3900');
   sh('docker', ['exec', '-i', CT, 'sh', '-c', `cat > ${APP}/.env && chmod 600 ${APP}/.env`], {
     input: `${Object.entries(E)
       .map(([k, v]) => `${k}=${v}`)
@@ -593,7 +593,7 @@ try {
   // ---------------------------------------------------------- G
   console.log('\n▸ G. Известный пробел в итоговом покрытии');
   const GAP = {
-    LOGS_GAP_SOURCE: 'docker:unicorn-postgres',
+    LOGS_GAP_SOURCE: 'docker:fifth-postgres',
     LOGS_GAP_UNTIL: '2026-11-02T20:07:17Z',
     LOGS_GAP_REASON: 'журнал json-file удалён пересозданием контейнера 02.11 (правка секретов)',
   };
@@ -607,7 +607,7 @@ try {
   const gr = arch('legacy-export', LEG);
   check(
     'итоговое покрытие называет пробел, восстановления не обещает',
-    gr.out.includes('известный пробел: docker:unicorn-postgres до 2026-11-02T20:07:17Z') &&
+    gr.out.includes('известный пробел: docker:fifth-postgres до 2026-11-02T20:07:17Z') &&
       gr.out.includes('восстановление не обещается') &&
       /ИТОГ: .*известных пробелов до выгрузки: 1/.test(gr.out),
     line(gr.out, /^ИТОГ/),

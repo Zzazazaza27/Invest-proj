@@ -26,11 +26,11 @@
 ### Контейнеры
 
 ```
-unicorn-web Up 7 hours (healthy)
-unicorn-redis Up 7 hours (healthy)
-unicorn-postgres Up 7 hours (healthy)
-unicorn-nats Up 7 hours (healthy)
-unicorn-minio Up 7 hours (healthy)
+fifth-web Up 7 hours (healthy)
+fifth-redis Up 7 hours (healthy)
+fifth-postgres Up 7 hours (healthy)
+fifth-nats Up 7 hours (healthy)
+fifth-minio Up 7 hours (healthy)
 ```
 
 ## Локальная копия

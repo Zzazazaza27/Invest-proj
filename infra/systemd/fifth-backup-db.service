@@ -7,7 +7,7 @@ Wants=docker.service
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/unicorn-launch
+WorkingDirectory=/opt/fifth-element
 ExecStart=/usr/bin/node scripts/backup.mjs db
 Nice=10
 IOSchedulingClass=idle
