@@ -7,8 +7,19 @@
  * Два комплекта из локальных образов (второй отличается меткой), среды test-73 и
  * test-74. Комплекты и среды создаются и удаляются прогоном.
  */
-import { spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  writeFileSync,
+  writeSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,13 +27,21 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fromArg = process.argv.indexOf('--from');
 const FROM = fromArg > 0 ? process.argv[fromArg + 1] : 'dev';
-const KITS = mkdtempSync(join(tmpdir(), 'fifth-kits-'));
+// Каталог постоянный и вне системного диска: оборванный прогон оставит в нём почти
+// 2 ГБ, и следующий запуск уберёт их сам. Временные каталоги копились бы на C:.
+const KITS = join(ROOT, '.local', 'check-release-kits');
+const LOCK = join(ROOT, '.local', 'check-release.lock');
+const MAX_RSS_MB = 300;
 const ENVS = join(ROOT, '.local', 'envs');
 const A = 'test-73';
 const B = 'test-74';
 const K1 = '2.1-b9001.1';
 const K2 = '2.1-b9002.1';
 const K3 = '2.1-b9002.2';
+const K4 = '2.1-b9003.1';
+const K5 = '2.1-b9004.1';
+const REPO_COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
+const MARK = '      W09_MARK: changed\n';
 const env0 = { ...process.env, MSYS_NO_PATHCONV: '1', FIFTH_KITS_DIR: KITS };
 
 let passed = 0;
@@ -82,6 +101,33 @@ function cleanup() {
   }
 }
 
+/** Два прогона разом удваивают нагрузку и мешают друг другу в одних средах. */
+function takeLock() {
+  if (existsSync(LOCK)) {
+    const pid = Number(readFileSync(LOCK, 'utf8'));
+    let alive = false;
+    try {
+      process.kill(pid, 0);
+      alive = true;
+    } catch {
+      /* прогон оборван, блокировка устарела */
+    }
+    if (alive) {
+      console.error(`прогон уже идёт, процесс ${pid}`);
+      process.exit(2);
+    }
+  }
+  writeFileSync(LOCK, String(process.pid));
+  process.on('exit', () => rmSync(LOCK, { force: true }));
+}
+
+takeLock();
+// Оборванный прогон мог оставить метку в рабочей копии Compose.
+const composeOriginal = Buffer.from(readFileSync(REPO_COMPOSE, 'utf8').replace(MARK, ''));
+writeFileSync(REPO_COMPOSE, composeOriginal);
+rmSync(KITS, { recursive: true, force: true });
+mkdirSync(KITS, { recursive: true });
+
 console.log('=== КОМПЛЕКТ, БЛОКИРОВКА, РЕЕСТР ===');
 cleanup();
 try {
@@ -116,26 +162,54 @@ try {
   const p1b = kit('pack', '--build', K1, '--from', FROM);
   check('комплект 1 снова в хранилище', p1b.code === 0, p1b.out.slice(0, 100));
   const tarFile = join(KITS, K1, 'images.tar');
-  const tar = readFileSync(tarFile);
-  writeFileSync(
-    tarFile,
-    Buffer.concat([tar.subarray(0, 4096), Buffer.from('x'), tar.subarray(4097)]),
-  );
+  // Один байт на месте: архив весит почти гигабайт, целиком его не читаем.
+  const flipByte = () => {
+    const fd = openSync(tarFile, 'r+');
+    const byte = Buffer.alloc(1);
+    readSync(fd, byte, 0, 1, 4096);
+    byte[0] ^= 0xff;
+    writeSync(fd, byte, 0, 1, 4096);
+    closeSync(fd);
+  };
+  flipByte();
   const bad = kit('check', '--build', K1);
   check('порча копии образов обнаружена', bad.code === 1, bad.json?.error);
-  writeFileSync(tarFile, tar);
+  flipByte();
   check('целая копия проходит проверку', kit('check', '--build', K1).code === 0);
+
+  console.log('\n▸ Файл запуска внутри комплекта');
+  check('файл запуска лежит в комплекте', existsSync(join(KITS, K1, 'compose.yml')));
+  const kitCompose = join(KITS, K1, 'compose.yml');
+  const kitComposeText = readFileSync(kitCompose);
+  writeFileSync(kitCompose, Buffer.concat([kitComposeText, Buffer.from('# подмена\n')]));
+  const tampered = kit('check', '--build', K1);
+  check('подмена файла запуска обнаружена', tampered.code === 1, tampered.json?.error);
+  writeFileSync(kitCompose, kitComposeText);
+  // Рабочая копия меняется после создания комплектов: установка её не должна видеть.
+  writeFileSync(
+    REPO_COMPOSE,
+    composeOriginal
+      .toString('utf8')
+      .replace('      CORE_HOST: core\n', `      CORE_HOST: core\n${MARK}`),
+  );
+  const webEnv = (id) =>
+    docker('inspect', `fifth-${id}-web`, '--format', '{{json .Config.Env}}').out;
 
   console.log('\n▸ Установка и реестр');
   const ca = env('create', A, '--kit', FROM, '--web-port', '18173');
   check('среда A создана', ca.code === 0, ca.out.slice(0, 120));
   const cb = env('create', B, '--kit', FROM, '--web-port', '18174');
   check('среда B создана', cb.code === 0, cb.out.slice(0, 120));
+  check('контроль: рабочая копия изменена и видна без комплекта', webEnv(A).includes('W09_MARK'));
   const i1 = install(A, K1, 'none');
   check(
     'выпуск 1 подтверждён фактической сверкой',
     i1.code === 0 && i1.json?.confirmed === 3 && i1.json?.total === 3,
     i1.out.slice(0, 160),
+  );
+  check(
+    'установка взяла файл запуска из комплекта, а не из рабочей копии',
+    !webEnv(A).includes('W09_MARK'),
   );
   const i1b = install(B, K1, 'none');
   check('тот же комплект в другую среду без пересборки', i1b.code === 0, i1b.out.slice(0, 120));
@@ -178,7 +252,7 @@ try {
     '--env-file',
     composeEnv,
     '-f',
-    join(ROOT, 'infra', 'docker-compose.env.yml'),
+    join(ENVS, A, 'compose.yml'),
     'up',
     '-d',
     'core',
@@ -195,7 +269,7 @@ try {
     '--env-file',
     composeEnv,
     '-f',
-    join(ROOT, 'infra', 'docker-compose.env.yml'),
+    join(ENVS, A, 'compose.yml'),
     'up',
     '-d',
     'core',
@@ -240,6 +314,7 @@ try {
   );
   const back = install(B, K1, K2, '--rollback');
   check('после закрытия откат проходит', back.code === 0, back.out.slice(0, 120));
+  check('возврат взял файл запуска из своего комплекта', !webEnv(B).includes('W09_MARK'));
   check(
     'откат записан отдельным видом',
     owner(
@@ -287,6 +362,73 @@ try {
     r2.out.slice(0, 120),
   );
 
+  console.log('\n▸ Закрепление комплектов');
+  const usedA = JSON.parse(readFileSync(join(KITS, 'pins', `${A}.json`), 'utf8'));
+  check(
+    'установка закрепила текущий и возврат',
+    usedA.current === K2 && usedA.rollback === K1,
+    JSON.stringify(usedA),
+  );
+  writeFileSync(REPO_COMPOSE, composeOriginal);
+  check('скачан будущий комплект C', kit('pack', '--build', K4, '--from', FROM).code === 0);
+  check('скачан будущий комплект D', kit('pack', '--build', K5, '--from', FROM).code === 0);
+  check(
+    'установленный и возврат остались после C и D',
+    existsSync(join(KITS, K2, 'kit.json')) && existsSync(join(KITS, K1, 'kit.json')),
+  );
+
+  console.log('\n▸ Гонка за блокировку');
+  const hold = mkdtempSync(join(tmpdir(), 'fifth-hold-'));
+  const late = spawn(
+    process.execPath,
+    [
+      join(ROOT, 'scripts', 'release.mjs'),
+      'install',
+      A,
+      '--kit',
+      K5,
+      '--expect',
+      K2,
+      '--actor',
+      'прогон',
+      '--approved-by',
+      'прогон',
+    ],
+    { env: { ...env0, FIFTH_TEST_HOLD: hold }, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  let lateOut = '';
+  late.stdout.on('data', (d) => (lateOut += d));
+  const lateDone = new Promise((ok) => late.on('close', ok));
+  let lateClosed = false;
+  late.on('close', () => (lateClosed = true));
+  const reachUntil = Date.now() + 120_000;
+  while (!existsSync(join(hold, 'reached')) && !lateClosed && Date.now() < reachUntil) {
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  if (!existsSync(join(hold, 'reached'))) {
+    late.kill();
+    throw new Error(`второй выпуск не дошёл до точки ожидания: ${lateOut.slice(0, 160)}`);
+  }
+  const first = install(A, K4, K2);
+  check('первый выпуск завершён, пока второй ждёт', first.code === 0, first.out.slice(0, 110));
+  const imageBefore = docker('inspect', `fifth-${A}-core`, '--format', '{{.Image}}').out;
+  writeFileSync(join(hold, 'go'), '1');
+  const lateCode = await lateDone;
+  check('устаревший выпуск отказан после захвата, код 2', lateCode === 2, lateOut.slice(0, 130));
+  check(
+    'устаревший выпуск ничего не изменил',
+    docker('inspect', `fifth-${A}-core`, '--format', '{{.Image}}').out === imageBefore,
+  );
+  check(
+    'блокировка свободна, отказ в реестре',
+    owner(A, "select count(*) from ops.installations where status = 'running'") === '0' &&
+      owner(
+        A,
+        `select count(*) from ops.installations where build = '${K5}' and status = 'failed'`,
+      ) === '1',
+  );
+  rmSync(hold, { recursive: true, force: true });
+
   console.log('\n▸ Права');
   const asRelease = (sql) =>
     docker(
@@ -318,13 +460,18 @@ try {
   check('ядро реестр не пишет', asCore.code !== 0);
 } finally {
   console.log('\n▸ Уборка');
+  writeFileSync(REPO_COMPOSE, composeOriginal);
   cleanup();
   for (const t of ['core', 'web', 'postgres']) {
-    for (const tag of ['rel2', K1, K2, K3]) docker('rmi', `fifth/${t}:${tag}`);
+    for (const tag of ['rel2', K1, K2, K3, K4, K5]) docker('rmi', `fifth/${t}:${tag}`);
   }
   rmSync(KITS, { recursive: true, force: true });
   check('среды прогона удалены', ![A, B].some((id) => existsSync(join(ENVS, id))));
 }
+
+// Регрессия: архив образов нельзя читать в память целиком (было 1,8 ГБ).
+const peakMb = Math.round(process.resourceUsage().maxRSS / 1024);
+check(`пик памяти скрипта меньше ${MAX_RSS_MB} МБ`, peakMb < MAX_RSS_MB, `${peakMb} МБ`);
 
 console.log(`\nИТОГО: ${passed} пройдено, ${failed} провалено`);
 process.exit(failed ? 1 : 0);

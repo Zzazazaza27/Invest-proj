@@ -412,10 +412,13 @@ jobs:
         run: |
           node scripts/kit.mjs manifest --build "$BUILD" --commit "${{ github.sha }}" \
             --images images.json --out kit.json
+          cp infra/docker-compose.env.yml compose.yml
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kit-${{ env.BUILD }}
-          path: kit.json
+          path: |
+            kit.json
+            compose.yml
           retention-days: 90
 
   build:

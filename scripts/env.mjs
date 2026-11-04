@@ -30,6 +30,7 @@ import { parseEnvFile } from './lib/backup.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
+const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
 const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
 const STORAGE_NETWORK = process.env.FIFTH_STORAGE_NETWORK || 'unicorn-launch_default';
 const STORAGE_ENDPOINT = process.env.FIFTH_STORAGE_ENDPOINT || 'http://garage-1:3900';
@@ -83,10 +84,30 @@ function loadInstall(id) {
 const saveInstall = (id, install) =>
   writeFileSync(join(names(id).dir, 'install.json'), `${JSON.stringify(install, null, 2)}\n`);
 
+const composeOf = (id) => join(names(id).dir, 'compose.yml');
+
+/**
+ * Файл запуска среды. Из комплекта — проверенный по манифесту, рабочая копия при
+ * этом не участвует; из репозитория — только для меток без комплекта (разработка).
+ */
+function installCompose(id, label) {
+  const kitFile = join(KITS, label, 'kit.json');
+  if (!existsSync(kitFile)) {
+    writeFileSync(composeOf(id), readFileSync(COMPOSE));
+    return;
+  }
+  const text = readFileSync(join(KITS, label, 'compose.yml'));
+  const expected = JSON.parse(readFileSync(kitFile, 'utf8')).compose.sha256;
+  if (createHash('sha256').update(text).digest('hex') !== expected) {
+    throw new Error(`файл запуска сборки ${label}: хеш не сошёлся`);
+  }
+  writeFileSync(composeOf(id), text);
+}
+
 function compose(id, args, { allowFail = false, timeout = 300_000 } = {}) {
   const r = spawnSync(
     'docker',
-    ['compose', '--env-file', join(names(id).dir, 'compose.env'), '-f', COMPOSE, ...args],
+    ['compose', '--env-file', join(names(id).dir, 'compose.env'), '-f', composeOf(id), ...args],
     { encoding: 'utf8', timeout, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
   );
   if (r.status !== 0 && !allowFail) {
@@ -351,6 +372,7 @@ async function create(id) {
   const address = flag('--address') || `http://127.0.0.1:${port}`;
   mkdirSync(n.dir, { recursive: true });
   chmodSync(n.dir, 0o700);
+  installCompose(id, kit);
   const keys = await createStorage(id);
   writeSettings(id, { address, keys });
   writeFileSync(
@@ -455,6 +477,7 @@ async function update(id) {
       samePostgres ? line : `FIFTH_POSTGRES_IMAGE=${images.postgres}`,
     );
   writeFileSync(file, lines);
+  installCompose(id, kit);
   compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', '--wait']);
   compose(id, ['run', '--rm', 'migrate']);
   compose(id, ['up', '-d', 'core', 'web']);
@@ -495,7 +518,7 @@ function seed(id) {
       '--env-file',
       join(names(id).dir, 'compose.env'),
       '-f',
-      COMPOSE,
+      composeOf(id),
       'exec',
       '-T',
       'postgres',
@@ -527,6 +550,8 @@ async function destroy(id) {
     await garageApi('DeleteKey', {}, `?id=${k.accessKeyId}`);
   }
   rmSync(n.dir, { recursive: true, force: true });
+  // Удалённая среда больше не держит комплекты.
+  rmSync(join(KITS, 'pins', `${id}.json`), { force: true });
   finish({ ok: true, env: id, message: `среда ${id}: удалена с данными` }, 0);
 }
 

@@ -2889,13 +2889,32 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
 
+  - id: CHK-RELEASE-PINS
+    file: scripts/check-release-pins.mjs
+    command: node scripts/check-release-pins.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 18
+    needs: [docker, s3]
+    effects:
+      ['временная среда test-75, комплекты в .local/check-release-pins-kits; удаляются прогоном']
+    studied: code
+    studiedOn: 2026-11-04
+    note: >-
+      Закрепление частично установленного комплекта после сбоя сверки и оборванного
+      обновления, запись закреплений под блокировкой.
+    purpose: 'Очистка не удаляет комплект, образы которого могут работать в среде.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-04
+
   - id: CHK-RELEASE
     file: scripts/check-release.mjs
     command: node scripts/check-release.mjs
     kind: check
     level: сквозной
     runner: manual
-    asserts: 39
+    asserts: 53
     needs: [docker, s3]
     effects:
       ['временные среды test-73 и test-74, комплекты во временном каталоге; удаляются прогоном']
@@ -4093,6 +4112,7 @@ blocks:
     title: Порты, развёртывание, консоль
     members:
       [
+        CHK-RELEASE-PINS,
         CHK-RELEASE,
         CHK-ENV-ISOLATION,
         CHK-PORTS-CONSISTENCY,

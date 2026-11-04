@@ -18,17 +18,20 @@
  * по ID без дублей. Операция, оборванная на середине, держит блокировку, пока её не
  * закроет `recover` с причиной: автоматически блокировка не снимается.
  *
+ * Ожидаемая сборка проверяется и после захвата: до него другой выпуск мог завершиться.
+ * Пока блокировка наша, новых завершений нет, поэтому повторная проверка окончательна.
+ * Устанавливаемый, установленный и выбранный для возврата комплекты закреплены.
+ *
  * Результат — строка JSON. Код завершения: 0 готово, 1 не удалось, 2 отказ.
  */
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildOrder } from './kit.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
 const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
 const SERVER = process.env.FIFTH_SERVER || 'local';
@@ -60,7 +63,7 @@ function psql(id, sql) {
       '--env-file',
       join(dirOf(id), 'compose.env'),
       '-f',
-      COMPOSE,
+      join(dirOf(id), 'compose.yml'),
       'exec',
       '-T',
       'postgres',
@@ -210,6 +213,18 @@ const upsertInstances = (id, v) =>
     )
     .join('\n');
 
+/** Испытания: остановка в заданной точке выпуска. */
+async function testHold(name = 'FIFTH_TEST_HOLD') {
+  const dir = process.env[name];
+  if (!dir) return;
+  writeFileSync(join(dir, 'reached'), '1');
+  const until = Date.now() + 300_000;
+  while (!existsSync(join(dir, 'go'))) {
+    if (Date.now() > until) throw new Error('испытание: ожидание истекло');
+    await new Promise((r) => setTimeout(r, 200));
+  }
+}
+
 async function install(id) {
   const build = flag('--kit');
   const expect = flag('--expect');
@@ -220,6 +235,7 @@ async function install(id) {
     throw new Refused('нужны --kit, --expect, --actor и --approved-by');
   }
   const kit = readKit(build);
+  kitTool('check', '--build', build);
   const op = randomUUID();
 
   // Захват блокировки подтверждает база: без него шагов дальше нет.
@@ -235,6 +251,7 @@ async function install(id) {
   if (current && older(build, current) && !rollback) {
     throw new Refused(`сборка ${build} старше текущей ${current}: откат только с --rollback`);
   }
+  await testHold();
   try {
     psql(
       id,
@@ -247,6 +264,19 @@ async function install(id) {
     if (e.sqlState === '23505') throw new Refused('в этой среде уже идёт выпуск');
     throw new Refused(`блокировка не подтверждена, выпуск не начат: ${e.message}`);
   }
+  // Проверка после захвата: окончательная, до неё ничего не менялось.
+  const held = currentBuild(id);
+  if ((held ?? 'none') !== (current ?? 'none')) {
+    const detail = `среда уже на сборке ${held ?? 'none'}, ожидалась ${expect}`;
+    record(id, op, 'lock', 'refused', detail);
+    psql(
+      id,
+      `UPDATE ops.installations SET status = 'failed', detail = ${q(detail)}, finished_at = now()
+        WHERE id = ${q(op)};`,
+    );
+    throw new Refused(detail);
+  }
+  kitTool('pin', '--env', id, '--pending', build);
   record(id, op, 'lock', 'ok', `сборка ${build}, было ${current ?? 'none'}`);
   const close = (status, detail) => {
     record(id, op, 'finish', status, detail);
@@ -261,6 +291,8 @@ async function install(id) {
     }
   };
 
+  // С начала обновления образы комплекта могут работать в среде даже при сбое.
+  let touched = false;
   try {
     kitTool('load', '--build', build);
     record(id, op, 'load', 'ok');
@@ -274,16 +306,40 @@ async function install(id) {
       ).join('\n'),
     );
     if (process.env.FIFTH_TEST_CRASH === 'after-load') process.exit(97);
+    touched = true;
+    record(id, op, 'updating', 'start');
+    if (process.env.FIFTH_TEST_CRASH === 'during-update') process.exit(96);
     const up = envTool('update', id, '--kit', build);
     if (up.code !== 0) throw new Error(`установка: ${up.out.slice(0, 200)}`);
     record(id, op, 'update', 'ok');
     const v = verifyAgainst(id, loaded);
+    if (process.env.FIFTH_TEST_VERIFY_FAIL) v.ok = false;
     record(id, op, 'verify', v.ok ? 'ok' : 'fail', `подтверждено ${v.confirmed} из ${v.total}`);
     psql(id, upsertInstances(id, v));
     if (!v.ok) throw new Error(`сверка: подтверждено ${v.confirmed} из ${v.total}`);
+    // Закрепления меняются под блокировкой: после `close` идёт следующий выпуск, и
+    // поздняя запись затёрла бы его значения.
+    kitTool(
+      'pin',
+      '--env',
+      id,
+      '--current',
+      build,
+      '--pending',
+      'none',
+      '--partial',
+      'none',
+      ...(current ? ['--rollback', current] : []),
+    );
+    await testHold('FIFTH_TEST_HOLD_CLOSE');
     close('succeeded', `подтверждено ${v.confirmed} из ${v.total}`);
     finish({ ok: true, env: id, op, build, confirmed: v.confirmed, total: v.total }, 0);
   } catch (e) {
+    try {
+      kitTool('pin', '--env', id, '--pending', 'none', ...(touched ? ['--partial', build] : []));
+    } catch (pinError) {
+      record(id, op, 'pin', 'fail', pinError.message);
+    }
     close('failed', e.message);
     finish({ ok: false, env: id, op, build, error: e.message }, 1);
   }
@@ -330,10 +386,20 @@ function replay(id) {
   finish({ ok: true, env: id, journal: events.length, sent: after - before }, 0);
 }
 
-function recover(id) {
+/**
+ * Закрытие оборванной операции. Закрепления меняются, пока блокировка ещё держится:
+ * после смены статуса следующий выпуск может записать свой `pending`, и его нельзя
+ * удалить. Ошибка закрепления оставляет операцию `running`, блокировка не снимается.
+ */
+async function recover(id) {
   const op = flag('--op');
   const note = flag('--note');
   if (!op || !note) throw new Refused('нужны --op <id> и --note <причина>');
+  const build = psql(
+    id,
+    `SELECT build FROM ops.installations WHERE id = ${q(op)} AND status = 'running';`,
+  );
+  if (!build) throw new Refused(`операции ${op} в работе нет`);
   const stage = existsSync(journalFile(id))
     ? readFileSync(journalFile(id), 'utf8')
         .split('\n')
@@ -341,6 +407,10 @@ function recover(id) {
         .map((l) => JSON.parse(l).stage)
         .pop()
     : null;
+  await testHold('FIFTH_TEST_HOLD_RECOVER');
+  // Обновление начиналось — его образы могут работать в среде.
+  const touched = ['updating', 'update', 'verify'].includes(stage);
+  kitTool('pin', '--env', id, '--pending', 'none', ...(touched ? ['--partial', build] : []));
   const done = psql(
     id,
     `UPDATE ops.installations SET status = 'interrupted', finished_at = now(),
