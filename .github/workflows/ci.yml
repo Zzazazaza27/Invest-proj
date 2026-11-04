@@ -6,8 +6,6 @@ name: CI
 # Реестр проверок (docs/testing/) сверяется гейтом check:registry — он
 # остаётся. Секрет-скан вынесен в secrets.yml и идёт на любой push.
 on:
-  # Комплект выпуска — по команде: gh workflow run ci.yml --ref main.
-  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -23,6 +21,7 @@ on:
       - '!docs/**'
       - '!obsidian-notes/**'
       - 'docs/testing/**'
+  # Комплект выпуска — по команде: gh workflow run ci.yml --ref main.
   workflow_dispatch:
 
 # Минимальные права токена по умолчанию (принцип least privilege).
