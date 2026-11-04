@@ -20,7 +20,7 @@
  */
 import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PORTS } from './lib/ports.mjs';
@@ -30,6 +30,11 @@ const ENV_PATH = join(ROOT, '.env');
 const COMPOSE_PATH = join(ROOT, 'infra', 'docker-compose.yml');
 const JOURNALD_PATH = join(ROOT, 'infra', 'docker-compose.journald.yml');
 const PROD_PATH = join(ROOT, 'infra', 'docker-compose.prod.yml');
+// Файлы запуска рабочей среды из установленного комплекта (W09e): рабочая копия не участвует.
+const ACTIVE_DIR =
+  process.env.FIFTH_PROD_COMPOSE_DIR || join(ROOT, '.local', 'envs', 'prod', 'compose');
+const ACTIVE = existsSync(join(ACTIVE_DIR, 'docker-compose.yml'));
+const composeFile = (path) => (ACTIVE ? join(ACTIVE_DIR, basename(path)) : path);
 
 /**
  * Боевое ли это окружение.
@@ -82,7 +87,8 @@ if (existsSync(ENV_PATH)) {
   );
 }
 
-args.push('-f', COMPOSE_PATH);
+if (ACTIVE) args.push('--project-directory', join(ROOT, 'infra'));
+args.push('-f', composeFile(COMPOSE_PATH));
 
 // Журналы контейнеров в journald (2.1-W08b): дополнение подключается только
 // при DOCKER_LOG_DRIVER=journald (окружение или .env). Без него основной файл
@@ -96,10 +102,13 @@ const logDriver =
         ?.trim()
     : undefined);
 // Рабочая среда из комплекта: образы заданы в .env (W09d).
-if (existsSync(ENV_PATH) && /^FIFTH_CORE_IMAGE=./m.test(readFileSync(ENV_PATH, 'utf8'))) {
-  args.push('-f', PROD_PATH);
+if (
+  ACTIVE ||
+  (existsSync(ENV_PATH) && /^FIFTH_CORE_IMAGE=./m.test(readFileSync(ENV_PATH, 'utf8')))
+) {
+  args.push('-f', composeFile(PROD_PATH));
 }
-if (logDriver === 'journald') args.push('-f', JOURNALD_PATH);
+if (logDriver === 'journald') args.push('-f', composeFile(JOURNALD_PATH));
 else if (logDriver) {
   console.error(`infra: DOCKER_LOG_DRIVER=${logDriver} — допустимо только journald или пусто`);
   process.exit(2);

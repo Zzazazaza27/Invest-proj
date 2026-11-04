@@ -25,11 +25,12 @@
  * Результат — строка JSON. Код завершения: 0 готово, 1 не удалось, 2 отказ.
  */
 import { spawnSync } from 'node:child_process';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildOrder } from './kit.mjs';
+import { activateProdFiles, prodFileProblems } from './lib/prod-compose.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
@@ -66,18 +67,14 @@ function prodEnv(name) {
 }
 
 /**
- * Рабочая установка собирается из образов комплекта и файлов этого репозитория. Хеши
- * файлов сверяются с манифестом, версия скриптов записывается в реестр: сочетание
- * фиксируется и воспроизводится, разные коммиты образов и скриптов допустимы.
+ * Рабочая установка собирается из образов и файлов запуска комплекта: файлы сверяются с
+ * манифестом и становятся действующими, поэтому возврат не зависит от рабочей копии.
+ * Версия скриптов записывается в журнал операции: разные коммиты образов и скриптов
+ * допустимы, их сочетание зафиксировано.
  */
 function checkProdFiles(kit) {
-  if (!kit.prodCompose) throw new Refused(`в комплекте ${kit.build} нет файлов рабочей среды`);
-  for (const [file, sum] of Object.entries(kit.prodCompose)) {
-    const now = createHash('sha256')
-      .update(readFileSync(join(ROOT, file)))
-      .digest('hex');
-    if (now !== sum) throw new Refused(`${file} не совпал с комплектом ${kit.build}`);
-  }
+  const problems = prodFileProblems(join(KITS, kit.build), kit);
+  if (problems.length) throw new Refused(problems.join('; '));
   return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
 }
 
@@ -97,6 +94,7 @@ function prodCompose(args) {
 
 /** Перевод рабочей среды на комплект: миграции одним шагом, затем ядро и статика. */
 function prodUpdate(build, kit) {
+  activateProdFiles(join(KITS, build), kit, join(dirOf(PROD), 'compose'));
   // База перезапускается только при новом образе, а не при смене метки.
   const running = spawnSync('docker', ['inspect', 'fifth-postgres', '--format', '{{.Image}}'], {
     encoding: 'utf8',

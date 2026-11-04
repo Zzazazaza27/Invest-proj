@@ -2906,6 +2906,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
 
+  - id: CHK-PROD-COMPOSE
+    file: scripts/check-prod-compose.mjs
+    command: node scripts/check-prod-compose.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 6
+    needs: [docker]
+    effects: ['временный каталог, контейнеры не запускаются']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Два комплекта с разными файлами запуска: выпуск и возврат берут свои, подмена отказывается.
+    purpose: 'Возврат рабочей среды не зависит от рабочей копии репозитория.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
   - id: CHK-RELEASE-PINS
     file: scripts/check-release-pins.mjs
     command: node scripts/check-release-pins.mjs
@@ -4129,6 +4146,7 @@ blocks:
     title: Порты, развёртывание, консоль
     members:
       [
+        CHK-PROD-COMPOSE,
         CHK-RELEASE-PINS,
         CHK-RELEASE,
         CHK-ENV-ISOLATION,

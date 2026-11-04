@@ -36,6 +36,7 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { prodFileName, prodFileProblems } from './lib/prod-compose.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
@@ -161,7 +162,7 @@ function manifest() {
 const kitDir = (build) => join(KITS, build);
 
 /** Комплект только добавляется: занятый номер не заменяется. */
-function storeKit(build, kit, composeFile, tarOf) {
+function storeKit(build, kit, composeFile, tarOf, prodSource = ROOT) {
   const dir = kitDir(build);
   if (existsSync(join(dir, 'kit.json'))) throw new Refused(`комплект ${build} уже есть`);
   const composeText = readFileSync(composeFile);
@@ -172,6 +173,13 @@ function storeKit(build, kit, composeFile, tarOf) {
   rmSync(tmp, { recursive: true, force: true });
   mkdirSync(tmp, { recursive: true });
   writeFileSync(join(tmp, 'compose.yml'), composeText);
+  mkdirSync(join(tmp, 'prod-compose'));
+  for (const file of PROD_COMPOSE) {
+    const source = join(prodSource, prodFileName(file));
+    const text = readFileSync(existsSync(source) ? source : join(ROOT, file));
+    if (sha256(text) !== kit.prodCompose[file]) throw new Error(`${file} не совпал с манифестом`);
+    writeFileSync(join(tmp, 'prod-compose', prodFileName(file)), text);
+  }
   tarOf(join(tmp, 'images.tar'));
   return { tmp, dir, kit };
 }
@@ -233,8 +241,12 @@ async function fetchKit() {
   if (!existsSync(stagedCompose))
     throw new Refused(`в артефакте сборки ${build} нет файла запуска`);
   const tags = tagForKit(build, (c) => kit.images[c].digest);
-  const staged = storeKit(build, kit, stagedCompose, (tar) =>
-    run('docker', ['save', '-o', tar, ...tags]),
+  const staged = storeKit(
+    build,
+    kit,
+    stagedCompose,
+    (tar) => run('docker', ['save', '-o', tar, ...tags]),
+    join(staging, 'prod-compose'),
   );
   rmSync(staging, { recursive: true, force: true });
   const sealed = await commitKit(staged);
@@ -271,6 +283,8 @@ async function readKit(build) {
   const kit = JSON.parse(readFileSync(file, 'utf8'));
   const tar = await sha256File(join(kitDir(build), 'images.tar'));
   if (tar !== kit.tar.sha256) throw new Error(`images.tar сборки ${build}: хеш не сошёлся`);
+  const prodProblems = prodFileProblems(kitDir(build), kit);
+  if (prodProblems.length) throw new Error(prodProblems.join('; '));
   const composeFile = join(kitDir(build), 'compose.yml');
   if (!existsSync(composeFile) || sha256(readFileSync(composeFile)) !== kit.compose.sha256) {
     throw new Error(`файл запуска сборки ${build}: хеш не сошёлся`);
