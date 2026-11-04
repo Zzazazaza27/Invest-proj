@@ -38,6 +38,16 @@ function loadDotEnv(): void {
 }
 loadDotEnv();
 
+/** `<ИМЯ>_FILE`: секрет из файла, как у ядра. */
+function loadSecretFiles(): void {
+  for (const [key, path] of Object.entries(process.env)) {
+    if (!key.endsWith('_FILE') || !path) continue;
+    const name = key.slice(0, -'_FILE'.length);
+    process.env[name] ??= readFileSync(path, 'utf8').replace(/\r?\n$/, '');
+  }
+}
+loadSecretFiles();
+
 export function requireEnv(name: string): string {
   const value = process.env[name];
   if (!value || value.trim() === '' || value.includes('CHANGE_ME')) {

@@ -1,0 +1,496 @@
+#!/usr/bin/env node
+/**
+ * Управление установкой среды 5Э из готовых образов (W09b).
+ *
+ *   node scripts/env.mjs create  <среда> --kit <метка> --web-port <порт> [--address <URL>]
+ *   node scripts/env.mjs status  <среда>
+ *   node scripts/env.mjs stop    <среда>
+ *   node scripts/env.mjs start   <среда>
+ *   node scripts/env.mjs seed    <среда> --set <файл.sql>
+ *   node scripts/env.mjs destroy <среда> --confirm <среда>
+ *
+ * Среда — `test-N`. Рабочую среду эта команда не создаёт и не удаляет: её
+ * установка — выпуск W09d, а удаление данных через тестовую команду запрещено.
+ * Всё производное берётся из идентификатора: проект `fifth-test-N`, контейнеры,
+ * сети и тома проекта, бакеты и ключи `fifth-test-N-*`. Настройки и секреты лежат
+ * в `.local/envs/<среда>` (FIFTH_ENVS_DIR), значения не печатаются.
+ *
+ * Результат — одна строка JSON на stdout (`--text` — словами). Код завершения:
+ * 0 — готово, 1 — не удалось, 2 — отказ: неверный вызов или защита.
+ */
+import { spawnSync } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { garageApi } from './lib/garage-admin.mjs';
+import { s3Object } from './lib/s3.mjs';
+import { parseEnvFile } from './lib/backup.mjs';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
+const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
+const STORAGE_NETWORK = process.env.FIFTH_STORAGE_NETWORK || 'unicorn-launch_default';
+const STORAGE_ENDPOINT = process.env.FIFTH_STORAGE_ENDPOINT || 'http://garage-1:3900';
+const STORAGE_ENDPOINT_HOST =
+  process.env.FIFTH_STORAGE_ENDPOINT_HOST ||
+  `http://127.0.0.1:${process.env.GARAGE_S3_PORT || 9000}`;
+const INTERNAL_PORT = 4400;
+const READY_TIMEOUT_MS = Number(process.env.FIFTH_READY_TIMEOUT_MS || 120_000);
+
+const argv = process.argv.slice(2);
+const flag = (name) => {
+  const i = argv.indexOf(name);
+  return i >= 0 ? argv[i + 1] : null;
+};
+const TEXT = argv.includes('--text');
+
+class Refused extends Error {}
+
+function finish(result, code) {
+  if (TEXT) console.log(result.message ?? JSON.stringify(result));
+  else console.log(JSON.stringify(result));
+  process.exit(code);
+}
+
+function needEnv(id) {
+  if (id === 'prod') {
+    throw new Refused('рабочая среда этой командой не управляется');
+  }
+  if (!/^test-[1-9][0-9]*$/.test(id ?? '')) {
+    throw new Refused(`неверный идентификатор среды: ${id ?? '(нет)'}; нужен test-N`);
+  }
+  return id;
+}
+
+const names = (id) => ({
+  project: `fifth-${id}`,
+  bucket: `fifth-${id}`,
+  archive: `fifth-${id}-archive`,
+  dir: join(ENVS, id),
+});
+
+function loadInstall(id) {
+  const file = join(names(id).dir, 'install.json');
+  if (!existsSync(file)) throw new Refused(`среда ${id} не установлена`);
+  const install = JSON.parse(readFileSync(file, 'utf8'));
+  // Защита от подмены каталога: запись обязана говорить о той же среде.
+  if (install.env !== id) throw new Refused(`запись установки не от среды ${id}`);
+  return install;
+}
+
+const saveInstall = (id, install) =>
+  writeFileSync(join(names(id).dir, 'install.json'), `${JSON.stringify(install, null, 2)}\n`);
+
+function compose(id, args, { allowFail = false, timeout = 300_000 } = {}) {
+  const r = spawnSync(
+    'docker',
+    ['compose', '--env-file', join(names(id).dir, 'compose.env'), '-f', COMPOSE, ...args],
+    { encoding: 'utf8', timeout, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+  );
+  if (r.status !== 0 && !allowFail) {
+    throw new Error(
+      `docker compose ${args[0]}: ${(r.stderr || r.stdout).trim().split('\n').pop()}`,
+    );
+  }
+  return r;
+}
+
+function docker(args) {
+  return spawnSync('docker', args, {
+    encoding: 'utf8',
+    env: { ...process.env, MSYS_NO_PATHCONV: '1' },
+  });
+}
+
+const hex = (n) => randomBytes(n).toString('hex');
+
+/** Настройки и секреты среды. Секрет — отдельный файл, в настройках только путь. */
+function writeSettings(id, { address, keys }) {
+  const n = names(id);
+  const secretsDir = join(n.dir, 'secrets');
+  mkdirSync(secretsDir, { recursive: true });
+  const secret = {};
+  const put = (name, value) => {
+    secret[name] = value;
+    writeFileSync(join(secretsDir, name), `${value}\n`);
+    chmodSync(join(secretsDir, name), 0o444);
+  };
+  const pg = (user, password) => `postgres://${user}:${password}@postgres:5432/fifth_element`;
+  const roles = {
+    BACKEND: 'app_backend_user',
+    PUBLIC_READ: 'app_public_read_user',
+    NOTIFICATIONS: 'app_notifications_user',
+    INTEGRATION: 'app_integration_user',
+    READONLY: 'app_readonly_user',
+    AUTH: 'app_auth_user',
+    MAINTENANCE: 'app_maintenance_user',
+    ARCHIVE: 'app_archive_user',
+  };
+  const roleKey = Object.fromEntries(Object.keys(roles).map((r) => [r, hex(24)]));
+  for (const [role, value] of Object.entries(roleKey)) put(`DB_ROLE_PASSWORD_APP_${role}`, value);
+  const owner = hex(24);
+  put('POSTGRES_PASSWORD', owner);
+  put('DATABASE_URL_OWNER', pg('fifth_owner', owner));
+  put('DATABASE_URL', pg(roles.BACKEND, roleKey.BACKEND));
+  for (const role of ['INTEGRATION', 'NOTIFICATIONS', 'AUTH', 'MAINTENANCE', 'ARCHIVE']) {
+    put(`DATABASE_URL_APP_${role}`, pg(roles[role], roleKey[role]));
+  }
+  const redis = hex(24);
+  put('REDIS_PASSWORD', redis);
+  const nats = hex(24);
+  put('NATS_PASSWORD', nats);
+  for (const name of [
+    'LOCAL_AUTH_SIGNING_KEY',
+    'CSRF_SIGNING_KEY',
+    'INTEGRATION_TOKEN_SIGNING_KEY',
+  ]) {
+    put(name, hex(48));
+  }
+  for (const name of [
+    'KEK_KYC_DOCUMENTS',
+    'KEK_KYB_DOCUMENTS',
+    'KEK_PASSPORT_SENSITIVE',
+    'KEK_WEBHOOK_SECRETS',
+    'KEK_SEARCH_INDEX',
+  ]) {
+    put(name, randomBytes(32).toString('base64'));
+  }
+  put('S3_SECRET_ACCESS_KEY', keys.app.secretAccessKey);
+  put('ARCHIVE_S3_SECRET_ACCESS_KEY', keys.archive.secretAccessKey);
+  writeFileSync(
+    join(secretsDir, 'valkey.conf'),
+    `requirepass ${redis}\nappendonly yes\nmaxmemory-policy noeviction\ndir /data\n`,
+  );
+  writeFileSync(
+    join(secretsDir, 'nats.conf'),
+    `jetstream { store_dir: "/data" }\nhttp_port: 8222\nauthorization { user: "fifth", password: "${nats}" }\n`,
+  );
+  for (const f of ['valkey.conf', 'nats.conf']) chmodSync(join(secretsDir, f), 0o444);
+
+  const skipFile = new Set(['POSTGRES_PASSWORD']);
+  const lines = [
+    `FIFTH_ENV=${id}`,
+    `MONITOR_ENV=${id}`,
+    // Рабочий режим ядра требует KMS (блок 5, задание 4): до него среды идут как VPS.
+    'NODE_ENV=development',
+    'CORE_BIND_HOST=0.0.0.0',
+    'CORE_PORT=4300',
+    `CORE_INTERNAL_PORT=${INTERNAL_PORT}`,
+    `CORE_PUBLIC_URL=${address}`,
+    `PUBLIC_BASE_URL=${address}`,
+    `CORS_ALLOWED_ORIGINS=${address}`,
+    'AUTH_MODE=local',
+    'KMS_MODE=local',
+    'SESSION_COOKIE_NAME=ul_session',
+    'CSRF_COOKIE_NAME=ul_csrf',
+    'REDIS_URL=redis://valkey:6379',
+    'NATS_URL=nats://nats:4222',
+    'NATS_USER=fifth',
+    'NATS_STREAM=LAUNCH',
+    `S3_ENDPOINT=${STORAGE_ENDPOINT}`,
+    'S3_REGION=ru-central1',
+    'S3_FORCE_PATH_STYLE=true',
+    `S3_BUCKET=${names(id).bucket}`,
+    `S3_ACCESS_KEY_ID=${keys.app.accessKeyId}`,
+    `ARCHIVE_S3_BUCKET=${names(id).archive}`,
+    `ARCHIVE_S3_ACCESS_KEY_ID=${keys.archive.accessKeyId}`,
+    'MAIL_TRANSPORT=none',
+    'WEBHOOK_DELIVERY_MODE=capture',
+    'TESTING_SESSIONS_ENABLED=true',
+    ...Object.keys(secret)
+      .filter((k) => !skipFile.has(k))
+      .map((k) => `${k}_FILE=/run/secrets/${k}`),
+  ];
+  writeFileSync(join(n.dir, 'settings.env'), `${lines.join('\n')}\n`);
+}
+
+function imageId(ref) {
+  const r = docker(['image', 'inspect', ref, '--format', '{{.Id}}']);
+  if (r.status !== 0) throw new Error(`образа ${ref} нет — комплект не загружен`);
+  return r.stdout.trim();
+}
+
+/** Бакеты и ключи среды: ключ видит только свой бакет. */
+async function createStorage(id) {
+  const n = names(id);
+  const keys = {};
+  for (const [role, bucket] of [
+    ['app', n.bucket],
+    ['archive', n.archive],
+  ]) {
+    const b = await garageApi('CreateBucket', { globalAlias: bucket });
+    const k = await garageApi('CreateKey', { name: `${bucket}-key` });
+    await garageApi('AllowBucketKey', {
+      bucketId: b.id,
+      accessKeyId: k.accessKeyId,
+      permissions: { read: true, write: true, owner: false },
+    });
+    keys[role] = { accessKeyId: k.accessKeyId, secretAccessKey: k.secretAccessKey };
+  }
+  return keys;
+}
+
+async function removeBucket(alias, key) {
+  let bucket;
+  try {
+    bucket = await garageApi(
+      'GetBucketInfo',
+      undefined,
+      `?globalAlias=${encodeURIComponent(alias)}`,
+    );
+  } catch (e) {
+    if (e.status === 404) return;
+    throw e;
+  }
+  const store = {
+    endpoint: STORAGE_ENDPOINT_HOST,
+    region: 'ru-central1',
+    bucket: alias,
+    accessKey: key.accessKeyId,
+    secretKey: key.secretAccessKey,
+  };
+  for (;;) {
+    const r = await s3Object(store, 'GET', '', null, {}, { 'list-type': '2' });
+    if (!r.ok) throw new Error(`список бакета ${alias}: HTTP ${r.status}`);
+    const found = [...(await r.text()).matchAll(/<Key>([^<]+)<\/Key>/g)].map((m) => m[1]);
+    if (!found.length) break;
+    for (const k of found) await s3Object(store, 'DELETE', k);
+  }
+  await garageApi('DeleteBucket', {}, `?id=${bucket.id}`);
+}
+
+function schemaVersion(id) {
+  const r = compose(id, [
+    'exec',
+    '-T',
+    'postgres',
+    'sh',
+    '-c',
+    `PGPASSWORD="$(cat /run/secrets/POSTGRES_PASSWORD)" psql -h 127.0.0.1 -U fifth_owner -d fifth_element -Atc "select count(*), max(id) from public.schema_migrations"`,
+  ]);
+  const [count, last] = r.stdout.trim().split('|');
+  return { applied: Number(count), last };
+}
+
+/** Служебный /ready ядра изнутри контейнера. */
+function readiness(id) {
+  const r = compose(
+    id,
+    [
+      'exec',
+      '-T',
+      'core',
+      'node',
+      '-e',
+      `Promise.all(['live','ready'].map((p)=>fetch('http://127.0.0.1:${INTERNAL_PORT}/'+p,{signal:AbortSignal.timeout(8000)}).then(async(r)=>({status:r.status,body:await r.json()})))).then((x)=>console.log(JSON.stringify(x)),(e)=>{console.log(JSON.stringify({error:e.message}));process.exit(1)})`,
+    ],
+    // Замёрзшее ядро не должно подвешивать команду: нет ответа — не готово.
+    { allowFail: true, timeout: 15_000 },
+  );
+  try {
+    const parsed = JSON.parse(r.stdout.trim().split('\n').pop());
+    if (!Array.isArray(parsed)) return { live: false, ready: false, detail: parsed };
+    return {
+      live: parsed[0].status === 200,
+      ready: parsed[1].status === 200,
+      detail: parsed[1].body,
+    };
+  } catch {
+    return { live: false, ready: false, detail: null };
+  }
+}
+
+async function waitReady(id) {
+  const until = Date.now() + READY_TIMEOUT_MS;
+  let last = null;
+  while (Date.now() < until) {
+    last = readiness(id);
+    if (last.ready) return last;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return last;
+}
+
+async function loadStoreAdmin() {
+  if (process.env.GARAGE_ADMIN_TOKEN) return;
+  const file = join(ROOT, '.env');
+  if (!existsSync(file)) return;
+  const vars = parseEnvFile(file);
+  for (const k of ['GARAGE_ADMIN_TOKEN', 'GARAGE_ADMIN_PORT', 'GARAGE_ADMIN_URL']) {
+    if (vars[k] && !process.env[k]) process.env[k] = vars[k];
+  }
+}
+
+async function create(id) {
+  const kit = flag('--kit');
+  const port = flag('--web-port');
+  if (!kit || !/^\d+$/.test(port ?? ''))
+    throw new Refused('нужны --kit <метка> и --web-port <порт>');
+  const n = names(id);
+  if (existsSync(join(n.dir, 'install.json'))) throw new Refused(`среда ${id} уже установлена`);
+  const images = {
+    core: `fifth/core:${kit}`,
+    web: `fifth/web:${kit}`,
+    postgres: `fifth/postgres:${kit}`,
+  };
+  const digests = Object.fromEntries(Object.entries(images).map(([k, v]) => [k, imageId(v)]));
+  const address = flag('--address') || `http://127.0.0.1:${port}`;
+  mkdirSync(n.dir, { recursive: true });
+  chmodSync(n.dir, 0o700);
+  const keys = await createStorage(id);
+  writeSettings(id, { address, keys });
+  writeFileSync(
+    join(n.dir, 'storage.json'),
+    `${JSON.stringify({ app: keys.app, archive: keys.archive }, null, 2)}\n`,
+  );
+  chmodSync(join(n.dir, 'storage.json'), 0o600);
+  writeFileSync(
+    join(n.dir, 'compose.env'),
+    [
+      `FIFTH_PROJECT=${n.project}`,
+      `FIFTH_ENV_DIR=${n.dir.replace(/\\/g, '/')}`,
+      `FIFTH_CORE_IMAGE=${images.core}`,
+      `FIFTH_WEB_IMAGE=${images.web}`,
+      `FIFTH_POSTGRES_IMAGE=${images.postgres}`,
+      `FIFTH_WEB_PORT=${port}`,
+      `FIFTH_STORAGE_NETWORK=${STORAGE_NETWORK}`,
+      '',
+    ].join('\n'),
+  );
+  saveInstall(id, {
+    env: id,
+    project: n.project,
+    kit: { label: kit, images: digests },
+    address,
+    webPort: Number(port),
+    schema: null,
+    dataset: null,
+    createdAt: new Date().toISOString(),
+  });
+  compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', '--wait']);
+  compose(id, ['run', '--rm', 'migrate']);
+  compose(id, ['up', '-d', 'core', 'web']);
+  const state = await waitReady(id);
+  const install = loadInstall(id);
+  install.schema = schemaVersion(id);
+  saveInstall(id, install);
+  const ok = Boolean(state?.ready);
+  finish(
+    {
+      ok,
+      env: id,
+      address,
+      kit: kit,
+      schema: install.schema,
+      ready: ok,
+      message: `среда ${id}: ${ok ? 'готова' : 'не готова'}, ${address}`,
+    },
+    ok ? 0 : 1,
+  );
+}
+
+async function status(id) {
+  const install = loadInstall(id);
+  const ps = compose(id, ['ps', '--format', '{{.Service}}={{.State}}'], { allowFail: true });
+  const services = Object.fromEntries(
+    ps.stdout
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((l) => l.split('=')),
+  );
+  const state = services.core === 'running' ? readiness(id) : { live: false, ready: false };
+  finish(
+    {
+      ok: state.ready,
+      env: id,
+      services,
+      live: state.live,
+      ready: state.ready,
+      checks: state.detail?.checks ?? state.detail ?? null,
+      kit: install.kit,
+      schema: install.schema,
+      dataset: install.dataset,
+      message: `среда ${id}: ${state.ready ? 'готова' : 'не готова'}`,
+    },
+    state.ready ? 0 : 1,
+  );
+}
+
+function stop(id) {
+  loadInstall(id);
+  compose(id, ['stop']);
+  finish({ ok: true, env: id, message: `среда ${id}: остановлена, данные сохранены` }, 0);
+}
+
+async function start(id) {
+  loadInstall(id);
+  compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', 'core', 'web']);
+  const state = await waitReady(id);
+  const ok = Boolean(state?.ready);
+  finish(
+    { ok, env: id, ready: ok, message: `среда ${id}: ${ok ? 'готова' : 'не готова'}` },
+    ok ? 0 : 1,
+  );
+}
+
+function seed(id) {
+  const install = loadInstall(id);
+  const file = flag('--set');
+  if (!file || !existsSync(file)) throw new Refused('нужен --set <файл.sql>');
+  const sql = readFileSync(file);
+  const r = spawnSync(
+    'docker',
+    [
+      'compose',
+      '--env-file',
+      join(names(id).dir, 'compose.env'),
+      '-f',
+      COMPOSE,
+      'exec',
+      '-T',
+      'postgres',
+      'sh',
+      '-c',
+      'PGPASSWORD="$(cat /run/secrets/POSTGRES_PASSWORD)" psql -h 127.0.0.1 -v ON_ERROR_STOP=1 -U fifth_owner -d fifth_element',
+    ],
+    { input: sql, encoding: 'utf8', env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+  );
+  if (r.status !== 0) throw new Error(`набор не загружен: ${r.stderr.trim().split('\n').pop()}`);
+  install.dataset = {
+    name: file.split(/[\\/]/).pop(),
+    sha256: createHash('sha256').update(sql).digest('hex'),
+    at: new Date().toISOString(),
+  };
+  saveInstall(id, install);
+  finish({ ok: true, env: id, dataset: install.dataset, message: `набор загружен в ${id}` }, 0);
+}
+
+async function destroy(id) {
+  if (flag('--confirm') !== id) throw new Refused(`удаление данных: нужен --confirm ${id}`);
+  loadInstall(id);
+  const n = names(id);
+  compose(id, ['--profile', 'tools', 'down', '-v', '--remove-orphans']);
+  const keys = JSON.parse(readFileSync(join(n.dir, 'storage.json'), 'utf8'));
+  await removeBucket(n.bucket, keys.app);
+  await removeBucket(n.archive, keys.archive);
+  for (const k of [keys.app, keys.archive]) {
+    await garageApi('DeleteKey', {}, `?id=${k.accessKeyId}`);
+  }
+  rmSync(n.dir, { recursive: true, force: true });
+  finish({ ok: true, env: id, message: `среда ${id}: удалена с данными` }, 0);
+}
+
+const COMMANDS = { create, status, stop, start, seed, destroy };
+
+try {
+  const [command, id] = argv;
+  if (!COMMANDS[command]) throw new Refused(`команды нет: ${command ?? '(нет)'}`);
+  needEnv(id);
+  await loadStoreAdmin();
+  await COMMANDS[command](id);
+} catch (e) {
+  const refused = e instanceof Refused;
+  finish({ ok: false, refused, error: e.message, message: e.message }, refused ? 2 : 1);
+}

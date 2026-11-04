@@ -17,7 +17,10 @@ RUN npm ci --ignore-scripts --no-audit --no-fund \
  && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
 FROM node:22.23.2-bookworm-slim
-ENV NODE_ENV=production
+ARG GIT_COMMIT=unknown
+ENV NODE_ENV=production \
+    RELEASE_SHA=$GIT_COMMIT \
+    CORE_INTERNAL_PORT=4400
 WORKDIR /app
 COPY --from=build --chown=node:node /src/node_modules ./node_modules
 COPY --from=build --chown=node:node /src/package.json ./package.json
@@ -25,9 +28,11 @@ COPY --from=build --chown=node:node /src/packages/contracts ./packages/contracts
 COPY --from=build --chown=node:node /src/apps/core/package.json ./apps/core/package.json
 COPY --from=build --chown=node:node /src/apps/core/dist ./apps/core/dist
 COPY --from=build --chown=node:node /src/database ./database
+COPY --chown=node:node infra/images/core-health.mjs ./core-health.mjs
+COPY --chown=node:node scripts/nats-init-stream.mjs ./scripts/nats-init-stream.mjs
 USER node
 EXPOSE 4300
-# Первая проверка живости: основная — служебные /live и /ready в Compose.
-HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=5 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.CORE_PORT||4300)+'/v1/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+# Живость — служебный /live; публичный /v1/health её не заменяет.
+HEALTHCHECK --interval=5s --timeout=4s --start-period=30s --retries=3 \
+  CMD ["node", "core-health.mjs"]
 CMD ["node", "apps/core/dist/main.js"]

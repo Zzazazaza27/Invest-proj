@@ -64,7 +64,9 @@ const SUBJECTS = [
 const nats = await connect({
   servers: process.env.NATS_URL || 'nats://127.0.0.1:4222',
   user: process.env.NATS_USER || undefined,
-  pass: process.env.NATS_PASSWORD || undefined,
+  pass: process.env.NATS_PASSWORD_FILE
+    ? readFileSync(process.env.NATS_PASSWORD_FILE, 'utf8').replace(/\r?\n$/, '')
+    : process.env.NATS_PASSWORD || undefined,
   timeout: 5_000,
 });
 

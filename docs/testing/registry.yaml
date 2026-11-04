@@ -2553,6 +2553,25 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
 
+  - id: TOOL-ENV
+    file: scripts/env.mjs
+    command: node scripts/env.mjs create|status|stop|start|seed|destroy <среда>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker, s3]
+    effects:
+      ['создаёт и удаляет контейнеры, тома, бакеты и ключи среды test-N; рабочую среду не трогает']
+    studied: code
+    studiedOn: 2026-11-04
+    note: >-
+      Установка среды из готовых образов (W09b). Результат — JSON и код завершения:
+      0 готово, 1 не удалось, 2 отказ.
+    purpose: 'Повторяемое управление изолированной средой; те же команды вызовет будущая ITSM.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-04
+
   - id: TOOL-LOGS-ARCHIVE
     file: scripts/logs-archive.mjs
     command: node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export|legacy-snapshot|legacy-gap|secrets-draft --to <файл>
@@ -2835,6 +2854,25 @@ checks:
     purpose: 'Технический журнал ядра без секретов до записи (8.4, 2.1-W08b): маскировка текста; поля только по перечню, отброшенные видны по имени; строка в поле error не пишется никогда (только объект исключения: класс, SQLSTATE, кадры без текста); JsonLogger; сторож исходников — подстановки в текст любого вызова журнала (logger, options.log) только из перечня, в полях нет .message/.stack/String()/JSON.stringify, error — только объект исключения; полный путь завершения процесса (Logger Nest → JsonLogger через shutdownLog) — исключение закрывающей функции без текста. Сторож проверен на исходниках f76f5de (35 находок, включая обходы Тэнка).'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
+
+  - id: CHK-ENV-ISOLATION
+    file: scripts/check-env-isolation.mjs
+    command: node scripts/check-env-isolation.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 39
+    needs: [docker, s3]
+    effects: ['временные среды test-71 и test-72: контейнеры, тома, бакеты; удаляются прогоном']
+    studied: code
+    studiedOn: 2026-11-04
+    note: >-
+      Две среды из одних образов: команды и коды, изоляция данных, бакетов и секретов,
+      запись и чтение через Garage с ключом из файла, /live и /ready, отказ базы без
+      перезапуска, зависшее ядро с перезапуском, защита рабочей среды.
+    purpose: 'Комплект запускается в разных изолированных средах без правки кода и Compose.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-04
 
   - id: CHK-LOGS-ARCHIVE
     file: scripts/check-logs-archive.mjs
@@ -3999,7 +4037,8 @@ blocks:
 
   стенд:
     title: Порты, развёртывание, консоль
-    members: [CHK-PORTS-CONSISTENCY, CHK-FRONT-BUILDS, RND-CONSOLE, RND-DEMO, SMK-DEMO]
+    members:
+      [CHK-ENV-ISOLATION, CHK-PORTS-CONSISTENCY, CHK-FRONT-BUILDS, RND-CONSOLE, RND-DEMO, SMK-DEMO]
 
   порядок:
     title: Сам реестр проверок и учёт техдолга

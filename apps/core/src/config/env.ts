@@ -821,7 +821,10 @@ export type AppEnv = Readonly<RawEnv> & {
 let cached: AppEnv | null = null;
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
-  const parsed = EnvSchema.safeParse(withSecretFiles(source));
+  const resolved = withSecretFiles(source);
+  // Ключи шифрования и часть служебных значений читаются из process.env напрямую.
+  if (source === process.env) Object.assign(process.env, resolved);
+  const parsed = EnvSchema.safeParse(resolved);
   if (!parsed.success) {
     const details = parsed.error.issues
       .map((i) => `  ${i.path.join('.') || '(root)'}: ${i.message}`)
