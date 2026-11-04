@@ -8,6 +8,11 @@ COPY package.json package-lock.json tsconfig*.json ./
 COPY packages ./packages
 COPY apps ./apps
 COPY database ./database
+COPY scripts/vite-build.mjs ./scripts/vite-build.mjs
+COPY scripts/lib/app-version.mjs scripts/lib/app-version.d.mts ./scripts/lib/
+# Версия сборки в сообщениях об ошибках; git в образе нет.
+ARG GIT_COMMIT=unknown
+ENV GIT_COMMIT=$GIT_COMMIT
 RUN npm ci --ignore-scripts --no-audit --no-fund \
  && npm run build:packages \
  && for app in web-public admin lab investor auth console; do npm run build -w "apps/$app" || exit 1; done
