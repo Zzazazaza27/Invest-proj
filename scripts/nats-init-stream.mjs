@@ -19,6 +19,7 @@ import { connect } from 'nats';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applySecretFiles } from './lib/secret-files.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 loadDotEnv();
@@ -43,6 +44,7 @@ function loadDotEnv() {
   }
 }
 
+applySecretFiles();
 const STREAM = process.env.NATS_STREAM ?? 'LAUNCH';
 
 /**
@@ -64,9 +66,7 @@ const SUBJECTS = [
 const nats = await connect({
   servers: process.env.NATS_URL || 'nats://127.0.0.1:4222',
   user: process.env.NATS_USER || undefined,
-  pass: process.env.NATS_PASSWORD_FILE
-    ? readFileSync(process.env.NATS_PASSWORD_FILE, 'utf8').replace(/\r?\n$/, '')
-    : process.env.NATS_PASSWORD || undefined,
+  pass: process.env.NATS_PASSWORD || undefined,
   timeout: 5_000,
 });
 

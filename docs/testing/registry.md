@@ -353,7 +353,7 @@
 | CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
 | CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
-| CHK-ENV-ISOLATION | `node scripts/check-env-isolation.mjs` | 39 | вручную | — |
+| CHK-ENV-ISOLATION | `node scripts/check-env-isolation.mjs` | 41 | вручную | — |
 | CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 228 | вручную | — |
 | CHK-LOGS-APPLY | `node scripts/check-logs-apply.mjs` | 36 | вручную | — |
 | CHK-MONITORING-ACCOUNT | `node scripts/check-monitoring-account.mjs` | 9 | вручную | — |
@@ -477,7 +477,7 @@
 | UNIT-CORE-SECURITY | `npm run test -w apps/core` | 64 | CI | CI |
 | UNIT-CORE-TECHDEBT | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-VERIFICATION | `npm run test -w apps/core` | 14 | CI | CI |
-| UNIT-CORE-SECRET-FILES | `npm run test -w apps/core` | 6 | CI | CI |
+| UNIT-CORE-SECRET-FILES | `npm run test -w apps/core` | 11 | CI | CI |
 | UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 17 | CI | CI |
 | UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |
 | UNIT-PKG-CONTRACTS-VISIBILITY | `npm run test -w packages/contracts` | 10 | CI | CI |

@@ -2861,7 +2861,7 @@ checks:
     kind: check
     level: сквозной
     runner: manual
-    asserts: 39
+    asserts: 41
     needs: [docker, s3]
     effects: ['временные среды test-71 и test-72: контейнеры, тома, бакеты; удаляются прогоном']
     studied: code
@@ -3120,7 +3120,7 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 6
+    asserts: 11
     studied: code
     studiedOn: 2026-11-04
     needs: []

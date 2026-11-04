@@ -71,7 +71,7 @@ const s3 = require('/app/apps/core/dist/storage/s3.service.js');
   const got = await new s3.S3Service().getObject('env-check/object');
   console.log(JSON.stringify({
     bucket: env.S3_BUCKET,
-    fromFile: require('node:fs').readFileSync(process.env.S3_SECRET_ACCESS_KEY_FILE, 'utf8').trim() === env.S3_SECRET_ACCESS_KEY,
+    fromFile: require('node:fs').readFileSync('/run/secrets/S3_SECRET_ACCESS_KEY', 'utf8').trim() === env.S3_SECRET_ACCESS_KEY,
     same: got?.body?.equals(body) ?? false,
   }));
 })().catch((e) => { console.log(JSON.stringify({ error: e.message })); process.exit(1); });
@@ -194,6 +194,30 @@ try {
   check('набор есть в A и нет в B', flagCount(A) === '1' && flagCount(B) === '0');
   const ia2 = JSON.parse(readFileSync(join(ENVS, A, 'install.json'), 'utf8'));
   check('версия набора записана', /^[0-9a-f]{64}$/.test(ia2.dataset?.sha256 ?? ''));
+
+  console.log('\n▸ Журнал PostgreSQL');
+  const compose = (file) =>
+    readFileSync(join(ROOT, 'infra', file), 'utf8')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => /^- log_[a-z_]+=/.test(l))
+      .sort()
+      .join(' ');
+  check(
+    'настройки журнала совпадают с основным Compose',
+    compose('docker-compose.env.yml') === compose('docker-compose.yml'),
+    compose('docker-compose.env.yml'),
+  );
+  // Значение в самом тексте ошибки, не только в STATEMENT и DETAIL.
+  const marker = 'w09b-probe-value-7f3a';
+  const failed = psql(A, `select '${marker}'::int`);
+  await new Promise((r) => setTimeout(r, 1000));
+  const logged = docker('logs', `fifth-${A}-postgres`).out;
+  check(
+    'значение из текста ошибки не попало в журнал сервера',
+    failed.includes('invalid input syntax') && !logged.includes(marker),
+    failed.split('\n')[0],
+  );
 
   console.log('\n▸ Остановка и запуск');
   check('среда B остановлена', env('stop', B).code === 0);

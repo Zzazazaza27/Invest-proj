@@ -8,6 +8,7 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applySecretFiles } from '../../scripts/lib/secret-files.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(HERE, '..', '..');
@@ -38,15 +39,7 @@ function loadDotEnv(): void {
 }
 loadDotEnv();
 
-/** `<ИМЯ>_FILE`: секрет из файла, как у ядра. */
-function loadSecretFiles(): void {
-  for (const [key, path] of Object.entries(process.env)) {
-    if (!key.endsWith('_FILE') || !path) continue;
-    const name = key.slice(0, -'_FILE'.length);
-    process.env[name] ??= readFileSync(path, 'utf8').replace(/\r?\n$/, '');
-  }
-}
-loadSecretFiles();
+applySecretFiles();
 
 export function requireEnv(name: string): string {
   const value = process.env[name];

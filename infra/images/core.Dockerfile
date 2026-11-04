@@ -30,6 +30,7 @@ COPY --from=build --chown=node:node /src/apps/core/dist ./apps/core/dist
 COPY --from=build --chown=node:node /src/database ./database
 COPY --chown=node:node infra/images/core-health.mjs ./core-health.mjs
 COPY --chown=node:node scripts/nats-init-stream.mjs ./scripts/nats-init-stream.mjs
+COPY --chown=node:node scripts/lib/secret-files.mjs ./scripts/lib/secret-files.mjs
 USER node
 EXPOSE 4300
 # Живость — служебный /live; публичный /v1/health её не заменяет.

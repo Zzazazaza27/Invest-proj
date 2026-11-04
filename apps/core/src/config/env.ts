@@ -823,7 +823,11 @@ let cached: AppEnv | null = null;
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
   const resolved = withSecretFiles(source);
   // Ключи шифрования и часть служебных значений читаются из process.env напрямую.
-  if (source === process.env) Object.assign(process.env, resolved);
+  if (source === process.env) {
+    Object.assign(process.env, resolved);
+    // `_FILE` снимается: повторная загрузка иначе приняла бы значение за конфликт.
+    for (const key of Object.keys(source)) if (!(key in resolved)) delete process.env[key];
+  }
   const parsed = EnvSchema.safeParse(resolved);
   if (!parsed.success) {
     const details = parsed.error.issues
