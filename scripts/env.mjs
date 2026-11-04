@@ -394,6 +394,7 @@ async function create(id) {
       `FIFTH_WEB_IMAGE=${images.web}`,
       `FIFTH_POSTGRES_IMAGE=${images.postgres}`,
       `FIFTH_WEB_PORT=${port}`,
+      'FIFTH_ENV_LABEL=Тестовый режим',
       // Роль IdP создаёт скрипт инициализации образа; значение своё у каждой среды.
       `FIFTH_KEYCLOAK_DB_PASSWORD=${hex(24)}`,
       `FIFTH_STORAGE_NETWORK=${STORAGE_NETWORK}`,
@@ -481,7 +482,10 @@ async function update(id) {
     .replace(/^FIFTH_POSTGRES_IMAGE=.*$/m, (line) =>
       samePostgres ? line : `FIFTH_POSTGRES_IMAGE=${images.postgres}`,
     );
-  writeFileSync(file, lines);
+  writeFileSync(
+    file,
+    /^FIFTH_ENV_LABEL=/m.test(lines) ? lines : `${lines}FIFTH_ENV_LABEL=Тестовый режим\n`,
+  );
   installCompose(id, kit);
   compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', '--wait']);
   compose(id, ['run', '--rm', 'migrate']);

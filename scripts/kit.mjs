@@ -42,6 +42,11 @@ const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
 const MIGRATIONS = join(ROOT, 'database', 'migrations');
 const COMPONENTS = ['core', 'web', 'postgres'];
+const PROD_COMPOSE = [
+  'infra/docker-compose.yml',
+  'infra/docker-compose.prod.yml',
+  'infra/docker-compose.journald.yml',
+];
 const KEEP = Number(process.env.FIFTH_KIT_KEEP || 2);
 
 const argv = process.argv.slice(2);
@@ -122,6 +127,10 @@ function manifestOf({ build, commit, images, previous }) {
     createdAt: new Date().toISOString(),
     images,
     compose: { file: 'infra/docker-compose.env.yml', sha256: sha256(readFileSync(COMPOSE)) },
+    // Рабочая среда запускается из файлов репозитория: их точные версии входят в комплект.
+    prodCompose: Object.fromEntries(
+      PROD_COMPOSE.map((f) => [f, sha256(readFileSync(join(ROOT, f)))]),
+    ),
     settingsVersion: 1,
     migrations,
     previous: previous ?? null,

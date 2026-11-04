@@ -19,6 +19,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund \
 
 FROM nginx:1.27-alpine
 COPY infra/nginx/default.conf /etc/nginx/templates/default.conf.template
+COPY --chmod=755 infra/images/web-banner.sh /docker-entrypoint.d/40-env-banner.sh
 COPY --from=build /src/apps/web-public/dist /srv/web-public
 COPY --from=build /src/apps/lab/dist /srv/lab
 COPY --from=build /src/apps/investor/dist /srv/investor

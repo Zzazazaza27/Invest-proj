@@ -25,8 +25,8 @@
  * Результат — строка JSON. Код завершения: 0 готово, 1 не удалось, 2 отказ.
  */
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildOrder } from './kit.mjs';
@@ -54,24 +54,120 @@ const finish = (result, code) => {
 const q = (v) => (v === null || v === undefined ? 'NULL' : `'${String(v).replace(/'/g, "''")}'`);
 const dirOf = (id) => join(ENVS, id);
 const instanceId = (id, component) => `${id}/${SERVER}/${component}`;
+const PROD = 'prod';
+const containerOf = (id, component) =>
+  id === PROD ? `fifth-${component}` : `fifth-${id}-${component}`;
+const PROD_PROFILES = 'web,monitoring,monitoring-host';
+
+/** Значение из .env рабочей среды. */
+function prodEnv(name) {
+  const m = readFileSync(join(ROOT, '.env'), 'utf8').match(new RegExp(`^${name}=(.*)$`, 'm'));
+  return m?.[1]?.trim() ?? '';
+}
+
+/**
+ * Рабочая установка собирается из образов комплекта и файлов этого репозитория. Хеши
+ * файлов сверяются с манифестом, версия скриптов записывается в реестр: сочетание
+ * фиксируется и воспроизводится, разные коммиты образов и скриптов допустимы.
+ */
+function checkProdFiles(kit) {
+  if (!kit.prodCompose) throw new Refused(`в комплекте ${kit.build} нет файлов рабочей среды`);
+  for (const [file, sum] of Object.entries(kit.prodCompose)) {
+    const now = createHash('sha256')
+      .update(readFileSync(join(ROOT, file)))
+      .digest('hex');
+    if (now !== sum) throw new Refused(`${file} не совпал с комплектом ${kit.build}`);
+  }
+  return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
+}
+
+function prodCompose(args) {
+  const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'infra.mjs'), 'compose', ...args], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    env: { ...dockerEnv, COMPOSE_PROFILES: PROD_PROFILES },
+    timeout: 300_000,
+  });
+  if (r.status !== 0) {
+    throw new Error(
+      `compose ${args[0]}: ${`${r.stdout}\n${r.stderr}`.trim().split('\n').slice(-2).join(' | ')}`,
+    );
+  }
+}
+
+/** Перевод рабочей среды на комплект: миграции одним шагом, затем ядро и статика. */
+function prodUpdate(build) {
+  const file = join(ROOT, '.env');
+  const text = readFileSync(file, 'utf8');
+  writeFileSync(
+    file,
+    text
+      .replace(/^FIFTH_CORE_IMAGE=.*$/m, `FIFTH_CORE_IMAGE=fifth/core:${build}`)
+      .replace(/^FIFTH_WEB_IMAGE=.*$/m, `FIFTH_WEB_IMAGE=fifth/web:${build}`),
+  );
+  prodCompose([
+    'run',
+    '--rm',
+    '--no-deps',
+    '-w',
+    '/app/database',
+    'core',
+    'sh',
+    '-c',
+    'node --experimental-strip-types src/migrate.ts && node --experimental-strip-types src/bootstrap-roles.ts',
+  ]);
+  prodCompose(['up', '-d', 'core', 'web']);
+  const until = Date.now() + 120_000;
+  while (Date.now() < until) {
+    if (readiness(PROD).ready) return { code: 0, out: 'готово' };
+    spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},2000)']);
+  }
+  return { code: 1, out: 'ядро не готово' };
+}
 
 function psql(id, sql) {
   const r = spawnSync(
     'docker',
-    [
-      'compose',
-      '--env-file',
-      join(dirOf(id), 'compose.env'),
-      '-f',
-      join(dirOf(id), 'compose.yml'),
-      'exec',
-      '-T',
-      'postgres',
-      'sh',
-      '-c',
-      'psql "$(cat /run/secrets/DATABASE_URL_APP_RELEASE)" -v ON_ERROR_STOP=1 -At',
-    ],
-    { input: sql, encoding: 'utf8', env: dockerEnv, timeout: 30_000 },
+    id === PROD
+      ? [
+          'exec',
+          '-i',
+          '-e',
+          'PGPASSWORD',
+          'fifth-postgres',
+          'psql',
+          '-h',
+          '127.0.0.1',
+          '-U',
+          'app_release_user',
+          '-d',
+          'fifth_element',
+          '-v',
+          'ON_ERROR_STOP=1',
+          '-At',
+        ]
+      : [
+          'compose',
+          '--env-file',
+          join(dirOf(id), 'compose.env'),
+          '-f',
+          join(dirOf(id), 'compose.yml'),
+          'exec',
+          '-T',
+          'postgres',
+          'sh',
+          '-c',
+          'psql "$(cat /run/secrets/DATABASE_URL_APP_RELEASE)" -v ON_ERROR_STOP=1 -At',
+        ],
+    {
+      input: sql,
+      encoding: 'utf8',
+      env:
+        id === PROD
+          ? { ...dockerEnv, PGPASSWORD: prodEnv('DB_ROLE_PASSWORD_APP_RELEASE') }
+          : dockerEnv,
+      timeout: 30_000,
+    },
   );
   if (r.status !== 0) {
     const e = new Error((r.stderr || 'база недоступна').trim().split('\n').pop());
@@ -148,7 +244,7 @@ function older(a, b) {
 function observe(id, kit) {
   const out = [];
   for (const component of COMPONENTS) {
-    const name = `fifth-${id}-${component}`;
+    const name = containerOf(id, component);
     const r = spawnSync('docker', ['inspect', name, '--format', '{{.Image}}|{{.State.Status}}'], {
       encoding: 'utf8',
       env: dockerEnv,
@@ -166,6 +262,20 @@ function observe(id, kit) {
 }
 
 function readiness(id) {
+  if (id === PROD) {
+    const r = spawnSync(
+      'docker',
+      [
+        'exec',
+        'fifth-core',
+        'node',
+        '-e',
+        "fetch('http://127.0.0.1:4400/ready',{signal:AbortSignal.timeout(8000)}).then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))",
+      ],
+      { env: dockerEnv, timeout: 15_000 },
+    );
+    return { ready: r.status === 0 };
+  }
   const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'env.mjs'), 'status', id], {
     encoding: 'utf8',
     env: dockerEnv,
@@ -236,6 +346,7 @@ async function install(id) {
   }
   const kit = readKit(build);
   kitTool('check', '--build', build);
+  const scripts = id === PROD ? checkProdFiles(kit) : null;
   const op = randomUUID();
 
   // Захват блокировки подтверждает база: без него шагов дальше нет.
@@ -277,7 +388,13 @@ async function install(id) {
     throw new Refused(detail);
   }
   kitTool('pin', '--env', id, '--pending', build);
-  record(id, op, 'lock', 'ok', `сборка ${build}, было ${current ?? 'none'}`);
+  record(
+    id,
+    op,
+    'lock',
+    'ok',
+    `сборка ${build}, было ${current ?? 'none'}${scripts ? `, скрипты ${scripts}` : ''}`,
+  );
   const close = (status, detail) => {
     record(id, op, 'finish', status, detail);
     try {
@@ -309,7 +426,7 @@ async function install(id) {
     touched = true;
     record(id, op, 'updating', 'start');
     if (process.env.FIFTH_TEST_CRASH === 'during-update') process.exit(96);
-    const up = envTool('update', id, '--kit', build);
+    const up = id === PROD ? prodUpdate(build) : envTool('update', id, '--kit', build);
     if (up.code !== 0) throw new Error(`установка: ${up.out.slice(0, 200)}`);
     record(id, op, 'update', 'ok');
     const v = verifyAgainst(id, loaded);
@@ -427,10 +544,11 @@ const COMMANDS = { install, verify, replay, recover };
 try {
   const [command, id] = argv;
   if (!COMMANDS[command]) throw new Refused(`команды нет: ${command ?? '(нет)'}`);
-  if (!/^test-[1-9][0-9]*$/.test(id ?? '')) {
-    throw new Refused('выпуск на рабочую среду — в W09d; сейчас только test-N');
+  if (!/^(prod|test-[1-9][0-9]*)$/.test(id ?? '')) throw new Refused(`неверная среда: ${id}`);
+  if (id === PROD) mkdirSync(dirOf(id), { recursive: true });
+  else if (!existsSync(join(dirOf(id), 'install.json'))) {
+    throw new Refused(`среда ${id} не установлена`);
   }
-  if (!existsSync(join(dirOf(id), 'install.json'))) throw new Refused(`среда ${id} не установлена`);
   await COMMANDS[command](id);
 } catch (e) {
   const refused = e instanceof Refused;
