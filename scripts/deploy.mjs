@@ -46,6 +46,13 @@ const NO_VERIFY = process.argv.includes('--no-verify');
 
 const HOST = 'root@193.233.217.210';
 const KEY = resolve(homedir(), '.ssh', 'launchbridge_ed25519');
+// С W09d рабочая среда идёт из комплекта, юнита ядра нет: прежний порядок сломал бы её.
+if (!process.env.FIFTH_DEPLOY_LEGACY) {
+  console.error(
+    'deploy отключён с W09d: выпуск рабочей среды — комплектом, см. docs/architecture/w09-plan.md',
+  );
+  process.exit(2);
+}
 const APP_DIR = '/opt/fifth-element';
 // Адрес стенда — из окружения: смена домена не требует правки скрипта.
 const PUBLIC_URL = process.env.STAND_PUBLIC_URL ?? 'https://5espace.com';
