@@ -562,16 +562,18 @@ async function walkChain(keyMat) {
   }
   const heads = [GENESIS];
   const visited = new Set();
+  const links = [];
   let head = GENESIS;
   for (;;) {
     const n = byPrev.get(head);
     if (!n) break;
     visited.add(n.key);
+    links.push({ key: n.key, body: n.b });
     head = linkOf(head, n.b.mac);
     heads.push(head);
   }
   const outside = keys.filter((k) => !visited.has(k) && !bad.includes(k) && !forks.includes(k));
-  return { head, count: heads.length - 1, heads, bad, forks, outside, total: keys.length };
+  return { head, count: heads.length - 1, heads, links, bad, forks, outside, total: keys.length };
 }
 
 /** Сверка цепочки хранилища с эталоном: {problems, unverifiable}. */
@@ -1382,6 +1384,15 @@ function status() {
  * разрывы и голова против эталона. Эталона нет или он не подтверждён —
  * «НЕПРОВЕРЯЕМО».
  */
+/** Испытания: проход таймера посреди чтения; значение — JSON с учёткой записи. */
+function testPassDuringRead() {
+  if (!env.LOGS_TEST_VERIFY_RACE) return;
+  spawnSync(process.execPath, [process.argv[1], 'run'], {
+    env: { ...env, ...JSON.parse(env.LOGS_TEST_VERIFY_RACE), LOGS_TEST_VERIFY_RACE: '' },
+    stdio: 'ignore',
+  });
+}
+
 async function verify() {
   const keyMat = archiveKey(env.LOGS_ARCHIVE_KEY);
   const state = loadState();
@@ -1430,13 +1441,7 @@ async function verify() {
   if (anchors.length > 1) console.log(`нумераций журнала: ${anchors.length}`);
   // Цепочка квитанций против эталона (голова и число звеньев).
   const walk = await walkChain(keyMat);
-  if (env.LOGS_TEST_VERIFY_RACE) {
-    // Испытания: проход таймера во время проверки.
-    spawnSync(process.execPath, [process.argv[1], 'run'], {
-      env: { ...env, LOGS_TEST_VERIFY_RACE: '' },
-      stdio: 'ignore',
-    });
-  }
+  testPassDuringRead();
   const chainCheck = chainProblems(walk, reference);
   problems.push(...chainCheck.problems);
   for (const r of rows) {
@@ -2629,9 +2634,13 @@ async function pull() {
   // Эталон копии: цепочка хранилища, сверенная с опубликованной головой
   // (ref/head.json) и с эталоном прежней копии — откат головы или утрата
   // хвоста видны здесь, даже если голову в хранилище подменили на старую.
-  const walk = await walkChain(keyMat);
-  const chainNotes = chainProblems(walk, null).problems;
+  // Голова — до обхода: рядом идут проходы таймера, и голова, прочитанная
+  // после, опередила бы цепочку без всякой утраты. Звенья описи — из того же
+  // обхода, что и эталон копии.
   const published = await chainedBody(REF_KEY, keyMat);
+  const walk = await walkChain(keyMat);
+  testPassDuringRead();
+  const chainNotes = chainProblems(walk, null).problems;
   if (
     published &&
     (walk.count < published.count || walk.heads[published.count] !== published.head)
@@ -2653,13 +2662,6 @@ async function pull() {
       `цепочка хранилища (${walk.count}) расходится с эталоном прежней копии (${prev.count}) — утрата или подмена`,
     );
   }
-  const chain = [];
-  for (const p of CHAINED) {
-    for (const v of await listVersions(p)) {
-      const b = await chainedBody(v.key, keyMat);
-      if (b) chain.push({ key: v.key, body: b });
-    }
-  }
   const manifest = {
     at: new Date().toISOString(),
     anchors,
@@ -2667,7 +2669,7 @@ async function pull() {
     packs,
     files: fileList,
     reference: { head: walk.head, count: walk.count },
-    chain,
+    chain: walk.links,
     chainNotes,
   };
   console.log(`скачано объектов: ${downloaded}`);

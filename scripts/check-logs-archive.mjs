@@ -837,6 +837,25 @@ try {
     return p;
   };
   const expectAfterRun = () => (catalog().some((r) => r.kind === 'loss') ? 'loss' : 'full');
+  // Проход таймера посреди скачивания: голова и звенья уходят вперёд копии.
+  gen(15, 'pull-race');
+  arch('run');
+  gen(15, 'pull-race2');
+  const raceDir = `/tmp/pr-${tag}`;
+  const pRace = arch('pull', {
+    ...asReader,
+    LOGS_PULL_TO: raceDir,
+    LOGS_TEST_VERIFY_RACE: JSON.stringify({
+      LOGS_S3_ACCESS_KEY_ID: ARCH_ENV.LOGS_S3_ACCESS_KEY_ID,
+      LOGS_S3_SECRET_ACCESS_KEY: ARCH_ENV.LOGS_S3_SECRET_ACCESS_KEY,
+    }),
+  });
+  check(
+    'проход во время pull не даёт ложного расхождения',
+    pRace.code === 0 && !verdictOf(pRace.out).includes('НЕ сошлась'),
+    `${verdictOf(pRace.out)} ${pRace.out.split('\n').find((l) => /опись:|голову/.test(l)) ?? ''}`,
+  );
+  inCt(`rm -rf ${raceDir}`);
   // «Завтра»: архиватор дочитал журнал после конца суток — сутки закрыты.
   const tomorrow = new Date(Date.now() + 86_400_000).toISOString();
   check('проход «завтра»', arch('run', { LOGS_TEST_NOW: tomorrow }).code === 0);
