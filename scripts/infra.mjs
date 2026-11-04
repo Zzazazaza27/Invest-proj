@@ -29,6 +29,7 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const ENV_PATH = join(ROOT, '.env');
 const COMPOSE_PATH = join(ROOT, 'infra', 'docker-compose.yml');
 const JOURNALD_PATH = join(ROOT, 'infra', 'docker-compose.journald.yml');
+const PROD_PATH = join(ROOT, 'infra', 'docker-compose.prod.yml');
 
 /**
  * Боевое ли это окружение.
@@ -94,6 +95,10 @@ const logDriver =
         .match(/^DOCKER_LOG_DRIVER=(.*)$/m)?.[1]
         ?.trim()
     : undefined);
+// Рабочая среда из комплекта: образы заданы в .env (W09d).
+if (existsSync(ENV_PATH) && /^FIFTH_CORE_IMAGE=./m.test(readFileSync(ENV_PATH, 'utf8'))) {
+  args.push('-f', PROD_PATH);
+}
 if (logDriver === 'journald') args.push('-f', JOURNALD_PATH);
 else if (logDriver) {
   console.error(`infra: DOCKER_LOG_DRIVER=${logDriver} — допустимо только journald или пусто`);

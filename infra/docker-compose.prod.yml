@@ -1,0 +1,34 @@
+# Рабочая среда из комплекта — дополнение к основному файлу (W09d).
+#
+# Подключает scripts/infra.mjs, когда в .env задан FIFTH_CORE_IMAGE. Образы приходят из
+# комплекта и не собираются на сервере.
+#
+# Ядро работает в сети узла: настройки .env остаются прежними, а локальная почта Exim
+# принимает письма только с петли. Перевод ядра в закрытую сеть — вместе с блоком 5.
+# Тестовые среды идут из infra/docker-compose.env.yml, в своих сетях.
+services:
+  postgres:
+    image: ${FIFTH_POSTGRES_IMAGE:?}
+
+  web:
+    image: ${FIFTH_WEB_IMAGE:?}
+    volumes: !override
+      - ${MONITOR_PULSE_PUBLIC_DIR:-../.local/pulse-public}:/srv/pulse:ro
+
+  core:
+    image: ${FIFTH_CORE_IMAGE:?}
+    container_name: fifth-core
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    env_file: ../.env
+    stop_grace_period: 35s
+    logging:
+      driver: journald
+    depends_on:
+      postgres:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
