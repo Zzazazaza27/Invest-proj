@@ -81,6 +81,9 @@ export async function createScratchDatabase(name: string): Promise<{
     max: 12,
     application_name: `fifth-db-tests-${name}`,
   });
+  // Удаление базы с FORCE обрывает ещё закрывающиеся соединения: это ожидаемо, а без
+  // обработчика ошибка простаивающего клиента становится необработанной и роняет прогон.
+  scratchPool.on('error', () => {});
   return {
     pool: scratchPool,
     async drop() {
