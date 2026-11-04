@@ -132,7 +132,7 @@ function docker(args) {
 const hex = (n) => randomBytes(n).toString('hex');
 
 /** Настройки и секреты среды. Секрет — отдельный файл, в настройках только путь. */
-function writeSettings(id, { address, keys }) {
+function writeSettings(id, { address, keys, filesUrl }) {
   const n = names(id);
   const mountDir = join(n.dir, 'secrets');
   mkdirSync(mountDir, { recursive: true });
@@ -214,6 +214,9 @@ function writeSettings(id, { address, keys }) {
     `CORE_PUBLIC_URL=${address}`,
     `PUBLIC_BASE_URL=${address}`,
     `CORS_ALLOWED_ORIGINS=${address}`,
+    // Статика среды — в той же сети Docker, адрес клиента приходит от неё.
+    'TRUSTED_PROXY_CIDRS=127.0.0.1/32,172.16.0.0/12',
+    ...(filesUrl ? [`S3_PUBLIC_ENDPOINT=${filesUrl}`] : []),
     'AUTH_MODE=local',
     'KMS_MODE=local',
     'SESSION_COOKIE_NAME=ul_session',
@@ -374,7 +377,7 @@ async function create(id) {
   chmodSync(n.dir, 0o700);
   installCompose(id, kit);
   const keys = await createStorage(id);
-  writeSettings(id, { address, keys });
+  writeSettings(id, { address, keys, filesUrl: flag('--files-url') });
   writeFileSync(
     join(n.dir, 'storage.json'),
     `${JSON.stringify({ app: keys.app, archive: keys.archive }, null, 2)}\n`,

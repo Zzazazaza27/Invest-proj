@@ -45,7 +45,7 @@ files.5espace.com {
 	# Рабочий бакет ↔ рабочий кабинет.
 	@prod_origin header Origin https://5espace.com
 
-	handle /unicorn-launch {
+	handle /fifth-element {
 		# Предварительный запрос: разрешённому сайту — 204 с правилами, чужому — 403.
 		@preflight method OPTIONS
 		handle @preflight {
@@ -70,6 +70,47 @@ files.5espace.com {
 				max_size 520MiB
 			}
 			header @prod_origin Access-Control-Allow-Origin "https://5espace.com"
+			header Vary "Origin"
+			reverse_proxy 127.0.0.1:9000 {
+				header_up Host {host}
+				# Заголовки CORS решает Caddy, ответ хранилища их не дополняет.
+				header_down -Access-Control-Allow-Origin
+				header_down -Access-Control-Allow-Credentials
+				header_down -Access-Control-Expose-Headers
+			}
+		}
+
+		respond 404
+	}
+
+	# Тестовый бакет ↔ тестовая среда test-1 (блок 12).
+	@test1_origin header Origin https://test-1.5espace.com
+
+	handle /fifth-test-1 {
+		# Предварительный запрос: разрешённому сайту — 204 с правилами, чужому — 403.
+		@preflight method OPTIONS
+		handle @preflight {
+			header @test1_origin {
+				Access-Control-Allow-Origin "https://test-1.5espace.com"
+				Access-Control-Allow-Methods "POST"
+				Access-Control-Allow-Headers "Content-Type"
+				Access-Control-Max-Age "600"
+			}
+			header Vary "Origin"
+			respond @test1_origin 204
+			respond 403
+		}
+
+		@upload method POST
+		handle @upload {
+			# Наибольший материал — 500 МиБ (524 288 000 байт, MATERIAL_UPLOAD_RULES).
+			# Единицы двоичные: «520MB» у Caddy — 520 000 000 байт, меньше
+			# разрешённого файла (замечание Тэнка при приёмке W06). Запас — на поля
+			# формы multipart.
+			request_body {
+				max_size 520MiB
+			}
+			header @test1_origin Access-Control-Allow-Origin "https://test-1.5espace.com"
 			header Vary "Origin"
 			reverse_proxy 127.0.0.1:9000 {
 				header_up Host {host}

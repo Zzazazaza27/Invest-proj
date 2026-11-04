@@ -75,7 +75,7 @@ if (draftIdx > 0) {
       GARAGE_S3_PORT: '9000',
       S3_ACCESS_KEY_ID: gk(),
       S3_SECRET_ACCESS_KEY: sec(),
-      ARCHIVE_S3_BUCKET: 'unicorn-launch-archive',
+      ARCHIVE_S3_BUCKET: 'fifth-element-archive',
       ARCHIVE_S3_ACCESS_KEY_ID: gk(),
       ARCHIVE_S3_SECRET_ACCESS_KEY: sec(),
       BACKUP_S3_ACCESS_KEY_ID: gk(),
@@ -193,8 +193,8 @@ const RW = { read: true, write: true, owner: false };
 const R = { read: true, write: false, owner: false };
 const W = { read: false, write: true, owner: false };
 
-const files = await bucket(env.S3_BUCKET || 'unicorn-launch');
-const archive = await bucket(env.ARCHIVE_S3_BUCKET || 'unicorn-launch-archive');
+const files = await bucket(env.S3_BUCKET || 'fifth-element');
+const archive = await bucket(env.ARCHIVE_S3_BUCKET || 'fifth-element-archive');
 const app = await key('S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY', 'app');
 const arch = await key(
   'ARCHIVE_S3_ACCESS_KEY_ID',

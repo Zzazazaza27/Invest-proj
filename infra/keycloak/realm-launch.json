@@ -1,5 +1,5 @@
 {
-  "realm": "unicorn-launch",
+  "realm": "fifth-element",
   "enabled": true,
   "displayName": "Пятый элемент (dev)",
   "sslRequired": "external",
@@ -25,7 +25,7 @@
   },
   "clients": [
     {
-      "clientId": "unicorn-launch-core",
+      "clientId": "fifth-core",
       "name": "Пятый элемент — Core API",
       "enabled": true,
       "protocol": "openid-connect",
