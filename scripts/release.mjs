@@ -96,15 +96,31 @@ function prodCompose(args) {
 }
 
 /** Перевод рабочей среды на комплект: миграции одним шагом, затем ядро и статика. */
-function prodUpdate(build) {
+function prodUpdate(build, kit) {
+  // База перезапускается только при новом образе, а не при смене метки.
+  const running = spawnSync('docker', ['inspect', 'fifth-postgres', '--format', '{{.Image}}'], {
+    encoding: 'utf8',
+    env: dockerEnv,
+  }).stdout.trim();
+  const newPostgres = running !== kit.images.postgres.imageId;
   const file = join(ROOT, '.env');
   const text = readFileSync(file, 'utf8');
   writeFileSync(
     file,
     text
       .replace(/^FIFTH_CORE_IMAGE=.*$/m, `FIFTH_CORE_IMAGE=fifth/core:${build}`)
-      .replace(/^FIFTH_WEB_IMAGE=.*$/m, `FIFTH_WEB_IMAGE=fifth/web:${build}`),
+      .replace(/^FIFTH_WEB_IMAGE=.*$/m, `FIFTH_WEB_IMAGE=fifth/web:${build}`)
+      .replace(/^FIFTH_POSTGRES_IMAGE=.*$/m, (line) =>
+        newPostgres ? `FIFTH_POSTGRES_IMAGE=fifth/postgres:${build}` : line,
+      ),
   );
+  if (newPostgres) {
+    // Инструменты копий берут образ базы по постоянной метке.
+    spawnSync('docker', ['tag', `fifth/postgres:${build}`, 'fifth/postgres:16'], {
+      env: dockerEnv,
+    });
+    prodCompose(['up', '-d', '--wait', 'postgres']);
+  }
   prodCompose([
     'run',
     '--rm',
@@ -426,7 +442,7 @@ async function install(id) {
     touched = true;
     record(id, op, 'updating', 'start');
     if (process.env.FIFTH_TEST_CRASH === 'during-update') process.exit(96);
-    const up = id === PROD ? prodUpdate(build) : envTool('update', id, '--kit', build);
+    const up = id === PROD ? prodUpdate(build, loaded) : envTool('update', id, '--kit', build);
     if (up.code !== 0) throw new Error(`установка: ${up.out.slice(0, 200)}`);
     record(id, op, 'update', 'ok');
     const v = verifyAgainst(id, loaded);
