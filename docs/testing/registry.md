@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 176; требований: 41
+- Проверок: 179; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 66
+### Зарегистрированы, но ни в наборе, ни в CI — 67
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -243,6 +243,7 @@
 - `CHK-DNS-HIDDEN-PRIMARY` — Схема «скрытый первичный + вторичные» на тестовой зоне (план независимого DNS): передача зоны только по ключу и с адреса вторичного, обновление по NOTIFY, от…
 - `CHK-DNS-PRIMARY-APPLY` — Безопасное применение зон первичного DNS: неверная зона отклоняется, рабочий файл и записанная версия не меняются, после перезапуска работает прежняя зона; с…
 - `CHK-MONITOR-APP-PROBE` — Разрешённое чтение контрольных данных прикладным путём (2.5, 8.2): обычный вход служебной учётки через публичный адрес, карточка контрольного проекта и матер…
+- `CHK-RELEASE` — Блок 9, задание 1: комплект, блокировка, реестр и сверка версий.
 - `CHK-ENV-ISOLATION` — Комплект запускается в разных изолированных средах без правки кода и Compose.
 - `CHK-LOGS-ARCHIVE` — Архиватор журналов на настоящем journald (8.4, 2.1-W08b): бакет и учётки — настоящим minio-init по infra/minio/policies; учётка записи пишет, но не удаляет о…
 - `CHK-LOGS-APPLY` — Применение W08b (8.4) без VPS: юниты fifth-logs-run/files/pack из infra/systemd проходят systemd-analyze verify и работают с окружением из .env (LOGS_DOTENV)…
@@ -306,6 +307,8 @@
 | TOOL-TEMP-STAND | `npm run temp:up` | 0 | вручную, по поводу | — |
 | TOOL-TEMP-RUN | `npm run temp:run` | 0 | вручную, по поводу | — |
 | TOOL-VITE-BUILD | `node scripts/vite-build.mjs` | 0 | вручную, по поводу | — |
+| TOOL-KIT | `node scripts/kit.mjs manifest|fetch|pack|load|check --build <номер>` | 0 | вручную, по поводу | — |
+| TOOL-RELEASE | `node scripts/release.mjs install|verify|replay|recover <среда>` | 0 | вручную, по поводу | — |
 | TOOL-ENV | `node scripts/env.mjs create|status|stop|start|seed|destroy <среда>` | 0 | вручную, по поводу | — |
 | TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export|legacy-snapshot|legacy-gap|secrets-draft --to <файл>` | 0 | вручную, по поводу | — |
 | TOOL-GARAGE-INIT | `node scripts/garage-init.mjs [--status]` | 0 | вручную, по поводу | — |
@@ -353,6 +356,7 @@
 | CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
 | CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
+| CHK-RELEASE | `node scripts/check-release.mjs` | 39 | вручную | — |
 | CHK-ENV-ISOLATION | `node scripts/check-env-isolation.mjs` | 41 | вручную | — |
 | CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 228 | вручную | — |
 | CHK-LOGS-APPLY | `node scripts/check-logs-apply.mjs` | 36 | вручную | — |
@@ -421,7 +425,7 @@
 | SMK-AUTH-RECOVERY | `node scripts/smoke-auth-recovery.mjs` | 35 | вручную | — |
 | SMK-CONTENT | `node scripts/smoke-content.mjs` | 19 | вручную | — |
 | SMK-CORE | `node scripts/smoke-core.mjs` | 44 | вручную | — |
-| SMK-DEMO | `node scripts/smoke-demo.mjs` | 42 | вручную | — |
+| SMK-DEMO | `node scripts/smoke-demo.mjs` | 39 | вручную | — |
 | SMK-EVENTS | `node scripts/smoke-events.mjs` | 27 | вручную | — |
 | SMK-FAVORITES | `node scripts/smoke-favorites.mjs` | 28 | вручную | — |
 | SMK-INTEGRATION | `node scripts/smoke-integration.mjs` | 38 | вручную | — |

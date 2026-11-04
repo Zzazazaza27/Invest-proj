@@ -7,6 +7,7 @@
  *   node scripts/env.mjs stop    <среда>
  *   node scripts/env.mjs start   <среда>
  *   node scripts/env.mjs seed    <среда> --set <файл.sql>
+ *   node scripts/env.mjs update  <среда> --kit <метка>
  *   node scripts/env.mjs destroy <среда> --confirm <среда>
  *
  * Среда — `test-N`. Рабочую среду эта команда не создаёт и не удаляет: её
@@ -90,7 +91,11 @@ function compose(id, args, { allowFail = false, timeout = 300_000 } = {}) {
   );
   if (r.status !== 0 && !allowFail) {
     throw new Error(
-      `docker compose ${args[0]}: ${(r.stderr || r.stdout).trim().split('\n').pop()}`,
+      `docker compose ${args[0]}: код ${r.status ?? r.signal}: ${`${r.stdout}\n${r.stderr}`
+        .trim()
+        .split('\n')
+        .slice(-3)
+        .join(' | ')}`,
     );
   }
   return r;
@@ -126,6 +131,7 @@ function writeSettings(id, { address, keys }) {
     AUTH: 'app_auth_user',
     MAINTENANCE: 'app_maintenance_user',
     ARCHIVE: 'app_archive_user',
+    RELEASE: 'app_release_user',
   };
   const roleKey = Object.fromEntries(Object.keys(roles).map((r) => [r, hex(24)]));
   for (const [role, value] of Object.entries(roleKey)) put(`DB_ROLE_PASSWORD_APP_${role}`, value);
@@ -133,7 +139,14 @@ function writeSettings(id, { address, keys }) {
   put('POSTGRES_PASSWORD', owner);
   put('DATABASE_URL_OWNER', pg('fifth_owner', owner));
   put('DATABASE_URL', pg(roles.BACKEND, roleKey.BACKEND));
-  for (const role of ['INTEGRATION', 'NOTIFICATIONS', 'AUTH', 'MAINTENANCE', 'ARCHIVE']) {
+  for (const role of [
+    'INTEGRATION',
+    'NOTIFICATIONS',
+    'AUTH',
+    'MAINTENANCE',
+    'ARCHIVE',
+    'RELEASE',
+  ]) {
     put(`DATABASE_URL_APP_${role}`, pg(roles[role], roleKey[role]));
   }
   const redis = hex(24);
@@ -420,6 +433,39 @@ async function status(id) {
   );
 }
 
+/** Перевод среды на другие образы: миграции одним шагом, затем ядро и статика. */
+async function update(id) {
+  const kit = flag('--kit');
+  if (!kit) throw new Refused('нужен --kit <метка>');
+  const install = loadInstall(id);
+  const images = {
+    core: `fifth/core:${kit}`,
+    web: `fifth/web:${kit}`,
+    postgres: `fifth/postgres:${kit}`,
+  };
+  const digests = Object.fromEntries(Object.entries(images).map(([k, v]) => [k, imageId(v)]));
+  // База перезапускается только при новом образе: смена метки без смены образа
+  // пересоздала бы контейнер и оборвала соединения без причины.
+  const samePostgres = install.kit?.images?.postgres === digests.postgres;
+  const file = join(names(id).dir, 'compose.env');
+  const lines = readFileSync(file, 'utf8')
+    .replace(/^FIFTH_CORE_IMAGE=.*$/m, `FIFTH_CORE_IMAGE=${images.core}`)
+    .replace(/^FIFTH_WEB_IMAGE=.*$/m, `FIFTH_WEB_IMAGE=${images.web}`)
+    .replace(/^FIFTH_POSTGRES_IMAGE=.*$/m, (line) =>
+      samePostgres ? line : `FIFTH_POSTGRES_IMAGE=${images.postgres}`,
+    );
+  writeFileSync(file, lines);
+  compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', '--wait']);
+  compose(id, ['run', '--rm', 'migrate']);
+  compose(id, ['up', '-d', 'core', 'web']);
+  const state = await waitReady(id);
+  install.kit = { label: kit, images: digests };
+  install.schema = schemaVersion(id);
+  saveInstall(id, install);
+  const ok = Boolean(state?.ready);
+  finish({ ok, env: id, kit, schema: install.schema, ready: ok }, ok ? 0 : 1);
+}
+
 function stop(id) {
   loadInstall(id);
   compose(id, ['stop']);
@@ -484,7 +530,7 @@ async function destroy(id) {
   finish({ ok: true, env: id, message: `среда ${id}: удалена с данными` }, 0);
 }
 
-const COMMANDS = { create, status, stop, start, seed, destroy };
+const COMMANDS = { create, status, stop, start, seed, update, destroy };
 
 try {
   const [command, id] = argv;

@@ -1885,7 +1885,7 @@ checks:
     kind: smoke
     level: интеграционный
     runner: manual
-    asserts: 42
+    asserts: 39
     needs: [db, core]
     studied: code
     studiedOn: 2026-09-22
@@ -2553,6 +2553,40 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
 
+  - id: TOOL-KIT
+    file: scripts/kit.mjs
+    command: node scripts/kit.mjs manifest|fetch|pack|load|check --build <номер>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects: ['скачивает образы по дайджесту, хранит текущий и предыдущий комплекты в .local/kits']
+    studied: code
+    studiedOn: 2026-11-04
+    note: >-
+      Манифест и полная копия образов (W09c): установка и возврат работают без GitHub.
+    purpose: 'Комплект выпуска: проверенные образы без пересборки.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-04
+
+  - id: TOOL-RELEASE
+    file: scripts/release.mjs
+    command: node scripts/release.mjs install|verify|replay|recover <среда>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects: ['обновляет среду test-N, пишет реестр ops и журнал среды; рабочую среду не трогает']
+    studied: code
+    studiedOn: 2026-11-04
+    note: >-
+      Блокировка, реестр установок и сверка фактических версий (W09c).
+    purpose: 'Выпуск комплекта с подтверждённой блокировкой и сверкой.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-04
+
   - id: TOOL-ENV
     file: scripts/env.mjs
     command: node scripts/env.mjs create|status|stop|start|seed|destroy <среда>
@@ -2854,6 +2888,26 @@ checks:
     purpose: 'Технический журнал ядра без секретов до записи (8.4, 2.1-W08b): маскировка текста; поля только по перечню, отброшенные видны по имени; строка в поле error не пишется никогда (только объект исключения: класс, SQLSTATE, кадры без текста); JsonLogger; сторож исходников — подстановки в текст любого вызова журнала (logger, options.log) только из перечня, в полях нет .message/.stack/String()/JSON.stringify, error — только объект исключения; полный путь завершения процесса (Logger Nest → JsonLogger через shutdownLog) — исключение закрывающей функции без текста. Сторож проверен на исходниках f76f5de (35 находок, включая обходы Тэнка).'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
+
+  - id: CHK-RELEASE
+    file: scripts/check-release.mjs
+    command: node scripts/check-release.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 39
+    needs: [docker, s3]
+    effects:
+      ['временные среды test-73 и test-74, комплекты во временном каталоге; удаляются прогоном']
+    studied: code
+    studiedOn: 2026-11-04
+    note: >-
+      Занятый номер, порча копии, один комплект в две среды, привязка к текущей версии,
+      подменённый образ, обрыв выпуска и блокировка, отказ при недоступной базе, доставка
+      журнала без дублей, права ролей.
+    purpose: 'Блок 9, задание 1: комплект, блокировка, реестр и сверка версий.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-04
 
   - id: CHK-ENV-ISOLATION
     file: scripts/check-env-isolation.mjs
@@ -4038,7 +4092,15 @@ blocks:
   стенд:
     title: Порты, развёртывание, консоль
     members:
-      [CHK-ENV-ISOLATION, CHK-PORTS-CONSISTENCY, CHK-FRONT-BUILDS, RND-CONSOLE, RND-DEMO, SMK-DEMO]
+      [
+        CHK-RELEASE,
+        CHK-ENV-ISOLATION,
+        CHK-PORTS-CONSISTENCY,
+        CHK-FRONT-BUILDS,
+        RND-CONSOLE,
+        RND-DEMO,
+        SMK-DEMO,
+      ]
 
   порядок:
     title: Сам реестр проверок и учёт техдолга

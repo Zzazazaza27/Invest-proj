@@ -236,6 +236,7 @@ jobs:
           DB_ROLE_PASSWORD_APP_MAINTENANCE: ci_only_role_password_mainten_0
           DB_ROLE_PASSWORD_APP_AUTH: ci_only_role_password_authstate_0
           DB_ROLE_PASSWORD_APP_ARCHIVE: ci_only_role_password_archive_00
+          DB_ROLE_PASSWORD_APP_RELEASE: ci_only_role_password_release_00
       - name: Негативные тесты RLS и конкурентные инварианты
         run: npm run test -w database
       - name: Права PUBLIC на функциях SECURITY DEFINER (ожидание 0 нарушений)
@@ -252,6 +253,7 @@ jobs:
           export DATABASE_URL_APP_MAINTENANCE="postgres://app_maintenance_user:${PW_MAINTEN}@${host}"
           export DATABASE_URL_APP_AUTH="postgres://app_auth_user:${PW_AUTH}@${host}"
           export DATABASE_URL_APP_ARCHIVE="postgres://app_archive_user:${PW_ARCHIVE}@${host}"
+          export DATABASE_URL_APP_RELEASE="postgres://app_release_user:${PW_RELEASE}@${host}"
           node scripts/check-service-roles.mjs
         env:
           PW_AUTH: ci_only_role_password_authstate_0
@@ -260,6 +262,7 @@ jobs:
           PW_INTEGR: ci_only_role_password_integr_00
           PW_MAINTEN: ci_only_role_password_mainten_0
           PW_ARCHIVE: ci_only_role_password_archive_00
+          PW_RELEASE: ci_only_role_password_release_00
 
   # ---------------------------------------------------------------- гейт 6
   unit:
@@ -324,18 +327,90 @@ jobs:
     name: Сборка образов выпуска
     runs-on: ubuntu-latest
     needs: [static]
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      # Зелёный CI подтверждает, что выпускаемые образы собираются, а не только
-      # что исходники проходят типы и тесты. Комплект W09c сохраняет проверенное.
-      - name: Образ ядра
-        run: docker build --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/core.Dockerfile -t fifth/core:ci .
-      - name: Образ статики
-        run: docker build --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/web.Dockerfile -t fifth/web:ci .
-      - name: Образ базы
-        run: docker build -t fifth/postgres:ci infra/postgres
+      # Образы собираются один раз, здесь. Комплект берёт именно их по дайджесту:
+      # задание kit ниже не пересобирает, а разрешает выпуск проверенного.
+      - name: Сборка
+        run: |
+          docker build --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/core.Dockerfile -t fifth/core:ci .
+          docker build --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/web.Dockerfile -t fifth/web:ci .
+          docker build -t fifth/postgres:ci infra/postgres
       - name: Образ ядра содержит сборку
         run: docker run --rm fifth/core:ci test -f apps/core/dist/main.js
+      - name: Кандидаты в GHCR
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATTEMPT: ${{ github.run_number }}.${{ github.run_attempt }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo '{}' > images.json
+          for c in core web postgres; do
+            ref="ghcr.io/rebel-diesel/fifth-$c:candidate-$ATTEMPT"
+            docker tag "fifth/$c:ci" "$ref"
+            docker push "$ref"
+            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$ref")
+            id=$(docker inspect --format '{{.Id}}' "$ref")
+            jq --arg c "$c" --arg r "$ref" --arg d "$digest" --arg i "$id" \
+              '.[$c] = {ref: $r, digest: $d, imageId: $i}' images.json > images.tmp
+            mv images.tmp images.json
+          done
+      - name: Дайджесты кандидатов
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: images-${{ github.run_number }}.${{ github.run_attempt }}
+          path: images.json
+          retention-days: 7
+
+  # Выпуск разрешается только после всех зелёных проверок. Образов здесь не собираем:
+  # манифест ссылается на дайджесты задания images. Номер содержит попытку, поэтому
+  # повторный запуск CI не занимает номер уже выпущенного комплекта.
+  kit:
+    name: Комплект выпуска
+    runs-on: ubuntu-latest
+    needs: [static, sast, deps, database, unit, build, images]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      packages: write
+    env:
+      BUILD: 2.1-b${{ github.run_number }}.${{ github.run_attempt }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: images-${{ github.run_number }}.${{ github.run_attempt }}
+      - name: Номер свободен, метка сборки на те же образы
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for c in core web postgres; do
+            tag="ghcr.io/rebel-diesel/fifth-$c:$BUILD"
+            if docker manifest inspect "$tag" > /dev/null 2>&1; then
+              echo "сборка $BUILD уже выпущена: $tag" >&2
+              exit 1
+            fi
+            digest=$(jq -r --arg c "$c" '.[$c].digest' images.json)
+            docker buildx imagetools create --tag "$tag" "$digest"
+          done
+      - name: Манифест
+        run: |
+          node scripts/kit.mjs manifest --build "$BUILD" --commit "${{ github.sha }}" \
+            --images images.json --out kit.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kit-${{ env.BUILD }}
+          path: kit.json
+          retention-days: 90
 
   build:
     name: Сборка всех приложений

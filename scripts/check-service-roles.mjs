@@ -130,6 +130,21 @@ const ROLES = [
     ],
   },
   {
+    // Реестр установок (M157): только схема ops, этапы только добавляются.
+    role: 'app_release',
+    urlKey: 'DATABASE_URL_APP_RELEASE',
+    login: 'app_release_user',
+    allowed: [
+      ['читает реестр установок', 'SELECT count(*) FROM ops.installations'],
+      ['читает версии экземпляров', 'SELECT count(*) FROM ops.instances'],
+    ],
+    forbidden: [
+      ['не правит этапы', "UPDATE ops.installation_events SET result = 'x' WHERE false"],
+      ['не удаляет установки', 'DELETE FROM ops.installations WHERE false'],
+      ['не видит людей', 'SELECT count(*) FROM identity.users'],
+    ],
+  },
+  {
     // Выгрузка журнала в архив (M052, остаток SEC-10). Роль читает журнал
     // ЦЕЛИКОМ (это её назначение) и ведёт append-only реестр выгрузок.
     // Изменять журнал и реестр, а также заглядывать в данные приложений — нет.

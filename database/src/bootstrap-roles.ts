@@ -63,6 +63,12 @@ const ROLE_MAP: { login: string; group: string; passwordEnv: string }[] = [
     group: 'app_archive',
     passwordEnv: 'DB_ROLE_PASSWORD_APP_ARCHIVE',
   },
+  // Процесс выпуска и сверка версий: только реестр ops (M157).
+  {
+    login: 'app_release_user',
+    group: 'app_release',
+    passwordEnv: 'DB_ROLE_PASSWORD_APP_RELEASE',
+  },
 ];
 
 const MIN_PASSWORD_LENGTH = 24;

@@ -7,7 +7,7 @@
   (номер, суть, для кого, статус; новые идеи — строкой со следующим номером);
 - **полный прежний текст** всех идей 001–094 — `01 5E/02 Ideas and Features/_Idea Bank Archive.md`
   под теми же номерами («Как говорить», «Архитектурно не закрывать», «Решение:»);
-- функции, выросшие из идей, — `01 5E/02 Ideas and Features/Features/`.
+- функции, выросшие из идей, — `01 5E/02 Ideas and Features/02 Features/`.
 
 Путь к сейфу: `D:\cloud@mail.ru\My\luden\01.vault\4. projects\L2 Implementations\01 5E\`.
 
