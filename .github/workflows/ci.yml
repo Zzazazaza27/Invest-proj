@@ -353,7 +353,7 @@ jobs:
           echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           echo '{}' > images.json
           for c in core web postgres; do
-            ref="ghcr.io/rebel-diesel/fifth-$c:candidate-$ATTEMPT"
+            ref="ghcr.io/rebel-diesel/fifth-element/$c:candidate-$ATTEMPT"
             docker tag "fifth/$c:ci" "$ref"
             docker push "$ref"
             digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$ref")
@@ -397,7 +397,7 @@ jobs:
         run: |
           echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           for c in core web postgres; do
-            tag="ghcr.io/rebel-diesel/fifth-$c:$BUILD"
+            tag="ghcr.io/rebel-diesel/fifth-element/$c:$BUILD"
             if docker manifest inspect "$tag" > /dev/null 2>&1; then
               echo "сборка $BUILD уже выпущена: $tag" >&2
               exit 1
