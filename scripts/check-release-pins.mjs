@@ -91,6 +91,16 @@ try {
   const first = install(A, 'none');
   check('исходный комплект установлен', first.code === 0, first.out.slice(0, 100));
 
+  // Образы в архиве сохранены с метками: без них после загрузки образ не найти.
+  for (const c of ['core', 'web', 'postgres']) docker('rmi', `fifth/${c}:${A}`);
+  const reload = kit('load', '--build', A);
+  check(
+    'метки образов восстанавливаются из архива',
+    reload.code === 0 &&
+      docker('image', 'inspect', `fifth/core:${A}`, '--format', '{{.Id}}') !== '',
+    reload.out.slice(0, 90),
+  );
+
   console.log('\n▸ Сбой сверки после обновления');
   check('следующий комплект скачан', kit('pack', '--build', C, '--from', FROM).code === 0);
   const bad = install(C, A, { FIFTH_TEST_VERIFY_FAIL: '1' });

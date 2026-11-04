@@ -88,6 +88,18 @@ export function buildOrder(build) {
   return m.slice(1).map(Number);
 }
 
+/**
+ * Метки сборки на образах перед сохранением. Образ, сохранённый по дайджесту, после
+ * `docker load` остаётся без имени, и найти его на другой машине нечем.
+ */
+function tagForKit(build, refOf) {
+  return COMPONENTS.map((c) => {
+    const tag = `fifth/${c}:${build}`;
+    run('docker', ['tag', refOf(c), tag]);
+    return tag;
+  });
+}
+
 function needBuild() {
   const build = flag('--build');
   if (!buildOrder(build)) throw new Refused(`неверный номер сборки: ${build ?? '(нет)'}`);
@@ -211,8 +223,9 @@ async function fetchKit() {
   const stagedCompose = join(staging, 'compose.yml');
   if (!existsSync(stagedCompose))
     throw new Refused(`в артефакте сборки ${build} нет файла запуска`);
+  const tags = tagForKit(build, (c) => kit.images[c].digest);
   const staged = storeKit(build, kit, stagedCompose, (tar) =>
-    run('docker', ['save', '-o', tar, ...refs]),
+    run('docker', ['save', '-o', tar, ...tags]),
   );
   rmSync(staging, { recursive: true, force: true });
   const sealed = await commitKit(staged);
@@ -235,9 +248,9 @@ async function pack() {
     images,
     previous: flag('--previous'),
   });
-  const refs = COMPONENTS.map((c) => images[c].ref);
+  const tags = tagForKit(build, (c) => images[c].ref);
   const staged = storeKit(build, kit, COMPOSE, (tar) =>
-    run('docker', ['save', '-o', tar, ...refs]),
+    run('docker', ['save', '-o', tar, ...tags]),
   );
   const sealed = await commitKit(staged);
   finish({ ok: true, build, tar: sealed.tar }, 0);
@@ -269,17 +282,17 @@ async function check() {
  */
 async function load() {
   const build = needBuild();
-  const kit = await readKit(build);
+  await readKit(build);
+  // Содержимое подтверждено хешем архива из манифеста, поэтому имя образа здесь — метка.
+  const tagOf = (c) => `fifth/${c}:${build}`;
   const known = (ref) =>
     spawnSync('docker', ['image', 'inspect', ref], { stdio: 'ignore' }).status === 0;
-  if (!COMPONENTS.every((c) => known(kit.images[c].digest))) {
+  if (!COMPONENTS.every((c) => known(tagOf(c)))) {
     run('docker', ['load', '-i', join(kitDir(build), 'images.tar')]);
   }
   const local = {};
   for (const c of COMPONENTS) {
-    const { digest } = kit.images[c];
-    local[c] = run('docker', ['image', 'inspect', digest, '--format', '{{.Id}}']);
-    run('docker', ['tag', digest, `fifth/${c}:${build}`]);
+    local[c] = run('docker', ['image', 'inspect', tagOf(c), '--format', '{{.Id}}']);
   }
   writeFileSync(join(kitDir(build), 'local-images.json'), `${JSON.stringify(local, null, 2)}\n`);
   finish({ ok: true, build, images: local }, 0);

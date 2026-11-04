@@ -6,6 +6,8 @@ name: CI
 # Реестр проверок (docs/testing/) сверяется гейтом check:registry — он
 # остаётся. Секрет-скан вынесен в secrets.yml и идёт на любой push.
 on:
+  # Комплект выпуска — по команде: gh workflow run ci.yml --ref main.
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
@@ -332,6 +334,7 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      # Сборка проверяется на каждом коммите, публикация — только при выпуске по команде.
       # Образы собираются один раз, здесь. Комплект берёт именно их по дайджесту:
       # задание kit ниже не пересобирает, а разрешает выпуск проверенного.
       - name: Сборка
@@ -345,7 +348,7 @@ jobs:
       - name: Образ ядра содержит сборку
         run: docker run --rm fifth/core:ci test -f apps/core/dist/main.js
       - name: Кандидаты в GHCR
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         env:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ATTEMPT: ${{ github.run_number }}.${{ github.run_attempt }}
@@ -366,7 +369,7 @@ jobs:
             mv images.tmp images.json
           done
       - name: Дайджесты кандидатов
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: images-${{ github.run_number }}.${{ github.run_attempt }}
@@ -380,7 +383,7 @@ jobs:
     name: Комплект выпуска
     runs-on: ubuntu-latest
     needs: [static, sast, deps, database, unit, build, images]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     permissions:
       contents: read
       packages: write
