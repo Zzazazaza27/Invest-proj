@@ -78,6 +78,12 @@ export const PREFIX_CLASSES: ReadonlyArray<{ prefix: string; kind: DataClass }> 
 ];
 
 export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
+  // -------------------------------------------------------------------- ops
+  // Реестр установок (M157): история выпусков среды.
+  'ops.installation_events': { kind: 'journal' },
+  'ops.installation_targets': { kind: 'journal' },
+  'ops.installations': { kind: 'journal' },
+  'ops.instances': { kind: 'operational', note: 'подтверждённые версии экземпляров' },
   // ------------------------------------------------------------------ audit
   'audit.consumed_events': { kind: 'journal' },
   'audit.control_objects': {
