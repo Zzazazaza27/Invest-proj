@@ -1,0 +1,13 @@
+# Контекст образов: только исходники. Секреты, копии и сборки в него не попадают.
+**/node_modules
+**/dist
+**/*.tsbuildinfo
+.git
+.local
+.env
+.env.*
+!.env.example
+out
+docs
+obsidian-notes
+core.log

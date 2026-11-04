@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { withSecretFiles } from './secret-files';
 
 /**
  * Конфигурация приложения. Fail-closed: отсутствие обязательной переменной —
@@ -820,7 +821,7 @@ export type AppEnv = Readonly<RawEnv> & {
 let cached: AppEnv | null = null;
 
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): AppEnv {
-  const parsed = EnvSchema.safeParse(source);
+  const parsed = EnvSchema.safeParse(withSecretFiles(source));
   if (!parsed.success) {
     const details = parsed.error.issues
       .map((i) => `  ${i.path.join('.') || '(root)'}: ${i.message}`)
