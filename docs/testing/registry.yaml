@@ -3076,6 +3076,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-09-22
 
+  - id: UNIT-CORE-SECRET-FILES
+    file: apps/core/tests/secret-files.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 6
+    studied: code
+    studiedOn: 2026-11-04
+    needs: []
+    effects: ['временные файлы теста, удаляются после прогона']
+    note: >-
+      Значение из файла, конфликт значения и файла, нечитаемый файл, содержимое не
+      попадает в ошибку.
+    purpose: 'Секреты приходят при установке через `<ИМЯ>_FILE`, образ один на все среды.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-04
+
   - id: UNIT-PKG-API-CLIENT-CLIENT
     file: packages/api-client/tests/client.test.ts
     command: npm run test -w packages/api-client
@@ -3976,6 +3994,7 @@ blocks:
         CHK-CONSOLE-PRIVATE,
         CHK-DEPLOY-RELEASE,
         UNIT-CORE-SECURITY,
+        UNIT-CORE-SECRET-FILES,
       ]
 
   стенд:
