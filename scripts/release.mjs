@@ -30,6 +30,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildOrder } from './kit.mjs';
+import { parseEnvFile } from './lib/backup.mjs';
 import { activateProdFiles, prodFileProblems } from './lib/prod-compose.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -60,11 +61,8 @@ const containerOf = (id, component) =>
   id === PROD ? `fifth-${component}` : `fifth-${id}-${component}`;
 const PROD_PROFILES = 'web,monitoring,monitoring-host';
 
-/** Значение из .env рабочей среды. */
-function prodEnv(name) {
-  const m = readFileSync(join(ROOT, '.env'), 'utf8').match(new RegExp(`^${name}=(.*)$`, 'm'));
-  return m?.[1]?.trim() ?? '';
-}
+/** Значение настройки рабочей среды, в том числе секрет из файла. */
+const prodEnv = (name) => parseEnvFile(join(ROOT, '.env'))[name] ?? '';
 
 /**
  * Рабочая установка собирается из образов и файлов запуска комплекта: файлы сверяются с

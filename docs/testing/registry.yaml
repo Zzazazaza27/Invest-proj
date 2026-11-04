@@ -2604,6 +2604,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-04
 
+  - id: TOOL-SECRETS-TO-FILES
+    file: scripts/secrets-to-files.mjs
+    command: node scripts/secrets-to-files.mjs apply|back
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    effects: ['переносит секреты из .env в файлы и обратно; значения не печатает']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 2.
+    purpose: 'Секреты рабочей среды не лежат в .env.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
   - id: TOOL-ENV
     file: scripts/env.mjs
     command: node scripts/env.mjs create|status|stop|start|seed|destroy <среда>
@@ -2905,6 +2922,24 @@ checks:
     purpose: 'Технический журнал ядра без секретов до записи (8.4, 2.1-W08b): маскировка текста; поля только по перечню, отброшенные видны по имени; строка в поле error не пишется никогда (только объект исключения: класс, SQLSTATE, кадры без текста); JsonLogger; сторож исходников — подстановки в текст любого вызова журнала (logger, options.log) только из перечня, в полях нет .message/.stack/String()/JSON.stringify, error — только объект исключения; полный путь завершения процесса (Logger Nest → JsonLogger через shutdownLog) — исключение закрывающей функции без текста. Сторож проверен на исходниках f76f5de (35 находок, включая обходы Тэнка).'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
+
+  - id: CHK-SECRETS-TO-FILES
+    file: scripts/check-secrets-to-files.mjs
+    command: node scripts/check-secrets-to-files.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 9
+    needs: []
+    effects: ['временный каталог']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Перенос и возврат, чтение служебными скриптами, значения для комплекта ключей, отказ при
+      значении рядом с файлом.
+    purpose: 'Перенос секретов не теряет значений и не печатает их.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
 
   - id: CHK-PROD-COMPOSE
     file: scripts/check-prod-compose.mjs
@@ -4146,6 +4181,7 @@ blocks:
     title: Порты, развёртывание, консоль
     members:
       [
+        CHK-SECRETS-TO-FILES,
         CHK-PROD-COMPOSE,
         CHK-RELEASE-PINS,
         CHK-RELEASE,

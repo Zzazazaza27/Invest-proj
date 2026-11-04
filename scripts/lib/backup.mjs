@@ -43,12 +43,15 @@ import {
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applySecretFiles } from './secret-files.mjs';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const TOOL_IMAGE = 'fifth/postgres:16';
 export const PG_CONTAINER = 'fifth-postgres';
 
 // ----------------------------------------------------------------- окружение
+
+export const ENV_PATH = join(ROOT, '.env');
 
 /** Разбор `.env` в объект; файл не печатается. */
 export function parseEnvFile(path) {
@@ -68,10 +71,23 @@ export function parseEnvFile(path) {
     }
     out[trimmed.slice(0, eq).trim()] = value;
   }
+  // `<ИМЯ>_FILE`: значение в файле (блок 5, задание 2), правила те же, что у ядра.
+  applySecretFiles(out);
   return out;
 }
 
-export const ENV_PATH = join(ROOT, '.env');
+/**
+ * Текст `.env` со значениями вместо `<ИМЯ>_FILE`. Комплект ключей хранит значения: файлы
+ * секретов в него сами не попадут, а восстановлению нужен прежний формат.
+ */
+export function resolvedEnvText(path = ENV_PATH) {
+  const full = parseEnvFile(path);
+  return readFileSync(path, 'utf8')
+    .replace(/\r\n/g, '\n')
+    .replace(/^([A-Z0-9_]+)_FILE=.*$/gm, (line, name) =>
+      full[name] === undefined ? line : `${name}=${full[name]}`,
+    );
+}
 
 export function loadEnv() {
   const env = parseEnvFile(ENV_PATH);
@@ -333,8 +349,7 @@ export const gb = (n) => `${(n / 1024 ** 3).toFixed(2)} ГБ`;
 
 /** Отпечаток комплекта ключей: SHA-256 содержимого `.env`. */
 export function keysFingerprint() {
-  const text = readFileSync(ENV_PATH, 'utf8').replace(/\r\n/g, '\n');
-  return createHash('sha256').update(text).digest('hex').slice(0, 32);
+  return createHash('sha256').update(resolvedEnvText()).digest('hex').slice(0, 32);
 }
 
 /**
@@ -369,7 +384,7 @@ export function ensureKeyBundle() {
         'gpg -q --batch --trust-model always --encrypt --armor ' +
         '--recipient "$(gpg --batch --list-keys --with-colons | awk -F: \'/^fpr/{print $10; exit}\')" --output -',
     ],
-    { input: readFileSync(ENV_PATH) },
+    { input: Buffer.from(resolvedEnvText()) },
   );
   if (!r.stdout.includes('BEGIN PGP MESSAGE')) throw new Error('gpg не зашифровал комплект ключей');
   writeFileSync(tmp, r.stdout);

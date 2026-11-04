@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 182; требований: 41
+- Проверок: 184; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 69
+### Зарегистрированы, но ни в наборе, ни в CI — 70
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -243,6 +243,7 @@
 - `CHK-DNS-HIDDEN-PRIMARY` — Схема «скрытый первичный + вторичные» на тестовой зоне (план независимого DNS): передача зоны только по ключу и с адреса вторичного, обновление по NOTIFY, от…
 - `CHK-DNS-PRIMARY-APPLY` — Безопасное применение зон первичного DNS: неверная зона отклоняется, рабочий файл и записанная версия не меняются, после перезапуска работает прежняя зона; с…
 - `CHK-MONITOR-APP-PROBE` — Разрешённое чтение контрольных данных прикладным путём (2.5, 8.2): обычный вход служебной учётки через публичный адрес, карточка контрольного проекта и матер…
+- `CHK-SECRETS-TO-FILES` — Перенос секретов не теряет значений и не печатает их.
 - `CHK-PROD-COMPOSE` — Возврат рабочей среды не зависит от рабочей копии репозитория.
 - `CHK-RELEASE-PINS` — Очистка не удаляет комплект, образы которого могут работать в среде.
 - `CHK-RELEASE` — Блок 9, задание 1: комплект, блокировка, реестр и сверка версий.
@@ -312,6 +313,7 @@
 | TOOL-KIT | `node scripts/kit.mjs manifest|fetch|pack|load|check --build <номер>` | 0 | вручную, по поводу | — |
 | TOOL-RELEASE | `node scripts/release.mjs install|verify|replay|recover <среда>` | 0 | вручную, по поводу | — |
 | TOOL-RENAME-STAND | `node scripts/rename-stand.mjs copy|back` | 0 | вручную, по поводу | — |
+| TOOL-SECRETS-TO-FILES | `node scripts/secrets-to-files.mjs apply|back` | 0 | вручную, по поводу | — |
 | TOOL-ENV | `node scripts/env.mjs create|status|stop|start|seed|destroy <среда>` | 0 | вручную, по поводу | — |
 | TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export|legacy-snapshot|legacy-gap|secrets-draft --to <файл>` | 0 | вручную, по поводу | — |
 | TOOL-GARAGE-INIT | `node scripts/garage-init.mjs [--status]` | 0 | вручную, по поводу | — |
@@ -359,6 +361,7 @@
 | CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
 | CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
+| CHK-SECRETS-TO-FILES | `node scripts/check-secrets-to-files.mjs` | 9 | вручную | — |
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
 | CHK-RELEASE | `node scripts/check-release.mjs` | 53 | вручную | — |
