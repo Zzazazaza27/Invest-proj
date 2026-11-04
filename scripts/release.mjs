@@ -100,7 +100,14 @@ const insertEvent = (e) =>
 function readKit(build) {
   const file = join(KITS, build, 'kit.json');
   if (!existsSync(file)) throw new Refused(`комплекта ${build} нет`);
-  return JSON.parse(readFileSync(file, 'utf8'));
+  const kit = JSON.parse(readFileSync(file, 'utf8'));
+  // Идентификаторы образов на этой машине записывает `kit load`.
+  const local = join(KITS, build, 'local-images.json');
+  if (existsSync(local)) {
+    const ids = JSON.parse(readFileSync(local, 'utf8'));
+    for (const c of COMPONENTS) kit.images[c].imageId = ids[c];
+  }
+  return kit;
 }
 
 function kitTool(...args) {
@@ -241,15 +248,6 @@ async function install(id) {
     throw new Refused(`блокировка не подтверждена, выпуск не начат: ${e.message}`);
   }
   record(id, op, 'lock', 'ok', `сборка ${build}, было ${current ?? 'none'}`);
-  psql(
-    id,
-    COMPONENTS.map(
-      (c) => `INSERT INTO ops.installation_targets
-        (installation_id, instance_id, component, role, expected_image)
-       VALUES (${q(op)}, ${q(instanceId(id, c))}, ${q(c)}, 'serving', ${q(kit.images[c].imageId)});`,
-    ).join('\n'),
-  );
-
   const close = (status, detail) => {
     record(id, op, 'finish', status, detail);
     try {
@@ -266,11 +264,20 @@ async function install(id) {
   try {
     kitTool('load', '--build', build);
     record(id, op, 'load', 'ok');
+    const loaded = readKit(build);
+    psql(
+      id,
+      COMPONENTS.map(
+        (c) => `INSERT INTO ops.installation_targets
+          (installation_id, instance_id, component, role, expected_image)
+         VALUES (${q(op)}, ${q(instanceId(id, c))}, ${q(c)}, 'serving', ${q(loaded.images[c].imageId)});`,
+      ).join('\n'),
+    );
     if (process.env.FIFTH_TEST_CRASH === 'after-load') process.exit(97);
     const up = envTool('update', id, '--kit', build);
     if (up.code !== 0) throw new Error(`установка: ${up.out.slice(0, 200)}`);
     record(id, op, 'update', 'ok');
-    const v = verifyAgainst(id, kit);
+    const v = verifyAgainst(id, loaded);
     record(id, op, 'verify', v.ok ? 'ok' : 'fail', `подтверждено ${v.confirmed} из ${v.total}`);
     psql(id, upsertInstances(id, v));
     if (!v.ok) throw new Error(`сверка: подтверждено ${v.confirmed} из ${v.total}`);

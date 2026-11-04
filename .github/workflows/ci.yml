@@ -355,9 +355,12 @@ jobs:
           for c in core web postgres; do
             ref="ghcr.io/rebel-diesel/fifth-element/$c:candidate-$ATTEMPT"
             docker tag "fifth/$c:ci" "$ref"
-            docker push "$ref"
-            digest=$(docker inspect --format '{{index .RepoDigests 0}}' "$ref")
+            # Дайджест — из ответа реестра: RepoDigests содержит и локальные имена.
+            docker push "$ref" | tee push.log
+            sum=$(grep -oE 'digest: sha256:[0-9a-f]{64}' push.log | cut -d' ' -f2)
+            digest="${ref%:*}@$sum"
             id=$(docker inspect --format '{{.Id}}' "$ref")
+            test -n "$sum"
             jq --arg c "$c" --arg r "$ref" --arg d "$digest" --arg i "$id" \
               '.[$c] = {ref: $r, digest: $d, imageId: $i}' images.json > images.tmp
             mv images.tmp images.json

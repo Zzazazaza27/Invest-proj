@@ -182,10 +182,6 @@ async function fetchKit() {
   if (kit.build !== build) throw new Refused(`манифест от сборки ${kit.build}`);
   const refs = COMPONENTS.map((c) => kit.images[c].digest);
   for (const ref of refs) run('docker', ['pull', ref]);
-  for (const c of COMPONENTS) {
-    const id = run('docker', ['image', 'inspect', kit.images[c].digest, '--format', '{{.Id}}']);
-    if (id !== kit.images[c].imageId) throw new Error(`образ ${c} не совпал с манифестом`);
-  }
   const staged = storeKit(build, kit, (tar) => run('docker', ['save', '-o', tar, ...refs]));
   const sealed = await commitKit(staged);
   finish({ ok: true, build, tar: sealed.tar }, 0);
@@ -228,23 +224,27 @@ async function check() {
   finish({ ok: true, build, commit: kit.commit, previous: kit.previous }, 0);
 }
 
+/**
+ * Загрузка в Docker этой машины. Содержимое подтверждает дайджест реестра, а
+ * идентификатор образа зависит от хранилища Docker: он свой на каждой машине и
+ * записывается рядом с манифестом, для сверки запущенных контейнеров.
+ */
 async function load() {
   const build = needBuild();
   const kit = await readKit(build);
-  // Образы уже на месте — не грузим: совпадение проверяется по идентификатору.
-  const present = COMPONENTS.every(
-    (c) =>
-      spawnSync('docker', ['image', 'inspect', kit.images[c].imageId], { stdio: 'ignore' })
-        .status === 0,
-  );
-  if (!present) run('docker', ['load', '-i', join(kitDir(build), 'images.tar')]);
-  for (const c of COMPONENTS) {
-    const { imageId, digest } = kit.images[c];
-    const id = run('docker', ['image', 'inspect', imageId, '--format', '{{.Id}}']);
-    if (id !== imageId) throw new Error(`образ ${c} (${digest}) не совпал с манифестом`);
-    run('docker', ['tag', imageId, `fifth/${c}:${build}`]);
+  const known = (ref) =>
+    spawnSync('docker', ['image', 'inspect', ref], { stdio: 'ignore' }).status === 0;
+  if (!COMPONENTS.every((c) => known(kit.images[c].digest))) {
+    run('docker', ['load', '-i', join(kitDir(build), 'images.tar')]);
   }
-  finish({ ok: true, build, images: Object.keys(kit.images) }, 0);
+  const local = {};
+  for (const c of COMPONENTS) {
+    const { digest } = kit.images[c];
+    local[c] = run('docker', ['image', 'inspect', digest, '--format', '{{.Id}}']);
+    run('docker', ['tag', digest, `fifth/${c}:${build}`]);
+  }
+  writeFileSync(join(kitDir(build), 'local-images.json'), `${JSON.stringify(local, null, 2)}\n`);
+  finish({ ok: true, build, images: local }, 0);
 }
 
 const COMMANDS = { manifest, fetch: fetchKit, pack, load, check };
