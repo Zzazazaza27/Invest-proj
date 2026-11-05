@@ -48,7 +48,7 @@ services:
       - '/tls/server.key'
     volumes:
       - ${FIFTH_TLS_DIR:?}:/tls:ro
-  zabbix-agent-host:
+  zabbix-agent2-host:
     volumes:
       - ${FIFTH_TLS_DIR:?}/ca.crt:/tls/ca.crt:ro
       - ./zabbix-agent-tls.conf:/etc/zabbix/zabbix_agent2.d/plugins.d/fifth-tls.conf:ro

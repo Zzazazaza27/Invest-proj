@@ -29,7 +29,7 @@ back() {
   echo "сбой на строке $1: возвращаю прежние настройки"
   hba_open || true
   cp -p "$BEFORE" .env
-  stack up -d --force-recreate --no-deps valkey nats zabbix-agent-host zabbix-server-host zabbix-web core >/dev/null 2>&1 || true
+  stack up -d --force-recreate --no-deps valkey nats zabbix-agent2-host zabbix-server-host zabbix-web core >/dev/null 2>&1 || true
   healthy fifth-core && echo 'рабочая среда вернулась'
   exit 1
 }
@@ -46,7 +46,7 @@ echo '▸ Valkey, NATS и наблюдение'
 stack up -d --force-recreate --no-deps valkey nats >/dev/null 2>&1
 healthy fifth-valkey
 healthy fifth-nats
-stack up -d --force-recreate --no-deps core zabbix-agent-host zabbix-server-host zabbix-web >/dev/null 2>&1
+stack up -d --force-recreate --no-deps core zabbix-agent2-host zabbix-server-host zabbix-web >/dev/null 2>&1
 healthy fifth-core
 node scripts/monitoring.mjs configure | tail -1 | cut -c1-120
 
