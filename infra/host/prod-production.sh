@@ -38,7 +38,8 @@ back() {
 trap 'back $LINENO' ERR
 
 echo '▸ PostgreSQL: TLS'
-owner="$(cat /run/fifth-secrets/DATABASE_URL_OWNER)"
+# Адрес с узла ведёт на опубликованный порт, внутри контейнера база на своём.
+owner="$(sed -E 's#@[^/]*/#@127.0.0.1:5432/#' /run/fifth-secrets/DATABASE_URL_OWNER)"
 pg() { docker exec -e URL="$owner" fifth-postgres sh -c "psql \"\$URL\" -At -c \"$1\""; }
 docker cp "$TLS/server.crt" fifth-postgres:/var/lib/postgresql/data/server.crt
 docker cp "$TLS/server.key" fifth-postgres:/var/lib/postgresql/data/server.key
@@ -76,7 +77,13 @@ MAIL_SMTP_PORT=587
 MAIL_SMTP_SECURITY=starttls
 MAIL_SMTP_USER=no-reply@5espace.com
 MAIL_SMTP_PASSWORD_FILE=/run/fifth-secrets/MAIL_SMTP_PASSWORD
+MONITOR_REDIS_URI=tcp://127.0.0.1:6381
 EOF
+
+echo '▸ проверка настроек до перезапуска'
+core_image="$(docker inspect fifth-core --format '{{.Config.Image}}')"
+docker run --rm --network host --env-file .env -v /run/fifth-secrets:/run/fifth-secrets:ro \
+  --entrypoint node "$core_image" -e "require('/app/apps/core/dist/config/env.js').loadEnv();console.log('настройки production приняты')" 2>&1 | cut -c1-240
 
 echo '▸ вход: mTLS'
 node -e "
@@ -105,12 +112,12 @@ done
 grep -q '"ok": true' /var/lib/fifth-monitor/app-probe.json
 echo 'контрольный вход и чтение прошли'
 
-echo '▸ письмо'
-docker exec -e TO="$TO" fifth-core node -e "
-const fs=require('fs');const n=require('nodemailer');
-n.createTransport({host:process.env.MAIL_SMTP_HOST,port:Number(process.env.MAIL_SMTP_PORT),requireTLS:true,auth:{user:process.env.MAIL_SMTP_USER,pass:fs.readFileSync(process.env.MAIL_SMTP_PASSWORD_FILE,'utf8').trim()}})
-.sendMail({from:process.env.MAIL_FROM,to:process.env.TO,subject:'5E production mail check',text:'Боевой режим: письмо ушло с шифрованием и входом.'}).then((r)=>console.log('релей принял:',String(r.response).slice(0,60)))"
-
 trap - ERR
-MONITOR_REDIS_URI=tcp://127.0.0.1:6381 node scripts/monitoring.mjs configure | tail -1 | cut -c1-120
+echo '▸ письмо настоящим транспортом ядра'
+docker exec -e TO="$TO" fifth-core node -e "
+require('reflect-metadata');
+const {createMailTransport}=require('/app/apps/core/dist/comms/mail.transport.js');
+createMailTransport().send({to:process.env.TO,subject:'5E production mail check',text:'Боевой режим: письмо ушло с шифрованием и входом.'}).then(()=>console.log('релей принял письмо'),(e)=>console.log('письмо не ушло:',String(e.message).slice(0,160)))" 2>&1 | tail -2 | cut -c1-220
+
+node scripts/monitoring.mjs configure | tail -1 | cut -c1-120
 echo 'боевой режим включён'
