@@ -174,6 +174,11 @@ docker volume rm -f "$VOLUME" >/dev/null
 agent_up
 compose -f "$DIR/compose.agent.yml" up -d --force-recreate --no-deps core >/dev/null 2>&1
 ready
+# Новый контейнер получил другой адрес: статика узнаёт его не сразу.
+for _ in $(seq 1 45); do
+  [ "$(curl -s -o /dev/null -w "%{http_code}" "$PROBE_URL_ENV/v1/auth/me")" != 502 ] && break
+  sleep 2
+done
 login_check login "$USERS"
 login_check register "$USERS" kms-mode
 counts="$(docker exec -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "$PROJECT-postgres"   psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -c   "SELECT count(*) FILTER (WHERE substring(contact_wrapped_dek from 1 for 6) = 'vault:'::bytea), count(contact_wrapped_dek) FROM identity.users")"
