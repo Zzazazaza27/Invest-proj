@@ -29,3 +29,13 @@ echo '== кто на узле читает ключи домена'
 grep -rln 'KEK_' scripts/*.mjs scripts/lib/*.mjs infra/systemd 2>/dev/null | tr '\n' ' '
 echo
 systemctl list-timers 'fifth-*' --no-pager 2>/dev/null | awk 'NR>1{print $NF, $(NF-1)}' | head -20
+echo '== почта и вход (без значений паролей)'
+grep -E '^(MAIL_TRANSPORT|MAIL_SMTP_HOST|MAIL_SMTP_PORT|MAIL_SMTP_SECURITY|MAIL_SMTP_USER|MAIL_FROM|TRUSTED_PROXY_CIDRS|CORS_ALLOWED_ORIGINS|WEBHOOK_DELIVERY_MODE|NATS_URL|REDIS_PORT|MAIL_SMTP_EHLO_NAME)=' .env | cut -c1-120
+ls /etc/exim4 2>/dev/null | head -5 | tr '\n' ' '; echo
+grep -nE 'auth|tls_advertise|smarthost|route_list' /etc/exim4/exim4.conf.template 2>/dev/null | head -8 | cut -c1-90
+echo '== nginx сайта'
+grep -rlE '5espace' /etc/nginx/conf.d /home/*/conf/web 2>/dev/null | head -8
+f="$(grep -rlE 'server_name +5espace.com' /etc/nginx /home/*/conf/web 2>/dev/null | head -1)"
+echo "$f"; grep -nE 'listen|ssl_certificate|location|proxy_pass|ssl_client|ssl_verify' "$f" 2>/dev/null | head -24 | cut -c1-100
+echo '== образ постгрес'
+docker exec fifth-postgres sh -c 'id postgres; psql -U postgres -At -c "show ssl" 2>&1 | head -1' 2>&1 | cut -c1-80
