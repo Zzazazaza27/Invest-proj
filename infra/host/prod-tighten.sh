@@ -58,8 +58,11 @@ echo '▸ PostgreSQL: сеть только по TLS'
 docker exec -u 0 fifth-postgres sh -c "sed -i 's/^host all all all /hostssl all all all /' /var/lib/postgresql/data/pg_hba.conf"
 docker exec -e URL="$url" fifth-postgres sh -c 'psql "$URL" -At -c "SELECT pg_reload_conf()"' >/dev/null
 docker exec fifth-postgres sh -c "grep -cE '^hostssl all all all ' /var/lib/postgresql/data/pg_hba.conf"
-if docker run --rm --network host -e PGPASSWORD=x -e PGSSLMODE=disable fifth/postgres:16 \
-  psql -h 127.0.0.1 -p 5433 -U unicorn_owner -d postgres -c 'select 1' 2>&1 | grep -q 'no pg_hba.conf entry'; then
+pg_image="$(docker inspect fifth-postgres --format '{{.Config.Image}}')"
+plain="$(docker run --rm --network host -e PGPASSWORD=x -e PGSSLMODE=disable --entrypoint psql "$pg_image" \
+  -h 127.0.0.1 -p 5433 -U unicorn_owner -d postgres -c 'select 1' 2>&1 || true)"
+echo "$plain" | head -2 | cut -c1-160
+if echo "$plain" | grep -q 'no pg_hba.conf entry'; then
   echo 'без TLS сервер отказывает'
 else
   echo 'подключение без TLS не отвергнуто'
