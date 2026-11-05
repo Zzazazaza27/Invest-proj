@@ -39,3 +39,11 @@ f="$(grep -rlE 'server_name +5espace.com' /etc/nginx /home/*/conf/web 2>/dev/nul
 echo "$f"; grep -nE 'listen|ssl_certificate|location|proxy_pass|ssl_client|ssl_verify' "$f" 2>/dev/null | head -24 | cut -c1-100
 echo '== образ постгрес'
 docker exec fifth-postgres sh -c 'id postgres; psql -U postgres -At -c "show ssl" 2>&1 | head -1' 2>&1 | cut -c1-80
+echo '== кто слушает 443'
+ss -ltnp 2>/dev/null | grep -E ':(80|443|2525) ' | cut -c1-110
+ls /etc/caddy 2>/dev/null | head; grep -nE '5espace|reverse_proxy|client_auth|tls ' /etc/caddy/Caddyfile 2>/dev/null | head -14 | cut -c1-90
+echo '== доставка почты'
+tail -400 /var/log/exim4/mainlog 2>/dev/null | grep -E ' => | == |\*\* ' | tail -6 | sed -E 's/[A-Za-z0-9._%+-]+@/***@/g' | cut -c1-130
+grep -nE 'smarthost|route_data|remote_smtp|port *=' /etc/exim4/exim4.conf.template 2>/dev/null | head -8 | cut -c1-90
+ls /etc/exim4/domains 2>/dev/null | head; v-list-mail-accounts 2>/dev/null | head -3
+/usr/local/hestia/bin/v-list-mail-domains admin plain 2>/dev/null | cut -c1-60 | head -5
