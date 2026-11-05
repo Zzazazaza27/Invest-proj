@@ -18,6 +18,22 @@ Beget каждую запись сверить запросом к их NS. Ра
 | `mail`            | A           | 193.233.217.210                  | Caddy `mail.5espace.com`; PTR `mail.5espace.com` у aeza         |
 | `mail._domainkey` | TXT         | `v=DKIM1; k=rsa; p=…`            | HestiaCP: `v-list-mail-domain-dkim-dns admin 5espace.com plain` |
 
+## Сверено по панели Beget 2026-11-05
+
+NS: ns1/ns2.beget.com, ns1/ns2.beget.pro. Вторичных у других компаний нет.
+
+| Имя                       | Тип | Значение                          | TTL |
+| ------------------------- | --- | --------------------------------- | --- |
+| `5espace.com`, `panel`    | A   | 193.233.217.210                   | 600 |
+| `files`, `mail`, `test-1` | A   | 193.233.217.210                   | 300 |
+| `5espace.com`             | MX  | 10 `mail.5espace.com.` — свой VPS | 300 |
+| `5espace.com`             | TXT | `v=spf1 ip4:193.233.217.210 ~all` | 300 |
+| `_dmarc`                  | TXT | `v=DMARC1; p=none`, без `rua`     | 300 |
+| `mail._domainkey`         | TXT | `v=DKIM1; k=rsa; p=…`             | 300 |
+
+`www` в панели скрыт среди служебных записей, публично отвечает 193.233.217.210. CAA на публичном
+запросе нет. Таблица ниже — прежние предположения: MX и SPF в них устарели.
+
 ## Сверить с Beget после восстановления — значения неизвестны
 
 | Имя              | Тип       | Что известно                                                                  |
