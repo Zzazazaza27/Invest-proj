@@ -97,8 +97,12 @@ echo "снимок снят: $(stat -c %s "$WORK/openbao.snap") байт"
 
 docker run --rm -v "$COPY_DATA:/d" --user 0 --entrypoint chown \
   "$(sed -n 's/.*image: \(openbao.*\)$/\1/p' infra/openbao/docker-compose.yml | head -1)" -R 1990:1990 /d
+# Выпуск root-токена по ключу восстановления по умолчанию закрыт: на копии он открывается настройкой.
+sed '/^listener "tcp" {/a\  disable_unauthed_generate_root_endpoints = false' \
+  infra/openbao/openbao.hcl >"$WORK/copy.hcl"
+chmod 644 "$WORK/copy.hcl"
 docker run -d --name "$COPY" --user 1990:1990 -p 127.0.0.1:18300:8200 \
-  -v "$ROOT/infra/openbao/openbao.hcl:/openbao/config/openbao.hcl:ro" \
+  -v "$WORK/copy.hcl:/openbao/config/openbao.hcl:ro" \
   -v /etc/fifth-openbao/seal:/openbao/seal:ro -v /etc/fifth-openbao/tls:/openbao/tls:ro \
   -v "$COPY_DATA:/openbao/data" --tmpfs /openbao/audit:uid=1990,gid=1990 \
   "$(sed -n 's/.*image: \(openbao.*\)$/\1/p' infra/openbao/docker-compose.yml | head -1)" \

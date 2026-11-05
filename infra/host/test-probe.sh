@@ -44,7 +44,8 @@ cleanup() {
     compose up -d --force-recreate --no-deps core >/dev/null 2>&1 || true
   fi
   rm -f "$DIR/compose.agent.yml"
-  docker rm -f "$AGENT" >/dev/null 2>&1 || true
+  docker rm -f "$AGENT" fifth-openbao-copy fifth-test-1-copy-postgres >/dev/null 2>&1 || true
+  docker volume rm -f fifth-openbao-copy-data >/dev/null 2>&1 || true
   docker network disconnect "$NET" fifth-openbao >/dev/null 2>&1 || true
   docker volume rm -f "$VOLUME" >/dev/null 2>&1 || true
   rm -rf "$WORK"
