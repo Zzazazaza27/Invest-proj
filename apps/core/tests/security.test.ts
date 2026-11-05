@@ -272,7 +272,6 @@ describe('Проверка токена', () => {
       await expect(verifier.verify(token)).rejects.toThrow();
     });
   });
-
 });
 
 describe('Ключ подписи CSRF', () => {

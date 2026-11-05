@@ -358,7 +358,7 @@ async function checkMigration() {
   return failed ? 1 : 0;
 }
 
-let status = 1;
+let status;
 console.log('=== CRYPTOSERVICE НА НАСТОЯЩЕМ OPENBAO ===');
 try {
   docker('rm', '-f', NAME);
