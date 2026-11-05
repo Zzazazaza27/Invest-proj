@@ -1,0 +1,87 @@
+#!/bin/sh
+# Переходный комплект (блок 5, задание 5): всё, что нужно ядру с местными ключами.
+#
+#   fifth-transition-kit create    снять .env и каталог секретов, зашифровать на ключ Томаса
+#   fifth-transition-kit restore   вернуть их: поток tar на вход, после проверки описи
+#
+# Прежнего .env для возврата мало: в нём только пути <ИМЯ>_FILE, а сами KEK лежат файлами со своими
+# владельцами и правами. Комплект хранит всё вместе, опись проверяет содержимое и права.
+# Значения не печатаются. Запускается от root; пути задаются только для проверок.
+set -eu
+umask 077
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+ROOT="${FIFTH_TRANSITION_ROOT:-/opt/fifth-element}"
+KEYS="${FIFTH_OPENBAO_KEYS_DIR:-/var/backups/fifth-element/openbao-keys}"
+RECIPIENT="${FIFTH_OPENBAO_RECIPIENT:-$ROOT/infra/openbao/thomas-recipient.asc}"
+RECIPIENT_FPR="${FIFTH_OPENBAO_RECIPIENT_FPR:-06D54B5532998568A88185A2BEA53785936C28C0}"
+OPENBAO_SECRETS=.local/secrets
+
+fail() {
+  echo "fifth-transition-kit: $1" >&2
+  exit 1
+}
+
+# Опись: права, владелец, хеш и имя каждого файла.
+manifest() {
+  (cd "$1" && find .env "$OPENBAO_SECRETS" -type f | LC_ALL=C sort | while read -r name; do
+    printf '%s %s %s\n' "$(stat -c '%a %u %g' "$name")" "$(sha256sum "$name" | cut -d' ' -f1)" "$name"
+  done)
+}
+
+create() {
+  [ -f "$ROOT/.env" ] || fail 'нет .env'
+  [ -d "$ROOT/$OPENBAO_SECRETS" ] || fail 'нет каталога секретов'
+  work="$(mktemp -d)"
+  trap 'rm -rf "$work"' EXIT
+  gpg --homedir "$work" --batch -q --import <"$RECIPIENT" 2>/dev/null
+  fpr="$(gpg --homedir "$work" --batch --list-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')"
+  [ "$fpr" = "$RECIPIENT_FPR" ] || fail 'открытый ключ не тот: комплект не создан'
+  mkdir -p "$KEYS"
+  manifest "$ROOT" >"$work/transition-manifest.txt"
+  files="$(wc -l <"$work/transition-manifest.txt" | tr -d ' ')"
+  # У sh нет pipefail: сбой tar отмечается файлом, иначе в комплект молча уйдёт обрывок.
+  (cd "$ROOT" && tar -cpf - --numeric-owner .env "$OPENBAO_SECRETS" -C "$work" transition-manifest.txt ||
+    touch "$work/tar.failed") |
+    gpg --homedir "$work" --batch -q --trust-model always --encrypt --recipient "$fpr" \
+      --output - >"$KEYS/transition.gpg.tmp"
+  [ ! -e "$work/tar.failed" ] || fail 'архив не собран: комплект не создан'
+  mv "$KEYS/transition.gpg.tmp" "$KEYS/transition.gpg"
+  printf '{"recipient":"%s","kitSha256":"%s","manifestSha256":"%s","files":%s,"at":"%s"}\n' \
+    "$fpr" "$(sha256sum "$KEYS/transition.gpg" | cut -d' ' -f1)" \
+    "$(sha256sum "$work/transition-manifest.txt" | cut -d' ' -f1)" "$files" \
+    "$(date -u +%FT%TZ)" >"$KEYS/transition.json"
+  echo "комплект создан, файлов: $files"
+}
+
+restore() {
+  stage="$(mktemp -d "$ROOT/.transition-XXXXXX")"
+  trap 'rm -rf "$stage"' EXIT
+  tar -xpf - --numeric-owner -C "$stage"
+  [ -s "$stage/transition-manifest.txt" ] || fail 'в комплекте нет описи'
+  # Опись снята при создании: после распаковки всё обязано совпасть, включая права и владельца.
+  (cd "$stage" && mv transition-manifest.txt ../.transition-manifest.$$)
+  manifest "$stage" >"$ROOT/.transition-actual.$$"
+  if ! cmp -s "$ROOT/.transition-manifest.$$" "$ROOT/.transition-actual.$$"; then
+    rm -f "$ROOT/.transition-manifest.$$" "$ROOT/.transition-actual.$$"
+    fail 'содержимое не совпало с описью: ничего не изменено'
+  fi
+  files="$(wc -l <"$ROOT/.transition-actual.$$" | tr -d ' ')"
+  rm -f "$ROOT/.transition-manifest.$$" "$ROOT/.transition-actual.$$"
+  aside="$ROOT/.local/before-restore-$(date -u +%Y%m%dT%H%M%SZ)"
+  mkdir -p "$aside"
+  [ ! -e "$ROOT/.env" ] || mv "$ROOT/.env" "$aside/.env"
+  [ ! -e "$ROOT/$OPENBAO_SECRETS" ] || mv "$ROOT/$OPENBAO_SECRETS" "$aside/secrets"
+  mv "$stage/.env" "$ROOT/.env"
+  mv "$stage/$OPENBAO_SECRETS" "$ROOT/$OPENBAO_SECRETS"
+  echo "восстановлено файлов: $files, прежнее отложено"
+}
+
+case "${1:-}" in
+  create) create ;;
+  restore) restore ;;
+  *)
+    echo 'команды: create, restore' >&2
+    exit 2
+    ;;
+esac

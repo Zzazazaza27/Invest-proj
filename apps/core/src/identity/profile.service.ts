@@ -60,7 +60,7 @@ export class ProfileService {
   }
 
   async updateName(ctx: RequestContext, displayName: string): Promise<MyProfile> {
-    return this.db.transaction(ctx, async (tx) => {
+    await this.db.transaction(ctx, async (tx) => {
       const { rowCount } = await tx.query(
         `UPDATE identity.users SET display_name = $2, updated_at = now()
           WHERE id = $1 AND deleted_at IS NULL`,
@@ -78,9 +78,8 @@ export class ProfileService {
         context: { field: 'displayName' },
         traceId: ctx.traceId,
       });
-
-      return this.read(tx, ctx.userId!);
     });
+    return this.me(ctx);
   }
 
   /**
@@ -289,9 +288,9 @@ export class ProfileService {
       });
     });
 
-    // Профиль читается после записи, а исходник удаляется последним. Отказ службы ключей на масках
-    // не откатывает аватар и не лишает повтора: он возьмёт тот же файл.
-    const profile = await this.db.readOnly(ctx, async (tx) => this.read(tx, userId));
+    // Профиль читается после записи, а исходник удаляется последним: сбой на любом шаге оставляет
+    // возможность повторить завершение с тем же файлом.
+    const profile = await this.me(ctx);
     await this.s3.deleteObject(key).catch(() => undefined);
 
     // Прежние объекты НЕ удаляются физически (блок 7, 2.1-W07): файл, уже
@@ -302,9 +301,9 @@ export class ProfileService {
 
   async removeAvatar(ctx: RequestContext): Promise<MyProfile> {
     const userId = ctx.userId!;
-    const { profile } = await this.db.transaction(ctx, async (tx) => {
+    await this.db.transaction(ctx, async (tx) => {
       const existing = await this.readAvatarRow(tx, userId);
-      if (!existing) return { profile: await this.read(tx, userId), removed: null };
+      if (!existing) return;
       await tx.query(`DELETE FROM identity.user_avatars WHERE user_id = $1`, [userId]);
       await this.audit.emit(tx, {
         verb: 'identity.avatar.removed',
@@ -315,9 +314,8 @@ export class ProfileService {
         context: {},
         traceId: ctx.traceId,
       });
-      return { profile: await this.read(tx, userId), removed: existing };
     });
-    return profile;
+    return this.me(ctx);
   }
 
   /**
@@ -378,6 +376,7 @@ export class ProfileService {
         : null,
       emailMasked: masks.email,
       phoneMasked: masks.phone,
+      contactsAvailable: masks.available,
       roles: roleRows.rows.map((row) => row.role),
       primaryRole: user.primary_role,
       status: user.status as MyProfile['status'],
@@ -398,8 +397,14 @@ export class ProfileService {
     return rows[0] ?? null;
   }
 
-  private async masks(row: ProfileRow): Promise<{ email: string | null; phone: string | null }> {
-    if (!row.contact_wrapped_dek) return { email: null, phone: null };
+  /**
+   * Маски для собственного профиля. Отказ службы ключей не мешает правке имени и аватара: контакты
+   * просто помечаются недоступными, а не показываются отсутствующими.
+   */
+  private async masks(
+    row: ProfileRow,
+  ): Promise<{ email: string | null; phone: string | null; available: boolean }> {
+    if (!row.contact_wrapped_dek) return { email: null, phone: null, available: true };
     try {
       const opened = await this.crypto.openFields('passport_sensitive', row.contact_wrapped_dek, {
         email: row.email_ciphertext,
@@ -408,11 +413,11 @@ export class ProfileService {
       return {
         email: opened.email ? maskEmail(opened.email.toString('utf8')) : null,
         phone: opened.phone ? maskPhone(opened.phone.toString('utf8')) : null,
+        available: true,
       };
     } catch (error) {
-      // Порченая строка не ломает кабинет, а отказ службы ключей за её отсутствие не выдаётся.
-      if (isKmsUnavailable(error)) throw error;
-      return { email: null, phone: null };
+      // Порченая строка не ломает кабинет.
+      return { email: null, phone: null, available: !isKmsUnavailable(error) };
     }
   }
 }

@@ -9,13 +9,14 @@
  * Повтор над запечатанным или упавшим OpenBao не сообщает об успехе: проверяется на заглушках.
  */
 import { spawnSync } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TOOL_IMAGE } from './lib/backup.mjs';
+import { KEK_DOMAINS, withOperatorToken } from './lib/openbao-keys.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'infra', 'openbao');
@@ -365,6 +366,125 @@ try {
   );
   const policies = login.json.auth?.policies ?? [];
   check('личный вход с политикой оператора', policies.includes('operator'), policies.join(','));
+
+  console.log('\n▸ Импорт рабочих ключей');
+  const operator = login.json.auth.client_token;
+  const kek = Object.fromEntries(KEK_DOMAINS.map((d) => [d.env, randomBytes(32)]));
+  const kitRoot = join(base, 'kit');
+  mkdirSync(join(kitRoot, '.local', 'secrets'), { recursive: true });
+  writeFileSync(join(kitRoot, '.env'), 'KMS_MODE=local\n');
+  for (const [name, value] of Object.entries(kek)) {
+    writeFileSync(join(kitRoot, '.local', 'secrets', name), `${value.toString('base64')}\n`);
+  }
+  const kit = spawnSync(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '--network',
+      'none',
+      '--user',
+      '0',
+      '-e',
+      'FIFTH_TRANSITION_ROOT=/kit',
+      '-e',
+      'FIFTH_OPENBAO_KEYS_DIR=/keys',
+      '-e',
+      'FIFTH_OPENBAO_RECIPIENT=/gpg/recipient.asc',
+      '-e',
+      `FIFTH_OPENBAO_RECIPIENT_FPR=${fpr}`,
+      '-v',
+      `${kitRoot}:/kit:ro`,
+      '-v',
+      `${keys}:/keys`,
+      '-v',
+      `${gpgDir}:/gpg:ro`,
+      '-v',
+      `${join(ROOT, 'infra', 'host')}:/tool:ro`,
+      '--entrypoint',
+      'sh',
+      TOOL_IMAGE,
+      '/tool/fifth-transition-kit',
+      'create',
+    ],
+    { encoding: 'utf8', env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+  );
+  check('комплект для импорта снят', kit.status === 0, kit.stderr.slice(-200));
+  const importKeys = (prefix) =>
+    spawnSync(
+      process.execPath,
+      [
+        join(ROOT, 'scripts', 'openbao-keys-import.mjs'),
+        '--kit',
+        join(keys, 'transition.gpg'),
+        '--bundle',
+        join(keys, 'emergency.gpg'),
+        '--secret-key',
+        join(gpgDir, 'secret.asc'),
+        '--passphrase-file',
+        join(gpgDir, 'phrase'),
+        '--addr',
+        `https://127.0.0.1:${PORT}`,
+        '--ca',
+        join(dir, 'tls', 'tls.crt'),
+        '--prefix',
+        prefix,
+      ],
+      { encoding: 'utf8' },
+    );
+  const latest = async (name) =>
+    (await api('GET', `transit/keys/${name}`, { token: operator })).json.data?.latest_version;
+  const imported = importKeys('lab');
+  const importText = `${imported.stdout}${imported.stderr}`;
+  check('ключи импортированы', imported.status === 0, importText.slice(-300));
+  check(
+    'значения и пароль не напечатаны',
+    !importText.includes(password) &&
+      Object.values(kek).every((v) => !importText.includes(v.toString('base64'))),
+  );
+  check('версия импорта — первая', (await latest('lab-passport-sensitive')) === 1);
+  const probe = await api('POST', 'transit/hmac/lab-search-index/sha2-256', {
+    token: operator,
+    body: { input: Buffer.from('контроль').toString('base64'), key_version: 1 },
+  });
+  check(
+    'ключ поиска импортирован как HMAC',
+    probe.json.data?.hmac ===
+      `vault:v1:${createHmac('sha256', kek.KEK_SEARCH_INDEX).update('контроль').digest('base64')}`,
+  );
+  const repeat = importKeys('lab');
+  check(
+    'повтор только сверяет',
+    repeat.status === 0 && !repeat.stdout.includes('импортирован'),
+    repeat.stderr.slice(-200),
+  );
+  check('повтор не создал версию', (await latest('lab-search-index')) === 1);
+  await api('POST', 'transit/keys/alien-passport-sensitive', {
+    token: operator,
+    body: { type: 'aes256-gcm96' },
+  });
+  const foreign = importKeys('alien');
+  check(
+    'чужой ключ под занятым именем — отказ',
+    foreign.status === 1 && foreign.stderr.includes('не совпала'),
+    foreign.stderr.slice(-200),
+  );
+  check(
+    'после отказа следующие ключи не тронуты',
+    (await latest('alien-kyb-documents')) === undefined,
+  );
+  let issued = '';
+  await withOperatorToken(api, password, async (token) => {
+    issued = token;
+    throw new Error('сбой внутри операции');
+  }).catch(() => undefined);
+  const revoked = await api('GET', 'auth/token/lookup-self', { token: issued });
+  check(
+    'токен отозван и при сбое',
+    issued !== '' && revoked.status === 403,
+    `код ${revoked.status}`,
+  );
+
   docker('rm', '-f', NAME);
   await start();
   let opened = false;

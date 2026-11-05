@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 194; требований: 41
+- Проверок: 198; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 75
+### Зарегистрированы, но ни в наборе, ни в CI — 76
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -249,6 +249,7 @@
 - `CHK-OPENBAO-OPS` — Agent, снимок, отзыв доступа и миграция seal работают на настоящих файлах размещения.
 - `CHK-OPENBAO-AUTO` — Установка без ручных шагов переживает обрыв и не теряет управление, комплект открывается ключом получателя.
 - `CHK-CRYPTO-TRANSIT` — CryptoService на настоящем OpenBao: старые данные читаются, индексы совпадают, версии и отказы работают.
+- `CHK-TRANSITION-KIT` — Переходный комплект возвращает .env и файлы секретов с владельцем и правами, подмена отвергается.
 - `CHK-PROD-COMPOSE` — Возврат рабочей среды не зависит от рабочей копии репозитория.
 - `CHK-RELEASE-PINS` — Очистка не удаляет комплект, образы которого могут работать в среде.
 - `CHK-RELEASE` — Блок 9, задание 1: комплект, блокировка, реестр и сверка версий.
@@ -302,6 +303,8 @@
 | TOOL-ROTATE-KEK | `npm run rotate:kek` | 0 | вручную, по поводу | — |
 | TOOL-ROTATE-STAND-SECRETS | `npm run rotate:stand-secrets` | 0 | вручную, по поводу | — |
 | TOOL-S3-LIFECYCLE-APPLY | `node scripts/s3-lifecycle-apply.mjs` | 0 | вручную, по поводу | — |
+| TOOL-OPENBAO-KEYS-IMPORT | `node scripts/openbao-keys-import.mjs` | 0 | вручную, по поводу | — |
+| TOOL-CRYPTO-MIGRATE | `node scripts/crypto-migrate.mjs verify` | 0 | вручную, по поводу | — |
 | TOOL-SEED-ACCEPTANCE | `node scripts/seed-acceptance.mjs` | 0 | вручную, по поводу | — |
 | TOOL-RUN-SUITE | `npm run suite:handoff` | 0 | вручную, по поводу | — |
 | TOOL-INTEL-VERIFY-PAGES | `node scripts/intelligence-verify-pages.mjs` | 0 | вручную, по поводу | — |
@@ -371,8 +374,9 @@
 | CHK-HOST-ACCESS | `node scripts/check-host-access.mjs` | 17 | вручную | — |
 | CHK-OPENBAO-LAB | `node scripts/check-openbao-lab.mjs` | 22 | вручную | — |
 | CHK-OPENBAO-OPS | `node scripts/check-openbao-ops.mjs` | 29 | вручную | — |
-| CHK-OPENBAO-AUTO | `node scripts/check-openbao-auto.mjs` | 24 | вручную | — |
-| CHK-CRYPTO-TRANSIT | `node scripts/check-crypto-transit.mjs` | 9 | вручную | — |
+| CHK-OPENBAO-AUTO | `node scripts/check-openbao-auto.mjs` | 34 | вручную | — |
+| CHK-CRYPTO-TRANSIT | `node scripts/check-crypto-transit.mjs` | 24 | вручную | — |
+| CHK-TRANSITION-KIT | `node scripts/check-transition-kit.mjs` | 14 | вручную | — |
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
 | CHK-RELEASE | `node scripts/check-release.mjs` | 53 | вручную | — |
@@ -499,7 +503,8 @@
 | UNIT-CORE-LAB | `npm run test -w apps/core` | 21 | CI | CI |
 | UNIT-CORE-SECURITY | `npm run test -w apps/core` | 64 | CI | CI |
 | UNIT-CORE-CRYPTO-CONTRACT | `npm run test -w apps/core` | 22 | CI | CI |
-| UNIT-CORE-AVATAR-RETRY | `npm run test -w apps/core` | 3 | CI | CI |
+| UNIT-CORE-AVATAR-RETRY | `npm run test -w apps/core` | 4 | CI | CI |
+| UNIT-CORE-WEBHOOK-KEYS | `npm run test -w apps/core` | 2 | CI | CI |
 | UNIT-CORE-SIGNING-KEYS | `npm run test -w apps/core` | 11 | CI | CI |
 | UNIT-CORE-CRYPTO-LIVE | `npm run test -w apps/core` | 9 | CI | CI |
 | UNIT-CORE-TECHDEBT | `npm run test -w apps/core` | 8 | CI | CI |

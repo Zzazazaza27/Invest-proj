@@ -235,12 +235,12 @@ function MainData({ profile }: { profile: MyProfile }) {
         <dl style={{ margin: 0, display: 'grid', gap: 'var(--u-space-2)' }}>
           <DataRow
             label="Электронная почта"
-            value={profile.emailMasked ?? 'не указана'}
+            value={contactText(profile, profile.emailMasked, 'не указана')}
             note="Адрес показан частично и меняется отдельной процедурой подтверждения."
           />
           <DataRow
             label="Телефон"
-            value={profile.phoneMasked ?? 'не указан'}
+            value={contactText(profile, profile.phoneMasked, 'не указан')}
             note="Меняется подтверждением номера, а не правкой профиля."
           />
           <DataRow
@@ -522,4 +522,9 @@ function messageOf(cause: unknown, fallback: string): string {
     if (typeof message === 'string' && message.length > 0) return message;
   }
   return fallback;
+}
+
+function contactText(profile: MyProfile, masked: string | null, empty: string): string {
+  if (profile.contactsAvailable === false) return 'временно недоступно';
+  return masked ?? empty;
 }

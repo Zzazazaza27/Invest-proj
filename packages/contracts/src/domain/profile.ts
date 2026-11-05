@@ -31,6 +31,8 @@ export const MyProfileSchema = z.object({
   /** Контакт показывается маской: полное значение человек и так знает. */
   emailMasked: z.string().nullable(),
   phoneMasked: z.string().nullable(),
+  /** `false`: контакты сейчас не прочитать, это не значит, что их нет. */
+  contactsAvailable: z.boolean().optional(),
   roles: z.array(z.string()),
   primaryRole: z.string(),
   status: UserStatusSchema,

@@ -1674,6 +1674,38 @@ checks:
     purpose: 'Политика жизненного цикла бакета материалов. Вторая половина уборки за брошенными загрузками (остаток SEC-14). Фоновая уборка в ядре снимает объекты, у которых есть строка материала. Она НЕ видит двух видов мусора: 1. **'
     confirmation: reviewed-in-code
 
+  - id: TOOL-OPENBAO-KEYS-IMPORT
+    file: scripts/openbao-keys-import.mjs
+    command: node scripts/openbao-keys-import.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    studied: code
+    studiedOn: 2026-11-05
+    effects: ['импортирует ключи в Transit']
+    note: >-
+      Блок 5, задание 5. Рабочая операция, проверяется из CHK-OPENBAO-AUTO и CHK-CRYPTO-TRANSIT.
+    purpose: 'Импорт рабочих ключей с ноутбука через SSH-туннель, занятые имена только сверяются.'
+    confirmation: reviewed-in-code
+
+  - id: TOOL-CRYPTO-MIGRATE
+    file: scripts/crypto-migrate.mjs
+    command: node scripts/crypto-migrate.mjs verify
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    studied: code
+    studiedOn: 2026-11-05
+    effects: ['run меняет записи, verify только читает']
+    note: >-
+      Блок 5, задание 5. Рабочая операция, проверяется из CHK-OPENBAO-AUTO и CHK-CRYPTO-TRANSIT.
+    purpose: 'Перенос записей в формат vault порциями и сверка всей таблицы.'
+    confirmation: reviewed-in-code
+
   - id: TOOL-SECURITY-AUDIT-FULL
     file: scripts/security-audit-full.mjs
     command: node scripts/security-audit-full.mjs
@@ -3015,7 +3047,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 24
+    asserts: 34
     needs: []
     effects: ['контейнер и том fifth-openbao-auto, удаляются в конце']
     studied: code
@@ -3032,7 +3064,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 9
+    asserts: 24
     needs: []
     effects: ['контейнер fifth-crypto-transit, удаляются в конце']
     studied: code
@@ -3040,6 +3072,23 @@ checks:
     note: >-
       Блок 5, задание 4, искусственные ключи.
     purpose: 'CryptoService на настоящем OpenBao: старые данные читаются, индексы совпадают, версии и отказы работают.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
+  - id: CHK-TRANSITION-KIT
+    file: scripts/check-transition-kit.mjs
+    command: node scripts/check-transition-kit.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 14
+    needs: []
+    effects: ['временный контейнер, удаляется сам']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 5, искусственные ключи.
+    purpose: 'Переходный комплект возвращает .env и файлы секретов с владельцем и правами, подмена отвергается.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
@@ -3340,12 +3389,27 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 3
+    asserts: 4
     studied: code
     studiedOn: 2026-11-05
     note: >-
       Блок 5, задание 4. Хранилище, база и служба ключей — заглушки, изображение настоящее.
     purpose: 'Отказ службы ключей или базы не лишает повтора завершения загрузки аватара: исходник удаляется последним.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
+  - id: UNIT-CORE-WEBHOOK-KEYS
+    file: apps/core/tests/webhook-keys.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 2
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 5. База и служба ключей — заглушки.
+    purpose: 'Отказ службы ключей откладывает доставку вебхука и не тратит попытку, обычный сбой попытку тратит.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
@@ -4342,6 +4406,7 @@ blocks:
         UNIT-CORE-SECURITY,
         UNIT-CORE-CRYPTO-CONTRACT,
         UNIT-CORE-AVATAR-RETRY,
+        UNIT-CORE-WEBHOOK-KEYS,
         UNIT-CORE-SIGNING-KEYS,
         UNIT-CORE-CRYPTO-LIVE,
         UNIT-CORE-SECRET-FILES,
@@ -4357,6 +4422,7 @@ blocks:
         CHK-OPENBAO-OPS,
         CHK-OPENBAO-AUTO,
         CHK-CRYPTO-TRANSIT,
+        CHK-TRANSITION-KIT,
         CHK-PROD-COMPOSE,
         CHK-RELEASE-PINS,
         CHK-RELEASE,

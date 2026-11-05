@@ -37,11 +37,13 @@ let stored: Buffer | null;
 let written: number;
 let keysDown: boolean;
 let writeFails: boolean;
+let readFails: boolean;
 
 const tx = {
   query: vi.fn(async (sql: string) => {
     if (sql.includes('INSERT INTO identity.user_avatars')) written += 1;
     if (sql.includes('FROM identity.users u')) return { rows: [row] };
+    if (sql.includes('UPDATE identity.users')) return { rows: [], rowCount: 1 };
     return { rows: [] };
   }),
 } as unknown as Tx;
@@ -52,7 +54,10 @@ const service = new ProfileService(
       if (writeFails) throw new Error('база недоступна');
       return fn(tx);
     },
-    readOnly: async (_: unknown, fn: (t: Tx) => Promise<unknown>) => fn(tx),
+    readOnly: async (_: unknown, fn: (t: Tx) => Promise<unknown>) => {
+      if (readFails) throw new Error('база недоступна');
+      return fn(tx);
+    },
   } as never,
   {
     openFields: async () => {
@@ -95,19 +100,36 @@ beforeEach(async () => {
   written = 0;
   keysDown = false;
   writeFails = false;
+  readFails = false;
 });
 
 describe('Завершение загрузки аватара', () => {
-  it('отказ службы ключей: аватар записан, исходник цел, повтор проходит', async () => {
+  it('отказ службы ключей не мешает: контакты помечены недоступными, а не пустыми', async () => {
     keysDown = true;
-    await expect(service.finalizeAvatar(ctx)).rejects.toMatchObject({ status: 503 });
+    const profile = await service.finalizeAvatar(ctx);
+    expect(written).toBe(1);
+    expect(profile.contactsAvailable).toBe(false);
+    expect(profile.emailMasked).toBeNull();
+    expect(stored).toBeNull();
+  });
+
+  it('сбой чтения профиля после записи: исходник цел, повтор проходит', async () => {
+    readFails = true;
+    await expect(service.finalizeAvatar(ctx)).rejects.toThrow();
     expect(written).toBe(1);
     expect(stored).not.toBeNull();
 
-    keysDown = false;
+    readFails = false;
     const profile = await service.finalizeAvatar(ctx);
+    expect(profile.contactsAvailable).toBe(true);
     expect(profile.emailMasked).not.toBeNull();
     expect(stored).toBeNull();
+  });
+
+  it('правка имени не зависит от службы ключей', async () => {
+    keysDown = true;
+    const profile = await service.updateName(ctx, 'Новое имя');
+    expect(profile.contactsAvailable).toBe(false);
   });
 
   it('отказ записи в базу: исходник цел, повтор проходит', async () => {
