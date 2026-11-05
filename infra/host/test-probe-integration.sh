@@ -99,14 +99,15 @@ node -e "
 const fs=require('fs');require('http').createServer((q,s)=>{let b='';q.on('data',(c)=>b+=c);q.on('end',()=>{fs.writeFileSync(process.argv[1],JSON.stringify({headers:q.headers,body:b}));s.writeHead(200);s.end('ok')})}).listen(18444,'127.0.0.1')" "$M/hook.json" &
 RECEIVER_PID=$!
 sleep 1
+# Подписаться через API сейчас нельзя ни на одно событие: выдача скоупов закрыта намеренно. Адрес
+# заводится напрямую, секрет шифруется настоящим сервисом, остальное — обычная доставка ядром.
 VERB="$(pg 'SELECT verb FROM audit.event_type_registry ORDER BY verb LIMIT 1')"
-curl -sk -o "$M/hook-answer" -w 'регистрация вебхука: %{http_code}\n' -H "Authorization: Bearer $access" \
-  -H 'Content-Type: application/json' --cert "$M/client.crt" --key "$M/client.key" \
-  -d "{\"url\":\"https://$ID.5espace.com/hook-probe/$SUFFIX\",\"subscribedVerbs\":[\"$VERB\"]}" \
-  https://localhost:18443/v1/integration/webhooks
-cut -c1-240 "$M/hook-answer"; echo
-endpoint="$(jq -r .id "$M/hook-answer")"
-[ -n "$endpoint" ] && [ "$endpoint" != null ]
+hook_secret="$(openssl rand -hex 32)"
+sealed="$(docker exec "$PROJECT-core" node -e "require('reflect-metadata');const {CryptoService}=require('/app/apps/core/dist/crypto/crypto.service.js');new CryptoService().sealDirect('webhook_secrets',process.argv[1],'webhook:signing').then((b)=>console.log(b.toString('hex')))" "$hook_secret" | tail -1)"
+[ -n "$sealed" ]
+account="$(pg "SELECT id FROM integration.service_accounts WHERE client_id = '$CLIENT_ID'")"
+endpoint="$(pg "INSERT INTO integration.webhook_endpoints (id, service_account_id, url, subscribed_verbs, secret_ciphertext, secret_kms_key_id, secret_fingerprint, status) VALUES (public.uuid_generate_v7(), '$account', 'https://$ID.5espace.com/hook-probe/$SUFFIX', ARRAY['$VERB'], decode('$sealed', 'hex'), 'probe', sha256('$hook_secret'::bytea), 'active') RETURNING id" | head -1)"
+[ -n "$endpoint" ]
 outbox="$(pg "INSERT INTO audit.outbox_events (id, aggregate_type, aggregate_id, aggregate_version, event_type, payload_jsonb, nats_subject, schema_version, message_key) VALUES (public.uuid_generate_v7(), 'project', public.uuid_generate_v7(), 1, '$VERB', '{\"check\":\"probe\"}'::jsonb, 'unicorn.$VERB', 1, 'probe-$SUFFIX') RETURNING id" | head -1)"
 pg "INSERT INTO integration.webhook_deliveries (id, endpoint_id, event_id, status) VALUES (public.uuid_generate_v7(), '$endpoint', '$outbox', 'queued')" >/dev/null
 for _ in $(seq 1 45); do
