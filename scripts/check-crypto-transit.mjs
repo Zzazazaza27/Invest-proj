@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { TOOL_IMAGE } from './lib/backup.mjs';
 import { MIGRATE_TARGETS, migrateTarget, verifyTarget } from './lib/crypto-migrate.mjs';
 import { importTransitKey } from './lib/openbao-import.mjs';
+import { repack, rewrapTarget, rotateKey } from './lib/transit-rotate.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const pg = createRequire(join(ROOT, 'apps', 'core', 'package.json'))('pg');
@@ -245,6 +246,111 @@ async function checkMigration() {
     check('с доступом команда прошла', done.status === 0, done.stderr.slice(-200));
     const final = command('verify');
     check('сверка командой подтвердила', final.status === 0, final.stdout.slice(-200));
+
+    console.log('\n=== СМЕНА ВЕРСИИ КЛЮЧА ===');
+    const rotatePolicy = readFileSync(
+      join(ROOT, 'infra', 'openbao', 'policy-prod-rotate.hcl'),
+      'utf8',
+    );
+    await must(
+      'политика смены',
+      call('PUT', 'sys/policies/acl/prod-rotate', { body: { policy: rotatePolicy } }),
+    );
+    const rotateToken = (
+      await must(
+        'токен смены',
+        call('POST', 'auth/token/create', {
+          body: { policies: ['prod-rotate'], no_default_policy: true, ttl: '30m' },
+        }),
+      )
+    ).json.auth.client_token;
+    const rotateFile = join(base, 'rotate-token');
+    writeFileSync(rotateFile, rotateToken);
+    const rotate = (...args) =>
+      spawnSync(process.execPath, [join(ROOT, 'scripts', 'rotate-kek.mjs'), '--transit', ...args], {
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          DATABASE_URL_OWNER: `postgres://postgres:lab@127.0.0.1:${PG_PORT}/postgres`,
+          OPENBAO_ADDR: ADDR,
+          OPENBAO_KEY_PREFIX: 'prod',
+          OPENBAO_TOKEN_PATH: rotateFile,
+          OPENBAO_CA_PATH: '',
+        },
+      });
+    const domain = ['--domain', 'passport_sensitive'];
+    check('осмотр: отставших нет', rotate(...domain).status === 0);
+    const search = rotate('--domain', 'search_index', '--rotate');
+    check(
+      'ключ поиска так не меняется',
+      search.status === 1 && search.stderr.includes('пересчёта'),
+    );
+    const rotated = rotate(...domain, '--rotate');
+    check(
+      'новая версия с контролем',
+      rotated.status === 0 && rotated.stdout.includes('новая версия: 2'),
+      `${rotated.stdout}${rotated.stderr}`.slice(-200),
+    );
+    check('старые записи отстают, но читаются', rotate(...domain).status === 1);
+    token = goodToken;
+    const oldRead = await transit(
+      'prod-passport-sensitive',
+      (await read(3)).toString('ascii'),
+      users.aad,
+    );
+    check('запись версии 1 открывается после смены', oldRead.equals(dek));
+    const rewrapped = rotate(...domain, '--rewrap');
+    check(
+      'переупаковка прошла',
+      rewrapped.status === 0,
+      `${rewrapped.stdout}${rewrapped.stderr}`.slice(-240),
+    );
+    const moved = await read(3);
+    check('запись на новой версии', moved.toString('ascii').startsWith('vault:v2:'));
+    check(
+      'DEK тот же, ядро его читает',
+      (await transit('prod-passport-sensitive', moved.toString('ascii'), users.aad)).equals(dek),
+    );
+
+    const rotateCall = (method, path, { body } = {}) =>
+      call(method, path, { token: rotateToken, body });
+    const name = 'prod-passport-sensitive';
+    const version = await rotateKey(rotateCall, name);
+    let touched = false;
+    const racedRewrap = await rewrapTarget(db, rotateCall, users, {
+      name,
+      version,
+      batch: 2,
+      afterSelect: async (rows) => {
+        if (touched) return;
+        touched = true;
+        const changed = await repack(
+          rotateCall,
+          name,
+          rows[0].value.toString('ascii'),
+          Buffer.from(users.aad).toString('base64'),
+        );
+        await db.query(`UPDATE identity.users SET contact_wrapped_dek = $2 WHERE id = $1`, [
+          rows[0].id,
+          changed,
+        ]);
+      },
+    });
+    check(
+      'параллельное изменение не перезаписано',
+      racedRewrap.skipped === 1,
+      JSON.stringify(racedRewrap),
+    );
+    await db.query(`UPDATE identity.users SET contact_wrapped_dek = $2 WHERE id = $1`, [
+      id(4),
+      wrapUser(),
+    ]);
+    const blocked = rotate(...domain, '--rewrap');
+    check(
+      'запись прежнего формата останавливает переупаковку',
+      blocked.status === 1 && blocked.stderr.includes('прежнего формата'),
+      blocked.stderr.slice(-200),
+    );
   } finally {
     await db.end().catch(() => undefined);
     docker('rm', '-f', PG);
@@ -325,6 +431,7 @@ try {
   status ||= migrated;
 } catch (error) {
   console.error(`ОШИБКА: ${error.message}`);
+  status = 1;
 } finally {
   docker('rm', '-f', NAME);
   rmSync(base, { recursive: true, force: true });

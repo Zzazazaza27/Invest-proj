@@ -49,6 +49,47 @@ export async function withOperatorToken(call, password, work) {
   return result;
 }
 
+/**
+ * Секреты среды в KV. Совпавшее значение не пишется заново, другое останавливает загрузку: молча
+ * заменить чужой секрет нельзя. KEK сюда не попадают, их держит Transit.
+ */
+export async function ensureSecrets(call, token, prefix, values) {
+  const report = { written: 0, same: 0 };
+  for (const [name, value] of Object.entries(values)) {
+    if (/^KEK_/.test(name)) throw new Error(`${name}: ключ домена не хранится в KV`);
+    const path = `kv/data/${prefix}/core/${name}`;
+    const existing = await call('GET', path, { token });
+    if (existing.status === 200) {
+      if (!sameText(existing.json.data?.data?.value, value)) {
+        throw new Error(`${name}: в KV другое значение, загрузка остановлена`);
+      }
+      report.same += 1;
+      continue;
+    }
+    if (existing.status !== 404)
+      throw new Error(`${name}: чтение отклонено, код ${existing.status}`);
+    const made = await call('POST', path, { token, body: { data: { value } } });
+    if (made.status >= 300) throw new Error(`${name}: запись отклонена, код ${made.status}`);
+    report.written += 1;
+  }
+  return report;
+}
+
+/** Шаблоны Agent для всех секретов среды. В файле только имена, значений нет. */
+export function agentTemplates(prefix, names) {
+  return names
+    .filter((name) => !/^KEK_/.test(name))
+    .map(
+      (name) => `template {
+  contents = "{{ with secret \\"kv/data/${prefix}/core/${name}\\" }}{{ .Data.data.value }}{{ end }}"
+  destination = "/run/fifth-secrets/${name}"
+  perms = "0440"
+}
+`,
+    )
+    .join('\n');
+}
+
 /** Контроль версии 1: совпадает ли ключ в Transit с нашим. Значений наружу не отдаёт. */
 async function sameKey(call, token, name, type, key) {
   const probe = randomBytes(32);

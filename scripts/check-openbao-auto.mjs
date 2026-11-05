@@ -376,6 +376,9 @@ try {
   for (const [name, value] of Object.entries(kek)) {
     writeFileSync(join(kitRoot, '.local', 'secrets', name), `${value.toString('base64')}\n`);
   }
+  const database = randomBytes(24).toString('hex');
+  writeFileSync(join(kitRoot, '.local', 'secrets', 'DATABASE_URL'), `${database}\n`);
+  writeFileSync(join(kitRoot, '.local', 'secrets', 'REDIS_PASSWORD'), 'lab-redis\n');
   const kit = spawnSync(
     'docker',
     [
@@ -429,6 +432,8 @@ try {
         join(dir, 'tls', 'tls.crt'),
         '--prefix',
         prefix,
+        '--agent-out',
+        join(base, 'agent-templates.hcl'),
       ],
       { encoding: 'utf8' },
     );
@@ -454,6 +459,17 @@ try {
       `vault:v1:${createHmac('sha256', kek.KEK_SEARCH_INDEX).update('контроль').digest('base64')}`,
     ),
   );
+  const kv = (name) => api('GET', `kv/data/lab/core/${name}`, { token: operator });
+  const stored = await kv('DATABASE_URL');
+  check('секреты в KV, без перевода строки', stored.json.data?.data?.value === database);
+  check('KEK в KV не попали', (await kv('KEK_SEARCH_INDEX')).status === 404);
+  const templates = readFileSync(join(base, 'agent-templates.hcl'), 'utf8');
+  check(
+    'шаблоны Agent только с именами',
+    templates.includes('/run/fifth-secrets/REDIS_PASSWORD') &&
+      !templates.includes('KEK_') &&
+      !templates.includes(database),
+  );
   const repeat = importKeys('lab');
   check(
     'повтор только сверяет',
@@ -461,6 +477,17 @@ try {
     repeat.stderr.slice(-200),
   );
   check('повтор не создал версию', (await latest('lab-search-index')) === 1);
+  check('повтор не тронул KV', (await kv('DATABASE_URL')).json.data?.metadata?.version === 1);
+  await api('POST', 'kv/data/lab/core/REDIS_PASSWORD', {
+    token: operator,
+    body: { data: { value: 'чужое' } },
+  });
+  const conflict = importKeys('lab');
+  check(
+    'другое значение в KV — отказ',
+    conflict.status === 1 && conflict.stderr.includes('другое значение'),
+    conflict.stderr.slice(-200),
+  );
   await api('POST', 'transit/keys/alien-passport-sensitive', {
     token: operator,
     body: { type: 'aes256-gcm96' },

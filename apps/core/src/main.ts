@@ -81,7 +81,7 @@ const PERMISSIONS_POLICY = [
  * приложение с небезопасной комбинацией параметров не стартует вовсе.
  */
 async function bootstrap(): Promise<void> {
-  // Валидация конфигурации до всего остального: в production с AUTH_MODE=local
+  // Валидация конфигурации до всего остального: в production с местными ключами
   // или CORS '*' процесс просто не поднимется.
   const env = getEnv();
   const logger = new Logger('bootstrap');

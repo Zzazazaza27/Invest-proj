@@ -167,6 +167,7 @@ case "${1:-}" in
     bao policy write prod-core - <"$HERE/policy-prod-core.hcl"
     bao policy write prod-backup - <"$HERE/policy-prod-backup.hcl"
     bao policy write operator - <"$HERE/policy-operator.hcl"
+    bao policy write prod-rotate - <"$HERE/policy-prod-rotate.hcl"
     role prod-core 1h
     role prod-backup 5m
     PASS="${FIFTH_OPENBAO_THOMAS_PASSWORD:-}"

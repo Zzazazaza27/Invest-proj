@@ -8,6 +8,7 @@
  * восстановление, смену Static seal key и миграцию seal в обе стороны.
  */
 import { spawnSync } from 'node:child_process';
+import { agentTemplates } from './lib/openbao-keys.mjs';
 import { randomBytes } from 'node:crypto';
 import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
@@ -223,12 +224,16 @@ try {
   console.log('\n▸ Agent');
   const roleId = (await api('GET', 'auth/approle/role/prod-core/role-id', { token: root })).json
     .data.role_id;
+  await api('POST', 'kv/data/prod/core/REDIS_PASSWORD', {
+    token: root,
+    body: { data: { value: 'lab-redis' } },
+  });
   const secret = await api('POST', 'auth/approle/role/prod-core/secret-id', { token: root });
   writeFileSync(join(dir, 'agent', 'role-id'), roleId);
   writeFileSync(join(dir, 'agent', 'secret-id'), secret.json.data.secret_id);
-  const agentConf = readFileSync(join(SRC, 'agent-core.hcl'), 'utf8')
+  const agentConf = `${readFileSync(join(SRC, 'agent-core.hcl'), 'utf8')
     .replace('https://127.0.0.1:8200', `https://${NAME}:8200`)
-    .replace('"5m"', '"2s"');
+    .replace('"5m"', '"2s"')}\n${agentTemplates('prod', ['REDIS_PASSWORD'])}`;
   writeFileSync(join(dir, 'agent', 'agent.hcl'), agentConf);
   copyFileSync(join(dir, 'tls', 'tls.crt'), join(dir, 'agent', 'tls.crt'));
   const run = docker(
@@ -273,6 +278,16 @@ try {
     '/run/fifth-secrets/POSTGRES_PASSWORD',
   ).stdout.trim();
   check('права файла 440', mode === '440', mode);
+  const sink = docker('exec', AGENT, 'cat', '/run/fifth-secrets/openbao-token').stdout.trim();
+  check('токен для Transit лежит файлом', sink.length > 0);
+  const viaSink = await api('GET', 'kv/data/prod/core/POSTGRES_PASSWORD', { token: sink });
+  check(
+    'токен из файла работает с рабочей политикой',
+    viaSink.status === 200,
+    `код ${viaSink.status}`,
+  );
+  const generated = docker('exec', AGENT, 'cat', '/run/fifth-secrets/REDIS_PASSWORD').stdout.trim();
+  check('созданный шаблон отдаёт секрет', generated === 'lab-redis');
   const mounts = docker('exec', AGENT, 'grep', ' /run/fifth-secrets ', '/proc/mounts').stdout;
   check('каталог секретов в памяти', mounts.includes('tmpfs'));
   await sleep(14000);

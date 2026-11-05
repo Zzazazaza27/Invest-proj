@@ -41,19 +41,6 @@ const BASE_ENV: NodeJS.ProcessEnv = {
 };
 
 describe('Конфигурация: fail-closed в production', () => {
-  it('локальный адаптер аутентификации не запускается в production', () => {
-    expect(() =>
-      loadEnv({
-        ...BASE_ENV,
-        NODE_ENV: 'production',
-        AUTH_MODE: 'local',
-        CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
-        CORE_PUBLIC_URL: 'https://api.5espace.test',
-        ...KMS_ENV,
-      }),
-    ).toThrow(/AUTH_MODE/);
-  });
-
   it('локальные ключи шифрования не запускаются в production', () => {
     expect(() =>
       loadEnv({
@@ -286,25 +273,6 @@ describe('Проверка токена', () => {
     });
   });
 
-  it('выпуск локального токена в production невозможен', () => {
-    const saved = { ...process.env };
-    Object.assign(process.env, BASE_ENV, {
-      NODE_ENV: 'production',
-      AUTH_MODE: 'oidc',
-      OIDC_ISSUER: 'https://id.5espace.test',
-      OIDC_AUDIENCE: 'core',
-      ...KMS_ENV,
-      CORE_PUBLIC_URL: 'https://api.5espace.test',
-      CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
-    });
-    resetEnvCache();
-    try {
-      expect(() => verifier.issueLocal({ subject: SUBJECT, roles: [], ttlSeconds: 60 })).toThrow();
-    } finally {
-      process.env = saved;
-      resetEnvCache();
-    }
-  });
 });
 
 describe('Ключ подписи CSRF', () => {

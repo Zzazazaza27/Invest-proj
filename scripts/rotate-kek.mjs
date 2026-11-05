@@ -20,6 +20,12 @@
 //     контроль на строке — старый HMAC обязан воспроизвестись. НЕ пересчитываются
 //     consents.request_trace_hash/user_agent_hash: исходники не хранятся.
 //
+// Ключи в OpenBao Transit (блок 5, задание 5), токен из OPENBAO_TOKEN_PATH с политикой prod-rotate:
+//   --transit --domain <домен>            осмотр: версия ключа и записи не на ней
+//   --transit --domain <домен> --rotate   новая версия с контрольной записью и чтением
+//   --transit --domain <домен> --rewrap   переупаковка записей на последнюю версию порциями
+// Код 0 у осмотра и переупаковки значит, что отставших записей нет. Значения не печатаются.
+//
 // Режимы:
 //   (по умолчанию)  только осмотр: сколько строк затронуто, открывается ли
 //                   текущий KEK — ничего не пишется;
@@ -41,7 +47,16 @@ import { readFileSync, existsSync, writeFileSync, renameSync } from 'node:fs';
 import { createCipheriv, createDecipheriv, randomBytes, createHash, createHmac } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { request as httpRequest } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import pg from 'pg';
+import {
+  behindVersion,
+  latestVersion,
+  rewrapTarget,
+  rotateKey,
+  targetsOf,
+} from './lib/transit-rotate.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -168,6 +183,70 @@ function readEnvValue(name) {
 }
 
 // --- разбор аргументов -------------------------------------------------------
+/** Запрос к OpenBao: файлы доступа читаются на каждый вызов, таймаут на весь вызов. */
+function transitCall(method, path, { body } = {}) {
+  const url = new URL(`/v1/${path}`, process.env.OPENBAO_ADDR);
+  const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
+  const token = readFileSync(process.env.OPENBAO_TOKEN_PATH, 'utf8').trim();
+  const ca = process.env.OPENBAO_CA_PATH ? readFileSync(process.env.OPENBAO_CA_PATH) : null;
+  return new Promise((done, fail) => {
+    const req = send(
+      url,
+      {
+        method,
+        signal: AbortSignal.timeout(10_000),
+        ...(ca ? { ca, servername: 'localhost' } : {}),
+        headers: { 'Content-Type': 'application/json', 'X-Vault-Token': token },
+      },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => (text += chunk));
+        res.on('error', fail);
+        res.on('end', () => {
+          try {
+            done({ status: res.statusCode, json: text ? JSON.parse(text) : {} });
+          } catch {
+            fail(new Error('ответ OpenBao не разобран'));
+          }
+        });
+      },
+    );
+    req.on('error', fail);
+    req.end(body ? JSON.stringify(body) : undefined);
+  });
+}
+
+async function transitRotation() {
+  const prefix = process.env.OPENBAO_KEY_PREFIX || 'prod';
+  const db = new pg.Client({ connectionString: process.env.DATABASE_URL_OWNER });
+  await db.connect();
+  try {
+    const targets = targetsOf(domain ?? '');
+    const name = `${prefix}-${targets[0].key}`;
+    if (flag('--rotate')) console.log(`новая версия: ${await rotateKey(transitCall, name)}`);
+    const version = await latestVersion(transitCall, name);
+    let behind = 0;
+    for (const target of targets) {
+      if (flag('--rewrap')) {
+        const stats = await rewrapTarget(db, transitCall, target, { name, version, batch: 200 });
+        console.log(
+          `${target.table}: переупаковано ${stats.rewrapped}, изменились параллельно ${stats.skipped}, не открылись ${stats.failed}`,
+        );
+      }
+      const left = await behindVersion(db, target, version);
+      console.log(`${target.table}: версия ${version}, отстают ${left}`);
+      behind += left;
+    }
+    if (flag('--rewrap') || !flag('--rotate')) process.exitCode = behind === 0 ? 0 : 1;
+  } catch (error) {
+    console.error(`ОШИБКА: ${error.message}`);
+    process.exitCode = 1;
+  } finally {
+    await db.end();
+  }
+}
+
 const argv = process.argv.slice(2);
 const flag = (n) => argv.includes(n);
 const value = (n) => {
@@ -176,6 +255,12 @@ const value = (n) => {
 };
 
 const domain = value('--domain');
+
+// Ключи в Transit: здесь нечего подставлять в окружение, версия создаётся в OpenBao.
+if (flag('--transit')) {
+  await transitRotation();
+  process.exit(process.exitCode ?? 0);
+}
 const mode = flag('--apply') ? 'apply' : flag('--test') ? 'test' : 'check';
 // --write-env: скрипт сам подставляет новый ключ в .env. Без него значение
 // пришлось бы передать через argv или прочитать с экрана — и оно осело бы в

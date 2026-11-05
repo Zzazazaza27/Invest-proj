@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 198; требований: 41
+- Проверок: 199; требований: 41
 
 ## Что защищено без участия человека
 
@@ -373,9 +373,9 @@
 | CHK-SECRETS-TO-FILES | `node scripts/check-secrets-to-files.mjs` | 11 | вручную | — |
 | CHK-HOST-ACCESS | `node scripts/check-host-access.mjs` | 17 | вручную | — |
 | CHK-OPENBAO-LAB | `node scripts/check-openbao-lab.mjs` | 22 | вручную | — |
-| CHK-OPENBAO-OPS | `node scripts/check-openbao-ops.mjs` | 29 | вручную | — |
-| CHK-OPENBAO-AUTO | `node scripts/check-openbao-auto.mjs` | 37 | вручную | — |
-| CHK-CRYPTO-TRANSIT | `node scripts/check-crypto-transit.mjs` | 28 | вручную | — |
+| CHK-OPENBAO-OPS | `node scripts/check-openbao-ops.mjs` | 32 | вручную | — |
+| CHK-OPENBAO-AUTO | `node scripts/check-openbao-auto.mjs` | 42 | вручную | — |
+| CHK-CRYPTO-TRANSIT | `node scripts/check-crypto-transit.mjs` | 37 | вручную | — |
 | CHK-TRANSITION-KIT | `node scripts/check-transition-kit.mjs` | 19 | вручную | — |
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
@@ -505,6 +505,7 @@
 | UNIT-CORE-CRYPTO-CONTRACT | `npm run test -w apps/core` | 22 | CI | CI |
 | UNIT-CORE-AVATAR-RETRY | `npm run test -w apps/core` | 4 | CI | CI |
 | UNIT-CORE-WEBHOOK-KEYS | `npm run test -w apps/core` | 2 | CI | CI |
+| UNIT-CORE-PRODUCTION-LOGIN | `npm run test -w apps/core` | 4 | CI | CI |
 | UNIT-CORE-SIGNING-KEYS | `npm run test -w apps/core` | 11 | CI | CI |
 | UNIT-CORE-CRYPTO-LIVE | `npm run test -w apps/core` | 9 | CI | CI |
 | UNIT-CORE-TECHDEBT | `npm run test -w apps/core` | 8 | CI | CI |

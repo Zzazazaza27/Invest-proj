@@ -89,7 +89,7 @@ export class TokenVerifier {
    * Локальный адаптер: компактный HMAC-токен `base64url(payload).base64url(mac)`, с версией
    * ключа впереди — `kid.payload.mac`.
    * Формат намеренно НЕ является JWT, чтобы его нельзя было спутать с
-   * настоящим токеном IdP и случайно принять в production.
+   * настоящим токеном внешнего поставщика входа.
    */
   private verifyLocal(token: string): VerifiedToken {
     const split = splitSigned(token);
@@ -152,17 +152,13 @@ export class TokenVerifier {
     return { subject, roles, acr, issuedAt, tokenId, expiresAt: (payload.exp ?? 0) * 1000 };
   }
 
-  /** Выпуск токена локального адаптера. Существует только вне production. */
+  /** Выпуск токена обычного входа по логину и паролю. */
   issueLocal(input: {
     subject: string;
     roles: string[];
     acr?: string;
     ttlSeconds: number;
   }): string {
-    const env = getEnv();
-    if (env.isProduction) {
-      throw new Error('Выпуск локальных токенов в production невозможен');
-    }
     const payload = {
       sub: input.subject,
       roles: input.roles,

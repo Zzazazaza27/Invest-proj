@@ -9,15 +9,25 @@
  * закреплённым сертификатом. Пароль оператора не попадает на VPS и в журнал, выданный токен
  * отзывается при любом исходе. Повтор безопасен: занятое имя только сверяется.
  *
+ * Заодно загружает секреты среды в KV и пишет шаблоны Agent в --agent-out: в них только имена.
+ *
  * Для проверок вместо туннеля: --addr <https://…> --ca <файл>.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { docker, MEMORY_ONLY, TOOL_IMAGE } from './lib/backup.mjs';
-import { ensureKeys, KEK_DOMAINS, withOperatorToken } from './lib/openbao-keys.mjs';
+import {
+  agentTemplates,
+  ensureKeys,
+  ensureSecrets,
+  KEK_DOMAINS,
+  withOperatorToken,
+} from './lib/openbao-keys.mjs';
 
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOME = process.env.USERPROFILE || process.env.HOME || '';
 const HOST = '193.233.217.210';
 const TUNNEL_PORT = 18210;
@@ -32,7 +42,6 @@ function openKits(kit, bundle, secretKey, passFile) {
   for (const f of [kit, bundle, secretKey, passFile]) {
     if (!existsSync(f)) throw new Error(`нет файла ${f}`);
   }
-  const names = KEK_DOMAINS.map((d) => d.env).join(' ');
   const script = [
     'set -e',
     'mkdir -m 700 /secure/gpg /secure/k',
@@ -40,7 +49,7 @@ function openKits(kit, bundle, secretKey, passFile) {
     'g --import /in/secret.asc',
     'g --decrypt /in/bundle.gpg | sed -n "s/^OPENBAO_THOMAS_PASSWORD=//p"',
     'g --decrypt /in/kit.gpg | tar -x -C /secure/k .local/secrets',
-    `for n in ${names}; do printf '%s=%s\\n' "$n" "$(cat "/secure/k/.local/secrets/$n")"; done`,
+    'for f in /secure/k/.local/secrets/*; do [ -f "$f" ] && printf "%s=%s\\n" "$(basename "$f")" "$(base64 -w0 "$f")"; done',
   ].join('\n');
   const r = docker(
     [
@@ -66,13 +75,18 @@ function openKits(kit, bundle, secretKey, passFile) {
     { env: { PASSPHRASE: readFileSync(passFile, 'utf8').trim() }, allowFail: true },
   );
   const [password, ...lines] = r.stdout.trim().split('\n');
-  const keys = Object.fromEntries(
-    lines.map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+  const all = Object.fromEntries(
+    lines.map((line) => {
+      const value = Buffer.from(line.slice(line.indexOf('=') + 1), 'base64').toString('utf8');
+      return [line.slice(0, line.indexOf('=')), value.replace(/\r?\n$/, '')];
+    }),
   );
-  if (!password || lines.length !== KEK_DOMAINS.length) {
+  const keys = Object.fromEntries(KEK_DOMAINS.map((d) => [d.env, all[d.env]]));
+  const secrets = Object.fromEntries(Object.entries(all).filter(([name]) => !/^KEK_/.test(name)));
+  if (!password || KEK_DOMAINS.some((d) => !all[d.env])) {
     throw new Error(`комплекты не открылись ключом Томаса: ${r.status} ${r.stderr.slice(-200)}`);
   }
-  return { password, keys };
+  return { password, keys, secrets };
 }
 
 function parsed(text) {
@@ -173,7 +187,7 @@ async function waitFor(call) {
 
 let tunnel = null;
 try {
-  const { password, keys } = openKits(
+  const { password, keys, secrets } = openKits(
     resolve(option('--kit') ?? ''),
     resolve(option('--bundle') ?? ''),
     resolve(option('--secret-key') ?? ''),
@@ -188,11 +202,24 @@ try {
     call = client(`https://127.0.0.1:${TUNNEL_PORT}`, ca);
   }
   await waitFor(call);
-  const report = await withOperatorToken(call, password, (token) =>
-    ensureKeys(call, token, option('--prefix') ?? 'prod', keys),
-  );
+  const prefix = option('--prefix') ?? 'prod';
+  const { report, stored } = await withOperatorToken(call, password, async (token) => ({
+    report: await ensureKeys(call, token, prefix, keys),
+    stored: await ensureSecrets(call, token, prefix, secrets),
+    // Установка могла пройти раньше этой политики: root-токена уже нет, поэтому ставит оператор.
+    policy: await call('PUT', 'sys/policies/acl/prod-rotate', {
+      token,
+      body: {
+        policy: readFileSync(join(ROOT, 'infra', 'openbao', 'policy-prod-rotate.hcl'), 'utf8'),
+      },
+    }),
+  }));
   for (const { name, action } of report) console.log(`${name}: ${action}`);
-  console.log('ключи совпали с комплектом, токен отозван');
+  console.log(`KV: записано ${stored.written}, уже на месте ${stored.same}`);
+  if (option('--agent-out')) {
+    writeFileSync(resolve(option('--agent-out')), agentTemplates(prefix, Object.keys(secrets)));
+  }
+  console.log('ключи и секреты совпали с комплектом, токен отозван');
 } catch (error) {
   console.error(`ОШИБКА: ${error.message}`);
   process.exitCode = 1;

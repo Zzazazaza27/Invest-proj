@@ -419,15 +419,8 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
   const isProd = env.NODE_ENV === 'production';
 
   // ---- Аутентификация -----------------------------------------------------
-  if (isProd && env.AUTH_MODE !== 'oidc') {
-    ctx.addIssue({
-      code: 'custom',
-      path: ['AUTH_MODE'],
-      message:
-        'В production допустим только AUTH_MODE=oidc. Локальный адаптер подписывает ' +
-        'токены сам и не имеет ни MFA, ни ротации ключей (ADR-003).',
-    });
-  }
+  // Обычный вход по логину и паролю разрешён и в production (решение Томаса, блок 5): его ключ
+  // проверяется ниже, версии подписей и защита cookie действуют как для любого входа.
   if (env.AUTH_MODE === 'oidc') {
     if (!env.OIDC_ISSUER) {
       ctx.addIssue({

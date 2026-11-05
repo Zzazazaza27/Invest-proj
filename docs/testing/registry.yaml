@@ -3030,7 +3030,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 29
+    asserts: 32
     needs: []
     effects: ['контейнер и том fifth-openbao-ops, удаляются в конце']
     studied: code
@@ -3047,7 +3047,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 37
+    asserts: 42
     needs: []
     effects: ['контейнер и том fifth-openbao-auto, удаляются в конце']
     studied: code
@@ -3064,7 +3064,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 28
+    asserts: 37
     needs: []
     effects: ['контейнер fifth-crypto-transit, удаляются в конце']
     studied: code
@@ -3410,6 +3410,21 @@ checks:
     note: >-
       Блок 5, задание 5. База и служба ключей — заглушки.
     purpose: 'Отказ службы ключей откладывает доставку вебхука и не тратит попытку, обычный сбой попытку тратит.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
+  - id: UNIT-CORE-PRODUCTION-LOGIN
+    file: apps/core/tests/production-login.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 4
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Решение Томаса 05.11: обычный вход сохраняется.
+    purpose: 'Обычный вход работает при NODE_ENV=production, остальные требования production действуют.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
@@ -4406,6 +4421,7 @@ blocks:
         UNIT-CORE-SECURITY,
         UNIT-CORE-CRYPTO-CONTRACT,
         UNIT-CORE-AVATAR-RETRY,
+        UNIT-CORE-PRODUCTION-LOGIN,
         UNIT-CORE-WEBHOOK-KEYS,
         UNIT-CORE-SIGNING-KEYS,
         UNIT-CORE-CRYPTO-LIVE,
