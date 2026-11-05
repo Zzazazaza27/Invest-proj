@@ -5,6 +5,7 @@
 #   fifth-test probe <сборка> <токен> проба перехода и возврата на test-1
 #   fifth-test env <start|stop|status>
 #   fifth-test logs                   хвост журнала ядра test-1
+#   fifth-test revoke                 снять это разрешение
 #
 # Скрипты репозитория идут от root, поэтому право равно root, пока оно выдано. Это осознанное
 # исключение из постановки 5.4 на время проверок: убрать — удалить /etc/sudoers.d/91-maus-test.
@@ -30,10 +31,14 @@ case "${1:-}" in
     [[ "${2:-}" =~ ^(start|stop|status)$ ]] || fail 'команды: start, stop, status'
     cd "$ROOT" && exec node scripts/env.mjs "$2" test-1 --text
     ;;
+  revoke)
+    rm -f /etc/sudoers.d/91-maus-test
+    echo 'разрешение снято'
+    ;;
   logs)
     exec docker logs --tail 40 fifth-test-1-core
     ;;
   *)
-    fail 'команды: sync, probe, env, logs'
+    fail 'команды: sync, probe, env, logs, revoke'
     ;;
 esac

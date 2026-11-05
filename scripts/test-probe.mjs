@@ -16,6 +16,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -26,6 +27,7 @@ import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { docker, MEMORY_ONLY, TOOL_IMAGE } from './lib/backup.mjs';
+import { legacyToVaultBytes } from './lib/crypto-migrate.mjs';
 import { readCopy } from './lib/openbao-copy.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -44,8 +46,10 @@ const runId = option('--run');
 const commit = option('--commit');
 const secretKey = resolve(option('--secret-key', 'd:/misc/tmp/secret-key.asc'));
 const passFile = resolve(option('--passphrase-file', 'd:/misc/tmp/ph.txt'));
+const keysDir = join(ROOT, '.local', 'keys-openbao');
 const bundle = resolve(
-  option('--bundle', join(ROOT, '.local', 'keys-openbao', 'emergency-2d0fff231bcc.gpg')),
+  option('--bundle') ??
+    join(keysDir, readdirSync(keysDir).find((name) => name.endsWith('.gpg')) ?? 'нет'),
 );
 if (!build || !runId || !commit) {
   console.error('нужны --build, --run, --commit');
@@ -191,7 +195,15 @@ function bundleValues() {
 
 /** Копия читается через туннель: ключ восстановления на сервер не попадает. */
 async function copyCheck(body) {
-  const [dek, email] = body.toString('utf8').trim().split(' ');
+  const lines = body.toString('utf8').trim().split('\n');
+  const expected = lines.pop().replace('hashes ', '').split(',');
+  const rows = lines.map((line) => {
+    const [dek, email] = line.split(' ');
+    const bytes = Buffer.from(dek, 'hex');
+    const wrapped =
+      bytes.subarray(0, 6).toString('latin1') === 'vault:' ? bytes : legacyToVaultBytes(bytes);
+    return { wrappedDek: wrapped.toString('ascii'), emailCiphertext: Buffer.from(email, 'hex') };
+  });
   const ca = readFileSync(join(work, 'tls.crt'));
   const call = (method, path, { token, body: payload } = {}) =>
     new Promise((done, fail) => {
@@ -220,13 +232,9 @@ async function copyCheck(body) {
       req.on('error', fail);
       req.end(payload ? JSON.stringify(payload) : undefined);
     });
-  const hash = await readCopy(call, {
-    ...bundleValues(),
-    prefix: ENV_ID,
-    wrappedDek: Buffer.from(dek, 'hex'),
-    emailCiphertext: Buffer.from(email, 'hex'),
-  });
-  return `копия прочитана: ключ восстановления принят, адрес открыт, отпечаток ${hash.slice(0, 12)}\n`;
+  const hashes = await readCopy(call, { ...bundleValues(), prefix: ENV_ID, rows });
+  if (hashes.some((hash) => !expected.includes(hash))) throw new Error('адрес не совпал');
+  return `копия прочитана: ключ восстановления принят, записей ${hashes.length}, старая и новая\n`;
 }
 
 const server = createServer((req, res) => {

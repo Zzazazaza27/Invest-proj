@@ -32,6 +32,17 @@ login_check login "$USERS"
 login_check register "$USERS" vault-mode
 sql "$PROJECT-postgres" "SELECT count(*) FILTER (WHERE substring(contact_wrapped_dek from 1 for 6) = 'vault:'::bytea), count(contact_wrapped_dek) FROM identity.users"
 
+old_row="$(sql "$PROJECT-postgres" "SELECT encode(contact_wrapped_dek, 'hex') || ' ' || encode(email_ciphertext, 'hex') FROM identity.users WHERE email_ciphertext IS NOT NULL AND substring(contact_wrapped_dek from 1 for 6) <> 'vault:'::bytea LIMIT 1")"
+[ -n "$old_row" ]
+
+say 'возврат после первой записи vault: выпуск, читающий оба формата'
+sed -i 's/^CRYPTO_WRITE_FORMAT=.*/CRYPTO_WRITE_FORMAT=legacy/' "$DIR/settings.env"
+recreate
+login_check login "$USERS"
+login_check register "$USERS" back-to-legacy
+sed -i 's/^CRYPTO_WRITE_FORMAT=.*/CRYPTO_WRITE_FORMAT=vault/' "$DIR/settings.env"
+recreate
+
 say 'перенос старых записей'
 if migrate verify >/dev/null 2>&1; then
   echo 'сверка до переноса прошла: это ложный успех'
@@ -120,9 +131,6 @@ for _ in $(seq 1 40); do
 done
 sleep 2
 docker exec -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "$PROJECT-postgres" \
-  pg_dump -h 127.0.0.1 -U fifth_owner -d fifth_element -t identity.users --no-owner --no-privileges --data-only --column-inserts \
-  --schema=identity >/dev/null 2>&1 || true
-docker exec -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "$PROJECT-postgres" \
   psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -F, -c \
   "COPY (SELECT id, contact_wrapped_dek, email_ciphertext FROM identity.users WHERE email_ciphertext IS NOT NULL) TO STDOUT" |
   docker exec -i "$COPY_PG" sh -c \
@@ -130,6 +138,8 @@ docker exec -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "$PROJECT-po
 row="$(docker exec "$COPY_PG" psql -U postgres -At -c \
   "SELECT encode(dek, 'hex') || ' ' || encode(email, 'hex') FROM u WHERE substring(dek from 1 for 6) = 'vault:'::bytea ORDER BY id DESC LIMIT 1")"
 [ -n "$row" ]
-laptop copy-check --data-binary "$row" | tee "$WORK/copy.txt"
+hashes="$(node -e "const c=require('crypto');console.log(JSON.parse(require('fs').readFileSync(process.argv[1])).map((u)=>c.createHash('sha256').update(u.email).digest('hex')).join(','))" "$USERS")"
+printf '%s\n%s\nhashes %s\n' "$row" "$old_row" "$hashes" >"$WORK/copy.rows"
+laptop copy-check --data-binary "@$WORK/copy.rows" | tee "$WORK/copy.txt"
 grep -q 'копия прочитана' "$WORK/copy.txt"
 copy_cleanup

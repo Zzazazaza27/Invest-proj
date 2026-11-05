@@ -59,7 +59,7 @@ trap 'fail $LINENO' ERR
 
 say 'инструменты'
 install -o root -g root -m 755 infra/host/fifth-backup-read infra/host/fifth-diag \
-  infra/host/fifth-transition-kit /usr/local/sbin/
+  infra/host/fifth-transition-kit infra/host/fifth-test /usr/local/sbin/
 if [ -f "$ROOT/.local/secrets/GARAGE_ADMIN_TOKEN" ]; then
   GARAGE_ADMIN_TOKEN="$(cat "$ROOT/.local/secrets/GARAGE_ADMIN_TOKEN")"
   export GARAGE_ADMIN_TOKEN
@@ -167,11 +167,8 @@ fi
 say 'отказ службы ключей'
 docker stop "$AGENT" >/dev/null
 docker network disconnect "$NET" fifth-openbao
-if login_check login "$USERS" >/dev/null 2>&1; then
-  echo 'вход прошёл без OpenBao: это ложный успех'
-  false
-fi
-echo 'без OpenBao вход отказывает, перехода к местным ключам нет'
+login_check down "$USERS"
+echo 'без OpenBao вход отказывает отказом зависимости, перехода к местным ключам нет'
 docker network connect "$NET" fifth-openbao
 docker start "$AGENT" >/dev/null
 

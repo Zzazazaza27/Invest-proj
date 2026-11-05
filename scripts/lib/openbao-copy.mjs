@@ -24,24 +24,28 @@ async function rootByRecoveryKey(call, recovery) {
   return Buffer.from(encoded.map((byte, i) => byte ^ pad[i])).toString('utf8');
 }
 
-/** Возвращает хеш адреса из копии: сверяют его, а не значение. */
-export async function readCopy(call, { recovery, password, prefix, wrappedDek, emailCiphertext }) {
+/** Возвращает хеши адресов из копии: сверяют их, а не значения. */
+export async function readCopy(call, { recovery, password, prefix, rows }) {
   const login = await call('POST', 'auth/userpass/login/thomas', { body: { password } });
   if (!login.json.auth?.client_token) throw new Error(`личный вход на копии: код ${login.status}`);
   const token = await rootByRecoveryKey(call, recovery);
-  const opened = await call('POST', `transit/decrypt/${prefix}-passport-sensitive`, {
-    token,
-    body: {
-      ciphertext: wrappedDek.toString('ascii'),
-      associated_data: Buffer.from('wrap:passport_sensitive').toString('base64'),
-    },
-  });
-  if (!opened.json.data?.plaintext) throw new Error(`запись не открылась, код ${opened.status}`);
-  const dek = Buffer.from(opened.json.data.plaintext, 'base64');
-  try {
-    const email = openField(dek, emailCiphertext, 'field:email');
-    return createHash('sha256').update(email).digest('hex');
-  } finally {
-    dek.fill(0);
+  const hashes = [];
+  for (const { wrappedDek, emailCiphertext } of rows) {
+    const opened = await call('POST', `transit/decrypt/${prefix}-passport-sensitive`, {
+      token,
+      body: {
+        ciphertext: wrappedDek,
+        associated_data: Buffer.from('wrap:passport_sensitive').toString('base64'),
+      },
+    });
+    if (!opened.json.data?.plaintext) throw new Error(`запись не открылась, код ${opened.status}`);
+    const dek = Buffer.from(opened.json.data.plaintext, 'base64');
+    try {
+      const email = openField(dek, emailCiphertext, 'field:email');
+      hashes.push(createHash('sha256').update(email).digest('hex'));
+    } finally {
+      dek.fill(0);
+    }
   }
+  return hashes;
 }

@@ -90,8 +90,17 @@ if (command === 'register') {
     );
   }
   if (accounts.length === 0) failed = true;
+} else if (command === 'down') {
+  // Отказ службы ключей: именно отказ зависимости, а не неверный пароль.
+  const { email, password } = accounts[0];
+  const r = await client()('/v1/auth/login', { method: 'POST', body: { email, password } });
+  const dependency = r.status === 503 && JSON.stringify(r.json).includes('dependency');
+  console.log(
+    `вход без OpenBao: код ${r.status}, ${dependency ? 'отказ зависимости' : 'другая причина'}`,
+  );
+  failed = !dependency;
 } else {
-  console.error('команды: register, login');
+  console.error('команды: register, login, down');
   failed = true;
 }
 process.exit(failed ? 1 : 0);
