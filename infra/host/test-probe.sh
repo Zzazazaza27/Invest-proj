@@ -37,6 +37,12 @@ ready() {
   return 1
 }
 cleanup() {
+  # Сбой посреди пробы не оставляет среду в режиме kms: повтор начинается с прежнего состояния.
+  if [ -f "$WORK/settings.before" ]; then
+    cp -p "$WORK/settings.before" "$DIR/settings.env"
+    compose up -d --force-recreate --no-deps core >/dev/null 2>&1 || true
+  fi
+  rm -f "$DIR/compose.agent.yml"
   docker rm -f "$AGENT" >/dev/null 2>&1 || true
   docker network disconnect "$NET" fifth-openbao >/dev/null 2>&1 || true
   docker volume rm -f "$VOLUME" >/dev/null 2>&1 || true
@@ -86,7 +92,8 @@ login_check register "$USERS" local-mode
 say 'переходный комплект'
 mkdir -p "$KEYS"
 FIFTH_TRANSITION_ROOT="$DIR" FIFTH_TRANSITION_ENV=settings.env FIFTH_TRANSITION_SECRETS=secrets \
-  FIFTH_OPENBAO_KEYS_DIR="$KEYS" fifth-transition-kit create
+  FIFTH_OPENBAO_KEYS_DIR="$KEYS" FIFTH_OPENBAO_RECIPIENT="$ROOT/infra/openbao/thomas-recipient.asc" \
+  fifth-transition-kit create
 laptop kit --data-binary "@$KEYS/transition.gpg" >/dev/null
 
 say 'импорт с ноутбука через туннель'
@@ -135,9 +142,9 @@ compose -f "$DIR/compose.agent.yml" up -d --force-recreate --no-deps core
 ready
 login_check login "$USERS"
 login_check register "$USERS" kms-mode
-format="$(docker exec "$PROJECT-postgres" psql -U fifth_owner -d fifth_element -At -c \
-  "SELECT count(*) FROM identity.users WHERE substring(contact_wrapped_dek from 1 for 6) = 'vault:'::bytea")"
-[ "$format" = 0 ]
+counts="$(docker exec -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "$PROJECT-postgres"   psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -c   "SELECT count(*) FILTER (WHERE substring(contact_wrapped_dek from 1 for 6) = 'vault:'::bytea), count(contact_wrapped_dek) FROM identity.users")"
+echo "записей vault и всего: $counts"
+[ "${counts%%|*}" = 0 ] && [ "${counts##*|}" -ge 2 ]
 echo 'записей vault нет: запись прежним форматом'
 
 say 'отказ службы ключей'
@@ -154,6 +161,7 @@ docker start "$AGENT" >/dev/null
 say 'возврат к местным ключам из комплекта'
 laptop restore.tar | FIFTH_TRANSITION_ROOT="$DIR" FIFTH_TRANSITION_ENV=settings.env \
   FIFTH_TRANSITION_SECRETS=secrets fifth-transition-kit restore
+rm -f "$WORK/settings.before"
 compose up -d --force-recreate --no-deps core
 ready
 login_check login "$USERS"
