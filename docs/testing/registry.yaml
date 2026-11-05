@@ -3009,7 +3009,6 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
-
   - id: CHK-OPENBAO-AUTO
     file: scripts/check-openbao-auto.mjs
     command: node scripts/check-openbao-auto.mjs

@@ -59,7 +59,7 @@ function api(method, path, { token, body } = {}) {
         let text = '';
         res.on('data', (c) => (text += c));
         res.on('end', () => {
-          let json = {};
+          let json;
           try {
             json = text ? JSON.parse(text) : {};
           } catch {
