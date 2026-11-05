@@ -73,6 +73,11 @@ good="$(post --cert "$M/client.crt" --key "$M/client.key")"
 echo "без сертификата: $none, с подложным заголовком: $spoof, с сертификатом: $good"
 if [ "$none" = 200 ] || [ "$spoof" = 200 ] || [ "$good" != 200 ]; then
   echo 'mTLS работает неверно'
+  cut -c1-200 "$M/answer"
+  echo
+  docker logs --tail 8 "$MTLS" 2>&1 | cut -c1-260
+  docker logs --tail 30 "$PROJECT-core" 2>&1 | grep -E 'integration|stage|unauth' | tail -5 | cut -c1-300 || true
+  docker run --rm --network "$NET" --entrypoint node "fifth/core:$BUILD" -e "fetch('http://web/v1/integration/token',{method:'POST',headers:{'content-type':'application/json','x-client-cert-fingerprint':process.argv[1]},body:process.argv[2]}).then(async(r)=>console.log('напрямую в статику:',r.status,(await r.text()).slice(0,120)))" "$fingerprint" "$body"
   false
 fi
 access="$(jq -r .accessToken "$M/answer")"
