@@ -37,6 +37,16 @@ ready() {
   docker logs --tail 15 "$PROJECT-core" 2>&1 | cut -c1-200 || true
   return 1
 }
+# Прошлая проба могла оставить среду в kms: следующая начинает с местных настроек.
+local_settings() {
+  [ -f "$DIR/settings.env" ] && grep -q '^KMS_MODE=kms' "$DIR/settings.env" || return 0
+  sed -i -e '/^CRYPTO_WRITE_FORMAT=/d' -e '/^OPENBAO_/d' -e '/_SIGNING_KEY_\(VERSIONS\|ACTIVE\|LEGACY_UNTIL\)=/d' \
+    -e 's/^KMS_MODE=.*/KMS_MODE=local/' -e 's#=/run/fifth-secrets/#=/run/secrets/#' "$DIR/settings.env"
+  for file in "$DIR"/secrets/KEK_*; do
+    name="$(basename "$file")"
+    echo "${name}_FILE=/run/secrets/$name" >>"$DIR/settings.env"
+  done
+}
 cleanup() {
   # Сбой посреди пробы не оставляет среду в режиме kms: повтор начинается с прежнего состояния.
   if [ -f "$WORK/settings.before" ]; then
@@ -81,6 +91,7 @@ fi
 node scripts/kit.mjs load --build "$BUILD" | cut -c1-160
 
 say 'среда test-1 в прежнем режиме'
+local_settings
 if [ -f "$DIR/install.json" ]; then
   node scripts/env.mjs start "$ID" --text | cut -c1-160 || true
   node scripts/env.mjs update "$ID" --kit "$BUILD" --text | cut -c1-160
@@ -180,6 +191,7 @@ if [ "$(laptop stage)" = vault ]; then
   rm -f "$DIR/compose.agent.yml"
   docker rm -f "$AGENT" >/dev/null 2>&1 || true
   compose stop >/dev/null 2>&1 || true
+  local_settings
   docker network disconnect "$NET" fifth-openbao >/dev/null 2>&1 || true
   rm -rf "$WORK"
   report 'ПРОБА ПРОЙДЕНА'
