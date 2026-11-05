@@ -5,15 +5,24 @@
  *
  *   node scripts/monitor-openbao.mjs
  */
-import { renameSync, writeFileSync } from 'node:fs';
+import { renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnvFile } from './lib/backup.mjs';
 import { openbaoState } from './lib/openbao.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const env = { ...parseEnvFile(join(ROOT, '.env')), ...process.env };
+const env = { ...parseEnvFile(join(ROOT, '.env'), { secrets: false }), ...process.env };
 const dir = resolve(env.MONITOR_STATE_DIR || join(ROOT, '.local', 'monitor-state'));
 const file = join(dir, 'openbao.json');
-writeFileSync(`${file}.tmp`, JSON.stringify({ state: await openbaoState() }));
+/** Agent жив, если файл токена на месте: без него секреты и служебные запуски не работают. */
+function agentState() {
+  if (env.KMS_MODE !== 'kms') return 'absent';
+  try {
+    return statSync(env.OPENBAO_TOKEN_PATH).size > 0 ? 'ok' : 'down';
+  } catch {
+    return 'down';
+  }
+}
+writeFileSync(`${file}.tmp`, JSON.stringify({ state: await openbaoState(), agent: agentState() }));
 renameSync(`${file}.tmp`, file);

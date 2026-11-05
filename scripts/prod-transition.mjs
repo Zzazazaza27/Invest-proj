@@ -82,6 +82,12 @@ let tunnel = null;
 let failed = false;
 try {
   remote(`sudo -n /usr/local/sbin/fifth-test sync ${commit}`);
+  if (option('--stage') === 'tighten') {
+    op('prod-tighten');
+    note('\nИТОГ: ЗАМЕЧАНИЯ ПРИМЕНЕНЫ');
+    process.exitCode = 0;
+    throw Object.assign(new Error('готово'), { done: true });
+  }
   if (production) op('prod-prepare');
   else op('prod-release', build, expect);
   op('prod-kit');
@@ -162,8 +168,10 @@ try {
     note('\nИТОГ: ПЕРЕХОД НА KMS/LEGACY ПРОЙДЕН');
   }
 } catch (error) {
-  failed = true;
-  note(`\nИТОГ: ОСТАНОВЛЕНО — ${error.message}`);
+  if (!error.done) {
+    failed = true;
+    note(`\nИТОГ: ОСТАНОВЛЕНО — ${error.message}`);
+  }
 } finally {
   tunnel?.kill();
   rmSync(work, { recursive: true, force: true });

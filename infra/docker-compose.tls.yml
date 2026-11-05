@@ -1,6 +1,5 @@
 # TLS внутренних служб рабочей среды (блок 5, задание 5). Подключает scripts/infra.mjs, когда в .env
-# задан FIFTH_TLS_DIR. Valkey слушает TLS на 6379, а обычный порт 6378 оставлен для проверки здоровья
-# и наблюдения: он опубликован только на петлю узла и закрыт паролем.
+# задан FIFTH_TLS_DIR: каталог только с сертификатами служб и серверным ключом, ключей центров там нет.
 services:
   valkey:
     command: !override
@@ -12,7 +11,7 @@ services:
       - --maxmemory-policy
       - noeviction
       - --port
-      - '6378'
+      - '0'
       - --tls-port
       - '6379'
       - --tls-cert-file
@@ -23,16 +22,13 @@ services:
       - /tls/ca.crt
       - --tls-auth-clients
       - 'no'
-    ports: !override
-      - '127.0.0.1:${REDIS_PORT:-6380}:6379'
-      - '127.0.0.1:6381:6378'
     volumes:
       - ${FIFTH_TLS_DIR:?}:/tls:ro
     healthcheck:
       test:
         [
           'CMD-SHELL',
-          'valkey-cli -p 6378 -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG',
+          'valkey-cli --tls --cacert /tls/ca.crt -h 127.0.0.1 -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG',
         ]
   nats:
     command: !override
@@ -52,3 +48,20 @@ services:
       - '/tls/server.key'
     volumes:
       - ${FIFTH_TLS_DIR:?}:/tls:ro
+  zabbix-agent-host:
+    volumes:
+      - ${FIFTH_TLS_DIR:?}/ca.crt:/tls/ca.crt:ro
+      - ./zabbix-agent-tls.conf:/etc/zabbix/zabbix_agent2.d/plugins.d/fifth-tls.conf:ro
+  zabbix-server-host:
+    environment:
+      ZBX_DBTLSCONNECT: verify_full
+      ZBX_DBTLSCAFILE: /tls/ca.crt
+    volumes:
+      - ${FIFTH_TLS_DIR:?}/ca.crt:/tls/ca.crt:ro
+  zabbix-web:
+    environment:
+      ZBX_DB_ENCRYPTION: 'true'
+      ZBX_DB_VERIFY_HOST: 'true'
+      ZBX_DB_CA_FILE: /tls/ca.crt
+    volumes:
+      - ${FIFTH_TLS_DIR:?}/ca.crt:/tls/ca.crt:ro

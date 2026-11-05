@@ -157,9 +157,9 @@ node scripts/rotate-kek.mjs --transit --domain passport_sensitive
 
 Команда: `node scripts/prod-transition.mjs --build <сборка> --expect <сборка> --commit <sha> --stage production --mail-to <адрес>`.
 
-Сертификаты лежат в `/etc/fifth-tls`. Valkey принимает TLS на 6379, обычный порт 6378 оставлен для
-наблюдения на петле узла. PostgreSQL включает `ssl`, служебные скрипты узла подключаются к нему как
-прежде. Вход Integration API защищён `client_auth` в Caddy: заголовок сертификата заменяется прокси.
+Сертификаты лежат в `/etc/fifth-tls`, службам подключается только `services`: ключей центров там нет.
+Valkey принимает только TLS. PostgreSQL по сети принимает только TLS (`hostssl`), локальный сокет и
+петля внутри контейнера остаются для служебных команд. Наблюдение идёт по TLS. Вход Integration API защищён `client_auth` в Caddy: заголовок сертификата заменяется прокси.
 Сбой возвращает `.env` и `Caddyfile` из `.local/*-before-production`.
 
 ## Если OpenBao запечатан

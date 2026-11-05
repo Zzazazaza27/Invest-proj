@@ -67,7 +67,7 @@ export const PG_CONTAINER = 'fifth-postgres';
 export const ENV_PATH = join(ROOT, '.env');
 
 /** Разбор `.env` в объект; файл не печатается. */
-export function parseEnvFile(path) {
+export function parseEnvFile(path, { secrets = true } = {}) {
   const out = {};
   if (!existsSync(path)) return out;
   for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
@@ -84,6 +84,8 @@ export function parseEnvFile(path) {
     }
     out[trimmed.slice(0, eq).trim()] = value;
   }
+  // Наблюдению за OpenBao и Agent секреты не нужны: оно обязано работать и без них.
+  if (!secrets) return out;
   // `<ИМЯ>_FILE`: значение в файле (блок 5, задание 2), правила те же, что у ядра.
   applySecretFiles(out);
   return out;

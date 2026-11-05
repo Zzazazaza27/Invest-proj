@@ -510,6 +510,20 @@ async function configure() {
       ),
     ],
   });
+  await item({
+    name: 'OpenBao Agent: файл токена на месте',
+    key_: 'openbao.agent.ok',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/openbao.json]'),
+    value_type: 3,
+    preprocessing: [step(JS, "return JSON.parse(value).agent === 'down' ? 0 : 1;", 2, '0')],
+  });
+  await trigger('OpenBao Agent не работает', `count(/${H}/openbao.agent.ok,#3,"eq",0)=3`, 4, {
+    recovery_mode: 1,
+    recovery_expression: `count(/${H}/openbao.agent.ok,#2,"eq",1)=2`,
+    comments:
+      'Секретов нет в памяти: ядро и служебные запуски откажут. Порядок — docs/runbooks/openbao.md.',
+  });
   await trigger('OpenBao запечатан или недоступен', `count(/${H}/openbao.ok,#3,"eq",0)=3`, 4, {
     recovery_mode: 1,
     recovery_expression: `count(/${H}/openbao.ok,#2,"eq",1)=2`,
