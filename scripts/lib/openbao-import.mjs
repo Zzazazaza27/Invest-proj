@@ -12,7 +12,11 @@ export async function importTransitKey(call, name, type, key, extra = {}) {
     if (wrapping.json.data?.public_key) break;
     await new Promise((resolve) => setTimeout(resolve, 500));
   }
-  if (!wrapping.json.data?.public_key) throw new Error();
+  if (!wrapping.json.data?.public_key) {
+    throw new Error(
+      `ключ упаковки: код ${wrapping.status} ${JSON.stringify(wrapping.json.errors)}`,
+    );
+  }
   const ephemeral = randomBytes(32);
   const kwp = createCipheriv('id-aes256-wrap-pad', ephemeral, Buffer.from('A65959A6', 'hex'));
   const wrapped = Buffer.concat([kwp.update(key), kwp.final()]);

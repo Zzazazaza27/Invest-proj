@@ -220,6 +220,12 @@ try {
   );
   check('TLS: без доверенного сертификата отказ', rejected);
 
+  // Открыт ещё не значит активен: подключение Transit до выбора лидера молча не проходит.
+  for (let i = 0; i < 40; i++) {
+    if ((await api('GET', 'sys/health')).status === 200) break;
+    await sleep(500);
+  }
+
   await api('POST', 'sys/mounts/transit', { token: root, body: { type: 'transit' } });
   await api('POST', 'sys/mounts/kv', {
     token: root,

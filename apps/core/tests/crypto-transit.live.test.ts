@@ -65,6 +65,7 @@ const admin = (path: string, method = 'POST', body?: object): Promise<Response> 
   fetch(`${ADDR}/v1/${path}`, {
     method,
     headers: { 'X-Vault-Token': ROOT ?? '', 'Content-Type': 'application/json' },
+    signal: AbortSignal.timeout(10_000),
     ...(body ? { body: JSON.stringify(body) } : {}),
   });
 
@@ -177,6 +178,7 @@ describe.skipIf(!ADDR)('CryptoService и настоящий Transit', () => {
       const res = await fetch(`${ADDR}/v1/${path}`, {
         method,
         headers: { 'X-Vault-Token': token },
+        signal: AbortSignal.timeout(10_000),
       });
       expect(res.status).toBe(403);
     }
