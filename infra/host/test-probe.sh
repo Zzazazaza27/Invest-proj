@@ -67,6 +67,8 @@ if [ -f "$ROOT/.local/secrets/GARAGE_ADMIN_TOKEN" ]; then
   export GARAGE_ADMIN_TOKEN
 fi
 
+[ "$(laptop stage)" != tools ] || { report 'инструменты обновлены'; exit 0; }
+
 say "комплект $BUILD"
 if [ ! -f "$ROOT/.local/kits/$BUILD/kit.json" ]; then
   mkdir "$WORK/kit" "$WORK/docker"

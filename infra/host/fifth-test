@@ -4,6 +4,7 @@
 #   fifth-test sync <коммит>          код на сервере на этот коммит
 #   fifth-test probe <сборка> <токен> проба перехода и возврата на test-1
 #   fifth-test env <start|stop|status>
+#   fifth-test op <шаг> [аргументы]    шаг перехода infra/host/prod-*.sh
 #   fifth-test logs                   хвост журнала ядра test-1
 #   fifth-test revoke                 снять это разрешение
 #
@@ -31,6 +32,10 @@ case "${1:-}" in
     [[ "${2:-}" =~ ^(start|stop|status)$ ]] || fail 'команды: start, stop, status'
     cd "$ROOT" && exec node scripts/env.mjs "$2" test-1 --text
     ;;
+  op)
+    [[ "${2:-}" =~ ^prod-[a-z0-9-]+$ ]] || fail 'нужно имя шага'
+    exec bash "$ROOT/infra/host/$2.sh" "${@:3}"
+    ;;
   revoke)
     rm -f /etc/sudoers.d/91-maus-test
     echo 'разрешение снято'
@@ -39,6 +44,6 @@ case "${1:-}" in
     exec docker logs --tail 40 fifth-test-1-core
     ;;
   *)
-    fail 'команды: sync, probe, env, logs, revoke'
+    fail 'команды: sync, probe, env, op, logs, revoke'
     ;;
 esac
