@@ -195,7 +195,7 @@ export class CryptoService {
     return this.searchHmac(`ctx:${value}`);
   }
 
-  /** Подпись ключа для столбца `*_kms_key_id`: версия новой записи живёт в её формате. */
+  /** Имя ключа для столбца `*_kms_key_id`: версия новой записи живёт в её формате. */
   keyId(domain: KekDomain): string {
     const env = getEnv();
     if (env.CRYPTO_WRITE_FORMAT === 'legacy') return `local/${domain}/v${LEGACY_KEY_VERSION}`;
