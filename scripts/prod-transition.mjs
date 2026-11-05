@@ -37,6 +37,7 @@ const option = (name, fallback) => {
   return i >= 0 ? process.argv[i + 1] : fallback;
 };
 const production = option('--stage') === 'production';
+const finalStage = option('--stage') === 'final';
 const build = option('--build');
 const expect = option('--expect');
 const commit = option('--commit');
@@ -89,7 +90,8 @@ try {
     throw Object.assign(new Error('готово'), { done: true });
   }
   if (production) op('prod-prepare');
-  else op('prod-release', build, expect);
+  else if (finalStage) op('prod-signing-prepare');
+  else if (!finalStage) op('prod-release', build, expect);
   op('prod-kit');
 
   note('\n▸ комплект на ноутбук');
@@ -159,7 +161,11 @@ try {
       .toString()
       .trim(),
   );
-  if (production) {
+  if (finalStage) {
+    op('prod-signing');
+    op('prod-vault', build);
+    note('\nИТОГ: ПОДПИСИ И VAULT ВКЛЮЧЕНЫ');
+  } else if (production) {
     op('prod-agent-core');
     op('prod-production', option('--mail-to'));
     note('\nИТОГ: БОЕВОЙ РЕЖИМ ВКЛЮЧЁН');

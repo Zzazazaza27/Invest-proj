@@ -88,7 +88,10 @@ const prefix = env.OPENBAO_KEY_PREFIX || 'prod';
 const stateFile = option('--state');
 const state = stateFile && existsSync(stateFile) ? JSON.parse(readFileSync(stateFile, 'utf8')) : {};
 
-const db = new pg.Client({ connectionString: env.DATABASE_URL_OWNER });
+const db = new pg.Client({
+  connectionString: env.DATABASE_URL_OWNER,
+  ssl: env.DATABASE_SSL === 'true' ? { rejectUnauthorized: true } : false,
+});
 await db.connect();
 try {
   if (command === 'run') {
