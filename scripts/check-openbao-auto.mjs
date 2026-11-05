@@ -16,7 +16,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TOOL_IMAGE } from './lib/backup.mjs';
-import { KEK_DOMAINS, withOperatorToken } from './lib/openbao-keys.mjs';
+import { KEK_DOMAINS, sameText, withOperatorToken } from './lib/openbao-keys.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const SRC = join(ROOT, 'infra', 'openbao');
@@ -449,8 +449,10 @@ try {
   });
   check(
     'ключ поиска импортирован как HMAC',
-    probe.json.data?.hmac ===
+    sameText(
+      probe.json.data?.hmac,
       `vault:v1:${createHmac('sha256', kek.KEK_SEARCH_INDEX).update('контроль').digest('base64')}`,
+    ),
   );
   const repeat = importKeys('lab');
   check(

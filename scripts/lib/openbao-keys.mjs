@@ -3,7 +3,7 @@
  *
  * `call(method, path, { token, body })` — запрос к OpenBao по TLS.
  */
-import { createCipheriv, createHmac, randomBytes } from 'node:crypto';
+import { createCipheriv, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { importTransitKey } from './openbao-import.mjs';
 
 /** Домены и переменные: поисковый ключ идёт отдельно, как HMAC. */
@@ -14,6 +14,13 @@ export const KEK_DOMAINS = [
   { env: 'KEK_WEBHOOK_SECRETS', key: 'webhook-secrets', type: 'aes256-gcm96' },
   { env: 'KEK_SEARCH_INDEX', key: 'search-index', type: 'hmac' },
 ];
+
+/** Сравнение контрольных значений — только за постоянное время. */
+export function sameText(a, b) {
+  const left = Buffer.from(String(a));
+  const right = Buffer.from(String(b));
+  return left.length === right.length && timingSafeEqual(left, right);
+}
 
 /** Токен живёт ровно на время работы и отзывается при любом исходе. */
 export async function withOperatorToken(call, password, work) {
@@ -36,7 +43,7 @@ async function sameKey(call, token, name, type, key) {
       body: { input: probe.toString('base64'), key_version: 1 },
     });
     const local = createHmac('sha256', key).update(probe).digest('base64');
-    return r.json.data?.hmac === `vault:v1:${local}`;
+    return sameText(r.json.data?.hmac, `vault:v1:${local}`);
   }
   const iv = randomBytes(12);
   const aad = Buffer.from(`import-check:${name}`);
@@ -48,7 +55,7 @@ async function sameKey(call, token, name, type, key) {
     token,
     body: { ciphertext: `vault:v1:${raw}`, associated_data: aad.toString('base64') },
   });
-  return r.json.data?.plaintext === probe.toString('base64');
+  return sameText(r.json.data?.plaintext, probe.toString('base64'));
 }
 
 /**
