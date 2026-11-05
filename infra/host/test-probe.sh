@@ -168,7 +168,7 @@ echo 'прежний каталог с KEK ядру не виден'
 login_check login "$USERS"
 
 say 'пересоздание каталога в памяти'
-compose stop core >/dev/null 2>&1
+compose rm -fs core >/dev/null 2>&1
 docker rm -f "$AGENT" >/dev/null
 docker volume rm -f "$VOLUME" >/dev/null
 agent_up
