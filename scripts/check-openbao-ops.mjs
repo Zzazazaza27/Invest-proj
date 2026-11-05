@@ -89,6 +89,8 @@ async function start(dir, volume) {
     '-d',
     '--name',
     NAME,
+    '--user',
+    '1990:1990',
     '--network',
     NET,
     '-p',
@@ -102,7 +104,7 @@ async function start(dir, volume) {
     '-v',
     `${volume}:/openbao/data`,
     '--tmpfs',
-    '/openbao/audit:uid=100,gid=1000',
+    '/openbao/audit:uid=1990,gid=1990',
     IMAGE,
     'server',
     '-config=/openbao/config/openbao.hcl',
@@ -136,7 +138,7 @@ const prepareVolume = (volume) =>
     'chown',
     IMAGE,
     '-R',
-    'openbao:openbao',
+    '1990:1990',
     '/d',
   );
 const kvRead = (token) => api('GET', 'kv/data/prod/core/POSTGRES_PASSWORD', { token });

@@ -11,7 +11,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 DIR="${FIFTH_OPENBAO_DIR:-/etc/fifth-openbao}"
 CONTAINER="${FIFTH_OPENBAO_CONTAINER:-fifth-openbao}"
-OPENBAO_UID=100
+OPENBAO_UID=1990
 
 bao() {
   BAO_ADDR=https://127.0.0.1:8200 BAO_CACERT=/openbao/tls/tls.crt BAO_TOKEN="${TOKEN:-}" \
@@ -33,6 +33,9 @@ role() {
 
 case "${1:-}" in
   files)
+    # Свой uid: 100 в образе на узле занят системной учёткой, а ключ читают только OpenBao и root.
+    getent passwd "$OPENBAO_UID" >/dev/null ||
+      useradd --system --uid "$OPENBAO_UID" --no-create-home --shell /usr/sbin/nologin openbao
     install -d -m 755 "$DIR" "$DIR/tls"
     install -d -m 500 -o "$OPENBAO_UID" "$DIR/seal"
     if [ ! -e "$DIR/seal/static.key" ]; then
@@ -50,7 +53,9 @@ case "${1:-}" in
     stat -c '%a %u %n' "$DIR/seal" "$DIR/seal/static.key" "$DIR/tls/tls.key"
     ;;
   start)
-    docker compose -p fifth-openbao -f "$HERE/docker-compose.yml" up -d
+    compose=(docker compose -p fifth-openbao -f "$HERE/docker-compose.yml")
+    "${compose[@]}" run --rm --no-deps --user 0 --entrypoint chown openbao -R "$OPENBAO_UID:$OPENBAO_UID" /openbao/data /openbao/audit
+    "${compose[@]}" up -d
     ;;
   init)
     bao operator init -recovery-shares=1 -recovery-threshold=1
