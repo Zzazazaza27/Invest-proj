@@ -15,7 +15,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { join, resolve } from 'node:path';
-import { docker, TOOL_IMAGE } from './lib/backup.mjs';
+import { docker, MEMORY_ONLY, TOOL_IMAGE } from './lib/backup.mjs';
 import { ensureKeys, KEK_DOMAINS, withOperatorToken } from './lib/openbao-keys.mjs';
 
 const HOME = process.env.USERPROFILE || process.env.HOME || '';
@@ -27,7 +27,7 @@ const option = (name) => {
   return i >= 0 ? argv[i + 1] : undefined;
 };
 
-/** Значения остаются в выводе контейнера и в памяти процесса: на диск ноутбука они не пишутся. */
+/** Значения остаются в памяти контейнера и этого процесса: диск Docker и ноутбука их не видит. */
 function openKits(kit, bundle, secretKey, passFile) {
   for (const f of [kit, bundle, secretKey, passFile]) {
     if (!existsSync(f)) throw new Error(`нет файла ${f}`);
@@ -35,12 +35,12 @@ function openKits(kit, bundle, secretKey, passFile) {
   const names = KEK_DOMAINS.map((d) => d.env).join(' ');
   const script = [
     'set -e',
-    'export GNUPGHOME=$(mktemp -d)',
+    'mkdir -m 700 /secure/gpg /secure/k',
     'g() { printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 "$@" 2>/dev/null; }',
     'g --import /in/secret.asc',
     'g --decrypt /in/bundle.gpg | sed -n "s/^OPENBAO_THOMAS_PASSWORD=//p"',
-    'mkdir /tmp/k; g --decrypt /in/kit.gpg | tar -x -C /tmp/k .local/secrets',
-    `for n in ${names}; do printf '%s=%s\\n' "$n" "$(cat "/tmp/k/.local/secrets/$n")"; done`,
+    'g --decrypt /in/kit.gpg | tar -x -C /secure/k .local/secrets',
+    `for n in ${names}; do printf '%s=%s\\n' "$n" "$(cat "/secure/k/.local/secrets/$n")"; done`,
   ].join('\n');
   const r = docker(
     [
@@ -48,8 +48,7 @@ function openKits(kit, bundle, secretKey, passFile) {
       '--rm',
       '--network',
       'none',
-      '--user',
-      '0',
+      ...MEMORY_ONLY,
       '-e',
       'PASSPHRASE',
       '-v',

@@ -34,10 +34,22 @@ function unavailable(message) {
   return Object.assign(new Error(message), { unavailable: true });
 }
 
-function decrypt(key, ciphertext, aad) {
+/** Файлы доступа читаются на каждый вызов, их отсутствие — отказ зависимости, а не порча записи. */
+function access() {
+  try {
+    return {
+      token: readFileSync(env.OPENBAO_TOKEN_PATH, 'utf8').trim(),
+      ca: env.OPENBAO_CA_PATH ? readFileSync(env.OPENBAO_CA_PATH) : null,
+    };
+  } catch {
+    throw unavailable('токен или сертификат OpenBao не прочитаны');
+  }
+}
+
+async function decrypt(key, ciphertext, aad) {
   const url = new URL(`/v1/transit/decrypt/${key}`, env.OPENBAO_ADDR);
   const send = url.protocol === 'https:' ? httpsRequest : httpRequest;
-  const token = readFileSync(env.OPENBAO_TOKEN_PATH, 'utf8').trim();
+  const { token, ca } = access();
   const body = JSON.stringify({
     ciphertext,
     associated_data: Buffer.from(aad).toString('base64'),
@@ -48,9 +60,7 @@ function decrypt(key, ciphertext, aad) {
       {
         method: 'POST',
         signal: AbortSignal.timeout(5_000),
-        ...(env.OPENBAO_CA_PATH
-          ? { ca: readFileSync(env.OPENBAO_CA_PATH), servername: 'localhost' }
-          : {}),
+        ...(ca ? { ca, servername: 'localhost' } : {}),
         headers: { 'Content-Type': 'application/json', 'X-Vault-Token': token },
       },
       (res) => {

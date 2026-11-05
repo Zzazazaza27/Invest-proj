@@ -22,16 +22,31 @@ export function sameText(a, b) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-/** Токен живёт ровно на время работы и отзывается при любом исходе. */
+/**
+ * Токен живёт ровно на время работы и отзывается при любом исходе. Неподтверждённый отзыв — ошибка
+ * команды даже при успешной работе: живой токен оператора нельзя считать закрытым.
+ */
 export async function withOperatorToken(call, password, work) {
   const login = await call('POST', 'auth/userpass/login/thomas', { body: { password } });
   const token = login.json.auth?.client_token;
   if (!token) throw new Error(`личный вход не прошёл, код ${login.status}`);
+  let result;
+  let failure = null;
   try {
-    return await work(token);
-  } finally {
-    await call('POST', 'auth/token/revoke-self', { token });
+    result = await work(token);
+  } catch (error) {
+    failure = error;
   }
+  const revoked = await call('POST', 'auth/token/revoke-self', { token }).then(
+    (r) => r.status >= 200 && r.status < 300,
+    () => false,
+  );
+  if (!revoked) {
+    const before = failure ? `${failure.message}; ` : '';
+    throw new Error(`${before}отзыв токена оператора не подтверждён: отзови его вручную`);
+  }
+  if (failure) throw failure;
+  return result;
 }
 
 /** Контроль версии 1: совпадает ли ключ в Transit с нашим. Значений наружу не отдаёт. */

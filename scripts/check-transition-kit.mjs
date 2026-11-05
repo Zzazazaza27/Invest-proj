@@ -31,6 +31,13 @@ printf 'lab-kek-value-2\n' > /tmp/root/.local/secrets/KEK_PASSPORT_SENSITIVE
 chmod 600 /tmp/root/.env; chmod 750 /tmp/root/.local/secrets
 chown 0:1000 /tmp/root/.local/secrets /tmp/root/.local/secrets/*
 chmod 440 /tmp/root/.local/secrets/*
+mkdir /tmp/root/.local/secrets/sub; printf 'вложенный\n' > /tmp/root/.local/secrets/sub/file
+chmod 700 /tmp/root/.local/secrets/sub; chmod 400 /tmp/root/.local/secrets/sub/file
+
+ln -s /etc/passwd /tmp/root/.local/secrets/link
+sh $K create >/dev/null 2>&1
+[ $? -ne 0 ] && [ ! -e /tmp/keys/transition.gpg ]; ok 'ссылка в источнике: комплект не создан' $?
+rm /tmp/root/.local/secrets/link
 
 FIFTH_OPENBAO_RECIPIENT_FPR=0000 sh $K create >/dev/null 2>&1
 [ $? -ne 0 ] && [ ! -e /tmp/keys/transition.gpg ]; ok 'чужой отпечаток: комплект не создан' $?
@@ -38,12 +45,14 @@ FIFTH_OPENBAO_RECIPIENT_FPR=0000 sh $K create >/dev/null 2>&1
 OUT=$(sh $K create 2>&1); ok 'комплект создан' $?
 echo "$OUT" | grep -q lab-kek; [ $? -ne 0 ]; ok 'значения не напечатаны' $?
 grep -q lab-kek /tmp/keys/transition.gpg; [ $? -ne 0 ]; ok 'значений нет в открытом виде' $?
-grep -q '"files":3' /tmp/keys/transition.json; ok 'опись считает файлы' $?
+grep -q '"files":4' /tmp/keys/transition.json; ok 'опись считает файлы' $?
 
-before=$(cd /tmp/root && find .env .local/secrets -type f | sort | xargs stat -c '%a %u %g %n'; cd /tmp/root && cat .env .local/secrets/*)
+state() { (cd /tmp/root && find .env .local/secrets | sort | xargs stat -c '%F %a %u %g %n'; find .env .local/secrets -type f | sort | xargs cat); }
+before=$(state)
 printf 'KMS_MODE=kms\n' > /tmp/root/.env; chmod 644 /tmp/root/.env
 rm /tmp/root/.local/secrets/KEK_SEARCH_INDEX
 chmod 444 /tmp/root/.local/secrets/KEK_PASSPORT_SENSITIVE
+chmod 777 /tmp/root/.local/secrets /tmp/root/.local/secrets/sub
 
 printf lab | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --decrypt /tmp/keys/transition.gpg > /tmp/kit.tar 2>/dev/null
 ok 'открывается ключом получателя' $?
@@ -61,9 +70,22 @@ tar -cpf /tmp/forged2.tar --numeric-owner -C /tmp/forged .env .local/secrets tra
 sh $K restore < /tmp/forged2.tar >/dev/null 2>&1
 [ $? -ne 0 ]; ok 'подмена прав отвергнута' $?
 
+forge() { rm -rf /tmp/forged; mkdir /tmp/forged; tar -xpf /tmp/kit.tar -C /tmp/forged; }
+pack() { tar -cpf /tmp/forged3.tar --numeric-owner -C /tmp/forged .env .local/secrets transition-manifest.txt; }
+forge; chmod 777 /tmp/forged/.local/secrets; pack
+sh $K restore < /tmp/forged3.tar >/dev/null 2>&1
+[ $? -ne 0 ]; ok 'подмена прав каталога секретов отвергнута' $?
+forge; chmod 777 /tmp/forged/.local/secrets/sub; pack
+sh $K restore < /tmp/forged3.tar >/dev/null 2>&1
+[ $? -ne 0 ]; ok 'подмена прав вложенного каталога отвергнута' $?
+forge; ln -s /etc/passwd /tmp/forged/.local/secrets/link; pack
+sh $K restore < /tmp/forged3.tar >/dev/null 2>&1
+[ $? -ne 0 ]; ok 'ссылка в комплекте отвергнута' $?
+grep -q KMS_MODE=kms /tmp/root/.env && [ ! -e /tmp/root/.local/secrets/link ]; ok 'действующее после отказов не тронуто' $?
+
 OUT=$(sh $K restore < /tmp/kit.tar 2>&1); ok 'восстановление прошло' $?
 echo "$OUT" | grep -q lab-kek; [ $? -ne 0 ]; ok 'значения не напечатаны при восстановлении' $?
-after=$(cd /tmp/root && find .env .local/secrets -type f | sort | xargs stat -c '%a %u %g %n'; cd /tmp/root && cat .env .local/secrets/*)
+after=$(state)
 [ "$before" = "$after" ]; ok 'содержимое, владелец и права вернулись' $?
 ls -d /tmp/root/.local/before-restore-* >/dev/null 2>&1; ok 'прежнее отложено, а не удалено' $?
 ls -a /tmp/root | grep -q '^\.transition'; [ $? -ne 0 ]; ok 'временных файлов не осталось' $?
@@ -92,7 +114,7 @@ const lines = r.stdout.split('\n').filter((l) => /^(OK|FAIL) /.test(l));
 console.log('=== ПЕРЕХОДНЫЙ КОМПЛЕКТ ===');
 for (const line of lines) console.log(`  ${line}`);
 const failed = lines.filter((l) => l.startsWith('FAIL')).length;
-const expected = 14;
+const expected = 19;
 if (lines.length !== expected) console.log(`  FAIL ожидалось ${expected}: ${r.stderr.slice(-300)}`);
 console.log(`\nИТОГ: пройдено ${lines.length - failed}, не пройдено ${failed}`);
 process.exit(failed || lines.length !== expected ? 1 : 0);

@@ -11,7 +11,7 @@ import { spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
 import { createCipheriv, createHash, randomBytes } from 'node:crypto';
 import { request } from 'node:http';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -77,7 +77,8 @@ async function checkMigration() {
     'токен переноса',
     call('POST', 'auth/token/create', { body: { policies: ['prod-core'], ttl: '30m' } }),
   );
-  let token = json.auth.client_token;
+  const goodToken = json.auth.client_token;
+  let token = goodToken;
   const transit = async (key, ciphertext, aad) => {
     const r = await call('POST', `transit/decrypt/${key}`, {
       token,
@@ -141,8 +142,10 @@ async function checkMigration() {
 
     let raced = false;
     const racedValue = wrapUser();
+    let saved = null;
     const first = await migrateTarget(db, transit, users, {
       ...options,
+      onPosition: (_, position) => (saved = position),
       afterSelect: async () => {
         if (raced) return;
         raced = true;
@@ -161,6 +164,7 @@ async function checkMigration() {
       (await db.query(`SELECT contact_wrapped_dek v FROM identity.users WHERE id = $1`, [id(n)]))
         .rows[0].v;
     check('её новое значение на месте', (await read(2)).equals(racedValue));
+    check('сохранённая позиция не прошла мимо неё', saved === id(1), String(saved));
     const partial = await verifyTarget(db, transit, users, options);
     check(
       'пройденная позиция не считается завершением',
@@ -205,6 +209,42 @@ async function checkMigration() {
     );
     check('отказ службы останавливает перенос', stopped);
     check('строка при отказе не тронута', !(await read(1)).toString('latin1').startsWith('vault:'));
+
+    // Сама команда: библиотека получает готовую функцию и дефект чтения файлов не поймала бы.
+    const stateFile = join(base, 'state.json');
+    const tokenFile = join(base, 'migrate-token');
+    const command = (action, extra = {}) =>
+      spawnSync(
+        process.execPath,
+        [join(ROOT, 'scripts', 'crypto-migrate.mjs'), action, '--state', stateFile],
+        {
+          encoding: 'utf8',
+          env: {
+            ...process.env,
+            DATABASE_URL_OWNER: `postgres://postgres:lab@127.0.0.1:${PG_PORT}/postgres`,
+            OPENBAO_ADDR: ADDR,
+            OPENBAO_KEY_PREFIX: 'prod',
+            OPENBAO_TOKEN_PATH: tokenFile,
+            OPENBAO_CA_PATH: '',
+            ...extra,
+          },
+        },
+      );
+    const stoppedBy = (r) => r.status === 1 && r.stderr.includes('не прочитаны');
+    const untouched = async () =>
+      !(await read(1)).toString('latin1').startsWith('vault:') && !existsSync(stateFile);
+    check('нет файла токена — команда остановлена', stoppedBy(command('run')));
+    check('строка цела, позиция не сдвинута', await untouched());
+    writeFileSync(tokenFile, goodToken);
+    check(
+      'нет файла сертификата — команда остановлена',
+      stoppedBy(command('run', { OPENBAO_CA_PATH: join(base, 'нет.crt') })),
+    );
+    check('и тут строка цела, позиция не сдвинута', await untouched());
+    const done = command('run');
+    check('с доступом команда прошла', done.status === 0, done.stderr.slice(-200));
+    const final = command('verify');
+    check('сверка командой подтвердила', final.status === 0, final.stdout.slice(-200));
   } finally {
     await db.end().catch(() => undefined);
     docker('rm', '-f', PG);

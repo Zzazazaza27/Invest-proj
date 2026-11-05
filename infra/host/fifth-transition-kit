@@ -22,11 +22,25 @@ fail() {
   exit 1
 }
 
-# Опись: права, владелец, хеш и имя каждого файла.
+# Опись: тип, права, владелец и хеш каждого файла и каталога, включая сам каталог секретов.
+# Ссылки и всё, кроме обычных файлов и каталогов, помечаются «!»: комплект таких не принимает.
 manifest() {
-  (cd "$1" && find .env "$OPENBAO_SECRETS" -type f | LC_ALL=C sort | while read -r name; do
-    printf '%s %s %s\n' "$(stat -c '%a %u %g' "$name")" "$(sha256sum "$name" | cut -d' ' -f1)" "$name"
-  done)
+  (cd "$1" && find .env "$OPENBAO_SECRETS" -printf '%y %m %U %G %n %p\n' | LC_ALL=C sort -k6 |
+    while read -r type mode uid gid links name; do
+      case "$type" in
+        f)
+          [ "$links" = 1 ] || { echo "! $name"; continue; }
+          echo "f $mode $uid $gid $(sha256sum "$name" | cut -d' ' -f1) $name"
+          ;;
+        d) echo "d $mode $uid $gid - $name" ;;
+        *) echo "! $name" ;;
+      esac
+    done)
+}
+
+# Набор обязан быть полным: .env файлом, каталог секретов каталогом, и ничего лишнего.
+sound() {
+  ! grep -q '^!' "$1" && grep -q ' \.env$' "$1" && grep -q "^d .* $OPENBAO_SECRETS\$" "$1"
 }
 
 create() {
@@ -39,7 +53,8 @@ create() {
   [ "$fpr" = "$RECIPIENT_FPR" ] || fail 'открытый ключ не тот: комплект не создан'
   mkdir -p "$KEYS"
   manifest "$ROOT" >"$work/transition-manifest.txt"
-  files="$(wc -l <"$work/transition-manifest.txt" | tr -d ' ')"
+  sound "$work/transition-manifest.txt" || fail 'есть ссылки или нет нужных файлов: комплект не создан'
+  files="$(grep -c '^f ' "$work/transition-manifest.txt")"
   # У sh нет pipefail: сбой tar отмечается файлом, иначе в комплект молча уйдёт обрывок.
   (cd "$ROOT" && tar -cpf - --numeric-owner .env "$OPENBAO_SECRETS" -C "$work" transition-manifest.txt ||
     touch "$work/tar.failed") |
@@ -62,11 +77,12 @@ restore() {
   # Опись снята при создании: после распаковки всё обязано совпасть, включая права и владельца.
   (cd "$stage" && mv transition-manifest.txt ../.transition-manifest.$$)
   manifest "$stage" >"$ROOT/.transition-actual.$$"
-  if ! cmp -s "$ROOT/.transition-manifest.$$" "$ROOT/.transition-actual.$$"; then
+  if ! sound "$ROOT/.transition-actual.$$" ||
+    ! cmp -s "$ROOT/.transition-manifest.$$" "$ROOT/.transition-actual.$$"; then
     rm -f "$ROOT/.transition-manifest.$$" "$ROOT/.transition-actual.$$"
     fail 'содержимое не совпало с описью: ничего не изменено'
   fi
-  files="$(wc -l <"$ROOT/.transition-actual.$$" | tr -d ' ')"
+  files="$(grep -c '^f ' "$ROOT/.transition-actual.$$")"
   rm -f "$ROOT/.transition-manifest.$$" "$ROOT/.transition-actual.$$"
   aside="$ROOT/.local/before-restore-$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$aside"

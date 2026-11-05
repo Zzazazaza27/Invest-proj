@@ -63,6 +63,9 @@ export async function migrateTarget(
 ) {
   const stats = { converted: 0, skipped: 0, failed: 0 };
   let position = from ?? null;
+  // Сохраняемая позиция не уходит дальше первой необработанной строки: иначе повтор её пропустит.
+  let saved = position;
+  let clean = true;
   for (;;) {
     const { rows } = await db.query(
       `SELECT id, ${ident(target.column)} AS value FROM ${ident(target.table)}
@@ -82,6 +85,7 @@ export async function migrateTarget(
         // Отказ службы ключей останавливает перенос, а не помечает строки порчеными.
         if (error.unavailable) throw error;
         stats.failed += 1;
+        clean = false;
         continue;
       }
       const { rowCount } = await db.query(
@@ -89,10 +93,15 @@ export async function migrateTarget(
           WHERE id = $1 AND ${ident(target.column)} = $3`,
         [row.id, next, row.value],
       );
-      if (rowCount === 1) stats.converted += 1;
-      else stats.skipped += 1;
+      if (rowCount === 1) {
+        stats.converted += 1;
+        if (clean) saved = row.id;
+      } else {
+        stats.skipped += 1;
+        clean = false;
+      }
     }
-    await onPosition?.(target, position);
+    await onPosition?.(target, saved);
   }
 }
 

@@ -32,6 +32,7 @@ import { dirname, join, resolve } from 'node:path';
 import {
   ENV_PATH,
   ROOT,
+  MEMORY_ONLY,
   TOOL_IMAGE,
   appendIndex,
   assertSpace,
@@ -199,13 +200,14 @@ function keysCheck() {
   const challenge = randomBytes(24).toString('hex');
   const script = [
     'set -e',
-    'export GNUPGHOME=$(mktemp -d)',
+    'mkdir -m 700 /secure/pub /secure/gpg',
+    'export GNUPGHOME=/secure/pub',
     'gpg -q --batch --import /in/recipient.asc 2>/dev/null',
     "fpr=$(gpg --batch --list-keys --with-colons | awk -F: '/^fpr/{print $10; exit}')",
-    'printf %s "$CHALLENGE" | gpg -q --batch --trust-model always --encrypt --recipient "$fpr" --output /tmp/c.gpg',
-    'export GNUPGHOME=$(mktemp -d)',
+    'printf %s "$CHALLENGE" | gpg -q --batch --trust-model always --encrypt --recipient "$fpr" --output /secure/c.gpg',
+    'export GNUPGHOME=/secure/gpg',
     'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --import /in/secret.asc 2>/dev/null',
-    'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --decrypt /tmp/c.gpg',
+    'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --decrypt /secure/c.gpg',
   ].join('\n');
   const r = docker(
     [
@@ -213,6 +215,7 @@ function keysCheck() {
       '--rm',
       '--network',
       'none',
+      ...MEMORY_ONLY,
       '-e',
       'CHALLENGE',
       '-e',
@@ -257,10 +260,10 @@ function verifyOpenbaoKeys(file, meta) {
   }
   const script = [
     'set -e',
-    'export GNUPGHOME=$(mktemp -d)',
+    'mkdir -m 700 /secure/gpg',
     'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --import /in/secret.asc 2>/dev/null',
-    'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --decrypt /in/emergency.gpg > /tmp/p 2>/dev/null',
-    'v() { sed -n "s/^$1=//p" /tmp/p; }',
+    'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --decrypt /in/emergency.gpg > /secure/p 2>/dev/null',
+    'v() { sed -n "s/^$1=//p" /secure/p; }',
     "v OPENBAO_STATIC_SEAL_B64 | base64 -d | sha256sum | cut -d' ' -f1",
     'printf %s "$(v OPENBAO_RECOVERY_KEY)" | sha256sum | cut -d\' \' -f1',
     'printf %s "$(v OPENBAO_THOMAS_PASSWORD)" | sha256sum | cut -d\' \' -f1',
@@ -271,6 +274,7 @@ function verifyOpenbaoKeys(file, meta) {
       '--rm',
       '--network',
       'none',
+      ...MEMORY_ONLY,
       '-e',
       'PASSPHRASE',
       '-v',

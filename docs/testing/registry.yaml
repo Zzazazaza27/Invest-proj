@@ -3047,7 +3047,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 34
+    asserts: 37
     needs: []
     effects: ['контейнер и том fifth-openbao-auto, удаляются в конце']
     studied: code
@@ -3064,7 +3064,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 24
+    asserts: 28
     needs: []
     effects: ['контейнер fifth-crypto-transit, удаляются в конце']
     studied: code
@@ -3081,7 +3081,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 14
+    asserts: 19
     needs: []
     effects: ['временный контейнер, удаляется сам']
     studied: code

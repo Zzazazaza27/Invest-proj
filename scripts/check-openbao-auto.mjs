@@ -15,7 +15,7 @@ import { request } from 'node:https';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { TOOL_IMAGE } from './lib/backup.mjs';
+import { MEMORY_ONLY, TOOL_IMAGE } from './lib/backup.mjs';
 import { KEK_DOMAINS, sameText, withOperatorToken } from './lib/openbao-keys.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -480,6 +480,32 @@ try {
     issued = token;
     throw new Error('сбой внутри операции');
   }).catch(() => undefined);
+  const refusing = async (method, path) =>
+    path.endsWith('revoke-self')
+      ? { status: 403, json: {} }
+      : { status: 200, json: { auth: { client_token: 'x' } } };
+  const quiet = await withOperatorToken(refusing, 'x', async () => 'итог').then(
+    () => '',
+    (error) => error.message,
+  );
+  check('неподтверждённый отзыв — ошибка команды', quiet.includes('не подтверждён'));
+  const both = await withOperatorToken(refusing, 'x', async () => {
+    throw new Error('сбой работы');
+  }).then(
+    () => '',
+    (error) => error.message,
+  );
+  check(
+    'сбой и неотозванный токен видны оба',
+    both.includes('сбой работы') && both.includes('не подтверждён'),
+  );
+  check(
+    'расшифровка идёт только в памяти',
+    MEMORY_ONLY.includes('--read-only') &&
+      !/mktemp|\/tmp\//.test(
+        readFileSync(join(ROOT, 'scripts', 'openbao-keys-import.mjs'), 'utf8'),
+      ),
+  );
   const revoked = await api('GET', 'auth/token/lookup-self', { token: issued });
   check(
     'токен отозван и при сбое',

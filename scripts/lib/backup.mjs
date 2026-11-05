@@ -47,6 +47,19 @@ import { applySecretFiles } from './secret-files.mjs';
 
 export const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
 export const TOOL_IMAGE = 'fifth/postgres:16';
+/**
+ * Контейнер, который видит расшифрованные ключи: корень только для чтения, писать можно лишь в
+ * /secure, а это память. Закрытый ключ и значения на диск Docker не попадают.
+ */
+export const MEMORY_ONLY = [
+  '--read-only',
+  '--tmpfs',
+  '/secure:rw,nosuid,nodev,noexec,size=32m,mode=0700',
+  '--user',
+  '0',
+  '-e',
+  'GNUPGHOME=/secure/gpg',
+];
 export const PG_CONTAINER = 'fifth-postgres';
 
 // ----------------------------------------------------------------- окружение
