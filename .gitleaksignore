@@ -1,0 +1,2 @@
+# Образец в проверке, не настоящий секрет: строка в прежнем коммите остаётся в истории.
+0c969394d5617124262c4c7c32d5200609fe862b:scripts/check-secrets-to-files.mjs:unicorn-db-url-with-password:23
