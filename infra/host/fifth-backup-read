@@ -7,6 +7,8 @@
  *   fifth-backup-read has <комплект>  имя, если комплект готов
  *   fifth-backup-read catalog <комплект>
  *   fifth-backup-read tar <комплект>  поток tar: только файлы описи комплекта
+ *   fifth-backup-read openbao-keys       зашифрованный аварийный комплект OpenBao
+ *   fifth-backup-read openbao-keys-meta  его описание, без значений
  *
  * Пути снаружи не принимаются: список файлов берётся из описи комплекта и проверяется.
  * Каталог задаётся переменной только для проверок без root.
@@ -81,6 +83,10 @@ if (command === 'latest') {
   );
   tar.stdin.end(files.join('\0') + '\0');
   tar.on('close', (code) => process.exit(code === null ? 1 : code));
+} else if (command === 'openbao-keys' || command === 'openbao-keys-meta') {
+  if (id !== undefined) fail('лишние аргументы');
+  const name = command === 'openbao-keys' ? 'emergency.gpg' : 'meta.json';
+  process.stdout.write(fs.readFileSync(path.join(ROOT, checked(`openbao-keys/${name}`))));
 } else {
-  fail('команды: latest, has, catalog, tar');
+  fail('команды: latest, has, catalog, tar, openbao-keys, openbao-keys-meta');
 }

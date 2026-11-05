@@ -1,7 +1,7 @@
 # OpenBao на VPS
 
-Блок 5, задание 3. Команды выполняет Томас под `thomas`. Значения в чат не передаются. После этих шагов
-OpenBao работает, но рабочие ключи в него ещё не перенесены: это задание 5.
+Блок 5, задание 3. Значения не выводятся на экран и не передаются в чат. После установки OpenBao
+работает, но рабочие ключи в него ещё не перенесены: это задание 5.
 
 ## Размещение
 
@@ -19,64 +19,33 @@ OpenBao работает, но рабочие ключи в него ещё не
 
 ## Установка
 
-Подготовь в KeePassXC записи: Static seal key, ключ восстановления, root-токен, пароль `thomas` в OpenBao.
+Одна команда под `thomas`. Вопросов нет, повтор после обрыва безопасен:
 
 ```bash
-cd /opt/fifth-element/infra/openbao
+sudo bash /opt/fifth-element/infra/host/apply-openbao-auto.sh
 ```
 
-1. Файлы и запуск:
+Команда ставит обёртку чтения, запускает OpenBao, создаёт ключи и шифрует их на GPG-ключ Томаса
+(отпечаток задан в `setup-vps.sh`). Затем настраивает хранилища и входы, проверяет личный вход,
+отзывает root-токен и включает наблюдение. Обрыв не теряет значений: они лежат в
+`/etc/fifth-openbao/auto` только у root до конца шага.
 
-   ```bash
-   sudo bash setup-vps.sh files
-   ```
+Затем с ноутбука, без терминала на сервере:
 
-   ```bash
-   sudo bash setup-vps.sh start
-   ```
+```bash
+node scripts/backup.mjs openbao-keys --secret-key <файл> --passphrase-file <файл>
+```
 
-2. Инициализация. Ключ восстановления и root-токен показываются один раз, сразу сохрани оба:
+Операция забирает комплект, сверяет получателя, открывает его ключом Томаса и сверяет значения с
+описанием установки. Пока она не прошла, сохранность ключей не подтверждена. Копия лежит в
+`.local/keys-openbao`. На отдельный носитель её кладёт Томас, один раз.
 
-   ```bash
-   sudo bash setup-vps.sh init
-   ```
-
-3. Копия Static seal key в KeePassXC. Строка показывается только на экране:
-
-   ```bash
-   sudo bash setup-vps.sh seal-copy
-   ```
-
-4. Настройка. Спросит root-токен и новый пароль:
-
-   ```bash
-   sudo bash setup-vps.sh configure
-   ```
-
-5. Включение наблюдения:
-
-   ```bash
-   sudo cp /opt/fifth-element/infra/systemd/fifth-monitor-openbao.* /etc/systemd/system/
-   ```
-
-   ```bash
-   sudo systemctl daemon-reload && sudo systemctl enable --now fifth-monitor-openbao.timer
-   ```
-
-6. Проверь личный вход, затем отзови root-токен:
-
-   ```bash
-   sudo docker exec -it -e BAO_ADDR=https://127.0.0.1:8200 -e BAO_CACERT=/openbao/tls/tls.crt fifth-openbao bao login -method=userpass username=thomas
-   ```
-
-   ```bash
-   sudo bash setup-vps.sh revoke
-   ```
+Новый root-токен при необходимости выпускается по ключу восстановления из комплекта.
 
 ## Если OpenBao запечатан
 
 - **Файл ключа цел:** перезапусти контейнер, он откроется сам.
-- **Файл утрачен:** верни его из KeePassXC: строка `seal-copy` декодируется в файл, 32 байта, владелец
+- **Файл утрачен:** верни его из аварийного комплекта: `OPENBAO_STATIC_SEAL_B64` декодируется в файл, 32 байта, владелец
   uid 1990, права 400. Затем перезапусти контейнер. Ключ восстановления файл не заменяет.
 - **Снимок без верного Static seal key не читается,** поэтому ключ и снимок хранятся раздельно.
 

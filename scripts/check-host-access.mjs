@@ -98,6 +98,16 @@ try {
   catalog([`files/${option}`]);
   check('имя-параметр остаётся именем', tarNames(run(['tar', ID]).stdout).length === 3);
 
+  check('комплекта OpenBao ещё нет — отказ', run(['openbao-keys']).status === 2);
+  put('openbao-keys/emergency.gpg', 'шифротекст');
+  put('openbao-keys/meta.json', '{}');
+  check('отдаёт комплект OpenBao', run(['openbao-keys']).stdout.toString() === 'шифротекст');
+  check('отдаёт его описание', run(['openbao-keys-meta']).stdout.toString() === '{}');
+  check(
+    'путь к комплекту снаружи не задаётся',
+    run(['openbao-keys', '../outside.txt']).status === 2,
+  );
+
   const sudoers = readFileSync(join(ROOT, 'infra', 'host', 'sudoers-maus'), 'utf8')
     .split('\n')
     .filter((l) => l && !l.startsWith('#'));

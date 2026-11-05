@@ -238,6 +238,102 @@ function keysCheck() {
   console.log('ключи в порядке: закрытый ключ с фразой открывает зашифрованное открытым ключом');
 }
 
+// ------------------------------------------------------------ openbao-keys
+
+const OPENBAO_RECIPIENT = '06D54B5532998568A88185A2BEA53785936C28C0';
+
+/** Комплект открывается ключом Томаса и совпадает с описанием. Печатаются только итоги. */
+function verifyOpenbaoKeys(file, meta) {
+  const secret = resolve(option('--secret-key') ?? '');
+  const passFile = resolve(option('--passphrase-file') ?? '');
+  for (const f of [file, secret, passFile]) {
+    if (!existsSync(f)) throw new Error(`нет файла ${f}`);
+  }
+  if (meta.recipient !== (option('--recipient-fpr') ?? OPENBAO_RECIPIENT)) {
+    throw new Error('комплект зашифрован не на ключ Томаса');
+  }
+  if (meta.operatorLogin !== true || meta.rootRevoked !== true) {
+    throw new Error('установка не подтвердила личный вход и отзыв root-токена');
+  }
+  const script = [
+    'set -e',
+    'export GNUPGHOME=$(mktemp -d)',
+    'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --import /in/secret.asc 2>/dev/null',
+    'printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --decrypt /in/emergency.gpg > /tmp/p 2>/dev/null',
+    'v() { sed -n "s/^$1=//p" /tmp/p; }',
+    "v OPENBAO_STATIC_SEAL_B64 | base64 -d | sha256sum | cut -d' ' -f1",
+    'printf %s "$(v OPENBAO_RECOVERY_KEY)" | sha256sum | cut -d\' \' -f1',
+    'printf %s "$(v OPENBAO_THOMAS_PASSWORD)" | sha256sum | cut -d\' \' -f1',
+  ].join('\n');
+  const r = docker(
+    [
+      'run',
+      '--rm',
+      '--network',
+      'none',
+      '-e',
+      'PASSPHRASE',
+      '-v',
+      `${resolve(file)}:/in/emergency.gpg:ro`,
+      '-v',
+      `${secret}:/in/secret.asc:ro`,
+      '--entrypoint',
+      'sh',
+      TOOL_IMAGE,
+      '-c',
+      script,
+    ],
+    { env: { PASSPHRASE: readFileSync(passFile, 'utf8').trim() }, allowFail: true },
+  );
+  const [seal, recovery, password] = r.stdout.trim().split('\n');
+  if (
+    seal !== meta.sealSha256 ||
+    recovery !== meta.recoverySha256 ||
+    password !== meta.passwordSha256
+  ) {
+    throw new Error('аварийный комплект не открылся или не совпал с описанием');
+  }
+  console.log('аварийный комплект открыт ключом Томаса, значения совпали с установкой');
+}
+
+/** Для проверок: комплект и описание из файлов. */
+function openbaoKeysCheck() {
+  const meta = JSON.parse(readFileSync(resolve(option('--meta') ?? ''), 'utf8'));
+  verifyOpenbaoKeys(resolve(option('--file') ?? ''), meta);
+}
+
+/**
+ * Забрать комплект с VPS и проверить его.
+ *
+ *   node scripts/backup.mjs openbao-keys --secret-key <файл> --passphrase-file <файл>
+ */
+function openbaoKeys() {
+  const read = (what) =>
+    execFileSync(
+      'ssh',
+      [
+        '-i',
+        VPS_KEY,
+        '-o',
+        'IdentitiesOnly=yes',
+        '-o',
+        'BatchMode=yes',
+        VPS,
+        `sudo -n /usr/local/sbin/fifth-backup-read ${what}`,
+      ],
+      { maxBuffer: 1 << 24 },
+    );
+  const meta = JSON.parse(read('openbao-keys-meta').toString('utf8'));
+  const dir = join(ROOT, '.local', 'keys-openbao');
+  mkdirSync(dir, { recursive: true });
+  const name = `emergency-${meta.sealSha256.slice(0, 12)}`;
+  const file = join(dir, `${name}.gpg`);
+  writeFileSync(file, read('openbao-keys'));
+  verifyOpenbaoKeys(file, meta);
+  writeFileSync(join(dir, `${name}.json`), `${JSON.stringify(meta, null, 2)}\n`);
+  console.log(`копия вне VPS: ${file}`);
+}
+
 // ---------------------------------------------------------------------- db
 
 function backupInfo() {
@@ -1013,6 +1109,8 @@ const commands = {
   'init-secrets': initSecrets,
   'keys-init': keysInit,
   'keys-check': keysCheck,
+  'openbao-keys': openbaoKeys,
+  'openbao-keys-check': openbaoKeysCheck,
   db,
   set,
   check,

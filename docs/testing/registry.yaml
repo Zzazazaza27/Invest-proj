@@ -2964,7 +2964,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 13
+    asserts: 17
     needs: []
     effects: ['временный каталог']
     studied: code
@@ -3006,6 +3006,24 @@ checks:
     note: >-
       Блок 5, задание 3, искусственные ключи.
     purpose: 'Agent, снимок, отзыв доступа и миграция seal работают на настоящих файлах размещения.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
+
+  - id: CHK-OPENBAO-AUTO
+    file: scripts/check-openbao-auto.mjs
+    command: node scripts/check-openbao-auto.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 21
+    needs: []
+    effects: ['контейнер и том fifth-openbao-auto, удаляются в конце']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 3, искусственные ключи.
+    purpose: 'Установка без ручных шагов переживает обрыв и не теряет управление, комплект открывается ключом получателя.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
@@ -4253,6 +4271,7 @@ blocks:
         CHK-HOST-ACCESS,
         CHK-OPENBAO-LAB,
         CHK-OPENBAO-OPS,
+        CHK-OPENBAO-AUTO,
         CHK-PROD-COMPOSE,
         CHK-RELEASE-PINS,
         CHK-RELEASE,
