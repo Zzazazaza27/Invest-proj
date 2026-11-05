@@ -53,7 +53,7 @@ automation:
     note: >-
       Браузерные прогоны, smoke и probe в CI не запускаются: им нужен
       поднятый стенд с базой, брокером и хранилищем, которого в CI нет.
-      С 2026-09-28 ci.yml не запускается на push только с Markdown, docs/
+      С 2026-11-05 ci.yml идёт по понедельникам и перед выпуском, не на push. Раньше не шёл на Markdown, docs/
       (кроме docs/testing/) и obsidian-notes/; секрет-скан вынесен в
       secrets.yml и идёт на любой push.
   manual:
