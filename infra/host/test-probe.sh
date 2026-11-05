@@ -186,6 +186,11 @@ echo "записей vault и всего: $counts"
 [ "${counts%%|*}" = 0 ] && [ "${counts##*|}" -ge 2 ]
 echo 'записей vault нет: запись прежним форматом'
 
+if [ "$(laptop stage)" = production ]; then
+  # shellcheck source=/dev/null
+  . infra/host/test-probe-production.sh
+fi
+
 if [ "$(laptop stage)" = vault ]; then
   # shellcheck source=/dev/null
   . infra/host/test-probe-vault.sh

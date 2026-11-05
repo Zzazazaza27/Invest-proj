@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 const BASE = process.env.PROBE_URL;
+const PREFIX = process.env.PROBE_COOKIE_PREFIX ?? '';
 const [command, file, label] = process.argv.slice(2);
 const CONSENTS = ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind) => ({
   kind,
@@ -30,13 +31,14 @@ function parsed(text) {
 function client() {
   const jar = new Map();
   const call = async (path, { method = 'GET', body } = {}) => {
-    const csrf = jar.get('ul_csrf');
+    const csrf = jar.get(`${PREFIX}ul_csrf`);
     const response = await fetch(`${BASE}${path}`, {
       method,
       headers: {
         Cookie: [...jar].map(([k, v]) => `${k}=${v}`).join('; '),
         ...(body ? { 'Content-Type': 'application/json' } : {}),
         ...(csrf && method !== 'GET' ? { 'X-CSRF-Token': csrf } : {}),
+        ...(process.env.PROBE_ORIGIN ? { Origin: process.env.PROBE_ORIGIN } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(20_000),
@@ -48,7 +50,7 @@ function client() {
     const text = await response.text();
     return { status: response.status, json: parsed(text) };
   };
-  call.session = () => jar.get('ul_session') ?? '';
+  call.session = () => jar.get(`${PREFIX}ul_session`) ?? '';
   return call;
 }
 
