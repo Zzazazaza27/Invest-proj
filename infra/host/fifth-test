@@ -1,0 +1,39 @@
+#!/bin/bash
+# Работы с test-1 для учётки maus (решение Томаса 05.11). Запускается через sudo.
+#
+#   fifth-test sync <коммит>          код на сервере на этот коммит
+#   fifth-test probe <сборка> <токен> проба перехода и возврата на test-1
+#   fifth-test env <start|stop|status>
+#   fifth-test logs                   хвост журнала ядра test-1
+#
+# Скрипты репозитория идут от root, поэтому право равно root, пока оно выдано. Это осознанное
+# исключение из постановки 5.4 на время проверок: убрать — удалить /etc/sudoers.d/91-maus-test.
+set -u
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+ROOT=/opt/fifth-element
+BUILD_RE='^[0-9]+\.[0-9]+-b[0-9]+\.[0-9]+$'
+fail() {
+  echo "fifth-test: $1" >&2
+  exit 2
+}
+case "${1:-}" in
+  sync)
+    [[ "${2:-}" =~ ^[0-9a-f]{7,40}$ ]] || fail 'нужен коммит'
+    git -C "$ROOT" fetch -q origin && git -C "$ROOT" reset -q --hard "$2"
+    ;;
+  probe)
+    [[ "${2:-}" =~ $BUILD_RE ]] || fail 'нужна сборка'
+    [[ "${3:-}" =~ ^[0-9a-f]{32,64}$ ]] || fail 'нужен токен'
+    PROBE_TOKEN="$3" PROBE_URL=http://127.0.0.1:18211 exec bash "$ROOT/infra/host/test-probe.sh" "$2"
+    ;;
+  env)
+    [[ "${2:-}" =~ ^(start|stop|status)$ ]] || fail 'команды: start, stop, status'
+    cd "$ROOT" && exec node scripts/env.mjs "$2" test-1 --text
+    ;;
+  logs)
+    exec docker logs --tail 40 fifth-test-1-core
+    ;;
+  *)
+    fail 'команды: sync, probe, env, logs'
+    ;;
+esac

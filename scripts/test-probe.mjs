@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Проба test-1 одной командой с ноутбука (блок 5, задание 5). Запускает Томас.
+ * Проба test-1 с ноутбука (блок 5, задание 5). Без участия Томаса: учётка maus и обёртка fifth-test.
  *
  *   node scripts/test-probe.mjs --build <метка> --run <запуск CI> --commit <sha>
  *
  * Одно подключение к серверу: SSH поднимает туннель к OpenBao и обратный туннель к этому процессу,
- * на сервере работает infra/host/test-probe.sh. Спрашивает фразу SSH-ключа и пароль sudo, больше
- * ничего. Комплект среды открывается здесь ключом Томаса, на сервере закрытого ключа нет.
+ * на сервере работает infra/host/test-probe.sh. Комплект среды открывается здесь ключом Томаса,
+ * на сервере закрытого ключа нет.
  * Итог пишется в out/test-probe-<время>.txt, чтобы его могли прочитать без пересказа.
  */
 import { spawn, spawnSync } from 'node:child_process';
@@ -28,7 +28,6 @@ import { docker, MEMORY_ONLY, TOOL_IMAGE } from './lib/backup.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOST = '193.233.217.210';
-const KEY = join(homedir(), '.ssh', 'thomas_5e');
 const MAUS = join(homedir(), '.ssh', 'maus_5e');
 const FORWARD = 18210;
 const BACK = 18211;
@@ -189,7 +188,7 @@ const server = createServer((req, res) => {
 });
 await new Promise((done) => server.listen(BACK, '127.0.0.1', done));
 
-for (const f of [secretKey, passFile, bundle, KEY]) {
+for (const f of [secretKey, passFile, bundle, MAUS]) {
   if (!existsSync(f)) {
     console.error(`нет файла ${f}`);
     process.exit(2);
@@ -197,29 +196,29 @@ for (const f of [secretKey, passFile, bundle, KEY]) {
 }
 
 const remote = [
-  'sudo -H git -C /opt/fifth-element fetch -q origin',
-  `sudo -H git -C /opt/fifth-element reset -q --hard ${commit}`,
-  `sudo -H env PROBE_TOKEN=${token} PROBE_URL=http://127.0.0.1:${BACK} bash /opt/fifth-element/infra/host/test-probe.sh ${build}`,
+  `sudo -n /usr/local/sbin/fifth-test sync ${commit}`,
+  `sudo -n /usr/local/sbin/fifth-test probe ${build} ${token}`,
 ].join(' && ');
 
 const ssh = spawn(
   'ssh',
   [
-    '-t',
     '-i',
-    KEY,
+    MAUS,
     '-o',
     'IdentitiesOnly=yes',
+    '-o',
+    'BatchMode=yes',
     '-o',
     'ExitOnForwardFailure=yes',
     '-L',
     `127.0.0.1:${FORWARD}:127.0.0.1:8200`,
     '-R',
     `127.0.0.1:${BACK}:127.0.0.1:${BACK}`,
-    `thomas@${HOST}`,
+    `maus@${HOST}`,
     remote,
   ],
-  { stdio: ['inherit', 'pipe', 'inherit'] },
+  { stdio: ['ignore', 'pipe', 'inherit'] },
 );
 ssh.stdout.on('data', (chunk) => {
   process.stdout.write(chunk);
