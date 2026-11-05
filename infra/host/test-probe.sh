@@ -96,6 +96,12 @@ node scripts/kit.mjs load --build "$BUILD" | cut -c1-160
 
 say 'среда test-1 в прежнем режиме'
 local_settings
+# Обрыв боевой пробы не должен мешать следующей: Valkey и NATS возвращаются к настройкам без TLS.
+if [ -f "$DIR/secrets/valkey.conf" ]; then
+  sed -i '/^port 6378/,$d' "$DIR/secrets/valkey.conf"
+  sed -i '/^tls {/d' "$DIR/secrets/nats.conf"
+  rm -f "$DIR/secrets/tls-server.crt" "$DIR/secrets/tls-server.key" "$DIR/secrets/tls-ca.crt" "$DIR/compose.tls.yml"
+fi
 if [ -f "$DIR/install.json" ]; then
   node scripts/env.mjs start "$ID" --text | cut -c1-160 || true
   node scripts/env.mjs update "$ID" --kit "$BUILD" --text | cut -c1-160
