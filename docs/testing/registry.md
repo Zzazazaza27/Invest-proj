@@ -370,7 +370,7 @@
 | CHK-HOST-ACCESS | `node scripts/check-host-access.mjs` | 17 | вручную | — |
 | CHK-OPENBAO-LAB | `node scripts/check-openbao-lab.mjs` | 22 | вручную | — |
 | CHK-OPENBAO-OPS | `node scripts/check-openbao-ops.mjs` | 29 | вручную | — |
-| CHK-OPENBAO-AUTO | `node scripts/check-openbao-auto.mjs` | 21 | вручную | — |
+| CHK-OPENBAO-AUTO | `node scripts/check-openbao-auto.mjs` | 24 | вручную | — |
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
 | CHK-RELEASE | `node scripts/check-release.mjs` | 53 | вручную | — |

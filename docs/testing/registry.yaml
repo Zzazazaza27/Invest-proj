@@ -3015,7 +3015,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 21
+    asserts: 24
     needs: []
     effects: ['контейнер и том fifth-openbao-auto, удаляются в конце']
     studied: code

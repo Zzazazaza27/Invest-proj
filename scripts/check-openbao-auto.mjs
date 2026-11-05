@@ -6,6 +6,7 @@
  *
  * Обрывает настоящий setup-vps.sh после инициализации и после отзыва root-токена: повтор
  * не теряет управление и не требует утраченного токена. Комплект открывается ключом получателя.
+ * Повтор над запечатанным или упавшим OpenBao не сообщает об успехе: проверяется на заглушках.
  */
 import { spawnSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -176,6 +177,40 @@ const keysCheck = (fpr, meta = join(keys, 'meta.json')) =>
     { encoding: 'utf8' },
   );
 
+/** Повтор auto поверх готовой установки: заглушки вместо узла, код ответа `bao status` задаётся. */
+function repeatAuto(baoRc) {
+  const stubs = join(base, 'stubs');
+  const cfg = join(base, 'repeat');
+  const done = join(base, 'repeat-keys');
+  for (const d of [stubs, join(cfg, 'seal'), join(cfg, 'tls'), done]) {
+    mkdirSync(d, { recursive: true });
+  }
+  for (const f of ['seal/static.key', 'tls/tls.crt', 'tls/tls.key'])
+    writeFileSync(join(cfg, f), 'x');
+  writeFileSync(join(done, 'meta.json'), '{}');
+  const stub = (name, body) => writeFileSync(join(stubs, name), `#!/bin/sh\n${body}\n`);
+  for (const name of ['install', 'getent', 'cp', 'systemctl', 'node']) stub(name, 'exit 0');
+  stub('docker', '[ "$1" = exec ] && exit "$FAKE_BAO_RC"\nexit 0');
+  const run = [
+    'p=$STUBS',
+    'command -v cygpath >/dev/null && p=$(cygpath -u "$p")',
+    'PATH="$p:$PATH" exec bash "$0" auto',
+  ].join('\n');
+  const r = spawnSync('bash', ['-c', run, join(SRC, 'setup-vps.sh')], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      MSYS_NO_PATHCONV: '1',
+      STUBS: stubs,
+      FAKE_BAO_RC: String(baoRc),
+      FIFTH_OPENBAO_WAIT: '2',
+      FIFTH_OPENBAO_DIR: cfg,
+      FIFTH_OPENBAO_KEYS_DIR: done,
+    },
+  });
+  return { status: r.status, text: `${r.stdout}${r.stderr}` };
+}
+
 function cleanup() {
   docker('rm', '-f', NAME);
   docker('volume', 'rm', '-f', VOLUME);
@@ -183,6 +218,22 @@ function cleanup() {
 
 console.log('=== OPENBAO: УСТАНОВКА БЕЗ РУЧНЫХ ШАГОВ ===');
 try {
+  console.log('\n▸ Повтор над готовой установкой');
+  const sealed = repeatAuto(2);
+  check(
+    'запечатан — отказ без «готово»',
+    sealed.status !== 0 && !sealed.text.includes('готово'),
+    sealed.text.slice(-200),
+  );
+  const down = repeatAuto(1);
+  check('недоступен — отказ без «готово»', down.status !== 0 && !down.text.includes('готово'));
+  const healthy = repeatAuto(0);
+  check(
+    'открыт — готово',
+    healthy.status === 0 && healthy.text.includes('готово'),
+    healthy.text.slice(-200),
+  );
+
   cleanup();
   for (const d of ['seal', 'tls']) mkdirSync(join(dir, d), { recursive: true });
   const seal = randomBytes(32);

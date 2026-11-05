@@ -12,5 +12,6 @@ case "$1" in
   dirty) g status --porcelain | head -20 ;;
   containers) docker ps --format '{{.Names}} {{.Status}}' ;;
   pins) cat /opt/fifth-element/.local/kits/pins/prod.json ;;
-  *) echo 'fifth-diag: команды: sha, subject, date, dirty, containers, pins' >&2; exit 2 ;;
+  zabbix-openbao) cd /opt/fifth-element && node scripts/monitoring.mjs openbao-status ;;
+  *) echo 'fifth-diag: команды: sha, subject, date, dirty, containers, pins, zabbix-openbao' >&2; exit 2 ;;
 esac

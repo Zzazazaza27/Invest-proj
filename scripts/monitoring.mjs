@@ -6,6 +6,7 @@
  *                                          Telegram, повторы тревог, хранение истории
  *   node scripts/monitoring.mjs status      открытые проблемы и свежесть данных
  *   node scripts/monitoring.mjs control-init  контрольный файл и запись для контрольной операции (M153)
+ *   node scripts/monitoring.mjs openbao-status  есть ли элемент и триггер OpenBao, свежо ли значение
  *
  * Идемпотентно: повторный запуск обновляет, а не дублирует. Пороги — таблица
  * 8.2 («начальные настройки для испытания»); числа собраны в THRESHOLDS ниже,
@@ -1327,9 +1328,34 @@ async function controlInit() {
   console.log(`контрольный объект заведён: ${key}, ${body.length} байт`);
 }
 
-const commands = { configure, status, 'control-init': controlInit };
+/** Подтверждение наблюдения за OpenBao: элемент, триггер, свежее значение. Настройку не меняет. */
+async function openbaoStatus() {
+  await login();
+  const item = (await peek(api, HOST)).find((i) => i.name.startsWith('OpenBao: работает'));
+  const [trig] = await api.call('trigger.get', {
+    host: HOST,
+    output: ['status', 'value'],
+    filter: { description: 'OpenBao запечатан или недоступен' },
+  });
+  console.log(item ? `элемент: ${item.ageSec ?? '—'} с, значение ${item.value}` : 'элемента нет');
+  console.log(
+    trig
+      ? `триггер: включён ${trig.status === '0'}, тревога ${trig.value === '1'}`
+      : 'триггера нет',
+  );
+  if (!item || !trig || item.unsupported || item.ageSec === null || item.ageSec > 300) {
+    process.exitCode = 1;
+  }
+}
+
+const commands = {
+  configure,
+  status,
+  'control-init': controlInit,
+  'openbao-status': openbaoStatus,
+};
 if (!commands[command]) {
-  console.error('команды: configure, status, control-init');
+  console.error('команды: configure, status, control-init, openbao-status');
   process.exit(2);
 }
 try {

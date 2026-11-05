@@ -32,7 +32,7 @@ initialized() {
 # Ждёт, пока `bao status` вернёт один из кодов: 0 открыт, 2 запечатан или не инициализирован.
 wait_status() {
   local rc try
-  for try in $(seq 1 30); do
+  for try in $(seq 1 "${FIFTH_OPENBAO_WAIT:-30}"); do
     rc=0
     bao status >/dev/null 2>&1 || rc=$?
     for want in "$@"; do [ "$rc" = "$want" ] && return 0; done
@@ -190,6 +190,8 @@ case "${1:-}" in
     bash "$0" start
     wait_status 0 2
     bootstrap
+    # meta.json говорит только о прошлой установке: успех — это открытый OpenBao сейчас.
+    wait_status 0
     cp "$HERE"/../systemd/fifth-monitor-openbao.* /etc/systemd/system/
     systemctl daemon-reload
     systemctl enable --now fifth-monitor-openbao.timer
