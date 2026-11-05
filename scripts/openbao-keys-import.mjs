@@ -131,7 +131,15 @@ async function environmentAccess(call, token, prefix) {
 function agentConfig(prefix, names) {
   const base = readFileSync(join(ROOT, 'infra', 'openbao', 'agent-core.hcl'), 'utf8');
   const head = base.slice(0, base.indexOf('template {'));
-  return `${head.replace('address = "https://127.0.0.1:8200"', 'address = "https://fifth-openbao:8200"\n  tls_server_name = "localhost"')}${agentTemplates(prefix, names)}`;
+  // Рабочая среда на сети узла, тестовая — в своей сети Docker.
+  const address =
+    prefix === 'prod'
+      ? head
+      : head.replace(
+          'address = "https://127.0.0.1:8200"',
+          'address = "https://fifth-openbao:8200"\n  tls_server_name = "localhost"',
+        );
+  return `${address}${agentTemplates(prefix, names)}`;
 }
 
 function parsed(text) {
@@ -259,18 +267,24 @@ try {
         policy: readFileSync(join(ROOT, 'infra', 'openbao', 'policy-prod-rotate.hcl'), 'utf8'),
       },
     }),
-    access: option('--agent-dir') ? await environmentAccess(call, token, prefix) : null,
+    // У рабочей среды роль и SecretID заведены установкой: нужна только настройка Agent.
+    access:
+      option('--agent-dir') && prefix !== 'prod'
+        ? await environmentAccess(call, token, prefix)
+        : null,
   }));
   for (const { name, action } of report) console.log(`${name}: ${action}`);
   console.log(`KV: записано ${stored.written}, уже на месте ${stored.same}`);
   if (option('--agent-out')) {
     writeFileSync(resolve(option('--agent-out')), agentTemplates(prefix, Object.keys(secrets)));
   }
-  if (access) {
+  if (option('--agent-dir')) {
     const dir = resolve(option('--agent-dir'));
-    writeFileSync(join(dir, 'role-id'), access.roleId);
-    writeFileSync(join(dir, 'secret-id'), access.secretId);
-    writeFileSync(join(dir, 'rotate-token'), access.rotateToken);
+    if (access) {
+      writeFileSync(join(dir, 'role-id'), access.roleId);
+      writeFileSync(join(dir, 'secret-id'), access.secretId);
+      writeFileSync(join(dir, 'rotate-token'), access.rotateToken);
+    }
     writeFileSync(join(dir, 'agent.hcl'), agentConfig(prefix, Object.keys(secrets)));
   }
   console.log('ключи и секреты совпали с комплектом, токен отозван');

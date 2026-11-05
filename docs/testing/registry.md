@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 201; требований: 41
+- Проверок: 202; требований: 41
 
 ## Что защищено без участия человека
 
@@ -306,6 +306,7 @@
 | TOOL-OPENBAO-KEYS-IMPORT | `node scripts/openbao-keys-import.mjs` | 0 | вручную, по поводу | — |
 | TOOL-CRYPTO-MIGRATE | `node scripts/crypto-migrate.mjs verify` | 0 | вручную, по поводу | — |
 | TOOL-TEST-PROBE | `node scripts/test-probe.mjs` | 0 | вручную, по поводу | — |
+| TOOL-PROD-TRANSITION | `node scripts/prod-transition.mjs` | 0 | вручную, по поводу | — |
 | TOOL-PROBE-TRANSIT-LOGIN | `node scripts/probe-transit-login.mjs` | 0 | вручную, по поводу | — |
 | TOOL-SEED-ACCEPTANCE | `node scripts/seed-acceptance.mjs` | 0 | вручную, по поводу | — |
 | TOOL-RUN-SUITE | `npm run suite:handoff` | 0 | вручную, по поводу | — |

@@ -1722,6 +1722,22 @@ checks:
     purpose: 'Проба перехода на Transit и возврата на test-1 одной командой.'
     confirmation: reviewed-in-code
 
+  - id: TOOL-PROD-TRANSITION
+    file: scripts/prod-transition.mjs
+    command: node scripts/prod-transition.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    studied: code
+    studiedOn: 2026-11-05
+    effects: ['переводит рабочую среду на kms/legacy, запускает Томас']
+    note: >-
+      Блок 5, задание 5. Шаги 1–2 перехода рабочей среды, запускает Томас.
+    purpose: 'Переход рабочей среды на OpenBao в режиме kms/legacy.'
+    confirmation: reviewed-in-code
+
   - id: TOOL-PROBE-TRANSIT-LOGIN
     file: scripts/probe-transit-login.mjs
     command: node scripts/probe-transit-login.mjs
