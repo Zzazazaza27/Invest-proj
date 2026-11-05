@@ -66,10 +66,11 @@ say 'настройки production'
 cp -p "$DIR/settings.env" "$WORK/settings.tls-before"
 sed -i -e '/^NODE_ENV=/d' -e '/^CORE_PUBLIC_URL=/d' -e '/^PUBLIC_BASE_URL=/d' -e '/^CORS_ALLOWED_ORIGINS=/d' \
   -e '/^SESSION_COOKIE_NAME=/d' -e '/^CSRF_COOKIE_NAME=/d' -e '/^REDIS_URL=/d' -e '/^NATS_URL=/d' \
-  -e '/^WEBHOOK_DELIVERY_MODE=/d' -e '/^TESTING_SESSIONS_ENABLED=/d' "$DIR/settings.env"
+  -e '/^WEBHOOK_DELIVERY_MODE=/d' -e '/^TESTING_SESSIONS_ENABLED=/d' -e '/^S3_ENDPOINT=/d' "$DIR/settings.env"
 cat >>"$DIR/settings.env" <<EOF
 NODE_ENV=production
 NODE_EXTRA_CA_CERTS=/internal-ca.crt
+S3_ENDPOINT=http://127.0.0.1:9000
 DATABASE_SSL=true
 REDIS_URL=rediss://valkey:6379
 NATS_URL=tls://nats:4222
@@ -82,6 +83,10 @@ WEBHOOK_DELIVERY_MODE=live
 INTEGRATION_CLIENT_CERT_HEADER=X-Client-Cert-Fingerprint
 EOF
 tcompose up -d --force-recreate --no-deps core >/dev/null 2>&1
+# На рабочей среде хранилище на петле узла. Здесь ядро в своей сети: то же даёт связка в его сети.
+docker rm -f "$PROJECT-s3-link" >/dev/null 2>&1 || true
+docker run -d --name "$PROJECT-s3-link" --network "container:$PROJECT-core" --entrypoint node \
+  "fifth/core:$BUILD" -e "require('net').createServer((c)=>{const s=require('net').connect(3900,'garage-1');c.pipe(s).pipe(c);c.on('error',()=>s.destroy());s.on('error',()=>c.destroy())}).listen(9000,'127.0.0.1')" >/dev/null
 ready
 for _ in $(seq 1 45); do
   [ "$(curl -s -o /dev/null -w '%{http_code}' "$PROBE_URL_ENV/v1/auth/me")" != 502 ] && break
@@ -102,6 +107,7 @@ const c=tls.connect({host:'valkey',port:6379,servername:'valkey',rejectUnauthori
 c.on('error',(e)=>{console.log('без нашего CA соединение отвергнуто:',e.code);process.exit(0)});"
 
 say 'возврат test-1 в прежний режим'
+docker rm -f "$PROJECT-s3-link" >/dev/null 2>&1 || true
 cp -p "$WORK/settings.tls-before" "$DIR/settings.env"
 chmod 644 "$DIR/secrets/valkey.conf" "$DIR/secrets/nats.conf"
 cp "$WORK/valkey.conf.before" "$DIR/secrets/valkey.conf"
