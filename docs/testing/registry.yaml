@@ -2929,7 +2929,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 9
+    asserts: 11
     needs: []
     effects: ['временный каталог']
     studied: code
@@ -2938,6 +2938,23 @@ checks:
       Перенос и возврат, чтение служебными скриптами, значения для комплекта ключей, отказ при
       значении рядом с файлом.
     purpose: 'Перенос секретов не теряет значений и не печатает их.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
+  - id: CHK-HOST-ACCESS
+    file: scripts/check-host-access.mjs
+    command: node scripts/check-host-access.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 13
+    needs: []
+    effects: ['временный каталог']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, шаг 3.0.
+    purpose: 'Обёртки maus не выводят за каталог копий.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
@@ -4182,6 +4199,7 @@ blocks:
     members:
       [
         CHK-SECRETS-TO-FILES,
+        CHK-HOST-ACCESS,
         CHK-PROD-COMPOSE,
         CHK-RELEASE-PINS,
         CHK-RELEASE,

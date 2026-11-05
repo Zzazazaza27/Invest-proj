@@ -110,15 +110,17 @@ if (
 ) {
   args.push('-f', composeFile(PROD_PATH));
 }
-if (logDriver === 'journald') args.push('-f', composeFile(JOURNALD_PATH));
+if (logDriver === 'journald') {
+  args.push('-f', composeFile(JOURNALD_PATH));
+} else if (logDriver) {
+  console.error(`infra: DOCKER_LOG_DRIVER=${logDriver} — допустимо только journald или пусто`);
+  process.exit(2);
+}
 // Секреты в файлах: значения для подстановки в Compose — только в памяти процесса. Файл с
 // каталогом берётся из репозитория: он работает и с файлами запуска прежнего комплекта.
 if (existsSync(ENV_PATH) && /^FIFTH_SECRETS_DIR=./m.test(readFileSync(ENV_PATH, 'utf8'))) {
   args.push('-f', SECRETS_PATH);
   for (const [k, v] of Object.entries(parseEnvFile(ENV_PATH))) process.env[k] ??= v;
-} else if (logDriver) {
-  console.error(`infra: DOCKER_LOG_DRIVER=${logDriver} — допустимо только journald или пусто`);
-  process.exit(2);
 }
 
 args.push(...tail, ...rest);

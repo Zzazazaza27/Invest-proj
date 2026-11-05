@@ -1,0 +1,86 @@
+#!/usr/bin/node
+'use strict';
+/*
+ * Чтение резервных копий для учётки maus (блок 5, шаг 3.0). Запускается через sudo.
+ *
+ *   fifth-backup-read latest          имя последнего готового комплекта
+ *   fifth-backup-read has <комплект>  имя, если комплект готов
+ *   fifth-backup-read catalog <комплект>
+ *   fifth-backup-read tar <комплект>  поток tar: только файлы описи комплекта
+ *
+ * Пути снаружи не принимаются: список файлов берётся из описи комплекта и проверяется.
+ * Каталог задаётся переменной только для проверок без root.
+ */
+const { spawn } = require('node:child_process');
+const fs = require('node:fs');
+const path = require('node:path');
+
+const isRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+const ROOT = fs.realpathSync(
+  isRoot ? '/var/backups/fifth-element' : process.env.FIFTH_BACKUP_READ_ROOT || '.',
+);
+const TAR = isRoot ? '/usr/bin/tar' : 'tar';
+const SET_ID = /^[0-9TZ]+-[0-9a-f]+$/;
+
+function fail(message) {
+  console.error(`fifth-backup-read: ${message}`);
+  process.exit(2);
+}
+
+function readySet(id) {
+  if (typeof id !== 'string' || !SET_ID.test(id)) fail('неверное имя комплекта');
+  const ready = path.join(ROOT, 'sets', id, 'READY');
+  if (!fs.existsSync(ready)) fail('комплект не готов');
+  return id;
+}
+
+function catalogOf(id) {
+  return JSON.parse(fs.readFileSync(path.join(ROOT, 'sets', id, 'catalog.json'), 'utf8'));
+}
+
+function checked(rel) {
+  if (typeof rel !== 'string' || !rel || rel.includes('\0')) fail('неверный путь в описи');
+  if (path.isAbsolute(rel) || rel.split(/[\\/]/).includes('..')) fail(`путь вне копий: ${rel}`);
+  const full = path.join(ROOT, rel);
+  const stat = fs.lstatSync(full, { throwIfNoEntry: false });
+  if (!stat || !stat.isFile()) fail(`не обычный файл: ${rel}`);
+  const real = fs.realpathSync(full);
+  if (!real.startsWith(ROOT + path.sep)) fail(`путь вне копий: ${rel}`);
+  return rel;
+}
+
+const [command, id, ...extra] = process.argv.slice(2);
+if (extra.length) fail('лишние аргументы');
+
+if (command === 'latest') {
+  if (id !== undefined) fail('лишние аргументы');
+  const sets = path.join(ROOT, 'sets');
+  const found = fs
+    .readdirSync(sets)
+    .filter((s) => SET_ID.test(s) && fs.existsSync(path.join(sets, s, 'READY')))
+    .sort()
+    .pop();
+  if (found) console.log(found);
+} else if (command === 'has') {
+  console.log(readySet(id));
+} else if (command === 'catalog') {
+  process.stdout.write(fs.readFileSync(path.join(ROOT, 'sets', readySet(id), 'catalog.json')));
+} else if (command === 'tar') {
+  readySet(id);
+  const catalog = catalogOf(id);
+  if (catalog.id !== id || !Array.isArray(catalog.manifest)) fail('опись не от этого комплекта');
+  const files = [
+    ...catalog.manifest.map((m) => m.path),
+    `sets/${id}/catalog.json`,
+    `sets/${id}/READY`,
+  ].map(checked);
+  const tar = spawn(
+    TAR,
+    ['--no-recursion', '--verbatim-files-from', '--null', '-cf', '-', '-T', '-'],
+    { cwd: ROOT, stdio: ['pipe', 'inherit', 'inherit'] },
+  );
+  tar.stdin.end(files.join('\0') + '\0');
+  tar.on('close', (code) => process.exit(code === null ? 1 : code));
+} else {
+  fail('команды: latest, has, catalog, tar');
+}

@@ -1,0 +1,2 @@
+# Права maus: только защищённые обёртки. Аргументы проверяют сами обёртки.
+maus ALL=(root) NOPASSWD: /usr/local/sbin/fifth-backup-read, /usr/local/sbin/fifth-diag

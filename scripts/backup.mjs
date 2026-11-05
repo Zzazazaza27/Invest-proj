@@ -85,7 +85,6 @@ const option = (name) => {
 
 const VPS = 'maus@193.233.217.210';
 const VPS_KEY = join(process.env.USERPROFILE || process.env.HOME || '', '.ssh', 'maus_5e');
-const VPS_BACKUP_DIR = '/var/backups/fifth-element';
 
 // ------------------------------------------------------------ init-secrets
 
@@ -936,29 +935,24 @@ async function pull() {
       copyFileSync(join(src, p), join(dest, id, p));
     }
   } else {
+    // На сервере maus: только обёртка, список файлов она берёт из описи сама.
+    const READ = 'sudo -n /usr/local/sbin/fifth-backup-read';
     const ssh = (cmd) =>
-      execFileSync('ssh', ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `sudo -n sh -c '${cmd}'`], {
+      execFileSync('ssh', ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `${READ} ${cmd}`], {
         encoding: 'utf8',
       });
     const wanted = option('--set');
     if (wanted && !/^[0-9TZ]+-[0-9a-f]+$/.test(wanted)) throw new Error('неверный --set');
-    id = ssh(
-      wanted
-        ? `[ -f ${VPS_BACKUP_DIR}/sets/${wanted}/READY ] && echo ${wanted}`
-        : `cd ${VPS_BACKUP_DIR}/sets && for d in *; do [ -f "$d/READY" ] && echo "$d"; done | sort | tail -1`,
-    ).trim();
+    id = ssh(wanted ? `has ${wanted}` : 'latest').trim();
     if (!id) throw new Error('на сервере пригодного комплекта нет');
-    catalog = JSON.parse(ssh(`cat ${VPS_BACKUP_DIR}/sets/${id}/catalog.json`));
+    catalog = JSON.parse(ssh(`catalog ${id}`));
     if (!catalog.manifest || !catalog.db.meta) {
       throw new Error(`у комплекта ${id} нет описи или снимка сводок (старый формат)`);
     }
     mkdirSync(join(dest, id), { recursive: true });
-    // Список файлов — на вход tar по ssh; поток — прямо в распаковку.
-    const remote = spawn(
-      'ssh',
-      ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `sudo -n tar -C ${VPS_BACKUP_DIR} -cf - -T -`],
-      { stdio: ['pipe', 'pipe', 'inherit'] },
-    );
+    const remote = spawn('ssh', ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `${READ} tar ${id}`], {
+      stdio: ['ignore', 'pipe', 'inherit'],
+    });
     // Каталог — рабочей папкой, не аргументом -C: GNU tar из Git для Windows
     // принимает «D:\…» за адрес удалённой машины.
     const local = spawn('tar', ['-xf', '-'], {
@@ -969,7 +963,6 @@ async function pull() {
     local.on('close', (code) => {
       if (code !== 0) remote.kill();
     });
-    remote.stdin.end(parts(catalog).join('\n') + '\n');
     remote.stdout.pipe(local.stdin);
     const codes = await Promise.all(
       [remote, local].map((p) => new Promise((r) => p.on('close', r))),

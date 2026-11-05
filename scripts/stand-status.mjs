@@ -24,14 +24,14 @@ const DRY = process.argv.includes('--dry-run');
 
 const HOST = 'maus@193.233.217.210';
 const KEY = resolve(homedir(), '.ssh', 'maus_5e');
-const APP_DIR = '/opt/fifth-element';
+const DIAG = 'sudo -n /usr/local/sbin/fifth-diag';
 const PUBLIC_URL = process.env.STAND_PUBLIC_URL ?? 'https://5espace.com';
 
 /** Команда на сервере. Пустая строка вместо падения: недоступный стенд — тоже факт. */
 function onServer(cmd) {
   try {
     return execSync(
-      `ssh -i "${KEY}" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 ${HOST} sudo -n sh -s`,
+      `ssh -i "${KEY}" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 ${HOST} sh -s`,
       { encoding: 'utf8', input: cmd, stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim();
   } catch {
@@ -43,16 +43,16 @@ const local = (cmd) => execSync(cmd, { encoding: 'utf8', cwd: ROOT }).trim();
 
 console.warn('Снимаю состояние стенда…');
 
-const serverSha = onServer(`cd ${APP_DIR} && git rev-parse --short HEAD`);
+const serverSha = onServer(`${DIAG} sha`);
 const online = serverSha !== '';
 
-const serverSubject = online ? onServer(`cd ${APP_DIR} && git log -1 --pretty=%s`) : '';
-const serverDate = online ? onServer(`cd ${APP_DIR} && git log -1 --date=short --pretty=%ad`) : '';
-const serverDirty = online ? onServer(`cd ${APP_DIR} && git status --porcelain | head -20`) : '';
+const serverSubject = online ? onServer(`${DIAG} subject`) : '';
+const serverDate = online ? onServer(`${DIAG} date`) : '';
+const serverDirty = online ? onServer(`${DIAG} dirty`) : '';
 const services = online
   ? onServer("systemctl is-active unicorn-core caddy 2>/dev/null | paste -sd' '")
   : '';
-const containers = online ? onServer("docker ps --format '{{.Names}} {{.Status}}' | head -8") : '';
+const containers = online ? onServer(`${DIAG} containers | head -8`) : '';
 const health = online ? onServer(`curl -s -m 10 ${PUBLIC_URL}/v1/health`) : '';
 const uptime = online ? onServer('uptime -p 2>/dev/null || uptime') : '';
 

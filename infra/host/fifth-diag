@@ -1,0 +1,16 @@
+#!/bin/bash
+# Диагностика для учётки maus (блок 5, шаг 3.0). Запускается через sudo.
+# Только постоянные команды: аргументы не передаются дальше, значения окружения не читаются.
+set -u
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+[ "$#" -eq 1 ] || { echo 'fifth-diag: нужна одна команда' >&2; exit 2; }
+g() { git -c safe.directory=/opt/fifth-element -C /opt/fifth-element "$@"; }
+case "$1" in
+  sha) g rev-parse --short HEAD ;;
+  subject) g log -1 --pretty=%s ;;
+  date) g log -1 --date=short --pretty=%ad ;;
+  dirty) g status --porcelain | head -20 ;;
+  containers) docker ps --format '{{.Names}} {{.Status}}' ;;
+  pins) cat /opt/fifth-element/.local/kits/pins/prod.json ;;
+  *) echo 'fifth-diag: команды: sha, subject, date, dirty, containers, pins' >&2; exit 2 ;;
+esac

@@ -121,3 +121,35 @@
 
 11. Смени раскрытый пароль root через KeePassXC, когда он будет готов. Пароль остаётся только для
     аварийной консоли.
+
+## Шаг 3.0. Сужение прав
+
+Выполняет Томас под `thomas`. Запасной вход на случай ошибки — консоль VNC под root.
+
+1. Задай пароль `thomas` и сохрани его в KeePassXC:
+
+   ```bash
+   sudo passwd thomas
+   ```
+
+2. Примени настройку:
+
+   ```bash
+   sudo bash /opt/fifth-element/infra/host/apply-access-narrowing.sh
+   ```
+
+3. В новой сессии проверь `sudo true`: должен спросить пароль.
+
+После этого у `maus` только `fifth-backup-read` и `fifth-diag`, журнал и обычные права. Выпуск и другие
+изменения сервера выполняет Томас. Разовые права Маусу — отдельным файлом на время задания:
+
+```bash
+echo 'maus ALL=(ALL) NOPASSWD:ALL' | sudo tee /etc/sudoers.d/91-maus-task
+```
+
+```bash
+sudo rm /etc/sudoers.d/91-maus-task
+```
+
+Когда на VPS появится Static seal key, разовые полные права Маусу больше не выдаются: они дают доступ к
+ключу.

@@ -75,6 +75,14 @@ try {
   const backed = tool('back', '--env', env);
   check('возврат прошёл', backed.status === 0);
   check('значения вернулись', parseEnvFile(env).POSTGRES_PASSWORD === before.POSTGRES_PASSWORD);
+  const driver = (value) =>
+    spawnSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'infra.mjs'), 'compose', 'config', '--services'],
+      { encoding: 'utf8', env: { ...process.env, DOCKER_LOG_DRIVER: value } },
+    ).status;
+  check('journald без файлов секретов принимается', driver('journald') === 0);
+  check('другой драйвер журналов — отказ', driver('json-file') === 2);
 } finally {
   rmSync(dir, { recursive: true, force: true });
 }
