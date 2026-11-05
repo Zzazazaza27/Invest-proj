@@ -9,7 +9,14 @@
  * формат `iv || tag || ciphertext` с AAD.
  */
 import { spawnSync } from 'node:child_process';
-import { constants, createCipheriv, createHmac, publicEncrypt, randomBytes } from 'node:crypto';
+import {
+  constants,
+  createCipheriv,
+  createHmac,
+  publicEncrypt,
+  randomBytes,
+  timingSafeEqual,
+} from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
@@ -30,6 +37,11 @@ const check = (name, ok, details = '') => {
 const docker = (...args) => spawnSync('docker', args, { encoding: 'utf8' });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const b64 = (x) => Buffer.from(x).toString('base64');
+const sameHmac = (response, local) => {
+  const a = Buffer.from(String(response.json.data?.hmac));
+  const b = Buffer.from(`vault:v1:${local}`);
+  return a.length === b.length && timingSafeEqual(a, b);
+};
 
 let ca;
 function api(method, path, { token, body, verify = true } = {}) {
@@ -251,7 +263,7 @@ try {
     token: root,
     body: { input: b64(value) },
   });
-  check('HMAC в точности совпал с локальным', remote.json.data?.hmac === `vault:v1:${local}`);
+  check('HMAC в точности совпал с локальным', sameHmac(remote, local));
 
   const kek = randomBytes(32);
   const aesImport = await importKey(root, 'prod-passport-sensitive', 'aes256-gcm96', kek);
@@ -367,7 +379,7 @@ path "kv/data/prod/core/*" { capabilities = ["read"] }`,
     token: root,
     body: { input: b64(value) },
   });
-  check('после перезапуска HMAC тот же', after.json.data?.hmac === `vault:v1:${local}`);
+  check('после перезапуска HMAC тот же', sameHmac(after, local));
 
   await api('POST', 'auth/token/revoke-self', { token: root });
   const dead = await api('GET', 'sys/mounts', { token: root });
