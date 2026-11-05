@@ -53,7 +53,6 @@ https://:18443 {
 		}
 	}
 	reverse_proxy web:80 {
-		header_up -X-Client-Cert-Fingerprint
 		header_up X-Client-Cert-Fingerprint {http.request.tls.client.fingerprint}
 		header_up X-Real-IP {remote_host}
 		header_up X-Forwarded-Proto {scheme}
@@ -71,7 +70,7 @@ none="$(post)"
 spoof="$(post -H "X-Client-Cert-Fingerprint: $fingerprint")"
 good="$(post --cert "$M/client.crt" --key "$M/client.key")"
 echo "без сертификата: $none, с подложным заголовком: $spoof, с сертификатом: $good"
-if [ "$none" = 200 ] || [ "$spoof" = 200 ] || [ "$good" != 200 ]; then
+if [ "$none" != 401 ] || [ "$spoof" != 401 ] || [ "$good" != 201 ]; then
   echo 'mTLS работает неверно'
   cut -c1-200 "$M/answer"
   echo
