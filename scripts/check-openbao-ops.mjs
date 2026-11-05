@@ -316,6 +316,8 @@ try {
   const copyRole = await api('POST', 'auth/approle/login', {
     body: {
       role_id: readFileSync(join(dir, 'approle', 'prod-backup', 'role-id'), 'utf8').trim(),
+      // Значение читается из файла, в коде его нет.
+      // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
       secret_id: readFileSync(join(dir, 'approle', 'prod-backup', 'secret-id'), 'utf8').trim(),
     },
   });
