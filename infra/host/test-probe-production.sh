@@ -24,7 +24,7 @@ pg() {
 }
 docker cp "$TLS/server.crt" "$PROJECT-postgres:/var/lib/postgresql/data/server.crt"
 docker cp "$TLS/server.key" "$PROJECT-postgres:/var/lib/postgresql/data/server.key"
-docker exec "$PROJECT-postgres" sh -c \
+docker exec -u 0 "$PROJECT-postgres" sh -c \
   'cd /var/lib/postgresql/data && chown postgres server.crt server.key && chmod 600 server.key'
 pg "ALTER SYSTEM SET ssl = on" >/dev/null
 pg "SELECT pg_reload_conf()" >/dev/null
