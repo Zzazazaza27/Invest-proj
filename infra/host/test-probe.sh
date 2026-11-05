@@ -105,21 +105,25 @@ mkdir "$WORK/agent"
 laptop import | tar -x -C "$WORK/agent"
 
 say 'Agent'
-docker volume create --driver local --opt type=tmpfs --opt device=tmpfs \
-  --opt "o=size=8m,mode=0770,uid=1990,gid=1000" "$VOLUME" >/dev/null
 docker network connect "$NET" fifth-openbao
 chown -R 1990:1000 "$WORK/agent"
 chmod 750 "$WORK" "$WORK/agent"
-docker run -d --name "$AGENT" --network "$NET" --user 1990:1000 \
-  -v "$WORK/agent:/agent:ro" -v /etc/fifth-openbao/tls/tls.crt:/openbao/tls/tls.crt:ro \
-  -v "$VOLUME:/run/fifth-secrets" "$(sed -n 's/.*image: \(openbao.*\)$/\1/p' infra/openbao/docker-compose.yml | head -1)" \
-  agent -config=/agent/agent.hcl >/dev/null
-for _ in $(seq 1 30); do
-  docker exec "$AGENT" test -s /run/fifth-secrets/openbao-token \
-    -a -s /run/fifth-secrets/POSTGRES_PASSWORD && break
-  sleep 1
-done
-docker exec "$AGENT" test -s /run/fifth-secrets/POSTGRES_PASSWORD
+agent_up() {
+  docker volume create --driver local --opt type=tmpfs --opt device=tmpfs \
+    --opt "o=size=8m,mode=0770,uid=1990,gid=1000" "$VOLUME" >/dev/null
+  docker run -d --name "$AGENT" --network "$NET" --user 1990:1000 \
+    -v "$WORK/agent:/agent:ro" -v /etc/fifth-openbao/tls/tls.crt:/openbao/tls/tls.crt:ro \
+    -v "$VOLUME:/run/fifth-secrets" \
+    "$(sed -n 's/.*image: \(openbao.*\)$/\1/p' infra/openbao/docker-compose.yml | head -1)" \
+    agent -config=/agent/agent.hcl >/dev/null
+  for _ in $(seq 1 30); do
+    docker exec "$AGENT" test -s /run/fifth-secrets/openbao-token \
+      -a -s /run/fifth-secrets/POSTGRES_PASSWORD && break
+    sleep 1
+  done
+  docker exec "$AGENT" test -s /run/fifth-secrets/POSTGRES_PASSWORD
+}
+agent_up
 
 say 'ядро: kms, запись прежним форматом'
 cp -p "$DIR/settings.env" "$WORK/settings.before"
@@ -135,7 +139,8 @@ EOF
 cat >"$DIR/compose.agent.yml" <<EOF
 services:
   core:
-    volumes:
+    # Прежний каталог с KEK ядру не подключается: только файлы Agent.
+    volumes: !override
       - $VOLUME:/run/fifth-secrets:ro
       - /etc/fifth-openbao/tls/tls.crt:/openbao-ca.crt:ro
 volumes:
@@ -143,6 +148,20 @@ volumes:
     external: true
 EOF
 compose -f "$DIR/compose.agent.yml" up -d --force-recreate --no-deps core
+ready
+if docker exec "$PROJECT-core" sh -c 'ls /run/secrets 2>/dev/null | grep -q .'; then
+  echo 'ядру виден прежний каталог секретов'
+  false
+fi
+echo 'прежний каталог с KEK ядру не виден'
+login_check login "$USERS"
+
+say 'пересоздание каталога в памяти'
+compose stop core >/dev/null 2>&1
+docker rm -f "$AGENT" >/dev/null
+docker volume rm -f "$VOLUME" >/dev/null
+agent_up
+compose -f "$DIR/compose.agent.yml" up -d --force-recreate --no-deps core >/dev/null 2>&1
 ready
 login_check login "$USERS"
 login_check register "$USERS" kms-mode
