@@ -3,6 +3,7 @@
 # рабочая среда и её ключи не затрагиваются. Запускается из scripts/test-probe.mjs через туннель:
 # ноутбук отдаёт комплект и принимает значения по $PROBE_URL, расшифровка — только на ноутбуке.
 set -Eeuo pipefail
+export PATH=/usr/local/sbin:$PATH
 BUILD="$1"
 ROOT=/opt/fifth-element
 ID=test-1
