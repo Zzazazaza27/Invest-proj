@@ -22,8 +22,8 @@ const ROOT = resolve(import.meta.dirname, '..');
 const OUT = resolve(ROOT, 'docs/runbooks/stands-status.md');
 const DRY = process.argv.includes('--dry-run');
 
-const HOST = 'root@193.233.217.210';
-const KEY = resolve(homedir(), '.ssh', 'launchbridge_ed25519');
+const HOST = 'maus@193.233.217.210';
+const KEY = resolve(homedir(), '.ssh', 'maus_5e');
 const APP_DIR = '/opt/fifth-element';
 const PUBLIC_URL = process.env.STAND_PUBLIC_URL ?? 'https://5espace.com';
 
@@ -31,8 +31,8 @@ const PUBLIC_URL = process.env.STAND_PUBLIC_URL ?? 'https://5espace.com';
 function onServer(cmd) {
   try {
     return execSync(
-      `ssh -i "${KEY}" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 ${HOST} "${cmd}"`,
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      `ssh -i "${KEY}" -o IdentitiesOnly=yes -o BatchMode=yes -o ConnectTimeout=20 ${HOST} sudo -n sh -s`,
+      { encoding: 'utf8', input: cmd, stdio: ['pipe', 'pipe', 'pipe'] },
     ).trim();
   } catch {
     return '';

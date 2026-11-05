@@ -83,12 +83,8 @@ const option = (name) => {
   return i >= 0 ? rest[i + 1] : undefined;
 };
 
-const VPS = 'root@193.233.217.210';
-const VPS_KEY = join(
-  process.env.USERPROFILE || process.env.HOME || '',
-  '.ssh',
-  'launchbridge_ed25519',
-);
+const VPS = 'maus@193.233.217.210';
+const VPS_KEY = join(process.env.USERPROFILE || process.env.HOME || '', '.ssh', 'maus_5e');
 const VPS_BACKUP_DIR = '/var/backups/fifth-element';
 
 // ------------------------------------------------------------ init-secrets
@@ -941,7 +937,9 @@ async function pull() {
     }
   } else {
     const ssh = (cmd) =>
-      execFileSync('ssh', ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, cmd], { encoding: 'utf8' });
+      execFileSync('ssh', ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `sudo -n sh -c '${cmd}'`], {
+        encoding: 'utf8',
+      });
     const wanted = option('--set');
     if (wanted && !/^[0-9TZ]+-[0-9a-f]+$/.test(wanted)) throw new Error('неверный --set');
     id = ssh(
@@ -958,7 +956,7 @@ async function pull() {
     // Список файлов — на вход tar по ssh; поток — прямо в распаковку.
     const remote = spawn(
       'ssh',
-      ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `tar -C ${VPS_BACKUP_DIR} -cf - -T -`],
+      ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `sudo -n tar -C ${VPS_BACKUP_DIR} -cf - -T -`],
       { stdio: ['pipe', 'pipe', 'inherit'] },
     );
     // Каталог — рабочей папкой, не аргументом -C: GNU tar из Git для Windows
