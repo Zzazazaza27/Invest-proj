@@ -1,0 +1,75 @@
+{
+  "note": "Сняты с прежнего синхронного CryptoService. Ключи искусственные: sha256(\"fifth-vectors:<домен>\").",
+  "seal": {
+    "domain": "passport_sensitive",
+    "plain": "секрет",
+    "ciphertext": "aa1f84555d1f40b2c3eaa2280dce48d64434a55712c58d89c3497b5302c5321b03a18ade683d3732",
+    "wrappedDek": "368e15a02807aa5ab47ed781a89146569c504796e63eb09891cdecaf5914f8f2c20552c8cfbe5d0fce38dfa0fd9fca761d78e09dac085efb151c70bf"
+  },
+  "sealAad": {
+    "domain": "passport_sensitive",
+    "plain": "секрет с контекстом",
+    "aad": "row:42",
+    "ciphertext": "bbe8089304ac1d9f553bb5b69fb5f69056e95831ffa4173971fe68c00b5c30e8c43b09fa7edd2f131ebfc919e0c0c58c6a9c54e7b2cb8c81cfad7197c1b47051",
+    "wrappedDek": "2321c5217166e0ea6db18adc08c3f049f5858218113f9c805935a740780c05d9e626875f8864ea0509f1f5b807c79f5a1eb0671ab9930d31436d68f4"
+  },
+  "sealMany": {
+    "domain": "passport_sensitive",
+    "email": "User@Example.ru",
+    "ciphertext": "28ed27c9b6f347293f33e706f151942e295623a42ce63f7e2fe81631c2b2de4418be36c9987f70b88f86b4",
+    "phone": null,
+    "wrappedDek": "e11f2acc5727fc48c63127c4c8a9973b2a9d3cb84ee8b88abc495d9d1b682d2018fee112041a6f43f37d4ba78832fb0867e549e169a05ea222dd8e5c"
+  },
+  "kyb": {
+    "domain": "kyb_documents",
+    "inn": "7707083893",
+    "ogrn": "1027700132195",
+    "innCiphertext": "a7eaf357c89f7755f41454aa2edd6819006c8e9442ffb612fd1773d8f5fe7e2c91264060a43e",
+    "ogrnCiphertext": "465c072d3a211619afef2e2c35ad03a505b7064b76e44cb69b1359a000702f9fc7fe0529f68068bc56",
+    "wrappedDek": "9f794871970de77809db8c29e6886c005f983647a1ea87e0ac1f4e590e0d179337821b7fda8cc6f7c4a32b576c538f82daf6ec00078f8b1c2b13c566"
+  },
+  "direct": {
+    "domain": "webhook_secrets",
+    "plain": "секрет-вебхука",
+    "aad": "webhook:signing-secret",
+    "payload": "9687d5500415de3f1679bdfe8eb79baf334a710c48efbbf1b672246f328703c230b91ecf6d183fdadd110c486a3bcd117652a1264800d3"
+  },
+  "blindIndex": [
+    {
+      "value": "User@Example.RU",
+      "kind": "email",
+      "index": "24bdc5ef2f67a3a35fa23713f3adb90877620eddb9a8df9c70c81b6ebf46d70b"
+    },
+    {
+      "value": "  user@example.ru ",
+      "kind": "email",
+      "index": "24bdc5ef2f67a3a35fa23713f3adb90877620eddb9a8df9c70c81b6ebf46d70b"
+    },
+    {
+      "value": "+7 (999) 000-00-00",
+      "kind": "phone",
+      "index": "3c9c129e85453a47e4682c7400aa397e45e82d02b3f121ebb19b2ce58d24061b"
+    },
+    {
+      "value": "+79990000000",
+      "kind": "phone",
+      "index": "3c9c129e85453a47e4682c7400aa397e45e82d02b3f121ebb19b2ce58d24061b"
+    },
+    {
+      "value": "77-07-083893",
+      "kind": "inn",
+      "index": "a2f9f64807ee1f9396f1f6bcb425329300104bb0eaddfef3623b65cbbee73497"
+    },
+    {
+      "value": "7707083893",
+      "kind": "inn",
+      "index": "a2f9f64807ee1f9396f1f6bcb425329300104bb0eaddfef3623b65cbbee73497"
+    }
+  ],
+  "contextHash": [
+    {
+      "value": "trace-1",
+      "hash": "f0cc7660502530f23c13532e0b073e4c3db66edeff45ef37bbf4680c3b45bd98"
+    }
+  ]
+}

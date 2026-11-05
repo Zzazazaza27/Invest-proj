@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { BackgroundJobsService } from '../background/background-jobs.service';
 import { resultOf } from '../background/job';
 import { getEnv } from '../config/env';
-import { CryptoService } from '../crypto/crypto.service';
+import { CryptoService, isKmsUnavailable } from '../crypto/crypto.service';
 import { Database, type Tx } from '../db/unit-of-work';
 import { buildEnvelope, type OutboxRow } from './publisher.service';
 import { absoluteDeadlineMs, postPinned } from './pinned-fetch';
@@ -193,9 +193,9 @@ export class WebhookDeliveryService implements OnModuleInit {
       // не происходит (DNS rebinding, SEC-05).
       const allowedAddresses = await assertPublicDestination(item.url);
 
-      const secret = this.crypto
-        .openDirect('webhook_secrets', item.secret_ciphertext, WEBHOOK_SECRET_AAD)
-        .toString('utf8');
+      const secret = (
+        await this.crypto.openDirect('webhook_secrets', item.secret_ciphertext, WEBHOOK_SECRET_AAD)
+      ).toString('utf8');
 
       const response = await postPinned(item.url, {
         allowedAddresses,
@@ -220,6 +220,10 @@ export class WebhookDeliveryService implements OnModuleInit {
       await this.markFailed(traceId, item, `HTTP ${response.status}`, response.status);
       return false;
     } catch (error) {
+      if (isKmsUnavailable(error)) {
+        await this.postponeForKeys(traceId, item);
+        return false;
+      }
       await this.markFailed(
         traceId,
         item,
@@ -228,6 +232,22 @@ export class WebhookDeliveryService implements OnModuleInit {
       );
       return false;
     }
+  }
+
+  /**
+   * Служба ключей недоступна: получатель тут ни при чём, и попытка не расходуется. Иначе короткий
+   * отказ OpenBao исчерпал бы доставки, которые дошли бы через минуту.
+   */
+  private async postponeForKeys(traceId: string, item: DeliveryRow): Promise<void> {
+    await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
+      await tx.query(
+        `UPDATE integration.webhook_deliveries
+            SET status = 'failed', next_retry_at = now() + make_interval(secs => $2)
+          WHERE id = $1 AND locked_by = $3`,
+        [item.id, KEYS_RETRY_SECONDS, this.instanceId],
+      );
+    });
+    this.logger.warn({ msg: 'доставка отложена: служба ключей недоступна', deliveryId: item.id });
   }
 
   /**
@@ -347,6 +367,7 @@ export function deliveryLeaseSeconds(): number {
 const LEASE_MARGIN_SECONDS = 10;
 
 const MAX_ATTEMPTS = 8;
+const KEYS_RETRY_SECONDS = 60;
 const MAX_BACKOFF_SECONDS = 3600;
 
 interface DeliveryRow {

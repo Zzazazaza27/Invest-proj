@@ -61,8 +61,9 @@ export class VerificationService {
    */
   async requestPasswordReset(ctx: RequestContext, email: string): Promise<void> {
     this.assertMailAvailable();
-    const index = this.crypto.blindIndex(email, 'email');
+    const index = await this.crypto.blindIndex(email, 'email');
     const indexHex = index.toString('hex');
+    const traceHash = await this.crypto.contextHash(ctx.traceId);
 
     // Счётчик крутится ДО поиска пользователя — в том числе для несуществующих
     // адресов. Иначе «есть счётчик / нет счётчика» различало бы адреса.
@@ -78,7 +79,7 @@ export class VerificationService {
           index,
           token.sha256,
           getEnv().PASSWORD_RESET_TTL_SEC,
-          this.crypto.contextHash(ctx.traceId),
+          traceHash,
         ],
       );
       return rows[0]?.user_id ?? null;
@@ -149,7 +150,7 @@ export class VerificationService {
     this.assertMailAvailable();
     const email = await this.ownEmail(ctx);
     const allowed = await this.throttle.allow(
-      this.crypto.blindIndex(email, 'email').toString('hex'),
+      (await this.crypto.blindIndex(email, 'email')).toString('hex'),
     );
     if (!allowed) {
       // Здесь человек аутентифицирован и просит письмо себе: отказ ничего не
@@ -159,12 +160,13 @@ export class VerificationService {
 
     const token = this.newToken();
     const ttl = getEnv().EMAIL_VERIFY_TTL_SEC;
+    const traceHash = await this.crypto.contextHash(ctx.traceId);
     await this.db.transaction(ctx, async (tx) => {
       await tx.query('SELECT identity.issue_email_verification_token($1, $2, $3, $4)', [
         uuidv7(),
         token.sha256,
         ttl,
-        this.crypto.contextHash(ctx.traceId),
+        traceHash,
       ]);
       await this.audit.emit(tx, {
         verb: 'identity.email.verification_sent',
@@ -252,7 +254,7 @@ export class VerificationService {
   }
 
   private async ownEmail(ctx: RequestContext): Promise<string> {
-    return this.db.readOnly(ctx, async (tx) => {
+    const user = await this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<{
         email_ciphertext: Buffer | null;
         contact_wrapped_dek: Buffer | null;
@@ -265,10 +267,15 @@ export class VerificationService {
       if (!user?.email_ciphertext || !user.contact_wrapped_dek) {
         throw errors.validation([{ path: 'email', message: 'в аккаунте не указан адрес почты' }]);
       }
-      return this.crypto
-        .openField('passport_sensitive', user.contact_wrapped_dek, user.email_ciphertext, 'email')
-        .toString('utf8');
+      return { dek: user.contact_wrapped_dek, ciphertext: user.email_ciphertext };
     });
+    const email = await this.crypto.openField(
+      'passport_sensitive',
+      user.dek,
+      user.ciphertext,
+      'email',
+    );
+    return email.toString('utf8');
   }
 
   private letter(reason: string, link: string, ttlSeconds: number, footer: string): string {

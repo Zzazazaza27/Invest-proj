@@ -67,6 +67,13 @@ export interface SessionRow {
 }
 
 /** Состав стандартного сценария: с кем владелец проходит платформу. */
+interface SealedParticipant {
+  userId: string;
+  tag: string;
+  contact: { ciphertexts: { email: Buffer | null; phone: Buffer | null }; wrappedDek: Buffer };
+  emailIndex: Buffer;
+}
+
 const STANDARD_CAST = [
   { role: 'founder' as const, label: 'Основатель' },
   { role: 'investor' as const, label: 'Инвестор' },
@@ -132,6 +139,11 @@ export class TestingSessionsService {
     const runTokenHash = createHash('sha256').update(runToken, 'utf8').digest();
     const env = getEnv();
 
+    const sealedCast =
+      input.withStandardCast === false
+        ? []
+        : await Promise.all(STANDARD_CAST.map(() => this.sealParticipant()));
+
     await this.db.transaction(ctx, async (tx) => {
       await tx.query(
         `INSERT INTO testing.sessions
@@ -152,7 +164,14 @@ export class TestingSessionsService {
 
       if (input.withStandardCast !== false) {
         for (const member of STANDARD_CAST) {
-          await this.addParticipant(tx, ctx, sessionId, member.role, member.label);
+          await this.addParticipant(
+            tx,
+            ctx,
+            sessionId,
+            member.role,
+            member.label,
+            sealedCast.shift()!,
+          );
         }
       }
 
@@ -175,6 +194,22 @@ export class TestingSessionsService {
     return { id: sessionId, runToken };
   }
 
+  /** Контакт участника готовится до транзакции: она не ждёт службу ключей. */
+  private async sealParticipant(): Promise<SealedParticipant> {
+    const userId = randomUUID();
+    const tag = userId.slice(0, 8);
+    const email = `session-${tag}@test.invalid`;
+    // Домен `test.invalid` зарезервирован стандартом и не разрешается в
+    // сеть: даже если однажды что-то попробует написать участнику письмо,
+    // адресата не существует по построению.
+    return {
+      userId,
+      tag,
+      contact: await this.crypto.sealMany('passport_sensitive', { email, phone: null }),
+      emailIndex: await this.crypto.blindIndex(email, 'email'),
+    };
+  }
+
   /**
    * Участник сессии — отдельная учётная запись.
    *
@@ -190,14 +225,9 @@ export class TestingSessionsService {
     sessionId: string,
     role: 'founder' | 'investor' | 'corporate',
     label: string,
+    sealed: SealedParticipant,
   ): Promise<string> {
-    const userId = randomUUID();
-    const tag = userId.slice(0, 8);
-    const email = `session-${tag}@test.invalid`;
-    // Домен `test.invalid` зарезервирован стандартом и не разрешается в
-    // сеть: даже если однажды что-то попробует написать участнику письмо,
-    // адресата не существует по построению.
-    const contact = this.crypto.sealMany('passport_sensitive', { email, phone: null });
+    const { userId, tag, contact, emailIndex } = sealed;
     const unusable = await argon2.hash(randomBytes(32).toString('base64'), {
       type: argon2.argon2id,
       memoryCost: 19_456,
@@ -214,7 +244,7 @@ export class TestingSessionsService {
         userId,
         contact.ciphertexts.email,
         contact.wrappedDek,
-        this.crypto.blindIndex(email, 'email'),
+        emailIndex,
         unusable,
         `${label} · ${tag}`,
         role,

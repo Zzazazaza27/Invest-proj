@@ -12,6 +12,13 @@ import { INTEGRATION_SCOPES, type IntegrationScope } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { addressInCidrs } from '../events/ip-classifier';
 import { getEnv } from '../config/env';
+import {
+  issuingKey,
+  joinSigned,
+  signedText,
+  splitSigned,
+  verifyingSecret,
+} from '../auth/signing-keys';
 import { ServiceAccountStateService } from './service-account-state.service';
 
 /**
@@ -85,7 +92,8 @@ export function issueServiceToken(input: {
     ep: input.tokenEpoch,
   };
   const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-  return { token: `${body}.${sign(body)}`, expiresIn: ttl };
+  const { kid, secret } = issuingKey('INTEGRATION_TOKEN_SIGNING_KEY');
+  return { token: joinSigned(kid, body, sign(secret, signedText(kid, body))), expiresIn: ttl };
 }
 
 /**
@@ -97,18 +105,18 @@ export function issueServiceToken(input: {
  * токен с любыми scope подделывался без секрета. Конфигурация теперь требует
  * отдельный ключ всегда, когда контур включён.
  */
-function sign(body: string): string {
-  const env = getEnv();
-  return createHmac('sha256', env.INTEGRATION_TOKEN_SIGNING_KEY)
-    .update(`${SIGNATURE_CONTEXT}.${body}`)
-    .digest('base64url');
+function sign(secret: string, body: string): string {
+  return createHmac('sha256', secret).update(`${SIGNATURE_CONTEXT}.${body}`).digest('base64url');
 }
 
 export function verifyServiceToken(token: string): TokenPayload {
-  const [body, signature] = token.split('.');
-  if (!body || !signature) throw errors.unauthenticated({ stage: 'integration-format' });
+  const split = splitSigned(token);
+  if (!split) throw errors.unauthenticated({ stage: 'integration-format' });
+  const secret = verifyingSecret('INTEGRATION_TOKEN_SIGNING_KEY', split.kid);
+  if (secret === null) throw errors.unauthenticated({ stage: 'integration-kid' });
+  const [body, signature] = split.parts;
 
-  const expected = Buffer.from(sign(body), 'base64url');
+  const expected = Buffer.from(sign(secret, signedText(split.kid, body)), 'base64url');
   let provided: Buffer;
   try {
     provided = Buffer.from(signature, 'base64url');

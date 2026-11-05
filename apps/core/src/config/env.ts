@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { withSecretFiles } from './secret-files';
+import { parseKeyVersions, SIGNING_KEY_NAMES } from '../auth/signing-keys';
 
 /**
  * Конфигурация приложения. Fail-closed: отсутствие обязательной переменной —
@@ -121,8 +122,34 @@ const RawEnvSchema = z.object({
    * при AUTH_MODE=local, а CSRF действует при любой схеме входа через cookie.
    */
   CSRF_SIGNING_KEY: z.string().default(''),
+  /** Версии подписей: `kid:секрет,…`, действующая версия и срок приёма токенов без kid. */
+  CSRF_SIGNING_KEY_VERSIONS: z.string().default(''),
+  CSRF_SIGNING_KEY_ACTIVE: z.string().default(''),
+  CSRF_SIGNING_KEY_LEGACY_UNTIL: z.string().default(''),
+  LOCAL_AUTH_SIGNING_KEY_VERSIONS: z.string().default(''),
+  LOCAL_AUTH_SIGNING_KEY_ACTIVE: z.string().default(''),
+  LOCAL_AUTH_SIGNING_KEY_LEGACY_UNTIL: z.string().default(''),
+  INTEGRATION_TOKEN_SIGNING_KEY_VERSIONS: z.string().default(''),
+  INTEGRATION_TOKEN_SIGNING_KEY_ACTIVE: z.string().default(''),
+  INTEGRATION_TOKEN_SIGNING_KEY_LEGACY_UNTIL: z.string().default(''),
 
   KMS_MODE: z.enum(['kms', 'local']).default('local'),
+  /**
+   * Формат новых записей, отдельно от места хранения ключа. `legacy` понимает и старое ядро,
+   * `vault` — граница возврата (блок 5, задание 4).
+   */
+  CRYPTO_WRITE_FORMAT: z.enum(['legacy', 'vault']).default('legacy'),
+  OPENBAO_ADDR: z.string().default(''),
+  OPENBAO_CA_PATH: z.string().default(''),
+  /** Файл с токеном, его пишет и продлевает OpenBao Agent. */
+  OPENBAO_TOKEN_PATH: z.string().default(''),
+  OPENBAO_KEY_PREFIX: z
+    .string()
+    .regex(/^[a-z0-9-]+$/)
+    .default('prod'),
+  /** Версия ключа поиска: новая не включается сама, смена означает пересчёт индексов. */
+  OPENBAO_SEARCH_INDEX_VERSION: z.coerce.number().int().min(1).default(1),
+  OPENBAO_TIMEOUT_MS: z.coerce.number().int().min(100).default(3_000),
   KEK_SEARCH_INDEX: z.string().default(''),
   KEK_KYC_DOCUMENTS: z.string().default(''),
   KEK_KYB_DOCUMENTS: z.string().default(''),
@@ -579,6 +606,85 @@ const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
       path: ['KMS_MODE'],
       message: 'В production ключи хранятся в KMS/Vault, а не в переменных окружения.',
     });
+  }
+  if (env.KMS_MODE === 'local' && env.CRYPTO_WRITE_FORMAT === 'vault') {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['CRYPTO_WRITE_FORMAT'],
+      message: 'формат vault пишется только через Transit: нужен KMS_MODE=kms',
+    });
+  }
+  if (env.KMS_MODE === 'kms') {
+    const secure = env.OPENBAO_ADDR.startsWith('https://');
+    if (!secure && (isProd || !env.OPENBAO_ADDR.startsWith('http://'))) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['OPENBAO_ADDR'],
+        message: 'при KMS_MODE=kms нужен адрес OpenBao, в production только https',
+      });
+    }
+    if (secure && !env.OPENBAO_CA_PATH) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['OPENBAO_CA_PATH'],
+        message: 'нужен сертификат OpenBao',
+      });
+    }
+    if (!env.OPENBAO_TOKEN_PATH) {
+      ctx.addIssue({ code: 'custom', path: ['OPENBAO_TOKEN_PATH'], message: 'нужен файл токена' });
+    }
+    // Ключ в окружении при рабочем KMS — это запасной путь в обход OpenBao.
+    for (const name of [
+      'KEK_SEARCH_INDEX',
+      'KEK_KYC_DOCUMENTS',
+      'KEK_PASSPORT_SENSITIVE',
+      'KEK_KYB_DOCUMENTS',
+      'KEK_WEBHOOK_SECRETS',
+    ] as const) {
+      if (env[name]) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [name],
+          message: 'при KMS_MODE=kms ядру KEK не выдаётся',
+        });
+      }
+    }
+  }
+  for (const name of SIGNING_KEY_NAMES) {
+    let versions = new Map<string, string>();
+    try {
+      versions = parseKeyVersions(env[`${name}_VERSIONS`]);
+    } catch {
+      ctx.addIssue({
+        code: 'custom',
+        path: [`${name}_VERSIONS`],
+        message: 'нужен вид kid:секрет через запятую, kid не повторяются',
+      });
+    }
+    for (const secret of versions.values()) {
+      if (secret.length < LOCAL_KEY_MIN_LENGTH || secret === env[name]) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [`${name}_VERSIONS`],
+          message: `минимум ${LOCAL_KEY_MIN_LENGTH} символов, и версия не повторяет прежний ключ`,
+        });
+      }
+    }
+    const active = env[`${name}_ACTIVE`];
+    if (active && !versions.has(active)) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [`${name}_ACTIVE`],
+        message: 'действующая версия не зарегистрирована',
+      });
+    }
+    if (active && Number.isNaN(Date.parse(env[`${name}_LEGACY_UNTIL`]))) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [`${name}_LEGACY_UNTIL`],
+        message: 'нужен конкретный срок приёма токенов без kid',
+      });
+    }
   }
   if (env.KMS_MODE === 'local') {
     // Проверяются ВСЕ фактически используемые домены, а не один blind index:

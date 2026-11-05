@@ -9,14 +9,8 @@
  * формат `iv || tag || ciphertext` с AAD.
  */
 import { spawnSync } from 'node:child_process';
-import {
-  constants,
-  createCipheriv,
-  createHmac,
-  publicEncrypt,
-  randomBytes,
-  timingSafeEqual,
-} from 'node:crypto';
+import { createCipheriv, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { importTransitKey } from './lib/openbao-import.mjs';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { request } from 'node:https';
 import { tmpdir } from 'node:os';
@@ -138,30 +132,13 @@ async function start(dir) {
   return { status: 0, json: {} };
 }
 
-/** Импорт ключа: AES-KWP под разовым ключом, сам разовый ключ под RSA-OAEP. */
-async function importKey(token, name, type, key) {
-  const wrapping = await api('GET', 'transit/wrapping_key', { token });
-  const ephemeral = randomBytes(32);
-  const kwp = createCipheriv('id-aes256-wrap-pad', ephemeral, Buffer.from('A65959A6', 'hex'));
-  const wrapped = Buffer.concat([kwp.update(key), kwp.final()]);
-  const rsa = publicEncrypt(
-    {
-      key: wrapping.json.data.public_key,
-      padding: constants.RSA_PKCS1_OAEP_PADDING,
-      oaepHash: 'sha256',
-    },
-    ephemeral,
+const importKey = (token, name, type, key) =>
+  importTransitKey(
+    (method, path, options) => api(method, path, { ...options, token }),
+    name,
+    type,
+    key,
   );
-  return api('POST', `transit/keys/${name}/import`, {
-    token,
-    body: {
-      ciphertext: Buffer.concat([rsa, wrapped]).toString('base64'),
-      type,
-      hash_function: 'SHA256',
-      exportable: false,
-    },
-  });
-}
 
 /** Старый формат CryptoService: iv || tag || ciphertext. */
 function oldSeal(key, plain, aad) {

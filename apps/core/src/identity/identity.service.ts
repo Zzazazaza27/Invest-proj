@@ -144,12 +144,15 @@ export class IdentityService {
     const userId = uuidv7();
     const passwordHash = await argon2.hash(input.password, ARGON2_OPTIONS);
 
-    const emailIndex = input.email ? this.crypto.blindIndex(input.email, 'email') : null;
-    const phoneIndex = input.phone ? this.crypto.blindIndex(input.phone, 'phone') : null;
+    // Обращения к службе ключей — до транзакции: соединение с БД не ждёт сеть, а отказ
+    // службы не оставляет частичной записи.
+    const emailIndex = input.email ? await this.crypto.blindIndex(input.email, 'email') : null;
+    const phoneIndex = input.phone ? await this.crypto.blindIndex(input.phone, 'phone') : null;
+    const traceHash = await this.crypto.contextHash(ctx.traceId);
     // Оба контакта шифруются ОДНИМ DEK: в схеме на строку приходится один
     // contact_wrapped_dek. Пустой контакт остаётся NULL — этого требует
     // CHECK ((phone_ciphertext IS NULL) = (phone_hmac IS NULL)).
-    const contact = this.crypto.sealMany('passport_sensitive', {
+    const contact = await this.crypto.sealMany('passport_sensitive', {
       email: input.email ?? null,
       phone: input.phone ?? null,
     });
@@ -245,7 +248,7 @@ export class IdentityService {
       await tx.query('SELECT set_config($1, $2, true)', ['app.current_user_id', userId]);
       await tx.query('SELECT set_config($1, $2, true)', ['app.current_roles', input.role]);
 
-      await this.storeConsents(tx, userId, input.consents, ctx);
+      await this.storeConsents(tx, userId, input.consents, ctx, traceHash);
       await this.activateIfComplete(tx, userId, input.locale);
 
       await this.audit.emit(tx, {
@@ -336,9 +339,9 @@ export class IdentityService {
     ctx: RequestContext,
   ): Promise<{ userId: string; roles: Role[]; status: string }> {
     const index = contact.email
-      ? this.crypto.blindIndex(contact.email, 'email')
+      ? await this.crypto.blindIndex(contact.email, 'email')
       : contact.phone
-        ? this.crypto.blindIndex(contact.phone, 'phone')
+        ? await this.crypto.blindIndex(contact.phone, 'phone')
         : null;
     if (!index) throw errors.unauthenticated({ stage: 'no-contact' });
 
@@ -434,20 +437,14 @@ export class IdentityService {
       // цену утечки логов и кешей.
       let emailMasked: string | null = null;
       let phoneMasked: string | null = null;
-      const dek = user.contact_wrapped_dek;
-      if (dek && user.email_ciphertext) {
-        emailMasked = maskEmail(
-          this.crypto
-            .openField('passport_sensitive', dek, user.email_ciphertext, 'email')
-            .toString('utf8'),
+      if (user.contact_wrapped_dek) {
+        const opened = await this.crypto.openFields(
+          'passport_sensitive',
+          user.contact_wrapped_dek,
+          { email: user.email_ciphertext, phone: user.phone_ciphertext },
         );
-      }
-      if (dek && user.phone_ciphertext) {
-        phoneMasked = maskPhone(
-          this.crypto
-            .openField('passport_sensitive', dek, user.phone_ciphertext, 'phone')
-            .toString('utf8'),
-        );
+        if (opened.email) emailMasked = maskEmail(opened.email.toString('utf8'));
+        if (opened.phone) phoneMasked = maskPhone(opened.phone.toString('utf8'));
       }
 
       return {
@@ -475,8 +472,9 @@ export class IdentityService {
     ctx: RequestContext,
     consents: { kind: string; version: string; locale: string }[],
   ): Promise<void> {
+    const traceHash = await this.crypto.contextHash(ctx.traceId);
     await this.db.transaction(ctx, async (tx) => {
-      await this.storeConsents(tx, ctx.userId!, consents, ctx);
+      await this.storeConsents(tx, ctx.userId!, consents, ctx, traceHash);
       await this.activateIfComplete(tx, ctx.userId!, consents[0]?.locale ?? 'ru-RU');
     });
   }
@@ -647,12 +645,11 @@ export class IdentityService {
     userId: string,
     consents: { kind: string; version: string; locale: string }[],
     ctx: RequestContext,
-  ): Promise<void> {
     // Хеш ИДЕНТИФИКАТОРА ЗАПРОСА, а не адреса. Раньше то же самое значение
     // писалось в колонку `ip_hash`, и запись о согласии выглядела как
     // доказательство канала, которым она не является (SEC-16, M043).
-    const traceHash = this.crypto.contextHash(ctx.traceId);
-
+    traceHash: Buffer,
+  ): Promise<void> {
     // Версия акцепта сверяется с действующими шаблонами ДО вставки.
     //
     // Без этой проверки несуществующая версия упиралась в внешний ключ

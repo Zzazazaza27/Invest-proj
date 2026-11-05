@@ -1,3 +1,4 @@
+import { KMS_ENV } from './kms-env';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   CatalogQuerySchema,
@@ -86,7 +87,7 @@ describe('Конфигурация хранилища', () => {
         AUTH_MODE: 'oidc',
         OIDC_ISSUER: 'https://id.5espace.test',
         OIDC_AUDIENCE: 'launch',
-        KMS_MODE: 'kms',
+        ...KMS_ENV,
         CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
         CORE_PUBLIC_URL: 'https://api.5espace.test',
       }),

@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 189; требований: 41
+- Проверок: 190; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 74
+### Зарегистрированы, но ни в наборе, ни в CI — 75
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -248,6 +248,7 @@
 - `CHK-OPENBAO-LAB` — OpenBao открывается по Static seal, а прежние ключи дают те же результаты.
 - `CHK-OPENBAO-OPS` — Agent, снимок, отзыв доступа и миграция seal работают на настоящих файлах размещения.
 - `CHK-OPENBAO-AUTO` — Установка без ручных шагов переживает обрыв и не теряет управление, комплект открывается ключом получателя.
+- `CHK-CRYPTO-TRANSIT` — CryptoService на настоящем OpenBao: старые данные читаются, индексы совпадают, версии и отказы работают.
 - `CHK-PROD-COMPOSE` — Возврат рабочей среды не зависит от рабочей копии репозитория.
 - `CHK-RELEASE-PINS` — Очистка не удаляет комплект, образы которого могут работать в среде.
 - `CHK-RELEASE` — Блок 9, задание 1: комплект, блокировка, реестр и сверка версий.
@@ -371,6 +372,7 @@
 | CHK-OPENBAO-LAB | `node scripts/check-openbao-lab.mjs` | 22 | вручную | — |
 | CHK-OPENBAO-OPS | `node scripts/check-openbao-ops.mjs` | 29 | вручную | — |
 | CHK-OPENBAO-AUTO | `node scripts/check-openbao-auto.mjs` | 24 | вручную | — |
+| CHK-CRYPTO-TRANSIT | `node scripts/check-crypto-transit.mjs` | 9 | вручную | — |
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
 | CHK-RELEASE | `node scripts/check-release.mjs` | 53 | вручную | — |

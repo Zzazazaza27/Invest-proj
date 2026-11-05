@@ -116,8 +116,11 @@ export class KycService {
   // --------------------------------------------------------------- юрлица
 
   async createEntity(ctx: RequestContext, input: CreateEntityRequest): Promise<BusinessEntity> {
-    const innIndex = this.crypto.blindIndex(input.inn, 'inn');
-    const sealed = this.crypto.sealMany('kyb_documents', { inn: input.inn, ogrn: input.ogrn });
+    const innIndex = await this.crypto.blindIndex(input.inn, 'inn');
+    const sealed = await this.crypto.sealMany('kyb_documents', {
+      inn: input.inn,
+      ogrn: input.ogrn,
+    });
     const id = uuidv7();
 
     try {
@@ -214,12 +217,13 @@ export class KycService {
         traceId: ctx.traceId,
       });
 
-      return this.mapEntity(rows[0]!, false);
+      // ИНН только что введён: маска считается из него, без лишнего обращения к службе ключей.
+      return this.toEntity(rows[0]!, false, maskInn(input.inn));
     });
   }
 
   async listEntities(ctx: RequestContext): Promise<BusinessEntity[]> {
-    return this.db.readOnly(ctx, async (tx) => {
+    const rows = await this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<EntityRow & { kyb_approved: boolean }>(
         `SELECT e.id, e.legal_name, e.legal_form, e.inn_ciphertext, e.entity_wrapped_dek,
                 e.jurisdiction, e.registry_status, e.created_at,
@@ -229,8 +233,9 @@ export class KycService {
           ORDER BY e.created_at DESC
           LIMIT 50`,
       );
-      return rows.map((row) => this.mapEntity(row, row.kyb_approved));
+      return rows;
     });
+    return Promise.all(rows.map((row) => this.mapEntity(row, row.kyb_approved)));
   }
 
   async addMember(
@@ -515,14 +520,21 @@ export class KycService {
     if (rows.length === 0) throw errors.notFound({ subject: 'business_entity' });
   }
 
-  private mapEntity(row: EntityRow, kybApproved: boolean): BusinessEntity {
+  private async mapEntity(row: EntityRow, kybApproved: boolean): Promise<BusinessEntity> {
     let innMasked = '***';
     if (row.entity_wrapped_dek && row.inn_ciphertext) {
-      const inn = this.crypto
-        .openField('kyb_documents', row.entity_wrapped_dek, row.inn_ciphertext, 'inn')
-        .toString('utf8');
-      innMasked = `${'*'.repeat(Math.max(0, inn.length - 4))}${inn.slice(-4)}`;
+      const inn = await this.crypto.openField(
+        'kyb_documents',
+        row.entity_wrapped_dek,
+        row.inn_ciphertext,
+        'inn',
+      );
+      innMasked = maskInn(inn.toString('utf8'));
     }
+    return this.toEntity(row, kybApproved, innMasked);
+  }
+
+  private toEntity(row: EntityRow, kybApproved: boolean, innMasked: string): BusinessEntity {
     return {
       id: row.id,
       legalName: row.legal_name,
@@ -534,6 +546,10 @@ export class KycService {
       createdAt: row.created_at.toISOString(),
     };
   }
+}
+
+function maskInn(inn: string): string {
+  return `${'*'.repeat(Math.max(0, inn.length - 4))}${inn.slice(-4)}`;
 }
 
 // ------------------------------------------------------------------- строки БД

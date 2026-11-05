@@ -56,7 +56,7 @@ export class WebhooksService {
     await this.assertKnownVerbs(ctx, input.subscribedVerbs);
 
     const secret = randomBytes(32).toString('base64url');
-    const ciphertext = this.crypto.sealDirect('webhook_secrets', secret, WEBHOOK_SECRET_AAD);
+    const ciphertext = await this.crypto.sealDirect('webhook_secrets', secret, WEBHOOK_SECRET_AAD);
     // Отпечаток — для аудита и поиска: по нему видно, что секрет тот самый, и
     // при этом сам секрет не раскрывается.
     // Правило SAST срабатывает на ИМЯ переменной. Значение здесь — свежие 32
@@ -80,7 +80,7 @@ export class WebhooksService {
             input.url,
             input.subscribedVerbs,
             ciphertext,
-            'local/webhook_secrets/v1',
+            this.crypto.keyId('webhook_secrets'),
             fingerprint,
           ],
         );

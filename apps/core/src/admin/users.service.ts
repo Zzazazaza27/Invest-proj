@@ -9,7 +9,7 @@ import type {
 } from '@fifth/contracts';
 import { AdminUserListQuerySchema, PROBE_ORIGINS } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
-import { CryptoService } from '../crypto/crypto.service';
+import { isKmsUnavailable, CryptoService } from '../crypto/crypto.service';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { SessionEpochService } from '../auth/session-epoch.service';
@@ -47,7 +47,7 @@ export class AdminUsersService {
 
   async list(ctx: RequestContext, rawQuery: AdminUserListQuery): Promise<AdminUserPage> {
     const query = AdminUserListQuerySchema.parse(rawQuery);
-    const search = this.searchCondition(query.field, query.q);
+    const search = await this.searchCondition(query.field, query.q);
     // Поиск по несуществующему идентификатору — пустая страница, а не ошибка:
     // человек ищет, а не утверждает, что такой аккаунт есть.
     if (search === null) {
@@ -58,7 +58,7 @@ export class AdminUsersService {
     const direction = query.dir === 'asc' ? 'ASC' : 'DESC';
     const offset = (query.page - 1) * query.perPage;
 
-    return this.db.readOnly(ctx, async (tx) => {
+    const found = await this.db.readOnly(ctx, async (tx) => {
       // Маски контактов — тоже персональные данные, пусть и урезанные.
       // Показываем их тому же, кому разрешено раскрытие: администратору
       // (полномочие пропускает его по правилу M097) и тому, кому полномочие
@@ -111,13 +111,17 @@ export class AdminUsersService {
         ],
       );
 
-      return {
-        items: rows.map((row) => this.toRow(row, withContacts)),
-        total: rows.length > 0 ? Number(rows[0]!.total) : 0,
-        page: query.page,
-        perPage: query.perPage,
-      };
+      return { rows, withContacts };
     });
+
+    // После транзакции: соединение с БД не ждёт службу ключей на каждой строке страницы.
+    const { rows, withContacts } = found;
+    return {
+      items: await Promise.all(rows.map((row) => this.toRow(row, withContacts))),
+      total: rows.length > 0 ? Number(rows[0]!.total) : 0,
+      page: query.page,
+      perPage: query.perPage,
+    };
   }
 
   async card(ctx: RequestContext, userId: string): Promise<AdminUserCard> {
@@ -225,12 +229,13 @@ export class AdminUsersService {
         [CONTACTS_CAPABILITY],
       );
 
+      const masks = await this.masks(user);
       return {
         id: user.id,
         displayName: user.display_name,
         avatarUrl: null,
-        emailMasked: this.mask(user, 'email'),
-        phoneMasked: this.mask(user, 'phone'),
+        emailMasked: masks.email,
+        phoneMasked: masks.phone,
         primaryRole: user.primary_role,
         origin: user.origin as AdminUserCard['origin'],
         roles: roles.rows.map((row) => ({
@@ -317,8 +322,7 @@ export class AdminUsersService {
       const user = rows[0];
       if (!user) throw errors.notFound({ subject: 'user' });
 
-      const email = this.open(user, 'email');
-      const phone = this.open(user, 'phone');
+      const { email, phone } = await this.open(user);
 
       await this.audit.emit(tx, {
         verb: 'identity.user_contacts.revealed',
@@ -460,10 +464,10 @@ export class AdminUsersService {
   }
 
   /** Условие поиска и его параметр. `null` — заведомо пустая выборка. */
-  private searchCondition(
+  private async searchCondition(
     field: AdminUserListQuery['field'],
     rawQuery: string | undefined,
-  ): { sql: string; param: string | Buffer | null } | null {
+  ): Promise<{ sql: string; param: string | Buffer | null } | null> {
     const q = (rawQuery ?? '').trim();
     if (q === '') return { sql: '($1::text IS NULL OR TRUE)', param: null };
 
@@ -471,9 +475,9 @@ export class AdminUsersService {
       case 'email':
         // Точное совпадение по слепому индексу: адрес зашифрован, и поиска по
         // части значения у этой модели не существует в принципе.
-        return { sql: 'u.email_hmac = $1::bytea', param: this.crypto.blindIndex(q, 'email') };
+        return { sql: 'u.email_hmac = $1::bytea', param: await this.crypto.blindIndex(q, 'email') };
       case 'phone':
-        return { sql: 'u.phone_hmac = $1::bytea', param: this.crypto.blindIndex(q, 'phone') };
+        return { sql: 'u.phone_hmac = $1::bytea', param: await this.crypto.blindIndex(q, 'phone') };
       case 'id':
         return UUID_RE.test(q) ? { sql: 'u.id = $1::uuid', param: q } : null;
       case 'name':
@@ -484,13 +488,14 @@ export class AdminUsersService {
     }
   }
 
-  private toRow(row: ListRow, withContacts: boolean): AdminUserRow {
+  private async toRow(row: ListRow, withContacts: boolean): Promise<AdminUserRow> {
+    const masks = withContacts ? await this.masks(row) : { email: null, phone: null };
     return {
       id: row.id,
       displayName: row.display_name,
       avatarUrl: null,
-      emailMasked: withContacts ? this.mask(row, 'email') : null,
-      phoneMasked: withContacts ? this.mask(row, 'phone') : null,
+      emailMasked: masks.email,
+      phoneMasked: masks.phone,
       roles: row.roles ?? [],
       status: row.status as AdminUserRow['status'],
       kycStatus: (row.kyc_status ?? 'none') as AdminUserKycStatus,
@@ -499,12 +504,16 @@ export class AdminUsersService {
     };
   }
 
-  private open(row: ContactRow, field: 'email' | 'phone'): string | null {
-    const ciphertext = field === 'email' ? row.email_ciphertext : row.phone_ciphertext;
-    if (!row.contact_wrapped_dek || !ciphertext) return null;
-    return this.crypto
-      .openField('passport_sensitive', row.contact_wrapped_dek, ciphertext, field)
-      .toString('utf8');
+  private async open(row: ContactRow): Promise<{ email: string | null; phone: string | null }> {
+    if (!row.contact_wrapped_dek) return { email: null, phone: null };
+    const opened = await this.crypto.openFields('passport_sensitive', row.contact_wrapped_dek, {
+      email: row.email_ciphertext,
+      phone: row.phone_ciphertext,
+    });
+    return {
+      email: opened.email?.toString('utf8') ?? null,
+      phone: opened.phone?.toString('utf8') ?? null,
+    };
   }
 
   /**
@@ -514,14 +523,20 @@ export class AdminUsersService {
    * данные перенесены наполовину) не должна ронять весь список — оператор
    * останется без рабочего экрана из-за одного аккаунта. Отсутствие маски
    * читается как «контакта нет», и это честнее пятисотой ошибки.
+   *
+   * Отказ службы ключей — другое дело: контакт цел, и показывать его отсутствие
+   * было бы неправдой, поэтому такая ошибка проходит наверх.
    */
-  private mask(row: ContactRow, field: 'email' | 'phone'): string | null {
+  private async masks(row: ContactRow): Promise<{ email: string | null; phone: string | null }> {
     try {
-      const value = this.open(row, field);
-      if (value === null) return null;
-      return field === 'email' ? maskEmail(value) : maskPhone(value);
-    } catch {
-      return null;
+      const { email, phone } = await this.open(row);
+      return {
+        email: email === null ? null : maskEmail(email),
+        phone: phone === null ? null : maskPhone(phone),
+      };
+    } catch (error) {
+      if (isKmsUnavailable(error)) throw error;
+      return { email: null, phone: null };
     }
   }
 }

@@ -6,7 +6,16 @@ import {
   randomBytes,
   timingSafeEqual,
 } from 'node:crypto';
+import { AppError } from '../common/errors';
 import { getEnv } from '../config/env';
+import {
+  isVaultFormat,
+  LEGACY_KEY_VERSION,
+  legacyToVault,
+  parseVault,
+  vaultToLegacy,
+} from './key-format';
+import { TransitClient } from './transit-client';
 
 /**
  * Envelope encryption и blind index.
@@ -17,6 +26,13 @@ import { getEnv } from '../config/env';
  * требует перешифровки данных — только перешифровки обёрток.
  *
  * KEK-домены соответствуют `audit.encryption_keys_registry`.
+ *
+ * Два независимых выбора (блок 5, задание 4):
+ *  - `KMS_MODE` — где живёт ключ: в окружении (`local`) или в OpenBao Transit (`kms`);
+ *  - `CRYPTO_WRITE_FORMAT` — как пишется запись: прежним форматом (`legacy`) или `vault:vN:`.
+ *
+ * Читаются оба формата. Переходный выпуск пишет `legacy` прежним ключом версии 1, поэтому записи
+ * понимает и старое ядро. Граница возврата начинается с первой записи `vault`.
  */
 
 export type KekDomain =
@@ -30,6 +46,15 @@ const ENV_BY_DOMAIN: Record<KekDomain, string> = {
   webhook_secrets: 'KEK_WEBHOOK_SECRETS',
 };
 
+/** Имена ключей Transit заданы здесь и не приходят извне. */
+const TRANSIT_KEY_BY_DOMAIN: Record<KekDomain, string> = {
+  kyc_documents: 'kyc-documents',
+  kyb_documents: 'kyb-documents',
+  passport_sensitive: 'passport-sensitive',
+  search_index: 'search-index',
+  webhook_secrets: 'webhook-secrets',
+};
+
 const IV_BYTES = 12; // рекомендованный размер nonce для GCM
 const TAG_BYTES = 16;
 const DEK_BYTES = 32;
@@ -41,15 +66,25 @@ export interface SealedValue {
   wrappedDek: Buffer;
 }
 
+/** Отказ службы ключей: это не порча данных, и скрывать его как «значения нет» нельзя. */
+export function isKmsUnavailable(error: unknown): boolean {
+  return error instanceof AppError && error.internal?.['dependency'] === 'kms';
+}
+
 @Injectable()
 export class CryptoService {
+  private transitClient: TransitClient | null = null;
+
   /** Шифрует значение и возвращает его вместе с обёрнутым DEK. */
-  seal(domain: KekDomain, plaintext: Buffer | string, aad?: string): SealedValue {
+  async seal(domain: KekDomain, plaintext: Buffer | string, aad?: string): Promise<SealedValue> {
     const dek = randomBytes(DEK_BYTES);
-    const ciphertext = this.encrypt(dek, Buffer.from(plaintext), aad);
-    const wrappedDek = this.encrypt(this.kek(domain), dek, `wrap:${domain}`);
-    dek.fill(0);
-    return { ciphertext, wrappedDek };
+    try {
+      const ciphertext = this.encrypt(dek, Buffer.from(plaintext), aad);
+      const wrappedDek = await this.wrap(domain, dek, `wrap:${domain}`);
+      return { ciphertext, wrappedDek };
+    } finally {
+      dek.fill(0);
+    }
   }
 
   /**
@@ -60,10 +95,10 @@ export class CryptoService {
    * значение получает собственный AAD, поэтому шифртексты нельзя поменять
    * местами — расшифровка чужого поля не пройдёт проверку тега.
    */
-  sealMany<K extends string>(
+  async sealMany<K extends string>(
     domain: KekDomain,
     values: Record<K, Buffer | string | null>,
-  ): { ciphertexts: Record<K, Buffer | null>; wrappedDek: Buffer } {
+  ): Promise<{ ciphertexts: Record<K, Buffer | null>; wrappedDek: Buffer }> {
     const dek = randomBytes(DEK_BYTES);
     try {
       const ciphertexts = {} as Record<K, Buffer | null>;
@@ -73,17 +108,36 @@ export class CryptoService {
             ? null
             : this.encrypt(dek, Buffer.from(value), `field:${field}`);
       }
-      return { ciphertexts, wrappedDek: this.encrypt(this.kek(domain), dek, `wrap:${domain}`) };
+      return { ciphertexts, wrappedDek: await this.wrap(domain, dek, `wrap:${domain}`) };
     } finally {
       dek.fill(0);
     }
   }
 
   /** Расшифровка одного поля из группы, зашифрованной `sealMany`. */
-  openField(domain: KekDomain, wrappedDek: Buffer, ciphertext: Buffer, field: string): Buffer {
-    const dek = this.decrypt(this.kek(domain), wrappedDek, `wrap:${domain}`);
+  async openField(
+    domain: KekDomain,
+    wrappedDek: Buffer,
+    ciphertext: Buffer,
+    field: string,
+  ): Promise<Buffer> {
+    const opened = await this.openFields(domain, wrappedDek, { [field]: ciphertext });
+    return opened[field]!;
+  }
+
+  /** Несколько полей одной строки: DEK распаковывается один раз, а не на каждое поле. */
+  async openFields<K extends string>(
+    domain: KekDomain,
+    wrappedDek: Buffer,
+    fields: Record<K, Buffer | null>,
+  ): Promise<Record<K, Buffer | null>> {
+    const dek = await this.unwrap(domain, wrappedDek, `wrap:${domain}`);
     try {
-      return this.decrypt(dek, ciphertext, `field:${field}`);
+      const opened = {} as Record<K, Buffer | null>;
+      for (const [field, ciphertext] of Object.entries(fields) as [K, Buffer | null][]) {
+        opened[field] = ciphertext ? this.decrypt(dek, ciphertext, `field:${field}`) : null;
+      }
+      return opened;
     } finally {
       dek.fill(0);
     }
@@ -102,16 +156,16 @@ export class CryptoService {
    * Для документов и ПДн этот метод НЕ применяется: там объёмы и ротация как
    * раз те, ради которых нужен DEK.
    */
-  sealDirect(domain: KekDomain, plaintext: Buffer | string, aad: string): Buffer {
-    return this.encrypt(this.kek(domain), Buffer.from(plaintext), aad);
+  sealDirect(domain: KekDomain, plaintext: Buffer | string, aad: string): Promise<Buffer> {
+    return this.wrap(domain, Buffer.from(plaintext), aad);
   }
 
-  openDirect(domain: KekDomain, payload: Buffer, aad: string): Buffer {
-    return this.decrypt(this.kek(domain), payload, aad);
+  openDirect(domain: KekDomain, payload: Buffer, aad: string): Promise<Buffer> {
+    return this.unwrap(domain, payload, aad);
   }
 
-  open(domain: KekDomain, sealed: SealedValue, aad?: string): Buffer {
-    const dek = this.decrypt(this.kek(domain), sealed.wrappedDek, `wrap:${domain}`);
+  async open(domain: KekDomain, sealed: SealedValue, aad?: string): Promise<Buffer> {
+    const dek = await this.unwrap(domain, sealed.wrappedDek, `wrap:${domain}`);
     try {
       return this.decrypt(dek, sealed.ciphertext, aad);
     } finally {
@@ -127,11 +181,8 @@ export class CryptoService {
    * при утечке ключа. Поэтому ключ живёт в отдельном KEK-домене и ротируется
    * отдельной процедурой.
    */
-  blindIndex(value: string, kind: 'email' | 'phone' | 'inn'): Buffer {
-    const normalized = this.normalize(value, kind);
-    return createHmac('sha256', this.kek('search_index'))
-      .update(`${kind}:${normalized}`, 'utf8')
-      .digest();
+  blindIndex(value: string, kind: 'email' | 'phone' | 'inn'): Promise<Buffer> {
+    return this.searchHmac(`${kind}:${this.normalize(value, kind)}`);
   }
 
   /** Сравнение секретов — только constant-time. */
@@ -140,8 +191,15 @@ export class CryptoService {
   }
 
   /** Хеш IP и User-Agent для записи акцепта: сам адрес не сохраняется. */
-  contextHash(value: string): Buffer {
-    return createHmac('sha256', this.kek('search_index')).update(`ctx:${value}`, 'utf8').digest();
+  contextHash(value: string): Promise<Buffer> {
+    return this.searchHmac(`ctx:${value}`);
+  }
+
+  /** Подпись ключа для столбца `*_kms_key_id`: версия новой записи живёт в её формате. */
+  keyId(domain: KekDomain): string {
+    const env = getEnv();
+    if (env.CRYPTO_WRITE_FORMAT === 'legacy') return `local/${domain}/v${LEGACY_KEY_VERSION}`;
+    return `transit/${this.transitKey(domain)}`;
   }
 
   /**
@@ -155,14 +213,65 @@ export class CryptoService {
     return trimmed.replace(/\D/g, '');
   }
 
-  private kek(domain: KekDomain): Buffer {
+  private async searchHmac(input: string): Promise<Buffer> {
     const env = getEnv();
-    if (env.KMS_MODE !== 'local') {
-      // Ветка внешнего KMS подключается вместе с production-инфраструктурой.
-      // Молча падать на локальный ключ здесь нельзя: это тихое понижение
-      // уровня защиты.
-      throw new Error('KMS_MODE=kms требует настроенного клиента KMS (см. TODO)');
+    if (env.KMS_MODE === 'local') {
+      return createHmac('sha256', this.kek('search_index')).update(input, 'utf8').digest();
     }
+    return this.transit().hmac(
+      this.transitKey('search_index'),
+      input,
+      env.OPENBAO_SEARCH_INDEX_VERSION,
+    );
+  }
+
+  /** Упаковка ключом домена. Формат записи выбирается отдельно от места хранения ключа. */
+  private async wrap(domain: KekDomain, plaintext: Buffer, aad: string): Promise<Buffer> {
+    const env = getEnv();
+    if (env.KMS_MODE === 'local') {
+      if (env.CRYPTO_WRITE_FORMAT !== 'legacy') {
+        throw new Error('формат vault пишется только через Transit');
+      }
+      return this.encrypt(this.kek(domain), plaintext, aad);
+    }
+    const key = this.transitKey(domain);
+    if (env.CRYPTO_WRITE_FORMAT === 'legacy') {
+      const text = await this.transit().encrypt(key, plaintext, aad, LEGACY_KEY_VERSION);
+      return vaultToLegacy(text);
+    }
+    const text = await this.transit().encrypt(key, plaintext, aad);
+    parseVault(text);
+    return Buffer.from(text, 'ascii');
+  }
+
+  private async unwrap(domain: KekDomain, payload: Buffer, aad: string): Promise<Buffer> {
+    const local = getEnv().KMS_MODE === 'local';
+    if (isVaultFormat(payload)) {
+      const text = payload.toString('ascii');
+      parseVault(text);
+      if (local) throw new Error('запись формата vault не читается местными ключами');
+      return this.transit().decrypt(this.transitKey(domain), text, aad);
+    }
+    if (local) return this.decrypt(this.kek(domain), payload, aad);
+    return this.transit().decrypt(this.transitKey(domain), legacyToVault(payload), aad);
+  }
+
+  private transitKey(domain: KekDomain): string {
+    return `${getEnv().OPENBAO_KEY_PREFIX}-${TRANSIT_KEY_BY_DOMAIN[domain]}`;
+  }
+
+  private transit(): TransitClient {
+    const env = getEnv();
+    this.transitClient ??= new TransitClient({
+      addr: env.OPENBAO_ADDR,
+      caFile: env.OPENBAO_CA_PATH,
+      tokenFile: env.OPENBAO_TOKEN_PATH,
+      timeoutMs: env.OPENBAO_TIMEOUT_MS,
+    });
+    return this.transitClient;
+  }
+
+  private kek(domain: KekDomain): Buffer {
     const raw = process.env[ENV_BY_DOMAIN[domain]] ?? '';
     const key = Buffer.from(raw, 'base64');
     if (key.length !== DEK_BYTES) {

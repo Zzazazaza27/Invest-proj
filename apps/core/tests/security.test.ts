@@ -1,3 +1,4 @@
+import { KMS_ENV } from './kms-env';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { loadEnv, resetEnvCache } from '../src/config/env';
 import { CryptoService } from '../src/crypto/crypto.service';
@@ -48,7 +49,7 @@ describe('Конфигурация: fail-closed в production', () => {
         AUTH_MODE: 'local',
         CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
         CORE_PUBLIC_URL: 'https://api.5espace.test',
-        KMS_MODE: 'kms',
+        ...KMS_ENV,
       }),
     ).toThrow(/AUTH_MODE/);
   });
@@ -80,7 +81,7 @@ describe('Конфигурация: fail-closed в production', () => {
         AUTH_MODE: 'oidc',
         OIDC_ISSUER: 'https://id.5espace.test',
         OIDC_AUDIENCE: 'core',
-        KMS_MODE: 'kms',
+        ...KMS_ENV,
         CORE_PUBLIC_URL: 'https://api.5espace.test',
         CORS_ALLOWED_ORIGINS: 'http://app.5espace.test',
       }),
@@ -111,7 +112,7 @@ describe('Конфигурация: fail-closed в production', () => {
 describe('Envelope encryption', () => {
   const crypto = new CryptoService();
 
-  function withKeys<T>(fn: () => T): T {
+  async function withKeys<T>(fn: () => Promise<T>): Promise<T> {
     const saved = { ...process.env };
     resetEnvCache();
     Object.assign(process.env, {
@@ -120,59 +121,59 @@ describe('Envelope encryption', () => {
       CORS_ALLOWED_ORIGINS: 'http://localhost:5173',
     });
     try {
-      return fn();
+      return await fn();
     } finally {
       process.env = saved;
       resetEnvCache();
     }
   }
 
-  it('значение расшифровывается обратно', () => {
-    withKeys(() => {
-      const sealed = crypto.seal('passport_sensitive', 'секрет');
-      expect(crypto.open('passport_sensitive', sealed).toString('utf8')).toBe('секрет');
+  it('значение расшифровывается обратно', async () => {
+    await withKeys(async () => {
+      const sealed = await crypto.seal('passport_sensitive', 'секрет');
+      expect((await crypto.open('passport_sensitive', sealed)).toString('utf8')).toBe('секрет');
     });
   });
 
-  it('подмена шифртекста обнаруживается тегом аутентичности', () => {
-    withKeys(() => {
-      const sealed = crypto.seal('passport_sensitive', 'секрет');
+  it('подмена шифртекста обнаруживается тегом аутентичности', async () => {
+    await withKeys(async () => {
+      const sealed = await crypto.seal('passport_sensitive', 'секрет');
       const last = sealed.ciphertext.length - 1;
       sealed.ciphertext.writeUInt8(sealed.ciphertext.readUInt8(last) ^ 0xff, last);
-      expect(() => crypto.open('passport_sensitive', sealed)).toThrow();
+      await expect(crypto.open('passport_sensitive', sealed)).rejects.toThrow();
     });
   });
 
-  it('каждое значение получает собственный DEK', () => {
-    withKeys(() => {
-      const a = crypto.seal('passport_sensitive', 'одно и то же');
-      const b = crypto.seal('passport_sensitive', 'одно и то же');
+  it('каждое значение получает собственный DEK', async () => {
+    await withKeys(async () => {
+      const a = await crypto.seal('passport_sensitive', 'одно и то же');
+      const b = await crypto.seal('passport_sensitive', 'одно и то же');
       expect(a.ciphertext.equals(b.ciphertext)).toBe(false);
       expect(a.wrappedDek.equals(b.wrappedDek)).toBe(false);
     });
   });
 
-  it('поля, зашифрованные одним DEK, нельзя поменять местами', () => {
-    withKeys(() => {
-      const sealed = crypto.sealMany('passport_sensitive', {
+  it('поля, зашифрованные одним DEK, нельзя поменять местами', async () => {
+    await withKeys(async () => {
+      const sealed = await crypto.sealMany('passport_sensitive', {
         email: 'a@b.ru',
         phone: '+79990000000',
       });
       // Расшифровка телефона под видом email не проходит проверку AAD.
-      expect(() =>
+      await expect(
         crypto.openField(
           'passport_sensitive',
           sealed.wrappedDek,
           sealed.ciphertexts.phone!,
           'email',
         ),
-      ).toThrow();
+      ).rejects.toThrow();
     });
   });
 
-  it('пустое поле остаётся пустым, а не превращается в шифртекст', () => {
-    withKeys(() => {
-      const sealed = crypto.sealMany('passport_sensitive', { email: 'a@b.ru', phone: null });
+  it('пустое поле остаётся пустым, а не превращается в шифртекст', async () => {
+    await withKeys(async () => {
+      const sealed = await crypto.sealMany('passport_sensitive', { email: 'a@b.ru', phone: null });
       expect(sealed.ciphertexts.phone).toBeNull();
     });
   });
@@ -181,46 +182,46 @@ describe('Envelope encryption', () => {
 describe('Blind index', () => {
   const crypto = new CryptoService();
 
-  function withKeys<T>(fn: () => T): T {
+  async function withKeys<T>(fn: () => Promise<T>): Promise<T> {
     const saved = { ...process.env };
     Object.assign(process.env, BASE_ENV);
     resetEnvCache();
     try {
-      return fn();
+      return await fn();
     } finally {
       process.env = saved;
       resetEnvCache();
     }
   }
 
-  it('нормализует регистр email: иначе один адрес даст два аккаунта', () => {
-    withKeys(() => {
-      expect(crypto.blindIndex('User@Example.RU', 'email')).toEqual(
-        crypto.blindIndex('user@example.ru', 'email'),
+  it('нормализует регистр email: иначе один адрес даст два аккаунта', async () => {
+    await withKeys(async () => {
+      expect(await crypto.blindIndex('User@Example.RU', 'email')).toEqual(
+        await crypto.blindIndex('user@example.ru', 'email'),
       );
     });
   });
 
-  it('нормализует форматирование телефона', () => {
-    withKeys(() => {
-      expect(crypto.blindIndex('+7 (999) 000-00-00', 'phone')).toEqual(
-        crypto.blindIndex('+79990000000', 'phone'),
+  it('нормализует форматирование телефона', async () => {
+    await withKeys(async () => {
+      expect(await crypto.blindIndex('+7 (999) 000-00-00', 'phone')).toEqual(
+        await crypto.blindIndex('+79990000000', 'phone'),
       );
     });
   });
 
-  it('разные значения дают разные индексы', () => {
-    withKeys(() => {
-      expect(crypto.blindIndex('a@b.ru', 'email')).not.toEqual(
-        crypto.blindIndex('c@d.ru', 'email'),
+  it('разные значения дают разные индексы', async () => {
+    await withKeys(async () => {
+      expect(await crypto.blindIndex('a@b.ru', 'email')).not.toEqual(
+        await crypto.blindIndex('c@d.ru', 'email'),
       );
     });
   });
 
-  it('одно значение в разных ролях даёт разные индексы', () => {
-    withKeys(() => {
-      expect(crypto.blindIndex('1234567890', 'inn')).not.toEqual(
-        crypto.blindIndex('1234567890', 'phone'),
+  it('одно значение в разных ролях даёт разные индексы', async () => {
+    await withKeys(async () => {
+      expect(await crypto.blindIndex('1234567890', 'inn')).not.toEqual(
+        await crypto.blindIndex('1234567890', 'phone'),
       );
     });
   });
@@ -292,7 +293,7 @@ describe('Проверка токена', () => {
       AUTH_MODE: 'oidc',
       OIDC_ISSUER: 'https://id.5espace.test',
       OIDC_AUDIENCE: 'core',
-      KMS_MODE: 'kms',
+      ...KMS_ENV,
       CORE_PUBLIC_URL: 'https://api.5espace.test',
       CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
     });
@@ -331,7 +332,7 @@ describe('Транспорт до внутренних систем в productio
     AUTH_MODE: 'oidc',
     OIDC_ISSUER: 'https://idp.example.org',
     OIDC_AUDIENCE: 'unicorn',
-    KMS_MODE: 'kms',
+    ...KMS_ENV,
     SESSION_COOKIE_NAME: '__Host-ul_session',
     CSRF_COOKIE_NAME: '__Host-ul_csrf',
     // Две разные переменные, и путать их нельзя: CORE_PUBLIC_URL — адрес API,
@@ -574,7 +575,7 @@ describe('Реконнесанс-поверхность (SEC-21)', () => {
     AUTH_MODE: 'oidc',
     OIDC_ISSUER: 'https://idp.example.org',
     OIDC_AUDIENCE: 'unicorn',
-    KMS_MODE: 'kms',
+    ...KMS_ENV,
     SESSION_COOKIE_NAME: '__Host-ul_session',
     CSRF_COOKIE_NAME: '__Host-ul_csrf',
     CORE_PUBLIC_URL: 'https://fifth.example.org',
@@ -800,7 +801,7 @@ describe('Происхождение записи из заголовка (M127)
     AUTH_MODE: 'oidc',
     OIDC_ISSUER: 'https://idp.example.org',
     OIDC_AUDIENCE: 'unicorn',
-    KMS_MODE: 'kms',
+    ...KMS_ENV,
     KMS_KEY_ID: 'arn:aws:kms:ru-central1:1:key/abc',
     CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
     CORE_PUBLIC_URL: 'https://api.5espace.test',

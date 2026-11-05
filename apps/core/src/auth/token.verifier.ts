@@ -3,6 +3,7 @@ import { createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTPayload } from 'jose';
 import { RoleSchema, type Role } from '@fifth/contracts';
 import { getEnv } from '../config/env';
+import { issuingKey, joinSigned, signedText, splitSigned, verifyingSecret } from './signing-keys';
 import { errors } from '../common/errors';
 
 /**
@@ -85,16 +86,19 @@ export class TokenVerifier {
   }
 
   /**
-   * Локальный адаптер: компактный HMAC-токен `base64url(payload).base64url(mac)`.
+   * Локальный адаптер: компактный HMAC-токен `base64url(payload).base64url(mac)`, с версией
+   * ключа впереди — `kid.payload.mac`.
    * Формат намеренно НЕ является JWT, чтобы его нельзя было спутать с
    * настоящим токеном IdP и случайно принять в production.
    */
   private verifyLocal(token: string): VerifiedToken {
-    const env = getEnv();
-    const [body, signature] = token.split('.');
-    if (!body || !signature) throw errors.unauthenticated({ stage: 'local-format' });
+    const split = splitSigned(token);
+    if (!split) throw errors.unauthenticated({ stage: 'local-format' });
+    const secret = verifyingSecret('LOCAL_AUTH_SIGNING_KEY', split.kid);
+    if (secret === null) throw errors.unauthenticated({ stage: 'local-kid' });
+    const [body, signature] = split.parts;
 
-    const expected = createHmac('sha256', env.LOCAL_AUTH_SIGNING_KEY).update(body).digest();
+    const expected = createHmac('sha256', secret).update(signedText(split.kid, body)).digest();
     let provided: Buffer;
     try {
       provided = Buffer.from(signature, 'base64url');
@@ -172,7 +176,8 @@ export class TokenVerifier {
       exp: Math.floor(Date.now() / 1000) + input.ttlSeconds,
     };
     const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
-    const mac = createHmac('sha256', env.LOCAL_AUTH_SIGNING_KEY).update(body).digest('base64url');
-    return `${body}.${mac}`;
+    const { kid, secret } = issuingKey('LOCAL_AUTH_SIGNING_KEY');
+    const mac = createHmac('sha256', secret).update(signedText(kid, body)).digest('base64url');
+    return joinSigned(kid, body, mac);
   }
 }

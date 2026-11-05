@@ -14,7 +14,7 @@ import { SessionEpochService } from '../auth/session-epoch.service';
 import { LoginThrottleService } from '../auth/login-throttle.service';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
-import { CryptoService } from '../crypto/crypto.service';
+import { isKmsUnavailable, CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service, putObject } from '../storage/s3.service';
 import { ARGON2_OPTIONS, maskEmail, maskPhone } from './identity.service';
@@ -361,6 +361,7 @@ export class ProfileService {
       [userId],
     );
 
+    const masks = await this.masks(user);
     return {
       id: user.id,
       displayName: user.display_name,
@@ -372,8 +373,8 @@ export class ProfileService {
             updatedAt: user.avatar_updated_at.toISOString(),
           }
         : null,
-      emailMasked: this.mask(user, 'email'),
-      phoneMasked: this.mask(user, 'phone'),
+      emailMasked: masks.email,
+      phoneMasked: masks.phone,
       roles: roleRows.rows.map((row) => row.role),
       primaryRole: user.primary_role,
       status: user.status as MyProfile['status'],
@@ -394,16 +395,21 @@ export class ProfileService {
     return rows[0] ?? null;
   }
 
-  private mask(row: ProfileRow, field: 'email' | 'phone'): string | null {
-    const ciphertext = field === 'email' ? row.email_ciphertext : row.phone_ciphertext;
-    if (!row.contact_wrapped_dek || !ciphertext) return null;
+  private async masks(row: ProfileRow): Promise<{ email: string | null; phone: string | null }> {
+    if (!row.contact_wrapped_dek) return { email: null, phone: null };
     try {
-      const value = this.crypto
-        .openField('passport_sensitive', row.contact_wrapped_dek, ciphertext, field)
-        .toString('utf8');
-      return field === 'email' ? maskEmail(value) : maskPhone(value);
-    } catch {
-      return null;
+      const opened = await this.crypto.openFields('passport_sensitive', row.contact_wrapped_dek, {
+        email: row.email_ciphertext,
+        phone: row.phone_ciphertext,
+      });
+      return {
+        email: opened.email ? maskEmail(opened.email.toString('utf8')) : null,
+        phone: opened.phone ? maskPhone(opened.phone.toString('utf8')) : null,
+      };
+    } catch (error) {
+      // Порченая строка не ломает кабинет, а отказ службы ключей за её отсутствие не выдаётся.
+      if (isKmsUnavailable(error)) throw error;
+      return { email: null, phone: null };
     }
   }
 }

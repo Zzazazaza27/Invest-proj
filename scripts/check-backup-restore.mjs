@@ -538,19 +538,24 @@ try {
     for (const u of users) {
       try {
         const email = u.email_ciphertext
-          ? crypto
-              .openField('passport_sensitive', u.contact_wrapped_dek, u.email_ciphertext, 'email')
-              .toString('utf8')
+          ? (
+              await crypto.openField(
+                'passport_sensitive',
+                u.contact_wrapped_dek,
+                u.email_ciphertext,
+                'email',
+              )
+            ).toString('utf8')
           : null;
         if (u.phone_ciphertext)
-          crypto.openField(
+          await crypto.openField(
             'passport_sensitive',
             u.contact_wrapped_dek,
             u.phone_ciphertext,
             'phone',
           );
         opened += 1;
-        if (email && u.email_hmac && crypto.blindIndex(email, 'email').equals(u.email_hmac))
+        if (email && u.email_hmac && (await crypto.blindIndex(email, 'email')).equals(u.email_hmac))
           indexOk += 1;
         if (email && u.status === 'active' && !u.deleted_at) emails.set(u.id, email);
         if (email && !candidate && u.status === 'active' && !u.deleted_at)

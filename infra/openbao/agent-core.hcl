@@ -14,6 +14,14 @@ auto_auth {
       remove_secret_id_file_after_reading = false
     }
   }
+
+  # Токен для Transit: ядро читает файл на каждый вызов, Agent его продлевает.
+  sink "file" {
+    config = {
+      path = "/run/fifth-secrets/openbao-token"
+      mode = 0440
+    }
+  }
 }
 
 template_config {

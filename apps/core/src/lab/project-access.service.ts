@@ -77,9 +77,10 @@ export class ProjectAccessService {
     projectId: string,
     input: GrantAccessRequest,
   ): Promise<ProjectAccessEntry> {
+    const index = await this.crypto.blindIndex(input.email, 'email');
     return this.db.transaction(ctx, async (tx) => {
       await this.projectVisibility(tx, projectId);
-      const grantee = await this.resolveGrantee(tx, input.email);
+      const grantee = await this.resolveGrantee(tx, index);
       await this.assertNotTeam(tx, projectId, grantee.userId);
 
       // Набор нормализуется: порядок и повторы в наборе ничего не значат, а
@@ -161,9 +162,10 @@ export class ProjectAccessService {
     projectId: string,
     input: ExcludeAccessRequest,
   ): Promise<ProjectAccessEntry> {
+    const index = await this.crypto.blindIndex(input.email, 'email');
     return this.db.transaction(ctx, async (tx) => {
       await this.projectVisibility(tx, projectId);
-      const subject = await this.resolveGrantee(tx, input.email);
+      const subject = await this.resolveGrantee(tx, index);
       await this.assertNotTeam(tx, projectId, subject.userId);
 
       const { rows } = await tx.query<ExclusionRow>(
@@ -277,9 +279,8 @@ export class ProjectAccessService {
    */
   private async resolveGrantee(
     tx: Tx,
-    email: string,
+    index: Buffer,
   ): Promise<{ userId: string; displayName: string }> {
-    const index = this.crypto.blindIndex(email, 'email');
     const { rows } = await tx.query<{ user_id: string; display_name: string }>(
       'SELECT user_id, display_name FROM lab.resolve_grantee($1)',
       [index],

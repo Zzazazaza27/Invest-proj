@@ -3026,6 +3026,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
+  - id: CHK-CRYPTO-TRANSIT
+    file: scripts/check-crypto-transit.mjs
+    command: node scripts/check-crypto-transit.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 9
+    needs: []
+    effects: ['контейнер fifth-crypto-transit, удаляются в конце']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 4, искусственные ключи.
+    purpose: 'CryptoService на настоящем OpenBao: старые данные читаются, индексы совпадают, версии и отказы работают.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
   - id: CHK-PROD-COMPOSE
     file: scripts/check-prod-compose.mjs
     command: node scripts/check-prod-compose.mjs
@@ -4271,6 +4288,7 @@ blocks:
         CHK-OPENBAO-LAB,
         CHK-OPENBAO-OPS,
         CHK-OPENBAO-AUTO,
+        CHK-CRYPTO-TRANSIT,
         CHK-PROD-COMPOSE,
         CHK-RELEASE-PINS,
         CHK-RELEASE,

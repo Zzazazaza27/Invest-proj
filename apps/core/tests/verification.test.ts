@@ -1,3 +1,4 @@
+import { KMS_ENV } from './kms-env';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -37,7 +38,7 @@ const PROD_ENV: NodeJS.ProcessEnv = {
   AUTH_MODE: 'oidc',
   OIDC_ISSUER: 'https://id.5espace.test',
   OIDC_AUDIENCE: 'unicorn-launch',
-  KMS_MODE: 'kms',
+  ...KMS_ENV,
   KMS_KEY_ID: 'arn:aws:kms:ru-central1:1:key/abc',
   CORS_ALLOWED_ORIGINS: 'https://app.5espace.test',
   CORE_PUBLIC_URL: 'https://api.5espace.test',
