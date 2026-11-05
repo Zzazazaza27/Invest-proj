@@ -97,8 +97,13 @@ async function environmentAccess(call, token, prefix) {
     .replaceAll('prod/core', `${prefix}/core`)
     .replaceAll('/prod-', `/${prefix}-`);
   const name = `${prefix}-core`;
+  const rotatePolicy = readFileSync(
+    join(ROOT, 'infra', 'openbao', 'policy-prod-rotate.hcl'),
+    'utf8',
+  ).replaceAll('/prod-', `/${prefix}-`);
   const steps = [
     ['PUT', `sys/policies/acl/${name}`, { policy }],
+    ['PUT', `sys/policies/acl/${prefix}-rotate`, { policy: rotatePolicy }],
     [
       'POST',
       `auth/approle/role/${name}`,
@@ -111,7 +116,15 @@ async function environmentAccess(call, token, prefix) {
   }
   const role = await call('GET', `auth/approle/role/${name}/role-id`, { token });
   const secret = await call('POST', `auth/approle/role/${name}/secret-id`, { token });
-  return { roleId: role.json.data.role_id, secretId: secret.json.data.secret_id };
+  const rotate = await call('POST', 'auth/token/create', {
+    token,
+    body: { policies: [`${prefix}-rotate`], no_default_policy: true, ttl: '1h' },
+  });
+  return {
+    roleId: role.json.data.role_id,
+    secretId: secret.json.data.secret_id,
+    rotateToken: rotate.json.auth.client_token,
+  };
 }
 
 /** Настройка Agent среды: вход и токен как у ядра, шаблоны — на её секреты. */
@@ -257,6 +270,7 @@ try {
     const dir = resolve(option('--agent-dir'));
     writeFileSync(join(dir, 'role-id'), access.roleId);
     writeFileSync(join(dir, 'secret-id'), access.secretId);
+    writeFileSync(join(dir, 'rotate-token'), access.rotateToken);
     writeFileSync(join(dir, 'agent.hcl'), agentConfig(prefix, Object.keys(secrets)));
   }
   console.log('ключи и секреты совпали с комплектом, токен отозван');

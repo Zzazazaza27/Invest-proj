@@ -21,15 +21,18 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { createServer } from 'node:http';
+import { request as httpsRequest } from 'node:https';
 import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { docker, MEMORY_ONLY, TOOL_IMAGE } from './lib/backup.mjs';
+import { readCopy } from './lib/openbao-copy.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const HOST = '193.233.217.210';
 const MAUS = join(homedir(), '.ssh', 'maus_5e');
 const FORWARD = 18210;
+const COPY_FORWARD = 18212;
 const BACK = 18211;
 const ENV_ID = 'test-1';
 const option = (name, fallback) => {
@@ -153,6 +156,79 @@ function restoreTar() {
   return Buffer.from(r.stdout.trim(), 'base64');
 }
 
+/** Значения комплекта остаются в памяти этого процесса. */
+function bundleValues() {
+  const r = docker(
+    [
+      'run',
+      '--rm',
+      '--network',
+      'none',
+      ...MEMORY_ONLY,
+      '-e',
+      'PASSPHRASE',
+      '-v',
+      `${bundle}:/in/bundle.gpg:ro`,
+      '-v',
+      `${secretKey}:/in/secret.asc:ro`,
+      '--entrypoint',
+      'sh',
+      TOOL_IMAGE,
+      '-c',
+      [
+        'set -e',
+        'mkdir -m 700 /secure/gpg',
+        'g() { printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 "$@" 2>/dev/null; }',
+        'g --import /in/secret.asc',
+        'g --decrypt /in/bundle.gpg',
+      ].join('\n'),
+    ],
+    { env: { PASSPHRASE: readFileSync(passFile, 'utf8').trim() } },
+  );
+  const value = (name) => new RegExp(`^${name}=(.+)$`, 'm').exec(r.stdout)?.[1];
+  return { recovery: value('OPENBAO_RECOVERY_KEY'), password: value('OPENBAO_THOMAS_PASSWORD') };
+}
+
+/** Копия читается через туннель: ключ восстановления на сервер не попадает. */
+async function copyCheck(body) {
+  const [dek, email] = body.toString('utf8').trim().split(' ');
+  const ca = readFileSync(join(work, 'tls.crt'));
+  const call = (method, path, { token, body: payload } = {}) =>
+    new Promise((done, fail) => {
+      const req = httpsRequest(
+        {
+          host: '127.0.0.1',
+          port: COPY_FORWARD,
+          method,
+          path: `/v1/${path}`,
+          ca,
+          servername: 'localhost',
+          headers: {
+            ...(token ? { 'X-Vault-Token': token } : {}),
+            'Content-Type': 'application/json',
+          },
+          signal: AbortSignal.timeout(15_000),
+        },
+        (res) => {
+          let text = '';
+          res.setEncoding('utf8');
+          res.on('data', (chunk) => (text += chunk));
+          res.on('error', fail);
+          res.on('end', () => done({ status: res.statusCode, json: text ? JSON.parse(text) : {} }));
+        },
+      );
+      req.on('error', fail);
+      req.end(payload ? JSON.stringify(payload) : undefined);
+    });
+  const hash = await readCopy(call, {
+    ...bundleValues(),
+    prefix: ENV_ID,
+    wrappedDek: Buffer.from(dek, 'hex'),
+    emailCiphertext: Buffer.from(email, 'hex'),
+  });
+  return `копия прочитана: ключ восстановления принят, адрес открыт, отпечаток ${hash.slice(0, 12)}\n`;
+}
+
 const server = createServer((req, res) => {
   const chunks = [];
   req.on('data', (c) => chunks.push(c));
@@ -172,7 +248,14 @@ const server = createServer((req, res) => {
         send('ok');
       } else if (req.url === '/import') send(importKeys());
       else if (req.url === '/restore.tar') send(restoreTar());
-      else if (req.url === '/report') {
+      else if (req.url === '/stage') send(option('--stage', 'transit'));
+      else if (req.url === '/copy-check') {
+        copyCheck(Buffer.concat(chunks)).then(send, (error) => {
+          note(`ОШИБКА копии: ${error.message}`);
+          res.writeHead(500);
+          res.end();
+        });
+      } else if (req.url === '/report') {
         verdict = Buffer.concat(chunks).toString('utf8');
         send('ok');
       } else {
@@ -213,6 +296,8 @@ const ssh = spawn(
     'ExitOnForwardFailure=yes',
     '-L',
     `127.0.0.1:${FORWARD}:127.0.0.1:8200`,
+    '-L',
+    `127.0.0.1:${COPY_FORWARD}:127.0.0.1:18300`,
     '-R',
     `127.0.0.1:${BACK}:127.0.0.1:${BACK}`,
     `maus@${HOST}`,

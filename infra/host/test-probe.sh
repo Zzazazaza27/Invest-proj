@@ -147,6 +147,23 @@ echo "записей vault и всего: $counts"
 [ "${counts%%|*}" = 0 ] && [ "${counts##*|}" -ge 2 ]
 echo 'записей vault нет: запись прежним форматом'
 
+if [ "$(laptop stage)" = vault ]; then
+  # shellcheck source=/dev/null
+  . infra/host/test-probe-vault.sh
+  say 'уборка'
+  trap - ERR
+  rm -f "$WORK/settings.before" "$WORK/users.json"
+  # Записи уже в формате vault: среда остаётся в kms и останавливается, местным ключам их не прочитать.
+  rm -f "$DIR/compose.agent.yml"
+  docker rm -f "$AGENT" >/dev/null 2>&1 || true
+  compose stop >/dev/null 2>&1 || true
+  docker network disconnect "$NET" fifth-openbao >/dev/null 2>&1 || true
+  rm -rf "$WORK"
+  report 'ПРОБА ПРОЙДЕНА'
+  echo 'ПРОБА ПРОЙДЕНА'
+  exit 0
+fi
+
 say 'отказ службы ключей'
 docker stop "$AGENT" >/dev/null
 docker network disconnect "$NET" fifth-openbao

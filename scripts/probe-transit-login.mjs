@@ -29,7 +29,7 @@ function parsed(text) {
 
 function client() {
   const jar = new Map();
-  return async (path, { method = 'GET', body } = {}) => {
+  const call = async (path, { method = 'GET', body } = {}) => {
     const csrf = jar.get('ul_csrf');
     const response = await fetch(`${BASE}${path}`, {
       method,
@@ -48,6 +48,8 @@ function client() {
     const text = await response.text();
     return { status: response.status, json: parsed(text) };
   };
+  call.session = () => jar.get('ul_session') ?? '';
+  return call;
 }
 
 const accounts = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : [];
@@ -79,7 +81,9 @@ if (command === 'register') {
     const login = await call('/v1/auth/login', { method: 'POST', body: { email, password } });
     const me = await call('/v1/auth/me');
     const masked = typeof me.json?.emailMasked === 'string' && !me.json.emailMasked.includes(email);
-    const ok = login.status < 300 && me.status === 200 && masked;
+    const kid = process.env.PROBE_EXPECT_KID;
+    const signed = !kid || call.session().startsWith(`${kid}.`);
+    const ok = login.status < 300 && me.status === 200 && masked && signed;
     if (!ok) failed = true;
     console.log(
       `вход ${name}: код ${login.status}, контакт ${masked ? 'читается' : 'НЕ читается'}`,
