@@ -23,35 +23,26 @@ services:
       - no-new-privileges:true
     mem_limit: 512m
 
-  # Agent ядра запускается отдельно, в задании 5: --profile agent.
+  # Agent ядра запускается отдельно: --profile agent. Файлы кладёт в память узла, /run.
   agent:
     profiles: [agent]
     image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
     container_name: fifth-openbao-agent
-    user: '1990:${FIFTH_SECRETS_GID:-1000}'
+    user: '1990:1000'
     restart: unless-stopped
-    command: ['agent', '-config=/agent/agent.hcl', '-config=/agent/templates.hcl']
+    command: ['agent', '-config=/agent/agent.hcl']
     network_mode: host
     volumes:
-      - ./agent-core.hcl:/agent/agent.hcl:ro
-      - /etc/fifth-openbao/agent/templates.hcl:/agent/templates.hcl:ro
+      - /etc/fifth-openbao/agent/agent.hcl:/agent/agent.hcl:ro
       - /etc/fifth-openbao/approle/prod-core/role-id:/agent/role-id:ro
       - /etc/fifth-openbao/approle/prod-core/secret-id:/agent/secret-id:ro
       - /etc/fifth-openbao/tls/tls.crt:/openbao/tls/tls.crt:ro
-      - secrets:/run/fifth-secrets
+      - /run/fifth-secrets:/run/fifth-secrets
     security_opt:
       - no-new-privileges:true
     mem_limit: 128m
 
 volumes:
-  # Секреты только в памяти узла: том общий для Agent и ядра.
-  secrets:
-    name: fifth_secrets_mem
-    driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
-      o: size=8m,mode=0750,uid=1990,gid=${FIFTH_SECRETS_GID:-1000}
   data:
     name: fifth_openbaodata
   audit:

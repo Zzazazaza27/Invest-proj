@@ -122,8 +122,9 @@ node scripts/openbao-keys-import.mjs --kit <transition.gpg> --bundle <emergency.
 ### Agent
 
 Запуск: `docker compose -p fifth-openbao -f infra/openbao/docker-compose.yml --profile agent up -d`.
-Секреты лежат в томе `fifth_secrets_mem`, он в памяти. Ядро подключает его через
-`infra/docker-compose.agent.yml`, токен Transit берёт из `/run/fifth-secrets/openbao-token`.
+Файлы лежат в `/run/fifth-secrets`, это память узла, каталог создаёт `tmpfiles.d`. Ядро подключает его
+через `infra/docker-compose.secrets.yml`, токен Transit берёт из `/run/fifth-secrets/openbao-token`.
+Секреты приложения ядро пока читает из `.local/secrets`: их перевод на файлы Agent — отдельный шаг.
 
 ### Смена версии ключа
 
