@@ -101,6 +101,7 @@ if [ -f "$DIR/secrets/valkey.conf" ]; then
   sed -i '/^port 6378/,$d' "$DIR/secrets/valkey.conf"
   sed -i '/^tls {/d' "$DIR/secrets/nats.conf"
   rm -f "$DIR/secrets/tls-server.crt" "$DIR/secrets/tls-server.key" "$DIR/secrets/tls-ca.crt" "$DIR/compose.tls.yml"
+  docker restart "$PROJECT-valkey" "$PROJECT-nats" >/dev/null 2>&1 || true
 fi
 if [ -f "$DIR/install.json" ]; then
   node scripts/env.mjs start "$ID" --text | cut -c1-160 || true
