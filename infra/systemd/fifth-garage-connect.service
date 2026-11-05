@@ -1,0 +1,17 @@
+# Узлы Garage после перезагрузки получают новые адреса Docker и теряют друг друга: соединяем заново.
+[Unit]
+Description=5E storage: reconnect Garage nodes
+After=docker.service network-online.target
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fifth-element
+ExecStartPre=/bin/sleep 45
+ExecStart=/usr/bin/node scripts/garage-init.mjs
+Restart=on-failure
+RestartSec=30
+TimeoutStartSec=5m
+
+[Install]
+WantedBy=multi-user.target
