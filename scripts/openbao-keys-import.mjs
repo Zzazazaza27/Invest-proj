@@ -38,7 +38,7 @@ const option = (name) => {
 };
 
 /** Значения остаются в памяти контейнера и этого процесса: диск Docker и ноутбука их не видит. */
-function openKits(kit, bundle, secretKey, passFile) {
+function openKits(kit, bundle, secretKey, passFile, secretsPath) {
   for (const f of [kit, bundle, secretKey, passFile]) {
     if (!existsSync(f)) throw new Error(`нет файла ${f}`);
   }
@@ -48,8 +48,8 @@ function openKits(kit, bundle, secretKey, passFile) {
     'g() { printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 "$@" 2>/dev/null; }',
     'g --import /in/secret.asc',
     'g --decrypt /in/bundle.gpg | sed -n "s/^OPENBAO_THOMAS_PASSWORD=//p"',
-    'g --decrypt /in/kit.gpg | tar -x -C /secure/k .local/secrets',
-    'for f in /secure/k/.local/secrets/*; do [ -f "$f" ] && printf "%s=%s\\n" "$(basename "$f")" "$(base64 -w0 "$f")"; done',
+    `g --decrypt /in/kit.gpg | tar -x -C /secure/k ${secretsPath}`,
+    'for f in /secure/k/$SECRETS_PATH/*; do [ -f "$f" ] && printf "%s=%s\\n" "$(basename "$f")" "$(base64 -w0 "$f")"; done',
   ].join('\n');
   const r = docker(
     [
@@ -60,6 +60,8 @@ function openKits(kit, bundle, secretKey, passFile) {
       ...MEMORY_ONLY,
       '-e',
       'PASSPHRASE',
+      '-e',
+      `SECRETS_PATH=${secretsPath}`,
       '-v',
       `${kit}:/in/kit.gpg:ro`,
       '-v',
@@ -87,6 +89,36 @@ function openKits(kit, bundle, secretKey, passFile) {
     throw new Error(`комплекты не открылись ключом Томаса: ${r.status} ${r.stderr.slice(-200)}`);
   }
   return { password, keys, secrets };
+}
+
+/** Политика и AppRole среды: те же права, что у ядра, но на её имена. */
+async function environmentAccess(call, token, prefix) {
+  const policy = readFileSync(join(ROOT, 'infra', 'openbao', 'policy-prod-core.hcl'), 'utf8')
+    .replaceAll('prod/core', `${prefix}/core`)
+    .replaceAll('/prod-', `/${prefix}-`);
+  const name = `${prefix}-core`;
+  const steps = [
+    ['PUT', `sys/policies/acl/${name}`, { policy }],
+    [
+      'POST',
+      `auth/approle/role/${name}`,
+      { token_policies: name, token_ttl: '1h', token_max_ttl: '4h' },
+    ],
+  ];
+  for (const [method, path, body] of steps) {
+    const r = await call(method, path, { token, body });
+    if (r.status >= 300) throw new Error(`${path}: код ${r.status}`);
+  }
+  const role = await call('GET', `auth/approle/role/${name}/role-id`, { token });
+  const secret = await call('POST', `auth/approle/role/${name}/secret-id`, { token });
+  return { roleId: role.json.data.role_id, secretId: secret.json.data.secret_id };
+}
+
+/** Настройка Agent среды: вход и токен как у ядра, шаблоны — на её секреты. */
+function agentConfig(prefix, names) {
+  const base = readFileSync(join(ROOT, 'infra', 'openbao', 'agent-core.hcl'), 'utf8');
+  const head = base.slice(0, base.indexOf('template {'));
+  return `${head.replace('address = "https://127.0.0.1:8200"', 'address = "https://fifth-openbao:8200"\n  tls_server_name = "localhost"')}${agentTemplates(prefix, names)}`;
 }
 
 function parsed(text) {
@@ -192,6 +224,7 @@ try {
     resolve(option('--bundle') ?? ''),
     resolve(option('--secret-key') ?? ''),
     resolve(option('--passphrase-file') ?? ''),
+    option('--secrets-path') ?? '.local/secrets',
   );
   let call;
   if (option('--addr')) {
@@ -203,7 +236,7 @@ try {
   }
   await waitFor(call);
   const prefix = option('--prefix') ?? 'prod';
-  const { report, stored } = await withOperatorToken(call, password, async (token) => ({
+  const { report, stored, access } = await withOperatorToken(call, password, async (token) => ({
     report: await ensureKeys(call, token, prefix, keys),
     stored: await ensureSecrets(call, token, prefix, secrets),
     // Установка могла пройти раньше этой политики: root-токена уже нет, поэтому ставит оператор.
@@ -213,11 +246,18 @@ try {
         policy: readFileSync(join(ROOT, 'infra', 'openbao', 'policy-prod-rotate.hcl'), 'utf8'),
       },
     }),
+    access: option('--agent-dir') ? await environmentAccess(call, token, prefix) : null,
   }));
   for (const { name, action } of report) console.log(`${name}: ${action}`);
   console.log(`KV: записано ${stored.written}, уже на месте ${stored.same}`);
   if (option('--agent-out')) {
     writeFileSync(resolve(option('--agent-out')), agentTemplates(prefix, Object.keys(secrets)));
+  }
+  if (access) {
+    const dir = resolve(option('--agent-dir'));
+    writeFileSync(join(dir, 'role-id'), access.roleId);
+    writeFileSync(join(dir, 'secret-id'), access.secretId);
+    writeFileSync(join(dir, 'agent.hcl'), agentConfig(prefix, Object.keys(secrets)));
   }
   console.log('ключи и секреты совпали с комплектом, токен отозван');
 } catch (error) {

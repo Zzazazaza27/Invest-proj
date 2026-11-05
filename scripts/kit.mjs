@@ -3,7 +3,7 @@
  * Комплект выпуска (W09c): манифест и полная локальная копия образов.
  *
  *   node scripts/kit.mjs manifest --build <номер> --commit <sha> --images <файл.json> --out <файл>
- *   node scripts/kit.mjs fetch    --build <номер> [--run <запуск CI>]
+ *   node scripts/kit.mjs fetch    --build <номер> [--run <запуск CI>] [--dir <артефакт>]
  *   node scripts/kit.mjs pack     --build <номер> --from <метка>
  *   node scripts/kit.mjs load     --build <номер>
  *   node scripts/kit.mjs check    --build <номер>
@@ -24,6 +24,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  cpSync,
   createReadStream,
   existsSync,
   mkdirSync,
@@ -224,15 +225,21 @@ async function fetchKit() {
   rmSync(staging, { recursive: true, force: true });
   mkdirSync(staging, { recursive: true });
   const runId = flag('--run');
-  run('gh', [
-    'run',
-    'download',
-    ...(runId ? [runId] : []),
-    '--name',
-    `kit-${build}`,
-    '--dir',
-    staging,
-  ]);
+  const from = flag('--dir');
+  if (from) {
+    // На сервере нет gh: артефакт сборки приходит готовым каталогом.
+    cpSync(from, staging, { recursive: true });
+  } else {
+    run('gh', [
+      'run',
+      'download',
+      ...(runId ? [runId] : []),
+      '--name',
+      `kit-${build}`,
+      '--dir',
+      staging,
+    ]);
+  }
   const kit = JSON.parse(readFileSync(join(staging, 'kit.json'), 'utf8'));
   if (kit.build !== build) throw new Refused(`манифест от сборки ${kit.build}`);
   const refs = COMPONENTS.map((c) => kit.images[c].digest);

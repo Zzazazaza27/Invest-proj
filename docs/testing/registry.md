@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 199; требований: 41
+- Проверок: 201; требований: 41
 
 ## Что защищено без участия человека
 
@@ -305,6 +305,8 @@
 | TOOL-S3-LIFECYCLE-APPLY | `node scripts/s3-lifecycle-apply.mjs` | 0 | вручную, по поводу | — |
 | TOOL-OPENBAO-KEYS-IMPORT | `node scripts/openbao-keys-import.mjs` | 0 | вручную, по поводу | — |
 | TOOL-CRYPTO-MIGRATE | `node scripts/crypto-migrate.mjs verify` | 0 | вручную, по поводу | — |
+| TOOL-TEST-PROBE | `node scripts/test-probe.mjs` | 0 | вручную, по поводу | — |
+| TOOL-PROBE-TRANSIT-LOGIN | `node scripts/probe-transit-login.mjs` | 0 | вручную, по поводу | — |
 | TOOL-SEED-ACCEPTANCE | `node scripts/seed-acceptance.mjs` | 0 | вручную, по поводу | — |
 | TOOL-RUN-SUITE | `npm run suite:handoff` | 0 | вручную, по поводу | — |
 | TOOL-INTEL-VERIFY-PAGES | `node scripts/intelligence-verify-pages.mjs` | 0 | вручную, по поводу | — |
@@ -376,7 +378,7 @@
 | CHK-OPENBAO-OPS | `node scripts/check-openbao-ops.mjs` | 32 | вручную | — |
 | CHK-OPENBAO-AUTO | `node scripts/check-openbao-auto.mjs` | 42 | вручную | — |
 | CHK-CRYPTO-TRANSIT | `node scripts/check-crypto-transit.mjs` | 37 | вручную | — |
-| CHK-TRANSITION-KIT | `node scripts/check-transition-kit.mjs` | 19 | вручную | — |
+| CHK-TRANSITION-KIT | `node scripts/check-transition-kit.mjs` | 22 | вручную | — |
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
 | CHK-RELEASE | `node scripts/check-release.mjs` | 53 | вручную | — |

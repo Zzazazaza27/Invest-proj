@@ -1706,6 +1706,40 @@ checks:
     purpose: 'Перенос записей в формат vault порциями и сверка всей таблицы.'
     confirmation: reviewed-in-code
 
+
+  - id: TOOL-TEST-PROBE
+    file: scripts/test-probe.mjs
+    command: node scripts/test-probe.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    studied: code
+    studiedOn: 2026-11-05
+    effects: ['поднимает test-1 на VPS, рабочую среду не трогает']
+    note: >-
+      Блок 5, задание 5. Проба test-1, запускает Томас.
+    purpose: 'Проба перехода на Transit и возврата на test-1 одной командой.'
+    confirmation: reviewed-in-code
+
+
+  - id: TOOL-PROBE-TRANSIT-LOGIN
+    file: scripts/probe-transit-login.mjs
+    command: node scripts/probe-transit-login.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    studied: code
+    studiedOn: 2026-11-05
+    effects: ['поднимает test-1 на VPS, рабочую среду не трогает']
+    note: >-
+      Блок 5, задание 5. Проба test-1, запускает Томас.
+    purpose: 'Настоящий вход в среде пробы.'
+    confirmation: reviewed-in-code
+
   - id: TOOL-SECURITY-AUDIT-FULL
     file: scripts/security-audit-full.mjs
     command: node scripts/security-audit-full.mjs
@@ -3081,7 +3115,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 19
+    asserts: 22
     needs: []
     effects: ['временный контейнер, удаляется сам']
     studied: code

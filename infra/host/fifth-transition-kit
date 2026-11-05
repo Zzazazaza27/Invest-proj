@@ -15,7 +15,8 @@ ROOT="${FIFTH_TRANSITION_ROOT:-/opt/fifth-element}"
 KEYS="${FIFTH_OPENBAO_KEYS_DIR:-/var/backups/fifth-element/openbao-keys}"
 RECIPIENT="${FIFTH_OPENBAO_RECIPIENT:-$ROOT/infra/openbao/thomas-recipient.asc}"
 RECIPIENT_FPR="${FIFTH_OPENBAO_RECIPIENT_FPR:-06D54B5532998568A88185A2BEA53785936C28C0}"
-OPENBAO_SECRETS=.local/secrets
+ENV_FILE="${FIFTH_TRANSITION_ENV:-.env}"
+OPENBAO_SECRETS="${FIFTH_TRANSITION_SECRETS:-.local/secrets}"
 
 fail() {
   echo "fifth-transition-kit: $1" >&2
@@ -25,7 +26,7 @@ fail() {
 # Опись: тип, права, владелец и хеш каждого файла и каталога, включая сам каталог секретов.
 # Ссылки и всё, кроме обычных файлов и каталогов, помечаются «!»: комплект таких не принимает.
 manifest() {
-  (cd "$1" && find .env "$OPENBAO_SECRETS" -printf '%y %m %U %G %n %p\n' | LC_ALL=C sort -k6 |
+  (cd "$1" && find "$ENV_FILE" "$OPENBAO_SECRETS" -printf '%y %m %U %G %n %p\n' | LC_ALL=C sort -k6 |
     while read -r type mode uid gid links name; do
       case "$type" in
         f)
@@ -40,11 +41,11 @@ manifest() {
 
 # Набор обязан быть полным: .env файлом, каталог секретов каталогом, и ничего лишнего.
 sound() {
-  ! grep -q '^!' "$1" && grep -q ' \.env$' "$1" && grep -q "^d .* $OPENBAO_SECRETS\$" "$1"
+  ! grep -q '^!' "$1" && grep -q "^f .* $ENV_FILE\$" "$1" && grep -q "^d .* $OPENBAO_SECRETS\$" "$1"
 }
 
 create() {
-  [ -f "$ROOT/.env" ] || fail 'нет .env'
+  [ -f "$ROOT/$ENV_FILE" ] || fail 'нет файла настроек'
   [ -d "$ROOT/$OPENBAO_SECRETS" ] || fail 'нет каталога секретов'
   work="$(mktemp -d)"
   trap 'rm -rf "$work"' EXIT
@@ -56,7 +57,7 @@ create() {
   sound "$work/transition-manifest.txt" || fail 'есть ссылки или нет нужных файлов: комплект не создан'
   files="$(grep -c '^f ' "$work/transition-manifest.txt")"
   # У sh нет pipefail: сбой tar отмечается файлом, иначе в комплект молча уйдёт обрывок.
-  (cd "$ROOT" && tar -cpf - --numeric-owner .env "$OPENBAO_SECRETS" -C "$work" transition-manifest.txt ||
+  (cd "$ROOT" && tar -cpf - --numeric-owner "$ENV_FILE" "$OPENBAO_SECRETS" -C "$work" transition-manifest.txt ||
     touch "$work/tar.failed") |
     gpg --homedir "$work" --batch -q --trust-model always --encrypt --recipient "$fpr" \
       --output - >"$KEYS/transition.gpg.tmp"
@@ -86,9 +87,9 @@ restore() {
   rm -f "$ROOT/.transition-manifest.$$" "$ROOT/.transition-actual.$$"
   aside="$ROOT/.local/before-restore-$(date -u +%Y%m%dT%H%M%SZ)"
   mkdir -p "$aside"
-  [ ! -e "$ROOT/.env" ] || mv "$ROOT/.env" "$aside/.env"
+  [ ! -e "$ROOT/$ENV_FILE" ] || mv "$ROOT/$ENV_FILE" "$aside/$ENV_FILE"
   [ ! -e "$ROOT/$OPENBAO_SECRETS" ] || mv "$ROOT/$OPENBAO_SECRETS" "$aside/secrets"
-  mv "$stage/.env" "$ROOT/.env"
+  mv "$stage/$ENV_FILE" "$ROOT/$ENV_FILE"
   mv "$stage/$OPENBAO_SECRETS" "$ROOT/$OPENBAO_SECRETS"
   echo "восстановлено файлов: $files, прежнее отложено"
 }

@@ -89,6 +89,14 @@ after=$(state)
 [ "$before" = "$after" ]; ok 'содержимое, владелец и права вернулись' $?
 ls -d /tmp/root/.local/before-restore-* >/dev/null 2>&1; ok 'прежнее отложено, а не удалено' $?
 ls -a /tmp/root | grep -q '^\.transition'; [ $? -ne 0 ]; ok 'временных файлов не осталось' $?
+
+mkdir -p /tmp/env/secrets; printf 'A=1\n' > /tmp/env/settings.env; printf 'x\n' > /tmp/env/secrets/KEK_X
+export FIFTH_TRANSITION_ROOT=/tmp/env FIFTH_TRANSITION_ENV=settings.env FIFTH_TRANSITION_SECRETS=secrets FIFTH_OPENBAO_KEYS_DIR=/tmp/keys2
+sh $K create >/dev/null 2>&1; ok 'среда с другим размещением: комплект создан' $?
+printf lab | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 --decrypt /tmp/keys2/transition.gpg > /tmp/kit2.tar 2>/dev/null
+printf 'B=2\n' > /tmp/env/settings.env; rm /tmp/env/secrets/KEK_X
+sh $K restore < /tmp/kit2.tar >/dev/null 2>&1; ok 'и восстановлен' $?
+grep -q A=1 /tmp/env/settings.env && [ -s /tmp/env/secrets/KEK_X ]; ok 'значения вернулись' $?
 `;
 
 const r = spawnSync(
@@ -114,7 +122,7 @@ const lines = r.stdout.split('\n').filter((l) => /^(OK|FAIL) /.test(l));
 console.log('=== ПЕРЕХОДНЫЙ КОМПЛЕКТ ===');
 for (const line of lines) console.log(`  ${line}`);
 const failed = lines.filter((l) => l.startsWith('FAIL')).length;
-const expected = 19;
+const expected = 22;
 if (lines.length !== expected) console.log(`  FAIL ожидалось ${expected}: ${r.stderr.slice(-300)}`);
 console.log(`\nИТОГ: пройдено ${lines.length - failed}, не пройдено ${failed}`);
 process.exit(failed || lines.length !== expected ? 1 : 0);
