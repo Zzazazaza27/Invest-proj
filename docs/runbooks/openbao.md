@@ -153,6 +153,15 @@ node scripts/rotate-kek.mjs --transit --domain passport_sensitive
 Ключ поиска: версия задана `OPENBAO_SEARCH_INDEX_VERSION`. Новая версия индексы не меняет, переход на
 неё означает полный пересчёт.
 
+## Боевой режим рабочей среды
+
+Команда: `node scripts/prod-transition.mjs --build <сборка> --expect <сборка> --commit <sha> --stage production --mail-to <адрес>`.
+
+Сертификаты лежат в `/etc/fifth-tls`. Valkey принимает TLS на 6379, обычный порт 6378 оставлен для
+наблюдения на петле узла. PostgreSQL включает `ssl`, служебные скрипты узла подключаются к нему как
+прежде. Вход Integration API защищён `client_auth` в Caddy: заголовок сертификата заменяется прокси.
+Сбой возвращает `.env` и `Caddyfile` из `.local/*-before-production`.
+
 ## Если OpenBao запечатан
 
 - **Файл ключа цел:** перезапусти контейнер, он откроется сам.

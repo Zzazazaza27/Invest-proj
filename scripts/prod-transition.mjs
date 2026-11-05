@@ -8,6 +8,9 @@
  * через туннель; Agent; ядро в kms/legacy. Запись остаётся прежним форматом, при сбое ядра .env
  * возвращается сам. KEK на сервере этим не удаляются. Значения не печатаются.
  * Запись хода: out/prod-transition-<время>.txt.
+ *
+ * Боевой режим: --stage production --mail-to <адрес>. Учётка почты и сертификаты, новый комплект и
+ * импорт, ядро на файлах Agent, затем TLS, mTLS и NODE_ENV=production. При сбое режим возвращается сам.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -33,6 +36,7 @@ const option = (name, fallback) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : fallback;
 };
+const production = option('--stage') === 'production';
 const build = option('--build');
 const expect = option('--expect');
 const commit = option('--commit');
@@ -78,7 +82,8 @@ let tunnel = null;
 let failed = false;
 try {
   remote(`sudo -n /usr/local/sbin/fifth-test sync ${commit}`);
-  op('prod-release', build, expect);
+  if (production) op('prod-prepare');
+  else op('prod-release', build, expect);
   op('prod-kit');
 
   note('\n▸ комплект на ноутбук');
@@ -148,8 +153,14 @@ try {
       .toString()
       .trim(),
   );
-  op('prod-kms');
-  note('\nИТОГ: ПЕРЕХОД НА KMS/LEGACY ПРОЙДЕН');
+  if (production) {
+    op('prod-agent-core');
+    op('prod-production', option('--mail-to'));
+    note('\nИТОГ: БОЕВОЙ РЕЖИМ ВКЛЮЧЁН');
+  } else {
+    op('prod-kms');
+    note('\nИТОГ: ПЕРЕХОД НА KMS/LEGACY ПРОЙДЕН');
+  }
 } catch (error) {
   failed = true;
   note(`\nИТОГ: ОСТАНОВЛЕНО — ${error.message}`);

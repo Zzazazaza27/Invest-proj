@@ -12,7 +12,8 @@ chown -R 1990 /etc/fifth-openbao/approle/prod-core
 install -o root -g root -m 644 infra/host/fifth-secrets.tmpfiles /etc/tmpfiles.d/fifth-secrets.conf
 systemd-tmpfiles --create /etc/tmpfiles.d/fifth-secrets.conf
 install -o root -g 1000 -m 440 /etc/fifth-openbao/tls/tls.crt "$ROOT/.local/secrets/openbao-ca.crt"
-docker compose -p fifth-openbao -f infra/openbao/docker-compose.yml --profile agent up -d agent 2>&1 | tail -1 | cut -c1-120
+docker compose -p fifth-openbao -f infra/openbao/docker-compose.yml --profile agent up -d --force-recreate agent 2>&1 | tail -1 | cut -c1-120
+sleep 5
 for _ in $(seq 1 30); do
   [ -s /run/fifth-secrets/openbao-token ] && [ -s /run/fifth-secrets/POSTGRES_PASSWORD ] && break
   sleep 1

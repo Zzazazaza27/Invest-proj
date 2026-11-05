@@ -1,0 +1,54 @@
+# TLS внутренних служб рабочей среды (блок 5, задание 5). Подключает scripts/infra.mjs, когда в .env
+# задан FIFTH_TLS_DIR. Valkey слушает TLS на 6379, а обычный порт 6378 оставлен для проверки здоровья
+# и наблюдения: он опубликован только на петлю узла и закрыт паролем.
+services:
+  valkey:
+    command: !override
+      - valkey-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?}
+      - --appendonly
+      - 'yes'
+      - --maxmemory-policy
+      - noeviction
+      - --port
+      - '6378'
+      - --tls-port
+      - '6379'
+      - --tls-cert-file
+      - /tls/server.crt
+      - --tls-key-file
+      - /tls/server.key
+      - --tls-ca-cert-file
+      - /tls/ca.crt
+      - --tls-auth-clients
+      - 'no'
+    ports: !override
+      - '127.0.0.1:${REDIS_PORT:-6380}:6379'
+      - '127.0.0.1:6381:6378'
+    volumes:
+      - ${FIFTH_TLS_DIR:?}:/tls:ro
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'valkey-cli -p 6378 -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG',
+        ]
+  nats:
+    command: !override
+      - '-js'
+      - '-sd'
+      - '/data'
+      - '-m'
+      - '8222'
+      - '--user'
+      - 'unicorn'
+      - '--pass'
+      - '${NATS_PASSWORD:?}'
+      - '--tls'
+      - '--tlscert'
+      - '/tls/server.crt'
+      - '--tlskey'
+      - '/tls/server.key'
+    volumes:
+      - ${FIFTH_TLS_DIR:?}:/tls:ro

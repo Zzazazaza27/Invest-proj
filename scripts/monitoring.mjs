@@ -58,7 +58,7 @@ const ADDR =
         publicUrl: 'https://5espace.com/',
         publicHealth: 'https://5espace.com/v1/health',
         pg: 'tcp://127.0.0.1:5433',
-        redis: 'tcp://127.0.0.1:6380',
+        redis: env.MONITOR_REDIS_URI || 'tcp://127.0.0.1:6380',
         nats: 'http://127.0.0.1:8222',
         // Garage (D-001): admin-порт первого узла, /health без токена.
         garageHealth: 'http://127.0.0.1:3903/health',

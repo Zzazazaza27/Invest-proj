@@ -32,6 +32,7 @@ const COMPOSE_PATH = join(ROOT, 'infra', 'docker-compose.yml');
 const JOURNALD_PATH = join(ROOT, 'infra', 'docker-compose.journald.yml');
 const PROD_PATH = join(ROOT, 'infra', 'docker-compose.prod.yml');
 const SECRETS_PATH = join(ROOT, 'infra', 'docker-compose.secrets.yml');
+const TLS_PATH = join(ROOT, 'infra', 'docker-compose.tls.yml');
 // Файлы запуска рабочей среды из установленного комплекта (W09e): рабочая копия не участвует.
 const ACTIVE_DIR =
   process.env.FIFTH_PROD_COMPOSE_DIR || join(ROOT, '.local', 'envs', 'prod', 'compose');
@@ -121,6 +122,11 @@ if (logDriver === 'journald') {
 if (existsSync(ENV_PATH) && /^FIFTH_SECRETS_DIR=./m.test(readFileSync(ENV_PATH, 'utf8'))) {
   args.push('-f', SECRETS_PATH);
   for (const [k, v] of Object.entries(parseEnvFile(ENV_PATH))) process.env[k] ??= v;
+}
+
+// TLS внутренних служб рабочей среды: файл из репозитория, как и каталог секретов.
+if (existsSync(ENV_PATH) && /^FIFTH_TLS_DIR=./m.test(readFileSync(ENV_PATH, 'utf8'))) {
+  args.push('-f', TLS_PATH);
 }
 
 args.push(...tail, ...rest);
