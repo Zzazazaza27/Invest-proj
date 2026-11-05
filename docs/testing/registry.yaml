@@ -3319,6 +3319,51 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: UNIT-CORE-CRYPTO-CONTRACT
+    file: apps/core/tests/crypto-contract.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 19
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 4. Transit здесь — заглушка с той же раскладкой байтов.
+    purpose: 'Контрольные примеры прежнего CryptoService, совместимость записи в обе стороны, отказ при порче и недоступности службы ключей.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
+  - id: UNIT-CORE-SIGNING-KEYS
+    file: apps/core/tests/signing-keys.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 11
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 4. Вход, CSRF и интеграции.
+    purpose: 'Версии подписей: прежний формат до включения, срок приёма токенов без kid, отказ неизвестной версии без перебора.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
+  - id: UNIT-CORE-CRYPTO-LIVE
+    file: apps/core/tests/crypto-transit.live.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 9
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Без адреса OpenBao пропускается. Запускается из scripts/check-crypto-transit.mjs.
+    purpose: 'CryptoService на настоящем OpenBao с рабочей политикой ядра и искусственными ключами.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
   - id: UNIT-CORE-TECHDEBT
     file: apps/core/tests/techdebt.test.ts
     command: npm run test -w apps/core
@@ -4064,6 +4109,9 @@ requirements:
     checks:
       [
         UNIT-CORE-SECURITY,
+        UNIT-CORE-CRYPTO-CONTRACT,
+        UNIT-CORE-SIGNING-KEYS,
+        UNIT-CORE-CRYPTO-LIVE,
         UNIT-CORE-LAB,
         UNIT-CORE-EVENTS,
         UNIT-PKG-CONTRACTS-CONTRACTS,
@@ -4276,6 +4324,9 @@ blocks:
         CHK-CONSOLE-PRIVATE,
         CHK-DEPLOY-RELEASE,
         UNIT-CORE-SECURITY,
+        UNIT-CORE-CRYPTO-CONTRACT,
+        UNIT-CORE-SIGNING-KEYS,
+        UNIT-CORE-CRYPTO-LIVE,
         UNIT-CORE-SECRET-FILES,
       ]
 

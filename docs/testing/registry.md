@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 190; требований: 41
+- Проверок: 193; требований: 41
 
 ## Что защищено без участия человека
 
@@ -163,7 +163,7 @@
 | --- | --- | --- | --- | --- |
 | **QUA-UNIT-002** Модульные проверки пакетов запускаются автоматикой, а не никем | high | `UNIT-PKG-CONTRACTS-CONTRACTS`, `UNIT-PKG-CONTRACTS-VISIBILITY`, `UNIT-PKG-UI-MARKDOWN`, `UNIT-PKG-API-CLIENT-CLIENT` | запущено 2026-09-22 | не подтверждено |
 | **QUA-UNIT-003** Проверки конфигурации задают обстановку сами и не зависят от машины | high | `UNIT-CORE-SECURITY`, `UNIT-CORE-VERIFICATION`, `UNIT-CORE-LAB`, `UNIT-CORE-INTEGRATION` | запущено 2026-09-22 | да (2026-09-22, 9f7c59f) |
-| **QUA-UNIT-001** Логика ядра и договоров покрыта модульными проверками | medium | `UNIT-CORE-SECURITY`, `UNIT-CORE-LAB`, `UNIT-CORE-EVENTS`, `UNIT-PKG-CONTRACTS-CONTRACTS`, `UNIT-PKG-CONTRACTS-VISIBILITY` | запущено 2026-09-22 | не подтверждено |
+| **QUA-UNIT-001** Логика ядра и договоров покрыта модульными проверками | medium | `UNIT-CORE-SECURITY`, `UNIT-CORE-CRYPTO-CONTRACT`, `UNIT-CORE-SIGNING-KEYS`, `UNIT-CORE-CRYPTO-LIVE`, `UNIT-CORE-LAB`, `UNIT-CORE-EVENTS`, `UNIT-PKG-CONTRACTS-CONTRACTS`, `UNIT-PKG-CONTRACTS-VISIBILITY` | запущено 2026-09-22 | не подтверждено |
 
 ### Целостность
 
@@ -498,6 +498,9 @@
 | UNIT-CORE-INTEGRATION | `npm run test -w apps/core` | 15 | CI | CI |
 | UNIT-CORE-LAB | `npm run test -w apps/core` | 21 | CI | CI |
 | UNIT-CORE-SECURITY | `npm run test -w apps/core` | 64 | CI | CI |
+| UNIT-CORE-CRYPTO-CONTRACT | `npm run test -w apps/core` | 19 | CI | CI |
+| UNIT-CORE-SIGNING-KEYS | `npm run test -w apps/core` | 11 | CI | CI |
+| UNIT-CORE-CRYPTO-LIVE | `npm run test -w apps/core` | 9 | CI | CI |
 | UNIT-CORE-TECHDEBT | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-VERIFICATION | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-SECRET-FILES | `npm run test -w apps/core` | 11 | CI | CI |

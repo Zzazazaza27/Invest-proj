@@ -35,14 +35,11 @@ export function issueCsrfToken(subject: string): string {
 export function isCsrfTokenValid(subject: string, token: string): boolean {
   const split = splitSigned(token);
   if (!split) return false;
-  const secret = verifyingSecret('CSRF_SIGNING_KEY', split.kid);
-  if (secret === null) return false;
+  const key = verifyingSecret('CSRF_SIGNING_KEY', split.kid);
+  if (key === null) return false;
   const [nonce, signature] = split.parts;
 
-  const expected = Buffer.from(
-    signCsrf(secret, subject, signedText(split.kid, nonce)),
-    'base64url',
-  );
+  const expected = Buffer.from(signCsrf(key, subject, signedText(split.kid, nonce)), 'base64url');
   const provided = Buffer.from(signature, 'base64url');
   if (provided.length !== expected.length) return false;
   return timingSafeEqual(provided, expected);

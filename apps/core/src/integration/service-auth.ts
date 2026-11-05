@@ -112,11 +112,11 @@ function sign(secret: string, body: string): string {
 export function verifyServiceToken(token: string): TokenPayload {
   const split = splitSigned(token);
   if (!split) throw errors.unauthenticated({ stage: 'integration-format' });
-  const secret = verifyingSecret('INTEGRATION_TOKEN_SIGNING_KEY', split.kid);
-  if (secret === null) throw errors.unauthenticated({ stage: 'integration-kid' });
+  const key = verifyingSecret('INTEGRATION_TOKEN_SIGNING_KEY', split.kid);
+  if (key === null) throw errors.unauthenticated({ stage: 'integration-kid' });
   const [body, signature] = split.parts;
 
-  const expected = Buffer.from(sign(secret, signedText(split.kid, body)), 'base64url');
+  const expected = Buffer.from(sign(key, signedText(split.kid, body)), 'base64url');
   let provided: Buffer;
   try {
     provided = Buffer.from(signature, 'base64url');
