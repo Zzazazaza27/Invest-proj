@@ -2958,6 +2958,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
+  - id: CHK-OPENBAO-LAB
+    file: scripts/check-openbao-lab.mjs
+    command: node scripts/check-openbao-lab.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 22
+    needs: []
+    effects: ['контейнер и том fifth-openbao-lab, удаляются в конце']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задания 3–4, искусственные ключи.
+    purpose: 'OpenBao открывается по Static seal, а прежние ключи дают те же результаты.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
   - id: CHK-PROD-COMPOSE
     file: scripts/check-prod-compose.mjs
     command: node scripts/check-prod-compose.mjs
@@ -4200,6 +4217,7 @@ blocks:
       [
         CHK-SECRETS-TO-FILES,
         CHK-HOST-ACCESS,
+        CHK-OPENBAO-LAB,
         CHK-PROD-COMPOSE,
         CHK-RELEASE-PINS,
         CHK-RELEASE,
