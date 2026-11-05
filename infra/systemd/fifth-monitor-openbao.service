@@ -1,0 +1,11 @@
+# Наблюдение 5Э (блок 5, задание 3): состояние OpenBao для агента Zabbix.
+[Unit]
+Description=5E monitor: openbao
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fifth-element
+ExecStart=/usr/bin/node scripts/monitor-openbao.mjs
+TimeoutStartSec=50

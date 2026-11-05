@@ -750,6 +750,7 @@ export function setLimitations(catalog) {
       `версия кода не записана${catalog.config?.commitError ? `: ${catalog.config.commitError}` : ''}`,
     );
   }
+  if (catalog.openbao?.error) out.push(`снимка OpenBao нет: ${catalog.openbao.error}`);
   return out;
 }
 

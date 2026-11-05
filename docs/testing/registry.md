@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 186; требований: 41
+- Проверок: 188; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 72
+### Зарегистрированы, но ни в наборе, ни в CI — 73
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -246,6 +246,7 @@
 - `CHK-SECRETS-TO-FILES` — Перенос секретов не теряет значений и не печатает их.
 - `CHK-HOST-ACCESS` — Обёртки maus не выводят за каталог копий.
 - `CHK-OPENBAO-LAB` — OpenBao открывается по Static seal, а прежние ключи дают те же результаты.
+- `CHK-OPENBAO-OPS` — Agent, снимок, отзыв доступа и миграция seal работают на настоящих файлах размещения.
 - `CHK-PROD-COMPOSE` — Возврат рабочей среды не зависит от рабочей копии репозитория.
 - `CHK-RELEASE-PINS` — Очистка не удаляет комплект, образы которого могут работать в среде.
 - `CHK-RELEASE` — Блок 9, задание 1: комплект, блокировка, реестр и сверка версий.
@@ -316,6 +317,7 @@
 | TOOL-RELEASE | `node scripts/release.mjs install|verify|replay|recover <среда>` | 0 | вручную, по поводу | — |
 | TOOL-RENAME-STAND | `node scripts/rename-stand.mjs copy|back` | 0 | вручную, по поводу | — |
 | TOOL-SECRETS-TO-FILES | `node scripts/secrets-to-files.mjs apply|back` | 0 | вручную, по поводу | — |
+| TOOL-MONITOR-OPENBAO | `node scripts/monitor-openbao.mjs` | 0 | вручную, по поводу | — |
 | TOOL-ENV | `node scripts/env.mjs create|status|stop|start|seed|destroy <среда>` | 0 | вручную, по поводу | — |
 | TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export|legacy-snapshot|legacy-gap|secrets-draft --to <файл>` | 0 | вручную, по поводу | — |
 | TOOL-GARAGE-INIT | `node scripts/garage-init.mjs [--status]` | 0 | вручную, по поводу | — |
@@ -366,6 +368,7 @@
 | CHK-SECRETS-TO-FILES | `node scripts/check-secrets-to-files.mjs` | 11 | вручную | — |
 | CHK-HOST-ACCESS | `node scripts/check-host-access.mjs` | 13 | вручную | — |
 | CHK-OPENBAO-LAB | `node scripts/check-openbao-lab.mjs` | 22 | вручную | — |
+| CHK-OPENBAO-OPS | `node scripts/check-openbao-ops.mjs` | 29 | вручную | — |
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
 | CHK-RELEASE | `node scripts/check-release.mjs` | 53 | вручную | — |

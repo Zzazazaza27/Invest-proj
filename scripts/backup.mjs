@@ -19,6 +19,7 @@
  */
 import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+import { openbaoSnapshot } from './lib/openbao.mjs';
 import {
   copyFileSync,
   existsSync,
@@ -623,6 +624,15 @@ async function set() {
       // --- ключи и конфигурация.
       const fingerprint = ensureKeyBundle();
       const config = snapshotConfig(join(dir, 'config'));
+      // Снимок OpenBao без Static seal key: тот хранится отдельно, у Томаса.
+      // Отказ OpenBao не лишает комплект базы и файлов: он отмечается ограничением.
+      let openbao = null;
+      let openbaoError = null;
+      try {
+        openbao = await openbaoSnapshot(join(dir, 'openbao.snap'));
+      } catch (e) {
+        openbaoError = e.message;
+      }
 
       // --- незавершённые загрузки (2.1.2): их временные файлы — часть комплекта.
       const pending = psql(
@@ -646,6 +656,7 @@ async function set() {
           ...objects.filter((o) => o.encPath).map((o) => `files/${o.encPath}`),
           `keys/${fingerprint}.env.gpg`,
           `sets/${id}/config`,
+          ...(openbao ? [`sets/${id}/openbao.snap`] : []),
         ],
         cache,
       );
@@ -677,6 +688,7 @@ async function set() {
         },
         pendingUploads: JSON.parse(pending),
         keys: { fingerprint, file: `keys/${fingerprint}.env.gpg` },
+        openbao: openbao ? { file: `sets/${id}/openbao.snap` } : { error: openbaoError },
         config: {
           commit: config.commit,
           commitError: config.commitError,

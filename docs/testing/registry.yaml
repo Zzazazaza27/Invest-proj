@@ -2621,6 +2621,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
+  - id: TOOL-MONITOR-OPENBAO
+    file: scripts/monitor-openbao.mjs
+    command: node scripts/monitor-openbao.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    effects: ['пишет состояние OpenBao для агента Zabbix']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 3.
+    purpose: 'Запечатанный OpenBao виден в Zabbix.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
   - id: TOOL-ENV
     file: scripts/env.mjs
     command: node scripts/env.mjs create|status|stop|start|seed|destroy <среда>
@@ -2972,6 +2989,23 @@ checks:
     note: >-
       Блок 5, задания 3–4, искусственные ключи.
     purpose: 'OpenBao открывается по Static seal, а прежние ключи дают те же результаты.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
+  - id: CHK-OPENBAO-OPS
+    file: scripts/check-openbao-ops.mjs
+    command: node scripts/check-openbao-ops.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 29
+    needs: []
+    effects: ['контейнер и том fifth-openbao-ops, удаляются в конце']
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 3, искусственные ключи.
+    purpose: 'Agent, снимок, отзыв доступа и миграция seal работают на настоящих файлах размещения.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
@@ -4218,6 +4252,7 @@ blocks:
         CHK-SECRETS-TO-FILES,
         CHK-HOST-ACCESS,
         CHK-OPENBAO-LAB,
+        CHK-OPENBAO-OPS,
         CHK-PROD-COMPOSE,
         CHK-RELEASE-PINS,
         CHK-RELEASE,

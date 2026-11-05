@@ -1,0 +1,29 @@
+# OpenBao на VPS (блок 5, задание 3). Отдельный проект: выпуск платформы его не перезапускает.
+#
+#   docker compose -p fifth-openbao -f infra/openbao/docker-compose.yml up -d
+#
+# Static seal key — /etc/fifth-openbao/seal/static.key. Этот каталог вне /opt/fifth-element и вне
+# комплектов копий, контейнеру он даётся только для чтения.
+services:
+  openbao:
+    image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+    container_name: fifth-openbao
+    restart: unless-stopped
+    command: ['server', '-config=/openbao/config/openbao.hcl']
+    ports:
+      - '127.0.0.1:8200:8200'
+    volumes:
+      - ./openbao.hcl:/openbao/config/openbao.hcl:ro
+      - /etc/fifth-openbao/seal:/openbao/seal:ro
+      - /etc/fifth-openbao/tls:/openbao/tls:ro
+      - data:/openbao/data
+      - audit:/openbao/audit
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+
+volumes:
+  data:
+    name: fifth_openbaodata
+  audit:
+    name: fifth_openbaoaudit

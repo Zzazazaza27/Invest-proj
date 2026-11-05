@@ -1,0 +1,11 @@
+# Раз в минуту: запечатанный OpenBao виден в Zabbix.
+[Unit]
+Description=5E monitor timer: openbao
+
+[Timer]
+OnCalendar=*:*:30
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

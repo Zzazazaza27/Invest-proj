@@ -486,6 +486,35 @@ async function configure() {
     },
   );
 
+  // ---- OpenBao (блок 5): файл пишет таймер узла, Zabbix от OpenBao не зависит ----
+  await item({
+    name: 'OpenBao: состояние, исходный файл',
+    key_: 'vfs.file.contents[/monitor/openbao.json]',
+    type: AGENT,
+    value_type: 4,
+    history: '0',
+  });
+  await item({
+    name: 'OpenBao: работает или ещё не установлен',
+    key_: 'openbao.ok',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/openbao.json]'),
+    value_type: 3,
+    preprocessing: [
+      step(
+        JS,
+        "var s = JSON.parse(value).state; return s === 'open' || s === 'absent' ? 1 : 0;",
+        2,
+        '0',
+      ),
+    ],
+  });
+  await trigger('OpenBao запечатан или недоступен', `count(/${H}/openbao.ok,#3,"eq",0)=3`, 4, {
+    recovery_mode: 1,
+    recovery_expression: `count(/${H}/openbao.ok,#2,"eq",1)=2`,
+    comments: 'Операции с ключами отказывают. Порядок восстановления — docs/runbooks/openbao.md.',
+  });
+
   // ---- Сайт снаружи, сертификат --------------------------------------------
   const page = async (name, url, marker, priority) => {
     const key = `web.page.get[${url}]`;
