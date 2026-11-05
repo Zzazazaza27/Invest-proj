@@ -5,6 +5,7 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import type { AppError } from '../src/common/errors';
 import { getEnv, loadEnv, resetEnvCache } from '../src/config/env';
 import { CryptoService, isKmsUnavailable } from '../src/crypto/crypto.service';
 import { legacyToVault, vaultToLegacy } from '../src/crypto/key-format';
@@ -80,6 +81,7 @@ let server: Server;
 let dir: string;
 let transitEnv: NodeJS.ProcessEnv;
 let down = false;
+let fault: 'cut' | 'stall' | 'drip' | null = null;
 const calls: string[] = [];
 
 function domainOf(name: string): string {
@@ -134,6 +136,16 @@ beforeAll(async () => {
     req.on('data', (chunk: Buffer) => (text += chunk.toString('utf8')));
     req.on('end', () => {
       calls.push(req.url ?? '');
+      if (fault) {
+        res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Length': '1000' });
+        res.write('{"data":');
+        if (fault === 'cut') setTimeout(() => res.socket?.destroy(), 20);
+        if (fault === 'drip') {
+          const timer = setInterval(() => res.write(' '), 30);
+          res.on('close', () => clearInterval(timer));
+        }
+        return;
+      }
       const [status, reply] = down
         ? [503, { errors: ['sealed'] }]
         : answer(req.url ?? '', JSON.parse(text) as Record<string, string>);
@@ -312,6 +324,26 @@ describe('Режим записи отделён от места хранени�
 });
 
 describe('Отказ службы ключей', () => {
+  it.each(['cut', 'stall', 'drip'] as const)(
+    'ответ после заголовков не завершился (%s): отказ 503 за ограниченное время',
+    async (kind) => {
+      fault = kind;
+      try {
+        await withEnv({ ...transitEnv, OPENBAO_TIMEOUT_MS: '200' }, async () => {
+          const started = Date.now();
+          const failure = await new CryptoService()
+            .blindIndex('a@b.ru', 'email')
+            .catch((e: unknown) => e);
+          expect(isKmsUnavailable(failure)).toBe(true);
+          expect((failure as AppError).status).toBe(503);
+          expect(Date.now() - started).toBeLessThan(1_500);
+        });
+      } finally {
+        fault = null;
+      }
+    },
+  );
+
   it('отказывает операции и не откатывается к ключу из окружения', async () => {
     down = true;
     try {

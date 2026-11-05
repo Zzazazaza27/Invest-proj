@@ -3325,12 +3325,27 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 19
+    asserts: 22
     studied: code
     studiedOn: 2026-11-05
     note: >-
       Блок 5, задание 4. Transit здесь — заглушка с той же раскладкой байтов.
     purpose: 'Контрольные примеры прежнего CryptoService, совместимость записи в обе стороны, отказ при порче и недоступности службы ключей.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-05
+
+  - id: UNIT-CORE-AVATAR-RETRY
+    file: apps/core/tests/avatar-retry.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 3
+    studied: code
+    studiedOn: 2026-11-05
+    note: >-
+      Блок 5, задание 4. Хранилище, база и служба ключей — заглушки, изображение настоящее.
+    purpose: 'Отказ службы ключей или базы не лишает повтора завершения загрузки аватара: исходник удаляется последним.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-05
 
@@ -4110,6 +4125,7 @@ requirements:
       [
         UNIT-CORE-SECURITY,
         UNIT-CORE-CRYPTO-CONTRACT,
+        UNIT-CORE-AVATAR-RETRY,
         UNIT-CORE-SIGNING-KEYS,
         UNIT-CORE-CRYPTO-LIVE,
         UNIT-CORE-LAB,
@@ -4325,6 +4341,7 @@ blocks:
         CHK-DEPLOY-RELEASE,
         UNIT-CORE-SECURITY,
         UNIT-CORE-CRYPTO-CONTRACT,
+        UNIT-CORE-AVATAR-RETRY,
         UNIT-CORE-SIGNING-KEYS,
         UNIT-CORE-CRYPTO-LIVE,
         UNIT-CORE-SECRET-FILES,

@@ -262,9 +262,8 @@ export class ProfileService {
 
     const masterKey = masterObjectKey(userId, stamp);
     await putObject({ key: masterKey, body: object.body, contentType: mime });
-    await this.s3.deleteObject(key).catch(() => undefined);
 
-    const profile = await this.db.transaction(ctx, async (tx) => {
+    await this.db.transaction(ctx, async (tx) => {
       await tx.query(
         `INSERT INTO identity.user_avatars
            (user_id, master_key, variants, mime, bytes, width, height, updated_at)
@@ -288,8 +287,12 @@ export class ProfileService {
         context: { mime, width, height, bytes: object.body.byteLength },
         traceId: ctx.traceId,
       });
-      return this.read(tx, userId);
     });
+
+    // Профиль читается после записи, а исходник удаляется последним. Отказ службы ключей на масках
+    // не откатывает аватар и не лишает повтора: он возьмёт тот же файл.
+    const profile = await this.db.readOnly(ctx, async (tx) => this.read(tx, userId));
+    await this.s3.deleteObject(key).catch(() => undefined);
 
     // Прежние объекты НЕ удаляются физически (блок 7, 2.1-W07): файл, уже
     // попавший в комплект резервной копии, должен остаться и в хранилище.

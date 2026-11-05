@@ -99,6 +99,9 @@ export class TransitClient {
         url,
         {
           method: 'POST',
+          // Предел на весь вызов: таймаут сокета считает только простой, а ответ может идти
+          // по байту или оборваться после заголовков.
+          signal: AbortSignal.timeout(this.config.timeoutMs),
           ...(agent ? { agent } : {}),
           headers: { 'Content-Type': 'application/json', 'X-Vault-Token': token },
         },
@@ -107,13 +110,16 @@ export class TransitClient {
           res.setEncoding('utf8');
           res.on('data', (chunk: string) => (text += chunk));
           res.on('end', () => {
-            resolve({ status: res.statusCode ?? 0, data: dataOf(text) });
+            if (res.complete) resolve({ status: res.statusCode ?? 0, data: dataOf(text) });
+            else reject(new Error('ответ Transit оборван'));
+          });
+          res.on('error', reject);
+          res.on('close', () => {
+            if (!res.complete) reject(new Error('ответ Transit оборван'));
           });
         },
       );
       req.on('error', reject);
-      // Внешний вызов без таймаута подвесил бы запрос при недоступном OpenBao.
-      req.setTimeout(this.config.timeoutMs, () => req.destroy(new Error('таймаут Transit')));
       req.end(payload);
     });
   }
