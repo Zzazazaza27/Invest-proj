@@ -69,6 +69,10 @@ fail() {
 }
 trap 'fail $LINENO' ERR
 
+vault_counts() {
+  docker exec -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "$PROJECT-postgres"     psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -c     "SELECT count(*) FILTER (WHERE substring(contact_wrapped_dek from 1 for 6) = 'vault:'::bytea), count(contact_wrapped_dek) FROM identity.users"
+}
+
 say 'инструменты'
 install -o root -g root -m 755 infra/host/fifth-backup-read infra/host/fifth-diag \
   infra/host/fifth-transition-kit infra/host/fifth-test /usr/local/sbin/
@@ -180,10 +184,15 @@ for _ in $(seq 1 45); do
   sleep 2
 done
 login_check login "$USERS"
+vault_before="$(vault_counts)"
 login_check register "$USERS" kms-mode
-counts="$(docker exec -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "$PROJECT-postgres"   psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -c   "SELECT count(*) FILTER (WHERE substring(contact_wrapped_dek from 1 for 6) = 'vault:'::bytea), count(contact_wrapped_dek) FROM identity.users")"
+counts="$(vault_counts)"
 echo "записей vault и всего: $counts"
-[ "${counts%%|*}" = 0 ] && [ "${counts##*|}" -ge 2 ]
+# Прежние пробы могли оставить записи vault: важно, что новая запись их не прибавила.
+if [ "${counts%%|*}" != "${vault_before%%|*}" ] || [ "${counts##*|}" -le "${vault_before##*|}" ]; then
+  echo 'новая запись ушла не прежним форматом'
+  false
+fi
 echo 'записей vault нет: запись прежним форматом'
 
 if [ "$(laptop stage)" = production ]; then
