@@ -100,6 +100,9 @@ login_check register "$USERS" production
 login_check login "$USERS"
 unset PROBE_COOKIE_PREFIX PROBE_ORIGIN
 
+# shellcheck source=/dev/null
+. infra/host/test-probe-integration.sh
+
 say 'проверка сертификатов в обе стороны'
 docker run --rm --network "$NET" "fifth/core:$BUILD" node -e "
 const tls=require('tls');
