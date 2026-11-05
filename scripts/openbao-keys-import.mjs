@@ -118,7 +118,7 @@ async function environmentAccess(call, token, prefix) {
   const secret = await call('POST', `auth/approle/role/${name}/secret-id`, { token });
   const rotate = await call('POST', 'auth/token/create', {
     token,
-    body: { policies: [`${prefix}-rotate`], no_default_policy: true, ttl: '1h' },
+    body: { policies: [`${prefix}-rotate`], no_default_policy: true, no_parent: true, ttl: '1h' },
   });
   return {
     roleId: role.json.data.role_id,
