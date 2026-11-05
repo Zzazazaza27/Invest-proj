@@ -378,7 +378,7 @@ try {
   }
   const database = randomBytes(24).toString('hex');
   writeFileSync(join(kitRoot, '.local', 'secrets', 'DATABASE_URL'), `${database}\n`);
-  writeFileSync(join(kitRoot, '.local', 'secrets', 'REDIS_PASSWORD'), 'lab-redis\n');
+  writeFileSync(join(kitRoot, '.local', 'secrets', 'REDIS_PASSWORD'), `${database}-r\n`);
   const kit = spawnSync(
     'docker',
     [
