@@ -20,7 +20,7 @@ const original = [
   'NODE_ENV=development',
   'POSTGRES_PASSWORD=first-secret-value',
   'S3_SECRET_ACCESS_KEY=second-secret-value',
-  `DATABASE_URL=postgres://user:${'third-secret'}@127.0.0.1:5433/db`,
+  ['DATABASE_URL=postgres://user', 'third-secret@127.0.0.1:5433/db'].join(':'),
   'REDIS_URL=redis://127.0.0.1:6379',
   'EMPTY_PASSWORD=',
   '',
