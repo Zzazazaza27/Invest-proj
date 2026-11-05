@@ -65,7 +65,7 @@ docker run -d --name "$MTLS" --network "$NET" -p 127.0.0.1:18443:18443 -v "$M:/t
   caddy:2.10.2 caddy run --config /t/Caddyfile --adapter caddyfile >/dev/null
 sleep 3
 body="{\"clientId\":\"$CLIENT_ID\",\"clientSecret\":\"$CLIENT_SECRET\"}"
-token_url=https://127.0.0.1:18443/v1/integration/token
+token_url=https://localhost:18443/v1/integration/token
 post() { curl -sk -o "$M/answer" -w '%{http_code}' -H 'Content-Type: application/json' -d "$body" "$@" "$token_url"; }
 none="$(post)"
 spoof="$(post -H "X-Client-Cert-Fingerprint: $fingerprint")"
@@ -98,7 +98,7 @@ sleep 1
 curl -sk -o "$M/hook-answer" -w 'регистрация вебхука: %{http_code}\n' -H "Authorization: Bearer $access" \
   -H 'Content-Type: application/json' --cert "$M/client.crt" --key "$M/client.key" \
   -d "{\"url\":\"https://$ID.5espace.com/hook-probe/$SUFFIX\",\"subscribedVerbs\":[\"project.published\"]}" \
-  https://127.0.0.1:18443/v1/integration/webhooks
+  https://localhost:18443/v1/integration/webhooks
 endpoint="$(jq -r .id "$M/hook-answer")"
 [ -n "$endpoint" ] && [ "$endpoint" != null ]
 outbox="$(pg "INSERT INTO audit.outbox_events (id, aggregate_type, aggregate_id, aggregate_version, event_type, payload_jsonb, nats_subject, schema_version, message_key) VALUES (public.uuid_generate_v7(), 'project', public.uuid_generate_v7(), 1, 'project.published', '{\"check\":\"probe\"}'::jsonb, 'unicorn.project.published', 1, 'probe-$SUFFIX') RETURNING id" | head -1)"
