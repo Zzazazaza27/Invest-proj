@@ -44,7 +44,7 @@ const option = (name, fallback) => {
 const build = option('--build');
 const runId = option('--run');
 const commit = option('--commit');
-const secretKey = resolve(option('--secret-key', 'd:/misc/tmp/secret-key.asc'));
+const keyFile = resolve(option('--secret-key', 'd:/misc/tmp/secret-key.asc'));
 const passFile = resolve(option('--passphrase-file', 'd:/misc/tmp/ph.txt'));
 const keysDir = join(ROOT, '.local', 'keys-openbao');
 const bundle = resolve(
@@ -107,7 +107,7 @@ function importKeys() {
       '--bundle',
       bundle,
       '--secret-key',
-      secretKey,
+      keyFile,
       '--passphrase-file',
       passFile,
       '--secrets-path',
@@ -142,7 +142,7 @@ function restoreTar() {
       '-v',
       `${kitFile}:/in/kit.gpg:ro`,
       '-v',
-      `${secretKey}:/in/secret.asc:ro`,
+      `${keyFile}:/in/secret.asc:ro`,
       '--entrypoint',
       'sh',
       TOOL_IMAGE,
@@ -174,7 +174,7 @@ function bundleValues() {
       '-v',
       `${bundle}:/in/bundle.gpg:ro`,
       '-v',
-      `${secretKey}:/in/secret.asc:ro`,
+      `${keyFile}:/in/secret.asc:ro`,
       '--entrypoint',
       'sh',
       TOOL_IMAGE,
@@ -279,7 +279,7 @@ const server = createServer((req, res) => {
 });
 await new Promise((done) => server.listen(BACK, '127.0.0.1', done));
 
-for (const f of [secretKey, passFile, bundle, MAUS]) {
+for (const f of [keyFile, passFile, bundle, MAUS]) {
   if (!existsSync(f)) {
     console.error(`нет файла ${f}`);
     process.exit(2);
