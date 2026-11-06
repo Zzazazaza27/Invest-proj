@@ -33,7 +33,7 @@ counts="$(pg psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -F= -c \
 network="$(sed -n 's/^FIFTH_STORAGE_NETWORK=//p' "$DIR/compose.env")"
 endpoint="$(sed -n 's/^S3_ENDPOINT=//p' "$DIR/settings.env")"
 mkdir "$work/files"
-node -e "const k=JSON.parse(require('fs').readFileSync('$DIR/storage.json'));process.stdout.write(k.app.accessKeyId+' '+k.app.secretAccessKey)" >"$work/key"
+node -e "const k=JSON.parse(require('fs').readFileSync('$DIR/storage.json'));console.log(k.app.accessKeyId+' '+k.app.secretAccessKey)" >"$work/key"
 read -r access secret <"$work/key"
 rm -f "$work/key"
 RCLONE_CONFIG_SRC_ACCESS_KEY_ID="$access" RCLONE_CONFIG_SRC_SECRET_ACCESS_KEY="$secret" \
