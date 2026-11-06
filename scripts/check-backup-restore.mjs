@@ -721,7 +721,7 @@ try {
           WHERE m.upload_state = 'ready' AND m.s3_key IS NOT NULL AND p.deleted_at IS NULL
           ORDER BY m.uploaded_at DESC NULLS LAST`,
       )
-    ).rows.find((m) => emails.has(m.uploaded_by));
+    ).rows.find((m) => emails.has(m.uploaded_by) && restored.keys.has(m.s3_key));
     if (!control) {
       check('контрольное чтение материала через ядро — есть кому читать', ready.length === 0);
     } else {
