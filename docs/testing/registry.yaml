@@ -3285,6 +3285,22 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-06
 
+  - id: CHK-PILOT-RESTORE
+    file: scripts/check-pilot-restore.mjs
+    command: node scripts/check-pilot-restore.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 7
+    needs: [docker]
+    effects: ['временный том и контейнер fifth-pilot-restore на ноутбуке, удаляются прогоном']
+    studied: code
+    studiedOn: 2026-11-06
+    note: >-
+      Копия test-2: хеши описи, расшифровка ключом Томаса, база, файлы, контакты ключами из копии.
+    purpose: 'Проверенный путь восстановления пилотной среды'
+    confirmation: reviewed-in-code
+
   - id: CHK-ENV-ISOLATION
     file: scripts/check-env-isolation.mjs
     command: node scripts/check-env-isolation.mjs
@@ -4582,6 +4598,7 @@ blocks:
         CHK-ENV-ISOLATION,
         CHK-INSTALLER,
         CHK-INSTALLER-SITE,
+        CHK-PILOT-RESTORE,
         CHK-PORTS-CONSISTENCY,
         CHK-FRONT-BUILDS,
         RND-CONSOLE,
