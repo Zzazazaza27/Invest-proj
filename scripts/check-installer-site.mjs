@@ -166,7 +166,12 @@ const K2 = '2.1-b9202.1';
 const K3 = '2.1-b9203.1';
 
 const sh = (command, input) => {
-  const r = spawnSync('bash', ['-c', command], { encoding: 'utf8', input, maxBuffer: 1 << 26 });
+  const r = spawnSync('bash', ['-c', command], {
+    encoding: 'utf8',
+    input,
+    maxBuffer: 1 << 26,
+    timeout: 300_000,
+  });
   return { code: r.status, out: `${r.stdout}${r.stderr}`.trim() };
 };
 const must = (command, input) => {
@@ -381,11 +386,12 @@ async function insideRun() {
     !escape.out.includes('uid=') && escape.out.includes('не разобран'),
     escape.out.slice(-160),
   );
-  const forward = sh(
-    `${SSH.replace('ssh ', 'ssh -L 19999:127.0.0.1:22 -N -o ExitOnForwardFailure=yes ')}`,
-    '',
+  const forward = sh(`timeout 8 ${SSH.replace('ssh ', 'ssh -W 127.0.0.1:22 ')} </dev/null`);
+  check(
+    'проброс порта закрыт',
+    forward.code !== 0 && !forward.out.includes('SSH-2.0'),
+    forward.out.slice(-120),
   );
-  check('проброс порта закрыт', forward.code !== 0, forward.out.slice(-120));
   const sudoOther = sh(`sudo -u fifth-ci sudo -n /bin/sh -c id`);
   check('sudo разрешён только на обёртку', sudoOther.code !== 0);
 
