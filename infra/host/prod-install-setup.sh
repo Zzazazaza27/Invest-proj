@@ -28,7 +28,8 @@ cat >"$ETC/policy.json" <<JSON
   "launchFiles": $(FIFTH_ROOT="$ROOT" node "$TOOLS/scripts/infra.mjs" files 2>/dev/null),
   "watchSeconds": 180,
   "probeFile": "/var/lib/fifth-monitor/app-probe.json",
-  "siteUrl": "https://5espace.com/v1/health"
+  "siteUrl": "https://5espace.com/v1/health",
+  "siteCredentials": "/etc/fifth-gate/monitor.credentials"
 }
 JSON
 chmod 644 "$ETC/policy.json"

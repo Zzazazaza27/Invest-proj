@@ -122,10 +122,16 @@ function fetchKit(kit, request, staged) {
 
 const wait = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
-async function siteOk(url) {
+/** Сайт за паролем на входе проверяется учёткой наблюдения. */
+async function siteOk(url, credentialsFile) {
   if (!url) return true;
+  const headers = credentialsFile
+    ? {
+        authorization: `Basic ${Buffer.from(readFileSync(credentialsFile, 'utf8').trim()).toString('base64')}`,
+      }
+    : {};
   try {
-    return (await fetch(url, { signal: AbortSignal.timeout(10_000) })).ok;
+    return (await fetch(url, { headers, signal: AbortSignal.timeout(10_000) })).ok;
   } catch {
     return false;
   }
@@ -147,7 +153,7 @@ function watch(env, build, policy) {
       probe: probeState(policy.probeFile, started),
       good:
         tool('release.mjs', ['verify', env, '--build', build]).code === 0 &&
-        (await siteOk(policy.siteUrl)),
+        (await siteOk(policy.siteUrl, policy.siteCredentials)),
     }),
   });
 }

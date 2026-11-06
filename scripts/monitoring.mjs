@@ -19,7 +19,7 @@
  */
 import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { ENV_PATH, loadEnv } from './lib/backup.mjs';
 import { LOGS_ITEMS, logsTriggers } from './lib/logs-metrics-zabbix.mjs';
 import { zabbixApi } from './lib/zabbix-api.mjs';
@@ -531,12 +531,38 @@ async function configure() {
   });
 
   // ---- Сайт снаружи, сертификат --------------------------------------------
+  // Рабочая среда закрыта паролем: агент его не умеет, проверку ведёт сервер, элемент HTTP.
+  const gateFile = process.env.MONITOR_GATE_CREDENTIALS_PATH;
+  const gate = gateFile ? readFileSync(gateFile, 'utf8').trim().split(':') : null;
   const page = async (name, url, marker, priority) => {
-    const key = `web.page.get[${url}]`;
+    const agentKey = `web.page.get[${url}]`;
+    const httpKey = `site.page[${url}]`;
+    const key = gate ? httpKey : agentKey;
+    const stale = await api.call('item.get', {
+      hostids: hostid,
+      filter: { key_: gate ? agentKey : httpKey },
+      output: ['itemid'],
+    });
+    if (stale.length)
+      await api.call(
+        'item.delete',
+        stale.map((i) => i.itemid),
+      );
     await item({
       name,
       key_: key,
-      type: AGENT,
+      type: gate ? 19 : AGENT,
+      ...(gate
+        ? {
+            url,
+            authtype: 1,
+            username: gate[0],
+            password: gate[1],
+            retrieve_mode: 2,
+            status_codes: '',
+            timeout: '10s',
+          }
+        : {}),
       value_type: 3,
       nodata: priority,
       preprocessing: [

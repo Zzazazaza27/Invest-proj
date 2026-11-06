@@ -12,6 +12,7 @@
  *
  *   node scripts/lib/pinned-fetch.mjs --status <url>   код ответа (0 — нет ответа)
  */
+import { readFileSync } from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import { pathToFileURL } from 'node:url';
@@ -38,8 +39,23 @@ export const pinned = (url, pins = parsePins()) => pins.has(new URL(url).hostnam
  * подменой lookup; иначе — глобальный fetch. Переадресации не выполняются
  * (как redirect: 'manual').
  */
-export function pinnedFetch(url, init = {}, pins = parsePins()) {
+/**
+ * Рабочая среда закрыта паролем на входе: наблюдение идёт тем же входом со своей учёткой.
+ * Заголовок только к адресу наблюдения и только по https.
+ */
+function gateHeaders(u) {
+  const file = process.env.MONITOR_GATE_CREDENTIALS_PATH;
+  if (!file || u.protocol !== 'https:') return {};
+  if (u.hostname !== new URL(process.env.MONITOR_PUBLIC_URL || 'http://127.0.0.1').hostname)
+    return {};
+  return {
+    authorization: `Basic ${Buffer.from(readFileSync(file, 'utf8').trim()).toString('base64')}`,
+  };
+}
+
+export function pinnedFetch(url, given = {}, pins = parsePins()) {
   const u = new URL(url);
+  const init = { ...given, headers: { ...gateHeaders(u), ...given.headers } };
   const ip = pins.get(u.hostname.toLowerCase());
   if (!ip) return fetch(url, init);
   const lib = u.protocol === 'https:' ? https : http;
