@@ -3247,7 +3247,8 @@ checks:
       Отказы защищённого установщика до изменений, удачный выпуск только core и web, один возврат
       при сбое, остановка при сбое возврата. Обёртку и SSH не проверяет.
     purpose: 'Границы автоматического выпуска: подпись, класс операций, возврат'
-    confirmation: reviewed-in-code
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-06
 
   - id: CHK-ENV-ISOLATION
     file: scripts/check-env-isolation.mjs

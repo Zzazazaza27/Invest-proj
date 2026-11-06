@@ -154,6 +154,10 @@ function cleanup() {
   if (existsSync(join(ROOT, '.local', 'envs', ENV, 'install.json'))) {
     tool('env.mjs', ['destroy', ENV, '--confirm', ENV]);
   }
+  // Образы прогона весят гигабайты, на машине их не оставляем.
+  for (const label of ['inst1', 'inst2', 'inst3', K0, K1, K2, K3]) {
+    docker('rmi', '-f', `fifth/core:${label}`, `fifth/web:${label}`, `fifth/postgres:${label}`);
+  }
 }
 
 console.log('=== ЗАЩИЩЁННЫЙ УСТАНОВЩИК ===');
