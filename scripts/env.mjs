@@ -10,6 +10,7 @@
  *   node scripts/env.mjs seed    <среда> --set <файл.sql>
  *   node scripts/env.mjs update  <среда> --kit <метка>
  *   node scripts/env.mjs destroy <среда> --confirm <среда>
+ *   node scripts/env.mjs images  <среда>   какие образы Compose возьмёт для среды, ничего не запуская
  *
  * Среда — `test-N`. Рабочую среду эта команда не создаёт и не удаляет: её
  * установка — выпуск W09d, а удаление данных через тестовую команду запрещено.
@@ -124,8 +125,9 @@ function installCompose(id, label) {
 }
 
 /**
- * Окружение Compose. Переменные запускающего процесса важнее `--env-file`: образы рабочей среды из
- * её `.env` подменили бы образы этой среды, и она молча работала бы не на своём комплекте.
+ * Окружение Compose. Переменные запускающего процесса важнее `--env-file`, а `lib/ports.mjs` при
+ * импорте кладёт в процесс весь `.env`: образы рабочей среды подменили бы образы этой среды, и она
+ * молча работала бы не на своём комплекте. Защищает CHK-ENV-IMAGES.
  */
 function composeEnv() {
   const env = { ...process.env, MSYS_NO_PATHCONV: '1' };
@@ -621,7 +623,14 @@ async function destroy(id) {
   finish({ ok: true, env: id, message: `среда ${id}: удалена с данными` }, 0);
 }
 
-const COMMANDS = { create, status, stop, start, seed, update, destroy };
+/** Образы, которые Compose возьмёт для среды: тот же путь, что у запуска, но без запуска. */
+function images(id) {
+  loadInstall(id);
+  const list = compose(id, ['config', '--images']).stdout.trim().split('\n');
+  finish({ ok: true, env: id, images: list, message: list.join(' ') }, 0);
+}
+
+const COMMANDS = { create, status, stop, start, seed, update, destroy, images };
 
 try {
   const [command, id] = argv;

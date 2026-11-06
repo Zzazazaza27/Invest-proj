@@ -3302,6 +3302,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-06
 
+  - id: CHK-ENV-IMAGES
+    file: scripts/check-env-images.mjs
+    command: node scripts/check-env-images.mjs
+    kind: check
+    level: узкий
+    runner: manual
+    asserts: 4
+    needs: [docker]
+    effects: ['временный каталог среды; контейнеры не запускаются']
+    studied: code
+    studiedOn: 2026-11-06
+    note: >-
+      В окружении процесса стоят образы рабочей среды, а тестовая среда получает образы своего
+      комплекта. Контрольный прямой вызов Compose показывает, что подмена без защиты случилась бы.
+    purpose: 'Тестовая среда работает на своём комплекте, а не на образах рабочей среды.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-06
+
   - id: CHK-ENV-ISOLATION
     file: scripts/check-env-isolation.mjs
     command: node scripts/check-env-isolation.mjs
@@ -4597,6 +4615,7 @@ blocks:
         CHK-RELEASE-PINS,
         CHK-RELEASE,
         CHK-ENV-ISOLATION,
+        CHK-ENV-IMAGES,
         CHK-INSTALLER,
         CHK-INSTALLER-SITE,
         CHK-PILOT-RESTORE,

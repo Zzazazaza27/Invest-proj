@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 208; требований: 41
+- Проверок: 209; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 79
+### Зарегистрированы, но ни в наборе, ни в CI — 80
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -256,6 +256,7 @@
 - `CHK-INSTALLER` — Границы автоматического выпуска: подпись, класс операций, возврат
 - `CHK-INSTALLER-SITE` — Рабочая ветка установщика: блокировка, файлы запуска, возврат
 - `CHK-PILOT-RESTORE` — Проверенный путь восстановления пилотной среды
+- `CHK-ENV-IMAGES` — Тестовая среда работает на своём комплекте, а не на образах рабочей среды.
 - `CHK-ENV-ISOLATION` — Комплект запускается в разных изолированных средах без правки кода и Compose.
 - `CHK-LOGS-ARCHIVE` — Архиватор журналов на настоящем journald (8.4, 2.1-W08b): бакет и учётки — настоящим minio-init по infra/minio/policies; учётка записи пишет, но не удаляет о…
 - `CHK-LOGS-APPLY` — Применение W08b (8.4) без VPS: юниты fifth-logs-run/files/pack из infra/systemd проходят systemd-analyze verify и работают с окружением из .env (LOGS_DOTENV)…
@@ -392,6 +393,7 @@
 | CHK-INSTALLER | `node scripts/check-installer.mjs` | 37 | вручную | — |
 | CHK-INSTALLER-SITE | `node scripts/check-installer-site.mjs` | 37 | вручную | — |
 | CHK-PILOT-RESTORE | `node scripts/check-pilot-restore.mjs` | 7 | вручную | — |
+| CHK-ENV-IMAGES | `node scripts/check-env-images.mjs` | 4 | вручную | — |
 | CHK-ENV-ISOLATION | `node scripts/check-env-isolation.mjs` | 41 | вручную | — |
 | CHK-LOGS-ARCHIVE | `node scripts/check-logs-archive.mjs` | 228 | вручную | — |
 | CHK-LOGS-APPLY | `node scripts/check-logs-apply.mjs` | 36 | вручную | — |
