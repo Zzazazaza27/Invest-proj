@@ -3302,6 +3302,36 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-06
 
+  - id: TOOL-PILOT-OFFSITE
+    file: scripts/pilot-offsite.mjs
+    command: node scripts/pilot-offsite.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    studied: code
+    studiedOn: 2026-11-06
+    effects: ['кладёт зашифрованную копию test-2 в локальный каталог, пишет отметку на сервере']
+    note: >-
+      Забирает последнюю копию пилотной среды, сверяет хеши описи, хранит 14 копий.
+    purpose: 'Копия пилотной среды вне сервера'
+
+  - id: TOOL-PROBE-ACCOUNT-PATH
+    file: scripts/probe-account-path.mjs
+    command: node scripts/probe-account-path.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    studied: code
+    studiedOn: 2026-11-06
+    effects: ['заводит на test-1 учётку и проект с зарезервированным адресом']
+    note: >-
+      Наблюдение за путём нового человека: регистрация, подтверждение почты, проект, публикация, выход.
+    purpose: 'Сверка фактического пути аккаунта с постановкой'
+
   - id: CHK-ENV-IMAGES
     file: scripts/check-env-images.mjs
     command: node scripts/check-env-images.mjs

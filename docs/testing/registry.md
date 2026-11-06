@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 209; требований: 41
+- Проверок: 211; требований: 41
 
 ## Что защищено без участия человека
 
@@ -341,6 +341,8 @@
 | TOOL-MONITOR-PULSE | `node scripts/monitor-pulse.mjs` | 0 | вручную, по поводу | — |
 | TOOL-DNS-PRIMARY | `node scripts/dns-primary.mjs up` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-PROBE-INIT | `node scripts/monitor-probe-init.mjs` | 0 | вручную, по поводу | — |
+| TOOL-PILOT-OFFSITE | `node scripts/pilot-offsite.mjs` | 0 | вручную, по поводу | — |
+| TOOL-PROBE-ACCOUNT-PATH | `node scripts/probe-account-path.mjs` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-EXPORT | `node scripts/monitor-export.mjs` | 0 | вручную, по поводу | — |
 
 ### Проверки поведения (`check-*`)
