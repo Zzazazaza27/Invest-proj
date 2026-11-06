@@ -2,7 +2,7 @@
 # Защищённый установщик: единственное, что разрешено учётке fifth-ci. Аргументов нет, запрос
 # приходит в stdin. Окружение чистое, код — закреплённая копия вне git, настройки — /etc/fifth-install.
 exec /usr/bin/env -i \
-  PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+  PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
   HOME=/root \
   FIFTH_ROOT=/opt/fifth-element \
   FIFTH_KITS_DIR=/opt/fifth-element/.local/kits \
