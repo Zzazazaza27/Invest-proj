@@ -19,6 +19,7 @@
  * DOCKER_LOG_DRIVER=journald (.env VPS) подключает infra/docker-compose.journald.yml.
  */
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -69,6 +70,8 @@ const COMMANDS = {
   // Любая команда compose с теми же файлами, что у остальных команд (в том
   // числе дополнение journald) — для ручных шагов на VPS.
   compose: [],
+  // Файлы запуска с хешами: для закрепления в настройках установщика.
+  files: [],
 };
 
 const [command, ...rest] = process.argv.slice(2);
@@ -127,6 +130,14 @@ if (existsSync(ENV_PATH) && /^FIFTH_SECRETS_DIR=./m.test(readFileSync(ENV_PATH, 
 // TLS внутренних служб рабочей среды: файл из репозитория, как и каталог секретов.
 if (existsSync(ENV_PATH) && /^FIFTH_TLS_DIR=./m.test(readFileSync(ENV_PATH, 'utf8'))) {
   args.push('-f', TLS_PATH);
+}
+
+// Файлы, которые Compose возьмёт на самом деле, с хешами: их закрепляет установщик.
+if (command === 'files') {
+  const files = args.filter((_, i) => args[i - 1] === '-f');
+  const sum = (file) => createHash('sha256').update(readFileSync(file)).digest('hex');
+  console.log(JSON.stringify(Object.fromEntries(files.map((f) => [f, sum(f)]))));
+  process.exit(0);
 }
 
 args.push(...tail, ...rest);

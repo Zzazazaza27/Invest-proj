@@ -489,9 +489,12 @@ async function update(id) {
     /^FIFTH_ENV_LABEL=/m.test(lines) ? lines : `${lines}FIFTH_ENV_LABEL=Тестовый режим\n`,
   );
   installCompose(id, kit);
-  compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', '--wait']);
-  if (!imagesOnly) compose(id, ['run', '--rm', 'migrate']);
-  compose(id, ['up', '-d', 'core', 'web']);
+  if (imagesOnly) compose(id, ['up', '-d', '--no-deps', 'core', 'web']);
+  else {
+    compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', '--wait']);
+    compose(id, ['run', '--rm', 'migrate']);
+    compose(id, ['up', '-d', 'core', 'web']);
+  }
   const state = await waitReady(id);
   install.kit = { label: kit, images: digests };
   install.schema = schemaVersion(id);

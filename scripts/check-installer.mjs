@@ -119,6 +119,7 @@ function setPolicy(change = {}) {
       approvedBy: 'прогон',
       rollbackFloor: K0,
       postgresSource: readKit(K0).postgresSource,
+      launchFiles: {},
       watchSeconds: 6,
       probeFile: PROBE,
       siteUrl: null,
@@ -175,7 +176,8 @@ try {
     kit: base,
     installed: { ...base, build: '2.1-b1.1' },
     applied: [],
-    policy: { rollbackFloor: '2.1-b1.1', postgresSource: 'p' },
+    policy: { rollbackFloor: '2.1-b1.1', postgresSource: 'p', launchFiles: {} },
+    launch: {},
   });
   check('совпадающая сборка в классе', clean.length === 0, clean.join('; '));
 

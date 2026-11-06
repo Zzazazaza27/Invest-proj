@@ -4,7 +4,8 @@
  *
  *   node scripts/release.mjs install <среда> --kit <сборка> --expect <сборка|none>
  *                                    --actor <кто> --approved-by <кто> [--rollback]
- *   node scripts/release.mjs verify  <среда>
+ *   node scripts/release.mjs verify  <среда> [--build <сборка>]
+ *   node scripts/release.mjs close   <среда> --op <id> --status succeeded|failed --detail <текст>
  *   node scripts/release.mjs replay  <среда>
  *   node scripts/release.mjs recover <среда> --op <id> --note <причина>
  *
@@ -132,7 +133,7 @@ function prodUpdate(build, kit, imagesOnly) {
       'node --experimental-strip-types src/migrate.ts && node --experimental-strip-types src/bootstrap-roles.ts',
     ]);
   }
-  prodCompose(['up', '-d', 'core', 'web']);
+  prodCompose(['up', '-d', ...(imagesOnly ? ['--no-deps'] : []), 'core', 'web']);
   const until = Date.now() + 120_000;
   while (Date.now() < until) {
     if (readiness(PROD).ready) return { code: 0, out: 'готово' };
@@ -375,6 +376,10 @@ async function install(id) {
   const rollback = argv.includes('--rollback');
   // Только образы core и web: база, миграции и роли не трогаются.
   const imagesOnly = argv.includes('--images-only');
+  // Установщик держит блокировку на всё наблюдение и возможный возврат: операцию закрывает `close`,
+  // а возврат принимает её в одной записи (`--takeover`), без разрыва блокировки.
+  const hold = argv.includes('--hold');
+  const takeover = flag('--takeover');
   if (!build || !expect || !actor || !approved) {
     throw new Refused('нужны --kit, --expect, --actor и --approved-by');
   }
@@ -397,15 +402,31 @@ async function install(id) {
     throw new Refused(`сборка ${build} старше текущей ${current}: откат только с --rollback`);
   }
   await testHold();
+  const row = `${q(op)}, ${q(id)}, ${q(build)}, ${q(kit.commit)}, ${q(kit.tar.sha256)},
+               ${q(current)}, ${q(actor)}, ${q(approved)}, ${q(rollback ? 'rollback' : 'install')}`;
+  const columns =
+    '(id, env, build, commit_sha, kit_sha256, expected_build, actor, approved_by, kind)';
   try {
-    psql(
-      id,
-      `INSERT INTO ops.installations
-         (id, env, build, commit_sha, kit_sha256, expected_build, actor, approved_by, kind)
-       VALUES (${q(op)}, ${q(id)}, ${q(build)}, ${q(kit.commit)}, ${q(kit.tar.sha256)},
-               ${q(current)}, ${q(actor)}, ${q(approved)}, ${q(rollback ? 'rollback' : 'install')});`,
-    );
+    if (takeover) {
+      const failedBuild = psql(
+        id,
+        `SELECT build FROM ops.installations WHERE id = ${q(takeover)} AND status = 'running';`,
+      );
+      const taken = psql(
+        id,
+        `WITH closed AS (
+           UPDATE ops.installations SET status = 'failed', detail = 'передано возврату',
+                  finished_at = now()
+            WHERE id = ${q(takeover)} AND env = ${q(id)} AND status = 'running' RETURNING id)
+         INSERT INTO ops.installations ${columns} SELECT ${row} FROM closed RETURNING id;`,
+      );
+      if (!taken.includes(op)) throw new Refused(`операции ${takeover} в работе нет`);
+      if (failedBuild) kitTool('pin', '--env', id, '--partial', failedBuild);
+    } else {
+      psql(id, `INSERT INTO ops.installations ${columns} VALUES (${row});`);
+    }
   } catch (e) {
+    if (e instanceof Refused) throw e;
     if (e.sqlState === '23505') throw new Refused('в этой среде уже идёт выпуск');
     throw new Refused(`блокировка не подтверждена, выпуск не начат: ${e.message}`);
   }
@@ -472,6 +493,9 @@ async function install(id) {
     record(id, op, 'verify', v.ok ? 'ok' : 'fail', `подтверждено ${v.confirmed} из ${v.total}`);
     psql(id, upsertInstances(id, v));
     if (!v.ok) throw new Error(`сверка: подтверждено ${v.confirmed} из ${v.total}`);
+    if (hold) {
+      finish({ ok: true, env: id, op, build, held: true, previous: current }, 0);
+    }
     // Закрепления меняются под блокировкой: после `close` идёт следующий выпуск, и
     // поздняя запись затёрла бы его значения.
     kitTool(
@@ -490,6 +514,10 @@ async function install(id) {
     close('succeeded', `подтверждено ${v.confirmed} из ${v.total}`);
     finish({ ok: true, env: id, op, build, confirmed: v.confirmed, total: v.total }, 0);
   } catch (e) {
+    if (hold && touched) {
+      record(id, op, 'finish', 'held', e.message);
+      finish({ ok: false, env: id, op, build, held: true, error: e.message }, 1);
+    }
     try {
       kitTool('pin', '--env', id, '--pending', 'none', ...(touched ? ['--partial', build] : []));
     } catch (pinError) {
@@ -500,8 +528,48 @@ async function install(id) {
   }
 }
 
+/** Закрыть удержанную операцию установщика. */
+function close(id) {
+  const op = flag('--op');
+  const status = flag('--status');
+  const detail = flag('--detail') ?? '';
+  if (!op || !['succeeded', 'failed'].includes(status)) {
+    throw new Refused('нужны --op и --status succeeded|failed');
+  }
+  const row = psql(
+    id,
+    `SELECT build || '|' || coalesce(expected_build, '') FROM ops.installations
+      WHERE id = ${q(op)} AND env = ${q(id)} AND status = 'running';`,
+  );
+  if (!row) throw new Refused(`операции ${op} в работе нет`);
+  const [build, previous] = row.split('|');
+  if (status === 'succeeded') {
+    kitTool(
+      'pin',
+      '--env',
+      id,
+      '--current',
+      build,
+      '--pending',
+      'none',
+      '--partial',
+      'none',
+      ...(previous ? ['--rollback', previous] : []),
+    );
+  } else {
+    kitTool('pin', '--env', id, '--pending', 'none', '--partial', build);
+  }
+  record(id, op, 'finish', status, detail);
+  psql(
+    id,
+    `UPDATE ops.installations SET status = ${q(status)}, detail = ${q(detail)}, finished_at = now()
+      WHERE id = ${q(op)};`,
+  );
+  finish({ ok: true, env: id, op, build, status }, 0);
+}
+
 function verify(id) {
-  const build = currentBuild(id);
+  const build = flag('--build') ?? currentBuild(id);
   if (!build) throw new Refused('в реестре нет успешной установки');
   const v = verifyAgainst(id, readKit(build));
   psql(id, upsertInstances(id, v));
@@ -597,7 +665,7 @@ function state(id) {
   finish({ ok: true, build: currentBuild(id), running: running !== '0', migrations }, 0);
 }
 
-const COMMANDS = { install, verify, replay, recover, state };
+const COMMANDS = { install, verify, replay, recover, state, close };
 
 try {
   const [command, id] = argv;

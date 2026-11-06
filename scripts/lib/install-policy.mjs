@@ -25,7 +25,7 @@ const sorted = (o) => Object.fromEntries(Object.entries(o ?? {}).sort());
  * Причины отказа. Пустой список — сборка в классе.
  * `applied` — применённые миграции `{ id, checksum }`, `installed` — манифест текущей сборки.
  */
-export function classProblems({ kit, installed, applied, policy }) {
+export function classProblems({ kit, installed, applied, policy, launch }) {
   const problems = [];
   const order = compareBuilds(kit.build, installed.build);
   if (order === null) problems.push('неверный номер сборки');
@@ -50,7 +50,43 @@ export function classProblems({ kit, installed, applied, policy }) {
     problems.push('другие файлы рабочей среды');
   }
   if (kit.settingsVersion !== installed.settingsVersion) problems.push('другая версия настроек');
+  problems.push(...launchProblems(launch, policy));
   return problems;
+}
+
+/** Все файлы запуска, которые фактически берёт Compose, совпали с закреплёнными. */
+export function launchProblems(launch, policy) {
+  if (!policy.launchFiles) return ['в настройках нет закреплённых файлов запуска'];
+  return same(sorted(launch), sorted(policy.launchFiles))
+    ? []
+    : ['файлы запуска не совпали с закреплёнными'];
+}
+
+/**
+ * Окно наблюдения. `step` даёт `{ good, probe }`, `probe`: ok, old, failed. Успех — только если
+ * последняя проверка окна прошла и контрольный вход был свежим. Ошибка шага — сбой наблюдения.
+ */
+export async function observeWindow({ seconds, step, pause, now = Date.now }) {
+  const until = now() + seconds * 1000;
+  let misses = 0;
+  let probed = false;
+  for (;;) {
+    let result;
+    try {
+      result = await step();
+    } catch (error) {
+      return `наблюдение: ${error.message}`;
+    }
+    if (result.probe === 'failed') return 'контрольный вход не прошёл';
+    probed ||= result.probe === 'ok';
+    misses = result.good ? 0 : misses + 1;
+    if (misses >= 2) return 'сверка или сайт не отвечают';
+    if (now() >= until) {
+      if (!result.good) return 'последняя проверка окна не прошла';
+      return probed ? null : 'контрольный вход не обновился';
+    }
+    await pause();
+  }
 }
 
 /** Хранимый комплект и подписанный манифест описывают одну сборку. */

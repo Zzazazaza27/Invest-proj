@@ -25,6 +25,7 @@ cat >"$ETC/policy.json" <<JSON
   "approvedBy": "thomas",
   "rollbackFloor": "2.1-b120.1",
   "postgresSource": "$(node scripts/kit.mjs source | sed -E 's/.*"source":"([0-9a-f]+)".*/\1/')",
+  "launchFiles": $(FIFTH_ROOT="$ROOT" node "$TOOLS/scripts/infra.mjs" files 2>/dev/null),
   "watchSeconds": 180,
   "probeFile": "/var/lib/fifth-monitor/app-probe.json",
   "siteUrl": "https://5espace.com/v1/health"

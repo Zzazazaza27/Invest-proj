@@ -26,7 +26,13 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { classProblems, compareBuilds, sameKit } from './lib/install-policy.mjs';
+import {
+  classProblems,
+  compareBuilds,
+  launchProblems,
+  observeWindow,
+  sameKit,
+} from './lib/install-policy.mjs';
 import { kitSignatureValid } from './lib/kit-sign.mjs';
 
 const TOOLS = resolve(dirname(fileURLToPath(import.meta.url)));
@@ -131,22 +137,30 @@ function probeState(file, since) {
   return JSON.parse(readFileSync(file, 'utf8')).ok === true ? 'ok' : 'failed';
 }
 
-/** Окно наблюдения: всё держится до конца и контрольный вход свежий. */
-async function watch(env, policy) {
+/** Окно наблюдения за конкретной сборкой. Нечитаемая отметка — сбой наблюдения. */
+function watch(env, build, policy) {
   const started = Date.now();
-  const until = started + policy.watchSeconds * 1000;
-  let misses = 0;
-  let probed = false;
-  for (;;) {
-    const state = probeState(policy.probeFile, started);
-    if (state === 'failed') return 'контрольный вход не прошёл';
-    probed ||= state === 'ok';
-    const good = tool('release.mjs', ['verify', env]).code === 0 && (await siteOk(policy.siteUrl));
-    misses = good ? 0 : misses + 1;
-    if (misses >= 2) return 'сверка или сайт не отвечают';
-    if (Date.now() >= until) return probed ? null : 'контрольный вход не обновился';
-    await wait(Math.min(5000, policy.watchSeconds * 250));
-  }
+  return observeWindow({
+    seconds: policy.watchSeconds,
+    pause: () => wait(Math.min(5000, policy.watchSeconds * 250)),
+    step: async () => ({
+      probe: probeState(policy.probeFile, started),
+      good:
+        tool('release.mjs', ['verify', env, '--build', build]).code === 0 &&
+        (await siteOk(policy.siteUrl)),
+    }),
+  });
+}
+
+/** Файлы запуска рабочей среды. У тестовой среды Compose свой, он в манифесте. */
+function launchFiles(env) {
+  if (env !== 'prod') return {};
+  const r = spawnSync(process.execPath, [join(TOOLS, 'infra.mjs'), 'files'], {
+    encoding: 'utf8',
+    env: process.env,
+  });
+  if (r.status !== 0) return { 'файлы запуска': 'не прочитаны' };
+  return JSON.parse(r.stdout.trim().split('\n').pop());
 }
 
 const pinsOf = (env) => {
@@ -169,18 +183,37 @@ const installArgs = (env, kit, expect, actor, approved, extra = []) => [
   ...extra,
 ];
 
-async function returnTo(env, previous, now, rollbackPin, reason, policy, build) {
+const stopped = (build, previous, reason, returnError) =>
+  done({ ok: false, stopped: true, build, previous, reason, returnError }, 3);
+
+/** Блокировка не прерывается: возврат принимает операцию. При остановке она остаётся за человеком. */
+async function returnTo(env, op, previous, rollbackPin, reason, policy, build) {
+  if (launchProblems(launchFiles(env), policy).length) {
+    stopped(build, previous, reason, 'файлы запуска изменились, возврат не начат');
+  }
   const back = tool(
     'release.mjs',
-    installArgs(env, previous, now, 'fifth-install', 'policy', ['--rollback']),
+    installArgs(env, previous, previous, 'fifth-install', 'policy', [
+      '--rollback',
+      '--hold',
+      '--takeover',
+      op,
+    ]),
   );
-  const problem = back.code === 0 ? await watch(env, policy) : `возврат: код ${back.code}`;
-  if (problem) {
-    done({ ok: false, stopped: true, build, previous, reason, returnError: problem }, 3);
-  }
-  if (rollbackPin) {
-    tool('kit.mjs', ['pin', '--env', env, '--rollback', rollbackPin]);
-  }
+  if (back.code !== 0) stopped(build, previous, reason, `возврат: код ${back.code}`);
+  const problem = await watch(env, previous, policy);
+  if (problem) stopped(build, previous, reason, problem);
+  tool('release.mjs', [
+    'close',
+    env,
+    '--op',
+    back.json.op,
+    '--status',
+    'succeeded',
+    '--detail',
+    reason,
+  ]);
+  if (rollbackPin) tool('kit.mjs', ['pin', '--env', env, '--rollback', rollbackPin]);
   done({ ok: false, returned: true, build, previous, reason }, 1);
 }
 
@@ -207,8 +240,12 @@ if (!current || current !== request.expect) {
 const installedFile = join(KITS, current, 'kit.json');
 if (!existsSync(installedFile)) refuse(`на узле нет комплекта возврата ${current}`);
 const installed = JSON.parse(readFileSync(installedFile, 'utf8'));
-const problems = classProblems({ kit, installed, applied, policy });
+const launch = launchFiles(env);
+const problems = classProblems({ kit, installed, applied, policy, launch });
 if (problems.length) refuse(`вне класса операций: ${problems.join('; ')}`);
+const ready = tool('kit.mjs', ['check', '--build', current]);
+if (ready.code !== 0)
+  refuse(`комплект возврата ${current} не годен: ${ready.json?.error ?? ready.code}`);
 
 const staged = stageFiles(request, kit);
 try {
@@ -220,22 +257,23 @@ try {
 const rollbackPin = pinsOf(env).rollback ?? null;
 const forward = tool(
   'release.mjs',
-  installArgs(env, kit.build, current, 'fifth-install', policy.approvedBy),
+  installArgs(env, kit.build, current, 'fifth-install', policy.approvedBy, ['--hold']),
 );
 if (forward.code === 2) refuse(forward.json?.error ?? 'выпуск отклонён');
-const touched = (pinsOf(env).partial ?? []).includes(kit.build);
 if (forward.code !== 0) {
-  if (!touched) done({ ok: false, build: kit.build, error: forward.json?.error }, 3);
-  await returnTo(
-    env,
-    current,
-    current,
-    rollbackPin,
-    forward.json?.error ?? 'выпуск',
-    policy,
-    kit.build,
-  );
+  if (!forward.json?.held) done({ ok: false, build: kit.build, error: forward.json?.error }, 3);
+  await returnTo(env, forward.json.op, current, rollbackPin, forward.json.error, policy, kit.build);
 }
-const problem = await watch(env, policy);
-if (problem) await returnTo(env, current, kit.build, rollbackPin, problem, policy, kit.build);
+const problem = await watch(env, kit.build, policy);
+if (problem) await returnTo(env, forward.json.op, current, rollbackPin, problem, policy, kit.build);
+tool('release.mjs', [
+  'close',
+  env,
+  '--op',
+  forward.json.op,
+  '--status',
+  'succeeded',
+  '--detail',
+  'наблюдение прошло',
+]);
 done({ ok: true, build: kit.build, previous: current }, 0);
