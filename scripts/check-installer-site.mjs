@@ -329,9 +329,9 @@ async function bootstrap() {
     .join('\n');
   const registry = readdirSync('database/migrations').find((f) => f.startsWith('M157'));
   sql(`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_readonly') THEN CREATE ROLE app_readonly NOLOGIN; END IF; END $$;
+    CREATE TABLE public.schema_migrations (id text PRIMARY KEY, checksum bytea NOT NULL);
     ${readFileSync(`database/migrations/${registry}`, 'utf8')}
     CREATE ROLE app_release_user LOGIN PASSWORD 'site-release' IN ROLE app_release;
-    CREATE TABLE public.schema_migrations (id text PRIMARY KEY, checksum bytea NOT NULL);
     GRANT SELECT ON public.schema_migrations TO app_release;
     ${rows}
     INSERT INTO ops.installations (id, env, build, commit_sha, kit_sha256, actor, approved_by, status, finished_at)
