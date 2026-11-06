@@ -448,7 +448,9 @@ export function snapshotConfig(targetDir) {
   }
   const images = {};
   const ps = docker(['ps', '--format', '{{.Names}}'], { allowFail: true }).stdout.trim();
-  for (const name of ps.split('\n').filter((n) => n.startsWith('fifth-') && !n.startsWith('fifth-test-'))) {
+  for (const name of ps
+    .split('\n')
+    .filter((n) => n.startsWith('fifth-') && !n.startsWith('fifth-test-'))) {
     const r = docker(['inspect', name, '-f', '{{.Config.Image}} {{.Image}}'], { allowFail: true });
     const [image, id] = r.stdout.trim().split(' ');
     images[name] = { image, id };
