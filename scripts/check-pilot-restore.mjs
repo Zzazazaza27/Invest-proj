@@ -3,6 +3,7 @@
  * Восстановление копии пилотной среды на ноутбуке, без обращения к ней самой.
  *
  *   node scripts/check-pilot-restore.mjs [--secret-key <файл>] [--passphrase-file <файл>]
+ *                                        [--control <SHA-256 контрольного файла>]
  *
  * Скачивает последнюю копию через `fifth-backup-read`, сверяет хеши описи, расшифровывает ключом
  * Томаса в том площадки, поднимает базу, сверяет число записей и файлы, открывает контакты ключами
@@ -23,6 +24,7 @@ const option = (name, fallback) => {
 const ownerKeyPath = ['d:/misc/tmp', 'secret-key.asc'].join('/');
 const keyFile = resolve(option('--secret-key', ownerKeyPath));
 const passFile = resolve(option('--passphrase-file', 'd:/misc/tmp/ph.txt'));
+const control = option('--control', null);
 const IMAGE = 'fifth/postgres:16';
 const CORE = option('--core-image', 'fifth/core:dev');
 const VOLUME = 'fifth-pilot-restore';
@@ -106,16 +108,15 @@ try {
         'd --decrypt /in/files.tar.gpg 2>/dev/null | tar -xf - -C /w/files',
         'd --decrypt /in/env.tar.gpg 2>/dev/null | tar -xf - -C /w/env',
         'cd /w/files && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 -r sha256sum | sha256sum | cut -d" " -f1',
+        'if [ -f _control/restore-check.bin ]; then sha256sum _control/restore-check.bin | cut -d" " -f1; fi',
       ].join('\n'),
     ],
     { env: { ...env, PASSPHRASE: readFileSync(passFile, 'utf8').trim() } },
   );
   check('копия открыта ключом Томаса', open.status === 0, open.stderr.slice(-160));
-  check(
-    'файлы совпали с описью',
-    open.stdout.trim() === manifest.filesSum,
-    `файлов ${manifest.objects}`,
-  );
+  const [filesSum, controlSum] = open.stdout.trim().split('\n');
+  check('файлы совпали с описью', filesSum === manifest.filesSum, `файлов ${manifest.objects}`);
+  if (control) check('контрольный файл восстановлен без искажений', controlSum === control);
 
   docker([
     'run',
