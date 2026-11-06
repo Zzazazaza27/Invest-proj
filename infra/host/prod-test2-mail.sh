@@ -18,3 +18,5 @@ echo "запрос: $code"
 sleep 15
 docker logs --since 1m fifth-test-2-core 2>&1 | grep -iE 'mail|smtp' | tail -4 | sed -E 's/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+/***/g' | cut -c1-200
 grep -E 'no-reply-test-2' /var/log/exim4/mainlog | tail -4 | sed -E 's/[A-Za-z0-9._%+-]+@([A-Za-z0-9.-]+)/***@\1/g' | cut -c1-200
+file="$(ls -t /home/admin/mail/5espace.com/info/new/* 2>/dev/null | head -1)"
+[ -z "$file" ] || grep -m1 -i '^Subject:' "$file" | cut -c1-120
