@@ -27,6 +27,8 @@ pg() {
   docker exec -i -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "fifth-$ID-postgres" "$@"
 }
 pg pg_dump -h 127.0.0.1 -U fifth_owner -d fifth_element -Fc | seal "$target/db.dump.gpg"
+# Политики доступа ссылаются на роли, а копия базы их не содержит.
+pg pg_dumpall -h 127.0.0.1 -U fifth_owner --roles-only | seal "$target/roles.sql.gpg"
 counts="$(pg psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -F= -c \
   "SELECT 'users', count(*) FROM identity.users UNION ALL SELECT 'projects', count(*) FROM lab.projects UNION ALL SELECT 'materials', count(*) FROM lab.project_materials" | paste -sd, -)"
 
@@ -50,7 +52,7 @@ tar -C "$DIR" -cf - secrets settings.env compose.env storage.json install.json |
 sum() { sha256sum "$target/$1" | cut -d' ' -f1; }
 cat >"$target/manifest.json" <<JSON
 {"at":"$stamp","env":"$ID","counts":"$counts","objects":$objects,"filesSum":"$files_sum",
- "sha256":{"db.dump.gpg":"$(sum db.dump.gpg)","files.tar.gpg":"$(sum files.tar.gpg)","env.tar.gpg":"$(sum env.tar.gpg)"}}
+ "sha256":{"db.dump.gpg":"$(sum db.dump.gpg)","roles.sql.gpg":"$(sum roles.sql.gpg)","files.tar.gpg":"$(sum files.tar.gpg)","env.tar.gpg":"$(sum env.tar.gpg)"}}
 JSON
 date -u +%FT%TZ >"$target/READY"
 find "$BACKUPS" -mindepth 1 -maxdepth 1 -type d | sort | head -n "-$KEEP" | xargs -r rm -rf

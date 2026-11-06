@@ -67,7 +67,7 @@ try {
   if (!set) throw new Error('готовых копий нет');
   console.log(`=== ВОССТАНОВЛЕНИЕ КОПИИ ${set} ===`);
   const manifest = JSON.parse(read(`pilot-file ${set}/manifest.json`).stdout.toString());
-  for (const name of ['db.dump.gpg', 'files.tar.gpg', 'env.tar.gpg']) {
+  for (const name of ['db.dump.gpg', 'roles.sql.gpg', 'files.tar.gpg', 'env.tar.gpg']) {
     const bytes = read(`pilot-file ${set}/${name}`).stdout;
     writeFileSync(join(WORK, name), bytes);
     check(
@@ -101,6 +101,7 @@ try {
         'd() { printf %s "$PASSPHRASE" | gpg -q --batch --pinentry-mode loopback --passphrase-fd 0 "$@"; }',
         'd --import /key.asc 2>/dev/null',
         'd --decrypt /in/db.dump.gpg > /w/db.dump 2>/dev/null',
+        'd --decrypt /in/roles.sql.gpg > /w/roles.sql 2>/dev/null',
         'mkdir -p /w/files /w/env',
         'd --decrypt /in/files.tar.gpg 2>/dev/null | tar -xf - -C /w/files',
         'd --decrypt /in/env.tar.gpg 2>/dev/null | tar -xf - -C /w/env',
@@ -136,14 +137,15 @@ try {
     IMAGE,
     'postgres',
   ]);
-  for (let i = 0; i < 40; i += 1) {
-    if (
-      docker(['exec', PG, 'psql', '-U', 'fifth_owner', '-d', 'fifth_element', '-c', 'select 1'])
-        .status === 0
-    )
-      break;
+  // При первом запуске сервер поднимается дважды: первый раз временно, для начальной настройки.
+  for (let i = 0; i < 60; i += 1) {
+    const log = docker(['logs', PG]);
+    const ready = `${log.stdout}${log.stderr}`.match(/ready to accept connections/g) ?? [];
+    if (ready.length >= 2) break;
     spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},1000)']);
   }
+  // Роль владельца уже есть, поэтому её строки дают отказ: важны остальные роли.
+  docker(['exec', PG, 'psql', '-q', '-U', 'fifth_owner', '-d', 'postgres', '-f', '/w/roles.sql']);
   const restored = docker([
     'exec',
     PG,
@@ -155,9 +157,8 @@ try {
     '--no-owner',
     '/w/db.dump',
   ]);
-  console.log(
-    `  предупреждений pg_restore: ${restored.stderr.split('\n').filter((l) => /error/i.test(l)).length}`,
-  );
+  const errors = restored.stderr.split(String.fromCharCode(10)).filter((l) => /error/i.test(l));
+  check('база восстановлена без ошибок', errors.length === 0, errors.slice(0, 2).join(' | '));
   const psql = (sql) =>
     docker([
       'exec',

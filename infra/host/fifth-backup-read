@@ -74,7 +74,7 @@ if (command === 'pilot-latest') {
   // Имя файла задаёт только этот список: путь снаружи не принимается.
   const [set, name] = String(id).split('/');
   if (!pilotSets().includes(set)) fail('нет такой копии');
-  if (!['manifest.json', 'db.dump.gpg', 'files.tar.gpg', 'env.tar.gpg'].includes(name)) {
+  if (!['manifest.json', 'db.dump.gpg', 'roles.sql.gpg', 'files.tar.gpg', 'env.tar.gpg'].includes(name)) {
     fail('неверное имя файла');
   }
   fs.createReadStream(path.join(PILOT, set, name)).pipe(process.stdout);
