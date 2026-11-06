@@ -446,7 +446,8 @@ try {
   // --------------------------------------------------------- 4. OpenBao
   if (catalog.openbao) {
     await timed('OpenBao из снимка', async () => {
-      if (!catalog.openbao.file) throw new Error(`в комплекте нет снимка: ${catalog.openbao.error}`);
+      if (!catalog.openbao.file)
+        throw new Error(`в комплекте нет снимка: ${catalog.openbao.error}`);
       openbao = await restoreOpenbao({
         tag,
         from,
@@ -562,7 +563,8 @@ try {
   await timed('Шифрованные поля и вход', async () => {
     for (const [k, v] of Object.entries(coreEnv)) process.env[k] = v;
     // Свой процесс проверки не должен держать местные KEK: .env машины загружен при старте.
-    if (openbao) for (const k of Object.keys(process.env)) if (/^KEK_/.test(k)) delete process.env[k];
+    if (openbao)
+      for (const k of Object.keys(process.env)) if (/^KEK_/.test(k)) delete process.env[k];
     const require = createRequire(join(ROOT, 'apps', 'core', 'package.json'));
     const { CryptoService } = require(
       join(ROOT, 'apps', 'core', 'dist', 'crypto', 'crypto.service.js'),
@@ -584,7 +586,9 @@ try {
       )
     ).rows;
     if (openbao) {
-      const vault = users.filter((u) => u.contact_wrapped_dek.subarray(0, 6).equals(Buffer.from('vault:')));
+      const vault = users.filter((u) =>
+        u.contact_wrapped_dek.subarray(0, 6).equals(Buffer.from('vault:')),
+      );
       check(`в базе есть записи vault (${vault.length} из ${users.length})`, vault.length > 0);
       report.vaultRecords = vault.length;
     }
