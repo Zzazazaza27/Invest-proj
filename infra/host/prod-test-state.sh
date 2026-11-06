@@ -11,8 +11,8 @@ test1() {
 }
 list='SELECT u.id, u.created_at::date, u.primary_role, u.status,
        (SELECT string_agg(role, $$,$$) FROM identity.user_roles r WHERE r.user_id = u.id AND r.revoked_at IS NULL),
-       (SELECT string_agg(capability, $$,$$) FROM identity.staff_capabilities c WHERE c.user_id = u.id),
-       left(u.password_hash, 10)
+       (SELECT count(*) FROM identity.staff_capabilities c WHERE c.user_id = u.id),
+       left(u.password_hash, 10), substring(u.contact_wrapped_dek from 1 for 6) = $vault:$::bytea
   FROM identity.users u ORDER BY u.created_at;'
 echo '== рабочая среда'
 echo "$list" | prod 2>&1 | cut -c1-160
