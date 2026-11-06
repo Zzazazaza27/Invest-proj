@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 206; требований: 41
+- Проверок: 207; требований: 41
 
 ## Что защищено без участия человека
 
@@ -327,6 +327,7 @@
 | TOOL-RELEASE | `node scripts/release.mjs install|verify|replay|recover <среда>` | 0 | вручную, по поводу | — |
 | TOOL-INSTALL-CI | `fifth-install (обёртка на узле), запрос в stdin` | 0 | вручную, по поводу | — |
 | TOOL-INSTALL-REQUEST | `node scripts/install-request.mjs --dir <артефакт> --expect <сборка> --sign-key-file <файл> --token-file <файл>` | 0 | вручную, по поводу | — |
+| TOOL-CI-CHAIN | `node scripts/ci-chain-check.mjs --commit <sha> --run <запуск CI> --build <сборка>` | 0 | вручную, по поводу | — |
 | TOOL-RENAME-STAND | `node scripts/rename-stand.mjs copy|back` | 0 | вручную, по поводу | — |
 | TOOL-SECRETS-TO-FILES | `node scripts/secrets-to-files.mjs apply|back` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-OPENBAO | `node scripts/monitor-openbao.mjs` | 0 | вручную, по поводу | — |

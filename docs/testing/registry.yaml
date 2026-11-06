@@ -2700,6 +2700,23 @@ checks:
     purpose: 'Запрос к защищённому установщику'
     confirmation: reviewed-in-code
 
+  - id: TOOL-CI-CHAIN
+    file: scripts/ci-chain-check.mjs
+    command: node scripts/ci-chain-check.mjs --commit <sha> --run <запуск CI> --build <сборка>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    effects:
+      ['ставит установщик на узел с одноразовыми ключами и снимает ключ входа; среду не меняет']
+    studied: code
+    studiedOn: 2026-11-06
+    note: >-
+      Цепочка SSH на настоящем узле: только запросы, обязанные получить отказ.
+    purpose: 'Проверка перед выдачей рабочего доступа CI'
+    confirmation: reviewed-in-code
+
   - id: TOOL-RENAME-STAND
     file: scripts/rename-stand.mjs
     command: node scripts/rename-stand.mjs copy|back
