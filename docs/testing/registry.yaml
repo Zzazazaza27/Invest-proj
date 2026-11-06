@@ -3299,7 +3299,8 @@ checks:
     note: >-
       Копия test-2: хеши описи, расшифровка ключом Томаса, база, файлы, контакты ключами из копии.
     purpose: 'Проверенный путь восстановления пилотной среды'
-    confirmation: reviewed-in-code
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-06
 
   - id: CHK-ENV-ISOLATION
     file: scripts/check-env-isolation.mjs
