@@ -3196,6 +3196,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-04
 
+  - id: CHK-INSTALLER
+    file: scripts/check-installer.mjs
+    command: node scripts/check-installer.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 37
+    needs: [docker]
+    effects: ['временная среда test-76, комплекты и ключ подписи в .local/check-installer, удаляются прогоном']
+    studied: code
+    studiedOn: 2026-11-06
+    note: >-
+      Отказы защищённого установщика до изменений, удачный выпуск только core и web, один возврат
+      при сбое, остановка при сбое возврата. Обёртку и SSH не проверяет.
+    purpose: 'Границы автоматического выпуска: подпись, класс операций, возврат'
+    confirmation: reviewed-in-code
+
   - id: CHK-ENV-ISOLATION
     file: scripts/check-env-isolation.mjs
     command: node scripts/check-env-isolation.mjs
@@ -4491,6 +4508,7 @@ blocks:
         CHK-RELEASE-PINS,
         CHK-RELEASE,
         CHK-ENV-ISOLATION,
+        CHK-INSTALLER,
         CHK-PORTS-CONSISTENCY,
         CHK-FRONT-BUILDS,
         RND-CONSOLE,

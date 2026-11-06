@@ -1,0 +1,12 @@
+#!/bin/sh
+# Защищённый установщик: единственное, что разрешено учётке fifth-ci. Аргументов нет, запрос
+# приходит в stdin. Окружение чистое, код — закреплённая копия вне git, настройки — /etc/fifth-install.
+exec /usr/bin/env -i \
+  PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+  HOME=/root \
+  FIFTH_ROOT=/opt/fifth-element \
+  FIFTH_KITS_DIR=/opt/fifth-element/.local/kits \
+  FIFTH_ENVS_DIR=/opt/fifth-element/.local/envs \
+  FIFTH_INSTALL_ETC=/etc/fifth-install \
+  FIFTH_INSTALL_TMP=/dev/shm \
+  /usr/bin/node /opt/fifth-install/tools/scripts/install-ci.mjs

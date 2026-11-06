@@ -474,6 +474,8 @@ async function update(id) {
   const digests = Object.fromEntries(Object.entries(images).map(([k, v]) => [k, imageId(v)]));
   // База перезапускается только при новом образе: смена метки без смены образа
   // пересоздала бы контейнер и оборвала соединения без причины.
+  const imagesOnly = process.argv.includes('--images-only');
+  if (imagesOnly) digests.postgres = install.kit?.images?.postgres;
   const samePostgres = install.kit?.images?.postgres === digests.postgres;
   const file = join(names(id).dir, 'compose.env');
   const lines = readFileSync(file, 'utf8')
@@ -488,7 +490,7 @@ async function update(id) {
   );
   installCompose(id, kit);
   compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', '--wait']);
-  compose(id, ['run', '--rm', 'migrate']);
+  if (!imagesOnly) compose(id, ['run', '--rm', 'migrate']);
   compose(id, ['up', '-d', 'core', 'web']);
   const state = await waitReady(id);
   install.kit = { label: kit, images: digests };

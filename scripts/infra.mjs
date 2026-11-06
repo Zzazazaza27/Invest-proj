@@ -26,7 +26,7 @@ import { fileURLToPath } from 'node:url';
 import { parseEnvFile } from './lib/backup.mjs';
 import { PORTS } from './lib/ports.mjs';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = process.env.FIFTH_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..');
 const ENV_PATH = join(ROOT, '.env');
 const COMPOSE_PATH = join(ROOT, 'infra', 'docker-compose.yml');
 const JOURNALD_PATH = join(ROOT, 'infra', 'docker-compose.journald.yml');

@@ -34,8 +34,10 @@ import { parseEnvFile } from './lib/backup.mjs';
 import { activateProdFiles, prodFileProblems } from './lib/prod-compose.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
-const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
+// Закреплённая копия инструментов работает с площадкой по `FIFTH_ROOT`, код берёт из своей папки.
+const HOME = process.env.FIFTH_ROOT || ROOT;
+const ENVS = process.env.FIFTH_ENVS_DIR || join(HOME, '.local', 'envs');
+const KITS = process.env.FIFTH_KITS_DIR || join(HOME, '.local', 'kits');
 const SERVER = process.env.FIFTH_SERVER || 'local';
 const COMPONENTS = ['core', 'web', 'postgres'];
 const dockerEnv = { ...process.env, MSYS_NO_PATHCONV: '1' };
@@ -62,7 +64,7 @@ const containerOf = (id, component) =>
 const PROD_PROFILES = 'web,monitoring,monitoring-host';
 
 /** Значение настройки рабочей среды, в том числе секрет из файла. */
-const prodEnv = (name) => parseEnvFile(join(ROOT, '.env'))[name] ?? '';
+const prodEnv = (name) => parseEnvFile(join(HOME, '.env'))[name] ?? '';
 
 /**
  * Рабочая установка собирается из образов и файлов запуска комплекта: файлы сверяются с
@@ -73,12 +75,12 @@ const prodEnv = (name) => parseEnvFile(join(ROOT, '.env'))[name] ?? '';
 function checkProdFiles(kit) {
   const problems = prodFileProblems(join(KITS, kit.build), kit);
   if (problems.length) throw new Refused(problems.join('; '));
-  return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: ROOT, encoding: 'utf8' }).stdout.trim();
+  return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: HOME, encoding: 'utf8' }).stdout.trim();
 }
 
 function prodCompose(args) {
   const r = spawnSync(process.execPath, [join(ROOT, 'scripts', 'infra.mjs'), 'compose', ...args], {
-    cwd: ROOT,
+    cwd: HOME,
     encoding: 'utf8',
     env: { ...dockerEnv, COMPOSE_PROFILES: PROD_PROFILES },
     timeout: 300_000,
@@ -91,15 +93,15 @@ function prodCompose(args) {
 }
 
 /** Перевод рабочей среды на комплект: миграции одним шагом, затем ядро и статика. */
-function prodUpdate(build, kit) {
+function prodUpdate(build, kit, imagesOnly) {
   activateProdFiles(join(KITS, build), kit, join(dirOf(PROD), 'compose'));
   // База перезапускается только при новом образе, а не при смене метки.
   const running = spawnSync('docker', ['inspect', 'fifth-postgres', '--format', '{{.Image}}'], {
     encoding: 'utf8',
     env: dockerEnv,
   }).stdout.trim();
-  const newPostgres = running !== kit.images.postgres.imageId;
-  const file = join(ROOT, '.env');
+  const newPostgres = !imagesOnly && running !== kit.images.postgres.imageId;
+  const file = join(HOME, '.env');
   const text = readFileSync(file, 'utf8');
   writeFileSync(
     file,
@@ -117,17 +119,19 @@ function prodUpdate(build, kit) {
     });
     prodCompose(['up', '-d', '--wait', 'postgres']);
   }
-  prodCompose([
-    'run',
-    '--rm',
-    '--no-deps',
-    '-w',
-    '/app/database',
-    'core',
-    'sh',
-    '-c',
-    'node --experimental-strip-types src/migrate.ts && node --experimental-strip-types src/bootstrap-roles.ts',
-  ]);
+  if (!imagesOnly) {
+    prodCompose([
+      'run',
+      '--rm',
+      '--no-deps',
+      '-w',
+      '/app/database',
+      'core',
+      'sh',
+      '-c',
+      'node --experimental-strip-types src/migrate.ts && node --experimental-strip-types src/bootstrap-roles.ts',
+    ]);
+  }
   prodCompose(['up', '-d', 'core', 'web']);
   const until = Date.now() + 120_000;
   while (Date.now() < until) {
@@ -335,6 +339,22 @@ const upsertInstances = (id, v) =>
     )
     .join('\n');
 
+/** База остаётся на своём образе: сверка этой сборки ждёт именно его. */
+function keepRunningPostgres(id, build) {
+  const r = spawnSync(
+    'docker',
+    ['inspect', containerOf(id, 'postgres'), '--format', '{{.Image}}'],
+    {
+      encoding: 'utf8',
+      env: dockerEnv,
+    },
+  );
+  if (r.status !== 0) throw new Error('образ работающей базы не прочитан');
+  const file = join(KITS, build, 'local-images.json');
+  const ids = JSON.parse(readFileSync(file, 'utf8'));
+  writeFileSync(file, `${JSON.stringify({ ...ids, postgres: r.stdout.trim() }, null, 2)}\n`);
+}
+
 /** Испытания: остановка в заданной точке выпуска. */
 async function testHold(name = 'FIFTH_TEST_HOLD') {
   const dir = process.env[name];
@@ -353,6 +373,8 @@ async function install(id) {
   const actor = flag('--actor');
   const approved = flag('--approved-by');
   const rollback = argv.includes('--rollback');
+  // Только образы core и web: база, миграции и роли не трогаются.
+  const imagesOnly = argv.includes('--images-only');
   if (!build || !expect || !actor || !approved) {
     throw new Refused('нужны --kit, --expect, --actor и --approved-by');
   }
@@ -425,6 +447,7 @@ async function install(id) {
   try {
     kitTool('load', '--build', build);
     record(id, op, 'load', 'ok');
+    if (imagesOnly) keepRunningPostgres(id, build);
     const loaded = readKit(build);
     psql(
       id,
@@ -438,7 +461,10 @@ async function install(id) {
     touched = true;
     record(id, op, 'updating', 'start');
     if (process.env.FIFTH_TEST_CRASH === 'during-update') process.exit(96);
-    const up = id === PROD ? prodUpdate(build, loaded) : envTool('update', id, '--kit', build);
+    const up =
+      id === PROD
+        ? prodUpdate(build, loaded, imagesOnly)
+        : envTool('update', id, '--kit', build, ...(imagesOnly ? ['--images-only'] : []));
     if (up.code !== 0) throw new Error(`установка: ${up.out.slice(0, 200)}`);
     record(id, op, 'update', 'ok');
     const v = verifyAgainst(id, loaded);
@@ -551,7 +577,27 @@ async function recover(id) {
   finish({ ok: true, env: id, op, lastStage: stage ?? null }, 0);
 }
 
-const COMMANDS = { install, verify, replay, recover };
+/** Состояние для установщика: текущая сборка, идущий выпуск, применённые миграции. */
+function state(id) {
+  const running = psql(
+    id,
+    `SELECT count(*) FROM ops.installations WHERE env = ${q(id)} AND status = 'running';`,
+  );
+  const rows = psql(
+    id,
+    `SELECT id || '|' || encode(checksum, 'hex') FROM public.schema_migrations ORDER BY id;`,
+  );
+  const migrations = rows
+    .split('\n')
+    .filter(Boolean)
+    .map((row) => {
+      const [migration, checksum] = row.split('|');
+      return { id: migration, checksum };
+    });
+  finish({ ok: true, build: currentBuild(id), running: running !== '0', migrations }, 0);
+}
+
+const COMMANDS = { install, verify, replay, recover, state };
 
 try {
   const [command, id] = argv;

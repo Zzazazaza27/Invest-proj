@@ -35,7 +35,7 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { prodFileName, prodFileProblems } from './lib/prod-compose.mjs';
 
@@ -43,6 +43,29 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
 const MIGRATIONS = join(ROOT, 'database', 'migrations');
+const POSTGRES_SOURCE = join(ROOT, 'infra', 'postgres');
+
+/**
+ * Хеш исходников образа базы. Digest образа меняется при каждой сборке, а установщику нужно знать,
+ * менялось ли содержимое. Концы строк приводятся к LF.
+ */
+function postgresSource() {
+  const hash = createHash('sha256');
+  const walk = (dir) => {
+    for (const name of readdirSync(dir, { withFileTypes: true }).sort((a, b) =>
+      a.name < b.name ? -1 : 1,
+    )) {
+      const path = join(dir, name.name);
+      if (name.isDirectory()) walk(path);
+      else {
+        hash.update(relative(POSTGRES_SOURCE, path).replaceAll('\\', '/'));
+        hash.update(readFileSync(path, 'utf8').replace(/\r\n/g, '\n'));
+      }
+    }
+  };
+  walk(POSTGRES_SOURCE);
+  return hash.digest('hex');
+}
 const COMPONENTS = ['core', 'web', 'postgres'];
 const PROD_COMPOSE = [
   'infra/docker-compose.yml',
@@ -134,6 +157,7 @@ function manifestOf({ build, commit, images, previous }) {
       PROD_COMPOSE.map((f) => [f, sha256(readFileSync(join(ROOT, f)))]),
     ),
     settingsVersion: 1,
+    postgresSource: postgresSource(),
     migrations,
     previous: previous ?? null,
     checks: ['status: /live и /ready', 'verify: дайджесты экземпляров и миграции'],
@@ -354,7 +378,9 @@ function pin() {
   finish({ ok: true, env, pins }, 0);
 }
 
-const COMMANDS = { manifest, fetch: fetchKit, pack, load, check, pin };
+const source = () => finish({ ok: true, source: postgresSource() }, 0);
+
+const COMMANDS = { manifest, fetch: fetchKit, pack, load, check, pin, source };
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
