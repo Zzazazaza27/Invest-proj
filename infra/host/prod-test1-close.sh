@@ -1,6 +1,6 @@
 #!/bin/bash
 # test-1 снова техническая: пароль на входе (новый, прежний попал в журнал), пределы ресурсов,
-# учётка администратора с адресом Томаса приостановлена.
+# у учётки администратора с адресом Томаса снят хеш пароля с рабочей среды.
 #   prod-test1-close <хеш пароля, base64>
 set -Eeuo pipefail
 HASH="$(printf %s "${1:?нужен хеш}" | base64 -d)"
@@ -37,10 +37,5 @@ for spec in postgres:768m:1 core:768m:1 valkey:128m:0.25 nats:128m:0.25 web:64m:
 done
 echo 'пределы ресурсов заданы'
 
-docker exec -i -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" fifth-test-1-postgres \
-  psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At <<'SQL' | tail -1
-UPDATE identity.users SET status = 'suspended'
- WHERE id IN (SELECT user_id FROM identity.user_roles WHERE role = 'admin' AND revoked_at IS NULL)
-RETURNING id;
-SQL
+bash infra/host/prod-test1-admin-off.sh
 echo 'test-1 закрыта'
