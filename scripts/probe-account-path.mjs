@@ -20,6 +20,7 @@ const call = async (method, path, body, cookies = jar) => {
   const r = await fetch(`${SITE}/v1${path}`, {
     method,
     redirect: 'manual',
+    signal: AbortSignal.timeout(15_000),
     headers: {
       authorization: basic,
       origin: SITE,
@@ -48,7 +49,10 @@ const code = (r) => `${r.status} ${r.json?.code ?? r.json?.error?.code ?? ''}`.t
 
 const templates = await call('GET', '/auth/consents/templates');
 const items = templates.json?.items ?? [];
-say('документы условий', `${templates.status}, ${items.length}: ${items.map((t) => t.kind).join(' ')}`);
+say(
+  'документы условий',
+  `${templates.status}, ${items.length}: ${items.map((t) => t.kind).join(' ')}`,
+);
 say('поля документа', Object.keys(items[0] ?? {}).join(' '));
 
 const email = `probe-${randomBytes(4).toString('hex')}@example.invalid`;
