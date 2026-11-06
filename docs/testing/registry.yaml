@@ -280,7 +280,7 @@ checks:
 
   - id: CHK-BACKUP-RESTORE
     file: scripts/check-backup-restore.mjs
-    command: node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>]
+    command: node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>] [--openbao-keys <аварийный комплект>]
     kind: check
     level: сквозной
     runner: manual
