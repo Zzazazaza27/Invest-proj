@@ -79,6 +79,10 @@ import {
 
 // Нечитаемый файл секрета — отказ задания, и он обязан попасть в состояние. Проверка
 // секретов не читает: без неё наблюдение увидело бы только молчание таймера.
+const PILOT_STATE = process.env.FIFTH_MONITOR_STATE || '/var/lib/fifth-monitor';
+const PILOT_BACKUP_HOURS = 30;
+// Ноутбук бывает выключен: порог с запасом на выходные.
+const PILOT_OFFSITE_HOURS = 72;
 let secretsError = null;
 try {
   loadEnv();
@@ -865,6 +869,33 @@ async function check() {
     Boolean(secretsError),
     secretsError ? secretsError.message : 'файлы секретов читаются',
   );
+
+  // Пилотная среда: копия на сервере и её вынос. Где пилотной среды нет, сигналов нет.
+  const pilotState = (name) => {
+    const file = join(PILOT_STATE, name);
+    return existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : null;
+  };
+  const hoursSince = (at) => (Date.now() - Date.parse(at)) / 3_600_000;
+  const pilot = pilotState('pilot-backup.json');
+  if (pilot) {
+    const age = hoursSince(pilot.at);
+    await say(
+      'pilot-backup',
+      !pilot.ok || age > PILOT_BACKUP_HOURS,
+      pilot.ok
+        ? `копия пилотной среды ${Math.round(age)} ч назад`
+        : `копия пилотной среды: ${pilot.detail}`,
+    );
+    const offsite = pilotState('pilot-offsite.json');
+    const offsiteAge = offsite ? hoursSince(offsite.at) : Infinity;
+    await say(
+      'pilot-offsite',
+      offsiteAge > PILOT_OFFSITE_HOURS,
+      offsite
+        ? `копия вне сервера ${Math.round(offsiteAge)} ч назад`
+        : 'копия пилотной среды ни разу не вынесена с сервера',
+    );
+  }
 
   // Диск: предупреждение раньше, чем запрет начинать задания.
   const d = diskInfo();

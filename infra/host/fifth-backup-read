@@ -6,6 +6,7 @@
  *   fifth-backup-read latest          имя последнего готового комплекта
  *   fifth-backup-read pilot-latest    последняя копия пилотной среды
  *   fifth-backup-read pilot-file <копия>/<файл>  файл этой копии, зашифрованный
+ *   fifth-backup-read pilot-ack <копия>  отметка: копия сохранена вне сервера
  *   fifth-backup-read has <комплект>  имя, если комплект готов
  *   fifth-backup-read catalog <комплект>
  *   fifth-backup-read tar <комплект>  поток tar: только файлы описи комплекта
@@ -78,6 +79,14 @@ if (command === 'pilot-latest') {
     fail('неверное имя файла');
   }
   fs.createReadStream(path.join(PILOT, set, name)).pipe(process.stdout);
+} else if (command === 'pilot-ack') {
+  // Единственная запись: имя готовой копии и время, в файл наблюдения.
+  if (!pilotSets().includes(id)) fail('нет такой копии');
+  const state = isRoot ? '/var/lib/fifth-monitor' : ROOT;
+  fs.writeFileSync(
+    path.join(state, 'pilot-offsite.json'),
+    `${JSON.stringify({ at: new Date().toISOString(), set: id })}\n`,
+  );
 } else if (command === 'latest') {
   if (id !== undefined) fail('лишние аргументы');
   const sets = path.join(ROOT, 'sets');
