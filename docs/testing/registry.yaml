@@ -3250,6 +3250,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-06
 
+  - id: CHK-INSTALLER-SITE
+    file: scripts/check-installer-site.mjs
+    command: node scripts/check-installer-site.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 37
+    needs: [docker]
+    effects: ['временный контейнер fifth-install-site со своим Docker, удаляется прогоном']
+    studied: code
+    studiedOn: 2026-11-06
+    note: >-
+      Окно наблюдения; настоящие установка на узел, sudo, SSH с принудительной командой, обёртка,
+      закреплённая копия и ветка prod. Образы core и web на площадке заглушки, GHCR не участвует.
+    purpose: 'Рабочая ветка установщика: блокировка, файлы запуска, возврат'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-06
+
   - id: CHK-ENV-ISOLATION
     file: scripts/check-env-isolation.mjs
     command: node scripts/check-env-isolation.mjs
@@ -4546,6 +4564,7 @@ blocks:
         CHK-RELEASE,
         CHK-ENV-ISOLATION,
         CHK-INSTALLER,
+        CHK-INSTALLER-SITE,
         CHK-PORTS-CONSISTENCY,
         CHK-FRONT-BUILDS,
         RND-CONSOLE,
