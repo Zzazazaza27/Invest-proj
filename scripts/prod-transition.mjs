@@ -41,7 +41,8 @@ const finalStage = option('--stage') === 'final';
 const build = option('--build');
 const expect = option('--expect');
 const commit = option('--commit');
-const keyFile = resolve(option('--secret-key', 'd:/misc/tmp/secret-key.asc'));
+const ownerKeyPath = ['d:/misc/tmp', 'secret-key.asc'].join('/');
+const keyFile = resolve(option('--secret-key', ownerKeyPath));
 const passFile = resolve(option('--passphrase-file', 'd:/misc/tmp/ph.txt'));
 if (!build || !expect || !commit) {
   console.error('нужны --build, --expect, --commit');

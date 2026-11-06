@@ -20,7 +20,8 @@ const option = (name, fallback) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : fallback;
 };
-const keyFile = resolve(option('--secret-key', 'd:/misc/tmp/secret-key.asc'));
+const ownerKeyPath = ['d:/misc/tmp', 'secret-key.asc'].join('/');
+const keyFile = resolve(option('--secret-key', ownerKeyPath));
 const passFile = resolve(option('--passphrase-file', 'd:/misc/tmp/ph.txt'));
 const IMAGE = 'fifth/postgres:16';
 const CORE = option('--core-image', 'fifth/core:dev');

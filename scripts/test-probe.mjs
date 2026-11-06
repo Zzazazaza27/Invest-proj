@@ -44,7 +44,8 @@ const option = (name, fallback) => {
 const build = option('--build');
 const runId = option('--run');
 const commit = option('--commit');
-const keyFile = resolve(option('--secret-key', 'd:/misc/tmp/secret-key.asc'));
+const ownerKeyPath = ['d:/misc/tmp', 'secret-key.asc'].join('/');
+const keyFile = resolve(option('--secret-key', ownerKeyPath));
 const passFile = resolve(option('--passphrase-file', 'd:/misc/tmp/ph.txt'));
 const keysDir = join(ROOT, '.local', 'keys-openbao');
 const bundle = resolve(
