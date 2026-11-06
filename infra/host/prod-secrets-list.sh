@@ -25,3 +25,5 @@ echo '== кто читает каталог'
 grep -rln 'FIFTH_SECRETS_DIR\|\.local/secrets' scripts infra --include=* 2>/dev/null | head -12
 echo '== закрепления'
 node scripts/kit.mjs pins --env prod 2>&1 | tail -4 | cut -c1-120
+echo '== убранные файлы'
+stat -c '%a %U %n' .local/retired
