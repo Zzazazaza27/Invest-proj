@@ -54,6 +54,7 @@ cleanup() {
     compose up -d --force-recreate --no-deps core >/dev/null 2>&1 || true
   fi
   rm -f "$DIR/compose.agent.yml"
+  docker rm -f -v "$PROJECT-backup-pg" >/dev/null 2>&1 || true
   docker rm -f "$AGENT" "$PROJECT-s3-link" fifth-openbao-copy fifth-test-1-copy-postgres >/dev/null 2>&1 || true
   docker volume rm -f fifth-openbao-copy-data >/dev/null 2>&1 || true
   docker network disconnect "$NET" fifth-openbao >/dev/null 2>&1 || true
@@ -82,6 +83,11 @@ if [ -f "$ROOT/.local/secrets/GARAGE_ADMIN_TOKEN" ]; then
 fi
 
 [ "$(laptop stage)" != tools ] || { report 'инструменты обновлены'; exit 0; }
+if [ "$(laptop stage)" = backup ]; then
+  # shellcheck source=/dev/null
+  . infra/host/test-probe-backup.sh
+  exit 0
+fi
 
 say "комплект $BUILD"
 if [ ! -f "$ROOT/.local/kits/$BUILD/kit.json" ]; then

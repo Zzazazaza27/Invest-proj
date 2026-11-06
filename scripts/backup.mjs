@@ -77,7 +77,15 @@ import {
   writeState,
 } from './lib/backup.mjs';
 
-loadEnv();
+// Нечитаемый файл секрета — отказ задания, и он обязан попасть в состояние. Проверка
+// секретов не читает: без неё наблюдение увидело бы только молчание таймера.
+let secretsError = null;
+try {
+  loadEnv();
+} catch (error) {
+  secretsError = error;
+  loadEnv({ secrets: false });
+}
 const [command, ...rest] = process.argv.slice(2);
 const flag = (name) => rest.includes(name);
 const option = (name) => {
@@ -852,6 +860,12 @@ async function check() {
     out.push(`${problem ? 'ПРОБЛЕМА' : 'ok      '} ${key}: ${text}`);
   };
 
+  await say(
+    'secrets',
+    Boolean(secretsError),
+    secretsError ? secretsError.message : 'файлы секретов читаются',
+  );
+
   // Диск: предупреждение раньше, чем запрет начинать задания.
   const d = diskInfo();
   await say(
@@ -1127,6 +1141,12 @@ if (!run) {
   process.exit(2);
 }
 try {
+  if (secretsError && command !== 'check' && command !== 'status') {
+    if (command === 'db' || command === 'set') {
+      recordJob(command, false, { lastError: secretsError.message });
+    }
+    throw secretsError;
+  }
   await run();
 } catch (error) {
   console.error(`ОШИБКА: ${error.message ?? error}`);

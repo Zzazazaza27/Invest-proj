@@ -60,7 +60,7 @@ export const MEMORY_ONLY = [
   '-e',
   'GNUPGHOME=/secure/gpg',
 ];
-export const PG_CONTAINER = 'fifth-postgres';
+export const PG_CONTAINER = process.env.BACKUP_PG_CONTAINER || 'fifth-postgres';
 
 // ----------------------------------------------------------------- окружение
 
@@ -104,8 +104,8 @@ export function resolvedEnvText(path = ENV_PATH) {
     );
 }
 
-export function loadEnv() {
-  const env = parseEnvFile(ENV_PATH);
+export function loadEnv(options) {
+  const env = parseEnvFile(ENV_PATH, options);
   for (const [k, v] of Object.entries(env)) if (process.env[k] === undefined) process.env[k] = v;
   return env;
 }
@@ -448,7 +448,7 @@ export function snapshotConfig(targetDir) {
   }
   const images = {};
   const ps = docker(['ps', '--format', '{{.Names}}'], { allowFail: true }).stdout.trim();
-  for (const name of ps.split('\n').filter((n) => n.startsWith('unicorn-'))) {
+  for (const name of ps.split('\n').filter((n) => n.startsWith('fifth-') && !n.startsWith('fifth-test-'))) {
     const r = docker(['inspect', name, '-f', '{{.Config.Image}} {{.Image}}'], { allowFail: true });
     const [image, id] = r.stdout.trim().split(' ');
     images[name] = { image, id };
