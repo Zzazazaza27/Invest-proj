@@ -2667,6 +2667,39 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-04
 
+  - id: TOOL-INSTALL-CI
+    file: scripts/install-ci.mjs
+    command: fifth-install (обёртка на узле), запрос в stdin
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects:
+      ['меняет образы core и web среды из настроек установщика; пишет реестр ops и журнал среды']
+    studied: code
+    studiedOn: 2026-11-06
+    note: >-
+      Защищённый установщик: подпись, класс операций, окно наблюдения, один возврат.
+    purpose: 'Автоматический выпуск в границах класса операций'
+    confirmation: reviewed-in-code
+
+  - id: TOOL-INSTALL-REQUEST
+    file: scripts/install-request.mjs
+    command: node scripts/install-request.mjs --dir <артефакт> --expect <сборка> --sign-key-file <файл> --token-file <файл>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    effects: ['печатает запрос установщику в stdout, файлы не меняет']
+    studied: code
+    studiedOn: 2026-11-06
+    note: >-
+      Подпись манифеста и сборка запроса в задании CI.
+    purpose: 'Запрос к защищённому установщику'
+    confirmation: reviewed-in-code
+
   - id: TOOL-RENAME-STAND
     file: scripts/rename-stand.mjs
     command: node scripts/rename-stand.mjs copy|back
@@ -3204,7 +3237,10 @@ checks:
     runner: manual
     asserts: 37
     needs: [docker]
-    effects: ['временная среда test-76, комплекты и ключ подписи в .local/check-installer, удаляются прогоном']
+    effects:
+      [
+        'временная среда test-76, комплекты и ключ подписи в .local/check-installer, удаляются прогоном',
+      ]
     studied: code
     studiedOn: 2026-11-06
     note: >-
