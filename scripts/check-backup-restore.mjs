@@ -15,7 +15,8 @@
  *  1. комплект ключей открывается закрытым ключом;
  *  2. база восстанавливается на момент T (LSN), транзакция T в ней есть;
  *  3. файлы расшифровываются в чистое хранилище, SHA-256 каждого — как в каталоге;
- *  4. ядро стартует на восстановленных базе, файлах и ключах;
+ *  4. OpenBao поднимается из снимка комплекта на ключах аварийного комплекта, ядро
+ *     стартует на восстановленных базе, файлах и OpenBao, без местных KEK;
  *  5. шифрованные поля всех учётных записей открываются, слепой индекс email сходится;
  *  6. вход по API и чтение своего профиля (email расшифрован ядром);
  *  7. готовые материалы ссылаются на существующие файлы; незавершённые
@@ -25,7 +26,8 @@
  * Внешние действия выключены: почта none, вебхуки capture, без NATS и Valkey.
  *
  *   node scripts/check-backup-restore.mjs [--from <каталог комплекта>]
- *        [--secret-key <файл>] [--passphrase-file <файл>] [--keep]
+ *        [--secret-key <файл>] [--passphrase-file <файл>]
+ *        [--openbao-keys <аварийный комплект>] [--keep]
  */
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
@@ -35,6 +37,7 @@ import { join, resolve } from 'node:path';
 import pg from 'pg';
 import { ROOT, TOOL_IMAGE, docker } from './lib/backup.mjs';
 import { GARAGE_IMAGE, garageKeyPair } from './lib/garage-admin.mjs';
+import { restoreOpenbao } from './lib/restore-openbao.mjs';
 
 const args = process.argv.slice(2);
 const opt = (n, d) => (args.includes(n) ? args[args.indexOf(n) + 1] : d);
@@ -60,6 +63,13 @@ const passphraseFile = resolve(
   opt('--passphrase-file', join(ROOT, '.local', 'backup-keys-local-stand', 'passphrase.txt')),
 );
 const keep = args.includes('--keep');
+const KIT_DIR = join(ROOT, '.local', 'keys-openbao');
+const openbaoKit = opt(
+  '--openbao-keys',
+  existsSync(KIT_DIR)
+    ? join(KIT_DIR, readdirSync(KIT_DIR).find((f) => /^emergency-.*\.gpg$/.test(f)) ?? '')
+    : '',
+);
 
 const tag = randomBytes(3).toString('hex');
 const NET = `fifth-restore-${tag}`;
@@ -70,16 +80,17 @@ const S3_PORT = 59000;
 // Ожидание без async внутри синхронного шага площадки.
 const spawnSyncSleep = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 const CORE_PORT = 4390;
+const OPENBAO_PORT = 58200;
 
 let passed = 0;
 let failed = 0;
 const results = [];
 const check = (name, ok, details = '') => {
-  results.push({ name, ok: Boolean(ok), details: String(details).slice(0, 300) });
+  results.push({ name, ok: Boolean(ok), details: String(details).slice(0, 1500) });
   if (ok) passed += 1;
   else failed += 1;
   console.log(
-    `  ${ok ? 'OK  ' : 'FAIL'}  ${name}${details ? ` — ${String(details).slice(0, 200)}` : ''}`,
+    `  ${ok ? 'OK  ' : 'FAIL'}  ${name}${details ? ` — ${String(details).slice(0, 1500)}` : ''}`,
   );
 };
 const stage = {};
@@ -94,10 +105,13 @@ const timed = async (name, fn) => {
 };
 
 let core;
+let openbao;
 // Вывод ядра площадки — в подробности отказа (без него причина 500 не видна).
 let coreLog = [];
 async function cleanup() {
   if (core) core.kill();
+  // Токен и ключи площадки не остаются и при --keep.
+  if (openbao) openbao.stop();
   if (keep) {
     console.log(`\n(--keep: площадка оставлена — ${PG}, ${S3}, сеть ${NET})`);
     return;
@@ -151,11 +165,11 @@ try {
       r.status === 0 && parsed.DATABASE_URL,
       r.status,
     );
+    // С OpenBao ключи полей живут в его снимке, местных KEK в комплекте нет.
     for (const k of [
       'BACKUP_PGBACKREST_CIPHER_PASS',
       'BACKUP_FILES_CRYPT_PASS',
-      'KEK_PASSPORT_SENSITIVE',
-      'KEK_SEARCH_INDEX',
+      ...(catalog.openbao ? [] : ['KEK_PASSPORT_SENSITIVE', 'KEK_SEARCH_INDEX']),
     ]) {
       check(`в комплекте есть ${k}`, Boolean(parsed[k]));
     }
@@ -194,7 +208,9 @@ try {
         TOOL_IMAGE,
         '-c',
         'chown postgres:postgres /var/lib/postgresql/data && chmod 700 /var/lib/postgresql/data && ' +
-          `gosu postgres pgbackrest restore --set=${catalog.db.backup} --type=lsn --target=${catalog.target.lsn} --target-action=promote`,
+          `gosu postgres pgbackrest restore --set=${catalog.db.backup} --type=lsn --target=${catalog.target.lsn} --target-action=promote && ` +
+          // Площадка на петле без TLS, а копия несёт правило рабочей среды hostssl.
+          "sed -i 's/^hostssl /host /' /var/lib/postgresql/data/pg_hba.conf",
       ],
       { env: pgbr, allowFail: true },
     );
@@ -427,7 +443,26 @@ try {
     return { keys: new Set(got.keys()), restoreKey };
   });
 
-  // ------------------------------------------------------------ 4. ядро
+  // --------------------------------------------------------- 4. OpenBao
+  if (catalog.openbao) {
+    await timed('OpenBao из снимка', async () => {
+      if (!catalog.openbao.file) throw new Error(`в комплекте нет снимка: ${catalog.openbao.error}`);
+      openbao = await restoreOpenbao({
+        tag,
+        from,
+        snapshot: join(from, catalog.openbao.file),
+        kit: openbaoKit,
+        secretKey,
+        passphraseFile,
+        port: OPENBAO_PORT,
+        prefix: env.OPENBAO_KEY_PREFIX,
+        postgresPassword: env.POSTGRES_PASSWORD,
+        check,
+      });
+    });
+  }
+
+  // ------------------------------------------------------------ 5. ядро
   const coreEnv = await timed('Ядро на восстановленных данных', async () => {
     const e = { ...env };
     const rewriteDb = (v) => {
@@ -441,6 +476,10 @@ try {
       CORE_PORT: String(CORE_PORT),
       CORE_INTERNAL_PORT: String(CORE_PORT + 100),
       PUBLIC_BASE_URL: `http://127.0.0.1:${CORE_PORT}`,
+      CORE_PUBLIC_URL: `http://127.0.0.1:${CORE_PORT}`,
+      SESSION_COOKIE_NAME: 'fifth_restore_session',
+      CSRF_COOKIE_NAME: 'fifth_restore_csrf',
+      CORS_ALLOWED_ORIGINS: `http://127.0.0.1:${CORE_PORT}`,
       S3_ENDPOINT: `http://127.0.0.1:${S3_PORT}`,
       S3_PUBLIC_ENDPOINT: '',
       // Ключ приложения рабочего хранилища здесь не заведён — на площадке
@@ -452,7 +491,19 @@ try {
       MAIL_TRANSPORT: 'none',
       WEBHOOK_DELIVERY_MODE: 'capture',
       DATABASE_SSL: 'false',
+      // Площадка без https и без наружных служб: правила рабочей среды здесь не сойдутся.
+      NODE_ENV: 'development',
+      ...(openbao
+        ? {
+            OPENBAO_ADDR: openbao.addr,
+            OPENBAO_CA_PATH: openbao.caPath,
+            OPENBAO_TOKEN_PATH: openbao.tokenPath,
+          }
+        : {}),
     });
+    // Поля обязаны открываться через OpenBao: местный ключ подменил бы проверку.
+    if (openbao) for (const k of Object.keys(e)) if (/^KEK_/.test(k)) delete e[k];
+    delete e.NODE_EXTRA_CA_CERTS;
     // Переменные других компонентов ядру не передаются: CORS хранилища
     // (MinIO, Garage), адрес прикладной пробы, узлы Garage. Ядро их не читает,
     // а внешние адреса в них остановили бы проверку изоляции (комплект VPS
@@ -502,7 +553,7 @@ try {
       }
       if (!up) await new Promise((r) => setTimeout(r, 1000));
     }
-    check('ядро стартовало, health 200', up, up ? '' : log.join('').slice(-400));
+    check('ядро стартовало, health 200', up, up ? '' : log.join('').slice(-1500));
     if (!up) throw new Error('ядро не стартовало');
     return e;
   });
@@ -510,6 +561,8 @@ try {
   // ------------------------------------------- 5. шифрованные поля и вход
   await timed('Шифрованные поля и вход', async () => {
     for (const [k, v] of Object.entries(coreEnv)) process.env[k] = v;
+    // Свой процесс проверки не должен держать местные KEK: .env машины загружен при старте.
+    if (openbao) for (const k of Object.keys(process.env)) if (/^KEK_/.test(k)) delete process.env[k];
     const require = createRequire(join(ROOT, 'apps', 'core', 'package.json'));
     const { CryptoService } = require(
       join(ROOT, 'apps', 'core', 'dist', 'crypto', 'crypto.service.js'),
@@ -530,6 +583,11 @@ try {
            FROM identity.users WHERE contact_wrapped_dek IS NOT NULL`,
       )
     ).rows;
+    if (openbao) {
+      const vault = users.filter((u) => u.contact_wrapped_dek.subarray(0, 6).equals(Buffer.from('vault:')));
+      check(`в базе есть записи vault (${vault.length} из ${users.length})`, vault.length > 0);
+      report.vaultRecords = vault.length;
+    }
     let opened = 0;
     let indexOk = 0;
     const broken = [];

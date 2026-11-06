@@ -13,7 +13,7 @@ function openField(dek, payload, aad) {
   return Buffer.concat([d.update(payload.subarray(28)), d.final()]);
 }
 
-async function rootByRecoveryKey(call, recovery) {
+export async function rootByRecoveryKey(call, recovery) {
   const started = await call('PUT', 'sys/generate-root/attempt', { body: {} });
   const { otp, nonce } = started.json;
   if (!otp) throw new Error(`выпуск токена не начат, код ${started.status}`);
