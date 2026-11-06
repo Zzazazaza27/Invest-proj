@@ -50,6 +50,7 @@ const PILOT_LIMITS = [
   'FIFTH_MEM_WEB=64m',
   'FIFTH_CPU_WEB=0.25',
 ];
+const KEEP = new Set(['FIFTH_KITS_DIR', 'FIFTH_ENVS_DIR']);
 const STORAGE_NETWORK = process.env.FIFTH_STORAGE_NETWORK || 'fifth_default';
 const STORAGE_ENDPOINT = process.env.FIFTH_STORAGE_ENDPOINT || 'http://garage-1:3900';
 const STORAGE_ENDPOINT_HOST =
@@ -122,11 +123,22 @@ function installCompose(id, label) {
   writeFileSync(composeOf(id), text);
 }
 
+/**
+ * Окружение Compose. Переменные запускающего процесса важнее `--env-file`: образы рабочей среды из
+ * её `.env` подменили бы образы этой среды, и она молча работала бы не на своём комплекте.
+ */
+function composeEnv() {
+  const env = { ...process.env, MSYS_NO_PATHCONV: '1' };
+  for (const name of Object.keys(env))
+    if (name.startsWith('FIFTH_') && !KEEP.has(name)) delete env[name];
+  return env;
+}
+
 function compose(id, args, { allowFail = false, timeout = 300_000 } = {}) {
   const r = spawnSync(
     'docker',
     ['compose', '--env-file', join(names(id).dir, 'compose.env'), '-f', composeOf(id), ...args],
-    { encoding: 'utf8', timeout, env: { ...process.env, MSYS_NO_PATHCONV: '1' } },
+    { encoding: 'utf8', timeout, env: composeEnv() },
   );
   if (r.status !== 0 && !allowFail) {
     throw new Error(
