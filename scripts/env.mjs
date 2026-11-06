@@ -3,6 +3,7 @@
  * Управление установкой среды 5Э из готовых образов (W09b).
  *
  *   node scripts/env.mjs create  <среда> --kit <метка> --web-port <порт> [--address <URL>]
+ *                                [--files-url <URL>] [--pilot]
  *   node scripts/env.mjs status  <среда>
  *   node scripts/env.mjs stop    <среда>
  *   node scripts/env.mjs start   <среда>
@@ -15,6 +16,10 @@
  * Всё производное берётся из идентификатора: проект `fifth-test-N`, контейнеры,
  * сети и тома проекта, бакеты и ключи `fifth-test-N-*`. Настройки и секреты лежат
  * в `.local/envs/<среда>` (FIFTH_ENVS_DIR), значения не печатаются.
+ *
+ * Назначение среды записано в install.json. `--pilot` — среда с сохраняемыми данными людей: своя
+ * служебная почта и пределы ресурсов, без проверочных сеансов. Её не останавливает и не удаляет
+ * ничего автоматического: `stop` и `destroy` требуют `--pilot-confirm <среда>`.
  *
  * Результат — одна строка JSON на stdout (`--text` — словами). Код завершения:
  * 0 — готово, 1 — не удалось, 2 — отказ: неверный вызов или защита.
@@ -32,6 +37,19 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
 const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
+// Пределы пилотной среды: бюджет узла считается по ним, а не по текущему расходу.
+const PILOT_LIMITS = [
+  'FIFTH_MEM_POSTGRES=768m',
+  'FIFTH_CPU_POSTGRES=1.5',
+  'FIFTH_MEM_CORE=768m',
+  'FIFTH_CPU_CORE=1.5',
+  'FIFTH_MEM_VALKEY=128m',
+  'FIFTH_CPU_VALKEY=0.25',
+  'FIFTH_MEM_NATS=128m',
+  'FIFTH_CPU_NATS=0.25',
+  'FIFTH_MEM_WEB=64m',
+  'FIFTH_CPU_WEB=0.25',
+];
 const STORAGE_NETWORK = process.env.FIFTH_STORAGE_NETWORK || 'fifth_default';
 const STORAGE_ENDPOINT = process.env.FIFTH_STORAGE_ENDPOINT || 'http://garage-1:3900';
 const STORAGE_ENDPOINT_HOST =
@@ -132,7 +150,7 @@ function docker(args) {
 const hex = (n) => randomBytes(n).toString('hex');
 
 /** Настройки и секреты среды. Секрет — отдельный файл, в настройках только путь. */
-function writeSettings(id, { address, keys, filesUrl }) {
+function writeSettings(id, { address, keys, filesUrl, pilot }) {
   const n = names(id);
   const mountDir = join(n.dir, 'secrets');
   mkdirSync(mountDir, { recursive: true });
@@ -192,6 +210,7 @@ function writeSettings(id, { address, keys, filesUrl }) {
   ]) {
     put(name, randomBytes(32).toString('base64'));
   }
+  if (pilot) put('MAIL_SMTP_PASSWORD', hex(24));
   put('S3_SECRET_ACCESS_KEY', keys.app.secretAccessKey);
   put('ARCHIVE_S3_SECRET_ACCESS_KEY', keys.archive.secretAccessKey);
   writeFileSync(
@@ -234,9 +253,20 @@ function writeSettings(id, { address, keys, filesUrl }) {
     `S3_ACCESS_KEY_ID=${keys.app.accessKeyId}`,
     `ARCHIVE_S3_BUCKET=${names(id).archive}`,
     `ARCHIVE_S3_ACCESS_KEY_ID=${keys.archive.accessKeyId}`,
-    'MAIL_TRANSPORT=none',
+    ...(pilot
+      ? [
+          'MAIL_TRANSPORT=smtp',
+          `MAIL_FROM=no-reply-${id}@5espace.com`,
+          `MAIL_SUBJECT_PREFIX=[${id}] `,
+          'MAIL_SMTP_HOST=mail.5espace.com',
+          'MAIL_SMTP_PORT=587',
+          'MAIL_SMTP_SECURITY=starttls',
+          'MAIL_SMTP_EHLO_NAME=mail.5espace.com',
+          `MAIL_SMTP_USER=no-reply-${id}@5espace.com`,
+        ]
+      : ['MAIL_TRANSPORT=none']),
     'WEBHOOK_DELIVERY_MODE=capture',
-    'TESTING_SESSIONS_ENABLED=true',
+    `TESTING_SESSIONS_ENABLED=${pilot ? 'false' : 'true'}`,
     ...Object.keys(secret)
       .filter((k) => !skipFile.has(k))
       .map((k) => `${k}_FILE=/run/secrets/${k}`),
@@ -379,7 +409,8 @@ async function create(id) {
   chmodSync(n.dir, 0o700);
   installCompose(id, kit);
   const keys = await createStorage(id);
-  writeSettings(id, { address, keys, filesUrl: flag('--files-url') });
+  const pilot = process.argv.includes('--pilot');
+  writeSettings(id, { address, keys, filesUrl: flag('--files-url'), pilot });
   writeFileSync(
     join(n.dir, 'storage.json'),
     `${JSON.stringify({ app: keys.app, archive: keys.archive }, null, 2)}\n`,
@@ -394,7 +425,8 @@ async function create(id) {
       `FIFTH_WEB_IMAGE=${images.web}`,
       `FIFTH_POSTGRES_IMAGE=${images.postgres}`,
       `FIFTH_WEB_PORT=${port}`,
-      'FIFTH_ENV_LABEL=Тестовый режим',
+      `FIFTH_ENV_LABEL=${pilot ? 'Пилотная среда' : 'Тестовый режим'}`,
+      ...(pilot ? PILOT_LIMITS : []),
       // Роль IdP создаёт скрипт инициализации образа; значение своё у каждой среды.
       `FIFTH_KEYCLOAK_DB_PASSWORD=${hex(24)}`,
       `FIFTH_STORAGE_NETWORK=${STORAGE_NETWORK}`,
@@ -404,6 +436,7 @@ async function create(id) {
   saveInstall(id, {
     env: id,
     project: n.project,
+    purpose: pilot ? 'pilot' : 'technical',
     kit: { label: kit, images: digests },
     address,
     webPort: Number(port),
@@ -503,8 +536,15 @@ async function update(id) {
   finish({ ok, env: id, kit, schema: install.schema, ready: ok }, ok ? 0 : 1);
 }
 
+/** Данные людей: автоматика такую среду не останавливает и не удаляет. */
+function guardPilot(id, install) {
+  if (install.purpose === 'pilot' && flag('--pilot-confirm') !== id) {
+    throw new Refused(`среда ${id} пилотная: нужен --pilot-confirm ${id}`);
+  }
+}
+
 function stop(id) {
-  loadInstall(id);
+  guardPilot(id, loadInstall(id));
   compose(id, ['stop']);
   finish({ ok: true, env: id, message: `среда ${id}: остановлена, данные сохранены` }, 0);
 }
@@ -554,7 +594,7 @@ function seed(id) {
 
 async function destroy(id) {
   if (flag('--confirm') !== id) throw new Refused(`удаление данных: нужен --confirm ${id}`);
-  loadInstall(id);
+  guardPilot(id, loadInstall(id));
   const n = names(id);
   compose(id, ['--profile', 'tools', 'down', '-v', '--remove-orphans']);
   const keys = JSON.parse(readFileSync(join(n.dir, 'storage.json'), 'utf8'));

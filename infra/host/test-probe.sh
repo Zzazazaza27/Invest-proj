@@ -99,6 +99,7 @@ if [ ! -f "$ROOT/.local/kits/$BUILD/kit.json" ]; then
   unset DOCKER_CONFIG
 fi
 node scripts/kit.mjs load --build "$BUILD" | cut -c1-160
+[ "$(laptop stage)" != kit ] || { report "комплект $BUILD на узле"; exit 0; }
 
 say 'среда test-1 в прежнем режиме'
 local_settings

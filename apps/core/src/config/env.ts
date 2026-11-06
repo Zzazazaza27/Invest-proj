@@ -216,6 +216,8 @@ const RawEnvSchema = z.object({
   MAIL_TRANSPORT: z.enum(['none', 'file', 'smtp']).default('none'),
   MAIL_OUTBOX_DIR: z.string().default('var/mail'),
   MAIL_FROM: z.string().default('no-reply@fifth.local'),
+  /** Приставка темы письма: называет среду, если она не рабочая. */
+  MAIL_SUBJECT_PREFIX: z.string().default(''),
   /**
    * Релей, через который уходят письма (`MAIL_TRANSPORT=smtp`).
    *

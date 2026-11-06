@@ -4,6 +4,8 @@
  * Чтение резервных копий для учётки maus (блок 5, шаг 3.0). Запускается через sudo.
  *
  *   fifth-backup-read latest          имя последнего готового комплекта
+ *   fifth-backup-read pilot-latest    последняя копия пилотной среды
+ *   fifth-backup-read pilot-file <копия>/<файл>  файл этой копии, зашифрованный
  *   fifth-backup-read has <комплект>  имя, если комплект готов
  *   fifth-backup-read catalog <комплект>
  *   fifth-backup-read tar <комплект>  поток tar: только файлы описи комплекта
@@ -56,7 +58,27 @@ function checked(rel) {
 const [command, id, ...extra] = process.argv.slice(2);
 if (extra.length) fail('лишние аргументы');
 
-if (command === 'latest') {
+const PILOT = path.join(ROOT, 'pilot', 'test-2');
+const pilotSets = () =>
+  fs.existsSync(PILOT)
+    ? fs
+        .readdirSync(PILOT)
+        .filter((s) => /^[0-9TZ]+$/.test(s) && fs.existsSync(path.join(PILOT, s, 'READY')))
+        .sort()
+    : [];
+
+if (command === 'pilot-latest') {
+  if (id !== undefined) fail('лишние аргументы');
+  process.stdout.write(`${pilotSets().pop() ?? ''}\n`);
+} else if (command === 'pilot-file') {
+  // Имя файла задаёт только этот список: путь снаружи не принимается.
+  const [set, name] = String(id).split('/');
+  if (!pilotSets().includes(set)) fail('нет такой копии');
+  if (!['manifest.json', 'db.dump.gpg', 'files.tar.gpg', 'env.tar.gpg'].includes(name)) {
+    fail('неверное имя файла');
+  }
+  fs.createReadStream(path.join(PILOT, set, name)).pipe(process.stdout);
+} else if (command === 'latest') {
   if (id !== undefined) fail('лишние аргументы');
   const sets = path.join(ROOT, 'sets');
   const found = fs

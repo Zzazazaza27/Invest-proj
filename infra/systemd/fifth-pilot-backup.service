@@ -1,0 +1,12 @@
+# Копия пилотной среды test-2. Запускается таймером, ядро в этом не участвует.
+[Unit]
+Description=5E pilot backup
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fifth-element
+ExecStart=/bin/bash infra/host/pilot-backup.sh
+Nice=10
+IOSchedulingClass=idle

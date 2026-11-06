@@ -1,25 +1,30 @@
 #!/bin/bash
-# Единый вход администратора на test-1 (просьба Томаса 06.11): адрес и хеш пароля учётки admin с
-# рабочей среды. Адрес шифруется ключами test-1. На рабочей среде только чтение. Значения не печатаются.
+# Учётка администратора на тестовой среде: адрес учётки admin с рабочей среды, шифруется ключами
+# среды. Пароль свой: хеш передаётся аргументом, общий с рабочей средой не используется.
+#   prod-test-admin <идентификатор учётки> <среда> <хеш пароля, base64>
+# На рабочей среде только чтение. Значения не печатаются.
 set -Eeuo pipefail
 ID="${1:?нужен идентификатор учётки}"
+ENV_ID="${2:?нужна среда}"
+hash="$(printf %s "${3:?нужен хеш}" | base64 -d)"
+[[ "$ENV_ID" =~ ^test-[0-9]+$ ]] || { echo 'неверная среда'; exit 2; }
 [[ "$ID" =~ ^[0-9a-f-]{36}$ ]] || { echo 'неверный идентификатор'; exit 2; }
-DIR=/opt/fifth-element/.local/envs/test-1
+DIR="/opt/fifth-element/.local/envs/$ENV_ID"
 url="$(sed -E 's#@[^/]*/#@127.0.0.1:5432/#' /run/fifth-secrets/DATABASE_URL_OWNER)"
 prod() { docker exec -i -e URL="$url" fifth-postgres sh -c 'psql "$URL" -v ON_ERROR_STOP=1 -At -F"|"'; }
 test1() {
-  docker exec -i -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" fifth-test-1-postgres \
+  docker exec -i -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "fifth-$ENV_ID-postgres" \
     psql -h 127.0.0.1 -U fifth_owner -d fifth_element -v ON_ERROR_STOP=1 -At
 }
 row="$(prod <<SQL
-SELECT encode(contact_wrapped_dek, 'hex'), encode(email_ciphertext, 'hex'), password_hash, display_name
+SELECT encode(contact_wrapped_dek, 'hex'), encode(email_ciphertext, 'hex'), display_name
   FROM identity.users u
  WHERE id = '$ID' AND status = 'active'
    AND EXISTS (SELECT 1 FROM identity.user_roles r WHERE r.user_id = u.id AND r.role = 'admin' AND r.revoked_at IS NULL);
 SQL
 )"
 [ -n "$row" ] || { echo 'такого администратора нет'; exit 1; }
-IFS='|' read -r dek cipher hash name <<<"$row"
+IFS='|' read -r dek cipher name <<<"$row"
 email="$(printf '%s\n%s' "$dek" "$cipher" | docker exec -i fifth-core node -e "
 require('reflect-metadata');
 const {CryptoService}=require('/app/apps/core/dist/crypto/crypto.service.js');
@@ -27,7 +32,7 @@ const [d,c]=require('fs').readFileSync(0,'utf8').trim().split('\n');
 new CryptoService().openField('passport_sensitive',Buffer.from(d,'hex'),Buffer.from(c,'hex'),'email')
   .then((v)=>process.stdout.write(v.toString('utf8')));")"
 [ -n "$email" ]
-sealed="$(printf %s "$email" | docker exec -i fifth-test-1-core node -e "
+sealed="$(printf %s "$email" | docker exec -i "fifth-$ENV_ID-core" node -e "
 require('reflect-metadata');
 const {CryptoService}=require('/app/apps/core/dist/crypto/crypto.service.js');
 const email=require('fs').readFileSync(0,'utf8');const c=new CryptoService();
@@ -63,5 +68,5 @@ BEGIN
 END
 \$do\$;
 SQL
-echo "администраторов на test-1: $(echo "SELECT count(*) FROM identity.user_roles WHERE role = 'admin' AND revoked_at IS NULL;" | test1)"
-echo 'учётка администратора на test-1 готова, пароль как на рабочей среде'
+echo "администраторов на $ENV_ID: $(echo "SELECT count(*) FROM identity.user_roles WHERE role = 'admin' AND revoked_at IS NULL;" | test1)"
+echo "учётка администратора на $ENV_ID готова, пароль свой"

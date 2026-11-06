@@ -1388,9 +1388,42 @@ async function openbaoStatus() {
   }
 }
 
+/** Наблюдённые пики за две недели: основа бюджета узла. */
+async function peaks() {
+  await login();
+  const [host] = await api.call('host.get', { filter: { host: HOST }, output: ['hostid'] });
+  const since = Math.floor(Date.now() / 1000) - 14 * 86400;
+  for (const [label, key, field] of [
+    ['минимум свободной памяти, %', 'vm.memory.size[pavailable]', 'value_min'],
+    ['пик загрузки процессора, %', 'system.cpu.util', 'value_max'],
+    ['минимум свободного места, %', 'vfs.fs.size[/rootfs,pfree]', 'value_min'],
+  ]) {
+    const items = await api.call('item.get', {
+      hostids: host.hostid,
+      filter: { key_: key },
+      output: ['itemid'],
+    });
+    if (!items.length) {
+      console.log(`${label}: нет элемента`);
+      continue;
+    }
+    const rows = await api.call('trend.get', {
+      itemids: [items[0].itemid],
+      time_from: since,
+      output: ['clock', field],
+    });
+    const values = rows.map((r) => Number(r[field]));
+    const pick = field === 'value_min' ? Math.min(...values) : Math.max(...values);
+    console.log(
+      `${label}: ${values.length ? pick.toFixed(1) : 'нет данных'} (часов: ${values.length})`,
+    );
+  }
+}
+
 const commands = {
   configure,
   status,
+  peaks,
   'control-init': controlInit,
   'openbao-status': openbaoStatus,
 };

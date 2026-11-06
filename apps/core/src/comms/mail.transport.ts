@@ -86,7 +86,7 @@ export class FileMailTransport extends MailTransport {
     const body = [
       `From: ${env.MAIL_FROM}`,
       `To: ${message.to}`,
-      `Subject: ${message.subject}`,
+      `Subject: ${env.MAIL_SUBJECT_PREFIX}${message.subject}`,
       'Content-Type: text/plain; charset=utf-8',
       '',
       message.text,
@@ -150,7 +150,7 @@ export class SmtpMailTransport extends MailTransport {
     const data = buildMessage({
       from: env.MAIL_FROM,
       to: message.to,
-      subject: message.subject,
+      subject: `${env.MAIL_SUBJECT_PREFIX}${message.subject}`,
       text: message.text,
     });
 
