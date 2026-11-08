@@ -370,3 +370,53 @@ describe('Неизвестный результат изменяющего за�
     expect((error as ApiError).outcomeUnknown).toBe(false);
   });
 });
+
+describe('Диагностика неизвестного исхода (8.4, замечание Тэнка к cea113a)', () => {
+  it('нечитаемый 201 на POST: одно сообщение onFailure без тела, исход неизвестен, ключ держится', async () => {
+    const { keyAfterError, keyForSend } = await import('../src/retry-key');
+    const fetchImpl = mockFetch(async () =>
+      jsonResponse({ unexpected: 'secret-body@leak.example' }, 201),
+    );
+    const failures: unknown[] = [];
+    const client = new ApiClient({
+      baseUrl: 'https://api.test/v1',
+      auth: { kind: 'cookie', csrfToken: 'csrf-abc' },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      onFailure: (info) => failures.push(info),
+    });
+    const key = keyForSend(null);
+    let caught: unknown = null;
+    try {
+      await client.request({
+        method: 'POST',
+        path: '/projects',
+        body: { a: 1 },
+        schema: z.object({ id: z.string() }),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(ApiError);
+    expect((caught as ApiError).outcomeUnknown).toBe(true);
+    expect(failures).toEqual([{ status: 201, requestId: null, outcomeUnknown: true }]);
+    expect(JSON.stringify(failures)).not.toContain('leak.example');
+    expect(keyAfterError(key, caught)).toEqual({ key: key.key, unresolved: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('обычный отказ 4xx в диагностику не идёт', async () => {
+    const fetchImpl = mockFetch(async () =>
+      jsonResponse({ type: 'about:blank', title: 'x', status: 409, code: 'conflict' }, 409),
+    );
+    const failures: unknown[] = [];
+    const client = new ApiClient({
+      baseUrl: 'https://api.test/v1',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      onFailure: (info) => failures.push(info),
+    });
+    await expect(client.request({ method: 'POST', path: '/x', body: {} })).rejects.toBeInstanceOf(
+      ApiError,
+    );
+    expect(failures).toEqual([]);
+  });
+});

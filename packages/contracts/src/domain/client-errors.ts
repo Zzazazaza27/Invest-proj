@@ -63,6 +63,8 @@ export const CLIENT_ERROR_CODES = [
   'api.server_error',
   /** Сеть или прокси: ответа ядра нет, исход неизвестен. */
   'api.unavailable',
+  /** Ответ получен, но не прочитан (например, 2xx не по контракту): исход неизвестен. */
+  'api.unknown_outcome',
 ] as const;
 export type ClientErrorCode = (typeof CLIENT_ERROR_CODES)[number];
 

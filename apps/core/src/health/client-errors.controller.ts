@@ -17,6 +17,8 @@ const WINDOW_MS = 60_000;
 export const PER_ADDRESS_LIMIT = 30;
 /** Сообщений за окно всего (с Valkey — на платформу, без него — на экземпляр). */
 export const TOTAL_LIMIT = 600;
+/** Предел числа адресов в памяти экземпляра (запасной режим без Valkey). */
+export const MAX_LOCAL_ADDRESSES = 10_000;
 
 /**
  * Приём ошибок интерфейса (блок 8, 8.4).
@@ -120,7 +122,10 @@ interface Verdict {
  * ответил — локальное окно экземпляра (предел действует на экземпляр, не на платформу).
  */
 export class ClientErrorLimiter {
+  /** Счётчики адресов экземпляра; при переполнении очищаются только они. */
   private local = new Map<string, { used: number; until: number }>();
+  /** Общий счётчик экземпляра — отдельно: очистка адресов его не трогает. */
+  private localTotal = { used: 0, until: 0 };
 
   constructor(
     private readonly counters: Counters | null,
@@ -138,8 +143,8 @@ export class ClientErrorLimiter {
       total = (await this.counters.hit(`ce:t:${bucket}`, WINDOW_MS)).used;
     } catch {
       scope = 'instance';
-      perAddress = this.localHit(`a:${address}`);
-      total = this.localHit('t');
+      perAddress = this.localHit(address);
+      total = this.localTotalHit();
     }
     if (perAddress > PER_ADDRESS_LIMIT) {
       return {
@@ -164,12 +169,21 @@ export class ClientErrorLimiter {
     const now = this.now();
     const entry = this.local.get(key);
     if (!entry || entry.until <= now) {
-      // Окно сменилось — старые адреса не копятся.
-      if (this.local.size > 10_000) this.local.clear();
+      // Предел памяти: при переполнении убираются адреса. Общий счётчик живёт отдельно,
+      // поэтому очистка не открывает нового бюджета в текущем окне — его держит
+      // `localTotal`. Сброшенный адрес теряет только свой счёт.
+      if (this.local.size >= MAX_LOCAL_ADDRESSES) this.local.clear();
       this.local.set(key, { used: 1, until: now + WINDOW_MS });
       return 1;
     }
     entry.used += 1;
     return entry.used;
+  }
+
+  private localTotalHit(): number {
+    const now = this.now();
+    if (this.localTotal.until <= now) this.localTotal = { used: 0, until: now + WINDOW_MS };
+    this.localTotal.used += 1;
+    return this.localTotal.used;
   }
 }

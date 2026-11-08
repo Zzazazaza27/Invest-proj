@@ -463,8 +463,8 @@
 | UNIT-CORE-READINESS | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-MONITORING-ACCOUNT | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 24 | CI | CI |
-| UNIT-CABINET-CLIENT-ERRORS | `npm run test -w packages/cabinet` | 6 | CI | CI |
-| UNIT-CORE-CLIENT-ERRORS | `npm run test -w apps/core` | 4 | CI | CI |
+| UNIT-CABINET-CLIENT-ERRORS | `npm run test -w packages/cabinet` | 7 | CI | CI |
+| UNIT-CORE-CLIENT-ERRORS | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |
@@ -491,7 +491,7 @@
 | UNIT-CORE-EVENTS-HEALTH | `npm run test -w apps/core` | 12 | CI | CI |
 | UNIT-CORE-MEDIA-FINALIZE | `npm run test -w apps/core` | 3 | CI | CI |
 | UNIT-CORE-STORAGE-BREAKER | `npm run test -w apps/core` | 15 | CI | CI |
-| UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 22 | CI | CI |
+| UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 24 | CI | CI |
 | UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |
 | UNIT-PKG-CONTRACTS-VISIBILITY | `npm run test -w packages/contracts` | 10 | CI | CI |
 | UNIT-PKG-UI-MARKDOWN | `npm run test -w packages/ui` | 10 | CI | CI |

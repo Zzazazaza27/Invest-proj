@@ -65,14 +65,21 @@ export function reportClientError(
 }
 
 /** Клиентский отказ API → сообщение (хук `onFailure` клиента API). */
-export function reportApiFailure(info: { status: number; requestId: string | null }): void {
+export function reportApiFailure(info: {
+  status: number;
+  requestId: string | null;
+  outcomeUnknown?: boolean;
+}): void {
   const unavailable =
     info.status === 0 || info.status === 502 || info.status === 503 || info.status === 504;
-  reportClientError(
-    unavailable ? 'api.unavailable' : 'api.server_error',
-    'request',
-    info.requestId,
-  );
+  const code = unavailable
+    ? 'api.unavailable'
+    : info.status >= 500
+      ? 'api.server_error'
+      : info.outcomeUnknown
+        ? 'api.unknown_outcome'
+        : null;
+  if (code) reportClientError(code, 'request', info.requestId);
 }
 
 export function createClientErrorReporter(options: ReporterOptions): ClientErrorReporter {

@@ -34,10 +34,11 @@ export interface ClientOptions {
    */
   onTransportFailure?: (info: { url: string; status: number }) => void;
   /**
-   * Отказ сервера или сети для диагностики ошибок интерфейса (8.4): статус 0 (сеть) или
-   * 5xx после всех повторов. Передаются только статус и ID запроса — ни адреса, ни тела.
+   * Отказ для диагностики ошибок интерфейса (8.4): статус 0 (сеть), 5xx после всех повторов
+   * или неизвестный исход (в том числе 2xx с нечитаемым телом). Передаются только статус,
+   * ID запроса и признак неизвестного исхода — ни адреса, ни тела, ни текста.
    */
-  onFailure?: (info: { status: number; requestId: string | null }) => void;
+  onFailure?: (info: { status: number; requestId: string | null; outcomeUnknown: boolean }) => void;
   fetchImpl?: typeof fetch;
 }
 
@@ -201,9 +202,18 @@ export class ApiClient {
       ) {
         this.#onTransportFailure?.({ url: options.path, status: error.status });
       }
-      if (error instanceof ApiError && (error.status === 0 || error.status >= 500)) {
+      // Неизвестный исход — тоже диагностика, даже при 2xx с нечитаемым телом: форма такую
+      // ошибку перехватывает, и глобальный `unhandledrejection` её не увидит.
+      if (
+        error instanceof ApiError &&
+        (error.status === 0 || error.status >= 500 || error.outcomeUnknown)
+      ) {
         try {
-          this.#onFailure?.({ status: error.status, requestId: error.traceId });
+          this.#onFailure?.({
+            status: error.status,
+            requestId: error.traceId,
+            outcomeUnknown: error.outcomeUnknown,
+          });
         } catch {
           // Диагностика не меняет исход запроса.
         }

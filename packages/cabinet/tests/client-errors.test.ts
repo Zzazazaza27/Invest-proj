@@ -164,3 +164,30 @@ describe('отправитель', () => {
     r.dispose();
   });
 });
+
+describe('отказ API → сообщение', () => {
+  it('неизвестный исход после 2xx — одно сообщение api.unknown_outcome; 4xx — ничего', async () => {
+    const { reportApiFailure } = await import('../src/client-errors');
+    const win = fakeWindow();
+    const bodies: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(null, { status: 202 });
+    });
+    const r = createClientErrorReporter({
+      cabinet: 'lab',
+      version: 'abc1234',
+      apiBaseUrl: '/v1',
+      basePath: '/lab/',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      win,
+    });
+    const requestId = '0e0e0e0e-1111-4222-8333-444455556666';
+    reportApiFailure({ status: 201, requestId, outcomeUnknown: true });
+    reportApiFailure({ status: 409, requestId: null, outcomeUnknown: false });
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]).toMatchObject({ code: 'api.unknown_outcome', stage: 'request', requestId });
+    expect(parseClientErrorReport(bodies[0]).ok).toBe(true);
+    r.dispose();
+  });
+});

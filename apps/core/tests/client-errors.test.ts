@@ -93,3 +93,26 @@ describe('ограничитель', () => {
     expect(over.notice?.scope).toBe('platform');
   });
 });
+
+describe('ограничитель: очистка таблицы адресов (замечание Тэнка к cea113a)', () => {
+  it('без Valkey, неподвижное время: 10 020 разных адресов — принято ровно TOTAL_LIMIT; новое окно — снова принимает', async () => {
+    const broken = {
+      hit: async () => {
+        throw new Error('valkey down');
+      },
+    } as unknown as Counters;
+    let now = 5_000;
+    const limiter = new ClientErrorLimiter(broken, () => now);
+    let admitted = 0;
+    for (let i = 0; i < 10_020; i += 1) {
+      if ((await limiter.admit(`10.${(i >> 16) & 255}.${(i >> 8) & 255}.${i & 255}`)).admitted) {
+        admitted += 1;
+      }
+    }
+    expect(admitted).toBe(TOTAL_LIMIT);
+    now += 60_000;
+    let next = 0;
+    for (let i = 0; i < 10; i += 1) if ((await limiter.admit(`10.200.0.${i}`)).admitted) next += 1;
+    expect(next).toBe(10);
+  });
+});
