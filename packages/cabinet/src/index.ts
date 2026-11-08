@@ -69,6 +69,7 @@ export {
 export {
   LeaveDialog,
   allowNextLeave,
+  setLeaveSignals,
   leaveState,
   resetLeaveGuard,
   shouldBlockInApp,

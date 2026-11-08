@@ -34,18 +34,35 @@ const notify = () => {
   listeners.forEach((fn) => fn());
 };
 
+/** Записать или снять признаки формы. Хук — обёртка; проверки зовут напрямую. */
+export function setLeaveSignals(name: string, signals: LeaveSignals | null): void {
+  const { dirty = false, guarded = false, request = false } = signals ?? {};
+  if (dirty || guarded || request) sources.set(name, { dirty, guarded, request });
+  else sources.delete(name);
+  notify();
+}
+
 /** Форма сообщает свои признаки; при размонтировании они снимаются. */
 export function useLeaveGuard(name: string, signals: LeaveSignals): void {
   const { dirty = false, guarded = false, request = false } = signals;
   useEffect(() => {
-    if (dirty || guarded || request) sources.set(name, { dirty, guarded, request });
-    else sources.delete(name);
-    notify();
-    return () => {
-      sources.delete(name);
-      notify();
-    };
+    setLeaveSignals(name, { dirty, guarded, request });
+    return () => setLeaveSignals(name, null);
   }, [name, dirty, guarded, request]);
+}
+
+/**
+ * Незавершённые защищённые отправки — из общей памяти отправок, а не из форм: ключ и снимок
+ * живут вне компонента, и форма может быть уже размонтирована (переход на другую страницу).
+ * Источник задаёт `guarded-send` и сам учитывает владельца.
+ */
+let guardedProbe: () => boolean = () => false;
+export function setGuardedProbe(probe: () => boolean): void {
+  guardedProbe = probe;
+}
+/** Сообщить, что состав незавершённых отправок изменился. */
+export function noteGuardedChanged(): void {
+  notify();
 }
 
 export interface LeaveState {
@@ -54,33 +71,31 @@ export interface LeaveState {
   request: boolean;
 }
 
-export function leaveState(): LeaveState {
-  const all = [...sources.values()];
+export function leaveState(exclude: ReadonlySet<string> = new Set()): LeaveState {
+  const all = [...sources.entries()].filter(([name]) => !exclude.has(name)).map(([, s]) => s);
   return {
     dirty: all.some((s) => s.dirty),
-    guarded: all.some((s) => s.guarded),
+    guarded: all.some((s) => s.guarded) || guardedProbe(),
     request: all.some((s) => s.request),
   };
 }
 
-/** Разовый пропуск перехода, который кабинет делает сам по итогу операции. */
-let allowUntil = 0;
-
 /**
- * Следующий переход внутри кабинета — итог операции, а не уход человека (открыть созданный
- * проект): не останавливать. Действует один раз и не дольше секунды.
+ * Разовый пропуск ОДНОЙ формы: переход — итог её операции (открыть созданный проект), её
+ * собственные признаки переход не держат. Признаки остальных форм на странице (набранное
+ * обращение) по-прежнему держат. Один раз и не дольше секунды.
  */
-export function allowNextLeave(now = Date.now()): void {
-  allowUntil = now + 1_000;
+let allow: { names: Set<string>; until: number } | null = null;
+
+export function allowNextLeave(names: string | readonly string[], now = Date.now()): void {
+  allow = { names: new Set(typeof names === 'string' ? [names] : names), until: now + 1_000 };
 }
 
 /** Остановить ли переход ВНУТРИ кабинета: теряются поля или результат обычного запроса. */
 export function shouldBlockInApp(now = Date.now()): boolean {
-  if (allowUntil > now) {
-    allowUntil = 0;
-    return false;
-  }
-  const s = leaveState();
+  const excluded = allow && allow.until > now ? allow.names : new Set<string>();
+  allow = null;
+  const s = leaveState(excluded);
   return s.dirty || s.request;
 }
 
@@ -93,6 +108,7 @@ export function shouldWarnOnUnload(): boolean {
 /** Для проверок без браузера. */
 export function resetLeaveGuard(): void {
   sources.clear();
+  allow = null;
   notify();
 }
 

@@ -45,12 +45,12 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
     state: (key) => api.operations.requestState('lab.project.create', key),
     onDone: (project) => {
       setCreating(false);
-      allowNextLeave();
+      allowNextLeave('lab.project.create.form');
       onOpen(project.id);
     },
     onResolved: (projectId) => {
       setCreating(false);
-      allowNextLeave();
+      allowNextLeave('lab.project.create.form');
       onOpen(projectId);
     },
     onFail: (caught) => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button } from '@fifth/ui';
 import type { GuardedOperationName, RequestKeyState } from '@fifth/contracts';
-import { useLeaveGuard } from './leave-guard';
+import { setGuardedProbe, useLeaveGuard } from './leave-guard';
 import { goToLogin, rememberUser } from './return-to';
 
 /**
@@ -57,6 +57,12 @@ export interface Pending {
 
 /** Ключ и снимок вне компонента, по владельцу и области: закрытие формы их не теряет. */
 const memory = new Map<string, Pending>();
+// Уход со страницы (2.2/2.3): незавершённая отправка ЭТОГО владельца держит перезагрузку,
+// даже когда её форма размонтирована. Чужие (другой владелец во вкладке) не учитываются.
+setGuardedProbe(() => {
+  for (const p of memory.values()) if (p.owner === owner) return true;
+  return false;
+});
 /** Память незавершённых отправок — для проверок без браузера. */
 export const guardedMemory = memory;
 const MARK = 'fifth.pending.';

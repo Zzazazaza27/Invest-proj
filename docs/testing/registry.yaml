@@ -3934,6 +3934,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
+  - id: UNIT-CABINET-LEAVE-GUARD
+    file: packages/cabinet/tests/leave-guard.test.ts
+    command: npm run test -w packages/cabinet
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 6
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['логика без браузера — побочных действий нет']
+    note: >-
+      Блок 2, 2.2/2.3, замечания Тэнка к 65456fa. Чувствительность подтверждена: с прежним
+      общим пропуском и признаком отправки из формы падают 2 случая.
+    purpose: 'Разовый пропуск перехода относится только к завершённой форме: черновик обращения при успешном создании проекта держит переход, без чужого черновика проект открывается сразу, пропуск одноразовый; незавершённая защищённая отправка держит перезагрузку и после размонтирования формы (признак из общей памяти), завершение снимает, чужой владелец не учитывается.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-CABINET-RETURN-READY
     file: packages/cabinet/tests/return-and-ready.test.ts
     command: npm run test -w packages/cabinet
@@ -4803,6 +4821,7 @@ blocks:
         RND-GUARDED-SEND,
         RND-CABINET-FAILURES,
         UNIT-CABINET-RETURN-READY,
+        UNIT-CABINET-LEAVE-GUARD,
         UNIT-PKG-CABINET-GUARDED-SEND,
         DBT-OPERATIONS,
         UNIT-CORE-UPLOAD-COMPLETION,
