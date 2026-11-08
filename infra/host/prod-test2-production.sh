@@ -56,6 +56,9 @@ grep -qx 'S3_ENDPOINT=http://garage-1:3900' "$DIR/settings.env" || { echo 'хр�
 grep -A8 "^$ID.5espace.com {" "$CADDY" | grep -q "^	reverse_proxy 127.0.0.1:$PORT$" ||
   { echo 'вход test-2 в Caddyfile не в ожидаемом виде'; exit 1; }
 docker inspect fifth-openbao --format '{{.State.Running}}' | grep -q true || { echo 'OpenBao не работает'; exit 1; }
+# Среда входит в сеть OpenBao как во внешнюю (infra/docker-compose.env-production.yml).
+docker inspect fifth-openbao --format '{{json .NetworkSettings.Networks}}' | grep -q '"fifth-openbao_default"' ||
+  { echo 'OpenBao не в своей сети fifth-openbao_default'; exit 1; }
 
 # Возврат: прежние настройки и вход, службы без TLS. Записи прежним форматом читаются KEK среды.
 restore_before() {
@@ -128,9 +131,6 @@ C $AGENT_DIR/openbao-ca.crt 0440 1990 1000 - /etc/fifth-openbao/tls/tls.crt
 C $AGENT_DIR/internal-ca.crt 0440 1990 1000 - $TLS/ca.crt
 EOF
 systemd-tmpfiles --create "/etc/tmpfiles.d/fifth-secrets-$ID.conf"
-# Ядро и Agent обращаются к OpenBao по сети среды; подключение переживает перезапуски.
-docker inspect fifth-openbao --format '{{json .NetworkSettings.Networks}}' | grep -q "\"$NET\"" ||
-  docker network connect "$NET" fifth-openbao
 
 say 'PostgreSQL: TLS'
 docker cp "$TLS/server.crt" "$PROJECT-postgres:/var/lib/postgresql/data/server.crt"

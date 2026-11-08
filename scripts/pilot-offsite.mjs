@@ -18,7 +18,7 @@ const option = (name, fallback) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : fallback;
 };
-const TARGET = resolve(option('--to', 'D:/backups/5e-pilot'));
+const TARGET = resolve(option('--to', 'D:/cloud@mail.ru/projects/5E/test-2-backups'));
 const KEEP = Number(option('--keep', 14));
 const FILES = ['db.dump.gpg', 'roles.sql.gpg', 'files.tar.gpg', 'env.tar.gpg'];
 
