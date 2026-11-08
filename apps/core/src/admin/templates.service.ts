@@ -145,13 +145,17 @@ export class TemplatesService {
       }
       // Уже выключен — не изменение (2.6, пакет 8): шаблон как есть, без события.
       if (!template.is_active) return mapTemplate(template);
+      // Условие в самом UPDATE: одновременный запрос, прочитавший тот же is_active=true,
+      // после фиксации первого не найдёт строку (повторная проверка условия в PostgreSQL)
+      // и вернёт выключенный шаблон без второго события.
       const { rows } = await tx.query<TemplateRow>(
         `UPDATE comms.notification_templates SET is_active = false
-          WHERE id = $1
+          WHERE id = $1 AND is_active
          RETURNING id, code, channel, locale, version, title_template, body_template,
                    fallback_chain, is_critical, is_active`,
         [id],
       );
+      if (rows.length === 0) return mapTemplate(await loadTemplate(tx, id));
 
       await this.audit.emit(tx, {
         verb: 'comms.template.updated',

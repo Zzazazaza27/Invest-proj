@@ -715,13 +715,16 @@ export class ProjectsService {
         await this.assertCanChange(tx, projectId);
         if (before[0]?.visibility !== 'private') {
           // Не в листинге, но режим ещё открытый (например, «выбранные инвесторы»):
-          // закрыть режим — настоящее изменение, и событие о нём пишется.
-          await tx.query(
+          // закрыть режим — настоящее изменение, и событие о нём пишется. Условие — в
+          // самом UPDATE: одновременный повтор второго события не пишет.
+          const { rowCount } = await tx.query(
             `UPDATE lab.projects SET visibility = 'private', visibility_changed_at = now(),
-                    updated_at = now() WHERE id = $1`,
+                    updated_at = now() WHERE id = $1 AND visibility <> 'private'`,
             [projectId],
           );
-          await this.auditVisibility(ctx, tx, projectId, before[0]!.visibility, 'private');
+          if ((rowCount ?? 0) > 0) {
+            await this.auditVisibility(ctx, tx, projectId, before[0]!.visibility, 'private');
+          }
         }
         return this.reread(tx, projectId);
       }

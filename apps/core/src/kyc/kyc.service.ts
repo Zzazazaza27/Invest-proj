@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import {
   uuidv7,
@@ -152,9 +153,21 @@ export class KycService {
     sealed: { ciphertexts: { inn: Buffer | null; ogrn: Buffer | null }; wrappedDek: Buffer },
   ): Promise<BusinessEntity> {
     return this.db.transaction(ctx, async (tx) => {
-      const duplicate = await tx.query<EntityRow & { owner_user_id: string }>(
-        `SELECT id, legal_name, legal_form, inn_ciphertext, entity_wrapped_dek, jurisdiction,
-                registry_status, created_at, owner_user_id
+      // Одновременные повторы создания по одному ИНН — по очереди: второй увидит юрлицо
+      // первого и ответит повтором, а не отказом гонки уникального индекса.
+      await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended(encode($1, 'hex'), 0))`, [
+        innIndex,
+      ]);
+      const duplicate = await tx.query<
+        EntityRow & {
+          owner_user_id: string;
+          ogrn_ciphertext: Buffer | null;
+          kyb_approved: boolean;
+        }
+      >(
+        `SELECT id, legal_name, legal_form, inn_ciphertext, ogrn_ciphertext, entity_wrapped_dek,
+                jurisdiction, registry_status, created_at, owner_user_id,
+                kyc.has_valid_kyb(id) AS kyb_approved
            FROM kyc.business_entities
           WHERE inn_hmac = $1 AND jurisdiction = $2 AND deleted_at IS NULL LIMIT 1`,
         [innIndex, input.jurisdiction],
@@ -164,12 +177,15 @@ export class KycService {
         same &&
         same.owner_user_id === ctx.userId &&
         same.legal_name === input.legalName &&
-        (same.legal_form ?? null) === (input.legalForm ?? null)
+        (same.legal_form ?? null) === (input.legalForm ?? null) &&
+        (await this.sameOgrn(same, input.ogrn))
       ) {
         // Целевое состояние (2.6, пакет 8): это юрлицо этого же владельца с теми же
-        // данными — повтор создания, возвращается оно, без новой строки и события. Чужое
-        // юрлицо (или иные данные) — прежний отказ, без справки о том, кому оно принадлежит.
-        return this.toEntity(same, false, maskInn(input.inn));
+        // реквизитами (ОГРН сверяется расшифровкой — шифрование не делает поле
+        // несущественным) — повтор создания: возвращается оно в ТЕКУЩЕМ состоянии, как при
+        // чтении (статус KYB), без новой строки и события. Чужое юрлицо или иные данные —
+        // прежний отказ, без справки о том, кому оно принадлежит.
+        return this.toEntity(same, same.kyb_approved, maskInn(input.inn));
       }
       if (duplicate.rows.length > 0) {
         // Формулировка не подтверждает, кому принадлежит юрлицо: это была бы
@@ -576,6 +592,26 @@ export class KycService {
       [entityId],
     );
     if (rows.length === 0) throw errors.notFound({ subject: 'business_entity' });
+  }
+
+  /**
+   * ОГРН сохранённого юрлица совпадает с введённым? Расшифровывается только юрлицо самого
+   * владельца (проверка владельца — раньше, в условии повтора); сравнение без утечки по
+   * времени. Нет шифротекста или ключа — «не совпадает»: повтор не подтверждён.
+   */
+  private async sameOgrn(
+    row: { entity_wrapped_dek: Buffer | null; ogrn_ciphertext: Buffer | null },
+    ogrn: string,
+  ): Promise<boolean> {
+    if (!row.entity_wrapped_dek || !row.ogrn_ciphertext) return false;
+    const stored = await this.crypto.openField(
+      'kyb_documents',
+      row.entity_wrapped_dek,
+      row.ogrn_ciphertext,
+      'ogrn',
+    );
+    const given = Buffer.from(ogrn, 'utf8');
+    return stored.length === given.length && timingSafeEqual(stored, given);
   }
 
   private async mapEntity(row: EntityRow, kybApproved: boolean): Promise<BusinessEntity> {

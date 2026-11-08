@@ -201,8 +201,17 @@ function mapRole(row: RoleRow): GrantedRole {
   };
 }
 
-/** Действующая роль пользователя — под правами администратора (RLS чтения ролей). */
+/**
+ * Действующая роль пользователя — под правами администратора (RLS чтения ролей).
+ * Сначала блокировка пары «пользователь — роль» до конца транзакции: одновременные выдача
+ * и снятие той же роли идут по очереди, и второй запрос видит итог первого — повтор
+ * отвечает целевым состоянием, а не 409/404 и не вторым событием. Порядок блокировок:
+ * эта, затем блокировка администраторов при снятии admin — встречного порядка нет.
+ */
 async function hasActiveRole(tx: Tx, userId: string, role: Role): Promise<boolean> {
+  await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+    `identity.user_role:${userId}:${role}`,
+  ]);
   const { rows } = await tx.query(
     `SELECT 1 FROM identity.user_roles WHERE user_id = $1 AND role = $2 AND revoked_at IS NULL`,
     [userId, role],

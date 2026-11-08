@@ -458,7 +458,115 @@ try {
     ok(pr1) && ok(pr2) && (await events('identity.user.profile_updated', F.userId)) === 1,
     `${pr1.status},${pr2.status}`,
   );
+
+  console.warn('[8] Замечания Тэнка к 04d583b: реквизиты, статус, одновременность');
+  const entityEvents = () =>
+    n(
+      `SELECT count(*)::int AS n FROM audit.events WHERE verb = 'kyc.entity.created' AND actor_id = $1`,
+      [F.userId],
+    );
+  const otherOgrn = `${body.ogrn.slice(0, 12)}${(Number(body.ogrn.slice(12)) + 1) % 10}`;
+  const eo = await F.client.call('/v1/kyc/entities', {
+    method: 'POST',
+    body: { ...body, ogrn: otherOgrn },
+  });
+  check(
+    'другой ОГРН при тех же владельце, ИНН и названии — конфликт, новое юрлицо не заведено, события нет',
+    eo.status === 409 &&
+      (await n(`SELECT count(*)::int AS n FROM kyc.business_entities WHERE owner_user_id = $1`, [
+        F.userId,
+      ])) === 1 &&
+      (await entityEvents()) === 1,
+    `HTTP ${eo.status}`,
+  );
+  const kybId = randomUUID();
+  await sql(
+    `INSERT INTO kyc.kyb_verifications (id, entity_id, kind, status, provider, decided_at, reviewed_by)
+     VALUES ($1, $2, 'registry_check', 'approved', 'manual', now(), $3)`,
+    [kybId, cleanup.entity, A.userId],
+  );
+  await sql(`UPDATE kyc.business_entities SET registry_status = 'active' WHERE id = $1`, [
+    cleanup.entity,
+  ]);
+  cleanup.kyb = kybId;
+  const ek = await F.client.call('/v1/kyc/entities', { method: 'POST', body });
+  const listed = await F.client.call('/v1/kyc/entities');
+  const fromList = (listed.json?.items ?? listed.json ?? []).find?.((e) => e.id === cleanup.entity);
+  check(
+    'одобренное юрлицо после повтора — одобрено и в ответе, как при чтении',
+    ok(ek) &&
+      ek.json?.id === cleanup.entity &&
+      ek.json?.kybApproved === true &&
+      fromList?.kybApproved === true &&
+      (await entityEvents()) === 1,
+    `HTTP ${ek.status}, kybApproved=${ek.json?.kybApproved}, в списке=${fromList?.kybApproved}`,
+  );
+
+  const tc = await A.client.call('/v1/admin/notification-templates', {
+    method: 'POST',
+    body: {
+      code: `${cleanup.template}c`,
+      channel: 'email',
+      locale: 'ru-RU',
+      bodyTemplate: 'Проба одновременно',
+      fallbackChain: [],
+      isCritical: false,
+    },
+  });
+  const tcEvents = () =>
+    n(
+      `SELECT count(*)::int AS n FROM audit.events WHERE verb = 'comms.template.updated' AND subject_id = $1`,
+      [tc.json?.id],
+    );
+  const beforeConcurrent = await tcEvents();
+  const [tx1, tx2] = await Promise.all([
+    A.client.call(`/v1/admin/notification-templates/${tc.json?.id}`, { method: 'DELETE' }),
+    A.client.call(`/v1/admin/notification-templates/${tc.json?.id}`, { method: 'DELETE' }),
+  ]);
+  check(
+    'одновременное выключение шаблона — оба успех, выключен, одно событие',
+    ok(tc) &&
+      ok(tx1) &&
+      ok(tx2) &&
+      tx1.json?.isActive === false &&
+      tx2.json?.isActive === false &&
+      (await tcEvents()) - beforeConcurrent === 1,
+    `${tx1.status},${tx2.status}, событий +${(await tcEvents()) - beforeConcurrent}`,
+  );
+
+  const [cg1, cg2] = await Promise.all([
+    A.client.call(`/v1/admin/users/${H.userId}/roles`, {
+      method: 'POST',
+      body: { role: 'investor' },
+    }),
+    A.client.call(`/v1/admin/users/${H.userId}/roles`, {
+      method: 'POST',
+      body: { role: 'investor' },
+    }),
+  ]);
+  check(
+    'одновременная выдача роли — оба успех, одно новое событие',
+    ok(cg1) && ok(cg2) && (await outbox('identity.role.granted', H.userId)) === 2,
+    `${cg1.status},${cg2.status}`,
+  );
+  const [cr1, cr2] = await Promise.all([
+    A.client.call(`/v1/admin/users/${H.userId}/roles/investor`, { method: 'DELETE' }),
+    A.client.call(`/v1/admin/users/${H.userId}/roles/investor`, { method: 'DELETE' }),
+  ]);
+  check(
+    'одновременное снятие роли — оба успех, одно новое событие',
+    ok(cr1) && ok(cr2) && (await outbox('identity.role.revoked', H.userId)) === 2,
+    `${cr1.status},${cr2.status}`,
+  );
 } finally {
+  if (cleanup.kyb) {
+    await sql(`DELETE FROM kyc.kyb_verifications WHERE id = $1`, [cleanup.kyb]).catch(
+      () => undefined,
+    );
+  }
+  await sql(`DELETE FROM comms.notification_templates WHERE code = $1`, [
+    `${cleanup.template}c`,
+  ]).catch(() => undefined);
   if (cleanup.landing) {
     await sql(
       `UPDATE content.landing_blocks SET valid_to = now() WHERE key = 'hero_subtitle' AND locale = 'ru-RU' AND valid_to IS NULL`,

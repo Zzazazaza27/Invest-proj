@@ -429,7 +429,7 @@
 | PRB-MAIL-GROUP | `node scripts/probe-mail.mjs` | 38 | вручную | — |
 | PRB-WEBHOOK-DESTINATION-PAUSE | `node scripts/probe-webhook-delivery.mjs` | 20 | вручную | — |
 | PRB-REQUEST-KEYS-MORE | `node scripts/probe-request-keys-more.mjs` | 28 | вручную | — |
-| PRB-TARGET-STATE | `node scripts/probe-target-state.mjs` | 32 | вручную | — |
+| PRB-TARGET-STATE | `node scripts/probe-target-state.mjs` | 37 | вручную | — |
 | PRB-CSRF-BINDING | `node scripts/probe-csrf-binding.mjs` | 6 | вручную | — |
 | PRB-DNS-REBINDING | `node scripts/probe-dns-rebinding.mjs` | 6 | вручную | — |
 | PRB-EVENT-ARCHIVE | `node scripts/probe-event-archive.mjs` | 11 | вручную | — |
