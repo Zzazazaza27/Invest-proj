@@ -1715,11 +1715,12 @@ checks:
     asserts: 0
     needs: []
     studied: code
-    studiedOn: 2026-11-05
-    effects: ['поднимает test-1 на VPS, рабочую среду не трогает']
+    studiedOn: 2026-11-08
+    effects: ['поднимает test-1 на VPS; с --env test-2 переводит пилотную среду в боевой режим, рабочую среду не трогает']
     note: >-
-      Блок 5, задание 5. Проба test-1, запускает Томас.
-    purpose: 'Проба перехода на Transit и возврата на test-1 одной командой.'
+      Блок 5, задание 5. Проба test-1. С 08.11: --env test-1 --production-step — репетиция
+      боевого режима с возвратом, --env test-2 — перевод пилотной среды (infra/host/prod-test2-production.sh).
+    purpose: 'Проба перехода на Transit на test-1 и перевод test-2 в боевой режим одной командой.'
     confirmation: reviewed-in-code
 
   - id: TOOL-PROD-TRANSITION
