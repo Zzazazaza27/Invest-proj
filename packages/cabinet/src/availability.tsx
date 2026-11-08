@@ -27,6 +27,20 @@ const requestFailure: Record<GroupMode, { reason: GroupReason; until: number } |
   read: null,
   write: null,
 };
+/**
+ * Отказ запроса, восстановление после которого ещё не подтверждено: время отказа. Снимается
+ * только сводкой с исправным режимом и наблюдением НОВЕЕ отказа. Истечение удержания лишь
+ * разрешает попытку (её проверит сервер), но о восстановлении не сообщает.
+ */
+const unconfirmed: Record<GroupMode, number | null> = { read: null, write: null };
+
+function confirmFrom(next: GroupStatus): void {
+  for (const mode of ['read', 'write'] as const) {
+    const since = unconfirmed[mode];
+    const seen = next[mode].observedAt ? Date.parse(next[mode].observedAt as string) : NaN;
+    if (since !== null && next[mode].allowed && seen > since) unconfirmed[mode] = null;
+  }
+}
 let restored = false;
 let warned = false;
 let loader: Loader | null = null;
@@ -64,7 +78,7 @@ function track(): void {
   if (!healthy) {
     warned = true;
     restored = false;
-  } else if (warned) {
+  } else if (warned && unconfirmed.read === null && unconfirmed.write === null) {
     warned = false;
     restored = true;
     setTimeout(() => {
@@ -80,6 +94,7 @@ export async function refreshFiles(load: Loader | null = loader): Promise<void> 
   if (!load) return;
   try {
     summary = (await load()).groups.files;
+    confirmFrom(summary);
   } catch {
     // Не узнали — показываем прежнее; само действие проверит сервер.
   }
@@ -100,6 +115,7 @@ export function noteGroupError(error: unknown, now = Date.now()): void {
   const mode: GroupMode = first?.path === 'files.read' ? 'read' : 'write';
   const reason = (first?.message as GroupReason | undefined) ?? 'dependency_failure';
   requestFailure[mode] = { reason, until: now + REQUEST_HOLD_MS };
+  unconfirmed[mode] = now;
   // Истёк срок — экран пересчитывается сам, без нового запроса.
   setTimeout(track, REQUEST_HOLD_MS + 50);
   track();
@@ -111,6 +127,8 @@ export function resetFilesAvailability(): void {
   summary = null;
   requestFailure.read = null;
   requestFailure.write = null;
+  unconfirmed.read = null;
+  unconfirmed.write = null;
   restored = false;
   warned = false;
   loader = null;

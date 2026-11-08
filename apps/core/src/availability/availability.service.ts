@@ -238,8 +238,8 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     const all = await this.observations();
     const restriction = await this.currentRestriction();
     return groupStatus({
-      read: dependencyState(all, 'read', now, getEnv().AVAILABILITY_RETIRE_MS),
-      write: dependencyState(all, 'write', now, getEnv().AVAILABILITY_RETIRE_MS),
+      read: dependencyState(all, 'read', now),
+      write: dependencyState(all, 'write', now),
       restriction: restriction ? { mode: restriction.mode } : null,
     });
   }
@@ -250,8 +250,8 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     const all = await this.observations();
     this.restriction = null;
     const restriction = await this.currentRestriction();
-    const read = dependencyState(all, 'read', now, getEnv().AVAILABILITY_RETIRE_MS);
-    const write = dependencyState(all, 'write', now, getEnv().AVAILABILITY_RETIRE_MS);
+    const read = dependencyState(all, 'read', now);
+    const write = dependencyState(all, 'write', now);
     return {
       group: 'files',
       status: groupStatus({

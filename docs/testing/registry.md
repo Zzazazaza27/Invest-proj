@@ -443,7 +443,7 @@
 
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
-| UNIT-CORE-AVAILABILITY-RULES | `npm run test -w apps/core` | 18 | CI | CI |
+| UNIT-CORE-AVAILABILITY-RULES | `npm run test -w apps/core` | 19 | CI | CI |
 | UNIT-CORE-OUTBOX-FAILURES | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
@@ -467,7 +467,7 @@
 | UNIT-CORE-VERIFICATION | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-SECRET-FILES | `npm run test -w apps/core` | 11 | CI | CI |
 | UNIT-PKG-CABINET-GUARDED-SEND | `npm run test -w packages/cabinet` | 3 | CI | CI |
-| UNIT-CABINET-FILES-AVAILABILITY | `npm run test -w packages/cabinet` | 3 | CI | CI |
+| UNIT-CABINET-FILES-AVAILABILITY | `npm run test -w packages/cabinet` | 4 | CI | CI |
 | UNIT-CORE-STORAGE-BREAKER | `npm run test -w apps/core` | 15 | CI | CI |
 | UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 22 | CI | CI |
 | UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |

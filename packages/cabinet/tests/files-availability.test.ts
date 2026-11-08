@@ -45,11 +45,32 @@ describe('Отказ запроса и сводка «Файлов»', () => {
     });
   });
 
-  it('по истечении удержания решает снова сводка', async () => {
+  it('истечение удержания разрешает попытку, но восстановления не объявляет', async () => {
+    // Исправная СТАРАЯ сводка → отказ запроса → новых наблюдений нет → прошло 60 с.
+    vi.setSystemTime(new Date('2026-11-08T12:00:30.000Z'));
+    await refreshFiles(features(available));
     noteGroupError(circuitOpen);
     await refreshFiles(features(available));
     vi.advanceTimersByTime(REQUEST_HOLD_MS + 100);
-    expect(currentFilesAvailability().canWrite).toBe(true);
+    await refreshFiles(features(available));
+    expect(currentFilesAvailability()).toMatchObject({ canWrite: true, restored: false });
+  });
+
+  it('восстановление объявляется по новому успешному наблюдению', async () => {
+    vi.setSystemTime(new Date('2026-11-08T12:00:30.000Z'));
+    noteGroupError(circuitOpen);
+    const later = new Date(Date.now() + 5_000).toISOString();
+    await refreshFiles(
+      features({
+        state: 'available',
+        read: { allowed: true, reason: 'ok', observedAt: later },
+        write: { allowed: true, reason: 'ok', observedAt: later },
+      }),
+    );
+    // Удержание ещё действует: запись закрыта, восстановления нет.
+    expect(currentFilesAvailability()).toMatchObject({ canWrite: false, restored: false });
+    vi.advanceTimersByTime(REQUEST_HOLD_MS + 100);
+    expect(currentFilesAvailability()).toMatchObject({ canWrite: true, restored: true });
   });
 
   it('отказ чтения закрывает чтение; другие ошибки не запоминаются', async () => {

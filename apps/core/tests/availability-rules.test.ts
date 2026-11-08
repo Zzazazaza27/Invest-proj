@@ -42,8 +42,8 @@ describe('Сведение наблюдений по экземплярам', ()
   });
 
   it('свежий отказ A и просроченное наблюдение необслуживающего B — «неизвестно», не отказ', () => {
-    // B не остановлен и молчит меньше горизонта: он может ещё обслуживать — отказ всех
-    // обслуживающих не подтверждён (замечание Тэнка 08.11).
+    // B не остановлен: он может ещё обслуживать — отказ всех обслуживающих не подтверждён
+    // (замечание Тэнка 08.11).
     const d = dependencyState(
       [
         obs({ instance: 'core-1', ok: false, reason: 'circuit_open' }),
@@ -51,24 +51,33 @@ describe('Сведение наблюдений по экземплярам', ()
       ],
       'write',
       now,
-      600_000,
     );
     expect(d).toMatchObject({ health: 'unknown', reason: 'observations_stale' });
   });
 
-  it('просроченный B исключён из обслуживания — отказ A подтверждён', () => {
-    for (const b of [
-      obs({ instance: 'core-2', stopped: true }),
-      obs({ instance: 'core-2', observedAt: at(-700), validUntil: at(-610) }),
-    ]) {
-      const d = dependencyState(
-        [obs({ instance: 'core-1', ok: false, reason: 'circuit_open' }), b],
-        'write',
-        now,
-        600_000,
-      );
-      expect(d).toMatchObject({ health: 'fail', reason: 'circuit_open' });
-    }
+  it('молчащий сутки, но не остановленный B — по-прежнему «неизвестно»: возраст не доказывает исключения', () => {
+    // B принимает запросы, но не сохраняет наблюдения (сбой фоновой задачи или записи).
+    const d = dependencyState(
+      [
+        obs({ instance: 'core-1', ok: false, reason: 'circuit_open' }),
+        obs({ instance: 'core-2', observedAt: at(-86_400), validUntil: at(-86_310) }),
+      ],
+      'write',
+      now,
+    );
+    expect(d).toMatchObject({ health: 'unknown', reason: 'observations_stale' });
+  });
+
+  it('B подтверждённо остановлен — отказ A подтверждён', () => {
+    const d = dependencyState(
+      [
+        obs({ instance: 'core-1', ok: false, reason: 'circuit_open' }),
+        obs({ instance: 'core-2', stopped: true }),
+      ],
+      'write',
+      now,
+    );
+    expect(d).toMatchObject({ health: 'fail', reason: 'circuit_open' });
   });
 
   it('исправность просроченного B не даёт доступности', () => {
@@ -79,7 +88,6 @@ describe('Сведение наблюдений по экземплярам', ()
       ],
       'write',
       now,
-      600_000,
     );
     expect(d.health).not.toBe('ok');
   });

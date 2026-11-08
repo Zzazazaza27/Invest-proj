@@ -11,8 +11,8 @@ import type { GroupMode, GroupReason, GroupStatus, RestrictionMode } from '@fift
  *     просроченный не дают ни доступности, ни отказа;
  *   * свежих нет — «неизвестно», а не «доступна»;
  *   * хоть один свежий исправен — зависимость работает (обслуживать есть кому);
- *   * отказ — только если свежий отказ у всех обслуживающих; просроченный, но не исключённый
- *     экземпляр (см. `isRetired`) делает итог «неизвестно».
+ *   * отказ — только если свежий отказ у всех обслуживающих; просроченный, но не остановленный
+ *     экземпляр (см. `isRetired`) делает итог «неизвестно», сколько бы он ни молчал.
  *
  * Итог для действия = продуктовый допуск ∧ ручное ограничение ∧ исправность зависимости.
  * Ручной запрет автоматическим восстановлением не снимается. Изменение при «неизвестно» не
@@ -44,13 +44,13 @@ export function isFresh(o: Observation, now: Date): boolean {
 }
 
 /**
- * Экземпляр исключён из обслуживания: остановлен штатно или молчит дольше горизонта
- * `retireAfterMs`. Работающий экземпляр проверяет зависимость каждые 30 с, поэтому молчание
- * дольше горизонта (по умолчанию 10 мин) значит, что он не обслуживает запросы — например,
- * упал без штатной остановки. До горизонта такой экземпляр может ещё обслуживать.
+ * Экземпляр исключён из обслуживания только подтверждённо: штатная остановка или явное
+ * исключение (`stopped`). Возраст наблюдения этого не доказывает — экземпляр может принимать
+ * запросы, но не сохранять наблюдения (сбой фоновой задачи, записи в таблицу). Давнее
+ * молчание — устаревшие сведения, и при них итог «неизвестно» (замечание Тэнка 08.11).
  */
-export function isRetired(o: Observation, now: Date, retireAfterMs: number): boolean {
-  return o.stopped || now.getTime() - o.observedAt.getTime() > retireAfterMs;
+export function isRetired(o: Observation): boolean {
+  return o.stopped;
 }
 
 /**
@@ -59,14 +59,9 @@ export function isRetired(o: Observation, now: Date, retireAfterMs: number): boo
  * Отказ объявляется, только когда он подтверждён у ВСЕХ обслуживающих: свежий отказ одного
  * при просроченном наблюдении другого, ещё не исключённого, — «неизвестно», а не «отказ».
  */
-export function dependencyState(
-  all: Observation[],
-  mode: GroupMode,
-  now: Date,
-  retireAfterMs = Number.POSITIVE_INFINITY,
-): DependencyState {
+export function dependencyState(all: Observation[], mode: GroupMode, now: Date): DependencyState {
   const ofMode = all.filter((o) => o.mode === mode);
-  const serving = ofMode.filter((o) => !isRetired(o, now, retireAfterMs));
+  const serving = ofMode.filter((o) => !isRetired(o));
   const fresh = serving.filter((o) => isFresh(o, now));
   const ok = fresh.filter((o) => o.ok);
   if (ok.length > 0) return { health: 'ok', reason: 'ok', observedAt: latest(ok) };

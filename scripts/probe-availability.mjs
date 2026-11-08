@@ -21,6 +21,7 @@ import pg from 'pg';
 import { createHmac, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { hostname } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { garageSetKeyPermissions } from './lib/garage-admin.mjs';
@@ -144,13 +145,31 @@ async function uploadPdf(client, projectId, label) {
 }
 
 console.warn('\n=== ГРУППА «ФАЙЛЫ» (4.11) ===\n');
-// Обстановка: экземпляры прежних запусков, снятые без штатной остановки (taskkill), ещё не
-// исключены горизонтом и по правилу сведения дают «неизвестно» вместо отказа. При интервале
-// 2 с молчащий дольше 20 с не работает — отмечаем его остановленным, как сделала бы эксплуатация.
-const retired = await sql(
-  "UPDATE availability.observations SET stopped = true WHERE NOT stopped AND observed_at < now() - interval '20 seconds' RETURNING instance",
+// Обстановка: экземпляры прежних запусков, снятые без штатной остановки (taskkill), не
+// отмечены остановленными и по правилу сведения дают «неизвестно» вместо отказа. Отмечаем
+// только те, чья остановка ДОКАЗАНА: экземпляр этой машины (`<машина>-<pid>-<метка>`), процесса
+// которого больше нет. Давнее молчание само по себе остановкой не считается.
+const pidAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error.code === 'EPERM';
+  }
+};
+const known = await sql(
+  'SELECT DISTINCT instance FROM availability.observations WHERE NOT stopped',
 );
-console.warn(`  (исключено прежних экземпляров: ${new Set(retired.map((r) => r.instance)).size})`);
+const gone = known
+  .map((r) => r.instance)
+  .filter((instance) => {
+    const m = instance.match(/^(.*)-(\d+)-[0-9a-f]{8}$/);
+    return m && m[1] === hostname() && !pidAlive(Number(m[2]));
+  });
+if (gone.length > 0) {
+  await sql('UPDATE availability.observations SET stopped = true WHERE instance = ANY($1)', [gone]);
+}
+console.warn(`  (отмечено остановленными — процесса нет: ${gone.length})`);
 const owner = await register('owner');
 const admin = await register('admin', true);
 const taxonomy = await (await fetch(`${BASE}/v1/taxonomy`)).json();
