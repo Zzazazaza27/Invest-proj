@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { IsoDateTimeSchema } from '../common/primitives';
+import { IsoDateTimeSchema, UuidSchema } from '../common/primitives';
 
 /**
  * Логотип и обложка проекта (этап 7.2; структуры — M119).
@@ -63,8 +63,19 @@ export const MediaUploadTicketSchema = z.object({
 });
 export type MediaUploadTicket = z.infer<typeof MediaUploadTicketSchema>;
 
+/**
+ * Билет загрузки медиа ПРОЕКТА (2.6, M164): своя временная точка у каждой загрузки —
+ * подтверждение называет её, и повтор прежнего подтверждения не разберёт следующий файл.
+ */
+export const ProjectMediaUploadTicketSchema = MediaUploadTicketSchema.extend({
+  uploadId: UuidSchema,
+});
+export type ProjectMediaUploadTicket = z.infer<typeof ProjectMediaUploadTicketSchema>;
+
 /** Подтверждение загрузки: здесь же задаётся точка фокуса. */
 export const FinalizeMediaSchema = z.object({
+  /** Какую загрузку подтвердить (из билета). */
+  uploadId: UuidSchema,
   focusX: z.number().min(0).max(1).default(0.5),
   focusY: z.number().min(0).max(1).default(0.5),
 });

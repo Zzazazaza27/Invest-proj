@@ -61,6 +61,27 @@ export class TemplatesService {
         `template:${input.code}:${input.channel}:${input.locale}`,
       ]);
 
+      // Повтор с тем же содержимым (2.6): действующая версия уже такая — новой версии и
+      // события нет, возвращается она. Читается под той же блокировкой.
+      const { rows: active } = await tx.query<TemplateRow>(
+        `SELECT id, code, channel, locale, version, title_template, body_template,
+                fallback_chain, is_critical, is_active
+           FROM comms.notification_templates
+          WHERE code = $1 AND channel = $2 AND locale = $3 AND is_active`,
+        [input.code, input.channel, input.locale],
+      );
+      const current = active[0];
+      if (
+        current &&
+        (current.title_template ?? null) === (input.titleTemplate ?? null) &&
+        current.body_template === input.bodyTemplate &&
+        JSON.stringify(current.fallback_chain ?? []) ===
+          JSON.stringify(input.fallbackChain ?? []) &&
+        current.is_critical === input.isCritical
+      ) {
+        return mapTemplate(current);
+      }
+
       const { rows: prev } = await tx.query<{ max: number | null }>(
         `SELECT max(version) AS max FROM comms.notification_templates
           WHERE code = $1 AND channel = $2 AND locale = $3`,

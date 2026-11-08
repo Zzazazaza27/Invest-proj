@@ -161,7 +161,7 @@ async function uploadLogo(client, projectId) {
   });
   return client.json(`/v1/projects/${projectId}/media/logo/finalize`, {
     method: 'POST',
-    body: { focusX: 0.5, focusY: 0.5 },
+    body: { uploadId: ticket.uploadId, focusX: 0.5, focusY: 0.5 },
   });
 }
 

@@ -60,6 +60,27 @@ export class ContentService {
   async publish(ctx: RequestContext, input: PublishLandingBlock): Promise<LandingBlock> {
     const id = uuidv7();
     return this.db.transaction(ctx, async (tx) => {
+      // Блокировка блока ДО чтения действующей версии (2.6): одновременные публикации ждут
+      // друг друга, повтор с тем же содержимым версии не создаёт.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `landing:${input.key}:${input.locale}`,
+      ]);
+      const { rows: active } = await tx.query<BlockRow>(
+        `SELECT id, key, locale, title, body, link_url, valid_from, valid_to
+           FROM content.landing_blocks
+          WHERE key = $1 AND locale = $2 AND valid_to IS NULL`,
+        [input.key, input.locale],
+      );
+      const current = active[0];
+      if (
+        current &&
+        (current.title ?? null) === (input.title ?? null) &&
+        current.body === input.body &&
+        (current.link_url ?? null) === (input.linkUrl ?? null)
+      ) {
+        return mapBlock(current);
+      }
+
       await tx.query(
         `UPDATE content.landing_blocks
             SET valid_to = now()

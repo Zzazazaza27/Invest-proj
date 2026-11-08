@@ -327,7 +327,7 @@ try {
   });
   await founder.call(`/v1/projects/${projectId}/media/logo/finalize`, {
     method: 'POST',
-    body: { focusX: 0.5, focusY: 0.5 },
+    body: { uploadId: logoTicket.json?.uploadId, focusX: 0.5, focusY: 0.5 },
   });
 
   const ownLogo = await founder.call(`/v1/projects/${projectId}/media/logo/card`);

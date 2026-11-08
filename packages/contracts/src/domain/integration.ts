@@ -91,10 +91,24 @@ export const ServiceAccountSchema = z.object({
 });
 export type ServiceAccount = z.infer<typeof ServiceAccountSchema>;
 
-/** Секрет отдаётся один раз — при создании и при ротации. */
-export const ServiceAccountWithSecretSchema = ServiceAccountSchema.extend({
-  clientSecret: z.string(),
-});
+/**
+ * Секрет отдаётся один раз — при создании и при ротации (2.6, M164).
+ *
+ *   * `issued` — первый ответ: секрет здесь и больше нигде (в БД — только хеш);
+ *   * `already_issued` — повтор тем же ключом: операция уже выполнена, секрет был в первом
+ *     ответе, повторно его показать нельзя. Это не повреждённый ответ — проверку не
+ *     повторять; потерянный секрет восстанавливается только новой ротацией.
+ */
+export const ServiceAccountWithSecretSchema = z.discriminatedUnion('secretDelivery', [
+  ServiceAccountSchema.extend({
+    secretDelivery: z.literal('issued'),
+    clientSecret: z.string(),
+  }),
+  ServiceAccountSchema.extend({
+    secretDelivery: z.literal('already_issued'),
+    clientSecret: z.null(),
+  }),
+]);
 export type ServiceAccountWithSecret = z.infer<typeof ServiceAccountWithSecretSchema>;
 
 /** Конверт постраничного ответа Integration API. */

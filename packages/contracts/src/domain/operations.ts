@@ -80,6 +80,9 @@ export const GUARDED_OPERATIONS = [
   'lab.material.link',
   'support.ticket.open',
   'support.message.add',
+  'integration.service_account.create',
+  'integration.service_account.rotate',
+  'lab.media.finalize',
 ] as const;
 export const GuardedOperationSchema = z.enum(GUARDED_OPERATIONS);
 export type GuardedOperationName = z.infer<typeof GuardedOperationSchema>;

@@ -1,8 +1,8 @@
-import { Body, Controller, Delete, Get, Param, Post, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Param, Post, Res } from '@nestjs/common';
 import type { FastifyReply } from 'fastify';
 import {
   FinalizeMediaSchema,
-  MediaUploadTicketSchema,
+  ProjectMediaUploadTicketSchema,
   ProjectMediaKindSchema,
   ProjectMediaSchema,
   ProjectMediaSizeSchema,
@@ -11,6 +11,7 @@ import {
 } from '@fifth/contracts';
 import { Ctx, Public, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
+import { requestKeyFrom } from '../db/request-keys';
 import { AvailabilityService } from '../availability/availability.service';
 import type { RequestContext } from '../db/unit-of-work';
 import { ProjectMediaService } from './project-media.service';
@@ -40,7 +41,7 @@ export class ProjectMediaController {
     await this.availability.assert('files', 'write');
     const id = parseOrThrow(UuidSchema, rawId);
     const input = parseOrThrow(RequestMediaUploadSchema, rawBody);
-    return MediaUploadTicketSchema.parse(await this.media.requestUpload(ctx, id, input));
+    return ProjectMediaUploadTicketSchema.parse(await this.media.requestUpload(ctx, id, input));
   }
 
   @Roles('founder', 'admin')
@@ -49,14 +50,16 @@ export class ProjectMediaController {
     @Param('id') rawId: string,
     @Param('kind') rawKind: string,
     @Body() rawBody: unknown,
+    @Headers('idempotency-key') rawKey: unknown,
     @Ctx() ctx: RequestContext,
   ) {
     // Группа «Файлы», изменение (4.11): недоступно — group_unavailable.
     await this.availability.assert('files', 'write');
+    const key = requestKeyFrom(rawKey);
     const id = parseOrThrow(UuidSchema, rawId);
     const kind = parseOrThrow(ProjectMediaKindSchema, rawKind);
     const input = parseOrThrow(FinalizeMediaSchema, rawBody ?? {});
-    return ProjectMediaSchema.parse(await this.media.finalize(ctx, id, kind, input));
+    return ProjectMediaSchema.parse(await this.media.finalize(ctx, id, kind, input, key));
   }
 
   @Roles('founder', 'admin')

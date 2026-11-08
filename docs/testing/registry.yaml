@@ -1012,6 +1012,28 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
+  - id: PRB-REQUEST-KEYS-MORE
+    file: scripts/probe-request-keys-more.mjs
+    command: node scripts/probe-request-keys-more.mjs
+    kind: probe
+    level: интеграционный
+    runner: manual
+    asserts: 28
+    needs: [db, core, storage]
+    effects:
+      [
+        'создаёт пользователей (один — администратор), проект, юрлицо, заявки KYC/KYB, шаблон, блок витрины, сервисные аккаунты и логотип',
+        'всё убирает, текст блока витрины hero_subtitle возвращает прежним; учётки остаются',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Блок 2, 2.6, пакет 7 раздела 01 (M164). Каждая операция — одновременный и
+      последовательный повтор на настоящей БД.
+    purpose: 'Повтор операций пакета 7: заявка KYC и KYB — одна заявка и одно событие; шаблон и блок витрины с тем же содержимым — одна версия и одно событие, другое содержимое — новая версия; создание сервисного аккаунта с ключом — один аккаунт, секрет ровно в одном ответе, повтор already_issued без секрета, без ключа — прежний ответ; ротация с ключом — рубеж +1, одно событие, повтор без секрета не меняет хеш; в записи ключа секрета нет; подтверждение медиа с ключом — одновременно и последовательно один результат и одно событие, повтор прежней загрузки не разбирает следующую.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: PRB-CSRF-BINDING
     file: scripts/probe-csrf-binding.mjs
     command: node scripts/probe-csrf-binding.mjs
@@ -4033,6 +4055,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
+  - id: UNIT-CORE-MEDIA-FINALIZE
+    file: apps/core/tests/media-finalize.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 3
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Блок 2, 2.6, пакет 7. Настоящий ProjectMediaService, подставлены БД и хранилище.
+      Чувствительность подтверждена: с прежним порядком (исходник удаляется до фиксации)
+      падает отказ фиксации.
+    purpose: 'Подтверждение медиа: отказ фиксации после подготовки файлов оставляет исходник, повтор проходит; повтор завершённой операции возвращает результат без чтения и записи файлов; повтор прежней загрузки не читает временную точку следующей.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-CORE-STORAGE-BREAKER
     file: apps/core/tests/storage-breaker.test.ts
     command: npm run test -w apps/core
@@ -4818,6 +4857,8 @@ blocks:
         PRB-UPLOAD-CANCEL,
         RND-UPLOAD-OPERATIONS,
         PRB-REQUEST-KEYS,
+        PRB-REQUEST-KEYS-MORE,
+        UNIT-CORE-MEDIA-FINALIZE,
         RND-GUARDED-SEND,
         RND-CABINET-FAILURES,
         UNIT-CABINET-RETURN-READY,

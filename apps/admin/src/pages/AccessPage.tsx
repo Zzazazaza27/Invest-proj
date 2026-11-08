@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Badge,
   Button,
@@ -10,7 +10,7 @@ import {
   LoadingState,
   Stack,
 } from '@fifth/ui';
-import type { AdminUserSummary } from '@fifth/contracts';
+import { uuidv7, type AdminUserSummary, type ServiceAccountWithSecret } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import { CapabilitiesSection } from './StaffAccessSections';
 
@@ -268,6 +268,26 @@ export function ServiceAccountsSection() {
     | { status: 'error'; message: string }
   >({ status: 'loading' });
   const [secret, setSecret] = useState<string | null>(null);
+  /**
+   * Ключи повтора (2.6, M164): живут, пока ответ не получен. Повторное нажатие после обрыва
+   * идёт с тем же ключом — второго аккаунта и второй ротации нет; секрет повтор не
+   * показывает, он был в первом ответе.
+   */
+  const createKey = useRef<string | null>(null);
+  const rotateKeys = useRef<Record<string, string>>({});
+  const [secretNote, setSecretNote] = useState<string | null>(null);
+  const showIssued = (issued: ServiceAccountWithSecret) => {
+    if (issued.secretDelivery === 'issued') {
+      setSecret(issued.clientSecret);
+      setSecretNote(null);
+    } else {
+      setSecret(null);
+      setSecretNote(
+        'Операция уже выполнена: секрет был показан в первом ответе, который не дошёл. Повторно его показать нельзя — если он потерян, выполните новую ротацию.',
+      );
+    }
+  };
+  const lostAnswer = (error: unknown) => error instanceof ApiError && error.outcomeUnknown;
   const [name, setName] = useState('');
   const [clientId, setClientId] = useState('');
   const [scopes, setScopes] = useState('graduates:read');
@@ -338,12 +358,23 @@ export function ServiceAccountsSection() {
                   <Button
                     variant="secondary"
                     onClick={async () => {
+                      rotateKeys.current[account.id] ??= uuidv7();
                       try {
-                        const rotated = await api.rotateServiceAccount(account.id);
-                        setSecret(rotated.clientSecret);
+                        const rotated = await api.rotateServiceAccount(
+                          account.id,
+                          rotateKeys.current[account.id],
+                        );
+                        delete rotateKeys.current[account.id];
+                        showIssued(rotated);
                         await load();
                       } catch (error) {
+                        if (!lostAnswer(error)) delete rotateKeys.current[account.id];
                         setSecret(null);
+                        setSecretNote(
+                          lostAnswer(error)
+                            ? 'Ответ не получен. Нажмите «Ротировать секрет» ещё раз — второй ротации это не вызовет.'
+                            : null,
+                        );
                         setState({
                           status: 'error',
                           message:
@@ -434,25 +465,36 @@ export function ServiceAccountsSection() {
           </Field>
           <Button
             onClick={async () => {
+              createKey.current ??= uuidv7();
               try {
-                const created = await api.createServiceAccount({
-                  name: name.trim(),
-                  clientId: clientId.trim(),
-                  scopes: scopes
-                    .split(',')
-                    .map((item) => item.trim())
-                    .filter(Boolean),
-                  mtlsCertFingerprint: fingerprint.trim(),
-                });
+                const created = await api.createServiceAccount(
+                  {
+                    name: name.trim(),
+                    clientId: clientId.trim(),
+                    scopes: scopes
+                      .split(',')
+                      .map((item) => item.trim())
+                      .filter(Boolean),
+                    mtlsCertFingerprint: fingerprint.trim(),
+                  },
+                  createKey.current,
+                );
+                createKey.current = null;
                 // Секрет показывается ОДИН раз — здесь же, где и после ротации.
-                setSecret(created.clientSecret);
+                showIssued(created);
                 setName('');
                 setClientId('');
                 setScopes('');
                 setFingerprint('');
                 await load();
               } catch (error) {
+                if (!lostAnswer(error)) createKey.current = null;
                 setSecret(null);
+                setSecretNote(
+                  lostAnswer(error)
+                    ? 'Ответ не получен. Нажмите «Создать» ещё раз с теми же данными — второй аккаунт не создастся.'
+                    : null,
+                );
                 setState({
                   status: 'error',
                   message:
@@ -467,6 +509,11 @@ export function ServiceAccountsSection() {
           </Button>
         </div>
 
+        {secretNote ? (
+          <p className="small" data-secret-note>
+            {secretNote}
+          </p>
+        ) : null}
         {secret ? (
           <div
             role="status"

@@ -59,6 +59,11 @@ export class KycService {
 
   async startVerification(ctx: RequestContext, input: StartKycRequest): Promise<KycVerification> {
     return this.db.transaction(ctx, async (tx) => {
+      // Блокировка ДО чтения состояния (2.6): одновременные повторы ждут друг друга, и
+      // второй видит заявку первого — одна заявка, одно событие.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `kyc.verification:${ctx.userId}:${input.kind}`,
+      ]);
       // Повторная подача при уже действующей проверке — не ошибка клиента, а
       // бессмысленная работа для комплаенса. Возвращаем существующую.
       const existing = await tx.query<VerificationRow>(
@@ -283,6 +288,10 @@ export class KycService {
     kind: 'registry_check' | 'beneficial_owners' | 'accreditation' | 'annual_review',
   ): Promise<KybVerification> {
     return this.db.transaction(ctx, async (tx) => {
+      // Блокировка ДО чтения состояния (2.6): одна заявка KYB на юрлицо и вид.
+      await tx.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [
+        `kyb.verification:${entityId}:${kind}`,
+      ]);
       await this.assertEntityVisible(tx, entityId);
 
       const existing = await tx.query<KybRow>(

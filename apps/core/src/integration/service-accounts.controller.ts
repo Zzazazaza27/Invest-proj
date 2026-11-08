@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Post } from '@nestjs/common';
 import {
   CreateServiceAccountRequestSchema,
   ServiceAccountSchema,
@@ -8,6 +8,7 @@ import {
 import { z } from 'zod';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
+import { requestKeyFrom } from '../db/request-keys';
 import type { RequestContext } from '../db/unit-of-work';
 import { IntegrationService } from './integration.service';
 
@@ -25,10 +26,15 @@ export class ServiceAccountsController {
   constructor(private readonly integration: IntegrationService) {}
 
   @Post()
-  async create(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+  async create(
+    @Body() rawBody: unknown,
+    @Headers('idempotency-key') rawKey: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const key = requestKeyFrom(rawKey);
     const input = parseOrThrow(CreateServiceAccountRequestSchema, rawBody);
     return ServiceAccountWithSecretSchema.parse(
-      await this.integration.createServiceAccount(ctx, input),
+      await this.integration.createServiceAccount(ctx, input, key),
     );
   }
 
@@ -39,9 +45,14 @@ export class ServiceAccountsController {
   }
 
   @Post(':id/rotation')
-  async rotate(@Param('id') rawId: string, @Ctx() ctx: RequestContext) {
+  async rotate(
+    @Param('id') rawId: string,
+    @Headers('idempotency-key') rawKey: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const key = requestKeyFrom(rawKey);
     const id = parseOrThrow(UuidSchema, rawId);
-    return ServiceAccountWithSecretSchema.parse(await this.integration.rotateSecret(ctx, id));
+    return ServiceAccountWithSecretSchema.parse(await this.integration.rotateSecret(ctx, id, key));
   }
 
   /**

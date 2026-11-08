@@ -20,7 +20,13 @@ import type { Database, RequestContext, Tx } from './unit-of-work';
  * конфликт, а не чужой результат.
  */
 export type GuardedOperation =
-  'lab.project.create' | 'lab.material.link' | 'support.ticket.open' | 'support.message.add';
+  | 'lab.project.create'
+  | 'lab.material.link'
+  | 'support.ticket.open'
+  | 'support.message.add'
+  | 'integration.service_account.create'
+  | 'integration.service_account.rotate'
+  | 'lab.media.finalize';
 
 export interface RequestKey {
   key: string;

@@ -67,7 +67,11 @@ export function MediaCard({ projectId }: { projectId: string }) {
 
       // Успех объявляется после подтверждения: до него платформа ещё не
       // смотрела, что внутри файла, и отказать может именно здесь.
-      await api.projects.finalizeMedia(projectId, kind, { focusX, focusY });
+      await api.projects.finalizeMedia(projectId, kind, {
+        uploadId: ticket.uploadId,
+        focusX,
+        focusY,
+      });
       setNotice({ tone: 'ok', text: 'Изображение загружено' });
       await load();
     } catch (error) {

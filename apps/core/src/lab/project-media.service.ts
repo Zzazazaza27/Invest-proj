@@ -5,13 +5,14 @@ import {
   MEDIA_VARIANTS,
   uuidv7,
   type FinalizeMedia,
-  type MediaUploadTicket,
+  type ProjectMediaUploadTicket,
   type ProjectMedia,
   type ProjectMediaKind,
   type ProjectMediaSize,
 } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
+import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service, putObject } from '../storage/s3.service';
 
@@ -60,7 +61,7 @@ export class ProjectMediaService {
     ctx: RequestContext,
     projectId: string,
     input: { kind: ProjectMediaKind; contentType: string; sizeBytes: number },
-  ): Promise<MediaUploadTicket> {
+  ): Promise<ProjectMediaUploadTicket> {
     if (!this.s3.isConfigured) throw errors.featureDisabled('media_upload');
 
     const limits = MEDIA_LIMITS[input.kind];
@@ -77,12 +78,16 @@ export class ProjectMediaService {
 
     await this.db.readOnly(ctx, async (tx) => this.assertCanEdit(tx, projectId));
 
+    // Своя временная точка у каждой загрузки (2.6): подтверждение называет её, и повтор
+    // прежнего подтверждения не разберёт файл следующей загрузки.
+    const uploadId = uuidv7();
     const form = this.s3.presignUpload({
-      key: uploadKey(projectId, input.kind),
+      key: uploadKey(projectId, input.kind, uploadId),
       contentType: input.contentType,
       maxBytes: limits.maxBytes,
     });
     return {
+      uploadId,
       uploadUrl: form.url,
       method: 'POST',
       formFields: form.fields,
@@ -104,93 +109,122 @@ export class ProjectMediaService {
     projectId: string,
     kind: ProjectMediaKind,
     input: FinalizeMedia,
+    key: string | null = null,
   ): Promise<ProjectMedia> {
     if (!this.s3.isConfigured) throw errors.featureDisabled('media_upload');
-    await this.db.readOnly(ctx, async (tx) => this.assertCanEdit(tx, projectId));
+    const source = uploadKey(projectId, kind, input.uploadId);
 
-    const key = uploadKey(projectId, kind);
-    const object = await this.s3.getObject(key);
-    if (!object) {
-      throw errors.stateTransition('Файл не загружен: сначала отправьте изображение');
-    }
+    // Подтверждение — ОДНОЙ транзакцией под блокировкой проекта и вида (2.6, M164):
+    // одновременные повторы ждут друг друга, ключ повтора проверяется ДО разбора файла,
+    // а запись результата и событие фиксируются вместе с ключом. Исходник удаляется только
+    // ПОСЛЕ фиксации: сбой записи оставляет повтору исходный файл.
+    const outcome = await this.db.transaction(ctx, async (tx) => {
+      await tx.query(`SET LOCAL lock_timeout = ${FINALIZE_LOCK_WAIT_MS}`);
+      try {
+        await tx.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          `lab.media.finalize:${projectId}:${kind}`,
+        ]);
+      } catch (error) {
+        if ((error as { code?: string }).code === '55P03') throw errors.operationInProgress();
+        throw error;
+      }
+      await this.assertCanEdit(tx, projectId);
 
-    const limits = MEDIA_LIMITS[kind];
-    if (object.body.byteLength > limits.maxBytes) {
-      await this.s3.deleteObject(key).catch(() => undefined);
-      throw errors.validation([{ path: 'file', message: 'Файл больше допустимого размера' }]);
-    }
+      const mediaId = uuidv7();
+      if (key) {
+        const earlier = await claimRequestKey(
+          tx,
+          ctx,
+          {
+            key,
+            operation: 'lab.media.finalize',
+            objectId: projectId,
+            payload: { kind, uploadId: input.uploadId, focusX: input.focusX, focusY: input.focusY },
+          },
+          mediaId,
+        );
+        if (earlier) {
+          // Завершённая операция: её результат без повторной обработки, с текущими правами.
+          const row = await this.readRow(tx, projectId, kind);
+          if (!row) throw errors.notFound({ subject: 'project_media' });
+          return { media: row, replay: true };
+        }
+      }
 
-    let meta: sharp.Metadata;
-    let normalized: { data: Buffer; info: sharp.OutputInfo };
-    try {
-      meta = await sharp(object.body, SHARP_INPUT).metadata();
-      // Поворот по EXIF применяется СРАЗУ и один раз: дальше и проверка
-      // размеров, и кадрирование идут по тому изображению, которое человек
-      // видит, а не по тому, как оно лежит в файле. Портретное фото иначе
-      // проверялось бы и обрезалось по неверной стороне.
-      normalized = await sharp(object.body, SHARP_INPUT)
-        .rotate()
-        .toBuffer({ resolveWithObject: true });
-    } catch {
-      await this.s3.deleteObject(key).catch(() => undefined);
-      throw errors.validation([{ path: 'file', message: 'Это не изображение или файл повреждён' }]);
-    }
+      const object = await this.s3.getObject(source);
+      if (!object) {
+        throw errors.stateTransition('Файл не загружен: сначала отправьте изображение');
+      }
 
-    const mime = MIME_BY_FORMAT[meta.format ?? ''];
-    if (!mime) {
-      await this.s3.deleteObject(key).catch(() => undefined);
-      throw errors.validation([{ path: 'file', message: 'Подходят только JPEG, PNG и WebP' }]);
-    }
-    const width = normalized.info.width;
-    const height = normalized.info.height;
-    if (width < limits.minWidth || height < limits.minHeight) {
-      await this.s3.deleteObject(key).catch(() => undefined);
-      throw errors.validation([
-        {
-          path: 'file',
-          message: `Слишком маленькое изображение: нужно не меньше ${limits.minWidth}×${limits.minHeight} точек`,
-        },
-      ]);
-    }
-    if (width > MAX_SIDE || height > MAX_SIDE) {
-      await this.s3.deleteObject(key).catch(() => undefined);
-      throw errors.validation([
-        { path: 'file', message: `Слишком большое изображение: сторона до ${MAX_SIDE} точек` },
-      ]);
-    }
+      const limits = MEDIA_LIMITS[kind];
+      if (object.body.byteLength > limits.maxBytes) {
+        await this.s3.deleteObject(source).catch(() => undefined);
+        throw errors.validation([{ path: 'file', message: 'Файл больше допустимого размера' }]);
+      }
 
-    // Варианты собираются из ОРИГИНАЛА заново. Побочный результат пересборки
-    // важнее самого сжатия: всё, что было в файле помимо пикселей — EXIF с
-    // координатами съёмки, цветовые профили, комментарии, — не переносится.
-    const mediaId = uuidv7();
-    const variants: Record<string, { key: string; width: number; height: number }> = {};
-    for (const [size, box] of Object.entries(MEDIA_VARIANTS[kind]) as [
-      ProjectMediaSize,
-      { width: number; height: number },
-    ][]) {
-      // Обрезка считается от ТОЧКИ ФОКУСА владельца, а не «по центру» и не
-      // алгоритмом «где интереснее»: человек указал, что должно остаться в
-      // кадре, и это указание нельзя переигрывать эвристикой.
-      const crop = cropAround(width, height, box, input.focusX, input.focusY);
-      const buffer = await sharp(normalized.data, SHARP_INPUT)
-        .extract(crop)
-        .resize({ width: box.width, height: box.height, fit: 'fill' })
-        .webp({ quality: 82 })
-        .toBuffer();
-      const variantKey = variantObjectKey(projectId, kind, mediaId, size);
-      await putObject({
-        key: variantKey,
-        body: buffer,
-        contentType: 'image/webp',
-      });
-      variants[size] = { key: variantKey, width: box.width, height: box.height };
-    }
+      let meta: sharp.Metadata;
+      let normalized: { data: Buffer; info: sharp.OutputInfo };
+      try {
+        meta = await sharp(object.body, SHARP_INPUT).metadata();
+        // Поворот по EXIF применяется СРАЗУ и один раз: дальше и проверка
+        // размеров, и кадрирование идут по тому изображению, которое человек
+        // видит, а не по тому, как оно лежит в файле.
+        normalized = await sharp(object.body, SHARP_INPUT)
+          .rotate()
+          .toBuffer({ resolveWithObject: true });
+      } catch {
+        await this.s3.deleteObject(source).catch(() => undefined);
+        throw errors.validation([
+          { path: 'file', message: 'Это не изображение или файл повреждён' },
+        ]);
+      }
 
-    const masterKey = masterObjectKey(projectId, kind, mediaId);
-    await putObject({ key: masterKey, body: object.body, contentType: mime });
-    await this.s3.deleteObject(key).catch(() => undefined);
+      const mime = MIME_BY_FORMAT[meta.format ?? ''];
+      if (!mime) {
+        await this.s3.deleteObject(source).catch(() => undefined);
+        throw errors.validation([{ path: 'file', message: 'Подходят только JPEG, PNG и WebP' }]);
+      }
+      const width = normalized.info.width;
+      const height = normalized.info.height;
+      if (width < limits.minWidth || height < limits.minHeight) {
+        await this.s3.deleteObject(source).catch(() => undefined);
+        throw errors.validation([
+          {
+            path: 'file',
+            message: `Слишком маленькое изображение: нужно не меньше ${limits.minWidth}×${limits.minHeight} точек`,
+          },
+        ]);
+      }
+      if (width > MAX_SIDE || height > MAX_SIDE) {
+        await this.s3.deleteObject(source).catch(() => undefined);
+        throw errors.validation([
+          { path: 'file', message: `Слишком большое изображение: сторона до ${MAX_SIDE} точек` },
+        ]);
+      }
 
-    const media = await this.db.transaction(ctx, async (tx) => {
+      // Варианты собираются из ОРИГИНАЛА заново: всё, что было в файле помимо пикселей,
+      // не переносится. Ключи — под новым mediaId: незафиксированная попытка оставляет
+      // лишь неиспользуемые объекты (уборка по 3.3), а не портит действующие.
+      const variants: Record<string, { key: string; width: number; height: number }> = {};
+      for (const [size, box] of Object.entries(MEDIA_VARIANTS[kind]) as [
+        ProjectMediaSize,
+        { width: number; height: number },
+      ][]) {
+        // Обрезка считается от ТОЧКИ ФОКУСА владельца, а не «по центру».
+        const crop = cropAround(width, height, box, input.focusX, input.focusY);
+        const buffer = await sharp(normalized.data, SHARP_INPUT)
+          .extract(crop)
+          .resize({ width: box.width, height: box.height, fit: 'fill' })
+          .webp({ quality: 82 })
+          .toBuffer();
+        const variantKey = variantObjectKey(projectId, kind, mediaId, size);
+        await putObject({ key: variantKey, body: buffer, contentType: 'image/webp' });
+        variants[size] = { key: variantKey, width: box.width, height: box.height };
+      }
+
+      const masterKey = masterObjectKey(projectId, kind, mediaId);
+      await putObject({ key: masterKey, body: object.body, contentType: mime });
+
       await tx.query(
         `INSERT INTO lab.project_media
            (id, project_id, kind, master_key, variants, mime, bytes, width, height,
@@ -231,14 +265,17 @@ export class ProjectMediaService {
         context: { kind, mime, width, height, bytes: object.body.byteLength },
         traceId: ctx.traceId,
       });
-      return (await this.readRow(tx, projectId, kind))!;
+      return { media: (await this.readRow(tx, projectId, kind))!, replay: false };
     });
+
+    // Результат зафиксирован — исходник больше не нужен. Его потеря здесь безвредна: повтор
+    // тем же ключом вернёт результат по ключу, не читая файл.
+    if (!outcome.replay) await this.s3.deleteObject(source).catch(() => undefined);
 
     // Прежние объекты НЕ удаляются физически (блок 7, 2.1-W07): файл, уже
     // попавший в комплект резервной копии, должен остаться и в хранилище.
     // Очистка неиспользуемых объектов — отдельной процедурой по 3.3.
-
-    return view(projectId, media);
+    return view(projectId, outcome.media);
   }
 
   /** Убрать изображение: запись удаляется, объекты остаются (блок 7). */
@@ -338,6 +375,8 @@ const SELECT_MEDIA = `
 /** Пределы разбора: вход выбирали не мы. */
 const MAX_SIDE = 6000;
 const MAX_CONCURRENCY = 2;
+/** Сколько повтор ждёт идущее подтверждение того же проекта и вида. */
+const FINALIZE_LOCK_WAIT_MS = 30_000;
 const SHARP_INPUT: sharp.SharpOptions = {
   // 60 мегапикселей: заведомо больше любого реального логотипа и обложки и
   // заведомо меньше того, чем кладут сервер.
@@ -389,8 +428,9 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
-function uploadKey(projectId: string, kind: ProjectMediaKind): string {
-  return `projects/${projectId}/media/${kind}/upload`;
+/** Временная точка загрузки: своя у каждой загрузки. */
+function uploadKey(projectId: string, kind: ProjectMediaKind, uploadId: string): string {
+  return `projects/${projectId}/media/${kind}/upload/${uploadId}`;
 }
 function masterObjectKey(projectId: string, kind: ProjectMediaKind, mediaId: string): string {
   return `projects/${projectId}/media/${kind}/${mediaId}/master`;

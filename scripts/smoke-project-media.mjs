@@ -195,7 +195,7 @@ try {
 
     const { response, json } = await founder.client.call(
       `/v1/projects/${project.id}/media/logo/finalize`,
-      { method: 'POST', body: { focusX: 0.5, focusY: 0.5 } },
+      { method: 'POST', body: { uploadId: ticket.uploadId, focusX: 0.5, focusY: 0.5 } },
     );
     check(
       'слишком маленькое изображение отвергнуто',
@@ -224,7 +224,7 @@ try {
     await uploadThrough(ticket, notAnImage, 'image/png', 'fake.png');
     const { response, json } = await founder.client.call(
       `/v1/projects/${project.id}/media/logo/finalize`,
-      { method: 'POST', body: {} },
+      { method: 'POST', body: { uploadId: ticket.uploadId } },
     );
     check(
       'файл с чужим содержимым отвергнут, несмотря на заявленный тип',
@@ -249,7 +249,7 @@ try {
     await uploadThrough(ticket, logo, 'image/jpeg', 'logo.jpg');
     media = await founder.client.json(`/v1/projects/${project.id}/media/logo/finalize`, {
       method: 'POST',
-      body: { focusX: 0.25, focusY: 0.75 },
+      body: { uploadId: ticket.uploadId, focusX: 0.25, focusY: 0.75 },
     });
     check('логотип загружен', media.kind === 'logo', media.mime);
     check('формат определён разбором', media.mime === 'image/jpeg', media.mime);
@@ -308,7 +308,7 @@ try {
     await uploadThrough(ticket, other, 'image/jpeg', 'logo2.jpg');
     const replaced = await founder.client.json(`/v1/projects/${project.id}/media/logo/finalize`, {
       method: 'POST',
-      body: { focusX: 0.5, focusY: 0.5 },
+      body: { uploadId: ticket.uploadId, focusX: 0.5, focusY: 0.5 },
     });
     check('логотип заменён', replaced.width === 600, `${replaced.width}`);
     const [{ n }] = await sql(
@@ -333,7 +333,7 @@ try {
     await uploadThrough(ticket, cover, 'image/jpeg', 'cover.jpg');
     await founder.client.json(`/v1/projects/${project.id}/media/cover/finalize`, {
       method: 'POST',
-      body: { focusX: 0.5, focusY: 0.2 },
+      body: { uploadId: ticket.uploadId, focusX: 0.5, focusY: 0.2 },
     });
     const list = await founder.client.json(`/v1/projects/${project.id}/media`);
     check('в списке оба изображения', list.items.length === 2, `${list.items.length}`);

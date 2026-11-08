@@ -1010,12 +1010,17 @@ export const api = {
    * список и ротация были, а завести первый аккаунт можно было только через
    * служебную консоль.
    */
-  createServiceAccount(body: CreateServiceAccountRequest): Promise<ServiceAccountWithSecret> {
+  /** Ключ повтора (2.6): повтор после потерянного ответа второго аккаунта не создаёт. */
+  createServiceAccount(
+    body: CreateServiceAccountRequest,
+    key?: string,
+  ): Promise<ServiceAccountWithSecret> {
     return client.request({
       method: 'POST',
       path: '/v1/admin/service-accounts',
       body,
       schema: ServiceAccountWithSecretSchema,
+      ...(key ? { idempotencyKey: key } : {}),
     });
   },
 
@@ -1037,11 +1042,12 @@ export const api = {
   },
 
   /** Ротация. Секрет возвращается ОДИН раз — в базе только Argon2id-хеш. */
-  rotateServiceAccount(id: string): Promise<ServiceAccountWithSecret> {
+  rotateServiceAccount(id: string, key?: string): Promise<ServiceAccountWithSecret> {
     return client.request({
       method: 'POST',
       path: `/v1/admin/service-accounts/${id}/rotation`,
       schema: ServiceAccountWithSecretSchema,
+      ...(key ? { idempotencyKey: key } : {}),
     });
   },
 

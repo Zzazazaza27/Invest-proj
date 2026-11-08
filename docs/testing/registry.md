@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 228; требований: 41
+- Проверок: 230; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 87
+### Зарегистрированы, но ни в наборе, ни в CI — 88
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -196,6 +196,7 @@
 - `PRB-AVAILABILITY-FILES` — Группа «Файлы»: при отказе записи хранилища кабинет получает «только чтение» с причиной зависимости, карточка проекта, список и готовый материал открываются,…
 - `PRB-MAIL-GROUP` — «Забыли пароль» одинаков для существующего и отсутствующего адреса при всех трёх исходах SMTP (принято релеем, точно не ушло, неизвестно), при повторе тем же…
 - `PRB-WEBHOOK-DESTINATION-PAUSE` — Пауза по получателю: отказ узла расходует попытку одной доставки, остальные доставки узла ждут без попыток, другой узел в том же проходе получает свои; пауза…
+- `PRB-REQUEST-KEYS-MORE` — Повтор операций пакета 7: заявка KYC и KYB — одна заявка и одно событие; шаблон и блок витрины с тем же содержимым — одна версия и одно событие, другое содер…
 - `PRB-CSRF-BINDING` — Проверка привязки CSRF-токена к сессии.
 - `PRB-DNS-REBINDING` — Проверка защиты доставки вебхуков от DNS rebinding.
 - `PRB-EVENT-ARCHIVE` — Проверка выгрузки журнала событий в холодное хранилище (M041).
@@ -425,6 +426,7 @@
 | PRB-AVAILABILITY-FILES | `node scripts/probe-availability.mjs` | 21 | вручную | — |
 | PRB-MAIL-GROUP | `node scripts/probe-mail.mjs` | 38 | вручную | — |
 | PRB-WEBHOOK-DESTINATION-PAUSE | `node scripts/probe-webhook-delivery.mjs` | 20 | вручную | — |
+| PRB-REQUEST-KEYS-MORE | `node scripts/probe-request-keys-more.mjs` | 28 | вручную | — |
 | PRB-CSRF-BINDING | `node scripts/probe-csrf-binding.mjs` | 6 | вручную | — |
 | PRB-DNS-REBINDING | `node scripts/probe-dns-rebinding.mjs` | 6 | вручную | — |
 | PRB-EVENT-ARCHIVE | `node scripts/probe-event-archive.mjs` | 11 | вручную | — |
@@ -478,6 +480,7 @@
 | UNIT-CORE-MAIL-OUTCOMES | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-MAIL-REGRESSIONS | `npm run test -w apps/core` | 4 | CI | CI |
 | UNIT-CORE-EVENTS-HEALTH | `npm run test -w apps/core` | 12 | CI | CI |
+| UNIT-CORE-MEDIA-FINALIZE | `npm run test -w apps/core` | 3 | CI | CI |
 | UNIT-CORE-STORAGE-BREAKER | `npm run test -w apps/core` | 15 | CI | CI |
 | UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 22 | CI | CI |
 | UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |

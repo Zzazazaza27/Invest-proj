@@ -1,6 +1,7 @@
 import {
   AcceptedSchema,
   MediaUploadTicketSchema,
+  ProjectMediaUploadTicketSchema,
   MyProfileSchema,
   TestingSessionListSchema,
   TestingSessionCardSchema,
@@ -496,7 +497,7 @@ export class FifthApi {
         method: 'POST',
         path: `/projects/${id}/media/upload`,
         body,
-        schema: MediaUploadTicketSchema,
+        schema: ProjectMediaUploadTicketSchema,
         idempotencyKey: uuidv7(),
       }),
 
@@ -506,12 +507,17 @@ export class FifthApi {
      * До этого вызова платформа файл не разбирала: отказ по формату, размеру
      * или размерам изображения приходит именно здесь.
      */
+    /**
+     * Ключ повтора (2.6, M164) — от идентификатора загрузки: любой повтор подтверждения той
+     * же загрузки идёт с тем же ключом и получает прежний результат без повторной обработки.
+     */
     finalizeMedia: (id: string, kind: 'logo' | 'cover', body: FinalizeMedia) =>
       this.http.request({
         method: 'POST',
         path: `/projects/${id}/media/${kind}/finalize`,
         body,
         schema: ProjectMediaSchema,
+        idempotencyKey: `media-${body.uploadId}`,
       }),
 
     removeMedia: (id: string, kind: 'logo' | 'cover') =>

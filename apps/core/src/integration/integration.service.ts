@@ -10,7 +10,8 @@ import {
 } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { errors } from '../common/errors';
-import { Database, type RequestContext } from '../db/unit-of-work';
+import { claimRequestKey } from '../db/request-keys';
+import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { issueServiceToken } from './service-auth';
 import { ServiceAccountStateService } from './service-account-state.service';
 
@@ -46,6 +47,7 @@ export class IntegrationService {
       scopes: string[];
       mtlsCertFingerprint: string;
     },
+    key: string | null = null,
   ): Promise<ServiceAccountWithSecret> {
     const unknown = input.scopes.filter(
       (scope) => !INTEGRATION_SCOPES.includes(scope as IntegrationScope),
@@ -60,6 +62,27 @@ export class IntegrationService {
     const id = uuidv7();
 
     const created = await this.db.transaction(ctx, async (tx) => {
+      // Ключ повтора — первым действием (2.6, M164). Повтор тем же ключом аккаунт не создаёт
+      // и секрета не показывает: он был в первом ответе, в БД — только хеш.
+      if (key) {
+        const earlier = await claimRequestKey(
+          tx,
+          ctx,
+          {
+            key,
+            operation: 'integration.service_account.create',
+            objectId: null,
+            payload: {
+              name: input.name,
+              clientId: input.clientId,
+              scopes: [...input.scopes].sort(),
+              mtlsCertFingerprint: input.mtlsCertFingerprint.toLowerCase(),
+            },
+          },
+          id,
+        );
+        if (earlier) return { replay: await this.readAccount(tx, earlier) };
+      }
       try {
         const { rows } = await tx.query<AccountRow>(
           `INSERT INTO integration.service_accounts
@@ -90,7 +113,11 @@ export class IntegrationService {
         });
 
         return {
-          account: { ...mapAccount(rows[0]!), clientSecret: secret },
+          account: {
+            ...mapAccount(rows[0]!),
+            secretDelivery: 'issued' as const,
+            clientSecret: secret,
+          },
           epoch: Number(rows[0]!.token_epoch),
         };
       } catch (error) {
@@ -109,8 +136,20 @@ export class IntegrationService {
     // снимок свежий, аккаунта в нём нет. Найдено smoke-integration в Ф30 —
     // раньше маскировалось порядком прогонов (первое чтение снимка случалось
     // после создания клиентов).
+    if ('replay' in created) return created.replay!;
     this.accounts.markEpochLocally(id, created.epoch);
     return created.account;
+  }
+
+  /** Аккаунт для ответа на повтор: без секрета, с явной пометкой «уже выдан». */
+  private async readAccount(tx: Tx, accountId: string): Promise<ServiceAccountWithSecret> {
+    const { rows } = await tx.query<AccountRow>(
+      `SELECT id, client_id, name, scopes, status, created_at, rotated_at, token_epoch
+         FROM integration.service_accounts WHERE id = $1`,
+      [accountId],
+    );
+    if (!rows[0]) throw errors.notFound({ subject: 'service_account' });
+    return { ...mapAccount(rows[0]), secretDelivery: 'already_issued', clientSecret: null };
   }
 
   /**
@@ -118,9 +157,29 @@ export class IntegrationService {
    * периода», когда работают оба, здесь нет намеренно: два действующих секрета
    * означают, что скомпрометированный продолжает работать.
    */
-  async rotateSecret(ctx: RequestContext, accountId: string): Promise<ServiceAccountWithSecret> {
+  async rotateSecret(
+    ctx: RequestContext,
+    accountId: string,
+    key: string | null = null,
+  ): Promise<ServiceAccountWithSecret> {
     const secret = generateSecret();
     const rotated = await this.db.transaction(ctx, async (tx) => {
+      // Повтор тем же ключом (2.6, M164) — второй ротации нет: секрет, выданный первым
+      // ответом, остаётся действующим, событие и рубеж не повторяются.
+      if (key) {
+        const earlier = await claimRequestKey(
+          tx,
+          ctx,
+          {
+            key,
+            operation: 'integration.service_account.rotate',
+            objectId: accountId,
+            payload: {},
+          },
+          accountId,
+        );
+        if (earlier) return { replay: await this.readAccount(tx, earlier) };
+      }
       const { rows } = await tx.query<AccountRow>(
         `UPDATE integration.service_accounts
             SET client_secret_hash = $2,
@@ -156,10 +215,15 @@ export class IntegrationService {
       // Рубеж возвращается отдельным полем, а не через контракт: наружу число
       // рубежа не отдаётся — оно внутреннее и держателю токена не нужно.
       return {
-        account: { ...mapAccount(account), clientSecret: secret },
+        account: {
+          ...mapAccount(account),
+          secretDelivery: 'issued' as const,
+          clientSecret: secret,
+        },
         epoch: account.token_epoch,
       };
     });
+    if ('replay' in rotated) return rotated.replay!;
     // Снимок своего экземпляра обновляется ПОСЛЕ фиксации: внутри транзакции
     // откат оставил бы в памяти рубеж, которого в БД нет, и действующие токены
     // отвергались бы до истечения снимка.
