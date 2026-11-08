@@ -1095,6 +1095,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: UNIT-CORE-OUTBOX-FAILURES
+    file: apps/core/tests/outbox-failures.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 5
+    studied: code
+    studiedOn: 2026-11-08
+    needs: []
+    effects: ['модульные проверки без БД и брокера — побочных действий нет']
+    note: >-
+      Чувствительность подтверждена мутациями: неузнанный отказ как ошибка
+      события — 2 отказа; итог доставки без проверки аренды — 1 отказ.
+    purpose: 'Настоящий классификатор NatsClient на ошибках установленной библиотеки nats: PERMISSIONS_VIOLATION, AUTHORIZATION_VIOLATION, истёкший вход, ошибка API и нераспознанный отказ не расходуют попытку события (blocked); только отказ самого сообщения (размер, предмет, заголовок) засчитывается; потерянное подтверждение — unknown, недоступный брокер — broker. Доставка вебхука: аренда потеряна во время HTTP-запроса — итог не записан, проход остановлен, ложного успеха нет, вторая доставка не отправлена, своя оставшаяся строка освобождена.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
   - id: PRB-OUTBOX-NATS
     file: scripts/probe-outbox-nats.mjs
     command: node scripts/probe-outbox-nats.mjs
@@ -4633,6 +4651,7 @@ blocks:
       [
         PRB-MAIL-READINESS,
         PRB-OUTBOX-NATS,
+        UNIT-CORE-OUTBOX-FAILURES,
         PRB-EVENT-VERSIONS,
         PRB-EVENT-ARCHIVE,
         PRB-DNS-REBINDING,

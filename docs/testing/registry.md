@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 215; требований: 41
+- Проверок: 216; требований: 41
 
 ## Что защищено без участия человека
 
@@ -437,6 +437,38 @@
 | PRB-TOKEN-REVOCATION | `node scripts/probe-token-revocation.mjs` | 23 | вручную | — |
 | PRB-UPLOAD-QUOTA | `node scripts/probe-upload-quota.mjs` | 13 | вручную | — |
 
+### unit-test
+
+| Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
+| --- | --- | --- | --- | --- |
+| UNIT-CORE-OUTBOX-FAILURES | `npm run test -w apps/core` | 5 | CI | CI |
+| UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
+| UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
+| UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
+| UNIT-CORE-READINESS | `npm run test -w apps/core` | 14 | CI | CI |
+| UNIT-CORE-MONITORING-ACCOUNT | `npm run test -w apps/core` | 6 | CI | CI |
+| UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 24 | CI | CI |
+| UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
+| UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
+| UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |
+| UNIT-CORE-INTEGRATION | `npm run test -w apps/core` | 15 | CI | CI |
+| UNIT-CORE-LAB | `npm run test -w apps/core` | 21 | CI | CI |
+| UNIT-CORE-SECURITY | `npm run test -w apps/core` | 64 | CI | CI |
+| UNIT-CORE-CRYPTO-CONTRACT | `npm run test -w apps/core` | 22 | CI | CI |
+| UNIT-CORE-AVATAR-RETRY | `npm run test -w apps/core` | 4 | CI | CI |
+| UNIT-CORE-WEBHOOK-KEYS | `npm run test -w apps/core` | 2 | CI | CI |
+| UNIT-CORE-PRODUCTION-LOGIN | `npm run test -w apps/core` | 4 | CI | CI |
+| UNIT-CORE-SIGNING-KEYS | `npm run test -w apps/core` | 11 | CI | CI |
+| UNIT-CORE-CRYPTO-LIVE | `npm run test -w apps/core` | 9 | CI | CI |
+| UNIT-CORE-TECHDEBT | `npm run test -w apps/core` | 8 | CI | CI |
+| UNIT-CORE-VERIFICATION | `npm run test -w apps/core` | 14 | CI | CI |
+| UNIT-CORE-SECRET-FILES | `npm run test -w apps/core` | 11 | CI | CI |
+| UNIT-PKG-CABINET-GUARDED-SEND | `npm run test -w packages/cabinet` | 3 | CI | CI |
+| UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 22 | CI | CI |
+| UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |
+| UNIT-PKG-CONTRACTS-VISIBILITY | `npm run test -w packages/contracts` | 10 | CI | CI |
+| UNIT-PKG-UI-MARKDOWN | `npm run test -w packages/ui` | 10 | CI | CI |
+
 ### Браузерные проходы (`render-check-*`)
 
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
@@ -507,35 +539,4 @@
 | CI-LINT-MIGRATIONS | `npm run lint:migrations -w database` | 0 | CI | CI |
 | CI-SAST | `semgrep (задание sast)` | 0 | CI | CI |
 | CI-SECRETS | `gitleaks (задание secrets-scan)` | 0 | CI | CI |
-
-### unit-test
-
-| Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
-| --- | --- | --- | --- | --- |
-| UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
-| UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
-| UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
-| UNIT-CORE-READINESS | `npm run test -w apps/core` | 14 | CI | CI |
-| UNIT-CORE-MONITORING-ACCOUNT | `npm run test -w apps/core` | 6 | CI | CI |
-| UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 24 | CI | CI |
-| UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
-| UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
-| UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |
-| UNIT-CORE-INTEGRATION | `npm run test -w apps/core` | 15 | CI | CI |
-| UNIT-CORE-LAB | `npm run test -w apps/core` | 21 | CI | CI |
-| UNIT-CORE-SECURITY | `npm run test -w apps/core` | 64 | CI | CI |
-| UNIT-CORE-CRYPTO-CONTRACT | `npm run test -w apps/core` | 22 | CI | CI |
-| UNIT-CORE-AVATAR-RETRY | `npm run test -w apps/core` | 4 | CI | CI |
-| UNIT-CORE-WEBHOOK-KEYS | `npm run test -w apps/core` | 2 | CI | CI |
-| UNIT-CORE-PRODUCTION-LOGIN | `npm run test -w apps/core` | 4 | CI | CI |
-| UNIT-CORE-SIGNING-KEYS | `npm run test -w apps/core` | 11 | CI | CI |
-| UNIT-CORE-CRYPTO-LIVE | `npm run test -w apps/core` | 9 | CI | CI |
-| UNIT-CORE-TECHDEBT | `npm run test -w apps/core` | 8 | CI | CI |
-| UNIT-CORE-VERIFICATION | `npm run test -w apps/core` | 14 | CI | CI |
-| UNIT-CORE-SECRET-FILES | `npm run test -w apps/core` | 11 | CI | CI |
-| UNIT-PKG-CABINET-GUARDED-SEND | `npm run test -w packages/cabinet` | 3 | CI | CI |
-| UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 22 | CI | CI |
-| UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |
-| UNIT-PKG-CONTRACTS-VISIBILITY | `npm run test -w packages/contracts` | 10 | CI | CI |
-| UNIT-PKG-UI-MARKDOWN | `npm run test -w packages/ui` | 10 | CI | CI |
 

@@ -4,6 +4,19 @@ import { EVENT_STREAM } from '@fifth/contracts';
 import { getEnv } from '../config/env';
 
 /**
+ * Коды библиотеки nats (ErrorCode), которые относятся к самому сообщению: его размеру,
+ * предмету, заголовкам, содержимому. Только они расходуют попытку события.
+ */
+const EVENT_FAULTS = new Set([
+  'MAX_PAYLOAD_EXCEEDED',
+  'BAD_SUBJECT',
+  'BAD_HEADER',
+  'BAD_PAYLOAD',
+  'BAD_JSON',
+  'INVALID_PAYLOAD',
+]);
+
+/**
  * Подключение к NATS JetStream.
  *
  * JetStream, а не обычный NATS, выбран не за буквы в названии: обычная
@@ -37,9 +50,13 @@ export class NatsClient implements OnModuleDestroy {
    *   * `unknown` — запрос ушёл, подтверждение не пришло: брокер мог сообщение принять.
    *     Повтор — с тем же messageId (идентификатор события): дубль отсечёт окно
    *     дедупликации стрима. Попытку не засчитываем;
-   *   * `event` — отказ про само событие (размер, предмет): попытка засчитывается.
+   *   * `event` — ПОЛОЖИТЕЛЬНО установленный отказ про само событие (размер, предмет,
+   *     заголовки, полезная нагрузка): только здесь попытка засчитывается;
+   *   * `blocked` — всё прочее: права, вход, конфигурация, нераспознанный отказ. Изменением
+   *     события такое не исправить — попытку не засчитываем, публикатор встаёт на паузу и
+   *     громко сообщает код (Тэнк 08.11: PERMISSIONS_VIOLATION не должен выжечь очередь).
    */
-  classifyPublishFailure(error: unknown): 'broker' | 'unknown' | 'event' {
+  classifyPublishFailure(error: unknown): 'broker' | 'unknown' | 'event' | 'blocked' {
     const code = String((error as { code?: unknown })?.code ?? '');
     if (!this.connection || this.connection.isClosed() || !this.linkUp) return 'broker';
     if (code === 'TIMEOUT') return 'unknown';
@@ -52,7 +69,8 @@ export class NatsClient implements OnModuleDestroy {
     ) {
       return 'broker';
     }
-    return 'event';
+    if (EVENT_FAULTS.has(code)) return 'event';
+    return 'blocked';
   }
 
   /**

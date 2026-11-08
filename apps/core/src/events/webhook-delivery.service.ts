@@ -93,8 +93,19 @@ export class WebhookDeliveryService implements OnModuleInit {
         await this.release(traceId, batch.slice(i + 1));
         break;
       }
-      const ok = await this.deliverOne(traceId, item);
-      if (ok) delivered += 1;
+      const outcome = await this.deliverOne(traceId, item);
+      if (outcome === 'lease_lost') {
+        // Итог не записан: захват ушёл, пока шёл запрос. Успехом это не считается, и дальше
+        // проход не идёт — следующие строки могли уйти другому исполнителю.
+        this.logger.warn({
+          msg: 'аренда доставки потеряна во время обработки, проход остановлен',
+          deliveryId: item.id,
+          eventType: item.event_type,
+        });
+        await this.release(traceId, batch.slice(i + 1));
+        break;
+      }
+      if (outcome === 'delivered') delivered += 1;
     }
     return delivered;
   }
@@ -188,17 +199,18 @@ export class WebhookDeliveryService implements OnModuleInit {
     });
   }
 
-  private async deliverOne(traceId: string, item: DeliveryRow): Promise<boolean> {
+  /** Итог одной доставки: `lease_lost` — завершающая запись не прошла, захват уже не наш. */
+  private async deliverOne(traceId: string, item: DeliveryRow): Promise<DeliveryOutcome> {
     // Граница контура проверяется ДО подготовки запроса и до расшифровки
     // секрета подписи: «не отправляем» должно означать, что наружу не ушло
     // ничего и что секрет ради этого даже не доставали.
     if (getEnv().WEBHOOK_DELIVERY_MODE === 'capture') {
-      await this.markWithheld(
+      const kept = await this.markWithheld(
         traceId,
         item,
         'контур не выпускает наружу (WEBHOOK_DELIVERY_MODE=capture)',
       );
-      return false;
+      return kept ? 'not_delivered' : 'lease_lost';
     }
     const envelope = buildEnvelope(toOutboxRow(item));
     const body = JSON.stringify(envelope);
@@ -232,23 +244,24 @@ export class WebhookDeliveryService implements OnModuleInit {
       // Перенаправления не выполняются: 3xx считается неуспехом доставки, а не
       // приглашением сходить по адресу из Location.
       if (response.status >= 200 && response.status < 300) {
-        await this.markDelivered(traceId, item, response.status);
-        return true;
+        return (await this.markDelivered(traceId, item, response.status))
+          ? 'delivered'
+          : 'lease_lost';
       }
-      await this.markFailed(traceId, item, `HTTP ${response.status}`, response.status);
-      return false;
+      return (await this.markFailed(traceId, item, `HTTP ${response.status}`, response.status))
+        ? 'not_delivered'
+        : 'lease_lost';
     } catch (error) {
       if (isKmsUnavailable(error)) {
-        await this.postponeForKeys(traceId, item);
-        return false;
+        return (await this.postponeForKeys(traceId, item)) ? 'not_delivered' : 'lease_lost';
       }
-      await this.markFailed(
+      const kept = await this.markFailed(
         traceId,
         item,
         error instanceof Error ? error.message : String(error),
         null,
       );
-      return false;
+      return kept ? 'not_delivered' : 'lease_lost';
     }
   }
 
@@ -256,17 +269,21 @@ export class WebhookDeliveryService implements OnModuleInit {
    * Служба ключей недоступна: получатель тут ни при чём, и попытка не расходуется. Иначе короткий
    * отказ OpenBao исчерпал бы доставки, которые дошли бы через минуту.
    */
-  private async postponeForKeys(traceId: string, item: DeliveryRow): Promise<void> {
-    await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
-      await tx.query(
+  private async postponeForKeys(traceId: string, item: DeliveryRow): Promise<boolean> {
+    const kept = await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
+      const { rowCount } = await tx.query(
         `UPDATE integration.webhook_deliveries
             SET status = 'failed', next_retry_at = now() + make_interval(secs => $2),
                 lease_id = NULL, lease_until = NULL
           WHERE id = $1 AND lease_id = $3::uuid AND lease_until > now()`,
         [item.id, KEYS_RETRY_SECONDS, item.lease_id],
       );
+      return (rowCount ?? 0) === 1;
     });
-    this.logger.warn({ msg: 'доставка отложена: служба ключей недоступна', deliveryId: item.id });
+    if (kept) {
+      this.logger.warn({ msg: 'доставка отложена: служба ключей недоступна', deliveryId: item.id });
+    }
+    return kept;
   }
 
   /**
@@ -279,8 +296,8 @@ export class WebhookDeliveryService implements OnModuleInit {
    *
    * Попытка не засчитывается: её не было.
    */
-  private async markWithheld(traceId: string, item: DeliveryRow, reason: string): Promise<void> {
-    await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
+  private async markWithheld(traceId: string, item: DeliveryRow, reason: string): Promise<boolean> {
+    const kept = await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
       const { rowCount } = await tx.query(
         `UPDATE integration.webhook_deliveries
             SET status = 'withheld', withheld_reason = $2, next_retry_at = NULL,
@@ -288,20 +305,23 @@ export class WebhookDeliveryService implements OnModuleInit {
           WHERE id = $1 AND lease_id = $3::uuid AND lease_until > now()`,
         [item.id, reason, item.lease_id],
       );
-      if ((rowCount ?? 0) === 0) {
-        this.logger.warn({ msg: 'перехват не записан: аренда уже не наша', deliveryId: item.id });
-      }
+      return (rowCount ?? 0) === 1;
     });
+    if (!kept) {
+      this.logger.warn({ msg: 'перехват не записан: аренда уже не наша', deliveryId: item.id });
+      return false;
+    }
     this.logger.log({
       msg: 'доставка наружу перехвачена контуром',
       deliveryId: item.id,
       eventType: item.event_type,
     });
+    return true;
   }
 
-  private async markDelivered(traceId: string, item: DeliveryRow, code: number): Promise<void> {
+  private async markDelivered(traceId: string, item: DeliveryRow, code: number): Promise<boolean> {
     const id = item.id;
-    await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
+    return this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
       // Результат пишется, только пока строка НАША. Без этого условия
       // экземпляр, у которого аренду уже перехватили, затирал бы итог того,
       // кто отправляет её сейчас (SEC-06).
@@ -314,7 +334,9 @@ export class WebhookDeliveryService implements OnModuleInit {
       );
       if ((rowCount ?? 0) === 0) {
         this.logger.warn({ msg: 'итог доставки не записан: аренда уже не наша', deliveryId: id });
+        return false;
       }
+      return true;
     });
   }
 
@@ -323,12 +345,12 @@ export class WebhookDeliveryService implements OnModuleInit {
     item: DeliveryRow,
     reason: string,
     code: number | null,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const attempts = item.attempts + 1;
     const exhausted = attempts >= MAX_ATTEMPTS;
     const delaySeconds = Math.min(2 ** attempts, MAX_BACKOFF_SECONDS);
 
-    await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
+    const kept = await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
       const { rowCount } = await tx.query(
         `UPDATE integration.webhook_deliveries
             SET status = $3, attempts = $2, response_code = $4,
@@ -338,13 +360,15 @@ export class WebhookDeliveryService implements OnModuleInit {
           WHERE id = $1 AND lease_id = $6::uuid AND lease_until > now()`,
         [item.id, attempts, exhausted ? 'exhausted' : 'failed', code, delaySeconds, item.lease_id],
       );
-      if ((rowCount ?? 0) === 0) {
-        this.logger.warn({
-          msg: 'отказ доставки не записан: аренда уже не наша',
-          deliveryId: item.id,
-        });
-      }
+      return (rowCount ?? 0) === 1;
     });
+    if (!kept) {
+      this.logger.warn({
+        msg: 'отказ доставки не записан: аренда уже не наша',
+        deliveryId: item.id,
+      });
+      return false;
+    }
 
     this.logger[exhausted ? 'error' : 'warn']({
       msg: exhausted ? 'доставка вебхука прекращена' : 'доставка вебхука отложена',
@@ -354,8 +378,11 @@ export class WebhookDeliveryService implements OnModuleInit {
       // Причина — без тела ответа получателя: оно чужое и может содержать что угодно.
       reason: reason.slice(0, 200),
     });
+    return true;
   }
 }
+
+type DeliveryOutcome = 'delivered' | 'not_delivered' | 'lease_lost';
 
 /**
  * Срок аренды ОДНОЙ доставки.

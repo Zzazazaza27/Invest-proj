@@ -170,17 +170,30 @@ export class OutboxPublisherService implements OnModuleInit {
   private pausedUntil = 0;
   private pauseMs = 0;
 
-  private pause(kind: 'broker' | 'unknown', id: string, error: unknown): void {
+  private pause(kind: 'broker' | 'unknown' | 'blocked', id: string, error: unknown): void {
     this.pauseMs = Math.min(Math.max(this.pauseMs * 2, 5_000), MAX_BACKOFF_SECONDS * 1000);
     this.pausedUntil = Date.now() + this.pauseMs;
+    const detail = {
+      id,
+      pauseSeconds: Math.round(this.pauseMs / 1000),
+      code: String((error as { code?: unknown })?.code ?? ''),
+      error,
+    };
+    if (kind === 'blocked') {
+      // Права, вход, конфигурация или нераспознанный отказ: событие не виновато, но и само
+      // не пройдёт — нужен человек. Ошибкой, чтобы сигнал не потерялся среди предупреждений.
+      this.logger.error({
+        msg: 'публикация событий заблокирована отказом брокера не по вине события: попытки не расходуются',
+        ...detail,
+      });
+      return;
+    }
     this.logger.warn({
       msg:
         kind === 'broker'
           ? 'брокер событий недоступен: публикация на паузе, попытки событий не расходуются'
           : 'подтверждение публикации не получено: событие повторится с тем же идентификатором',
-      id,
-      pauseSeconds: Math.round(this.pauseMs / 1000),
-      error,
+      ...detail,
     });
   }
 

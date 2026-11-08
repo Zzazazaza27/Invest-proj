@@ -48,8 +48,8 @@ const item = {
   created_at: new Date(0),
 };
 
-const deliver = (): Promise<boolean> =>
-  (service as unknown as { deliverOne: (t: string, i: unknown) => Promise<boolean> }).deliverOne(
+const deliver = (): Promise<string> =>
+  (service as unknown as { deliverOne: (t: string, i: unknown) => Promise<string> }).deliverOne(
     't',
     item,
   );
@@ -75,7 +75,7 @@ beforeEach(() => {
 describe('Доставка вебхука и служба ключей', () => {
   it('отказ службы ключей откладывает доставку, попытка не тратится', async () => {
     failure = errors.upstreamUnavailable('kms');
-    expect(await deliver()).toBe(false);
+    expect(await deliver()).toBe('not_delivered');
     expect(updates).toHaveLength(1);
     expect(updates[0]!.sql).not.toMatch(/attempts/);
     expect(updates[0]!.sql).toMatch(/next_retry_at/);
@@ -83,7 +83,7 @@ describe('Доставка вебхука и служба ключей', () => {
 
   it('порча секрета остаётся обычным сбоем: попытка тратится', async () => {
     failure = new Error('повреждённые данные');
-    expect(await deliver()).toBe(false);
+    expect(await deliver()).toBe('not_delivered');
     expect(updates[0]!.sql).toMatch(/attempts = \$2/);
     expect(updates[0]!.params[1]).toBe(4);
   });
