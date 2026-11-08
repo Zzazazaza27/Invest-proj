@@ -31,7 +31,12 @@ const REASON: Record<string, string> = {
   security: 'безопасность',
   other: 'другое',
 };
-const TITLE: Record<FunctionGroup, string> = { files: 'Файлы', mail: 'Почта' };
+const TITLE: Record<FunctionGroup, string> = {
+  files: 'Файлы',
+  mail: 'Почта',
+  events: 'События и интеграции',
+};
+const at = (iso: string | null) => (iso ? formatDate(iso) : '—');
 
 export function AvailabilityCard() {
   const [groups, setGroups] = useState<AdminGroupStatus[] | null>(null);
@@ -81,6 +86,9 @@ function GroupRow({
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
   const isMail = group.group === 'mail';
+  const isEvents = group.group === 'events';
+  /** Один режим ограничения: у «Почты» и «Событий» ручной запрет закрывает группу целиком. */
+  const single = isMail || isEvents;
 
   async function act(work: () => Promise<AdminGroupStatus>) {
     setBusy(true);
@@ -100,7 +108,22 @@ function GroupRow({
       {error ? <div className="alert alert--error">{error}</div> : null}
       <p>
         {TITLE[group.group]}: <strong data-availability-state>{STATE[group.status.state]}</strong>.{' '}
-        {isMail ? (
+        {isEvents && group.contours ? (
+          <>
+            Публикация —{' '}
+            <span data-availability-publish>{HEALTH[group.contours.publish.health]}</span>, доставка
+            вебхуков —{' '}
+            <span data-availability-delivery>{HEALTH[group.contours.delivery.health]}</span>
+            {group.contours.delivery.egressSuspected ? (
+              <>
+                {' '}
+                (предполагаемый общий сбой сети, проба после{' '}
+                {at(group.contours.delivery.egressPausedUntil)})
+              </>
+            ) : null}
+            ; адресов на паузе: {group.contours.delivery.pausedDestinations}.
+          </>
+        ) : isMail ? (
           <>
             Транспорт — <span data-availability-write>{HEALTH[group.dependency.write]}</span>{' '}
             <span className="small muted">
@@ -115,10 +138,19 @@ function GroupRow({
           </>
         )}
       </p>
+      {isEvents && group.backlog ? (
+        <p className="small" data-availability-backlog={group.backlog.growing ? 'growing' : 'ok'}>
+          Очередь{group.backlog.growing ? ' растёт' : ''}: событий к публикации{' '}
+          {group.backlog.outbox.unpublished} (старейшее {at(group.backlog.outbox.oldestAt)});
+          доставок — ожидают {group.backlog.deliveries.waiting}, отложены{' '}
+          {group.backlog.deliveries.postponed}, исчерпаны {group.backlog.deliveries.exhausted}{' '}
+          (старейшая {at(group.backlog.deliveries.oldestAt)}). Очередь — не признак отказа.
+        </p>
+      ) : null}
       {group.restriction ? (
         <p data-availability-restriction={group.restriction.mode}>
           Ручное ограничение:{' '}
-          {group.restriction.mode === 'read_only' && !isMail ? 'только чтение' : 'недоступна'} (
+          {group.restriction.mode === 'read_only' && !single ? 'только чтение' : 'недоступна'} (
           {REASON[group.restriction.reasonCode]}, {formatDate(group.restriction.setAt)}) —{' '}
           {group.restriction.note}. Автоматическое восстановление его не снимает.
         </p>
@@ -128,7 +160,7 @@ function GroupRow({
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {group.restriction ? null : (
           <>
-            {isMail ? null : (
+            {single ? null : (
               <select value={mode} onChange={(e) => setMode(e.target.value as RestrictionMode)}>
                 <option value="read_only">Только чтение</option>
                 <option value="unavailable">Недоступна</option>
@@ -169,8 +201,8 @@ function GroupRow({
             onClick={() =>
               void act(() =>
                 api.restrictGroup(group.group, {
-                  // У «Почты» один режим — отправка: ограничение закрывает её целиком.
-                  mode: isMail ? 'unavailable' : mode,
+                  // У «Почты» и «Событий» ограничение закрывает группу целиком.
+                  mode: single ? 'unavailable' : mode,
                   reasonCode,
                   note: note.trim(),
                 }),

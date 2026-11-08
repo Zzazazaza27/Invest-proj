@@ -1,4 +1,4 @@
-import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, Optional, type OnModuleInit } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import { uuidv7 } from '@fifth/contracts';
 import { BackgroundJobsService } from '../background/background-jobs.service';
@@ -6,6 +6,8 @@ import { resultOf } from '../background/job';
 import { claimLeases, completeUnderLease, renewLease, type Lease } from '../background/lease';
 import { getEnv } from '../config/env';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { AvailabilityService } from '../availability/availability.service';
+import { brokerBreaker } from './events-health';
 import { NatsClient } from './nats.client';
 
 const OUTBOX = 'audit.outbox_events';
@@ -37,6 +39,7 @@ export class OutboxPublisherService implements OnModuleInit {
     private readonly db: Database,
     private readonly nats: NatsClient,
     private readonly jobs: BackgroundJobsService,
+    @Optional() private readonly availability?: AvailabilityService,
   ) {}
 
   onModuleInit(): void {
@@ -99,6 +102,9 @@ export class OutboxPublisherService implements OnModuleInit {
     const traceId = `outbox-${randomUUID()}`;
     // Брокер недоступен: пачку не берём вовсе, события ждут в outbox без расхода попыток.
     if (Date.now() < this.pausedUntil) return 0;
+    // Ручной запрет группы «События» (4.11): публикация стоит, события копятся. Отказ
+    // доставки вебхуков публикацию не останавливает — контуры независимы.
+    if (this.availability && (await this.availability.restrictionOf('events'))) return 0;
 
     const { batch, leases } = await this.db.transaction(SYSTEM(traceId), async (tx) =>
       this.lockBatch(tx, env.OUTBOX_BATCH_SIZE),
@@ -140,11 +146,13 @@ export class OutboxPublisherService implements OnModuleInit {
         }
         // Брокер недоступен или подтверждение потеряно: попытку не засчитываем, событие и
         // оставшаяся пачка освобождаются, публикатор встаёт на паузу.
+        brokerBreaker().record('write', false);
         this.pause(kind, event.id, error);
         await this.release(traceId, rest());
         break;
       }
       this.resume();
+      brokerBreaker().record('write', true);
       if (!(await this.markPublished(traceId, lease, seq))) {
         // Опубликовано, но захват уже не наш: отметку поставит новый владелец — его
         // повтор с тем же messageId дубля не даст. Дальше не идём.

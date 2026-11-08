@@ -240,8 +240,11 @@ export async function assertPublicDestination(rawUrl: string): Promise<string[]>
   try {
     const resolved = await lookupWithDeadline(host);
     addresses = resolved.map((entry) => entry.address);
-  } catch {
-    throw errors.validation([{ path: 'url', message: 'имя не разрешается' }]);
+  } catch (error) {
+    // Код отказа DNS — доставке (4.11): временный сбой резолвера и «имени нет» — разные отказы.
+    throw Object.assign(errors.validation([{ path: 'url', message: 'имя не разрешается' }]), {
+      dnsCode: String((error as { code?: unknown })?.code ?? 'EUNKNOWN'),
+    });
   }
   if (addresses.length === 0 || addresses.some(isForbiddenAddress)) {
     // Достаточно ОДНОГО запрещённого адреса: балансировщик может вернуть
@@ -267,7 +270,10 @@ async function lookupWithDeadline(host: string): Promise<{ address: string }[]> 
       lookup(host, { all: true }),
       new Promise<never>((_, reject) => {
         timer = setTimeout(
-          () => reject(new Error('DNS lookup превысил предел времени')),
+          () =>
+            reject(
+              Object.assign(new Error('DNS lookup превысил предел времени'), { code: 'ETIMEOUT' }),
+            ),
           DNS_LOOKUP_TIMEOUT_MS,
         );
         timer.unref();

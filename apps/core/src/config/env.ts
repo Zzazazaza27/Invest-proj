@@ -252,6 +252,9 @@ const RawEnvSchema = z.object({
   // Очередь служебных писем (4.11, M162): частота прохода и предел попыток по вине письма.
   MAIL_QUEUE_POLL_MS: z.coerce.number().int().min(500).max(600_000).default(5_000),
   MAIL_QUEUE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(5),
+  // Очередь «Событий» (4.11): порог числа незавершённых и возраста старейшей — «растёт».
+  EVENTS_BACKLOG_WARN_COUNT: z.coerce.number().int().min(1).default(1_000),
+  EVENTS_BACKLOG_WARN_AGE_S: z.coerce.number().int().min(10).default(900),
   /**
    * Уведомлять ли служебный ящик о новых регистрациях.
    *

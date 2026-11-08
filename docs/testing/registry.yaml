@@ -987,6 +987,30 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
+  - id: PRB-WEBHOOK-DESTINATION-PAUSE
+    file: scripts/probe-webhook-delivery.mjs
+    command: node scripts/probe-webhook-delivery.mjs
+    kind: probe
+    level: интеграционный
+    runner: manual
+    asserts: 15
+    needs: [db]
+    effects:
+      [
+        'на время пробы останавливает ядро стенда, в конце — stand:up --no-build --restart-core',
+        'создаёт сервисный аккаунт, подписки *.probe.test, события и доставки; всё убирает',
+      ]
+    studied: code
+    studiedOn: 2026-11-08
+    note: >-
+      Блок 4, 4.11, пакет 5 раздела 01. Настоящая служба доставки из apps/core/dist,
+      настоящая БД и аренда; подставлен только исходящий HTTP (SSRF-защита не ослаблена,
+      наружу ничего не уходит). Чувствительность подтверждена: без условия «пробу никто не
+      держит» два исполнителя проверяют узел дважды — 2 отказа.
+    purpose: 'Пауза по получателю: отказ узла расходует попытку одной доставки, остальные доставки узла ждут без попыток, другой узел в том же проходе получает свои; пауза переживает перезапуск; по истечении — одна проба на двух одновременных исполнителей, отказ пробы удваивает паузу и расходует попытку только пробы; успех снимает паузу; три подписки на один адрес — один узел; предполагаемый общий сбой — пауза, затем одна проба; открытый размыкатель брокера доставку не останавливает.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
   - id: PRB-CSRF-BINDING
     file: scripts/probe-csrf-binding.mjs
     command: node scripts/probe-csrf-binding.mjs
@@ -3936,6 +3960,21 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
+  - id: UNIT-CORE-EVENTS-HEALTH
+    file: apps/core/tests/events-health.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 12
+    studied: code
+    studiedOn: 2026-11-08
+    note: >-
+      Блок 4, 4.11, пакет 5 раздела 01.
+    purpose: 'Чей отказ доставки: транспорт до передачи тела, неизвестно после (не отказ получателя), сертификат и «имени нет» — получатель, временный сбой DNS — транспорт, служба ключей — наша; узел «хост:порт» одинаков для подписок одного адреса; общий сигнал считает разные узлы и только транспорт, у паузы есть выход через одну пробу, отказ пробы удваивает до предела; контуры независимы, ручной запрет останавливает оба.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
   - id: UNIT-CORE-STORAGE-BREAKER
     file: apps/core/tests/storage-breaker.test.ts
     command: npm run test -w apps/core
@@ -4811,6 +4850,8 @@ blocks:
         UNIT-CORE-MAIL-OUTCOMES,
         PRB-MAIL-GROUP,
         UNIT-CORE-MAIL-REGRESSIONS,
+        UNIT-CORE-EVENTS-HEALTH,
+        PRB-WEBHOOK-DESTINATION-PAUSE,
         CHK-MONITOR-APP-PROBE,
         CHK-MONITORING-ACCOUNT,
         CHK-LOGS-ARCHIVE,

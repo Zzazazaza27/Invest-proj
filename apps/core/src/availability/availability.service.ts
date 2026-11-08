@@ -20,6 +20,8 @@ import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
 import { Database, type RequestContext } from '../db/unit-of-work';
 import { MailTransport } from '../comms/mail.transport';
+import { brokerBreaker, egressMonitor } from '../events/events-health';
+import { NatsClient } from '../events/nats.client';
 import { assertCapability } from '../identity/capabilities.service';
 import { PROBE_PREFIX, S3Service } from '../storage/s3.service';
 import {
@@ -33,8 +35,9 @@ import {
 import { mailBreaker } from './mail-health';
 import { storageBreaker } from './storage-health';
 
-const GROUPS = ['files', 'mail'] as const satisfies readonly FunctionGroup[];
-const breakerFor = (group: FunctionGroup) => (group === 'mail' ? mailBreaker() : storageBreaker());
+const GROUPS = ['files', 'mail', 'events'] as const satisfies readonly FunctionGroup[];
+const breakerFor = (group: FunctionGroup) =>
+  group === 'mail' ? mailBreaker() : group === 'events' ? brokerBreaker() : storageBreaker();
 
 /** Контрольный объект чтения: известное маленькое содержимое, общее для всех экземпляров. */
 export const READ_CONTROL_KEY = `${PROBE_PREFIX}read-control`;
@@ -73,6 +76,7 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
   private readonly local: Record<FunctionGroup, Record<GroupMode, Observation | null>> = {
     files: { read: null, write: null },
     mail: { read: null, write: null },
+    events: { read: null, write: null },
   };
   private readonly restriction: Partial<
     Record<FunctionGroup, { value: RestrictionRow | null; at: number }>
@@ -84,7 +88,15 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     private readonly jobs: BackgroundJobsService,
     private readonly audit: AuditRepository,
     @Optional() private readonly mail?: MailTransport,
+    @Optional() private readonly nats?: NatsClient,
   ) {}
+
+  private backlogGrowing = false;
+
+  /** Ручное ограничение группы (режим) или `null`. Кэш — те же 5 с. */
+  async restrictionOf(group: FunctionGroup): Promise<'read_only' | 'unavailable' | null> {
+    return (await this.currentRestriction(group))?.mode ?? null;
+  }
 
   get instance(): string {
     return this.jobs.instanceId;
@@ -114,7 +126,49 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
 
   /** Один проход служебных проверок всех групп. Возвращает число исправных режимов. */
   async observe(): Promise<number> {
-    return (await this.observeFiles()) + (await this.observeMail());
+    return (await this.observeFiles()) + (await this.observeMail()) + (await this.observeEvents());
+  }
+
+  /**
+   * Служебная проверка группы «События»: два контура — два режима наблюдения.
+   * «Запись» — публикация: брокер отвечает и стрим есть. «Чтение» — доставка вебхуков:
+   * нет предполагаемого общего сбоя исходящей сети (наблюдается по самим доставкам —
+   * отдельного внешнего адреса проверки нет).
+   */
+  async observeEvents(): Promise<number> {
+    const env = getEnv();
+    let publish: { ok: boolean; reason: GroupReason };
+    if (!this.nats?.enabled) {
+      publish = { ok: false, reason: 'not_configured' };
+    } else {
+      try {
+        await withTimeout(this.nats.checkBroker(), env.AVAILABILITY_PROBE_TIMEOUT_MS);
+        brokerBreaker().probe('write', true);
+        publish = { ok: true, reason: 'ok' };
+      } catch {
+        publish = { ok: false, reason: 'dependency_failure' };
+      }
+    }
+    const egress = egressMonitor().state();
+    const delivery: { ok: boolean; reason: GroupReason } = egress.suspected
+      ? { ok: false, reason: 'dependency_failure' }
+      : { ok: true, reason: 'ok' };
+    await this.store('events', { write: publish, read: delivery });
+    // Рост очереди — в журнал только при смене состояния, а не на каждом проходе.
+    const detail = await this.eventsDetail(
+      delivery.ok ? 'ok' : 'fail',
+      publish.ok ? 'ok' : 'fail',
+    ).catch(() => null);
+    const growing = detail?.backlog?.growing ?? false;
+    if (growing !== this.backlogGrowing) {
+      this.backlogGrowing = growing;
+      this.logger[growing ? 'warn' : 'log']({
+        msg: growing ? 'очередь событий растёт' : 'очередь событий в пределах порога',
+        outbox: detail?.backlog?.outbox.unpublished,
+        deliveries: detail?.backlog?.deliveries,
+      });
+    }
+    return Number(publish.ok) + Number(delivery.ok);
   }
 
   /** Служебная проверка группы «Почта»: транспорт без письма. */
@@ -345,6 +399,81 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
         fresh: isFresh(o, now),
         stopped: o.stopped,
       })),
+      ...(group === 'events' ? await this.eventsDetail(read.health, write.health) : {}),
+    };
+  }
+
+  /** Контуры «Событий» и очередь — очередь отдельно от доступности. */
+  private async eventsDetail(
+    delivery: AdminGroupStatus['dependency']['read'],
+    publish: AdminGroupStatus['dependency']['write'],
+  ): Promise<Pick<AdminGroupStatus, 'contours' | 'backlog'>> {
+    const egress = egressMonitor().state();
+    const env = getEnv();
+    const backlog = await this.db
+      .asServiceRole('app_integration', { traceId: 'availability-backlog' }, async (tx) => {
+        const { rows: o } = await tx.query<{ n: number; oldest: Date | null }>(
+          `SELECT count(*)::int AS n, min(created_at) AS oldest
+             FROM audit.outbox_events WHERE published_at IS NULL`,
+        );
+        const { rows: d } = await tx.query<{
+          waiting: number;
+          postponed: number;
+          exhausted: number;
+          oldest: Date | null;
+          paused: number;
+        }>(
+          `SELECT
+             count(*) FILTER (WHERE d.status IN ('queued', 'failed')
+                                AND (d.next_retry_at IS NULL OR d.next_retry_at <= now())
+                                AND (w.destination IS NULL OR w.paused_until <= now()))::int AS waiting,
+             count(*) FILTER (WHERE d.status IN ('queued', 'failed')
+                                AND ((d.next_retry_at > now())
+                                     OR (w.paused_until > now())))::int AS postponed,
+             count(*) FILTER (WHERE d.status = 'exhausted')::int AS exhausted,
+             min(d.created_at) FILTER (WHERE d.status IN ('queued', 'failed')) AS oldest,
+             (SELECT count(*)::int FROM integration.webhook_destinations
+               WHERE paused_until > now() OR probe_lease_id IS NOT NULL) AS paused
+             FROM integration.webhook_deliveries d
+             JOIN integration.webhook_endpoints e ON e.id = d.endpoint_id
+             LEFT JOIN integration.webhook_destinations w ON w.destination = e.destination`,
+        );
+        return { o: o[0]!, d: d[0]! };
+      })
+      .catch(() => null);
+    const oldest = [backlog?.o.oldest, backlog?.d.oldest].filter((x): x is Date => Boolean(x));
+    const ageSeconds =
+      oldest.length > 0 ? (Date.now() - Math.min(...oldest.map((x) => x.getTime()))) / 1000 : 0;
+    const count = backlog ? backlog.o.n + backlog.d.waiting + backlog.d.postponed : 0;
+    const growing =
+      count > env.EVENTS_BACKLOG_WARN_COUNT || ageSeconds > env.EVENTS_BACKLOG_WARN_AGE_S;
+    return {
+      contours: {
+        publish: { health: publish, paused: brokerBreaker().isOpen('write') },
+        delivery: {
+          health: delivery,
+          egressSuspected: egress.suspected,
+          egressPausedUntil: egress.pausedUntil ? new Date(egress.pausedUntil).toISOString() : null,
+          pausedDestinations: backlog?.d.paused ?? 0,
+        },
+      },
+      ...(backlog
+        ? {
+            backlog: {
+              outbox: {
+                unpublished: backlog.o.n,
+                oldestAt: backlog.o.oldest?.toISOString() ?? null,
+              },
+              deliveries: {
+                waiting: backlog.d.waiting,
+                postponed: backlog.d.postponed,
+                exhausted: backlog.d.exhausted,
+                oldestAt: backlog.d.oldest?.toISOString() ?? null,
+              },
+              growing,
+            },
+          }
+        : {}),
     };
   }
 

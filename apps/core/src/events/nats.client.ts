@@ -161,6 +161,17 @@ export class NatsClient implements OnModuleDestroy {
    * стрима нет — громкое предупреждение с именем команды, которая его создаёт.
    * Возвращает `null`, если контур публикации выключен или брокер недоступен.
    */
+  /**
+   * Служебная проверка брокера (4.11): JetStream отвечает и стрим событий есть. Бросает при
+   * отказе, в журнал не пишет — проверка идёт каждые 30 с.
+   */
+  async checkBroker(): Promise<void> {
+    if (!this.enabled) throw new Error('брокер не настроен');
+    const js = await this.ensureJetStream();
+    const jsm = await js.jetstreamManager();
+    await jsm.streams.info(EVENT_STREAM);
+  }
+
   async streamStatus(): Promise<{ stream: string; messages: number; subjects: string[] } | null> {
     if (!this.enabled) return null;
     try {

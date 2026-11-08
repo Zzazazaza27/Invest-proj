@@ -9,7 +9,7 @@ import { IsoDateTimeSchema } from '../common/primitives';
  * Первая подключённая группа — «Файлы» (хранилище). «Почта» и «События» — следующими
  * пакетами.
  */
-export const FUNCTION_GROUPS = ['files', 'mail'] as const;
+export const FUNCTION_GROUPS = ['files', 'mail', 'events'] as const;
 export const FunctionGroupSchema = z.enum(FUNCTION_GROUPS);
 export type FunctionGroup = z.infer<typeof FunctionGroupSchema>;
 
@@ -96,5 +96,42 @@ export const AdminGroupStatusSchema = z.object({
       stopped: z.boolean(),
     }),
   ),
+  /**
+   * Только у «Событий»: два независимых контура. `publish` — брокер, `delivery` — исходящая
+   * сеть (предполагаемый общий сбой в экземпляре) и узлы назначения на паузе.
+   */
+  contours: z
+    .object({
+      publish: z.object({ health: DependencyHealthSchema, paused: z.boolean() }),
+      delivery: z.object({
+        health: DependencyHealthSchema,
+        egressSuspected: z.boolean(),
+        egressPausedUntil: IsoDateTimeSchema.nullable(),
+        pausedDestinations: z.number().int().nonnegative(),
+      }),
+    })
+    .optional(),
+  /**
+   * Только у «Событий»: очередь — отдельно от доступности. Большая очередь сама по себе не
+   * означает отказа транспорта. Возраст — по старейшей незавершённой записи.
+   */
+  backlog: z
+    .object({
+      outbox: z.object({
+        unpublished: z.number().int().nonnegative(),
+        oldestAt: IsoDateTimeSchema.nullable(),
+      }),
+      deliveries: z.object({
+        /** Готовы к отправке сейчас. */
+        waiting: z.number().int().nonnegative(),
+        /** Ждут срока повтора или паузы своего узла. */
+        postponed: z.number().int().nonnegative(),
+        exhausted: z.number().int().nonnegative(),
+        oldestAt: IsoDateTimeSchema.nullable(),
+      }),
+      /** Превышен порог числа или возраста (EVENTS_BACKLOG_WARN_*). */
+      growing: z.boolean(),
+    })
+    .optional(),
 });
 export type AdminGroupStatus = z.infer<typeof AdminGroupStatusSchema>;

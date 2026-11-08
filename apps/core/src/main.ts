@@ -404,6 +404,7 @@ async function bootstrap(): Promise<void> {
       return {
         files: (await availability.localStatus('files')).state,
         mail: (await availability.localStatus('mail')).state,
+        events: (await availability.localStatus('events')).state,
       };
     },
     queues: () => db.queueMetrics(),

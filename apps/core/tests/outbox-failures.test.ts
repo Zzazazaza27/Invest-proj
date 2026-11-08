@@ -115,6 +115,10 @@ describe('Доставка вебхука: аренда потеряна во в
       query: async (sql: string, params: unknown[]) => {
         if (sql.includes('SET lease_id = $4::uuid')) return { rows: [{ id: 'd1' }, { id: 'd2' }] };
         if (sql.includes('SELECT d.id, d.lease_id')) return { rows: [row('d1'), row('d2')] };
+        // Пауза по узлу и пробы (M163): в этом тесте узлов на паузе нет.
+        if (sql.includes('integration.webhook_destinations') && !sql.includes('SELECT d.id')) {
+          return { rowCount: 0, rows: [] };
+        }
         if (sql.includes('SET lease_until = now()')) return { rowCount: 1, rows: [] };
         // Пока шёл HTTP-запрос, захват ушёл другому исполнителю: итог не записывается.
         if (sql.includes("SET status = 'delivered'")) return { rowCount: 0, rows: [] };

@@ -56,6 +56,20 @@ export async function postPinned(
 
   return new Promise<PinnedResponse>((resolve, reject) => {
     let settled = false;
+    /**
+     * Фаза отказа (4.11): до установленного TLS тело получателю не ушло — `connect`; после —
+     * могло дойти, исход неизвестен — `sent`. Классификацию делает доставка.
+     */
+    let connected = false;
+    const fail = (error: Error, kind?: 'receiver'): void =>
+      finish(() =>
+        reject(
+          Object.assign(error, {
+            deliveryPhase: connected ? 'sent' : 'connect',
+            ...(kind ? { deliveryKind: kind } : {}),
+          }),
+        ),
+      );
     /** Дедлайн и таймер снимаются ровно один раз, чем бы ни кончился запрос. */
     const finish = (action: () => void): void => {
       if (settled) return;
@@ -92,7 +106,7 @@ export async function postPinned(
         const remote = res.socket.remoteAddress ?? '';
         if (remote && isForbiddenAddress(remote)) {
           res.destroy();
-          finish(() => reject(new Error(`соединение установлено с внутренним адресом ${remote}`)));
+          fail(new Error(`соединение установлено с внутренним адресом ${remote}`), 'receiver');
           return;
         }
         void readCapped(res, () => req.destroy()).then((body) => {
@@ -105,13 +119,18 @@ export async function postPinned(
     // бездействия ниже лишь обрывает молчащего получателя быстрее.
     const deadline = setTimeout(() => {
       req.destroy();
-      finish(() => reject(new Error('превышен предельный срок доставки')));
+      fail(new Error('превышен предельный срок доставки'));
     }, absoluteDeadlineMs(options));
 
     req.setTimeout(options.timeoutMs, () => {
       req.destroy(new Error('таймаут доставки'));
     });
-    req.on('error', (error) => finish(() => reject(error)));
+    req.on('socket', (socket) => {
+      // Сокет из пула уже соединён; новый — после рукопожатия TLS.
+      if (!socket.connecting && !(socket as { pending?: boolean }).pending) connected = true;
+      else socket.once('secureConnect', () => (connected = true));
+    });
+    req.on('error', (error) => fail(error));
     req.write(options.body);
     req.end();
   });

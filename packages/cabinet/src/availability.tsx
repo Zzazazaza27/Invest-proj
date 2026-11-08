@@ -1,12 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert } from '@fifth/ui';
-import type {
-  Features,
-  FunctionGroup,
-  GroupMode,
-  GroupReason,
-  GroupStatus,
-} from '@fifth/contracts';
+import type { Features, GroupMode, GroupReason, GroupStatus } from '@fifth/contracts';
 
 /**
  * Доступность групп функций в кабинете (блок 4, 4.11): «Файлы» и «Почта».
@@ -49,7 +43,7 @@ class GroupStore {
   timer: ReturnType<typeof setInterval> | null = null;
   readonly listeners = new Set<() => void>();
 
-  constructor(readonly group: FunctionGroup) {}
+  constructor(readonly group: CabinetGroup) {}
 
   notify(): void {
     this.listeners.forEach((fn) => fn());
@@ -154,7 +148,9 @@ class GroupStore {
   }
 }
 
-const stores: Record<FunctionGroup, GroupStore> = {
+/** Кабинетам видны «Файлы» и «Почта»; у «Событий» пользовательских действий нет. */
+export type CabinetGroup = 'files' | 'mail';
+const stores: Record<CabinetGroup, GroupStore> = {
   files: new GroupStore('files'),
   mail: new GroupStore('mail'),
 };
@@ -172,14 +168,14 @@ export function noteGroupError(error: unknown, now = Date.now()): void {
   const first = e.problem?.errors?.[0];
   const [groupPart, modePart] = (first?.path ?? 'files.write').split('.');
   const store =
-    stores[(groupPart as FunctionGroup) in stores ? (groupPart as FunctionGroup) : 'files'];
+    stores[(groupPart as CabinetGroup) in stores ? (groupPart as CabinetGroup) : 'files'];
   const mode: GroupMode = modePart === 'read' ? 'read' : 'write';
   const reason = (first?.message as GroupReason | undefined) ?? 'dependency_failure';
   store.noteFailure(mode, reason, now);
 }
 
 export function useGroupAvailability(
-  group: FunctionGroup,
+  group: CabinetGroup,
   load: Loader | undefined,
 ): GroupAvailability {
   const store = stores[group];
@@ -240,7 +236,7 @@ const MAIL_SEND: Record<GroupReason, string> = {
   not_configured: 'Отправка писем на платформе не подключена.',
 };
 
-const RESTORED: Record<FunctionGroup, string> = {
+const RESTORED: Record<CabinetGroup, string> = {
   files: 'Работа с файлами восстановлена.',
   mail: 'Отправка писем восстановлена.',
 };
@@ -250,7 +246,7 @@ export function GroupNotice({
   group,
   availability,
 }: {
-  group: FunctionGroup;
+  group: CabinetGroup;
   availability: GroupAvailability;
 }): React.ReactElement | null {
   const { status, restored } = availability;
