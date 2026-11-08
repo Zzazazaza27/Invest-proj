@@ -4,6 +4,7 @@
  *
  *   node scripts/test-probe.mjs --build <метка> --run <запуск CI> --commit <sha>
  *   node scripts/test-probe.mjs --env test-2 --commit <sha>   test-2 в боевой режим, насовсем
+ *   node scripts/test-probe.mjs --env test-1 --production-step --commit <sha>   его репетиция
  *
  * Одно подключение к серверу: SSH поднимает туннель к OpenBao и обратный туннель к этому процессу,
  * на сервере работает infra/host/test-probe.sh. Комплект среды открывается здесь ключом Томаса,
@@ -47,6 +48,7 @@ if (!['test-1', 'test-2'].includes(ENV_ID)) {
   process.exit(2);
 }
 const PILOT = ENV_ID === 'test-2';
+const STEP = PILOT || process.argv.includes('--production-step');
 const build = option('--build');
 const runId = option('--run');
 const commit = option('--commit');
@@ -58,8 +60,8 @@ const bundle = resolve(
   option('--bundle') ??
     join(keysDir, readdirSync(keysDir).find((name) => name.endsWith('.gpg')) ?? 'нет'),
 );
-if (!commit || (!PILOT && (!build || !runId))) {
-  console.error(PILOT ? 'нужен --commit' : 'нужны --build, --run, --commit');
+if (!commit || (!STEP && (!build || !runId))) {
+  console.error(STEP ? 'нужен --commit' : 'нужны --build, --run, --commit');
   process.exit(2);
 }
 
@@ -296,8 +298,8 @@ for (const f of [keyFile, passFile, bundle, MAUS]) {
 const remote = [
   `sudo -n /usr/local/sbin/fifth-test sync ${commit}`,
   // Пилотная среда — шаг с откатом при сбое, а не проба: данные людей остаются на месте.
-  PILOT
-    ? `sudo -n /usr/local/sbin/fifth-test op prod-test2-production ${token}`
+  STEP
+    ? `sudo -n /usr/local/sbin/fifth-test op prod-test2-production ${token} ${ENV_ID}`
     : `sudo -n /usr/local/sbin/fifth-test probe ${build} ${token}`,
 ].join(' && ');
 

@@ -7,14 +7,17 @@
 # Записи остаются прежним форматом: копия с KEK среды по-прежнему открывается без OpenBao, возврат
 # к местным ключам не теряет данных. При сбое настройки возвращаются сами.
 #
-#   fifth-test op prod-test2-production <токен>   с ноутбука: scripts/test-probe.mjs --env test-2
+#   fifth-test op prod-test2-production <токен> [test-1]   с ноутбука: scripts/test-probe.mjs
+# С test-1 — репетиция: весь путь, затем возврат в прежний режим тем же откатом, что при сбое.
 # Комплект ключей открывает ноутбук ключом Томаса, на сервере закрытого ключа нет.
 set -Eeuo pipefail
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 TOKEN="$1"
 [[ "$TOKEN" =~ ^[0-9a-f]{32,64}$ ]] || { echo 'нужен токен'; exit 2; }
 ROOT=/opt/fifth-element
-ID=test-2
+ID="${2:-test-2}"
+[[ "$ID" =~ ^test-[12]$ ]] || { echo 'среда: test-1 или test-2'; exit 2; }
+REHEARSE=$([ "$ID" = test-1 ] && echo 1 || true)
 PROJECT="fifth-$ID"
 DIR="$ROOT/.local/envs/$ID"
 NET="${PROJECT}_default"
@@ -29,6 +32,9 @@ S3TLS="$PROJECT-s3tls"
 CADDY=/etc/caddy/Caddyfile
 WORK="$(mktemp -d)"
 cd "$ROOT"
+PORT="$(sed -n 's/^FIFTH_WEB_PORT=//p' "$DIR/compose.env")"
+# Копии ведутся только у пилотной среды.
+backup() { [ -n "$REHEARSE" ] || bash infra/host/pilot-backup.sh; }
 
 say() { printf '\n▸ %s\n' "$1"; }
 laptop() { curl -fsS -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:18211/$1" "${@:2}"; }
@@ -40,22 +46,30 @@ pg() {
 }
 
 if grep -q '^NODE_ENV=production' "$DIR/settings.env"; then
-  echo 'test-2 уже в боевом режиме'
-  report 'test-2 уже в боевом режиме'
+  echo "$ID уже в боевом режиме"
+  report "$ID уже в боевом режиме"
   exit 0
 fi
 grep -q '^KMS_MODE=local' "$DIR/settings.env" || { echo 'ожидался KMS_MODE=local'; exit 1; }
+# Копии и контрольный файл ходят к Garage напрямую: адрес обязан быть тем же.
+grep -qx 'S3_ENDPOINT=http://garage-1:3900' "$DIR/settings.env" || { echo 'хранилище среды не garage-1:3900'; exit 1; }
+grep -A4 "^$ID.5espace.com {" "$CADDY" | grep -q "^	reverse_proxy 127.0.0.1:$PORT$" ||
+  { echo 'вход test-2 в Caddyfile не в ожидаемом виде'; exit 1; }
+docker inspect fifth-openbao --format '{{.State.Running}}' | grep -q true || { echo 'OpenBao не работает'; exit 1; }
 
+# Возврат: прежние настройки и вход, службы без TLS. Записи прежним форматом читаются KEK среды.
+restore_before() {
+  [ -f "$BEFORE/settings.env" ] || return 0
+  cp -p "$BEFORE/settings.env" "$DIR/settings.env"
+  cp -p "$BEFORE/compose.env" "$DIR/compose.env"
+  cp -p "$BEFORE/Caddyfile" "$CADDY" && systemctl reload caddy
+  docker rm -f "$PROJECT-agent" "$S3TLS" >/dev/null 2>&1 || true
+  node scripts/env.mjs start "$ID" --text | cut -c1-160
+}
 back() {
   echo "СБОЙ на строке $1: возвращаю прежний режим"
   docker logs --tail 12 "$PROJECT-core" 2>&1 | cut -c1-220 || true
-  if [ -f "$BEFORE/settings.env" ]; then
-    cp -p "$BEFORE/settings.env" "$DIR/settings.env"
-    cp -p "$BEFORE/compose.env" "$DIR/compose.env"
-    cp -p "$BEFORE/Caddyfile" "$CADDY" && systemctl reload caddy || true
-    docker rm -f "$PROJECT-agent" "$S3TLS" >/dev/null 2>&1 || true
-    node scripts/env.mjs start "$ID" --text | cut -c1-160 || true
-  fi
+  restore_before || true
   report "ОСТАНОВЛЕНО на строке $1, test-2 возвращена в прежний режим"
   rm -rf "$WORK"
   exit 1
@@ -63,7 +77,7 @@ back() {
 trap 'back $LINENO' ERR
 
 say 'копия до изменения'
-bash infra/host/pilot-backup.sh
+backup
 install -d -m 700 "$BEFORE"
 cp -p "$DIR/settings.env" "$DIR/compose.env" "$BEFORE/"
 cp -p "$CADDY" "$BEFORE/Caddyfile"
@@ -182,11 +196,11 @@ say 'вход: заголовок сертификата клиента не п�
 # Интеграций по mTLS на test-2 нет: присланный заголовок снимается, подделать отпечаток нельзя.
 node -e "
 const fs=require('fs');const f='$CADDY';let t=fs.readFileSync(f,'utf8');
-const a='\treverse_proxy 127.0.0.1:18082\n';
+const a='\treverse_proxy 127.0.0.1:$PORT\n';
 const i=t.indexOf('$ID.5espace.com {');const j=t.indexOf(a,i);
 if(i<0||j<0)process.exit(1);
 if(t.slice(i,j+a.length+200).includes('X-Client-Cert-Fingerprint'))process.exit(0);
-t=t.slice(0,j)+'\treverse_proxy 127.0.0.1:18082 {\n\t\theader_up -X-Client-Cert-Fingerprint\n\t}\n'+t.slice(j+a.length);
+t=t.slice(0,j)+'\treverse_proxy 127.0.0.1:$PORT {\n\t\theader_up -X-Client-Cert-Fingerprint\n\t}\n'+t.slice(j+a.length);
 fs.writeFileSync(f,t)"
 caddy validate --config "$CADDY" --adapter caddyfile >/dev/null 2>&1
 systemctl reload caddy
@@ -194,13 +208,13 @@ systemctl reload caddy
 say 'службы среды'
 env_cmd start "$ID"
 for _ in $(seq 1 45); do
-  [ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$ORIGIN/v1/auth/me")" = 401 ] && break
+  [ "$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://127.0.0.1:$PORT/v1/auth/me")" = 401 ] && break
   sleep 2
 done
 
 say 'проверка'
 docker ps --filter "name=$PROJECT-" --format '{{.Names}} {{.Status}}' | sort
-code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 "$ORIGIN/v1/auth/me")"
+code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://127.0.0.1:$PORT/v1/auth/me")"
 echo "вход без сессии: $code"
 [ "$code" = 401 ]
 if docker exec "$PROJECT-core" sh -c 'ls /run/secrets 2>/dev/null | grep -q .'; then
@@ -219,22 +233,34 @@ c.on('error',(e)=>{console.log('Valkey без нашего центра отве
 docker run --rm --network "$NET" --entrypoint node "$core_image" -e "
 const c=require('net').connect(6378,'valkey',()=>{console.log('плохо: открытый порт Valkey');process.exit(1)});
 c.on('error',()=>{console.log('открытого порта Valkey нет');process.exit(0)});"
-# Контакт администратора открывается ключом из Transit: прежний формат, новый путь ключа.
-row="$(pg "SELECT encode(contact_wrapped_dek, 'hex') || ' ' || encode(email_ciphertext, 'hex') FROM identity.users u JOIN identity.user_roles r ON r.user_id = u.id WHERE r.role = 'admin' AND r.revoked_at IS NULL LIMIT 1")"
+# Контакт первой учётки открывается ключом из Transit: прежний формат, новый путь ключа.
+row="$(pg "SELECT encode(contact_wrapped_dek, 'hex') || ' ' || encode(email_ciphertext, 'hex') FROM identity.users WHERE email_ciphertext IS NOT NULL AND substring(contact_wrapped_dek from 1 for 6) <> 'vault:'::bytea ORDER BY created_at LIMIT 1")"
 printf %s "$row" | docker exec -i "$PROJECT-core" node -e "
 require('reflect-metadata');
 const {CryptoService}=require('/app/apps/core/dist/crypto/crypto.service.js');
 const [d,c]=require('fs').readFileSync(0,'utf8').trim().split(' ');
 new CryptoService().openField('passport_sensitive',Buffer.from(d,'hex'),Buffer.from(c,'hex'),'email')
-  .then((v)=>console.log('контакт администратора открыт через Transit, длина',v.length),(e)=>{console.log('не открылся:',e.message);process.exit(1)});"
+  .then((v)=>console.log('контакт открыт через Transit, длина',v.length),(e)=>{console.log('не открылся:',e.message);process.exit(1)});"
 docker exec "$PROJECT-core" node -e "
 require('reflect-metadata');
 const {S3Service}=require('/app/apps/core/dist/storage/s3.service.js');
-new S3Service().headObject('_control/restore-check.bin').then((r)=>{console.log('хранилище через TLS: контрольный файл',r.exists?'виден':'НЕ виден');process.exit(r.exists?0:1)},(x)=>{console.log('хранилище:',x.message);process.exit(1)});"
+new S3Service().headObject('_control/restore-check.bin').then((r)=>{console.log('хранилище через TLS отвечает, контрольный файл',r.exists?'виден':'не виден');process.exit(r.exists||'$REHEARSE'?0:1)},(x)=>{console.log('хранилище:',x.message);process.exit(1)});"
 
+if [ -n "$REHEARSE" ]; then
+  say 'репетиция: возврат в прежний режим'
+  trap - ERR
+  restore_before
+  code="$(curl -s -o /dev/null -w "%{http_code}" --max-time 10 "http://127.0.0.1:$PORT/v1/auth/me")"
+  echo "после возврата вход без сессии: $code"
+  docker exec "$PROJECT-core" printenv NODE_ENV KMS_MODE | paste -sd' '
+  rm -rf "$WORK"
+  report 'РЕПЕТИЦИЯ ПРОЙДЕНА'
+  echo 'РЕПЕТИЦИЯ ПРОЙДЕНА'
+  exit 0
+fi
 trap - ERR
 say 'копия после изменения'
-bash infra/host/pilot-backup.sh
+backup
 rm -rf "$WORK"
 report 'test-2 В БОЕВОМ РЕЖИМЕ'
 echo 'test-2 в боевом режиме: kms/legacy, production, TLS'
