@@ -82,7 +82,7 @@ if [ -f "$ROOT/.local/secrets/GARAGE_ADMIN_TOKEN" ]; then
   export GARAGE_ADMIN_TOKEN
 fi
 
-[ "$(laptop stage)" != tools ] || { report 'инструменты обновлены'; exit 0; }
+[ "$(laptop stage)" != tools ] || { report 'инструменты обновлены'; rm -rf "$WORK"; exit 0; }
 if [ "$(laptop stage)" = backup ]; then
   # shellcheck source=/dev/null
   . infra/host/test-probe-backup.sh
@@ -99,7 +99,8 @@ if [ ! -f "$ROOT/.local/kits/$BUILD/kit.json" ]; then
   unset DOCKER_CONFIG
 fi
 node scripts/kit.mjs load --build "$BUILD" | cut -c1-160
-[ "$(laptop stage)" != kit ] || { report "комплект $BUILD на узле"; exit 0; }
+# Ранний выход тоже убирает временный каталог: в нём учётные данные GHCR этого запуска.
+[ "$(laptop stage)" != kit ] || { report "комплект $BUILD на узле"; rm -rf "$WORK"; exit 0; }
 
 say 'среда test-1 в прежнем режиме'
 local_settings
