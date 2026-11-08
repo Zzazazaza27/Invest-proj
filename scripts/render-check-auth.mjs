@@ -340,10 +340,7 @@ if (mailOff) {
   );
   await p3.getByRole('button', { name: 'Запросить новую ссылку' }).click();
   await p3.waitForTimeout(400);
-  check(
-    'кнопка ведёт к запросу новой ссылки',
-    (await p3.locator('#forgot-email').count()) === 1,
-  );
+  check('кнопка ведёт к запросу новой ссылки', (await p3.locator('#forgot-email').count()) === 1);
 }
 
 const inputsWithoutLabel = await p3.locator('input:not([id]):not([aria-label])').count();
