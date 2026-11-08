@@ -43,9 +43,13 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/v1/ready")"
 [ "$code" = 200 ] && ok "публичный /v1/ready через web — $code" || bad "публичный /v1/ready — $code"
 
 echo "  ·     миграций: $(psql_env 'SELECT count(*) || '"'"' / последняя '"'"' || max(id) FROM public.schema_migrations')"
-echo "  ·     группы: $(psql_env "SELECT string_agg(group_id || ':' || mode || '=' || CASE WHEN bool_and(ok) THEN 'ok' ELSE 'нет' END, ' ' ORDER BY group_id, mode) FROM (SELECT group_id, mode, ok FROM availability.observations WHERE NOT stopped AND valid_until > now()) s GROUP BY true" 2>/dev/null || echo 'таблицы групп нет (прежний комплект)')"
+groups="$(psql_env "SELECT string_agg(g, ' ' ORDER BY g) FROM (SELECT group_id || ':' || mode || '=' || CASE WHEN bool_and(ok) THEN 'ok' ELSE 'нет' END AS g FROM availability.observations WHERE NOT stopped AND valid_until > now() GROUP BY group_id, mode) s" 2>/dev/null || echo 'таблицы групп нет (прежний комплект)')"
+echo "  ·     группы: ${groups:-нет действующих наблюдений}"
 backlog="$(psql_env "SELECT count(*) || ' неопубликованных, старейшее ' || coalesce(extract(epoch FROM now() - min(created_at))::int::text || ' с', '—') FROM audit.outbox_events WHERE published_at IS NULL")"
 echo "  ·     outbox: $backlog"
+# Застрявшие события: тип, попытки, возраст — чтобы отличить исчерпанные старые от растущего потока.
+echo "  ·     outbox старше часа: $(psql_env "SELECT coalesce(string_agg(event_type || ' попыток ' || attempts || ' возраст ' || extract(epoch FROM now() - created_at)::int || ' с', '; '), 'нет') FROM audit.outbox_events WHERE published_at IS NULL AND created_at < now() - interval '1 hour'")"
+echo "  ·     outbox за 10 мин: $(psql_env "SELECT count(*) FILTER (WHERE published_at IS NOT NULL) || ' опубликовано из ' || count(*) FROM audit.outbox_events WHERE created_at > now() - interval '10 minutes'")"
 restarts="$(docker inspect -f '{{.RestartCount}}' "$PROJECT-core")"
 [ "$restarts" = 0 ] && ok 'ядро без перезапусков' || bad "перезапусков ядра: $restarts"
 
