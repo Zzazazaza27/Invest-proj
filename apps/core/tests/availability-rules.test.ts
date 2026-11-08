@@ -41,16 +41,47 @@ describe('Сведение наблюдений по экземплярам', ()
     expect(d.health).toBe('ok');
   });
 
-  it('исправный, но просроченный не перевешивает свежий отказ', () => {
+  it('свежий отказ A и просроченное наблюдение необслуживающего B — «неизвестно», не отказ', () => {
+    // B не остановлен и молчит меньше горизонта: он может ещё обслуживать — отказ всех
+    // обслуживающих не подтверждён (замечание Тэнка 08.11).
     const d = dependencyState(
       [
         obs({ instance: 'core-1', ok: false, reason: 'circuit_open' }),
-        obs({ instance: 'core-2', validUntil: at(-5) }),
+        obs({ instance: 'core-2', observedAt: at(-100), validUntil: at(-5) }),
       ],
       'write',
       now,
+      600_000,
     );
-    expect(d).toMatchObject({ health: 'fail', reason: 'circuit_open' });
+    expect(d).toMatchObject({ health: 'unknown', reason: 'observations_stale' });
+  });
+
+  it('просроченный B исключён из обслуживания — отказ A подтверждён', () => {
+    for (const b of [
+      obs({ instance: 'core-2', stopped: true }),
+      obs({ instance: 'core-2', observedAt: at(-700), validUntil: at(-610) }),
+    ]) {
+      const d = dependencyState(
+        [obs({ instance: 'core-1', ok: false, reason: 'circuit_open' }), b],
+        'write',
+        now,
+        600_000,
+      );
+      expect(d).toMatchObject({ health: 'fail', reason: 'circuit_open' });
+    }
+  });
+
+  it('исправность просроченного B не даёт доступности', () => {
+    const d = dependencyState(
+      [
+        obs({ instance: 'core-1', ok: false, reason: 'dependency_failure' }),
+        obs({ instance: 'core-2', observedAt: at(-100), validUntil: at(-5) }),
+      ],
+      'write',
+      now,
+      600_000,
+    );
+    expect(d.health).not.toBe('ok');
   });
 
   it('режимы сводятся раздельно', () => {

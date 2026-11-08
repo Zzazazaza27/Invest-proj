@@ -26,7 +26,9 @@ import {
 import { storageBreaker } from './storage-health';
 
 /** Служебные ключи проб «Файлов»: вне материалов людей и квот. */
-const READ_KEY = `${PROBE_PREFIX}read-probe`;
+/** Контрольный объект чтения: известное маленькое содержимое, общее для всех экземпляров. */
+export const READ_CONTROL_KEY = `${PROBE_PREFIX}read-control`;
+export const READ_CONTROL_BODY = Buffer.from('fifth availability read control v1\n');
 const writeKey = (instance: string) =>
   `${PROBE_PREFIX}write-probe-${instance.replace(/[^A-Za-z0-9_.-]/g, '_')}`;
 const PROBE_BODY = Buffer.from('fifth availability probe v1\n');
@@ -44,8 +46,9 @@ interface RestrictionRow {
  * Доступность групп функций (блок 4, 4.11), первая группа — «Файлы».
  *
  *   * наблюдение: служебная задача блока 1 раз в AVAILABILITY_PROBE_INTERVAL_MS проверяет
- *     чтение (HEAD служебного ключа: ответ хранилища, даже «нет такого», — чтение работает)
- *     и запись (PUT маленького фиксированного объекта) с пределом времени; результат с
+ *     чтение (GET контрольного объекта и сверка с известным содержимым; отсутствие объекта
+ *     успехом не считается — объект готовится один раз записью и сразу перечитывается) и
+ *     запись (PUT маленького фиксированного объекта) с пределом времени; результат с
  *     пределом актуальности пишется в БД и помнится локально;
  *   * решение для операции — по этому экземпляру: ручное ограничение, размыкатель и
  *     свежесть своего наблюдения. Отказ файлов не снимает готовность ядра (`/ready`);
@@ -105,7 +108,7 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
       }
     };
     const results = {
-      read: await check('read', () => this.s3.headObject(READ_KEY)),
+      read: await check('read', () => this.readControl(timeout)),
       write: await check('write', () =>
         this.s3.putProbeObject(writeKey(this.instance), PROBE_BODY, timeout),
       ),
@@ -136,6 +139,21 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
       }
     });
     return Number(results.read.ok) + Number(results.write.ok);
+  }
+
+  /**
+   * Чтение подтверждено, только когда прочитано известное содержимое. Нет объекта — его
+   * готовят записью (один раз, а не на каждой проверке) и перечитывают; не вышло — отказ.
+   */
+  private async readControl(timeout: number): Promise<void> {
+    let body = await this.s3.getProbeObject(READ_CONTROL_KEY, timeout);
+    if (body === null) {
+      await this.s3.putProbeObject(READ_CONTROL_KEY, READ_CONTROL_BODY, timeout);
+      body = await this.s3.getProbeObject(READ_CONTROL_KEY, timeout);
+    }
+    if (body === null || !body.equals(READ_CONTROL_BODY)) {
+      throw new Error('контрольный объект чтения не совпал');
+    }
   }
 
   /** Своё наблюдение с поправкой на размыкатель этого экземпляра. */
@@ -220,8 +238,8 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     const all = await this.observations();
     const restriction = await this.currentRestriction();
     return groupStatus({
-      read: dependencyState(all, 'read', now),
-      write: dependencyState(all, 'write', now),
+      read: dependencyState(all, 'read', now, getEnv().AVAILABILITY_RETIRE_MS),
+      write: dependencyState(all, 'write', now, getEnv().AVAILABILITY_RETIRE_MS),
       restriction: restriction ? { mode: restriction.mode } : null,
     });
   }
@@ -232,8 +250,8 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     const all = await this.observations();
     this.restriction = null;
     const restriction = await this.currentRestriction();
-    const read = dependencyState(all, 'read', now);
-    const write = dependencyState(all, 'write', now);
+    const read = dependencyState(all, 'read', now, getEnv().AVAILABILITY_RETIRE_MS);
+    const write = dependencyState(all, 'write', now, getEnv().AVAILABILITY_RETIRE_MS);
     return {
       group: 'files',
       status: groupStatus({

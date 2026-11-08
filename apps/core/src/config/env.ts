@@ -51,6 +51,8 @@ const RawEnvSchema = z.object({
   AVAILABILITY_PROBE_INTERVAL_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
   AVAILABILITY_FRESH_MS: z.coerce.number().int().min(2_000).max(3_600_000).default(90_000),
   AVAILABILITY_PROBE_TIMEOUT_MS: z.coerce.number().int().min(200).max(30_000).default(5_000),
+  // Молчание экземпляра дольше этого — он исключён из обслуживания и в сведение не входит.
+  AVAILABILITY_RETIRE_MS: z.coerce.number().int().min(10_000).max(86_400_000).default(600_000),
   BACKGROUND_LIVE_STALE_MS: z.coerce.number().int().min(2_000).max(600_000).default(30_000),
   // Предел ожидания одной зависимости в /ready (блок 8, 8.2: проверки с
   // ограниченным ожиданием). Зависшая зависимость — fail, а не висящий ответ.

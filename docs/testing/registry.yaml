@@ -955,12 +955,12 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 16
+    asserts: 18
     studied: code
     studiedOn: 2026-11-08
     note: >-
       Блок 4, 4.11. Чистые правила, время задаётся тестом.
-    purpose: 'Сведение наблюдений экземпляров (просроченные и остановленные не дают доступности), состояние группы из продуктового включения, ручного ограничения и зависимости, размыкатель по режимам.'
+    purpose: 'Сведение наблюдений экземпляров (просроченные и остановленные не дают доступности; отказ — только когда он у всех обслуживающих: просроченный, но не исключённый экземпляр даёт «неизвестно»), состояние группы из продуктового включения, ручного ограничения и зависимости, размыкатель по режимам.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
@@ -3864,6 +3864,40 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
+  - id: UNIT-CABINET-FILES-AVAILABILITY
+    file: packages/cabinet/tests/files-availability.test.ts
+    command: npm run test -w packages/cabinet
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 3
+    studied: code
+    studiedOn: 2026-11-08
+    needs: []
+    effects: ['логика без браузера — побочных действий нет']
+    note: >-
+      Блок 4, 4.11, замечание Тэнка 08.11: прежде отказ files.write/circuit_open исчезал
+      после исправной сводки.
+    purpose: 'Отказ конкретного запроса группы «Файлы» хранится отдельно от сводки: исправная сводка (другой экземпляр, прежнее наблюдение) его не отменяет, запись закрыта и причина видна до конца удержания; затем решает сводка; отказ чтения закрывает чтение.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
+  - id: UNIT-CORE-STORAGE-BREAKER
+    file: apps/core/tests/storage-breaker.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 15
+    studied: code
+    studiedOn: 2026-11-08
+    note: >-
+      Блок 4, 4.11, замечания Тэнка 08.11. Настоящие методы S3Service, хранилище —
+      заглушка fetch. Чувствительность подтверждена: без учёта обрыва тела падают 4 случая.
+    purpose: 'Размыкатель «Файлов» видит все обращения: HEAD, GET целиком и потоком, DELETE, копирование и серверная запись (5xx, сеть, обрыв тела после 200 — отказ; 404 и остановка вызывающим — нет; режимы раздельно). Проба чтения подтверждает чтение только известным содержимым контрольного объекта: отсутствие готовит объект один раз и перечитывает, нельзя подготовить или не совпало — отказ.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
   - id: UNIT-PKG-API-CLIENT-CLIENT
     file: packages/api-client/tests/client.test.ts
     command: npm run test -w packages/api-client
@@ -4718,6 +4752,8 @@ blocks:
         UNIT-CORE-READINESS,
         UNIT-CORE-AVAILABILITY-RULES,
         PRB-AVAILABILITY-FILES,
+        UNIT-CORE-STORAGE-BREAKER,
+        UNIT-CABINET-FILES-AVAILABILITY,
         CHK-MONITOR-APP-PROBE,
         CHK-MONITORING-ACCOUNT,
         CHK-LOGS-ARCHIVE,

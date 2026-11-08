@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Alert } from '@fifth/ui';
-import type { Features, GroupReason, GroupStatus } from '@fifth/contracts';
+import type { Features, GroupMode, GroupReason, GroupStatus } from '@fifth/contracts';
 
 /**
  * Доступность группы «Файлы» в кабинете (блок 4, 4.11).
@@ -10,12 +10,23 @@ import type { Features, GroupReason, GroupStatus } from '@fifth/contracts';
  * Ограничиваются действия с хранилищем, а не экран: карточки, списки и профиль открываются по
  * своим условиям. Восстановление сообщается один раз — только если перед этим показывалось
  * предупреждение.
+ *
+ * Отказ конкретного запроса (`group_unavailable` от экземпляра, который его обслуживал)
+ * хранится ОТДЕЛЬНО от сводки и держится `REQUEST_HOLD_MS`: исправная сводка — другой
+ * экземпляр или прежнее наблюдение — его не отменяет. По истечении срока решает снова сервер.
  */
 type Loader = () => Promise<Features>;
 
 const POLL_MS = 60_000;
 const RESTORED_SHOW_MS = 8_000;
-let status: GroupStatus | null = null;
+/** Дольше размыкателя (30 с) и интервала проверки (30 с): ядро успевает перепроверить себя. */
+export const REQUEST_HOLD_MS = 60_000;
+
+let summary: GroupStatus | null = null;
+const requestFailure: Record<GroupMode, { reason: GroupReason; until: number } | null> = {
+  read: null,
+  write: null,
+};
 let restored = false;
 let warned = false;
 let loader: Loader | null = null;
@@ -23,51 +34,115 @@ let timer: ReturnType<typeof setInterval> | null = null;
 const listeners = new Set<() => void>();
 const notify = () => listeners.forEach((fn) => fn());
 
-async function refresh(): Promise<void> {
-  if (!loader) return;
-  try {
-    const next = (await loader()).groups.files;
-    const healthy = next.read.allowed && next.write.allowed;
-    if (!healthy) {
-      warned = true;
+/** Сводка с наложенными отказами конкретных запросов — то, что видит экран. */
+export function effectiveStatus(now = Date.now()): GroupStatus | null {
+  const failure = (mode: GroupMode) => {
+    const f = requestFailure[mode];
+    return f && f.until > now ? f : null;
+  };
+  const read = failure('read');
+  const write = failure('write');
+  if (!summary && !read && !write) return null;
+  const base: GroupStatus = summary ?? {
+    state: 'unknown',
+    read: { allowed: true, reason: 'ok', observedAt: null },
+    write: { allowed: true, reason: 'ok', observedAt: null },
+  };
+  const next: GroupStatus = {
+    state: base.state,
+    read: read ? { ...base.read, allowed: false, reason: read.reason } : base.read,
+    write: write ? { ...base.write, allowed: false, reason: write.reason } : base.write,
+  };
+  if (!next.read.allowed) next.state = 'unavailable';
+  else if (!next.write.allowed && next.state === 'available') next.state = 'read_only';
+  return next;
+}
+
+function track(): void {
+  const status = effectiveStatus();
+  const healthy = !status || (status.read.allowed && status.write.allowed);
+  if (!healthy) {
+    warned = true;
+    restored = false;
+  } else if (warned) {
+    warned = false;
+    restored = true;
+    setTimeout(() => {
       restored = false;
-    } else if (warned) {
-      warned = false;
-      restored = true;
-      setTimeout(() => {
-        restored = false;
-        notify();
-      }, RESTORED_SHOW_MS);
-    }
-    status = next;
-    notify();
+      notify();
+    }, RESTORED_SHOW_MS);
+  }
+  notify();
+}
+
+/** Освежить сводку. Отказы конкретных запросов она не снимает. */
+export async function refreshFiles(load: Loader | null = loader): Promise<void> {
+  if (!load) return;
+  try {
+    summary = (await load()).groups.files;
   } catch {
     // Не узнали — показываем прежнее; само действие проверит сервер.
   }
+  track();
 }
 
 /**
- * Ответ `group_unavailable` от действия с файлами: сразу освежить состояние, чтобы причина
- * совпала с ответом ядра.
+ * Ответ `group_unavailable` от действия с файлами: запомнить режим и причину этого запроса и
+ * освежить сводку. Режим и причина — из `errors[0]` (`files.write` / `circuit_open`).
  */
-export function noteGroupError(error: unknown): void {
-  if ((error as { code?: string } | null)?.code === 'group_unavailable') void refresh();
+export function noteGroupError(error: unknown, now = Date.now()): void {
+  const e = error as {
+    code?: string;
+    problem?: { errors?: { path?: string; message?: string }[] } | null;
+  } | null;
+  if (e?.code !== 'group_unavailable') return;
+  const first = e.problem?.errors?.[0];
+  const mode: GroupMode = first?.path === 'files.read' ? 'read' : 'write';
+  const reason = (first?.message as GroupReason | undefined) ?? 'dependency_failure';
+  requestFailure[mode] = { reason, until: now + REQUEST_HOLD_MS };
+  // Истёк срок — экран пересчитывается сам, без нового запроса.
+  setTimeout(track, REQUEST_HOLD_MS + 50);
+  track();
+  void refreshFiles();
 }
 
-export function useFilesAvailability(load: Loader | undefined): {
+/** Для модульных проверок: чистое состояние. */
+export function resetFilesAvailability(): void {
+  summary = null;
+  requestFailure.read = null;
+  requestFailure.write = null;
+  restored = false;
+  warned = false;
+  loader = null;
+}
+
+export function currentFilesAvailability(): {
   status: GroupStatus | null;
   canWrite: boolean;
   canRead: boolean;
   restored: boolean;
 } {
+  const status = effectiveStatus();
+  return {
+    status,
+    // Пока состояние не пришло, кнопки не блокируются: решит сервер.
+    canWrite: status?.write.allowed ?? true,
+    canRead: status?.read.allowed ?? true,
+    restored,
+  };
+}
+
+export function useFilesAvailability(
+  load: Loader | undefined,
+): ReturnType<typeof currentFilesAvailability> {
   const [, rerender] = useState(0);
   useEffect(() => {
     if (!load) return undefined;
     loader = load;
     const fn = () => rerender((n) => n + 1);
     listeners.add(fn);
-    if (status === null) void refresh();
-    timer ??= setInterval(() => void refresh(), POLL_MS);
+    if (summary === null) void refreshFiles();
+    timer ??= setInterval(() => void refreshFiles(), POLL_MS);
     return () => {
       listeners.delete(fn);
       if (listeners.size === 0 && timer) {
@@ -76,13 +151,7 @@ export function useFilesAvailability(load: Loader | undefined): {
       }
     };
   }, [load]);
-  return {
-    status,
-    // Пока состояние не пришло, кнопки не блокируются: решит сервер.
-    canWrite: status?.write.allowed ?? true,
-    canRead: status?.read.allowed ?? true,
-    restored,
-  };
+  return currentFilesAvailability();
 }
 
 const WRITE_TEXT: Record<GroupReason, string> = {

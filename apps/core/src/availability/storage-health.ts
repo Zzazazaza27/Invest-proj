@@ -22,3 +22,8 @@ export function storageBreaker(): Breaker {
 export function storageMode(method: string): GroupMode {
   return method === 'GET' || method === 'HEAD' ? 'read' : 'write';
 }
+
+/** Для модульных проверок: новый размыкатель с текущими порогами. */
+export function resetStorageBreaker(): void {
+  breaker = null;
+}

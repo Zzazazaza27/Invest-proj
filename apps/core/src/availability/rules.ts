@@ -11,7 +11,8 @@ import type { GroupMode, GroupReason, GroupStatus, RestrictionMode } from '@fift
  *     просроченный не дают ни доступности, ни отказа;
  *   * свежих нет — «неизвестно», а не «доступна»;
  *   * хоть один свежий исправен — зависимость работает (обслуживать есть кому);
- *   * все свежие с отказом — отказ.
+ *   * отказ — только если свежий отказ у всех обслуживающих; просроченный, но не исключённый
+ *     экземпляр (см. `isRetired`) делает итог «неизвестно».
  *
  * Итог для действия = продуктовый допуск ∧ ручное ограничение ∧ исправность зависимости.
  * Ручной запрет автоматическим восстановлением не снимается. Изменение при «неизвестно» не
@@ -42,15 +43,36 @@ export function isFresh(o: Observation, now: Date): boolean {
   return !o.stopped && o.validUntil > now;
 }
 
-/** Сведение наблюдений одного режима по всем экземплярам. */
-export function dependencyState(all: Observation[], mode: GroupMode, now: Date): DependencyState {
+/**
+ * Экземпляр исключён из обслуживания: остановлен штатно или молчит дольше горизонта
+ * `retireAfterMs`. Работающий экземпляр проверяет зависимость каждые 30 с, поэтому молчание
+ * дольше горизонта (по умолчанию 10 мин) значит, что он не обслуживает запросы — например,
+ * упал без штатной остановки. До горизонта такой экземпляр может ещё обслуживать.
+ */
+export function isRetired(o: Observation, now: Date, retireAfterMs: number): boolean {
+  return o.stopped || now.getTime() - o.observedAt.getTime() > retireAfterMs;
+}
+
+/**
+ * Сведение наблюдений одного режима по всем экземплярам.
+ *
+ * Отказ объявляется, только когда он подтверждён у ВСЕХ обслуживающих: свежий отказ одного
+ * при просроченном наблюдении другого, ещё не исключённого, — «неизвестно», а не «отказ».
+ */
+export function dependencyState(
+  all: Observation[],
+  mode: GroupMode,
+  now: Date,
+  retireAfterMs = Number.POSITIVE_INFINITY,
+): DependencyState {
   const ofMode = all.filter((o) => o.mode === mode);
-  const fresh = ofMode.filter((o) => isFresh(o, now));
-  if (fresh.length === 0) {
-    return { health: 'unknown', reason: 'observations_stale', observedAt: latest(ofMode) };
-  }
+  const serving = ofMode.filter((o) => !isRetired(o, now, retireAfterMs));
+  const fresh = serving.filter((o) => isFresh(o, now));
   const ok = fresh.filter((o) => o.ok);
   if (ok.length > 0) return { health: 'ok', reason: 'ok', observedAt: latest(ok) };
+  if (fresh.length === 0 || fresh.length < serving.length) {
+    return { health: 'unknown', reason: 'observations_stale', observedAt: latest(ofMode) };
+  }
   const reason = fresh.find((o) => o.reason !== 'ok')?.reason ?? 'dependency_failure';
   return { health: 'fail', reason, observedAt: latest(fresh) };
 }

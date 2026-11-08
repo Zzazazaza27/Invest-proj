@@ -144,6 +144,13 @@ async function uploadPdf(client, projectId, label) {
 }
 
 console.warn('\n=== ГРУППА «ФАЙЛЫ» (4.11) ===\n');
+// Обстановка: экземпляры прежних запусков, снятые без штатной остановки (taskkill), ещё не
+// исключены горизонтом и по правилу сведения дают «неизвестно» вместо отказа. При интервале
+// 2 с молчащий дольше 20 с не работает — отмечаем его остановленным, как сделала бы эксплуатация.
+const retired = await sql(
+  "UPDATE availability.observations SET stopped = true WHERE NOT stopped AND observed_at < now() - interval '20 seconds' RETURNING instance",
+);
+console.warn(`  (исключено прежних экземпляров: ${new Set(retired.map((r) => r.instance)).size})`);
 const owner = await register('owner');
 const admin = await register('admin', true);
 const taxonomy = await (await fetch(`${BASE}/v1/taxonomy`)).json();

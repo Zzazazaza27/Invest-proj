@@ -2,6 +2,7 @@ import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { createHash, createHmac } from 'node:crypto';
 import { errors } from '../common/errors';
 import { getEnv, isLoopbackUrl } from '../config/env';
+import type { GroupMode } from '@fifth/contracts';
 import { storageBreaker, storageMode } from '../availability/storage-health';
 
 /** Служебные ключи проб доступности (4.11): вне материалов людей и их квот. */
@@ -134,63 +135,9 @@ export class S3Service implements OnModuleInit {
   async headObject(
     key: string,
   ): Promise<{ exists: boolean; sizeBytes: number | null; etag: string | null }> {
-    const env = getEnv();
-    if (!this.isConfigured) throw new Error('S3 не настроен');
-
-    const now = new Date();
-    const amzDate = toAmzDate(now);
-    const shortDate = amzDate.slice(0, 8);
-    // У HEAD тела нет, и хеш пустого тела — часть подписи.
-    const payloadHash = sha256Hex(Buffer.alloc(0));
-
-    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
-    const url = new URL(
-      env.S3_FORCE_PATH_STYLE === 'true'
-        ? `${base}/${env.S3_BUCKET}/${key}`
-        : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${key}`,
-    );
-
-    const headers: Record<string, string> = {
-      host: url.host,
-      'x-amz-content-sha256': payloadHash,
-      'x-amz-date': amzDate,
-    };
-    const signedHeaders = Object.keys(headers).sort().join(';');
-    const canonicalHeaders = Object.keys(headers)
-      .sort()
-      .map((name) => `${name}:${headers[name]}\n`)
-      .join('');
-
-    const canonicalRequest = [
-      'HEAD',
-      url.pathname,
-      '',
-      canonicalHeaders,
-      signedHeaders,
-      payloadHash,
-    ].join('\n');
-
-    const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
-    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
-    const signature = createHmac(
-      'sha256',
-      signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
-    )
-      .update(stringToSign, 'utf8')
-      .digest('hex');
-
-    const response = await fetch(url.toString(), {
-      method: 'HEAD',
-      headers: {
-        ...headers,
-        Authorization:
-          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
-          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
-      },
-      // Хранилище — внешняя зависимость: без таймаута зависший ответ держит
-      // запрос пользователя бесконечно.
-      signal: AbortSignal.timeout(10_000),
-    });
+    // Хранилище — внешняя зависимость: без таймаута зависший ответ держит
+    // запрос пользователя бесконечно.
+    const response = await this.signedFetch('HEAD', key, { timeoutMs: 10_000 });
 
     if (response.status === 404) return { exists: false, sizeBytes: null, etag: null };
     if (!response.ok) throw new Error(`хранилище ответило ${response.status} на HEAD`);
@@ -224,60 +171,9 @@ export class S3Service implements OnModuleInit {
     sha256: string | null;
     head: Buffer;
   }> {
-    const env = getEnv();
-    if (!this.isConfigured) throw new Error('S3 не настроен');
-
-    const now = new Date();
-    const amzDate = toAmzDate(now);
-    const shortDate = amzDate.slice(0, 8);
-    const payloadHash = sha256Hex(Buffer.alloc(0));
-
-    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
-    const url = new URL(
-      env.S3_FORCE_PATH_STYLE === 'true'
-        ? `${base}/${env.S3_BUCKET}/${key}`
-        : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${key}`,
-    );
-
-    const headers: Record<string, string> = {
-      host: url.host,
-      'x-amz-content-sha256': payloadHash,
-      'x-amz-date': amzDate,
-    };
-    const signedHeaders = Object.keys(headers).sort().join(';');
-    const canonicalHeaders = Object.keys(headers)
-      .sort()
-      .map((name) => `${name}:${headers[name]}\n`)
-      .join('');
-    const canonicalRequest = [
-      'GET',
-      url.pathname,
-      '',
-      canonicalHeaders,
-      signedHeaders,
-      payloadHash,
-    ].join('\n');
-    const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
-    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
-    const signature = createHmac(
-      'sha256',
-      signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
-    )
-      .update(stringToSign, 'utf8')
-      .digest('hex');
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        ...headers,
-        Authorization:
-          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
-          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
-      },
-      // Дольше, чем HEAD: тело видео может быть до 500 МБ. Таймаут всё равно
-      // обязателен — зависшее чтение держало бы запрос пользователя.
-      signal: AbortSignal.timeout(120_000),
-    });
+    // Дольше, чем HEAD: тело видео может быть до 500 МБ. Таймаут всё равно
+    // обязателен — зависшее чтение держало бы запрос пользователя.
+    const response = await this.signedFetch('GET', key, { timeoutMs: 120_000, settleLater: true });
 
     if (response.status === 404) {
       return { exists: false, sizeBytes: 0, sha256: null, head: Buffer.alloc(0) };
@@ -285,26 +181,28 @@ export class S3Service implements OnModuleInit {
     if (!response.ok || !response.body) {
       throw new Error(`хранилище ответило ${response.status} на GET`);
     }
-
-    const hash = createHash('sha256');
-    const headChunks: Buffer[] = [];
-    let headBytes = 0;
-    let sizeBytes = 0;
-    for await (const chunk of response.body) {
-      const buf = Buffer.from(chunk);
-      hash.update(buf);
-      sizeBytes += buf.byteLength;
-      if (headBytes < 16) {
-        headChunks.push(buf.subarray(0, 16 - headBytes));
-        headBytes = Math.min(16, headBytes + buf.byteLength);
+    const body = response.body;
+    return this.settleBody('read', async () => {
+      const hash = createHash('sha256');
+      const headChunks: Buffer[] = [];
+      let headBytes = 0;
+      let sizeBytes = 0;
+      for await (const chunk of body) {
+        const buf = Buffer.from(chunk);
+        hash.update(buf);
+        sizeBytes += buf.byteLength;
+        if (headBytes < 16) {
+          headChunks.push(buf.subarray(0, 16 - headBytes));
+          headBytes = Math.min(16, headBytes + buf.byteLength);
+        }
       }
-    }
-    return {
-      exists: true,
-      sizeBytes,
-      sha256: hash.digest('hex'),
-      head: Buffer.concat(headChunks),
-    };
+      return {
+        exists: true,
+        sizeBytes,
+        sha256: hash.digest('hex'),
+        head: Buffer.concat(headChunks),
+      };
+    });
   }
 
   /**
@@ -320,65 +218,14 @@ export class S3Service implements OnModuleInit {
    * незачем.
    */
   async getObject(key: string): Promise<{ body: Buffer; contentType: string | null } | null> {
-    const env = getEnv();
-    if (!this.isConfigured) throw new Error('S3 не настроен');
-
-    const now = new Date();
-    const amzDate = toAmzDate(now);
-    const shortDate = amzDate.slice(0, 8);
-    const payloadHash = sha256Hex(Buffer.alloc(0));
-
-    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
-    const url = new URL(
-      env.S3_FORCE_PATH_STYLE === 'true'
-        ? `${base}/${env.S3_BUCKET}/${key}`
-        : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${key}`,
-    );
-
-    const headers: Record<string, string> = {
-      host: url.host,
-      'x-amz-content-sha256': payloadHash,
-      'x-amz-date': amzDate,
-    };
-    const signedHeaders = Object.keys(headers).sort().join(';');
-    const canonicalHeaders = Object.keys(headers)
-      .sort()
-      .map((name) => `${name}:${headers[name]}\n`)
-      .join('');
-    const canonicalRequest = [
-      'GET',
-      url.pathname,
-      '',
-      canonicalHeaders,
-      signedHeaders,
-      payloadHash,
-    ].join('\n');
-    const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
-    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
-    const signature = createHmac(
-      'sha256',
-      signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
-    )
-      .update(stringToSign, 'utf8')
-      .digest('hex');
-
-    const response = await fetch(url.toString(), {
-      method: 'GET',
-      headers: {
-        ...headers,
-        Authorization:
-          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
-          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
-      },
-      signal: AbortSignal.timeout(60_000),
-    });
+    const response = await this.signedFetch('GET', key, { timeoutMs: 60_000, settleLater: true });
 
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`хранилище ответило ${response.status} на GET`);
-    return {
-      body: Buffer.from(await response.arrayBuffer()),
-      contentType: response.headers.get('content-type'),
-    };
+    const body = await this.settleBody('read', async () =>
+      Buffer.from(await response.arrayBuffer()),
+    );
+    return { body, contentType: response.headers.get('content-type') };
   }
 
   /**
@@ -392,61 +239,8 @@ export class S3Service implements OnModuleInit {
    * него, и это правильное поведение для уборки, которая повторяется.
    */
   async deleteObject(key: string): Promise<void> {
-    const env = getEnv();
-    if (!this.isConfigured) throw new Error('S3 не настроен');
-
-    const now = new Date();
-    const amzDate = toAmzDate(now);
-    const shortDate = amzDate.slice(0, 8);
-    const payloadHash = sha256Hex(Buffer.alloc(0));
-
-    const base = env.S3_ENDPOINT.replace(/\/+$/, '');
-    const url = new URL(
-      env.S3_FORCE_PATH_STYLE === 'true'
-        ? `${base}/${env.S3_BUCKET}/${key}`
-        : `${injectBucketIntoHost(base, env.S3_BUCKET)}/${key}`,
-    );
-
-    const headers: Record<string, string> = {
-      host: url.host,
-      'x-amz-content-sha256': payloadHash,
-      'x-amz-date': amzDate,
-    };
-    const signedHeaders = Object.keys(headers).sort().join(';');
-    const canonicalHeaders = Object.keys(headers)
-      .sort()
-      .map((name) => `${name}:${headers[name]}\n`)
-      .join('');
-
-    const canonicalRequest = [
-      'DELETE',
-      url.pathname,
-      '',
-      canonicalHeaders,
-      signedHeaders,
-      payloadHash,
-    ].join('\n');
-
-    const scope = `${shortDate}/${env.S3_REGION}/s3/aws4_request`;
-    const stringToSign = [ALGORITHM, amzDate, scope, sha256Hex(canonicalRequest)].join('\n');
-    const signature = createHmac(
-      'sha256',
-      signingKey(env.S3_SECRET_ACCESS_KEY, shortDate, env.S3_REGION, 's3'),
-    )
-      .update(stringToSign, 'utf8')
-      .digest('hex');
-
-    const response = await fetch(url.toString(), {
-      method: 'DELETE',
-      headers: {
-        ...headers,
-        Authorization:
-          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
-          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
-      },
-      // Таймаут обязателен на каждом внешнем вызове (RULES.md §3.1).
-      signal: AbortSignal.timeout(10_000),
-    });
+    // Таймаут обязателен на каждом внешнем вызове (RULES.md §3.1).
+    const response = await this.signedFetch('DELETE', key, { timeoutMs: 10_000 });
 
     // 204 — удалено, 404 — уже нет. Всё остальное означает, что объект
     // остался, и уборка обязана об этом сказать, а не молча пойти дальше.
@@ -476,8 +270,9 @@ export class S3Service implements OnModuleInit {
       },
       timeoutMs: input.timeoutMs,
       signal: input.signal,
+      settleLater: true,
     });
-    const body = await response.text();
+    const body = await this.settleBody('write', () => response.text(), input.signal);
     if (!response.ok || body.includes('<Error>')) {
       throw new Error(`хранилище не скопировало объект: ${response.status}`);
     }
@@ -500,40 +295,75 @@ export class S3Service implements OnModuleInit {
     if (limits.signal) signals.push(limits.signal);
     const signal = AbortSignal.any(signals);
     try {
-      const response = await this.signedFetch('GET', key, { signal, timeoutMs: limits.totalMs });
+      // Простой и общий предел — отказ хранилища; остановка вызывающим — нет.
+      const response = await this.signedFetch('GET', key, {
+        signal,
+        timeoutMs: limits.totalMs,
+        settleLater: true,
+        cancelSignal: limits.signal,
+      });
       if (response.status === 404) {
         return { exists: false, sizeBytes: 0, sha256: null, head: Buffer.alloc(0) };
       }
       if (!response.ok || !response.body) {
         throw new Error(`хранилище ответило ${response.status} на GET`);
       }
-      const hash = createHash('sha256');
-      const headChunks: Buffer[] = [];
-      let headBytes = 0;
-      let sizeBytes = 0;
-      for await (const chunk of response.body) {
-        clearTimeout(idleTimer);
-        idleTimer = setTimeout(() => idle.abort(new Error('простой чтения')), limits.idleMs);
-        const buf = Buffer.from(chunk);
-        hash.update(buf);
-        sizeBytes += buf.byteLength;
-        if (headBytes < 16) {
-          headChunks.push(buf.subarray(0, 16 - headBytes));
-          headBytes = Math.min(16, headBytes + buf.byteLength);
-        }
-      }
-      return {
-        exists: true,
-        sizeBytes,
-        sha256: hash.digest('hex'),
-        head: Buffer.concat(headChunks),
-      };
+      const stream = response.body;
+      return await this.settleBody(
+        'read',
+        async () => {
+          const hash = createHash('sha256');
+          const headChunks: Buffer[] = [];
+          let headBytes = 0;
+          let sizeBytes = 0;
+          for await (const chunk of stream) {
+            clearTimeout(idleTimer);
+            idleTimer = setTimeout(() => idle.abort(new Error('простой чтения')), limits.idleMs);
+            const buf = Buffer.from(chunk);
+            hash.update(buf);
+            sizeBytes += buf.byteLength;
+            if (headBytes < 16) {
+              headChunks.push(buf.subarray(0, 16 - headBytes));
+              headBytes = Math.min(16, headBytes + buf.byteLength);
+            }
+          }
+          return {
+            exists: true,
+            sizeBytes,
+            sha256: hash.digest('hex'),
+            head: Buffer.concat(headChunks),
+          };
+        },
+        limits.signal,
+      );
     } finally {
       clearTimeout(idleTimer);
     }
   }
 
-  /** Подписанный SigV4 запрос без тела — для новых операций хранилища. */
+  /**
+   * Чтение или разбор тела ответа — часть того же обращения: обрыв и простой посреди тела
+   * считаются техническим отказом режима (4.11), успех засчитывается только после тела.
+   */
+  private async settleBody<T>(
+    mode: GroupMode,
+    read: () => Promise<T>,
+    cancelSignal?: AbortSignal,
+  ): Promise<T> {
+    try {
+      const value = await read();
+      storageBreaker().record(mode, true);
+      return value;
+    } catch (error) {
+      if (!cancelSignal?.aborted) storageBreaker().record(mode, false);
+      throw error;
+    }
+  }
+
+  /**
+   * Подписанный SigV4 запрос — единственный путь ядра к хранилищу из этого класса: каждое
+   * обращение сообщает свой технический исход размыкателю группы «Файлы» (4.11).
+   */
   private async signedFetch(
     method: 'GET' | 'PUT' | 'HEAD' | 'DELETE',
     key: string,
@@ -543,6 +373,13 @@ export class S3Service implements OnModuleInit {
       signal?: AbortSignal;
       /** Тело PUT: только для служебной пробы записи (4.11) — маленькое и фиксированное. */
       body?: Buffer;
+      /**
+       * Успешный ответ засчитать после тела (`settleBody`): у GET с телом и у копирования
+       * отказ может прийти уже после заголовков. Отказы (5xx, сеть) учитываются сразу.
+       */
+      settleLater?: boolean;
+      /** Чья остановка — не отказ хранилища. По умолчанию `signal`. */
+      cancelSignal?: AbortSignal;
     },
   ): Promise<Response> {
     const env = getEnv();
@@ -601,12 +438,27 @@ export class S3Service implements OnModuleInit {
         ...(options.body ? { body: new Uint8Array(options.body) } : {}),
         signal: AbortSignal.any(signals),
       });
-      storageBreaker().record(mode, response.status < 500);
+      // 2xx/3xx с отложенным учётом засчитает settleBody; 4xx и 5xx — исход уже известен.
+      if (!(options.settleLater && response.status < 400)) {
+        storageBreaker().record(mode, response.status < 500);
+      }
       return response;
     } catch (error) {
-      if (!options.signal?.aborted) storageBreaker().record(mode, false);
+      if (!(options.cancelSignal ?? options.signal)?.aborted) storageBreaker().record(mode, false);
       throw error;
     }
+  }
+
+  /**
+   * Служебное чтение маленького объекта — проба чтения группы «Файлы» (4.11). `null` —
+   * объекта нет; отсутствие НЕ подтверждает чтение — решает вызывающий.
+   */
+  async getProbeObject(key: string, timeoutMs: number): Promise<Buffer | null> {
+    if (!key.startsWith(PROBE_PREFIX)) throw new Error('проба чтения — только служебный ключ');
+    const res = await this.signedFetch('GET', key, { timeoutMs, settleLater: true });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`проба чтения: HTTP ${res.status}`);
+    return this.settleBody('read', async () => Buffer.from(await res.arrayBuffer()));
   }
 
   /**
@@ -750,18 +602,26 @@ export async function putObject(input: {
     .update(stringToSign, 'utf8')
     .digest('hex');
 
-  const response = await fetch(url.toString(), {
-    method: 'PUT',
-    headers: {
-      ...headers,
-      Authorization:
-        `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
-        `SignedHeaders=${signedHeaders}, Signature=${signature}`,
-    },
-    body: new Uint8Array(input.body),
-    // Таймаут обязателен на каждом внешнем вызове (RULES.md §3.1).
-    signal: AbortSignal.timeout(15_000),
-  });
+  let response: Response;
+  try {
+    response = await fetch(url.toString(), {
+      method: 'PUT',
+      headers: {
+        ...headers,
+        Authorization:
+          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
+          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+      },
+      body: new Uint8Array(input.body),
+      // Таймаут обязателен на каждом внешнем вызове (RULES.md §3.1).
+      signal: AbortSignal.timeout(15_000),
+    });
+  } catch (error) {
+    // Технический исход — размыкателю записи группы «Файлы» (4.11), как у S3Service.
+    storageBreaker().record('write', false);
+    throw error;
+  }
+  storageBreaker().record('write', response.status < 500);
 
   if (!response.ok) {
     // Тело ответа хранилища во внутренний лог не тянем: оно может содержать
