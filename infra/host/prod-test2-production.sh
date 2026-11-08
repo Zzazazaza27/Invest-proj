@@ -70,7 +70,7 @@ back() {
   echo "СБОЙ на строке $1: возвращаю прежний режим"
   docker logs --tail 12 "$PROJECT-core" 2>&1 | cut -c1-220 || true
   restore_before || true
-  report "ОСТАНОВЛЕНО на строке $1, test-2 возвращена в прежний режим"
+  report "ОСТАНОВЛЕНО на строке $1, $ID возвращена в прежний режим"
   rm -rf "$WORK"
   exit 1
 }
@@ -188,8 +188,9 @@ say 'проверка настроек до перезапуска'
 core_image="$(sed -n 's/^FIFTH_CORE_IMAGE=//p' "$DIR/compose.env")"
 docker run --rm --network none --env-file "$DIR/settings.env" -v "$AGENT_DIR:/run/fifth-secrets:ro" \
   --entrypoint node "$core_image" -e \
-  "require('/app/apps/core/dist/config/env.js').loadEnv();console.log('настройки production приняты')" 2>&1 |
-  tail -3 | cut -c1-240 | tee "$WORK/env-check"
+  "try{require('/app/apps/core/dist/config/env.js').loadEnv();console.log('настройки production приняты')}
+   catch(e){console.log(String(e.message).replace(/\s+/g,' ').slice(0,900))}" 2>&1 |
+  tail -3 | cut -c1-900 | tee "$WORK/env-check"
 grep -q 'настройки production приняты' "$WORK/env-check"
 
 say 'вход: заголовок сертификата клиента не принимается от посетителя'
