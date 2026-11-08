@@ -53,6 +53,9 @@ export class RolesService {
 
     return this.db.transaction(ctx, async (tx) => {
       await assertUserExists(tx, userId);
+      // Целевое состояние (2.6, пакет 8): роль уже есть — успешный ответ с текущими ролями,
+      // без записи, смены рубежа и события. Права — те же: маршрут администратора и RLS.
+      if (await hasActiveRole(tx, userId, role)) return this.readRoles(tx, userId);
       try {
         await tx.query(
           `INSERT INTO identity.user_roles (user_id, role, granted_by) VALUES ($1, $2, $3)`,
@@ -60,6 +63,7 @@ export class RolesService {
         );
       } catch (error) {
         if ((error as { code?: string }).code === '23505') {
+          // Одновременная выдача той же роли: она уже есть — тот же ответ, что и выше.
           throw errors.conflict('Эта роль у пользователя уже есть');
         }
         if ((error as { code?: string }).code === '23514') {
@@ -94,6 +98,10 @@ export class RolesService {
     }
 
     return this.db.transaction(ctx, async (tx) => {
+      await assertUserExists(tx, userId);
+      // Целевое состояние: роли уже нет — успешный ответ с текущими ролями, без события.
+      // Проверка «последнего администратора» нужна только для действительного снятия.
+      if (!(await hasActiveRole(tx, userId, role))) return this.readRoles(tx, userId);
       if (role === 'admin') {
         // Блокировка берётся ДО подсчёта: две одновременные операции иначе
         // увидели бы по два администратора и сняли обоих.
@@ -191,4 +199,13 @@ function mapRole(row: RoleRow): GrantedRole {
     grantedAt: row.granted_at.toISOString(),
     revokedAt: row.revoked_at ? row.revoked_at.toISOString() : null,
   };
+}
+
+/** Действующая роль пользователя — под правами администратора (RLS чтения ролей). */
+async function hasActiveRole(tx: Tx, userId: string, role: Role): Promise<boolean> {
+  const { rows } = await tx.query(
+    `SELECT 1 FROM identity.user_roles WHERE user_id = $1 AND role = $2 AND revoked_at IS NULL`,
+    [userId, role],
+  );
+  return rows.length > 0;
 }

@@ -152,11 +152,25 @@ export class KycService {
     sealed: { ciphertexts: { inn: Buffer | null; ogrn: Buffer | null }; wrappedDek: Buffer },
   ): Promise<BusinessEntity> {
     return this.db.transaction(ctx, async (tx) => {
-      const duplicate = await tx.query(
-        `SELECT 1 FROM kyc.business_entities
+      const duplicate = await tx.query<EntityRow & { owner_user_id: string }>(
+        `SELECT id, legal_name, legal_form, inn_ciphertext, entity_wrapped_dek, jurisdiction,
+                registry_status, created_at, owner_user_id
+           FROM kyc.business_entities
           WHERE inn_hmac = $1 AND jurisdiction = $2 AND deleted_at IS NULL LIMIT 1`,
         [innIndex, input.jurisdiction],
       );
+      const same = duplicate.rows[0];
+      if (
+        same &&
+        same.owner_user_id === ctx.userId &&
+        same.legal_name === input.legalName &&
+        (same.legal_form ?? null) === (input.legalForm ?? null)
+      ) {
+        // Целевое состояние (2.6, пакет 8): это юрлицо этого же владельца с теми же
+        // данными — повтор создания, возвращается оно, без новой строки и события. Чужое
+        // юрлицо (или иные данные) — прежний отказ, без справки о том, кому оно принадлежит.
+        return this.toEntity(same, false, maskInn(input.inn));
+      }
       if (duplicate.rows.length > 0) {
         // Формулировка не подтверждает, кому принадлежит юрлицо: это была бы
         // справка о чужом бизнесе по ИНН.
@@ -254,23 +268,58 @@ export class KycService {
       // Без RETURNING намеренно: политика чтения состава отдаёт пользователю
       // только его собственные строки, поэтому возврат ЧУЖОЙ добавленной строки
       // упёрся бы в RLS. Ответ собирается из проверенного входа.
-      await tx.query(
-        `INSERT INTO kyc.entity_members (entity_id, user_id, member_role, share_pct)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (entity_id, user_id, member_role)
-         DO UPDATE SET share_pct = EXCLUDED.share_pct`,
-        [entityId, input.userId, input.memberRole, input.sharePct ?? null],
+      // Повтор (2.6, пакет 8): тот же участник с той же долей — не изменение, ни строки,
+      // ни события. Сравнение — функцией M165 (владельцу юрлица или администратору):
+      // чужие строки состава RLS прочитать не даёт.
+      const params = [entityId, input.userId, input.memberRole, input.sharePct ?? null];
+      // Сериализует повторы одного участника: проверка и вставка не расходятся.
+      await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+        `kyc.member:${entityId}:${input.userId}:${input.memberRole}`,
+      ]);
+      const { rows: stateRows } = await tx.query<{ state: string | null }>(
+        `SELECT kyc.member_share_state($1, $2, $3, $4::numeric) AS state`,
+        params,
       );
+      const state = stateRows[0]?.state ?? null;
+      if (state === null) throw errors.forbidden({ subject: 'business_entity' });
 
-      await this.audit.emit(tx, {
-        verb: 'kyc.entity.member_added',
-        actorId: ctx.userId,
-        actorRole: primaryRole(ctx),
-        subjectType: 'business_entity',
-        subjectId: entityId,
-        context: { memberRole: input.memberRole },
-        traceId: ctx.traceId,
-      });
+      let changed = false;
+      if (state === 'absent') {
+        // Без ON CONFLICT: у владельца он требует права чтения вставляемой чужой строки
+        // (42501). Гонку повторов снимает блокировка выше.
+        await tx.query(
+          `INSERT INTO kyc.entity_members (entity_id, user_id, member_role, share_pct)
+           VALUES ($1, $2, $3, $4)`,
+          params,
+        );
+        changed = true;
+      } else if (state === 'different') {
+        // Менять долю существующего участника может только администратор (политика
+        // entity_members_update); владельцу — явный отказ, а не молчаливый успех.
+        if (!ctx.roles.includes('admin')) {
+          throw errors.conflict('Участник уже в составе с другой долей', {
+            subject: 'entity_member',
+          });
+        }
+        const { rowCount } = await tx.query(
+          `UPDATE kyc.entity_members SET share_pct = $4
+            WHERE entity_id = $1 AND user_id = $2 AND member_role = $3
+              AND share_pct IS DISTINCT FROM $4::numeric`,
+          params,
+        );
+        changed = (rowCount ?? 0) > 0;
+      }
+
+      if (changed)
+        await this.audit.emit(tx, {
+          verb: 'kyc.entity.member_added',
+          actorId: ctx.userId,
+          actorRole: primaryRole(ctx),
+          subjectType: 'business_entity',
+          subjectId: entityId,
+          context: { memberRole: input.memberRole },
+          traceId: ctx.traceId,
+        });
 
       return {
         entityId,

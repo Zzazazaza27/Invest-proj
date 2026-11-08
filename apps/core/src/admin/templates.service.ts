@@ -143,6 +143,8 @@ export class TemplatesService {
       if (template.is_critical) {
         throw errors.conflict('Критичный шаблон нельзя выключить: уведомление обязано уходить');
       }
+      // Уже выключен — не изменение (2.6, пакет 8): шаблон как есть, без события.
+      if (!template.is_active) return mapTemplate(template);
       const { rows } = await tx.query<TemplateRow>(
         `UPDATE comms.notification_templates SET is_active = false
           WHERE id = $1
@@ -207,12 +209,11 @@ export function assertNoPersonalPlaceholders(input: {
   }
 }
 
-async function loadTemplate(
-  tx: Tx,
-  id: string,
-): Promise<{ code: string; channel: string; is_critical: boolean }> {
-  const { rows } = await tx.query<{ code: string; channel: string; is_critical: boolean }>(
-    'SELECT code, channel, is_critical FROM comms.notification_templates WHERE id = $1',
+async function loadTemplate(tx: Tx, id: string): Promise<TemplateRow> {
+  const { rows } = await tx.query<TemplateRow>(
+    `SELECT id, code, channel, locale, version, title_template, body_template,
+            fallback_chain, is_critical, is_active
+       FROM comms.notification_templates WHERE id = $1`,
     [id],
   );
   const template = rows[0];

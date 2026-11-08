@@ -190,6 +190,10 @@ export class ProjectsService {
         const existing = current.rows[0];
         if (!existing) throw errors.notFound({ subject: 'project' });
 
+        // Права — до сравнения: «ничего не изменилось» не должно скрывать отказ в правах.
+        await this.assertCanChange(tx, projectId);
+        // Изменение — только если существенные поля после подстановки отличаются (2.6,
+        // пакет 8). Отсутствующее поле частичного обновления — «не менять», а не «очистить».
         const { rows } = await tx.query<ProjectRow>(
           `UPDATE lab.projects
               SET title            = COALESCE($2, title),
@@ -202,6 +206,13 @@ export class ProjectsService {
                   investment_ask   = COALESCE($9::numeric, investment_ask),
                   updated_at       = now()
             WHERE id = $1 AND deleted_at IS NULL
+              AND (COALESCE($2, title), COALESCE($3, tagline), COALESCE($4, description),
+                   COALESCE($5, stage), COALESCE($6::uuid, taxonomy_id),
+                   COALESCE($7, geo_country), COALESCE($8, geo_region),
+                   COALESCE($9::numeric, investment_ask))
+                  IS DISTINCT FROM
+                  (title, tagline, description, stage, taxonomy_id, geo_country, geo_region,
+                   investment_ask)
             RETURNING ${PROJECT_COLUMNS}`,
           [
             projectId,
@@ -216,7 +227,8 @@ export class ProjectsService {
           ],
         );
         const row = rows[0];
-        if (!row) throw errors.notFound({ subject: 'project' });
+        // Ничего не изменилось — текущий проект, без события.
+        if (!row) return this.reread(tx, projectId);
 
         await this.audit.emit(tx, {
           verb: 'lab.project.updated',
@@ -616,6 +628,8 @@ export class ProjectsService {
         const project = found[0];
         if (!project) throw errors.notFound({ subject: 'project' });
         if (project.visibility === mode) {
+          // Уже в этом режиме: успех — но по текущим правам на изменение (2.6, пакет 8).
+          await this.assertCanChange(tx, projectId);
           return this.reread(tx, projectId);
         }
         if (project.listing_status === 'listed') {
@@ -695,9 +709,21 @@ export class ProjectsService {
       );
       const row = rows[0];
       if (!row) {
-        // Либо проекта нет, либо он и не был опубликован. Различать эти случаи
-        // наружу незачем.
-        throw errors.notFound({ subject: 'listing' });
+        // Целевое состояние (2.6, пакет 8): проект уже не в листинге — успешный ответ с
+        // текущим проектом, без события. Но только для того, кто вправе его менять: чужой
+        // или недоступный проект остаётся «нет такого».
+        await this.assertCanChange(tx, projectId);
+        if (before[0]?.visibility !== 'private') {
+          // Не в листинге, но режим ещё открытый (например, «выбранные инвесторы»):
+          // закрыть режим — настоящее изменение, и событие о нём пишется.
+          await tx.query(
+            `UPDATE lab.projects SET visibility = 'private', visibility_changed_at = now(),
+                    updated_at = now() WHERE id = $1`,
+            [projectId],
+          );
+          await this.auditVisibility(ctx, tx, projectId, before[0]!.visibility, 'private');
+        }
+        return this.reread(tx, projectId);
       }
       await this.auditVisibility(ctx, tx, projectId, before[0]?.visibility ?? 'public', 'private');
 
@@ -757,11 +783,24 @@ export class ProjectsService {
         `UPDATE lab.project_materials
             SET visibility = $3
           WHERE id = $2 AND project_id = $1 AND uploaded_at IS NOT NULL
+            AND visibility IS DISTINCT FROM $3
           RETURNING id, project_id, type, version, url, created_at, visibility`,
         [projectId, materialId, visibility],
       );
       const row = rows[0];
-      if (!row) throw errors.notFound({ subject: 'material' });
+      if (!row) {
+        // Целевое состояние (2.6, пакет 8): видимость уже такая — материал как есть, без
+        // события; по текущим правам на проект. Нет материала — «нет такого».
+        await this.assertCanChange(tx, projectId);
+        const { rows: same } = await tx.query<MaterialRow>(
+          `SELECT id, project_id, type, version, url, created_at, visibility
+             FROM lab.project_materials
+            WHERE id = $2 AND project_id = $1 AND uploaded_at IS NOT NULL`,
+          [projectId, materialId],
+        );
+        if (!same[0]) throw errors.notFound({ subject: 'material' });
+        return mapMaterial(same[0]);
+      }
       await this.audit.emit(tx, {
         verb: 'lab.project_material.visibility_changed',
         actorId: ctx.userId,
@@ -796,6 +835,20 @@ export class ProjectsService {
       [projectId],
     );
     if (rows.length === 0) throw errors.notFound({ subject: 'project' });
+  }
+
+  /**
+   * Право менять проект — то же условие, что у политики обновления (`projects_update_owner`):
+   * участник проекта или администратор. Нужна там, где «уже выполнено» иначе ответило бы
+   * успехом тому, кому изменение запрещено. Чужой или недоступный — «нет такого».
+   */
+  private async assertCanChange(tx: Tx, projectId: string): Promise<void> {
+    const { rows } = await tx.query<{ ok: boolean }>(
+      `SELECT (lab.is_project_member(id, app.current_user_id()) OR app.has_role('admin')) AS ok
+         FROM lab.projects WHERE id = $1 AND deleted_at IS NULL`,
+      [projectId],
+    );
+    if (!rows[0]?.ok) throw errors.notFound({ subject: 'project' });
   }
 
   private async assertProjectVisible(tx: Tx, projectId: string): Promise<void> {

@@ -131,7 +131,14 @@ export class ContentService {
       );
       // Ноль строк означает либо чужой идентификатор, либо уже снятый блок.
       // И то и другое — не изменение, и события об изменении быть не должно.
-      if ((rowCount ?? 0) === 0) throw errors.notFound({ subject: 'landing_block' });
+      if ((rowCount ?? 0) === 0) {
+        // Целевое состояние (2.6, пакет 8): блок уже снят — успех; нет такого — «нет такого».
+        const { rows } = await tx.query(`SELECT 1 FROM content.landing_blocks WHERE id = $1`, [
+          blockId,
+        ]);
+        if (rows.length === 0) throw errors.notFound({ subject: 'landing_block' });
+        return;
+      }
 
       await this.audit.emit(tx, {
         verb: 'content.landing_block.withdrawn',

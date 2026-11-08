@@ -49,7 +49,15 @@ export class ServiceCountriesService {
         [code],
       );
       const row = rows[0];
-      if (!row) throw errors.conflict(`Страна ${code} уже заведена`);
+      if (!row) {
+        // Целевое состояние (2.6, пакет 8): страна уже заведена — она и возвращается, без
+        // события. Создание ничего, кроме кода, не задаёт: другого содержимого нет.
+        const { rows: existing } = await tx.query<CountryRow>(
+          `SELECT code, is_active, sort_order FROM billing.service_countries WHERE code = $1`,
+          [code],
+        );
+        return mapCountry(existing[0]!);
+      }
       await this.audit.emit(tx, {
         verb: 'billing.service_country.updated',
         actorId: ctx.userId,
@@ -74,11 +82,21 @@ export class ServiceCountriesService {
         `UPDATE billing.service_countries
             SET is_active = COALESCE($2, is_active), sort_order = COALESCE($3, sort_order)
           WHERE code = $1
+            AND (COALESCE($2, is_active), COALESCE($3, sort_order))
+                IS DISTINCT FROM (is_active, sort_order)
           RETURNING code, is_active, sort_order`,
         [code, input.isActive ?? null, input.sortOrder ?? null],
       );
       const row = rows[0];
-      if (!row) throw errors.notFound({ subject: 'service_country', code });
+      if (!row) {
+        // Ничего не изменилось (2.6, пакет 8) — страна как есть, без события.
+        const { rows: existing } = await tx.query<CountryRow>(
+          `SELECT code, is_active, sort_order FROM billing.service_countries WHERE code = $1`,
+          [code],
+        );
+        if (!existing[0]) throw errors.notFound({ subject: 'service_country', code });
+        return mapCountry(existing[0]);
+      }
       await this.audit.emit(tx, {
         verb: 'billing.service_country.updated',
         actorId: ctx.userId,

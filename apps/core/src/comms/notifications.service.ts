@@ -107,7 +107,15 @@ export class NotificationsService {
       );
       // RLS уже ограничивает выборку своими устройствами; условие по user_id —
       // второй барьер на случай ошибки в политике, а не замена ей.
-      if (rowCount === 0) throw errors.notFound({ subject: 'device' });
+      if (rowCount === 0) {
+        // Целевое состояние (2.6, пакет 8): СВОЁ устройство уже отозвано — успех. Чужое или
+        // несуществующее — по-прежнему «нет такого».
+        const { rows } = await tx.query(
+          `SELECT 1 FROM comms.user_devices WHERE id = $1 AND user_id = $2`,
+          [deviceId, ctx.userId],
+        );
+        if (rows.length === 0) throw errors.notFound({ subject: 'device' });
+      }
     });
   }
 

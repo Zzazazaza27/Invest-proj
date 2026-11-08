@@ -63,10 +63,18 @@ export class ProfileService {
     await this.db.transaction(ctx, async (tx) => {
       const { rowCount } = await tx.query(
         `UPDATE identity.users SET display_name = $2, updated_at = now()
-          WHERE id = $1 AND deleted_at IS NULL`,
+          WHERE id = $1 AND deleted_at IS NULL AND display_name IS DISTINCT FROM $2`,
         [ctx.userId, displayName],
       );
-      if (rowCount === 0) throw errors.notFound({ subject: 'user' });
+      if (rowCount === 0) {
+        // То же имя — не изменение (2.6, пакет 8): без события. Нет пользователя — отказ.
+        const { rows } = await tx.query(
+          `SELECT 1 FROM identity.users WHERE id = $1 AND deleted_at IS NULL`,
+          [ctx.userId],
+        );
+        if (rows.length === 0) throw errors.notFound({ subject: 'user' });
+        return;
+      }
 
       await this.audit.emit(tx, {
         verb: 'identity.user.profile_updated',

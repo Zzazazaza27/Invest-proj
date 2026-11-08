@@ -131,7 +131,19 @@ export class CapabilitiesService {
           WHERE user_id = $1 AND capability = $2 AND revoked_at IS NULL`,
         [input.userId, input.capability, ctx.userId, input.reason],
       );
-      if (rowCount === 0) throw errors.notFound({ subject: 'staff_capability_grant' });
+      if (rowCount === 0) {
+        // Целевое состояние (2.6, пакет 8): действующего полномочия нет — успешный ответ без
+        // события. Но только для того, кто вправе снимать (администратор), и только для
+        // существующего пользователя: иначе «уже снято» скрыло бы отказ в правах.
+        const { rows } = await tx.query<{ admin: boolean; exists: boolean }>(
+          `SELECT app.has_role('admin') AS admin,
+                  EXISTS (SELECT 1 FROM identity.users WHERE id = $1) AS exists`,
+          [input.userId],
+        );
+        if (!rows[0]?.admin) throw errors.forbidden({ stage: 'capability-revoke' });
+        if (!rows[0].exists) throw errors.notFound({ subject: 'user' });
+        return;
+      }
       await this.audit.emit(tx, {
         verb: 'identity.capability.revoked',
         actorId: ctx.userId,

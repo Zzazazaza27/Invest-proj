@@ -126,7 +126,12 @@ export class TextsService {
           [uuidv7(), namespace, key, input.sortOrder ?? 0, input.isActive ?? true, ctx.userId],
         ));
         entry = found[0]!;
-      } else if (input.sortOrder !== undefined || input.isActive !== undefined) {
+      } else if (
+        (input.sortOrder !== undefined && input.sortOrder !== entry.sort_order) ||
+        (input.isActive !== undefined && input.isActive !== entry.is_active)
+      ) {
+        // Только фактическое изменение порядка или активности пишет строку и событие
+        // (2.6, пакет 8); те же значения — не изменение.
         ({ rows: found } = await tx.query<EntryRow>(
           `UPDATE content.text_entries
               SET sort_order = COALESCE($2, sort_order), is_active = COALESCE($3, is_active)

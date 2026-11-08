@@ -95,10 +95,41 @@ export class ProjectAccessService {
                        reason      = EXCLUDED.reason,
                        granted_by  = EXCLUDED.granted_by,
                        granted_at  = now()
+           -- Тот же набор и основание — не изменение (2.6, пакет 8): строка, срок выдачи и
+           -- событие остаются прежними.
+           WHERE (lab.project_access_grants.permissions, lab.project_access_grants.reason)
+                 IS DISTINCT FROM (EXCLUDED.permissions, EXCLUDED.reason)
          RETURNING id, permissions, granted_at, reason, revoked_at`,
-        [uuidv7(), projectId, grantee.userId, permissions, ctx.userId, input.reason ?? null],
+        [
+          uuidv7(),
+          projectId,
+          grantee.userId,
+          permissions,
+          ctx.userId,
+          normalizeReason(input.reason),
+        ],
       );
-      const row = rows[0]!;
+      if (!rows[0]) {
+        const { rows: same } = await tx.query<GrantRow>(
+          `SELECT id, permissions, granted_at, reason, revoked_at
+             FROM lab.project_access_grants
+            WHERE project_id = $1 AND grantee_user_id = $2 AND revoked_at IS NULL`,
+          [projectId, grantee.userId],
+        );
+        const current = same[0]!;
+        return {
+          id: current.id,
+          kind: 'grant',
+          subjectKind: 'user',
+          subjectId: grantee.userId,
+          subjectName: grantee.displayName,
+          permissions: current.permissions as GrantPermission[],
+          createdAt: current.granted_at.toISOString(),
+          reason: current.reason,
+          revokedAt: null,
+        };
+      }
+      const row = rows[0];
 
       // В журнал идёт идентификатор, не адрес: адрес — персональные данные,
       // а для разбора «кому открывали» хватает идентификатора.
@@ -174,10 +205,31 @@ export class ProjectAccessService {
          VALUES ($1, $2, $3, $4, $5)
          ON CONFLICT (project_id, excluded_user_id) WHERE revoked_at IS NULL AND excluded_user_id IS NOT NULL
          DO UPDATE SET reason = EXCLUDED.reason, created_by = EXCLUDED.created_by
+           WHERE lab.project_access_exclusions.reason IS DISTINCT FROM EXCLUDED.reason
          RETURNING id, created_at, reason`,
-        [uuidv7(), projectId, subject.userId, ctx.userId, input.reason ?? null],
+        [uuidv7(), projectId, subject.userId, ctx.userId, normalizeReason(input.reason)],
       );
-      const row = rows[0]!;
+      if (!rows[0]) {
+        // То же исключение с тем же основанием — не изменение: без события.
+        const { rows: same } = await tx.query<ExclusionRow>(
+          `SELECT id, created_at, reason FROM lab.project_access_exclusions
+            WHERE project_id = $1 AND excluded_user_id = $2 AND revoked_at IS NULL`,
+          [projectId, subject.userId],
+        );
+        const current = same[0]!;
+        return {
+          id: current.id,
+          kind: 'exclusion',
+          subjectKind: 'user',
+          subjectId: subject.userId,
+          subjectName: subject.displayName,
+          permissions: [],
+          createdAt: current.created_at.toISOString(),
+          reason: current.reason,
+          revokedAt: null,
+        };
+      }
+      const row = rows[0];
 
       await this.audit.emit(tx, {
         verb: 'lab.project_access.excluded',
@@ -356,4 +408,10 @@ function mapEntry(row: EntryRow): ProjectAccessEntry {
     reason: row.reason,
     revokedAt: row.revoked_at ? row.revoked_at.toISOString() : null,
   };
+}
+
+/** Основание после нормализации: пробелы по краям и пустая строка — «нет основания». */
+function normalizeReason(reason: string | null | undefined): string | null {
+  const trimmed = (reason ?? '').trim();
+  return trimmed === '' ? null : trimmed;
 }
