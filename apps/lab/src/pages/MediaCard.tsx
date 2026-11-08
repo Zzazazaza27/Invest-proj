@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ContextualImage, noteGroupError, useFilesAvailability } from '@fifth/cabinet';
 import { Button, Card, Stack } from '@fifth/ui';
 import { MEDIA_LIMITS, type ProjectMedia, type ProjectMediaKind } from '@fifth/contracts';
+import { keyAfterError, keyForSend, type RetryKey } from '@fifth/api-client';
 import { ApiError, api, mediaUrl } from '../api';
 import { S } from '../strings';
 
@@ -16,6 +17,23 @@ import { S } from '../strings';
  * Изображения показываются по адресам ядра: доступ к ним проверяется на
  * каждом запросе, и ссылка сама по себе ничего не открывает.
  */
+/**
+ * Незавершённое подтверждение загрузки (2.6, M164): загрузка, её точка фокуса и состояние
+ * ключа — ВНЕ компонента, по проекту и виду. После потерянного ответа проверка и повтор
+ * подтверждения идут для ПРЕЖНЕЙ загрузки (тот же uploadId и ключ `media-<uploadId>`) —
+ * без нового билета, без повторной обработки и события на сервере. Новый билет — только для
+ * новой операции, когда человек явно выбрал другое изображение. Живёт в памяти страницы:
+ * перезагрузка его не сохраняет — результат тогда виден в карточке.
+ */
+interface PendingFinalize {
+  uploadId: string;
+  focusX: number;
+  focusY: number;
+  key: RetryKey;
+}
+const pendingFinalize = new Map<string, PendingFinalize>();
+const slotOf = (projectId: string, kind: ProjectMediaKind) => `${projectId}:${kind}`;
+
 export function MediaCard({ projectId }: { projectId: string }) {
   const [items, setItems] = useState<ProjectMedia[] | null>(null);
   const [busy, setBusy] = useState<ProjectMediaKind | null>(null);
@@ -23,6 +41,8 @@ export function MediaCard({ projectId }: { projectId: string }) {
   // Группа «Файлы» (4.11): ограничиваются только загрузка и удаление; причину на странице
   // показывает карточка материалов — одна на группу.
   const files = useFilesAvailability(api.features);
+  const [, rerender] = useState(0);
+  const pendingOf = (kind: ProjectMediaKind) => pendingFinalize.get(slotOf(projectId, kind));
 
   const load = useCallback(async () => {
     const result = await api.projects.media(projectId).catch(() => ({ items: [] }));
@@ -67,13 +87,12 @@ export function MediaCard({ projectId }: { projectId: string }) {
 
       // Успех объявляется после подтверждения: до него платформа ещё не
       // смотрела, что внутри файла, и отказать может именно здесь.
-      await api.projects.finalizeMedia(projectId, kind, {
+      pendingFinalize.set(slotOf(projectId, kind), {
         uploadId: ticket.uploadId,
         focusX,
         focusY,
+        key: keyForSend(null),
       });
-      setNotice({ tone: 'ok', text: 'Изображение загружено' });
-      await load();
     } catch (error) {
       noteGroupError(error);
       setNotice({
@@ -87,6 +106,47 @@ export function MediaCard({ projectId }: { projectId: string }) {
       });
     } finally {
       setBusy(null);
+    }
+    if (pendingOf(kind)) await confirm(kind);
+  }
+
+  /** Подтвердить прежнюю загрузку: тот же uploadId и ключ; неизвестный исход — держать. */
+  async function confirm(kind: ProjectMediaKind) {
+    const pending = pendingOf(kind);
+    if (!pending) return;
+    setBusy(kind);
+    setNotice(null);
+    try {
+      await api.projects.finalizeMedia(projectId, kind, {
+        uploadId: pending.uploadId,
+        focusX: pending.focusX,
+        focusY: pending.focusY,
+      });
+      pendingFinalize.delete(slotOf(projectId, kind));
+      setNotice({ tone: 'ok', text: 'Изображение загружено' });
+      await load();
+    } catch (error) {
+      noteGroupError(error);
+      const kept = keyAfterError(pending.key, error);
+      if (kept) {
+        pendingFinalize.set(slotOf(projectId, kind), { ...pending, key: kept });
+        setNotice({
+          tone: 'error',
+          text: 'Исход подтверждения неизвестен: изображение могло уже сохраниться. Проверьте загрузку — повтор не обработает файл второй раз.',
+        });
+      } else {
+        pendingFinalize.delete(slotOf(projectId, kind));
+        setNotice({
+          tone: 'error',
+          text:
+            error instanceof ApiError
+              ? (error.problem?.errors?.[0]?.message ?? error.problem?.detail ?? error.message)
+              : 'Загрузка не удалась',
+        });
+      }
+    } finally {
+      setBusy(null);
+      rerender((n) => n + 1);
     }
   }
 
@@ -133,7 +193,15 @@ export function MediaCard({ projectId }: { projectId: string }) {
             media={items.find((item) => item.kind === kind) ?? null}
             busy={busy === kind}
             canWrite={files.canWrite}
+            pending={Boolean(pendingOf(kind))}
             onUpload={(file, focusX, focusY) => void upload(kind, file, focusX, focusY)}
+            onCheck={() => void confirm(kind)}
+            onDiscard={() => {
+              // Явное решение: прежнюю загрузку не выяснять, следующая — новая операция.
+              pendingFinalize.delete(slotOf(projectId, kind));
+              setNotice(null);
+              rerender((n) => n + 1);
+            }}
             onRemove={() => void remove(kind)}
           />
         ))}
@@ -147,14 +215,21 @@ function MediaSlot({
   media,
   busy,
   canWrite,
+  pending,
   onUpload,
+  onCheck,
+  onDiscard,
   onRemove,
 }: {
   kind: ProjectMediaKind;
   media: ProjectMedia | null;
   busy: boolean;
   canWrite: boolean;
+  /** Подтверждение прежней загрузки не выяснено. */
+  pending: boolean;
   onUpload: (file: File, focusX: number, focusY: number) => void;
+  onCheck: () => void;
+  onDiscard: () => void;
   onRemove: () => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
@@ -229,11 +304,28 @@ function MediaSlot({
         onChange={(event) => setFocus((f) => ({ ...f, y: Number(event.target.value) / 100 }))}
       />
 
+      {pending ? (
+        <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
+          <Button
+            variant="brand"
+            loading={busy}
+            disabled={!canWrite}
+            data-media-check={kind}
+            onClick={onCheck}
+          >
+            Проверить загрузку
+          </Button>
+          <Button variant="ghost" disabled={busy} data-media-discard={kind} onClick={onDiscard}>
+            Загрузить другое изображение
+          </Button>
+        </div>
+      ) : null}
+
       <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
         <Button
           variant="brand"
           loading={busy}
-          disabled={file === null || !canWrite}
+          disabled={file === null || !canWrite || pending}
           data-media-upload={kind}
           onClick={() => {
             if (file) onUpload(file, focus.x, focus.y);

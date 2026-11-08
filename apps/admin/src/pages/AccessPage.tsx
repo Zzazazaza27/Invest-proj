@@ -10,7 +10,8 @@ import {
   LoadingState,
   Stack,
 } from '@fifth/ui';
-import { uuidv7, type AdminUserSummary, type ServiceAccountWithSecret } from '@fifth/contracts';
+import type { AdminUserSummary, ServiceAccountWithSecret } from '@fifth/contracts';
+import { keyAfterError, keyForSend, type RetryKey } from '@fifth/api-client';
 import { ApiError, api } from '../api';
 import { CapabilitiesSection } from './StaffAccessSections';
 
@@ -269,12 +270,17 @@ export function ServiceAccountsSection() {
   >({ status: 'loading' });
   const [secret, setSecret] = useState<string | null>(null);
   /**
-   * Ключи повтора (2.6, M164): живут, пока ответ не получен. Повторное нажатие после обрыва
-   * идёт с тем же ключом — второго аккаунта и второй ротации нет; секрет повтор не
-   * показывает, он был в первом ответе.
+   * Ключи повтора (2.6, M164). После неизвестного исхода ключ держится до подтверждённого
+   * завершения или явного «начать заново»: промежуточный отказ проверки («выполняется»,
+   * временная недоступность, сеть) исход не разрешает. Повтор с тем же ключом второго
+   * аккаунта и второй ротации не даёт; секрет повтор не показывает.
    */
-  const createKey = useRef<string | null>(null);
-  const rotateKeys = useRef<Record<string, string>>({});
+  const createKey = useRef<RetryKey | null>(null);
+  const rotateKeys = useRef<Record<string, RetryKey>>({});
+  const [, setUnresolved] = useState(0);
+  const unresolvedCount = () =>
+    (createKey.current?.unresolved ? 1 : 0) +
+    Object.values(rotateKeys.current).filter((k) => k.unresolved).length;
   const [secretNote, setSecretNote] = useState<string | null>(null);
   const showIssued = (issued: ServiceAccountWithSecret) => {
     if (issued.secretDelivery === 'issued') {
@@ -287,7 +293,8 @@ export function ServiceAccountsSection() {
       );
     }
   };
-  const lostAnswer = (error: unknown) => error instanceof ApiError && error.outcomeUnknown;
+  const pendingNote = (what: string) =>
+    `Исход неизвестен. Нажмите «${what}» ещё раз — повтор пойдёт с тем же ключом и операцию второй раз не выполнит.`;
   const [name, setName] = useState('');
   const [clientId, setClientId] = useState('');
   const [scopes, setScopes] = useState('graduates:read');
@@ -358,23 +365,20 @@ export function ServiceAccountsSection() {
                   <Button
                     variant="secondary"
                     onClick={async () => {
-                      rotateKeys.current[account.id] ??= uuidv7();
+                      const sending = keyForSend(rotateKeys.current[account.id] ?? null);
+                      rotateKeys.current[account.id] = sending;
                       try {
-                        const rotated = await api.rotateServiceAccount(
-                          account.id,
-                          rotateKeys.current[account.id],
-                        );
+                        const rotated = await api.rotateServiceAccount(account.id, sending.key);
                         delete rotateKeys.current[account.id];
                         showIssued(rotated);
                         await load();
                       } catch (error) {
-                        if (!lostAnswer(error)) delete rotateKeys.current[account.id];
+                        const kept = keyAfterError(sending, error);
+                        if (kept) rotateKeys.current[account.id] = kept;
+                        else delete rotateKeys.current[account.id];
                         setSecret(null);
-                        setSecretNote(
-                          lostAnswer(error)
-                            ? 'Ответ не получен. Нажмите «Ротировать секрет» ещё раз — второй ротации это не вызовет.'
-                            : null,
-                        );
+                        setSecretNote(kept ? pendingNote('Ротировать секрет') : null);
+                        setUnresolved((n) => n + 1);
                         setState({
                           status: 'error',
                           message:
@@ -465,7 +469,8 @@ export function ServiceAccountsSection() {
           </Field>
           <Button
             onClick={async () => {
-              createKey.current ??= uuidv7();
+              const sending = keyForSend(createKey.current);
+              createKey.current = sending;
               try {
                 const created = await api.createServiceAccount(
                   {
@@ -477,7 +482,7 @@ export function ServiceAccountsSection() {
                       .filter(Boolean),
                     mtlsCertFingerprint: fingerprint.trim(),
                   },
-                  createKey.current,
+                  sending.key,
                 );
                 createKey.current = null;
                 // Секрет показывается ОДИН раз — здесь же, где и после ротации.
@@ -488,13 +493,10 @@ export function ServiceAccountsSection() {
                 setFingerprint('');
                 await load();
               } catch (error) {
-                if (!lostAnswer(error)) createKey.current = null;
+                createKey.current = keyAfterError(sending, error);
                 setSecret(null);
-                setSecretNote(
-                  lostAnswer(error)
-                    ? 'Ответ не получен. Нажмите «Создать» ещё раз с теми же данными — второй аккаунт не создастся.'
-                    : null,
-                );
+                setSecretNote(createKey.current ? pendingNote('Создать клиента') : null);
+                setUnresolved((n) => n + 1);
                 setState({
                   status: 'error',
                   message:
@@ -513,6 +515,21 @@ export function ServiceAccountsSection() {
           <p className="small" data-secret-note>
             {secretNote}
           </p>
+        ) : null}
+        {unresolvedCount() > 0 ? (
+          <Button
+            variant="ghost"
+            data-retry-reset
+            onClick={() => {
+              // Явное решение человека: незавершённое не выяснять, следующая операция — новая.
+              createKey.current = null;
+              rotateKeys.current = {};
+              setSecretNote(null);
+              setUnresolved((n) => n + 1);
+            }}
+          >
+            Начать заново (не выяснять незавершённое)
+          </Button>
         ) : null}
         {secret ? (
           <div

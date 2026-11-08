@@ -1677,6 +1677,29 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: RND-RETRY-KEYS
+    file: scripts/render-check-retry-keys.mjs
+    command: FIFTH_ENTRY=web node scripts/render-check-retry-keys.mjs
+    kind: render
+    level: сквозной
+    runner: manual
+    asserts: 12
+    needs: [db, core, web, storage]
+    effects:
+      [
+        'создаёт основателя с проектом и логотипом и администратора с сервисными аккаунтами',
+        'убирает проект, медиа, аккаунты и роль администратора; учётки остаются',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Блок 2, 2.6, пакет 7, замечания Тэнка к 094c8ad. Ответ теряется после записи:
+      Playwright пропускает запрос к ядру и обрывает соединение до браузера; «выполняется» и
+      временный отказ подставляются ответом.
+    purpose: 'Клиентское удержание ключа: подтверждение медиа выполнено, ответ потерян — «Проверить загрузку» идёт с тем же uploadId и ключом, без второго билета, обработки и события; ротация и создание сервисного аккаунта: потерянный ответ → «выполняется» → временный отказ → успех — во всех запросах один ключ, одна ротация (одно событие), один аккаунт, повтор объясняет, что секрет уже выдан.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: RND-UPLOAD-OPERATIONS
     file: scripts/render-check-upload-operations.mjs
     command: FIFTH_ENTRY=web node scripts/render-check-upload-operations.mjs
@@ -3991,6 +4014,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: UNIT-API-RETRY-KEY
+    file: packages/api-client/tests/retry-key.test.ts
+    command: npm run test -w packages/api-client
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 4
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['логика без браузера — побочных действий нет']
+    note: >-
+      Блок 2, 2.6, пакет 7. Чувствительность подтверждена: с прежним правилом (держать ключ
+      только при outcomeUnknown) падают 3 случая.
+    purpose: 'Ключ повтора держится до подтверждённого завершения: потерянный ответ → «выполняется» → временный отказ — везде один ключ; после неизвестного исхода даже окончательный отказ ключа не снимает; окончательный отказ первой отправки снимает; промежуточный отказ сам по себе исход не разрешает.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-CABINET-FILES-AVAILABILITY
     file: packages/cabinet/tests/files-availability.test.ts
     command: npm run test -w packages/cabinet
@@ -4858,6 +4899,8 @@ blocks:
         RND-UPLOAD-OPERATIONS,
         PRB-REQUEST-KEYS,
         PRB-REQUEST-KEYS-MORE,
+        RND-RETRY-KEYS,
+        UNIT-API-RETRY-KEY,
         UNIT-CORE-MEDIA-FINALIZE,
         RND-GUARDED-SEND,
         RND-CABINET-FAILURES,

@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 230; требований: 41
+- Проверок: 232; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 88
+### Зарегистрированы, но ни в наборе, ни в CI — 89
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -227,6 +227,7 @@
 - `RND-PROJECT-MEDIA` — Рендер-проверка логотипа и обложки НА ТЕЛЕФОНЕ (7.2).
 - `RND-GUARDED-SEND` — Защищённая отправка формы «Новый проект» (2.2, 2.6), по одному проекту и одному ключу в каждом сценарии: потерянный ответ — предупреждение без ложного успеха…
 - `RND-CABINET-FAILURES` — Кабинет основателя при сбоях: несохранённые поля — диалог при переходе внутри кабинета («Остаться» сохраняет введённое, «Уйти» переходит) и запрос браузера п…
+- `RND-RETRY-KEYS` — Клиентское удержание ключа: подтверждение медиа выполнено, ответ потерян — «Проверить загрузку» идёт с тем же uploadId и ключом, без второго билета, обработк…
 - `RND-UPLOAD-OPERATIONS` — Длительные операции в кабинете основателя (2.1-W04, блок 1 1.5): окончательная ошибка — всплывающее сообщение; скрытая вкладка показ не подтверждает, видимая…
 - `RND-PROJECT-PAGE` — Рендер-проверка страницы проекта для ТРЁХ зрителей (этап 7.3).
 - `RND-SUPPORT` — Поддержка и сообщение об ошибке в РЕАЛЬНОМ рендере (`RULES.md` §2).
@@ -476,6 +477,7 @@
 | UNIT-PKG-CABINET-GUARDED-SEND | `npm run test -w packages/cabinet` | 3 | CI | CI |
 | UNIT-CABINET-LEAVE-GUARD | `npm run test -w packages/cabinet` | 6 | CI | CI |
 | UNIT-CABINET-RETURN-READY | `npm run test -w packages/cabinet` | 9 | CI | CI |
+| UNIT-API-RETRY-KEY | `npm run test -w packages/api-client` | 4 | CI | CI |
 | UNIT-CABINET-FILES-AVAILABILITY | `npm run test -w packages/cabinet` | 4 | CI | CI |
 | UNIT-CORE-MAIL-OUTCOMES | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-MAIL-REGRESSIONS | `npm run test -w apps/core` | 4 | CI | CI |
@@ -506,6 +508,7 @@
 | RND-PROJECT-MEDIA | `node scripts/render-check-project-media.mjs` | 16 | вручную | — |
 | RND-GUARDED-SEND | `FIFTH_ENTRY=web node scripts/render-check-guarded-send.mjs` | 55 | вручную | — |
 | RND-CABINET-FAILURES | `FIFTH_ENTRY=web node scripts/render-check-cabinet-failures.mjs` | 28 | вручную | — |
+| RND-RETRY-KEYS | `FIFTH_ENTRY=web node scripts/render-check-retry-keys.mjs` | 12 | вручную | — |
 | RND-UPLOAD-OPERATIONS | `FIFTH_ENTRY=web node scripts/render-check-upload-operations.mjs` | 48 | вручную | — |
 | RND-PROJECT-PAGE | `node scripts/render-check-project-page.mjs` | 15 | вручную | — |
 | RND-SUPPORT | `node scripts/render-check-support.mjs` | 26 | вручную | — |

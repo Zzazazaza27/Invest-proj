@@ -82,6 +82,13 @@ import { z } from 'zod';
 import { ApiClient, type ClientOptions } from './client';
 
 export { ApiClient, ApiError, type AuthMode, type ClientOptions } from './client';
+export {
+  keyAfterError,
+  keyAfterSuccess,
+  keyForSend,
+  leavesOutcomeOpen,
+  type RetryKey,
+} from './retry-key';
 
 /**
  * Ключ повтора защищённой операции (2.6): форма создаёт его до первой отправки и передаёт
