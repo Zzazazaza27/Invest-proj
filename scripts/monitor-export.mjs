@@ -40,5 +40,5 @@ writeFileSync(
 );
 renameSync(`${target}.tmp`, target);
 console.log(
-  `контейнеров: ${containers.length}, не работают: ${containers.filter((c) => c.expected && c.state !== 'running').length}, автовосстановление остановлено: ${containers.filter((c) => c.recoveryStopped).length}`,
+  `контейнеров: ${containers.length}, не работают: ${containers.filter((c) => c.expected && c.state !== 'running').length}, автовосстановление остановлено: ${containers.filter((c) => c.recoveryStopped).length}, петля падений: ${containers.filter((c) => c.crashLoop).length}`,
 );

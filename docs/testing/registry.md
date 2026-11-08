@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 240; требований: 41
+- Проверок: 241; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 93
+### Зарегистрированы, но ни в наборе, ни в CI — 94
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -253,6 +253,7 @@
 - `CHK-DNS-HIDDEN-PRIMARY` — Схема «скрытый первичный + вторичные» на тестовой зоне (план независимого DNS): передача зоны только по ключу и с адреса вторичного, обновление по NOTIFY, от…
 - `CHK-DNS-PRIMARY-APPLY` — Безопасное применение зон первичного DNS: неверная зона отклоняется, рабочий файл и записанная версия не меняются, после перезапуска работает прежняя зона; с…
 - `CHK-MONITOR-APP-PROBE` — Разрешённое чтение контрольных данных прикладным путём (2.5, 8.2): обычный вход служебной учётки через публичный адрес, карточка контрольного проекта и матер…
+- `CHK-CORE-STARTUP-DEPS` — Старт ядра при недоступной зависимости: база, Valkey и NATS по очереди — ядро не падает (/live 200), после возврата зависимости само становится готовым без п…
 - `CHK-CORE-HANG-LIMIT` — Предел перезапусков зависшего ядра на Docker: три зависания — три автоматических перезапуска и снова здоров; четвёртое — recovery=stopped, процесс не убит, п…
 - `PRB-SERVICE-TABLES-RLS` — Матрица доступа к availability.observations и comms.mail_queue после M166 на настоящей БД: пользовательский и анонимный контекст app_backend не читает и не м…
 - `PRB-CLIENT-ERRORS` — Приём ошибок интерфейса на стенде: запись с полями перечня и reported: browser; секрет в имени и значении неизвестного поля — ни в журнале, ни в ответе, имён…
@@ -395,7 +396,8 @@
 | CHK-DNS-HIDDEN-PRIMARY | `node scripts/check-dns-hidden-primary.mjs` | 14 | вручную | — |
 | CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
-| CHK-CORE-HANG-LIMIT | `node scripts/check-core-hang-limit.mjs` | 11 | вручную | — |
+| CHK-CORE-STARTUP-DEPS | `node scripts/check-core-startup-deps.mjs` | 3 | вручную | — |
+| CHK-CORE-HANG-LIMIT | `node scripts/check-core-hang-limit.mjs` | 21 | вручную | — |
 | CHK-SECRETS-TO-FILES | `node scripts/check-secrets-to-files.mjs` | 11 | вручную | — |
 | CHK-HOST-ACCESS | `node scripts/check-host-access.mjs` | 17 | вручную | — |
 | CHK-OPENBAO-LAB | `node scripts/check-openbao-lab.mjs` | 22 | вручную | — |
@@ -466,7 +468,7 @@
 | UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-READINESS | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-MONITORING-ACCOUNT | `npm run test -w apps/core` | 6 | CI | CI |
-| UNIT-CORE-HEALTH-POLICY | `npm run test -w apps/core` | 6 | CI | CI |
+| UNIT-CORE-HEALTH-POLICY | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 24 | CI | CI |
 | UNIT-CABINET-CLIENT-ERRORS | `npm run test -w packages/cabinet` | 7 | CI | CI |
 | UNIT-CORE-CLIENT-ERRORS | `npm run test -w apps/core` | 5 | CI | CI |

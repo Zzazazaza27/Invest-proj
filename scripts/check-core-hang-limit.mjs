@@ -13,6 +13,12 @@
  *   2. четвёртое — без перезапуска, unhealthy, recovery=stopped, recoveryStopped в выгрузке;
  *   3. ручной перезапуск — после трёх успешных /live отметка снята;
  *   4. перезапущенный процесс со «старым» журналом не убит во время медленного старта.
+ *   5. зависания W23 через обёртку запуска падениями не считаются;
+ *   6. петля падений: три быстрых перезапуска, затем редкий режим (mode=slow, crashLoop в
+ *      выгрузке), docker stop во время ожидания — сразу, без запуска; поправилась — после
+ *      трёх /live обычный режим, история падений сохранена; штатный перезапуск — не падение;
+ *      SIGTERM ядру мимо обёртки — падение, и сразу снова редкий режим.
+ * Ожидание редкого режима в пробе — CORE_START_SLOW_MS=20000 вместо 10 минут.
  * Контейнер и образ пробы удаляются.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -70,21 +76,28 @@ try {
     join(ROOT, 'infra/images/core-health-policy.mjs'),
     join(work, 'core-health-policy.mjs'),
   );
+  copyFileSync(join(ROOT, 'infra/images/core-start.mjs'), join(work, 'core-start.mjs'));
+  copyFileSync(
+    join(ROOT, 'infra/images/core-start-policy.mjs'),
+    join(work, 'core-start-policy.mjs'),
+  );
   // Заглушка: STUB_SLOW_MS — задержка перед /live (медленный старт после перезапуска).
   writeFileSync(
     join(work, 'main.js'),
     `const fs=require('fs');const slow=fs.existsSync('/tmp/slow-start')?8000:0;
-setTimeout(()=>require('http').createServer((q,s)=>{s.writeHead(q.url==='/live'?200:404);s.end('ok')}).listen(4400,'127.0.0.1'),slow);`,
+setTimeout(()=>require('http').createServer((q,s)=>{s.writeHead(q.url==='/live'?200:404);s.end('ok')}).listen(4400,'127.0.0.1'),slow);
+setInterval(()=>{if(fs.existsSync('/tmp/crash-mode'))process.exit(1)},500);`,
   );
   writeFileSync(
     join(work, 'Dockerfile'),
     `FROM node:22.23.2-bookworm-slim
 WORKDIR /app
-COPY core-health.mjs core-health-policy.mjs ./
+COPY core-health.mjs core-health-policy.mjs core-start.mjs core-start-policy.mjs ./
 COPY main.js ./apps/core/dist/main.js
+ENV CORE_START_SLOW_MS=20000
 USER node
 HEALTHCHECK --interval=5s --timeout=4s --start-period=30s --retries=3 CMD ["node", "core-health.mjs"]
-CMD ["node", "apps/core/dist/main.js"]
+CMD ["node", "core-start.mjs"]
 `,
   );
   execFileSync('docker', ['build', '-q', '-t', IMAGE, work], { env, stdio: 'ignore' });
@@ -140,6 +153,71 @@ CMD ["node", "apps/core/dist/main.js"]
     'медленный старт — без убийства, затем здоров',
     up && restarts() === before5,
     `перезапусков ${restarts()}`,
+  );
+
+  const startState = () => {
+    try {
+      return JSON.parse(docker('exec', NAME, 'cat', '/tmp/core-start.json') || '{}');
+    } catch {
+      return {};
+    }
+  };
+  const crashes = () => (startState().crashes ?? []).length;
+  const running = () => inspect()?.State?.Status === 'running';
+
+  console.warn('[5] Зависания W23 через обёртку — не падения');
+  check(
+    'после трёх убийств зависшего и ручных перезапусков падений нет',
+    crashes() === 0,
+    `падений ${crashes()}`,
+  );
+
+  console.warn('[6] Петля падений');
+  docker('exec', NAME, 'sh', '-c', 'touch /tmp/crash-mode');
+  const slowSeen = await waitFor(() => /mode=slow/.test(lastHealth()), 120_000);
+  check(
+    'три падения — затем редкий режим, mode=slow',
+    slowSeen && crashes() === 3,
+    `${lastHealth()}; падений ${crashes()}`,
+  );
+  check('выгрузка наблюдения: crashLoop', containerRecord(inspect()).crashLoop === true);
+  const waiting = Boolean(startState().nextStart);
+  const r0 = restarts();
+  await sleep(8_000);
+  check(
+    'во время ожидания перезапусков нет, контейнер работает',
+    waiting && restarts() === r0 && running(),
+    `перезапусков ${restarts()}`,
+  );
+  const t0 = Date.now();
+  docker('stop', '-t', '30', NAME);
+  const stopSec = Math.round((Date.now() - t0) / 1000);
+  check(
+    'docker stop во время ожидания — сразу, без запуска ядра',
+    stopSec < 5 && !running(),
+    `${stopSec} с`,
+  );
+  docker('start', NAME);
+  docker('exec', NAME, 'sh', '-c', 'rm -f /tmp/crash-mode');
+  const normal = await waitFor(() => /live=1.*mode=normal/.test(lastHealth()), 120_000);
+  check('поправилась: после трёх /live обычный режим', normal, lastHealth());
+  check('история падений сохранена', crashes() === 3, `падений ${crashes()}`);
+  check('выгрузка наблюдения: признака петли нет', containerRecord(inspect()).crashLoop === false);
+  docker('restart', NAME);
+  await waitFor(healthy, 60_000);
+  check('штатный перезапуск — не падение', crashes() === 3, `падений ${crashes()}`);
+  docker(
+    'exec',
+    NAME,
+    'node',
+    '-e',
+    "const fs=require('fs');for(const p of fs.readdirSync('/proc').filter((d)=>/^\\d+$/.test(d)&&d!=='1')){try{if(fs.readFileSync('/proc/'+p+'/cmdline','utf8').startsWith('node\\0apps/core/dist/main.js'))process.kill(Number(p),'SIGTERM')}catch{}}",
+  );
+  const again = await waitFor(() => /mode=slow/.test(lastHealth()) && crashes() === 4, 60_000);
+  check(
+    'SIGTERM ядру мимо обёртки — падение, сразу снова редкий режим',
+    again,
+    `${lastHealth()}; падений ${crashes()}`,
   );
 } finally {
   docker('rm', '-f', NAME);

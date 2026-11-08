@@ -131,7 +131,112 @@ describe('выгрузка наблюдения', () => {
       restarts: 3,
       expected: true,
       recoveryStopped: true,
+      crashLoop: false,
     });
     expect(containerRecord(base).recoveryStopped).toBe(false);
+  });
+});
+
+// @ts-expect-error — модуль образа на JS без деклараций.
+import * as startPolicy from '../../../infra/images/core-start-policy.mjs';
+
+/**
+ * Петля падений (решение Томаса 09.11.2026): после третьего незапланированного выхода за
+ * скользящие 30 минут следующий запуск — через 10 минут после предыдущего, дальше не чаще раза
+ * в 10 минут; штатная остановка и убийство зависшего — не падения; три успешных /live снимают
+ * редкий режим, но не историю.
+ */
+describe('петля падений', () => {
+  type S = Record<string, unknown>;
+  const sp = startPolicy as {
+    initialStartState: () => S;
+    beforeStart: (
+      s: S,
+      now: number,
+      slowMs?: number,
+    ) => { state: S; delayMs: number; slow: boolean };
+    started: (s: S, now: number, id: string) => S;
+    exited: (
+      s: S,
+      now: number,
+      o: { stopRequested: boolean; killedByHealth: boolean },
+    ) => { state: S; crash: boolean };
+    crashMode: (
+      s: S,
+      cleared: string | null,
+      o: { now: number; procId: string | null; okStreak: number },
+    ) => { slow: boolean; cleared: string | null; crashes: number; nextStart: number | null };
+  };
+  const MIN = 60_000;
+  /** Запуск в момент t и падение через 5 с. */
+  function crashAt(s: S, t: number, id: string) {
+    const b = sp.beforeStart(s, t);
+    const st = sp.started(b.state, t + b.delayMs, id);
+    return {
+      before: b,
+      state: sp.exited(st, t + b.delayMs + 5_000, { stopRequested: false, killedByHealth: false })
+        .state,
+    };
+  }
+
+  it('три падения — сразу; после третьего запуск через 10 минут, дальше не чаще раза в 10 минут', () => {
+    let s = sp.initialStartState();
+    let t = 0;
+    for (const id of ['a', 'b', 'c']) {
+      const r = crashAt(s, t, id);
+      expect(r.before.delayMs).toBe(0);
+      s = r.state;
+      t += 10_000;
+    }
+    const fourth = sp.beforeStart(s, t);
+    expect(fourth.slow).toBe(true);
+    expect(fourth.delayMs).toBe(10 * MIN - (t - 20_000));
+    const s4 = sp.exited(
+      sp.started(fourth.state, t + fourth.delayMs, 'd'),
+      t + fourth.delayMs + 5_000,
+      {
+        stopRequested: false,
+        killedByHealth: false,
+      },
+    ).state;
+    const fifth = sp.beforeStart(s4, t + fourth.delayMs + 6_000);
+    expect(fifth.delayMs).toBeGreaterThan(9 * MIN);
+  });
+
+  it('штатная остановка и убийство зависшего — не падения', () => {
+    let s = sp.started(sp.initialStartState(), 0, 'p');
+    s = sp.exited(s, 1_000, { stopRequested: true, killedByHealth: false }).state;
+    s = sp.exited(sp.started(s, 2_000, 'q'), 3_000, {
+      stopRequested: false,
+      killedByHealth: true,
+    }).state;
+    expect((s.crashes as number[]).length).toBe(0);
+    expect(
+      sp.exited(sp.started(s, 4_000, 'r'), 5_000, { stopRequested: false, killedByHealth: false })
+        .crash,
+    ).toBe(true);
+  });
+
+  it('падения старше 30 минут не считаются', () => {
+    let s = sp.initialStartState();
+    for (const [i, id] of ['a', 'b', 'c'].entries()) s = crashAt(s, i * MIN, id).state;
+    expect(sp.beforeStart(s, 31 * MIN + 10_000).delayMs).toBe(0);
+  });
+
+  it('три успешных /live снимают редкий режим, история остаётся — следующее падение снова редкое', () => {
+    let s = sp.initialStartState();
+    for (const [i, id] of ['a', 'b', 'c'].entries()) s = crashAt(s, i * 10_000, id).state;
+    const waitState = { ...sp.beforeStart(s, 30_000).state, nextStart: 600_000 };
+    expect(sp.crashMode(waitState, null, { now: 30_000, procId: null, okStreak: 0 }).slow).toBe(
+      true,
+    );
+    const run = sp.started({ ...waitState, nextStart: null }, 600_000, 'd');
+    let m = sp.crashMode(run, null, { now: 601_000, procId: 'd', okStreak: 2 });
+    expect(m.slow).toBe(true);
+    m = sp.crashMode(run, m.cleared, { now: 602_000, procId: 'd', okStreak: 3 });
+    expect(m.slow).toBe(false);
+    expect(m.crashes).toBe(3);
+    const after = sp.exited(run, 603_000, { stopRequested: false, killedByHealth: false }).state;
+    expect(sp.beforeStart(after, 604_000).slow).toBe(true);
   });
 });

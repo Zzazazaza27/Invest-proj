@@ -13,9 +13,11 @@
 // хранит её в журнале проверки, monitor-export выгружает recovery=stopped в наблюдение.
 import { existsSync, readdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { decide, initialState } from './core-health-policy.mjs';
+import { crashMode } from './core-start-policy.mjs';
 
 const PORT = process.env.CORE_INTERNAL_PORT || '4400';
 const STATE = '/tmp/core-health.json';
+const START = '/tmp/core-start.json';
 
 /** Процесс ядра: «pid:время старта» (поле 22 /proc/<pid>/stat) — опознание переживает переиспользование pid. */
 function coreProcess() {
@@ -52,11 +54,33 @@ try {
   live = false;
 }
 const proc = coreProcess();
-const result = decide(load(), { now: Date.now(), live, proc: proc?.id ?? null });
-writeFileSync(`${STATE}.tmp`, JSON.stringify(result.state));
+const now = Date.now();
+const prev = load();
+const result = decide(prev, { now, live, proc: proc?.id ?? null });
+// Петля падений (core-start.mjs): редкий режим и его снятие после трёх успехов этого процесса.
+const readStart = () => {
+  try {
+    return existsSync(START) ? JSON.parse(readFileSync(START, 'utf8')) : {};
+  } catch {
+    return {};
+  }
+};
+const start = readStart();
+const crash = crashMode(start, prev.slowClearedFor ?? null, {
+  now,
+  procId: proc?.id ?? null,
+  okStreak: result.state.okStreak,
+});
+const next = { ...result.state, slowClearedFor: crash.cleared };
+// Убитый как зависший процесс отмечается: обёртка не считает его выход падением.
+if (result.action === 'kill' && proc) next.lastKill = proc.id;
+writeFileSync(`${STATE}.tmp`, JSON.stringify(next));
 renameSync(`${STATE}.tmp`, STATE);
 if (result.action === 'kill' && proc) process.kill(proc.pid, 'SIGKILL');
 // В stdout: Docker хранит вывод проверки в журнале здоровья контейнера.
-const line = result.action === 'kill' ? `${result.status} action=kill` : result.status;
+const crashPart =
+  ` mode=${crash.slow ? 'slow' : 'normal'} crashes=${crash.crashes}/30m` +
+  (crash.nextStart ? ` next_start=${new Date(crash.nextStart).toISOString()}` : '');
+const line = `${result.status}${crashPart}${result.action === 'kill' ? ' action=kill' : ''}`;
 process.stdout.write(`${line}\n`);
 process.exit(result.exitCode);

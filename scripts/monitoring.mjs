@@ -832,6 +832,22 @@ async function configure() {
       ),
     ],
   });
+  // Петля падений (core-start.mjs): после трёх падений за 30 минут — запуск не чаще раза в
+  // 10 минут. Высокий уровень: ядро большую часть времени не работает.
+  await item({
+    name: 'Ядро: петля падений',
+    key_: 'containers.crash_loop',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/containers.json]'),
+    value_type: 1,
+    preprocessing: [
+      step(
+        JS,
+        "var c = JSON.parse(value).containers; return c.filter(function (x) { return x.crashLoop; }).map(function (x) { return x.name; }).join(', ');",
+      ),
+    ],
+  });
+  await trigger('Ядро в петле падений', `length(last(/${H}/containers.crash_loop))>0`, 4);
   await trigger(
     'Автовосстановление ядра остановлено',
     `length(last(/${H}/containers.recovery_stopped))>0`,
