@@ -36,6 +36,7 @@ import { parseEnvFile } from './lib/backup.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
+const PRODUCTION_OVERLAY = join(ROOT, 'infra', 'docker-compose.env-production.yml');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
 const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
 // Пределы пилотной среды: бюджет узла считается по ним, а не по текущему расходу.
@@ -136,10 +137,29 @@ function composeEnv() {
   return env;
 }
 
+/**
+ * Боевой режим среды (test-2): TLS служб, файлы Agent, шифрованный вход к хранилищу. Дополнение
+ * берётся из репозитория, как у рабочей среды в infra.mjs, и подключается, пока в compose.env
+ * задан FIFTH_AGENT_DIR. Ставит его infra/host/prod-test2-production.sh.
+ */
+function overlays(id) {
+  const file = join(names(id).dir, 'compose.env');
+  if (!existsSync(file) || !/^FIFTH_AGENT_DIR=/m.test(readFileSync(file, 'utf8'))) return [];
+  return ['-f', PRODUCTION_OVERLAY];
+}
+
 function compose(id, args, { allowFail = false, timeout = 300_000 } = {}) {
   const r = spawnSync(
     'docker',
-    ['compose', '--env-file', join(names(id).dir, 'compose.env'), '-f', composeOf(id), ...args],
+    [
+      'compose',
+      '--env-file',
+      join(names(id).dir, 'compose.env'),
+      '-f',
+      composeOf(id),
+      ...overlays(id),
+      ...args,
+    ],
     { encoding: 'utf8', timeout, env: composeEnv() },
   );
   if (r.status !== 0 && !allowFail) {

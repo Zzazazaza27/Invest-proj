@@ -10,7 +10,8 @@ trap 'rm -rf "$work"' EXIT
 head -c 65536 /dev/urandom >"$work/restore-check.bin"
 sha="$(sha256sum "$work/restore-check.bin" | cut -d' ' -f1)"
 network="$(sed -n 's/^FIFTH_STORAGE_NETWORK=//p' "$DIR/compose.env")"
-endpoint="$(sed -n 's/^S3_ENDPOINT=//p' "$DIR/settings.env")"
+# Прямо к Garage в сети хранилища: адрес ядра в боевом режиме — вход с TLS на сертификате среды.
+endpoint=http://garage-1:3900
 node -e "const k=JSON.parse(require('fs').readFileSync('$DIR/storage.json'));console.log(k.app.accessKeyId+' '+k.app.secretAccessKey)" >"$work/key"
 read -r access secret <"$work/key" || true
 rm -f "$work/key"

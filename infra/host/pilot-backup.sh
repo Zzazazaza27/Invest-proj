@@ -33,7 +33,8 @@ counts="$(pg psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -F= -c \
   "SELECT 'users', count(*) FROM identity.users UNION ALL SELECT 'projects', count(*) FROM lab.projects UNION ALL SELECT 'materials', count(*) FROM lab.project_materials" | paste -sd, -)"
 
 network="$(sed -n 's/^FIFTH_STORAGE_NETWORK=//p' "$DIR/compose.env")"
-endpoint="$(sed -n 's/^S3_ENDPOINT=//p' "$DIR/settings.env")"
+# Прямо к Garage в сети хранилища: адрес ядра в боевом режиме — вход с TLS на сертификате среды.
+endpoint=http://garage-1:3900
 mkdir "$work/files"
 node -e "const k=JSON.parse(require('fs').readFileSync('$DIR/storage.json'));console.log(k.app.accessKeyId+' '+k.app.secretAccessKey)" >"$work/key"
 read -r access secret <"$work/key"

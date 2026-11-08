@@ -184,6 +184,7 @@ try {
   const rows = psql(
     `SELECT encode(contact_wrapped_dek, 'hex') || ' ' || encode(email_ciphertext, 'hex') FROM identity.users WHERE email_ciphertext IS NOT NULL`,
   );
+  // Среда в боевом режиме пишет прежним форматом: копия открывается KEK среды без OpenBao.
   const opened = docker(
     [
       'run',
@@ -199,7 +200,7 @@ try {
       'sh',
       CORE,
       '-c',
-      `rm -rf /run/secrets; ln -s /w/env/secrets /run/secrets; set -a; . /w/env/settings.env; set +a; export NODE_ENV=development; node -e "
+      `rm -rf /run/secrets; ln -s /w/env/secrets /run/secrets; set -a; . /w/env/settings.env; set +a; export NODE_ENV=development KMS_MODE=local SESSION_COOKIE_NAME=ul_session CSRF_COOKIE_NAME=ul_csrf; unset OPENBAO_ADDR OPENBAO_TOKEN_PATH NODE_EXTRA_CA_CERTS INTEGRATION_CLIENT_CERT_HEADER; rm -rf /run/fifth-secrets; ln -s /w/env/secrets /run/fifth-secrets; for f in /run/secrets/KEK_*; do export $(basename $f)_FILE=$f; done; node -e "
 require('reflect-metadata');
 const {CryptoService}=require('/app/apps/core/dist/crypto/crypto.service.js');
 const c=new CryptoService();
