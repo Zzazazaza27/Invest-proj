@@ -53,7 +53,7 @@ fi
 grep -q '^KMS_MODE=local' "$DIR/settings.env" || { echo 'ожидался KMS_MODE=local'; exit 1; }
 # Копии и контрольный файл ходят к Garage напрямую: адрес обязан быть тем же.
 grep -qx 'S3_ENDPOINT=http://garage-1:3900' "$DIR/settings.env" || { echo 'хранилище среды не garage-1:3900'; exit 1; }
-grep -A4 "^$ID.5espace.com {" "$CADDY" | grep -q "^	reverse_proxy 127.0.0.1:$PORT$" ||
+grep -A8 "^$ID.5espace.com {" "$CADDY" | grep -q "^	reverse_proxy 127.0.0.1:$PORT$" ||
   { echo 'вход test-2 в Caddyfile не в ожидаемом виде'; exit 1; }
 docker inspect fifth-openbao --format '{{.State.Running}}' | grep -q true || { echo 'OpenBao не работает'; exit 1; }
 
