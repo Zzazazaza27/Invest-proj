@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button } from '@fifth/ui';
 import type { GuardedOperationName, RequestKeyState } from '@fifth/contracts';
 import { hrefFor } from './access';
@@ -41,7 +41,7 @@ export function setGuardOwner(id: string | null): void {
   owner = id;
 }
 
-interface Pending {
+export interface Pending {
   owner: string | null;
   key: string;
   /** Отправленное. `null` — страница перезагружена или исход «не найдена». */
@@ -55,6 +55,8 @@ interface Pending {
 
 /** Ключ и снимок вне компонента, по владельцу и области: закрытие формы их не теряет. */
 const memory = new Map<string, Pending>();
+/** Память незавершённых отправок — для проверок без браузера. */
+export const guardedMemory = memory;
 const MARK = 'fifth.pending.';
 const slot = (who: string | null, scope: string) => `${who ?? '-'}|${scope}`;
 
@@ -124,7 +126,108 @@ function classify(error: unknown, first: boolean): Outcome {
 
 const AUTO_CHECK_MS = 1500;
 
-export function useGuardedSend<P, R>(options: {
+export type RunMode = 'first' | 'check' | 'auto';
+
+/**
+ * Один шаг защищённой отправки без React: тело хука вынесено, чтобы проверять его
+ * (в том числе старый таймер после смены владельца) без браузера.
+ */
+export function makeRun<P, R>(deps: {
+  name: string;
+  opts: { current: GuardedOptions<P, R> };
+  timer: { current: ReturnType<typeof setTimeout> | null };
+  finish: (slotName: string) => void;
+  setPhase: (phase: GuardedPhase) => void;
+  setPending: (p: Pending | null) => void;
+  setNote: (note: 'not_found' | 'earlier_done' | null) => void;
+}): (mode: RunMode) => Promise<void> {
+  const { name, opts, timer, finish, setPhase, setPending, setNote } = deps;
+  const run = async (mode: 'first' | 'check' | 'auto'): Promise<void> => {
+    const slotName = name;
+    const current = memory.get(slotName);
+    if (!current) return;
+    // Ответ пришёл уже другому пользователю вкладки: чужую операцию не трогаем.
+    const stillMine = () => current.owner === owner && memory.get(slotName) === current;
+    // Владелец сменился (вошёл другой человек) — ни запроса, ни показа: ключ и содержимое
+    // прежнего владельца не уходят от имени нового.
+    if (!stillMine()) return;
+    setPhase(mode === 'first' ? 'sending' : 'checking');
+    setNote(null);
+    try {
+      // Снимок есть и ответ не «нечитаемый» — запрос тем же ключом: сервер вернёт прежний
+      // результат либо выполнит работу один раз. Иначе — только исход по ключу.
+      if (current.payload !== null && !current.unreadable) {
+        const result = await opts.current.send(current.payload as P, current.key);
+        if (!stillMine()) return;
+        finish(slotName);
+        opts.current.onDone(result, current.payload as P);
+        return;
+      }
+      const answer = await opts.current.state(current.key);
+      if (!stillMine()) return;
+      if (answer.state === 'done') {
+        finish(slotName);
+        opts.current.onResolved(answer.resultId, answer.objectId);
+        return;
+      }
+      // «Не найдена» — не «не выполнится»: ключ остаётся для следующей отправки.
+      current.payload = null;
+      current.carried = true;
+      current.unreadable = false;
+      writeMark(slotName, current);
+      setPending({ ...current });
+      setPhase('idle');
+      setNote('not_found');
+    } catch (error) {
+      if (!stillMine()) return;
+      // Новая отправка с перенесённым ключом получила «ключ занят другим содержимым»:
+      // поздняя исходная успела выполниться — показываем её результат.
+      if (current.carried && (error as { code?: string }).code === 'idempotency_key_reused') {
+        try {
+          const answer = await opts.current.state(current.key);
+          if (stillMine() && answer.state === 'done') {
+            finish(slotName);
+            setNote('earlier_done');
+            opts.current.onResolved(answer.resultId, answer.objectId);
+            return;
+          }
+        } catch {
+          // выясним позже кнопкой
+        }
+        setPhase('unknown');
+        return;
+      }
+      const outcome = classify(error, mode === 'first');
+      if (outcome.kind === 'final') {
+        if (current.carried) {
+          // Отказ новой отправке, но поздняя исходная ещё может прийти: ключ не снимаем.
+          current.payload = null;
+          writeMark(slotName, current);
+          setPending({ ...current });
+          setPhase('idle');
+        } else {
+          finish(slotName);
+        }
+        opts.current.onFail(error);
+        return;
+      }
+      if (outcome.phase === 'unreadable') current.unreadable = true;
+      setPhase(outcome.phase);
+      if (mode === 'first' && outcome.phase === 'unknown' && timer.current === null) {
+        // Одна проверка сама: короткий обрыв обычно выясняется сразу.
+        timer.current = setTimeout(() => {
+          timer.current = null;
+          // Проверку повторит и сам run; здесь — чтобы старый таймер не начинал ничего.
+          if (memory.get(slotName) === current && current.owner === owner) void run('auto');
+        }, AUTO_CHECK_MS);
+      }
+    }
+  };
+
+  return run;
+}
+
+export interface GuardedOptions<P, R> {
   /** Где живёт операция: имя и, если нужно, объект — `lab.material.link:<проект>`. */
   scope: string;
   operation: GuardedOperationName;
@@ -137,7 +240,9 @@ export function useGuardedSend<P, R>(options: {
   onResolved: (resultId: string, objectId: string | null) => void;
   /** Ответ-отказ: ввод остаётся на странице. */
   onFail: (error: unknown) => void;
-}) {
+}
+
+export function useGuardedSend<P, R>(options: GuardedOptions<P, R>) {
   const opts = useRef(options);
   opts.current = options;
   // Владелец берётся при каждом показе: после входа другого человека — его область.
@@ -160,84 +265,8 @@ export function useGuardedSend<P, R>(options: {
     [name],
   );
 
-  const run = useCallback(
-    async (mode: 'first' | 'check' | 'auto'): Promise<void> => {
-      const slotName = name;
-      const current = memory.get(slotName);
-      if (!current) return;
-      // Ответ пришёл уже другому пользователю вкладки: чужую операцию не трогаем.
-      const stillMine = () => current.owner === owner && memory.get(slotName) === current;
-      setPhase(mode === 'first' ? 'sending' : 'checking');
-      setNote(null);
-      try {
-        // Снимок есть и ответ не «нечитаемый» — запрос тем же ключом: сервер вернёт прежний
-        // результат либо выполнит работу один раз. Иначе — только исход по ключу.
-        if (current.payload !== null && !current.unreadable) {
-          const result = await opts.current.send(current.payload as P, current.key);
-          if (!stillMine()) return;
-          finish(slotName);
-          opts.current.onDone(result, current.payload as P);
-          return;
-        }
-        const answer = await opts.current.state(current.key);
-        if (!stillMine()) return;
-        if (answer.state === 'done') {
-          finish(slotName);
-          opts.current.onResolved(answer.resultId, answer.objectId);
-          return;
-        }
-        // «Не найдена» — не «не выполнится»: ключ остаётся для следующей отправки.
-        current.payload = null;
-        current.carried = true;
-        current.unreadable = false;
-        writeMark(slotName, current);
-        setPending({ ...current });
-        setPhase('idle');
-        setNote('not_found');
-      } catch (error) {
-        if (!stillMine()) return;
-        // Новая отправка с перенесённым ключом получила «ключ занят другим содержимым»:
-        // поздняя исходная успела выполниться — показываем её результат.
-        if (current.carried && (error as { code?: string }).code === 'idempotency_key_reused') {
-          try {
-            const answer = await opts.current.state(current.key);
-            if (stillMine() && answer.state === 'done') {
-              finish(slotName);
-              setNote('earlier_done');
-              opts.current.onResolved(answer.resultId, answer.objectId);
-              return;
-            }
-          } catch {
-            // выясним позже кнопкой
-          }
-          setPhase('unknown');
-          return;
-        }
-        const outcome = classify(error, mode === 'first');
-        if (outcome.kind === 'final') {
-          if (current.carried) {
-            // Отказ новой отправке, но поздняя исходная ещё может прийти: ключ не снимаем.
-            current.payload = null;
-            writeMark(slotName, current);
-            setPending({ ...current });
-            setPhase('idle');
-          } else {
-            finish(slotName);
-          }
-          opts.current.onFail(error);
-          return;
-        }
-        if (outcome.phase === 'unreadable') current.unreadable = true;
-        setPhase(outcome.phase);
-        if (mode === 'first' && outcome.phase === 'unknown' && timer.current === null) {
-          // Одна проверка сама: короткий обрыв обычно выясняется сразу.
-          timer.current = setTimeout(() => {
-            timer.current = null;
-            if (memory.get(slotName) === current) void run('auto');
-          }, AUTO_CHECK_MS);
-        }
-      }
-    },
+  const run = useMemo(
+    () => makeRun<P, R>({ name, opts, timer, finish, setPhase, setPending, setNote }),
     [name, finish],
   );
 

@@ -3766,6 +3766,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-04
 
+  - id: UNIT-PKG-CABINET-GUARDED-SEND
+    file: packages/cabinet/tests/guarded-send.test.ts
+    command: npm run test -w packages/cabinet
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 3
+    studied: code
+    studiedOn: 2026-11-08
+    needs: []
+    effects: ['логика без браузера — побочных действий нет']
+    note: >-
+      Чувствительность подтверждена: без проверки владельца до запроса два
+      случая из трёх падают (старый таймер и проверка кнопкой отправляют ключ A).
+    purpose: 'Защищённая отправка (2.6): старый таймер автоматической проверки после входа другого человека во вкладке не отправляет ни ключа, ни содержимого прежнего владельца и не выясняет его исход; без смены владельца тот же таймер проверяет тем же ключом; проверка кнопкой у чужой операции не начинается.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
   - id: UNIT-PKG-API-CLIENT-CLIENT
     file: packages/api-client/tests/client.test.ts
     command: npm run test -w packages/api-client
@@ -4536,6 +4554,7 @@ blocks:
         RND-UPLOAD-OPERATIONS,
         PRB-REQUEST-KEYS,
         RND-GUARDED-SEND,
+        UNIT-PKG-CABINET-GUARDED-SEND,
         DBT-OPERATIONS,
         UNIT-CORE-UPLOAD-COMPLETION,
         DBT-INVARIANTS,
