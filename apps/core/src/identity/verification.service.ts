@@ -100,6 +100,17 @@ export class VerificationService {
       // Счётчик крутится ДО поиска пользователя — в том числе для несуществующих
       // адресов. Иначе «есть счётчик / нет счётчика» различало бы адреса.
       const allowed = await this.throttle.allow(indexHex);
+      if (!allowed) {
+        // До выдачи ссылки: выдача гасит прежнюю, а новая не была бы отправлена — человек
+        // остался бы без действующей ссылки. Ответ тот же, что и при отправке.
+        await markSkipped(tx, claim.id);
+        this.logger.log({
+          msg: 'ссылка на смену пароля не отправлена',
+          reason: 'throttled',
+          traceId: ctx.traceId,
+        });
+        return null;
+      }
       const token = this.newToken();
       const { rows } = await tx.query<{ user_id: string | null }>(
         'SELECT identity.issue_verification_token($1, $2, $3, $4, $5, $6) AS user_id',
@@ -113,11 +124,11 @@ export class VerificationService {
         ],
       );
       const userId = rows[0]?.user_id ?? null;
-      if (!userId || !allowed) {
+      if (!userId) {
         await markSkipped(tx, claim.id);
         this.logger.log({
           msg: 'ссылка на смену пароля не отправлена',
-          reason: userId ? 'throttled' : 'no-user',
+          reason: 'no-user',
           traceId: ctx.traceId,
         });
         return null;

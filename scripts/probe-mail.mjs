@@ -92,9 +92,12 @@ const server = createServer((socket) => {
         }
         inData = false;
         const header = data.find((l) => /^Message-ID:/i.test(l)) ?? '';
+        const blank = data.indexOf('');
         relay.messages.push({
           to,
           messageId: header.replace(/^Message-ID:\s*<?/i, '').replace(/>$/, ''),
+          // Тело письма — base64 после пустой строки (так собирает ядро).
+          text: Buffer.from(data.slice(blank + 1).join(''), 'base64').toString('utf8'),
           at: Date.now(),
         });
         data = [];
@@ -141,12 +144,12 @@ function stopCore() {
   const pid = portOwner(CORE_PORT);
   if (pid) stopTree(pid);
 }
-async function startCore() {
+async function startCore(extra = {}) {
   stopCore();
   await sleep(800);
   spawnSync(process.execPath, [join(ROOT, 'scripts/dev-core.mjs'), '--detached'], {
     cwd: ROOT,
-    env: { ...process.env, ...CORE_ENV },
+    env: { ...process.env, ...CORE_ENV, ...extra },
     stdio: 'ignore',
   });
   for (let i = 0; i < 60; i += 1) {
@@ -518,6 +521,62 @@ try {
   check(
     'повтор обращения — то же обращение, одна копия в очереди',
     t4b.json?.id === t4.json?.id && n4[0].n === 1,
+  );
+
+  console.warn('[8] Отказ лимита писем не гасит действующую ссылку');
+  relay.mode = 'accept';
+  // Предел — два письма на адрес: подтверждение при регистрации и одна ссылка.
+  await startCore({ RATE_LIMIT_VERIFY_MAIL_PER_CONTACT: '2' });
+  await waitFor(async () => (await localMail()) === 'available');
+  const u5 = await register('u5');
+  const base5 = to(u5.email).length;
+  const first = await forgot(u5.email, key());
+  await waitFor(async () => to(u5.email).length === base5 + 1, 10_000);
+  const tokenA = (to(u5.email)
+    .at(-1)
+    ?.text.match(/#reset=([A-Za-z0-9_-]+)/) ?? [])[1];
+  const alive = async () =>
+    (await anon.call('/v1/auth/password/reset/check', { method: 'POST', body: { token: tokenA } }))
+      .status;
+  check('ссылка пришла и действует', Boolean(tokenA) && (await alive()) === 200);
+  const throttled = await forgot(u5.email, key());
+  await sleep(2500);
+  check(
+    'запрос сверх лимита — тот же ответ, письма нет',
+    shape(throttled) === shape(first) && to(u5.email).length === base5 + 1,
+  );
+  check('действующая ссылка после отказа лимита действует', (await alive()) === 200);
+  const live = await sql(
+    `SELECT count(*)::int AS n FROM identity.verification_tokens
+      WHERE user_id = $1 AND purpose = 'password_reset' AND used_at IS NULL AND expires_at > now()`,
+    [u5.userId],
+  );
+  check('новой ссылки нет: действует ровно одна', live[0].n === 1, `действует ${live[0].n}`);
+
+  console.warn('[9] Служебное письмо без транспорта');
+  await startCore({ MAIL_TRANSPORT: 'none' });
+  const t5 = await openTicket(u3, 'без транспорта');
+  tickets.push(t5.json?.id);
+  const q5 = await queueRow('support.ticket.opened', t5.json?.id);
+  check(
+    'транспорт выключен — обращение принято, письмо в очереди',
+    t5.status === 201 && q5?.state === 'pending',
+    `HTTP ${t5.status} ${q5?.state}`,
+  );
+  await sleep(4000);
+  const q5b = await queueRow('support.ticket.opened', t5.json?.id);
+  check(
+    'без транспорта попытки не расходуются',
+    q5b?.state === 'pending' && q5b.attempts === 0 && q5b.unknown_count === 0,
+  );
+  await startCore();
+  const q5done = await waitFor(async () => {
+    const row = await queueRow('support.ticket.opened', t5.json?.id);
+    return row?.state === 'accepted' ? row : null;
+  });
+  check(
+    'после включения транспорта письмо отправлено один раз',
+    Boolean(q5done) && withId(q5done.message_id).length === 1,
   );
 } finally {
   relay.mode = 'accept';

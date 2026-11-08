@@ -84,20 +84,22 @@ export class MailQueueService implements OnModuleInit {
   }
 
   /**
-   * Поставить служебное письмо в транзакции события. Нет ящика или почта не настроена —
-   * не ставится (решение конфигурации, а не сбой), в лог предупреждением.
+   * Поставить служебное письмо в транзакции события.
+   *
+   * Намеренно выключено — получатель не задан (нет SUPPORT_INBOX_EMAIL; уведомление о
+   * регистрации выключается своим флагом у вызывающего): письма нет. Получатель задан, а
+   * транспорт выключен или не настроен — это недоступность канала, а не решение: письмо
+   * сохраняется и ждёт, пока отправщик сможет его отправить.
    */
   async enqueue(
     tx: Tx,
     input: { source: QueueSource; sourceId: string; subject: string; text: string },
   ): Promise<void> {
     const inbox = getEnv().SUPPORT_INBOX_EMAIL;
-    if (!inbox || !this.mail.available) {
+    if (!inbox) {
       this.logger.warn({
-        msg: 'служебное письмо не поставлено — канал не настроен',
+        msg: 'служебное письмо не поставлено — получатель не задан',
         source: input.source,
-        hasInbox: Boolean(inbox),
-        mailAvailable: this.mail.available,
       });
       return;
     }
@@ -112,6 +114,8 @@ export class MailQueueService implements OnModuleInit {
   /** Один проход: сколько писем принято релеем. */
   async runOnce(signal?: AbortSignal): Promise<number> {
     if (Date.now() < this.pausedUntil) return 0;
+    // Транспорт выключен или не настроен: письма ждут в очереди, попытки не расходуются.
+    if (!this.mail.available) return 0;
     // Группа «Почта» закрыта (размыкатель, отказ проверки, ручной запрет): письма ждут.
     if (this.availability && !(await this.availability.allows('write', 'mail'))) return 0;
     const traceId = `mail-queue-${randomUUID()}`;
