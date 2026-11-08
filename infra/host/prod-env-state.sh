@@ -2,7 +2,7 @@
 # Состояние тестовой среды перед выпуском: текущая сборка по реестру, последние установки,
 # закрепления, образы в работе, миграции. Только чтение, значений не печатает.
 #
-#   fifth-test op prod-env-state <среда>
+#   fifth-test op prod-env-state <среда> [сборка для проверки возврата]
 set -Eeuo pipefail
 ID="$1"
 [[ "$ID" =~ ^test-[12]$ ]] || { echo 'среда: test-1 или test-2' >&2; exit 2; }
@@ -28,3 +28,8 @@ for c in core web postgres; do
 done
 echo "  миграций: $(psql_env 'SELECT count(*) || '"'"' / последняя '"'"' || max(id) FROM public.schema_migrations')"
 echo "  комплекты на узле: $(ls .local/kits | grep -v pins | tr '\n' ' ')"
+# Возможность возврата: комплект проходит проверку инструментами текущего кода.
+if [ -n "${2:-}" ]; then
+  [[ "$2" =~ ^[0-9]+\.[0-9]+-b[0-9]+\.[0-9]+$ ]] || { echo 'нужна сборка' >&2; exit 2; }
+  echo "  проверка комплекта $2: $(node scripts/kit.mjs check --build "$2" 2>&1 | cut -c1-200)"
+fi

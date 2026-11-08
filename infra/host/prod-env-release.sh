@@ -11,7 +11,11 @@ EXPECT="$3"
 ROLLBACK="${4:-}"
 [[ "$ID" =~ ^test-[12]$ ]] || { echo 'среда: test-1 или test-2' >&2; exit 2; }
 [[ "$BUILD" =~ ^[0-9]+\.[0-9]+-b[0-9]+\.[0-9]+$ ]] || { echo 'нужна сборка' >&2; exit 2; }
-[[ "$EXPECT" =~ ^[0-9]+\.[0-9]+-b[0-9]+\.[0-9]+$ ]] || { echo 'нужна ожидаемая сборка' >&2; exit 2; }
+# none — в реестре среды ещё нет установок (среда ставилась env.mjs, не release.mjs).
+[[ "$EXPECT" == none || "$EXPECT" =~ ^[0-9]+\.[0-9]+-b[0-9]+\.[0-9]+$ ]] || {
+  echo 'нужна ожидаемая сборка или none' >&2
+  exit 2
+}
 [[ -z "$ROLLBACK" || "$ROLLBACK" == --rollback ]] || { echo 'четвёртый аргумент — --rollback' >&2; exit 2; }
 ROOT=/opt/fifth-element
 DIR="$ROOT/.local/envs/$ID"
