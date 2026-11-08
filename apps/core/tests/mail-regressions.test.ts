@@ -94,7 +94,7 @@ describe('Служебное письмо без транспорта', () => {
       subject: 's',
       text: 't',
     });
-    expect(queries.some((q) => q.includes('INSERT INTO comms.mail_queue'))).toBe(true);
+    expect(queries.some((q) => q.includes('comms.enqueue_service_mail('))).toBe(true);
   });
 
   it('получатель не задан — намеренно выключено, письма нет', async () => {

@@ -43,6 +43,9 @@ function check(name, condition, detail = '') {
   console.warn(`  ${condition ? 'OK  ' : 'FAIL'}  ${name}${detail ? ` — ${detail}` : ''}`);
 }
 
+// Адрес намеренно по http: проверяется, работает ли СВОЁ ядро стенда на петлевом интерфейсе
+// этой машины; TLS к собственному процессу на 127.0.0.1 ничего не защищает.
+// nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
 const alive = await fetch('http://127.0.0.1:4300/v1/health', { signal: AbortSignal.timeout(2000) })
   .then(() => true)
   .catch(() => false);

@@ -38,6 +38,24 @@ const CONTRACT_WITHOUT_MARKER: Record<string, string> = {
     'правка файла сломала бы контрольную сумму уже применённой миграции',
 };
 
+/**
+ * Широкие политики уже применённых миграций, ЗАМЕНЁННЫЕ следующей миграцией. Файл
+ * применённой миграции не правится (forward-only, контрольная сумма), поэтому замена
+ * регистрируется здесь: точечно — по имени политики и файлу, со ссылкой на заменяющую
+ * миграцию, которая обязана существовать и удалять эту политику. Иначе — прежний ERROR.
+ * Конечные права после замены подтверждены пробой PRB-SERVICE-TABLES-RLS (09.11.2026).
+ */
+const BLANKET_SUPERSEDED: Record<string, { policy: string; by: string }> = {
+  'M161_function_availability.sql': {
+    policy: 'observations_core',
+    by: 'M166_service_tables_system_only.sql',
+  },
+  'M162_mail_delivery.sql': {
+    policy: 'mail_queue_core',
+    by: 'M166_service_tables_system_only.sql',
+  },
+};
+
 const findings: Finding[] = [];
 
 function add(
@@ -229,7 +247,25 @@ for (const [fileIndex, file] of files.entries()) {
   // --- 3. Опасные широкие политики для роли пользовательских запросов -------
   const blanket =
     /CREATE\s+POLICY\s+[a-z_]+\s+ON\s+[a-z_.]+\s+FOR\s+ALL\s+TO\s+app_backend\s+USING\s*\(\s*true\s*\)/i;
-  if (blanket.test(sql)) {
+  const blanketAll = new RegExp(blanket.source, 'gi');
+  for (const m of sql.matchAll(blanketAll)) {
+    const policy = /CREATE\s+POLICY\s+([a-z_]+)/i.exec(m[0])?.[1] ?? '';
+    const superseded = BLANKET_SUPERSEDED[file];
+    const replacedBy =
+      superseded && superseded.policy === policy && files.includes(superseded.by)
+        ? readFileSync(join(MIGRATIONS_DIR, superseded.by), 'utf8')
+        : null;
+    if (replacedBy && new RegExp(`DROP\\s+POLICY\\s+${policy}\\b`, 'i').test(replacedBy)) {
+      add(
+        'WARN',
+        file,
+        lineOf(new RegExp(`CREATE\\s+POLICY\\s+${policy}\\b`, 'i')),
+        'blanket-policy',
+        `Широкая политика ${policy} заменена ${superseded!.by} (только служебный контекст); ` +
+          'файл применённой миграции не правится.',
+      );
+      continue;
+    }
     add(
       'ERROR',
       file,

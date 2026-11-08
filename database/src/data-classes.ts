@@ -84,6 +84,16 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   'ops.installation_targets': { kind: 'journal' },
   'ops.installations': { kind: 'journal' },
   'ops.instances': { kind: 'operational', note: 'подтверждённые версии экземпляров' },
+  // ----------------------------------------------------------- availability
+  // Группы функций (M161, 4.11): наблюдения экземпляров пересоздаются служебной задачей,
+  // ограничения ставит оператор на время работ — рабочее состояние среды, не содержимое.
+  'availability.observations': { kind: 'operational', note: 'наблюдения экземпляров' },
+  'availability.restrictions': { kind: 'operational', note: 'ограничения оператора' },
+
+  // --------------------------------------------------------------- requests
+  // Ключи повтора (M159, 2.6): ссылка на результат операции, со сроком.
+  'requests.idempotency_keys': { kind: 'operational' },
+
   // ------------------------------------------------------------------ audit
   'audit.consumed_events': { kind: 'journal' },
   'audit.control_objects': {
@@ -105,6 +115,9 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   'billing.service_countries': { kind: 'content', exportable: true, naturalKey: ['code'] },
 
   // ------------------------------------------------------------------ comms
+  // Почта (M162, 4.11): отметки отправки писем со ссылкой и очередь служебных писем.
+  'comms.mail_dispatches': { kind: 'operational' },
+  'comms.mail_queue': { kind: 'operational' },
   'comms.notification_preferences': { kind: 'operational' },
   'comms.notification_templates': {
     kind: 'content',
@@ -187,6 +200,8 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
     note: 'настройка, но с секретами — в файлы не выгружается',
   },
   'integration.webhook_deliveries': { kind: 'operational' },
+  // Пауза доставки по получателю (M163, 4.11).
+  'integration.webhook_destinations': { kind: 'operational' },
   'integration.webhook_endpoints': {
     kind: 'content',
     exportable: false,

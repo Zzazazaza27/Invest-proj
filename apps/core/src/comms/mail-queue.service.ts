@@ -103,12 +103,18 @@ export class MailQueueService implements OnModuleInit {
       });
       return;
     }
-    await tx.query(
-      `INSERT INTO comms.mail_queue (id, source_type, source_id, recipient, subject, body, message_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       ON CONFLICT (source_type, source_id) DO NOTHING`,
-      [uuidv7(), input.source, input.sourceId, inbox, input.subject, input.text, newMessageId()],
-    );
+    // Только функцией (M166): у роли пользовательских запросов нет ни чтения очереди, ни
+    // прямой записи. Вызов — в транзакции события: её откат убирает и письмо; повтор того
+    // же события прежнее письмо не перезаписывает.
+    await tx.query(`SELECT comms.enqueue_service_mail($1, $2, $3, $4, $5, $6, $7)`, [
+      uuidv7(),
+      input.source,
+      input.sourceId,
+      inbox,
+      input.subject,
+      input.text,
+      newMessageId(),
+    ]);
   }
 
   /** Один проход: сколько писем принято релеем. */

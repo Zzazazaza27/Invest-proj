@@ -3371,6 +3371,27 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: PRB-SERVICE-TABLES-RLS
+    file: scripts/probe-service-tables-rls.mjs
+    command: FIFTH_ENTRY=web node scripts/probe-service-tables-rls.mjs
+    kind: probe
+    level: интеграционный
+    runner: manual
+    asserts: 20
+    needs: [db, core]
+    effects:
+      [
+        'ставит в очередь пробные письма на адрес test.local и убирает их; одно обращение в поддержку и один пользователь остаются',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Выпуск W13–W21, M166: широкие политики M161/M162 заменены служебным контекстом;
+      находка линтера миграций в CI 42517656709.
+    purpose: 'Матрица доступа к availability.observations и comms.mail_queue после M166 на настоящей БД: пользовательский и анонимный контекст app_backend не читает и не меняет ни одной строки, вставка наблюдения и прямая запись в очередь — 42501; служебный контекст читает и меняет обе таблицы, прямая запись в очередь закрыта и ему; app_readonly читает, не меняет и не вызывает функцию; постановка функцией — true без содержимого, повтор — false без перезаписи, откат исходной транзакции убирает письмо, неизвестный источник — 22023; функция без PUBLIC, SECURITY DEFINER, закреплённый search_path; обращение через HTTP ставит копию, отправщик её принимает; служебная задача продолжает обновлять наблюдения.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: PRB-CLIENT-ERRORS
     file: scripts/probe-client-errors.mjs
     command: FIFTH_ENTRY=web node scripts/probe-client-errors.mjs
@@ -5134,6 +5155,7 @@ blocks:
         UNIT-CORE-CLIENT-ERRORS,
         UNIT-CABINET-CLIENT-ERRORS,
         PRB-CLIENT-ERRORS,
+        PRB-SERVICE-TABLES-RLS,
         PRB-RATE-LIMIT,
         PRB-IP-CEILING-TTL,
         PRB-VALKEY-COUNTERS,

@@ -535,7 +535,7 @@ describe('RLS: покрытие манифеста', () => {
          FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname IN ('identity','kyc','lab','comms','billing','audit','integration',
-                            'content','testing')
+                            'content','testing','requests','availability')
           AND c.relkind IN ('r','p')
           AND c.relispartition = false
           AND (NOT c.relrowsecurity
@@ -547,19 +547,19 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 9 схем и 52 таблицы', async () => {
+  it('схема соответствует спецификации: 11 схем и 58 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','comms','billing','audit','integration',
-                              'content','testing')`,
+                              'content','testing','requests','availability')`,
     );
-    expect(Number(schemas.rows[0]!.count)).toBe(9);
+    expect(Number(schemas.rows[0]!.count)).toBe(11);
 
     const tables = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM pg_class c
          JOIN pg_namespace n ON n.oid = c.relnamespace
         WHERE n.nspname IN ('identity','kyc','lab','comms','billing','audit','integration',
-                            'content','testing')
+                            'content','testing','requests','availability')
           AND c.relkind IN ('r','p') AND c.relispartition = false`,
     );
     // 60 таблиц по docs/architecture/Database_Launch.md.
@@ -673,7 +673,14 @@ describe('RLS: покрытие манифеста', () => {
     // + comms.operation_notices (M151, 2.1-W04): отметка «итог операции
     // показан пользователю» — одна на пару «операция — пользователь».
     // + audit.control_objects (M153, 2.1-W08a): контрольные объекты наблюдения.
-    expect(Number(tables.rows[0]!.count)).toBe(52);
+    //
+    // + схема requests и requests.idempotency_keys (M159, 2.6): ключи повтора.
+    // + схема availability, availability.observations и availability.restrictions
+    //   (M161, 4.11): группы функций. Обе схемы добавлены и в запрос покрытия выше —
+    //   без этого их таблицы оставались вне манифеста RLS (найдено при выпуске W13–W21).
+    // + comms.mail_dispatches и comms.mail_queue (M162), integration.webhook_destinations
+    //   (M163): почта и пауза доставки по получателю.
+    expect(Number(tables.rows[0]!.count)).toBe(58);
   });
 });
 
