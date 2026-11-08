@@ -11,6 +11,7 @@ import {
 } from '@fifth/contracts';
 import { Ctx, Public, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
+import { AvailabilityService } from '../availability/availability.service';
 import type { RequestContext } from '../db/unit-of-work';
 import { ProjectMediaService } from './project-media.service';
 
@@ -23,7 +24,10 @@ import { ProjectMediaService } from './project-media.service';
  */
 @Controller('projects')
 export class ProjectMediaController {
-  constructor(private readonly media: ProjectMediaService) {}
+  constructor(
+    private readonly media: ProjectMediaService,
+    private readonly availability: AvailabilityService,
+  ) {}
 
   @Roles('founder', 'admin')
   @Post(':id/media/upload')
@@ -32,6 +36,8 @@ export class ProjectMediaController {
     @Body() rawBody: unknown,
     @Ctx() ctx: RequestContext,
   ) {
+    // Группа «Файлы», изменение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'write');
     const id = parseOrThrow(UuidSchema, rawId);
     const input = parseOrThrow(RequestMediaUploadSchema, rawBody);
     return MediaUploadTicketSchema.parse(await this.media.requestUpload(ctx, id, input));
@@ -45,6 +51,8 @@ export class ProjectMediaController {
     @Body() rawBody: unknown,
     @Ctx() ctx: RequestContext,
   ) {
+    // Группа «Файлы», изменение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'write');
     const id = parseOrThrow(UuidSchema, rawId);
     const kind = parseOrThrow(ProjectMediaKindSchema, rawKind);
     const input = parseOrThrow(FinalizeMediaSchema, rawBody ?? {});
@@ -58,6 +66,8 @@ export class ProjectMediaController {
     @Param('kind') rawKind: string,
     @Ctx() ctx: RequestContext,
   ) {
+    // Группа «Файлы», изменение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'write');
     const id = parseOrThrow(UuidSchema, rawId);
     const kind = parseOrThrow(ProjectMediaKindSchema, rawKind);
     await this.media.remove(ctx, id, kind);
@@ -97,6 +107,8 @@ export class ProjectMediaController {
     @Ctx() ctx: RequestContext,
     @Res() reply: FastifyReply,
   ) {
+    // Группа «Файлы», чтение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'read');
     const id = parseOrThrow(UuidSchema, rawId);
     const kind = parseOrThrow(ProjectMediaKindSchema, rawKind);
     const size = parseOrThrow(ProjectMediaSizeSchema, rawSize);

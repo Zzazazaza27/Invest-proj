@@ -26,6 +26,9 @@ import {
   RequestKeyStateSchema,
   type RequestKeyState,
   type GuardedOperationName,
+  AdminGroupStatusSchema,
+  type AdminGroupStatus,
+  type SetRestrictionRequest,
   ServiceAccountWithSecretSchema,
   type AuthSession,
   type CreateServiceAccountRequest,
@@ -704,6 +707,34 @@ export const api = {
   },
 
   // -------------------------------------------------------------- фичефлаги
+
+  /** Доступность групп функций (4.11): исправность зависимости и ручной запрет раздельно. */
+  async availability(): Promise<AdminGroupStatus[]> {
+    const { items } = await client.request({
+      method: 'GET',
+      path: '/v1/admin/availability',
+      schema: listOf(AdminGroupStatusSchema),
+    });
+    return items;
+  },
+
+  restrictFiles(body: SetRestrictionRequest): Promise<AdminGroupStatus> {
+    return client.request({
+      method: 'PUT',
+      path: '/v1/admin/availability/files',
+      body,
+      schema: AdminGroupStatusSchema,
+    });
+  },
+
+  clearFilesRestriction(note: string): Promise<AdminGroupStatus> {
+    return client.request({
+      method: 'POST',
+      path: '/v1/admin/availability/files/clear',
+      body: { note },
+      schema: AdminGroupStatusSchema,
+    });
+  },
 
   async featureFlags(): Promise<FeatureFlag[]> {
     const { items } = await client.request({

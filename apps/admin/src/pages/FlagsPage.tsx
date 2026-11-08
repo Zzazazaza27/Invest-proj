@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { UI_SKIN_FLAG, type FeatureFlag } from '@fifth/contracts';
 import { PromptDialog } from '@fifth/ui';
 import { api } from '../api';
+import { AvailabilityCard } from './AvailabilityCard';
 import { formatDate, problemText } from '../lib/format';
 
 /**
@@ -57,6 +58,9 @@ export function FlagsPage() {
 
       {error && <div className="alert alert--error">{error}</div>}
       {notice && <div className="alert alert--ok">{notice}</div>}
+
+      {/* Эксплуатационная доступность (4.11) — отдельно от продуктовых флагов ниже. */}
+      <AvailabilityCard />
 
       {flags === null && <div className="spinner">Загрузка…</div>}
 

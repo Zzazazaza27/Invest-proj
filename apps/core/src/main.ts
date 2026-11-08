@@ -14,6 +14,7 @@ import { runControl } from './background/readiness';
 import { Database } from './db/unit-of-work';
 import { NatsClient } from './events/nats.client';
 import { S3Service } from './storage/s3.service';
+import { AvailabilityService } from './availability/availability.service';
 import { createShutdown, shutdownLog } from './background/shutdown';
 import { getEnv } from './config/env';
 import { ProblemDetailsFilter, problemCodeOf } from './common/problem.filter';
@@ -397,6 +398,8 @@ async function bootstrap(): Promise<void> {
       required: background.allowed,
       running: jobs.isStarted && !jobs.isStopping,
     }),
+    // Группы функций (4.11): эксплуатация видит состояние «Файлов»; готовность не снимается.
+    groups: async () => ({ files: (await app.get(AvailabilityService).localStatus()).state }),
     queues: () => db.queueMetrics(),
     control: () =>
       runControl(

@@ -2,6 +2,10 @@ import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
 import { createHash, createHmac } from 'node:crypto';
 import { errors } from '../common/errors';
 import { getEnv, isLoopbackUrl } from '../config/env';
+import { storageBreaker, storageMode } from '../availability/storage-health';
+
+/** Служебные ключи проб доступности (4.11): вне материалов людей и их квот. */
+export const PROBE_PREFIX = '_availability/';
 
 /**
  * Подписанная загрузка в объектное хранилище.
@@ -537,6 +541,8 @@ export class S3Service implements OnModuleInit {
       extraHeaders?: Record<string, string>;
       timeoutMs?: number;
       signal?: AbortSignal;
+      /** Тело PUT: только для служебной пробы записи (4.11) — маленькое и фиксированное. */
+      body?: Buffer;
     },
   ): Promise<Response> {
     const env = getEnv();
@@ -544,7 +550,7 @@ export class S3Service implements OnModuleInit {
 
     const amzDate = toAmzDate(new Date());
     const shortDate = amzDate.slice(0, 8);
-    const payloadHash = sha256Hex(Buffer.alloc(0));
+    const payloadHash = sha256Hex(options.body ?? Buffer.alloc(0));
     const base = env.S3_ENDPOINT.replace(/\/+$/, '');
     const url = new URL(
       env.S3_FORCE_PATH_STYLE === 'true'
@@ -580,16 +586,41 @@ export class S3Service implements OnModuleInit {
 
     const signals = [AbortSignal.timeout(options.timeoutMs ?? 10_000)];
     if (options.signal) signals.push(options.signal);
-    return fetch(url.toString(), {
-      method,
-      headers: {
-        ...headers,
-        Authorization:
-          `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
-          `SignedHeaders=${signedHeaders}, Signature=${signature}`,
-      },
-      signal: AbortSignal.any(signals),
+    // Технический исход обращения — размыкателю группы «Файлы» (4.11): сеть, таймаут и 5xx
+    // считаются отказом зависимости, 4xx — нет. Остановка вызывающим — не отказ.
+    const mode = storageMode(method);
+    try {
+      const response = await fetch(url.toString(), {
+        method,
+        headers: {
+          ...headers,
+          Authorization:
+            `${ALGORITHM} Credential=${env.S3_ACCESS_KEY_ID}/${scope}, ` +
+            `SignedHeaders=${signedHeaders}, Signature=${signature}`,
+        },
+        ...(options.body ? { body: new Uint8Array(options.body) } : {}),
+        signal: AbortSignal.any(signals),
+      });
+      storageBreaker().record(mode, response.status < 500);
+      return response;
+    } catch (error) {
+      if (!options.signal?.aborted) storageBreaker().record(mode, false);
+      throw error;
+    }
+  }
+
+  /**
+   * Служебная запись маленького фиксированного объекта — проба записи группы «Файлы»
+   * (4.11). Только для служебных ключей вне материалов людей и их квот.
+   */
+  async putProbeObject(key: string, body: Buffer, timeoutMs: number): Promise<void> {
+    if (!key.startsWith(PROBE_PREFIX)) throw new Error('проба записи — только служебный ключ');
+    const res = await this.signedFetch('PUT', key, {
+      body,
+      timeoutMs,
+      extraHeaders: { 'content-length': String(body.length) },
     });
+    if (!res.ok) throw new Error(`проба записи: HTTP ${res.status}`);
   }
 
   presignUpload(input: {

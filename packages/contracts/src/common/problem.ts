@@ -52,6 +52,8 @@ export const ErrorCode = {
   INTERNAL_ERROR: 'internal_error',
   DEPENDENCY_UNAVAILABLE: 'dependency_unavailable',
   FEATURE_DISABLED: 'feature_disabled',
+  /** Группа функций сейчас недоступна (4.11): ответ несёт группу и безопасную причину. */
+  GROUP_UNAVAILABLE: 'group_unavailable',
 } as const;
 
 export type ErrorCodeValue = (typeof ErrorCode)[keyof typeof ErrorCode];
@@ -125,4 +127,5 @@ export const ERROR_STATUS: Record<ErrorCodeValue, number> = {
   [ErrorCode.INTERNAL_ERROR]: 500,
   [ErrorCode.DEPENDENCY_UNAVAILABLE]: 503,
   [ErrorCode.FEATURE_DISABLED]: 503,
+  [ErrorCode.GROUP_UNAVAILABLE]: 503,
 };

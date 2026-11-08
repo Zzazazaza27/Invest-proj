@@ -176,6 +176,7 @@ const TITLES: Partial<Record<string, string>> = {
   [ErrorCode.LIMIT_EXCEEDED]: 'Превышен лимит',
   [ErrorCode.RATE_LIMITED]: 'Слишком много запросов',
   [ErrorCode.FEATURE_DISABLED]: 'Функция недоступна',
+  [ErrorCode.GROUP_UNAVAILABLE]: 'Группа функций недоступна',
   [ErrorCode.INTERNAL_ERROR]: 'Внутренняя ошибка',
   [ErrorCode.DEPENDENCY_UNAVAILABLE]: 'Сервис временно недоступен',
 };

@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { AdminController } from './admin/admin.controller';
+import { AvailabilityController } from './availability/availability.controller';
+import { AvailabilityService } from './availability/availability.service';
 import { AdminService } from './admin/admin.service';
 import { DiscoveryModule } from '@nestjs/core';
 import { DirectoryController } from './admin/directory.controller';
@@ -126,6 +128,7 @@ import { S3Service } from './storage/s3.service';
     AdminCapabilitiesController,
     MyCapabilitiesController,
     AdminController,
+    AvailabilityController,
     NotificationsController,
     SupportController,
     FavoritesController,
@@ -152,6 +155,7 @@ import { S3Service } from './storage/s3.service';
     IntelligenceService,
     LoginThrottleService,
     S3Service,
+    AvailabilityService,
     IdentityService,
     VerificationService,
     MailThrottleService,

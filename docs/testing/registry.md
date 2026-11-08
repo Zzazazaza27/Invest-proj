@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 216; требований: 41
+- Проверок: 218; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 83
+### Зарегистрированы, но ни в наборе, ни в CI — 84
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -193,6 +193,7 @@
 - `PRB-UPLOAD-COMPLETION` — Приёмка завершения загрузок материалов на общем механизме: аренда, попытки, сверка, отказы и режим отката.
 - `PRB-REQUEST-KEYS` — Ключ повтора на четырёх операциях (создание проекта, ссылка-материал, обращение, сообщение): повтор после потерянного ответа даёт прежний результат без второ…
 - `PRB-UPLOAD-CANCEL` — Отмена загрузки — состояние «отменено» без удаления: место в квоте освобождено, поздний файл не публикуется ни завершением, ни сверкой, гонка отмены с публик…
+- `PRB-AVAILABILITY-FILES` — Группа «Файлы»: при отказе записи хранилища кабинет получает «только чтение» с причиной зависимости, карточка проекта, список и готовый материал открываются,…
 - `PRB-CSRF-BINDING` — Проверка привязки CSRF-токена к сессии.
 - `PRB-DNS-REBINDING` — Проверка защиты доставки вебхуков от DNS rebinding.
 - `PRB-EVENT-ARCHIVE` — Проверка выгрузки журнала событий в холодное хранилище (M041).
@@ -418,6 +419,7 @@
 | PRB-UPLOAD-COMPLETION | `node scripts/probe-upload-completion.mjs` | 55 | вручную | — |
 | PRB-REQUEST-KEYS | `node scripts/probe-request-keys.mjs` | 31 | вручную | — |
 | PRB-UPLOAD-CANCEL | `node scripts/probe-upload-cancel.mjs` | 48 | вручную | — |
+| PRB-AVAILABILITY-FILES | `node scripts/probe-availability.mjs` | 21 | вручную | — |
 | PRB-CSRF-BINDING | `node scripts/probe-csrf-binding.mjs` | 6 | вручную | — |
 | PRB-DNS-REBINDING | `node scripts/probe-dns-rebinding.mjs` | 6 | вручную | — |
 | PRB-EVENT-ARCHIVE | `node scripts/probe-event-archive.mjs` | 11 | вручную | — |
@@ -441,6 +443,7 @@
 
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
+| UNIT-CORE-AVAILABILITY-RULES | `npm run test -w apps/core` | 16 | CI | CI |
 | UNIT-CORE-OUTBOX-FAILURES | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |

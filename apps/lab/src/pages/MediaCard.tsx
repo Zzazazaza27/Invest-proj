@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ContextualImage } from '@fifth/cabinet';
+import { ContextualImage, noteGroupError, useFilesAvailability } from '@fifth/cabinet';
 import { Button, Card, Stack } from '@fifth/ui';
 import { MEDIA_LIMITS, type ProjectMedia, type ProjectMediaKind } from '@fifth/contracts';
 import { ApiError, api, mediaUrl } from '../api';
@@ -20,6 +20,9 @@ export function MediaCard({ projectId }: { projectId: string }) {
   const [items, setItems] = useState<ProjectMedia[] | null>(null);
   const [busy, setBusy] = useState<ProjectMediaKind | null>(null);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  // Группа «Файлы» (4.11): ограничиваются только загрузка и удаление; причину на странице
+  // показывает карточка материалов — одна на группу.
+  const files = useFilesAvailability(api.features);
 
   const load = useCallback(async () => {
     const result = await api.projects.media(projectId).catch(() => ({ items: [] }));
@@ -68,6 +71,7 @@ export function MediaCard({ projectId }: { projectId: string }) {
       setNotice({ tone: 'ok', text: 'Изображение загружено' });
       await load();
     } catch (error) {
+      noteGroupError(error);
       setNotice({
         tone: 'error',
         text:
@@ -89,6 +93,7 @@ export function MediaCard({ projectId }: { projectId: string }) {
       setNotice({ tone: 'ok', text: 'Изображение убрано' });
       await load();
     } catch (error) {
+      noteGroupError(error);
       setNotice({
         tone: 'error',
         text: error instanceof ApiError ? (error.problem?.detail ?? 'Не удалось') : 'Не удалось',
@@ -123,6 +128,7 @@ export function MediaCard({ projectId }: { projectId: string }) {
             kind={kind}
             media={items.find((item) => item.kind === kind) ?? null}
             busy={busy === kind}
+            canWrite={files.canWrite}
             onUpload={(file, focusX, focusY) => void upload(kind, file, focusX, focusY)}
             onRemove={() => void remove(kind)}
           />
@@ -136,12 +142,14 @@ function MediaSlot({
   kind,
   media,
   busy,
+  canWrite,
   onUpload,
   onRemove,
 }: {
   kind: ProjectMediaKind;
   media: ProjectMedia | null;
   busy: boolean;
+  canWrite: boolean;
   onUpload: (file: File, focusX: number, focusY: number) => void;
   onRemove: () => void;
 }) {
@@ -221,7 +229,7 @@ function MediaSlot({
         <Button
           variant="brand"
           loading={busy}
-          disabled={file === null}
+          disabled={file === null || !canWrite}
           data-media-upload={kind}
           onClick={() => {
             if (file) onUpload(file, focus.x, focus.y);
@@ -230,7 +238,13 @@ function MediaSlot({
           {media ? S.media.replace : S.media.upload}
         </Button>
         {media ? (
-          <Button variant="secondary" loading={busy} data-media-remove={kind} onClick={onRemove}>
+          <Button
+            variant="secondary"
+            loading={busy}
+            disabled={!canWrite}
+            data-media-remove={kind}
+            onClick={onRemove}
+          >
             {S.media.remove}
           </Button>
         ) : null}

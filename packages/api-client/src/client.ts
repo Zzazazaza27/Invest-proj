@@ -413,7 +413,9 @@ async function isFeatureDisabled(response: Response): Promise<boolean> {
   if (response.status !== 503) return false;
   try {
     const problem = (await response.clone().json()) as { code?: unknown };
-    return problem?.code === 'feature_disabled';
+    // Группа функций недоступна (4.11) — тоже решение, а не временный сбой ответа: повтор
+    // не поможет, состояние кабинет узнаёт из /v1/features.
+    return problem?.code === 'feature_disabled' || problem?.code === 'group_unavailable';
   } catch {
     return false;
   }

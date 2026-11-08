@@ -9,6 +9,7 @@ import {
   type SkinId,
 } from '@fifth/contracts';
 import { Public } from '../auth/guards';
+import { AvailabilityService } from '../availability/availability.service';
 import { Database } from '../db/unit-of-work';
 
 /**
@@ -25,7 +26,10 @@ import { Database } from '../db/unit-of-work';
  */
 @Controller('features')
 export class FeaturesController {
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly availability: AvailabilityService,
+  ) {}
 
   @Public()
   @Get()
@@ -51,6 +55,9 @@ export class FeaturesController {
     const skin = (SKIN_IDS as readonly string[]).includes(skinValue ?? '')
       ? (skinValue as SkinId)
       : DEFAULT_SKIN;
-    return FeaturesSchema.parse({ flags, skin });
+    // Доступность групп функций (4.11): сведение по экземплярам, только безопасные коды.
+    // Чтение состояния ничего не повторяет и не выполняет.
+    const groups = { files: await this.availability.platformStatus() };
+    return FeaturesSchema.parse({ flags, skin, groups });
   }
 }

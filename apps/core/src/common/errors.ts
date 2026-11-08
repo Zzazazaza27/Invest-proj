@@ -125,6 +125,21 @@ export const errors = {
       publicDetail: 'Обработка этих данных за пределами разрешённого контура запрещена',
     }),
 
+  /**
+   * Группа функций недоступна (4.11). Группа, режим и безопасный код причины — в `errors`
+   * (`path` = `<группа>.<режим>`, `message` = код причины): кабинет показывает ту же причину,
+   * что и `/v1/features`. Внутренние подробности — только во внутреннем поле.
+   */
+  groupUnavailable: (group: string, mode: string, reason: string) =>
+    new AppError(ErrorCode.GROUP_UNAVAILABLE, {
+      publicDetail:
+        mode === 'write'
+          ? 'Работа с файлами сейчас недоступна: изменить их нельзя'
+          : 'Получить файл сейчас нельзя',
+      fieldErrors: [{ path: `${group}.${mode}`, message: reason }],
+      internal: { group, mode, reason },
+    }),
+
   featureDisabled: (flag: string) =>
     new AppError(ErrorCode.FEATURE_DISABLED, {
       publicDetail: 'Функция пока недоступна',

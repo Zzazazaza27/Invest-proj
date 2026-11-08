@@ -1,4 +1,5 @@
-import { Injectable, Logger, type OnModuleInit } from '@nestjs/common';
+import { Injectable, Logger, Optional, type OnModuleInit } from '@nestjs/common';
+import { AvailabilityService } from '../availability/availability.service';
 import type { UploadableMaterialType } from '@fifth/contracts';
 import { randomUUID } from 'node:crypto';
 import { AuditRepository } from '../audit/audit.repository';
@@ -42,6 +43,8 @@ export class MaterialUploadsService implements OnModuleInit {
     private readonly s3: S3Service,
     private readonly audit: AuditRepository,
     private readonly jobs: BackgroundJobsService,
+    /** Группа «Файлы» (4.11): сверка не пишет в хранилище, пока запись недоступна. */
+    @Optional() private readonly availability?: AvailabilityService,
   ) {
     this.completion = new UploadCompletion(db, s3, this.target());
   }
@@ -57,6 +60,12 @@ export class MaterialUploadsService implements OnModuleInit {
       coordination: 'local',
       runAtStart: true,
       run: async ({ signal }) => {
+        // Запись файлов недоступна или ограничена вручную: проход пропускается. Загрузки
+        // остаются «ожидает», выданные билеты не отзываются; сверка завершит их после
+        // восстановления, а состояние операции можно узнать в любой момент.
+        if (this.availability && !(await this.availability.allows('write'))) {
+          return { status: 'idle' };
+        }
         const processed = await this.reconcile(signal);
         return processed > 0 ? { status: 'done', processed } : { status: 'idle' };
       },

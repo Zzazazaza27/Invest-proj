@@ -12,6 +12,7 @@ import {
 } from '@fifth/contracts';
 import { Ctx } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
+import { AvailabilityService } from '../availability/availability.service';
 import type { RequestContext } from '../db/unit-of-work';
 import { ProfileService } from './profile.service';
 
@@ -29,7 +30,10 @@ import { ProfileService } from './profile.service';
  */
 @Controller('me')
 export class ProfileController {
-  constructor(private readonly profile: ProfileService) {}
+  constructor(
+    private readonly profile: ProfileService,
+    private readonly availability: AvailabilityService,
+  ) {}
 
   @Get('profile')
   async me(@Ctx() ctx: RequestContext) {
@@ -59,6 +63,8 @@ export class ProfileController {
 
   @Post('avatar/upload')
   async requestAvatarUpload(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    // Группа «Файлы», изменение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'write');
     const input = parseOrThrow(RequestAvatarUploadSchema, rawBody);
     return MediaUploadTicketSchema.parse(await this.profile.requestAvatarUpload(ctx, input));
   }
@@ -66,11 +72,15 @@ export class ProfileController {
   @HttpCode(200)
   @Post('avatar/finalize')
   async finalizeAvatar(@Ctx() ctx: RequestContext) {
+    // Группа «Файлы», изменение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'write');
     return MyProfileSchema.parse(await this.profile.finalizeAvatar(ctx));
   }
 
   @Delete('avatar')
   async removeAvatar(@Ctx() ctx: RequestContext) {
+    // Группа «Файлы», изменение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'write');
     return MyProfileSchema.parse(await this.profile.removeAvatar(ctx));
   }
 }
@@ -82,7 +92,10 @@ export class ProfileController {
  */
 @Controller('users')
 export class UserAvatarController {
-  constructor(private readonly profile: ProfileService) {}
+  constructor(
+    private readonly profile: ProfileService,
+    private readonly availability: AvailabilityService,
+  ) {}
 
   @Get(':id/avatar/:size')
   async avatar(
@@ -91,6 +104,8 @@ export class UserAvatarController {
     @Ctx() ctx: RequestContext,
     @Res() reply: FastifyReply,
   ) {
+    // Группа «Файлы», чтение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'read');
     const id = parseOrThrow(UuidSchema, rawId);
     const size = parseOrThrow(AvatarSizeSchema, rawSize);
     const file = await this.profile.avatarBytes(ctx, id, size);

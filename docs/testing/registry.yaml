@@ -926,6 +926,44 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-30
 
+  - id: PRB-AVAILABILITY-FILES
+    file: scripts/probe-availability.mjs
+    command: node scripts/probe-availability.mjs
+    kind: probe
+    level: интеграционный
+    runner: manual
+    asserts: 21
+    needs: [db, core, storage]
+    effects:
+      [
+        'на время пробы снимает у ключа приложения в Garage право записи и возвращает его при любом исходе',
+        'создаёт двух пользователей (один — администратор), проект и материалы; проект, материалы и ограничение убирает',
+      ]
+    studied: code
+    studiedOn: 2026-11-08
+    note: >-
+      Блок 4, 4.11, пакет 3 раздела 01. Ядро запускать с AVAILABILITY_PROBE_INTERVAL_MS=2000.
+      После жёсткой остановки прежнего ядра его последнее «исправно» действует до конца окна
+      актуальности — проба ждёт до 120 с.
+    purpose: 'Группа «Файлы»: при отказе записи хранилища кабинет получает «только чтение» с причиной зависимости, карточка проекта, список и готовый материал открываются, состояние начатой загрузки выясняется, новая загрузка отклоняется group_unavailable с той же причиной, готовность ядра не снята; ручное ограничение закрывает запись при исправном хранилище, эксплуатация видит оба факта, наружу уходит код, а не заметка, снятие — отдельным действием с правом и записью в журнал.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
+  - id: UNIT-CORE-AVAILABILITY-RULES
+    file: apps/core/tests/availability-rules.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 16
+    studied: code
+    studiedOn: 2026-11-08
+    note: >-
+      Блок 4, 4.11. Чистые правила, время задаётся тестом.
+    purpose: 'Сведение наблюдений экземпляров (просроченные и остановленные не дают доступности), состояние группы из продуктового включения, ручного ограничения и зависимости, размыкатель по режимам.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
   - id: PRB-CSRF-BINDING
     file: scripts/probe-csrf-binding.mjs
     command: node scripts/probe-csrf-binding.mjs
@@ -4678,6 +4716,8 @@ blocks:
         CHK-BACKUP-RESTORE,
         CHK-BACKUP-LOGIC,
         UNIT-CORE-READINESS,
+        UNIT-CORE-AVAILABILITY-RULES,
+        PRB-AVAILABILITY-FILES,
         CHK-MONITOR-APP-PROBE,
         CHK-MONITORING-ACCOUNT,
         CHK-LOGS-ARCHIVE,

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { IsoDateTimeSchema } from '../common/primitives';
+import { FunctionGroupsSchema } from './availability';
 
 /**
  * Флаги функций и скин платформы.
@@ -53,6 +54,8 @@ export const FeaturesSchema = z.object({
   flags: z.record(z.string(), z.boolean()),
   /** Скин всей платформы: флаг `ui.skin` (значение в `rules.value`). */
   skin: z.enum(SKIN_IDS),
+  /** Доступность групп функций (4.11): только безопасные коды, без внутренних подробностей. */
+  groups: FunctionGroupsSchema,
 });
 export type Features = z.infer<typeof FeaturesSchema>;
 

@@ -26,6 +26,8 @@ export interface ReadinessProbes {
   storage: (() => Promise<boolean>) | null;
   nats: (() => Promise<boolean>) | null;
   background: () => { required: boolean; running: boolean };
+  /** Состояния групп функций этого экземпляра (4.11): видны, готовность не снимают. */
+  groups?: () => Promise<Record<string, string>>;
   queues: () => Promise<Record<string, Record<string, number>>>;
   /** Контрольная операция: запись через БД приложения и файл из хранилища. */
   control: () => Promise<ControlReport>;
@@ -89,6 +91,8 @@ export interface ReadyReport {
   required: { database: CheckState; valkey: CheckState };
   /** Зависимости функций (4.11): видны отдельно, общую готовность не снимают. */
   functions: { storage: CheckState; nats: CheckState };
+  /** Группы функций (4.11): состояние по коду, `null` — не удалось узнать. */
+  groups: Record<string, string> | null;
   background: CheckState;
   checkedInMs: number;
 }
@@ -125,11 +129,19 @@ export async function checkReadiness(probes: ReadinessProbes): Promise<ReadyRepo
   const lifecycle = probes.lifecycle();
   const bg = probes.background();
   const required = { database, valkey };
+  // Не дольше общего предела проверки; отказ узнать состояние — `null`, готовность не снимает.
+  const groups = probes.groups
+    ? await Promise.race([
+        probes.groups().catch(() => null),
+        new Promise<null>((done) => setTimeout(() => done(null), timeout).unref?.()),
+      ])
+    : null;
   return {
     ready: lifecycle === 'running' && Object.values(required).every((s) => s !== 'fail'),
     lifecycle,
     required,
     functions: { storage, nats },
+    groups,
     background: bg.required ? (bg.running ? 'ok' : 'fail') : 'not_configured',
     checkedInMs: Date.now() - started,
   };

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ContextualImage } from './test-context';
 import { Badge, Button, Card, ErrorState, Field, Input, LoadingState, Stack } from '@fifth/ui';
-import type { MyProfile } from '@fifth/contracts';
+import type { Features, MyProfile } from '@fifth/contracts';
+import { FilesNotice, noteGroupError, useFilesAvailability } from './availability';
 import { AVATAR_LIMITS } from '@fifth/contracts';
 
 /**
@@ -31,6 +32,11 @@ export interface ProfilePort {
   uploadAvatar: (file: File) => Promise<MyProfile>;
   removeAvatar: () => Promise<MyProfile>;
   changePassword: (input: { currentPassword: string; newPassword: string }) => Promise<void>;
+  /**
+   * Состояние групп функций (4.11). Есть — кнопки аватара следуют доступности «Файлов»;
+   * нет — решает только сервер. Сам профиль открывается в любом случае.
+   */
+  features?: () => Promise<Features>;
 }
 
 export function ProfilePage({
@@ -111,6 +117,7 @@ function AvatarAndName({
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const files = useFilesAvailability(port.features);
 
   async function run(action: () => Promise<MyProfile>, okText: string) {
     setBusy(true);
@@ -119,6 +126,7 @@ function AvatarAndName({
       onChange(await action());
       setNotice({ tone: 'ok', text: okText });
     } catch (cause) {
+      noteGroupError(cause);
       setNotice({ tone: 'error', text: messageOf(cause, 'Не удалось сохранить') });
     } finally {
       setBusy(false);
@@ -140,10 +148,11 @@ function AvatarAndName({
         >
           <ProfileAvatar profile={profile} size={72} />
           <Stack gap="var(--u-space-2)">
+            <FilesNotice availability={files} />
             <div style={{ display: 'flex', gap: 'var(--u-space-2)', flexWrap: 'wrap' }}>
               <Button
                 variant="secondary"
-                disabled={busy}
+                disabled={busy || !files.canWrite}
                 onClick={() => fileRef.current?.click()}
                 data-testid="avatar-pick"
               >
@@ -152,7 +161,7 @@ function AvatarAndName({
               {profile.avatar ? (
                 <Button
                   variant="secondary"
-                  disabled={busy}
+                  disabled={busy || !files.canWrite}
                   data-testid="avatar-remove"
                   onClick={() => void run(() => port.removeAvatar(), 'Аватар удалён')}
                 >

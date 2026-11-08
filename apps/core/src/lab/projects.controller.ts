@@ -30,6 +30,7 @@ import {
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
 import { requestKeyFrom } from '../db/request-keys';
+import { AvailabilityService } from '../availability/availability.service';
 import type { RequestContext } from '../db/unit-of-work';
 import { ProjectsService } from './projects.service';
 import { UploadOperationsService } from './upload-operations.service';
@@ -49,6 +50,7 @@ export class ProjectsController {
   constructor(
     private readonly projects: ProjectsService,
     private readonly operations: UploadOperationsService,
+    private readonly availability: AvailabilityService,
   ) {}
 
   @Roles('founder', 'admin')
@@ -112,6 +114,8 @@ export class ProjectsController {
     @Ctx() ctx: RequestContext,
     @Res({ passthrough: true }) reply: FastifyReply,
   ) {
+    // Группа «Файлы», чтение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'read');
     const id = parseOrThrow(UuidSchema, rawId);
     const materialId = parseOrThrow(UuidSchema, rawMaterialId);
     const file = await this.projects.getMaterialContent(ctx, id, materialId);
@@ -165,6 +169,8 @@ export class ProjectsController {
     @Body() rawBody: unknown,
     @Ctx() ctx: RequestContext,
   ) {
+    // Группа «Файлы», изменение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'write');
     const id = parseOrThrow(UuidSchema, rawId);
     const input = parseOrThrow(RequestUploadSchema, { ...asObject(rawBody), projectId: id });
     return UploadTicketSchema.parse(await this.projects.requestUpload(ctx, input));
@@ -184,6 +190,8 @@ export class ProjectsController {
     @Param('materialId') rawMaterialId: string,
     @Ctx() ctx: RequestContext,
   ) {
+    // Группа «Файлы», изменение (4.11): недоступно — group_unavailable.
+    await this.availability.assert('files', 'write');
     const id = parseOrThrow(UuidSchema, rawId);
     const materialId = parseOrThrow(UuidSchema, rawMaterialId);
     return MaterialUploadResultSchema.parse(

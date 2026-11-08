@@ -155,6 +155,8 @@ function profileHref(): string {
  * (`@fifth/cabinet`), сюда приходит только транспорт.
  */
 const profilePort: ProfilePort = {
+  // Доступность «Файлов» (4.11): кнопки аватара следуют ей, сам профиль открывается всегда.
+  features: () => api.features(),
   load: () => api.profile.me(),
   updateName: (displayName) => api.profile.updateName(displayName),
   uploadAvatar: (file) => api.profile.uploadAvatar(file),

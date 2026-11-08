@@ -17,7 +17,13 @@ import {
   type ProjectMaterial,
   type UserOperation,
 } from '@fifth/contracts';
-import { GuardedNotice, useGuardedSend } from '@fifth/cabinet';
+import {
+  FilesNotice,
+  GuardedNotice,
+  noteGroupError,
+  useFilesAvailability,
+  useGuardedSend,
+} from '@fifth/cabinet';
 import { ApiError, api } from '../api';
 import { useOperations } from '../operations';
 import { S } from '../strings';
@@ -91,6 +97,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
   );
   const [notice, setNotice] = useState<Notice | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const files = useFilesAvailability(api.features);
   const { requestCheck } = useOperations();
 
   const load = useCallback(async () => {
@@ -284,6 +291,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
         // Не принят — итог показывает общее сообщение (1.5), один раз.
         if (result.uploadState === 'rejected') requestCheck();
       } catch (error) {
+        noteGroupError(error);
         // Передачу остановила отмена — итог уже показан отменой, это не ошибка.
         if (!transfer.current?.cancelled) {
           setNotice({ tone: 'error', text: errorText(error, 'Загрузка не удалась') });
@@ -514,6 +522,8 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
           (замечание Томаса при приёмке W06). Поле выбора скрыто, его
           открывает кнопка.
         */}
+        {/* Группа «Файлы» (4.11): одна причина, ограничена только загрузка, не карточка. */}
+        <FilesNotice availability={files} />
         <Field
           label="Презентация"
           htmlFor="deck-file"
@@ -524,6 +534,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
             variant="secondary"
             onClick={() => fileInput.current?.click()}
             loading={uploading}
+            disabled={!files.canWrite}
           >
             Загрузить презентацию
           </Button>
