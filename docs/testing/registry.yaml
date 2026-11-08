@@ -1095,6 +1095,29 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: PRB-OUTBOX-NATS
+    file: scripts/probe-outbox-nats.mjs
+    command: node scripts/probe-outbox-nats.mjs
+    kind: probe
+    level: интеграционный
+    runner: manual
+    asserts: 23
+    needs: [db, nats]
+    effects:
+      [
+        'на время пробы откладывает неопубликованную очередь стенда и возвращает её; требует остановленного ядра стенда',
+        'создаёт свои события, подписчика и изолированный стрим с окном 2 с; всё убирает',
+      ]
+    studied: code
+    studiedOn: 2026-11-08
+    note: >-
+      Блок 1 (1.3.6), блок 2 (2.4, 2.6), M160. Чувствительность подтверждена
+      мутацией сборки: отказ брокера, засчитанный как попытка события, даёт
+      5 отказов из 23.
+    purpose: 'Публикатор outbox и доставка вебхуков при отказах: 12 проходов недоступного брокера не расходуют попыток, захват пачки освобождается сразу, на паузе брокер не дёргается, после возврата каждое событие опубликовано один раз; подтверждение потеряно после принятия сообщения (настоящий NATS, окно 2 с) — попытка не засчитана, повтор внутри окна отсечён дедупликацией, после окна второе сообщение с тем же Nats-Msg-Id и eventId, событие не потеряно; потеря аренды посреди пачки останавливает проход, чужие строки не тронуты; ошибка самого события засчитывается, следующее в пачке публикуется; потеря аренды доставки вебхука останавливает проход, оставшаяся доставка освобождена.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
   - id: PRB-OUTBOX-LEASE
     file: scripts/probe-outbox-lease.mjs
     command: node scripts/probe-outbox-lease.mjs
@@ -1113,7 +1136,8 @@ checks:
       базы и на чистом стенде краснела с «в базе нет сервисного аккаунта»,
       ничего не сказав об аренде. Теперь заводит аккаунт себе сама.
     purpose: 'Проверка очереди outbox: аренда между экземплярами и повтор рассылки. Две находки внешнего аудита проверяются здесь фактом, а не чтением кода: 1. Аренда (CODE-05). `FOR UPDATE SKIP LOCKED` держит строку только до конца т'
-    confirmation: reviewed-in-code
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
 
   - id: PRB-RATE-LIMIT
     file: scripts/probe-rate-limit.mjs
@@ -4608,6 +4632,7 @@ blocks:
     members:
       [
         PRB-MAIL-READINESS,
+        PRB-OUTBOX-NATS,
         PRB-EVENT-VERSIONS,
         PRB-EVENT-ARCHIVE,
         PRB-DNS-REBINDING,

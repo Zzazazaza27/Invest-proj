@@ -18,11 +18,17 @@
  * Запуск: node scripts/probe-outbox-lease.mjs
  */
 import pg from 'pg';
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+// Захват — тем же общим модулем, что у публикатора (собранное ядро).
+const { claimLeases } = createRequire(import.meta.url)(
+  join(ROOT, 'apps/core/dist/background/lease.js'),
+);
 loadDotEnv();
 
 function loadDotEnv() {
@@ -54,26 +60,29 @@ const sql = async (text, params = []) => (await pool.query(text, params)).rows;
 const MARK = `probe-outbox-${Date.now() % 1e9}`;
 const LEASE_SECONDS = 60;
 
-/** Захват пачки в аренду — тем же выражением, что и в публикаторе. */
-async function claim(instance, size) {
-  return sql(
-    `UPDATE audit.outbox_events o
-        SET locked_at = now(),
-            locked_until = now() + ($3 || ' seconds')::interval,
-            locked_by = $4
-      WHERE o.id IN (
-        SELECT id FROM audit.outbox_events
-         WHERE published_at IS NULL
-           AND next_attempt_at <= now()
-           AND attempts < $2
-           AND (locked_until IS NULL OR locked_until < now())
-           AND event_type = $5
-         ORDER BY created_at
-         FOR UPDATE SKIP LOCKED
-         LIMIT $1)
-    RETURNING o.id`,
-    [size, 10, LEASE_SECONDS, instance, 'lab.listing.published'],
-  );
+/**
+ * Захват пачки в аренду — общим модулем, как в публикаторе с M160 (`background/lease.ts`),
+ * с тем же условием выборки. Экземпляр здесь — отдельная транзакция: идентификатор захвата
+ * новый на каждый захват.
+ */
+async function claim(_instance, size) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const leases = await claimLeases(client, {
+      table: 'audit.outbox_events',
+      where: `published_at IS NULL AND next_attempt_at <= now() AND attempts < $1
+              AND (locked_until IS NULL OR locked_until < now()) AND event_type = $2`,
+      params: [10, 'lab.listing.published'],
+      orderBy: 'created_at',
+      limit: size,
+      seconds: LEASE_SECONDS,
+    });
+    await client.query('COMMIT');
+    return leases;
+  } finally {
+    client.release();
+  }
 }
 
 console.warn('\n=== ПРОВЕРКА ОЧЕРЕДИ OUTBOX ===\n');
@@ -112,7 +121,7 @@ try {
   // Просроченная аренда обязана освобождаться: упавший экземпляр не должен
   // блокировать очередь навсегда.
   await sql(
-    `UPDATE audit.outbox_events SET locked_until = now() - interval '1 second'
+    `UPDATE audit.outbox_events SET lease_until = now() - interval '1 second'
       WHERE id = ANY($1::uuid[])`,
     [created],
   );
@@ -128,7 +137,7 @@ try {
   // прежде не выбирался ничем.
   await sql(
     `UPDATE audit.outbox_events
-        SET published_at = now(), fanout_completed_at = NULL, locked_until = NULL
+        SET published_at = now(), fanout_completed_at = NULL, lease_id = NULL, lease_until = NULL
       WHERE id = $1`,
     [created[0]],
   );
@@ -197,23 +206,25 @@ try {
       `INSERT INTO integration.webhook_deliveries (id, endpoint_id, event_id, status)
        VALUES (public.uuid_generate_v7(), $1, $2, 'queued')
        ON CONFLICT (endpoint_id, event_id) DO UPDATE
-         SET status = 'queued', locked_until = NULL, attempts = 0
+         SET status = 'queued', lease_id = NULL, lease_until = NULL, attempts = 0
        RETURNING id`,
       [endpoint.id, created[1]],
     );
 
-    const claim = async (instance) =>
+    // Тем же условием, что исполнитель доставки с M160: новый идентификатор на каждый захват.
+    const claim = async () =>
       sql(
         `UPDATE integration.webhook_deliveries d
-            SET locked_until = now() + interval '60 seconds', locked_by = $2
+            SET lease_id = $2::uuid, lease_until = now() + interval '60 seconds'
           WHERE d.id IN (
             SELECT d2.id FROM integration.webhook_deliveries d2
              WHERE d2.id = $1
                AND d2.status IN ('queued','failed')
+               AND (d2.lease_until IS NULL OR d2.lease_until < now())
                AND (d2.locked_until IS NULL OR d2.locked_until < now())
              FOR UPDATE OF d2 SKIP LOCKED)
         RETURNING d.id`,
-        [delivery.id, instance],
+        [delivery.id, randomUUID()],
       );
 
     const firstDelivery = await claim('delivery-A');

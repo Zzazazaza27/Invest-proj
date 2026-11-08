@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 214; требований: 41
+- Проверок: 215; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 82
+### Зарегистрированы, но ни в наборе, ни в CI — 83
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -201,6 +201,7 @@
 - `PRB-MAIL-READINESS` — Зонд готовности домена к почте: MX, SPF, DKIM, DMARC, PTR и сам релей.
 - `PRB-BACKGROUND-JOBS` — Общий механизм фоновой работы ядра — проверка фактом на PostgreSQL и процессах core: аренда, advisory-блокировка, выключатель, роли запуска.
 - `PRB-VALKEY-COUNTERS` — Общие счётчики ограничений на Valkey — проверка фактом: окно, обрыв, неизвестный результат, отказ без обхода.
+- `PRB-OUTBOX-NATS` — Публикатор outbox и доставка вебхуков при отказах: 12 проходов недоступного брокера не расходуют попыток, захват пачки освобождается сразу, на паузе брокер н…
 - `PRB-OUTBOX-LEASE` — Проверка очереди outbox: аренда между экземплярами и повтор рассылки.
 - `PRB-RATE-LIMIT` — Проверка: обходится ли ограничение частоты подделкой cookie сессии.
 - `PRB-ROLE-REVOCATION` — Проверка немедленности отзыва прав.
@@ -426,6 +427,7 @@
 | PRB-MAIL-READINESS | `node scripts/probe-mail-readiness.mjs` | 0 | вручную | — |
 | PRB-BACKGROUND-JOBS | `node scripts/probe-background-jobs.mjs` | 45 | вручную | — |
 | PRB-VALKEY-COUNTERS | `node scripts/probe-valkey-counters.mjs` | 15 | вручную | — |
+| PRB-OUTBOX-NATS | `node scripts/probe-outbox-nats.mjs` | 23 | вручную | — |
 | PRB-OUTBOX-LEASE | `node scripts/probe-outbox-lease.mjs` | 10 | вручную | — |
 | PRB-RATE-LIMIT | `node scripts/probe-rate-limit.mjs` | 0 | вручную | — |
 | PRB-ROLE-REVOCATION | `node scripts/probe-role-revocation.mjs` | 5 | вручную | — |

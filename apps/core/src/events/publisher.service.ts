@@ -3,9 +3,13 @@ import { randomUUID } from 'node:crypto';
 import { uuidv7 } from '@fifth/contracts';
 import { BackgroundJobsService } from '../background/background-jobs.service';
 import { resultOf } from '../background/job';
+import { claimLeases, completeUnderLease, renewLease, type Lease } from '../background/lease';
 import { getEnv } from '../config/env';
-import { Database, type Tx } from '../db/unit-of-work';
+import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { NatsClient } from './nats.client';
+
+const OUTBOX = 'audit.outbox_events';
+const SYSTEM = (traceId: string): RequestContext => ({ userId: null, roles: ['system'], traceId });
 
 /**
  * Публикатор transactional outbox.
@@ -28,11 +32,6 @@ import { NatsClient } from './nats.client';
 @Injectable()
 export class OutboxPublisherService implements OnModuleInit {
   private readonly logger = new Logger(OutboxPublisherService.name);
-  /**
-   * Кто держит аренду. Записывается в строку: по нему видно, какой экземпляр
-   * завис, а не просто «строка кем-то занята».
-   */
-  private readonly instanceId = `${process.pid}-${randomUUID().slice(0, 8)}`;
 
   constructor(
     private readonly db: Database,
@@ -98,32 +97,68 @@ export class OutboxPublisherService implements OnModuleInit {
   async runOnce(signal?: AbortSignal): Promise<number> {
     const env = getEnv();
     const traceId = `outbox-${randomUUID()}`;
+    // Брокер недоступен: пачку не берём вовсе, события ждут в outbox без расхода попыток.
+    if (Date.now() < this.pausedUntil) return 0;
 
-    const batch = await this.db.transaction(
-      { userId: null, roles: ['system'], traceId },
-      async (tx) => this.lockBatch(tx, env.OUTBOX_BATCH_SIZE),
+    const { batch, leases } = await this.db.transaction(SYSTEM(traceId), async (tx) =>
+      this.lockBatch(tx, env.OUTBOX_BATCH_SIZE),
     );
     if (batch.length === 0) return 0;
 
     let published = 0;
-    for (const event of batch) {
-      if (signal?.aborted) break;
+    for (let i = 0; i < batch.length; i += 1) {
+      const event = batch[i]!;
+      const lease = leases.get(event.id)!;
+      const rest = () => batch.slice(i).map((e) => leases.get(e.id)!);
+      if (signal?.aborted) {
+        await this.release(traceId, rest());
+        break;
+      }
+      // Аренда наша и живая — иначе проход прекращается целиком, а не только без отметки:
+      // строки уже у другого исполнителя, публиковать за него нельзя.
+      if (!(await this.renew(traceId, lease))) {
+        this.logger.warn({ msg: 'аренда события потеряна, проход остановлен', id: event.id });
+        await this.release(traceId, rest().slice(1));
+        break;
+      }
+      let seq: number;
       try {
-        const seq = await this.nats.publish(event.nats_subject, buildEnvelope(event), {
+        seq = await this.nats.publish(event.nats_subject, buildEnvelope(event), {
+          // Идентификатор события — и при повторе после неизвестного исхода: дубль
+          // отсекает окно дедупликации стрима.
           messageId: event.id,
           messageKey: event.message_key,
         });
-        await this.markPublished(traceId, event.id, seq);
-        // Постановка доставок — отдельный факт с отдельной отметкой. Её
-        // неудача больше не теряет задачу: строка останется в очереди
-        // повторной рассылки (M033).
-        if (await this.fanOutToWebhooks(traceId, event)) {
-          await this.markFanOutDone(traceId, event.id);
-        }
-        published += 1;
       } catch (error) {
-        await this.markFailed(traceId, event, error);
+        const kind = this.nats.classifyPublishFailure(error);
+        if (kind === 'event') {
+          if (!(await this.markFailed(traceId, lease, event, error))) {
+            await this.release(traceId, rest().slice(1));
+            break;
+          }
+          continue;
+        }
+        // Брокер недоступен или подтверждение потеряно: попытку не засчитываем, событие и
+        // оставшаяся пачка освобождаются, публикатор встаёт на паузу.
+        this.pause(kind, event.id, error);
+        await this.release(traceId, rest());
+        break;
       }
+      this.resume();
+      if (!(await this.markPublished(traceId, lease, seq))) {
+        // Опубликовано, но захват уже не наш: отметку поставит новый владелец — его
+        // повтор с тем же messageId дубля не даст. Дальше не идём.
+        this.logger.warn({ msg: 'аренда потеряна после публикации', id: event.id });
+        await this.release(traceId, rest().slice(1));
+        break;
+      }
+      // Постановка доставок — отдельный факт с отдельной отметкой. Её
+      // неудача больше не теряет задачу: строка останется в очереди
+      // повторной рассылки (M033).
+      if (await this.fanOutToWebhooks(traceId, event)) {
+        await this.markFanOutDone(traceId, event.id);
+      }
+      published += 1;
     }
     if (published > 0) {
       this.logger.log({ msg: 'события опубликованы', count: published });
@@ -131,38 +166,73 @@ export class OutboxPublisherService implements OnModuleInit {
     return published;
   }
 
+  /** Пауза при недоступном брокере: от 5 с, вдвое за каждый отказ, не дольше 5 минут. */
+  private pausedUntil = 0;
+  private pauseMs = 0;
+
+  private pause(kind: 'broker' | 'unknown', id: string, error: unknown): void {
+    this.pauseMs = Math.min(Math.max(this.pauseMs * 2, 5_000), MAX_BACKOFF_SECONDS * 1000);
+    this.pausedUntil = Date.now() + this.pauseMs;
+    this.logger.warn({
+      msg:
+        kind === 'broker'
+          ? 'брокер событий недоступен: публикация на паузе, попытки событий не расходуются'
+          : 'подтверждение публикации не получено: событие повторится с тем же идентификатором',
+      id,
+      pauseSeconds: Math.round(this.pauseMs / 1000),
+      error,
+    });
+  }
+
+  private resume(): void {
+    if (this.pauseMs > 0) this.logger.log({ msg: 'брокер событий снова принимает публикацию' });
+    this.pauseMs = 0;
+    this.pausedUntil = 0;
+  }
+
   /**
-   * Атомарный захват пачки в аренду.
-   *
-   * `FOR UPDATE SKIP LOCKED` держит строку только до конца транзакции, а
-   * транзакция закрывалась ДО публикации: второй экземпляр немедленно забирал
-   * те же события. Поэтому захват и отметка аренды выполняются ОДНИМ
-   * выражением, а условие выборки её учитывает — строка занята до `locked_until`.
-   *
-   * Просроченная аренда освобождается сама: экземпляр, упавший посреди прохода,
-   * не должен блокировать очередь навсегда.
+   * Захват пачки общим модулем аренды (M160): новый идентификатор на каждый захват.
+   * Строки, взятые прежней версией (`locked_until`), не берутся до истечения её срока.
    */
-  private async lockBatch(tx: Tx, size: number): Promise<OutboxRow[]> {
+  private async lockBatch(
+    tx: Tx,
+    size: number,
+  ): Promise<{ batch: OutboxRow[]; leases: Map<string, Lease> }> {
+    const claimed = await claimLeases(tx, {
+      table: OUTBOX,
+      where: `published_at IS NULL AND next_attempt_at <= now() AND attempts < $1
+              AND (locked_until IS NULL OR locked_until < now())`,
+      params: [MAX_ATTEMPTS],
+      orderBy: 'created_at',
+      limit: size,
+      seconds: LEASE_SECONDS,
+    });
+    if (claimed.length === 0) return { batch: [], leases: new Map() };
     const { rows } = await tx.query<OutboxRow>(
-      `UPDATE audit.outbox_events o
-          SET locked_at = now(),
-              locked_until = now() + ($3 || ' seconds')::interval,
-              locked_by = $4
-        WHERE o.id IN (
-          SELECT id FROM audit.outbox_events
-           WHERE published_at IS NULL
-             AND next_attempt_at <= now()
-             AND attempts < $2
-             AND (locked_until IS NULL OR locked_until < now())
-           ORDER BY created_at
-           FOR UPDATE SKIP LOCKED
-           LIMIT $1)
-      RETURNING o.id, o.aggregate_type, o.aggregate_id, o.aggregate_version, o.event_type,
-                o.payload_jsonb, o.nats_subject, o.schema_version, o.message_key,
-                o.attempts, o.created_at`,
-      [size, MAX_ATTEMPTS, LEASE_SECONDS, this.instanceId],
+      `SELECT id, aggregate_type, aggregate_id, aggregate_version, event_type, payload_jsonb,
+              nats_subject, schema_version, message_key, attempts, created_at
+         FROM audit.outbox_events WHERE id = ANY($1::uuid[]) ORDER BY created_at`,
+      [claimed.map((l) => l.id)],
     );
-    return rows;
+    return { batch: rows, leases: new Map(claimed.map((l) => [l.id, l])) };
+  }
+
+  private renew(traceId: string, lease: Lease): Promise<boolean> {
+    return this.db.transaction(SYSTEM(traceId), (tx) =>
+      renewLease(tx, { table: OUTBOX, lease, seconds: LEASE_SECONDS }),
+    );
+  }
+
+  /** Вернуть свои незавершённые строки в очередь сразу, не дожидаясь срока аренды. */
+  private async release(traceId: string, leases: Lease[]): Promise<void> {
+    if (leases.length === 0) return;
+    await this.db.transaction(SYSTEM(traceId), async (tx) => {
+      await tx.query(
+        `UPDATE audit.outbox_events SET lease_id = NULL, lease_until = NULL
+          WHERE id = ANY($1::uuid[]) AND lease_id = ANY($2::uuid[])`,
+        [leases.map((l) => l.id), leases.map((l) => l.leaseId)],
+      );
+    });
   }
 
   /**
@@ -215,40 +285,46 @@ export class OutboxPublisherService implements OnModuleInit {
     });
   }
 
-  private async markPublished(traceId: string, id: string, seq: number): Promise<void> {
-    await this.db.transaction({ userId: null, roles: ['system'], traceId }, async (tx) => {
-      await tx.query(
-        `UPDATE audit.outbox_events
-            SET published_at = now(), locked_at = NULL, last_error = NULL
-          WHERE id = $1 AND published_at IS NULL`,
-        [id],
-      );
-    });
-    this.logger.debug?.({ msg: 'событие опубликовано', id, seq });
+  /** «Опубликовано» — только при текущем захвате (M160). `false` — захват уже не наш. */
+  private async markPublished(traceId: string, lease: Lease, seq: number): Promise<boolean> {
+    const done = await this.db.transaction(SYSTEM(traceId), (tx) =>
+      completeUnderLease(tx, {
+        table: OUTBOX,
+        lease,
+        set: 'published_at = coalesce(published_at, now()), locked_at = NULL, last_error = NULL',
+      }),
+    );
+    if (done) this.logger.debug?.({ msg: 'событие опубликовано', id: lease.id, seq });
+    return done;
   }
 
   /**
-   * Отметка неудачи с экспоненциальной задержкой.
+   * Отметка неудачи самого события с экспоненциальной задержкой — под текущим захватом.
+   * Отказ брокера сюда не попадает: он попыток не расходует.
    *
    * Текст ошибки сохраняется во внутреннее поле и наружу не уходит: это
    * диагностика для оператора, а не часть контракта.
    */
-  private async markFailed(traceId: string, event: OutboxRow, error: unknown): Promise<void> {
+  private async markFailed(
+    traceId: string,
+    lease: Lease,
+    event: OutboxRow,
+    error: unknown,
+  ): Promise<boolean> {
     const attempts = event.attempts + 1;
     const delaySeconds = Math.min(2 ** attempts, MAX_BACKOFF_SECONDS);
     const message = error instanceof Error ? error.message : String(error);
 
-    await this.db.transaction({ userId: null, roles: ['system'], traceId }, async (tx) => {
-      await tx.query(
-        `UPDATE audit.outbox_events
-            SET attempts = $2,
-                next_attempt_at = now() + make_interval(secs => $3),
-                locked_at = NULL,
-                last_error = left($4, 500)
-          WHERE id = $1`,
-        [event.id, attempts, delaySeconds, message],
-      );
-    });
+    const done = await this.db.transaction(SYSTEM(traceId), (tx) =>
+      completeUnderLease(tx, {
+        table: OUTBOX,
+        lease,
+        set: `attempts = $1, next_attempt_at = now() + make_interval(secs => $2),
+              locked_at = NULL, last_error = left($3, 500)`,
+        params: [attempts, delaySeconds, message],
+      }),
+    );
+    if (!done) return false;
 
     if (attempts >= MAX_ATTEMPTS) {
       // Исчерпание попыток — инцидент, а не рутина: событие уже произошло, а
@@ -267,6 +343,7 @@ export class OutboxPublisherService implements OnModuleInit {
         delaySeconds,
       });
     }
+    return true;
   }
 
   /**

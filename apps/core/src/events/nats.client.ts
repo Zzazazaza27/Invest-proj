@@ -22,8 +22,37 @@ export class NatsClient implements OnModuleDestroy {
   private jetstream: JetStreamClient | null = null;
   private connecting: Promise<void> | null = null;
 
+  /** Связь с брокером сейчас есть: по событиям подключения, а не по последнему запросу. */
+  private linkUp = false;
+
   get enabled(): boolean {
     return getEnv().NATS_URL.length > 0;
+  }
+
+  /**
+   * Чем была неудача публикации (блок 2, 2.4 и 2.6):
+   *
+   *   * `broker` — брокер недоступен: нет связи, нет JetStream. Событие не виновато, попытку
+   *     ему не засчитываем, публикатор встаёт на паузу;
+   *   * `unknown` — запрос ушёл, подтверждение не пришло: брокер мог сообщение принять.
+   *     Повтор — с тем же messageId (идентификатор события): дубль отсечёт окно
+   *     дедупликации стрима. Попытку не засчитываем;
+   *   * `event` — отказ про само событие (размер, предмет): попытка засчитывается.
+   */
+  classifyPublishFailure(error: unknown): 'broker' | 'unknown' | 'event' {
+    const code = String((error as { code?: unknown })?.code ?? '');
+    if (!this.connection || this.connection.isClosed() || !this.linkUp) return 'broker';
+    if (code === 'TIMEOUT') return 'unknown';
+    if (
+      code === '503' ||
+      code.startsWith('CONNECTION') ||
+      code === 'DISCONNECT' ||
+      code === 'NO_RESPONDERS' ||
+      (error instanceof Error && error.message === 'JetStream недоступен')
+    ) {
+      return 'broker';
+    }
+    return 'event';
   }
 
   /**
@@ -89,6 +118,7 @@ export class NatsClient implements OnModuleDestroy {
         reconnectTimeWait: 2_000,
       });
       this.jetstream = this.connection.jetstream();
+      this.linkUp = true;
       this.logger.log({ msg: 'подключение к NATS установлено', stream: EVENT_STREAM });
 
       void this.watchStatus(this.connection);
@@ -141,9 +171,13 @@ export class NatsClient implements OnModuleDestroy {
     // то есть падение всего ядра из-за наблюдателя за логом.
     try {
       for await (const status of connection.status()) {
+        if (status.type === 'disconnect') this.linkUp = false;
+        if (status.type === 'reconnect') this.linkUp = true;
         this.logger.warn({ msg: 'состояние подключения NATS', type: status.type });
       }
+      this.linkUp = false;
     } catch (error) {
+      this.linkUp = false;
       this.logger.warn({
         msg: 'наблюдение за состоянием NATS прервано',
         error,

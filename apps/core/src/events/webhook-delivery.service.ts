@@ -30,7 +30,6 @@ import {
 export class WebhookDeliveryService implements OnModuleInit {
   private readonly logger = new Logger(WebhookDeliveryService.name);
   /** Кто держит аренду: по нему видно, какой экземпляр завис. */
-  private readonly instanceId = `${process.pid}-${randomUUID().slice(0, 8)}`;
 
   constructor(
     private readonly db: Database,
@@ -70,8 +69,12 @@ export class WebhookDeliveryService implements OnModuleInit {
     if (batch.length === 0) return 0;
 
     let delivered = 0;
-    for (const item of batch) {
-      if (signal?.aborted) break;
+    for (let i = 0; i < batch.length; i += 1) {
+      const item = batch[i]!;
+      if (signal?.aborted) {
+        await this.release(traceId, batch.slice(i));
+        break;
+      }
       // Аренда продлевается ПЕРЕД каждой доставкой, а не берётся одна на всю
       // пачку. Прежняя схема была арифметически несостоятельна: до
       // OUTBOX_BATCH_SIZE строк (по умолчанию 50) получали общую аренду в
@@ -80,18 +83,32 @@ export class WebhookDeliveryService implements OnModuleInit {
       // экземпляр забирал те же строки и слал вебхук ВТОРОЙ раз — а побочный
       // эффект у получателя настоящий: списание, сделка, запись в CRM
       // (SEC-06).
-      if (!(await this.renewLease(traceId, item.id))) {
+      if (!(await this.renewLease(traceId, item))) {
+        // Захват уже не наш: дальше не идём вовсе — пачка могла уйти другому исполнителю.
         this.logger.warn({
-          msg: 'аренда доставки потеряна, отправка пропущена',
+          msg: 'аренда доставки потеряна, проход остановлен',
           deliveryId: item.id,
           eventType: item.event_type,
         });
-        continue;
+        await this.release(traceId, batch.slice(i + 1));
+        break;
       }
       const ok = await this.deliverOne(traceId, item);
       if (ok) delivered += 1;
     }
     return delivered;
+  }
+
+  /** Вернуть свои незавершённые доставки в очередь сразу, не дожидаясь срока аренды. */
+  private async release(traceId: string, items: DeliveryRow[]): Promise<void> {
+    if (items.length === 0) return;
+    await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
+      await tx.query(
+        `UPDATE integration.webhook_deliveries SET lease_id = NULL, lease_until = NULL
+          WHERE id = ANY($1::uuid[]) AND lease_id = ANY($2::uuid[])`,
+        [items.map((x) => x.id), items.map((x) => x.lease_id)],
+      );
+    });
   }
 
   /**
@@ -110,8 +127,8 @@ export class WebhookDeliveryService implements OnModuleInit {
     // остаётся окно, в которое ту же строку берёт второй экземпляр.
     const { rows: claimed } = await tx.query<{ id: string }>(
       `UPDATE integration.webhook_deliveries d
-          SET locked_until = now() + ($3 || ' seconds')::interval,
-              locked_by = $4
+          SET lease_id = $4::uuid,
+              lease_until = now() + make_interval(secs => $3)
         WHERE d.id IN (
           SELECT d2.id
             FROM integration.webhook_deliveries d2
@@ -120,19 +137,20 @@ export class WebhookDeliveryService implements OnModuleInit {
              AND (d2.next_retry_at IS NULL OR d2.next_retry_at <= now())
              AND d2.attempts < $1
              AND e2.status = 'active'
+             AND (d2.lease_until IS NULL OR d2.lease_until < now())
              AND (d2.locked_until IS NULL OR d2.locked_until < now())
            ORDER BY d2.created_at
            FOR UPDATE OF d2 SKIP LOCKED
            LIMIT $2)
       RETURNING d.id`,
-      [MAX_ATTEMPTS, getEnv().OUTBOX_BATCH_SIZE, deliveryLeaseSeconds(), this.instanceId],
+      [MAX_ATTEMPTS, getEnv().OUTBOX_BATCH_SIZE, deliveryLeaseSeconds(), randomUUID()],
     );
     if (claimed.length === 0) return [];
 
     // Шаг 2: данные для доставки. Отдельным запросом, а не подзапросами в
     // RETURNING: строки уже наши по аренде, и читать их можно спокойно.
     const { rows } = await tx.query<DeliveryRow>(
-      `SELECT d.id, d.endpoint_id, d.event_id, d.attempts,
+      `SELECT d.id, d.lease_id, d.endpoint_id, d.event_id, d.attempts,
               e.url, e.secret_ciphertext, e.status AS endpoint_status,
               o.id AS outbox_id, o.aggregate_type, o.aggregate_id, o.aggregate_version,
               o.event_type, o.payload_jsonb, o.nats_subject, o.schema_version,
@@ -154,17 +172,17 @@ export class WebhookDeliveryService implements OnModuleInit {
    * строку забрал другой экземпляр. Тогда отправлять НЕЛЬЗЯ — она уже в работе
    * у другого, и вторая отправка означала бы повторный побочный эффект.
    *
-   * Условие `locked_by = $2` — это ограждение. Идентификатор экземпляра свой у
-   * каждого процесса, поэтому перехват строки чужим экземпляром обнуляет наше
-   * право на неё, даже если по времени аренда ещё выглядит живой.
+   * Условие `lease_id = $2` — это ограждение. Идентификатор захвата новый на каждый
+   * захват (M160): перехват строки обнуляет наше право на неё, даже если тот же
+   * экземпляр позже возьмёт её снова.
    */
-  private async renewLease(traceId: string, id: string): Promise<boolean> {
+  private async renewLease(traceId: string, item: DeliveryRow): Promise<boolean> {
     return this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
       const { rowCount } = await tx.query(
         `UPDATE integration.webhook_deliveries
-            SET locked_until = now() + ($3 || ' seconds')::interval
-          WHERE id = $1 AND locked_by = $2 AND locked_until > now()`,
-        [id, this.instanceId, deliveryLeaseSeconds()],
+            SET lease_until = now() + make_interval(secs => $3)
+          WHERE id = $1 AND lease_id = $2::uuid AND lease_until > now()`,
+        [item.id, item.lease_id, deliveryLeaseSeconds()],
       );
       return (rowCount ?? 0) === 1;
     });
@@ -214,7 +232,7 @@ export class WebhookDeliveryService implements OnModuleInit {
       // Перенаправления не выполняются: 3xx считается неуспехом доставки, а не
       // приглашением сходить по адресу из Location.
       if (response.status >= 200 && response.status < 300) {
-        await this.markDelivered(traceId, item.id, response.status);
+        await this.markDelivered(traceId, item, response.status);
         return true;
       }
       await this.markFailed(traceId, item, `HTTP ${response.status}`, response.status);
@@ -242,9 +260,10 @@ export class WebhookDeliveryService implements OnModuleInit {
     await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
       await tx.query(
         `UPDATE integration.webhook_deliveries
-            SET status = 'failed', next_retry_at = now() + make_interval(secs => $2)
-          WHERE id = $1 AND locked_by = $3`,
-        [item.id, KEYS_RETRY_SECONDS, this.instanceId],
+            SET status = 'failed', next_retry_at = now() + make_interval(secs => $2),
+                lease_id = NULL, lease_until = NULL
+          WHERE id = $1 AND lease_id = $3::uuid AND lease_until > now()`,
+        [item.id, KEYS_RETRY_SECONDS, item.lease_id],
       );
     });
     this.logger.warn({ msg: 'доставка отложена: служба ключей недоступна', deliveryId: item.id });
@@ -264,9 +283,10 @@ export class WebhookDeliveryService implements OnModuleInit {
     await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
       const { rowCount } = await tx.query(
         `UPDATE integration.webhook_deliveries
-            SET status = 'withheld', withheld_reason = $2, next_retry_at = NULL
-          WHERE id = $1 AND locked_by = $3`,
-        [item.id, reason, this.instanceId],
+            SET status = 'withheld', withheld_reason = $2, next_retry_at = NULL,
+                lease_id = NULL, lease_until = NULL
+          WHERE id = $1 AND lease_id = $3::uuid AND lease_until > now()`,
+        [item.id, reason, item.lease_id],
       );
       if ((rowCount ?? 0) === 0) {
         this.logger.warn({ msg: 'перехват не записан: аренда уже не наша', deliveryId: item.id });
@@ -279,7 +299,8 @@ export class WebhookDeliveryService implements OnModuleInit {
     });
   }
 
-  private async markDelivered(traceId: string, id: string, code: number): Promise<void> {
+  private async markDelivered(traceId: string, item: DeliveryRow, code: number): Promise<void> {
+    const id = item.id;
     await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
       // Результат пишется, только пока строка НАША. Без этого условия
       // экземпляр, у которого аренду уже перехватили, затирал бы итог того,
@@ -287,9 +308,9 @@ export class WebhookDeliveryService implements OnModuleInit {
       const { rowCount } = await tx.query(
         `UPDATE integration.webhook_deliveries
             SET status = 'delivered', attempts = attempts + 1, response_code = $2,
-                next_retry_at = NULL
-          WHERE id = $1 AND locked_by = $3`,
-        [id, code, this.instanceId],
+                next_retry_at = NULL, lease_id = NULL, lease_until = NULL
+          WHERE id = $1 AND lease_id = $3::uuid AND lease_until > now()`,
+        [id, code, item.lease_id],
       );
       if ((rowCount ?? 0) === 0) {
         this.logger.warn({ msg: 'итог доставки не записан: аренда уже не наша', deliveryId: id });
@@ -312,16 +333,10 @@ export class WebhookDeliveryService implements OnModuleInit {
         `UPDATE integration.webhook_deliveries
             SET status = $3, attempts = $2, response_code = $4,
                 next_retry_at = CASE WHEN $3 = 'exhausted' THEN NULL
-                                     ELSE now() + make_interval(secs => $5) END
-          WHERE id = $1 AND locked_by = $6`,
-        [
-          item.id,
-          attempts,
-          exhausted ? 'exhausted' : 'failed',
-          code,
-          delaySeconds,
-          this.instanceId,
-        ],
+                                     ELSE now() + make_interval(secs => $5) END,
+                lease_id = NULL, lease_until = NULL
+          WHERE id = $1 AND lease_id = $6::uuid AND lease_until > now()`,
+        [item.id, attempts, exhausted ? 'exhausted' : 'failed', code, delaySeconds, item.lease_id],
       );
       if ((rowCount ?? 0) === 0) {
         this.logger.warn({
@@ -372,6 +387,8 @@ const MAX_BACKOFF_SECONDS = 3600;
 
 interface DeliveryRow {
   id: string;
+  /** Захват этой строки (M160). */
+  lease_id: string;
   endpoint_id: string;
   event_id: string;
   attempts: number;
