@@ -43,7 +43,7 @@ code="$(curl -s -o /dev/null -w '%{http_code}' "$BASE/v1/ready")"
 [ "$code" = 200 ] && ok "публичный /v1/ready через web — $code" || bad "публичный /v1/ready — $code"
 
 echo "  ·     миграций: $(psql_env 'SELECT count(*) || '"'"' / последняя '"'"' || max(id) FROM public.schema_migrations')"
-groups="$(psql_env "SELECT string_agg(g, ' ' ORDER BY g) FROM (SELECT group_id || ':' || mode || '=' || CASE WHEN bool_and(ok) THEN 'ok' ELSE 'нет' END AS g FROM availability.observations WHERE NOT stopped AND valid_until > now() GROUP BY group_id, mode) s" 2>/dev/null || echo 'таблицы групп нет (прежний комплект)')"
+groups="$(psql_env "SELECT string_agg(g, ' ' ORDER BY g) FROM (SELECT group_id || ':' || mode || '=' || CASE WHEN bool_and(ok) THEN 'ok' ELSE 'нет(' || string_agg(DISTINCT reason, ',') || ')' END AS g FROM availability.observations WHERE NOT stopped AND valid_until > now() GROUP BY group_id, mode) s" 2>/dev/null || echo 'таблицы групп нет (прежний комплект)')"
 echo "  ·     группы: ${groups:-нет действующих наблюдений}"
 backlog="$(psql_env "SELECT count(*) || ' неопубликованных, старейшее ' || coalesce(extract(epoch FROM now() - min(created_at))::int::text || ' с', '—') FROM audit.outbox_events WHERE published_at IS NULL")"
 echo "  ·     outbox: $backlog"
