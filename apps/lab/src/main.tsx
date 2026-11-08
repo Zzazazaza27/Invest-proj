@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { ClientErrorBoundary, reportClientError } from '@fifth/cabinet';
 import { RouterProvider, createBrowserRouter } from 'react-router-dom';
 import '@fifth/ui/tokens.css';
 // Брендовая тема платформы: палитра, шрифт Manrope (тянется самой темой) и
@@ -41,6 +42,13 @@ const router = createBrowserRouter(
 
 createRoot(container).render(
   <React.StrictMode>
-    <RouterProvider router={router} />
+    <ClientErrorBoundary>
+      <RouterProvider
+        router={router}
+        onError={(_error, info) =>
+          reportClientError('render.boundary', info.errorInfo ? 'render' : 'navigate')
+        }
+      />
+    </ClientErrorBoundary>
   </React.StrictMode>,
 );

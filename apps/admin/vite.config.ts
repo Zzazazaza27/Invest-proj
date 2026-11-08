@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from 'vite';
+import { appVersion } from '../../scripts/lib/app-version.mjs';
 import react from '@vitejs/plugin-react';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -57,7 +58,10 @@ export default defineConfig(({ mode }) => {
     // Порт служебной консоли попадает в сборку значением: за единой точкой
     // входа ссылка на неё идёт по пути `/console/`, а при прямом запуске
     // dev-сервером — по своему порту, иначе вела бы в никуда.
-    define: { __CONSOLE_PORT__: singleEntry ? 0 : Number(env.CONSOLE_PORT || 5178) },
+    define: {
+      __CONSOLE_PORT__: singleEntry ? 0 : Number(env.CONSOLE_PORT || 5178),
+      __APP_VERSION__: JSON.stringify(appVersion()),
+    },
     plugins: [react()],
     // Пакеты монорепо собираются в CommonJS: их потребляет и ядро на NestJS,
     // которое ESM не принимает. Vite не пре-бандлит связанные пакеты по

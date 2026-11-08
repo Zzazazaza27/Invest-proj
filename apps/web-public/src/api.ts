@@ -1,3 +1,4 @@
+import { createClientErrorReporter, reportApiFailure } from '@fifth/cabinet';
 import { FifthApi } from '@fifth/api-client';
 
 /**
@@ -45,8 +46,20 @@ if (
   throw new Error('VITE_API_BASE_URL обязателен: адрес API не может выводиться из адреса страницы');
 }
 
+
+declare const __APP_VERSION__: string;
+
+// Ошибки интерфейса (8.4): только перечень полей, одна попытка, без повторов.
+createClientErrorReporter({
+  cabinet: 'public',
+  version: __APP_VERSION__,
+  apiBaseUrl: baseUrl,
+  basePath: import.meta.env.BASE_URL,
+});
+
 export const api = new FifthApi({
   baseUrl,
+  onFailure: reportApiFailure,
   auth: { kind: 'none' },
   // Витрина — первое, что видит человек. Запрос, висящий дольше десяти секунд,
   // для него неотличим от сломанного сайта.

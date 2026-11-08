@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 234; требований: 41
+- Проверок: 237; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 90
+### Зарегистрированы, но ни в наборе, ни в CI — 91
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -253,6 +253,7 @@
 - `CHK-DNS-HIDDEN-PRIMARY` — Схема «скрытый первичный + вторичные» на тестовой зоне (план независимого DNS): передача зоны только по ключу и с адреса вторичного, обновление по NOTIFY, от…
 - `CHK-DNS-PRIMARY-APPLY` — Безопасное применение зон первичного DNS: неверная зона отклоняется, рабочий файл и записанная версия не меняются, после перезапуска работает прежняя зона; с…
 - `CHK-MONITOR-APP-PROBE` — Разрешённое чтение контрольных данных прикладным путём (2.5, 8.2): обычный вход служебной учётки через публичный адрес, карточка контрольного проекта и матер…
+- `PRB-CLIENT-ERRORS` — Приём ошибок интерфейса на стенде: запись с полями перечня и reported: browser; секрет в имени и значении неизвестного поля — ни в журнале, ни в ответе, имён…
 - `CHK-SECRETS-TO-FILES` — Перенос секретов не теряет значений и не печатает их.
 - `CHK-HOST-ACCESS` — Обёртки maus не выводят за каталог копий.
 - `CHK-OPENBAO-LAB` — OpenBao открывается по Static seal, а прежние ключи дают те же результаты.
@@ -448,6 +449,7 @@
 | PRB-SHARED-RATE-LIMIT | `node scripts/probe-shared-rate-limit.mjs` | 10 | вручную | — |
 | PRB-TOKEN-REVOCATION | `node scripts/probe-token-revocation.mjs` | 23 | вручную | — |
 | PRB-UPLOAD-QUOTA | `node scripts/probe-upload-quota.mjs` | 13 | вручную | — |
+| PRB-CLIENT-ERRORS | `FIFTH_ENTRY=web node scripts/probe-client-errors.mjs` | 21 | вручную | — |
 
 ### unit-test
 
@@ -461,6 +463,8 @@
 | UNIT-CORE-READINESS | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-MONITORING-ACCOUNT | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 24 | CI | CI |
+| UNIT-CABINET-CLIENT-ERRORS | `npm run test -w packages/cabinet` | 6 | CI | CI |
+| UNIT-CORE-CLIENT-ERRORS | `npm run test -w apps/core` | 4 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |

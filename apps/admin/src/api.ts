@@ -1,3 +1,4 @@
+import { createClientErrorReporter, reportApiFailure } from '@fifth/cabinet';
 import {
   TestingSessionListSchema,
   TestingSessionCardSchema,
@@ -180,9 +181,20 @@ const CSRF_COOKIE_NAMES = [
   '__Host-ul_csrf',
 ];
 
+declare const __APP_VERSION__: string;
+
+// Ошибки интерфейса (8.4): только перечень полей, одна попытка, без повторов.
+createClientErrorReporter({
+  cabinet: 'admin',
+  version: __APP_VERSION__,
+  apiBaseUrl: `${BASE_URL}/v1`,
+  basePath: import.meta.env.BASE_URL,
+});
+
 const client = new ApiClient({
   baseUrl: BASE_URL,
   auth: { kind: 'cookie', csrfToken: readCsrfCookie() },
+  onFailure: reportApiFailure,
 });
 
 function readCsrfCookie(): string | null {

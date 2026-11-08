@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import { ClientErrorBoundary } from '@fifth/cabinet';
 import { BrowserRouter } from 'react-router-dom';
 import { App } from './App';
 import '@fifth/ui/tokens.css';
@@ -27,8 +28,10 @@ createRoot(container).render(
       `import.meta.env.BASE_URL` всегда заканчивается косой чертой, react-router
       ждёт путь без неё.
     */}
-    <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-      <App />
-    </BrowserRouter>
+    <ClientErrorBoundary>
+      <BrowserRouter basename={import.meta.env.BASE_URL.replace(/\/$/, '')}>
+        <App />
+      </BrowserRouter>
+    </ClientErrorBoundary>
   </StrictMode>,
 );

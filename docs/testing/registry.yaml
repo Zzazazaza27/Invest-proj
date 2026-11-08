@@ -3337,6 +3337,61 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-02
 
+  - id: UNIT-CABINET-CLIENT-ERRORS
+    file: packages/cabinet/tests/client-errors.test.ts
+    command: npm run test -w packages/cabinet
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 6
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['логика без браузера — побочных действий нет']
+    note: >-
+      Блок 8, 8.4; план принят 09.11 с уточнениями Тэнка.
+    purpose: 'Ошибки интерфейса, разбор и отправка: секрет в имени неизвестного поля — только число отброшенных, ни имени, ни значения; значения вне закрытых перечней (экран, код, этап, кабинет, версия, числа, ID запроса) — отказ без поля; экран — шаблон маршрута, чужой путь — other; 5 одинаковых ошибок — сразу count=1, через 10 с count=4, всего 5; уход со страницы — накопленное с keepalive; не больше 10 сообщений с загрузки; недоступный приёмник — одна попытка без повторов.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
+  - id: UNIT-CORE-CLIENT-ERRORS
+    file: apps/core/tests/client-errors.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 4
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['только память']
+    note: >-
+      Блок 8, 8.4.
+    purpose: 'Приёмник ошибок интерфейса: запись журнала через safeFields без имени поля с секретом, только droppedFields; без Valkey — локальный предел экземпляра (scope instance), с Valkey — общий (platform); превышение — одна запись; новое окно сбрасывает предел.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
+  - id: PRB-CLIENT-ERRORS
+    file: scripts/probe-client-errors.mjs
+    command: FIFTH_ENTRY=web node scripts/probe-client-errors.mjs
+    kind: probe
+    level: интеграционный
+    runner: manual
+    asserts: 21
+    needs: [core, web]
+    effects:
+      [
+        'пишет записи «ошибка интерфейса» в журнал ядра стенда; заводит одного пользователя (учётка остаётся)',
+        'ждёт начала новой минуты дважды — до двух минут',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Блок 8, 8.4. Настоящий HTTP через единую точку входа, итог — из core.log стенда.
+    purpose: 'Приём ошибок интерфейса на стенде: запись с полями перечня и reported: browser; секрет в имени и значении неизвестного поля — ни в журнале, ни в ответе, имён отброшенных нет; экран вне перечня, неверное число и битый JSON — 400 без секрета в ответе и журнале; чужой Origin и без Origin — 403; больше 2 КБ — 413; 36 сообщений с одного адреса — все 202 (ничто раньше приёмника не отклонило), записано ровно 30, одна запись об ограничении; с живой сессией — same-origin без CSRF-заголовка и CSRF-пара принимаются, чужой сайт — 403; ID пользователя в записи нет.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: CHK-SECRETS-TO-FILES
     file: scripts/check-secrets-to-files.mjs
     command: node scripts/check-secrets-to-files.mjs
@@ -5076,6 +5131,9 @@ blocks:
         PRB-SHARED-RATE-LIMIT,
         PRB-SECRET-LEAK,
         UNIT-CORE-SAFE-LOG,
+        UNIT-CORE-CLIENT-ERRORS,
+        UNIT-CABINET-CLIENT-ERRORS,
+        PRB-CLIENT-ERRORS,
         PRB-RATE-LIMIT,
         PRB-IP-CEILING-TTL,
         PRB-VALKEY-COUNTERS,

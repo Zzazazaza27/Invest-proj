@@ -96,3 +96,11 @@ export {
   type OwnedRunResult,
 } from './owned-pending';
 export { getGuardOwner } from './guarded-send';
+export {
+  ClientErrorBoundary,
+  createClientErrorReporter,
+  reportApiFailure,
+  reportClientError,
+  FLUSH_MS,
+  type ClientErrorReporter,
+} from './client-errors';

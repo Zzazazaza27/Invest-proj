@@ -33,6 +33,11 @@ export interface ClientOptions {
    * меняется — изменение после 502/504 по-прежнему «результат неизвестен».
    */
   onTransportFailure?: (info: { url: string; status: number }) => void;
+  /**
+   * Отказ сервера или сети для диагностики ошибок интерфейса (8.4): статус 0 (сеть) или
+   * 5xx после всех повторов. Передаются только статус и ID запроса — ни адреса, ни тела.
+   */
+  onFailure?: (info: { status: number; requestId: string | null }) => void;
   fetchImpl?: typeof fetch;
 }
 
@@ -117,6 +122,7 @@ export class ApiClient {
   readonly #fetch: typeof fetch;
   readonly #onResponse: ClientOptions['onResponse'];
   readonly #onTransportFailure: ClientOptions['onTransportFailure'];
+  readonly #onFailure: ClientOptions['onFailure'];
   #auth: AuthMode;
   /**
    * Контекст доступа вкладки (M129): запрос выполняется от лица участника
@@ -136,6 +142,7 @@ export class ApiClient {
     this.#fetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.#onResponse = options.onResponse;
     this.#onTransportFailure = options.onTransportFailure;
+    this.#onFailure = options.onFailure;
   }
 
   setAuth(auth: AuthMode): void {
@@ -193,6 +200,13 @@ export class ApiClient {
         (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504)
       ) {
         this.#onTransportFailure?.({ url: options.path, status: error.status });
+      }
+      if (error instanceof ApiError && (error.status === 0 || error.status >= 500)) {
+        try {
+          this.#onFailure?.({ status: error.status, requestId: error.traceId });
+        } catch {
+          // Диагностика не меняет исход запроса.
+        }
       }
       throw error;
     }

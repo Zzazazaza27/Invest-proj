@@ -66,6 +66,14 @@ const ALLOWED = new Set([
   'deliveryId',
   'contextId',
   'clientId',
+  // Ошибки интерфейса (8.4): значения — из закрытых перечней приёмника, числа.
+  'reported',
+  'cabinet',
+  'screen',
+  'appVersion',
+  'viewportWidth',
+  'viewportHeight',
+  'droppedFields',
 ]);
 
 /** Прежние имена полей → новые. */

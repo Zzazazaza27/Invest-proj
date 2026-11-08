@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from 'vite';
+import { appVersion } from '../../scripts/lib/app-version.mjs';
 import react from '@vitejs/plugin-react';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -62,7 +63,10 @@ export default defineConfig(({ mode }) => {
     // Значок вкладки лежит один на все приложения: иначе семь копий одного
     // favicon расходятся по одной за раз. Каталог общий — `packages/ui/public`.
     publicDir: resolve(ROOT, 'packages', 'ui', 'public'),
-    define: { __CABINET_PORTS__: JSON.stringify(cabinetPorts) },
+    define: {
+      __CABINET_PORTS__: JSON.stringify(cabinetPorts),
+      __APP_VERSION__: JSON.stringify(appVersion()),
+    },
     plugins: [react()],
     optimizeDeps: { include: ['@fifth/api-client', '@fifth/contracts'] },
     server: { port, strictPort: true, host: '127.0.0.1' },

@@ -1,3 +1,4 @@
+import { createClientErrorReporter, reportApiFailure } from '@fifth/cabinet';
 import { ApiError, FifthApi } from '@fifth/api-client';
 
 /**
@@ -71,8 +72,19 @@ export function readCsrfCookie(): string | null {
   return null;
 }
 
+declare const __APP_VERSION__: string;
+
+// Ошибки интерфейса (8.4): только перечень полей, одна попытка, без повторов.
+createClientErrorReporter({
+  cabinet: 'auth',
+  version: __APP_VERSION__,
+  apiBaseUrl: BASE_URL,
+  basePath: import.meta.env.BASE_URL,
+});
+
 export const api = new FifthApi({
   baseUrl: BASE_URL,
+  onFailure: reportApiFailure,
   // Токен сессии живёт в httpOnly-cookie и этому коду недоступен: сюда попадает
   // только CSRF-токен по схеме double-submit.
   auth: { kind: 'cookie', csrfToken: readCsrfCookie() },

@@ -23,6 +23,7 @@ export * from './domain/project-views';
 export * from './domain/project-access';
 export * from './domain/visibility';
 export * from './domain/service-country';
+export * from './domain/client-errors';
 export * from './domain/content';
 export * from './domain/project-media';
 export * from './domain/staff-capabilities';

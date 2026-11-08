@@ -1,5 +1,6 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
+import { ClientErrorBoundary } from '@fifth/cabinet';
 import '@fifth/ui/tokens.css';
 // Брендовая тема платформы: палитра, шрифт Manrope (тянется самой темой) и
 // крупные формы. Включается атрибутом `data-brand="nova"` в `index.html`;
@@ -20,6 +21,8 @@ if (!container) {
 
 createRoot(container).render(
   <React.StrictMode>
-    <App />
+    <ClientErrorBoundary>
+      <App />
+    </ClientErrorBoundary>
   </React.StrictMode>,
 );

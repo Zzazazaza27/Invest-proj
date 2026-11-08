@@ -90,6 +90,7 @@ import { UploadOperationsService } from './lab/upload-operations.service';
 import { ProjectMediaController } from './lab/project-media.controller';
 import { ProjectMediaService } from './lab/project-media.service';
 import { FeaturesController } from './health/features.controller';
+import { ClientErrorsController } from './health/client-errors.controller';
 import { PartitionMaintenanceService } from './maintenance/partitions.service';
 import { S3Service } from './storage/s3.service';
 
@@ -119,6 +120,7 @@ import { S3Service } from './storage/s3.service';
     OperationsController,
     RequestKeysController,
     FeaturesController,
+    ClientErrorsController,
     CatalogController,
     ProjectAccessController,
     ProjectViewsController,

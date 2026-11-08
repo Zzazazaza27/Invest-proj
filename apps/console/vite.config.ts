@@ -1,4 +1,5 @@
 import { defineConfig, loadEnv } from 'vite';
+import { appVersion } from '../../scripts/lib/app-version.mjs';
 import react from '@vitejs/plugin-react';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,6 +30,7 @@ export default defineConfig(({ mode }) => {
     // Значок вкладки лежит один на все приложения: иначе семь копий одного
     // favicon расходятся по одной за раз. Каталог общий — `packages/ui/public`.
     publicDir: resolve(ROOT, 'packages', 'ui', 'public'),
+    define: { __APP_VERSION__: JSON.stringify(appVersion()) },
     plugins: [react()],
     // Пакеты монорепо собираются в CommonJS: их потребляет и ядро на NestJS,
     // которое ESM не принимает. Явное включение возвращает шаг преобразования.
