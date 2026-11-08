@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 232; требований: 41
+- Проверок: 233; требований: 41
 
 ## Что защищено без участия человека
 
@@ -478,6 +478,7 @@
 | UNIT-CABINET-LEAVE-GUARD | `npm run test -w packages/cabinet` | 6 | CI | CI |
 | UNIT-CABINET-RETURN-READY | `npm run test -w packages/cabinet` | 9 | CI | CI |
 | UNIT-API-RETRY-KEY | `npm run test -w packages/api-client` | 4 | CI | CI |
+| UNIT-CABINET-OWNED-PENDING | `npm run test -w packages/cabinet` | 2 | CI | CI |
 | UNIT-CABINET-FILES-AVAILABILITY | `npm run test -w packages/cabinet` | 4 | CI | CI |
 | UNIT-CORE-MAIL-OUTCOMES | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-MAIL-REGRESSIONS | `npm run test -w apps/core` | 4 | CI | CI |

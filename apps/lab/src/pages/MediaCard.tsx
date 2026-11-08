@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ContextualImage, noteGroupError, useFilesAvailability } from '@fifth/cabinet';
+import {
+  ContextualImage,
+  createOwnedPendingStore,
+  noteGroupError,
+  runOwnedPending,
+  useFilesAvailability,
+} from '@fifth/cabinet';
 import { Button, Card, Stack } from '@fifth/ui';
 import { MEDIA_LIMITS, type ProjectMedia, type ProjectMediaKind } from '@fifth/contracts';
 import { keyAfterError, keyForSend, type RetryKey } from '@fifth/api-client';
@@ -24,6 +30,9 @@ import { S } from '../strings';
  * без нового билета, без повторной обработки и события на сервере. Новый билет — только для
  * новой операции, когда человек явно выбрал другое изображение. Живёт в памяти страницы:
  * перезагрузка его не сохраняет — результат тогда виден в карточке.
+ *
+ * Запись принадлежит начавшему пользователю: вошедший в ту же вкладку другой её не видит и
+ * не отправляет; запоздавший ответ меняет только запись начавшего.
  */
 interface PendingFinalize {
   uploadId: string;
@@ -31,7 +40,7 @@ interface PendingFinalize {
   focusY: number;
   key: RetryKey;
 }
-const pendingFinalize = new Map<string, PendingFinalize>();
+const pendingFinalize = createOwnedPendingStore<PendingFinalize>();
 const slotOf = (projectId: string, kind: ProjectMediaKind) => `${projectId}:${kind}`;
 
 export function MediaCard({ projectId }: { projectId: string }) {
@@ -69,6 +78,8 @@ export function MediaCard({ projectId }: { projectId: string }) {
 
     setBusy(kind);
     setNotice(null);
+    // Чья операция — фиксируется до начала: файл, загруженный A, не станет операцией B.
+    const owner = pendingFinalize.owner();
     try {
       const ticket = await api.projects.requestMediaUpload(projectId, {
         kind,
@@ -87,7 +98,7 @@ export function MediaCard({ projectId }: { projectId: string }) {
 
       // Успех объявляется после подтверждения: до него платформа ещё не
       // смотрела, что внутри файла, и отказать может именно здесь.
-      pendingFinalize.set(slotOf(projectId, kind), {
+      pendingFinalize.setFor(owner, slotOf(projectId, kind), {
         uploadId: ticket.uploadId,
         focusX,
         focusY,
@@ -107,47 +118,58 @@ export function MediaCard({ projectId }: { projectId: string }) {
     } finally {
       setBusy(null);
     }
-    if (pendingOf(kind)) await confirm(kind);
+    if (pendingFinalize.owner() === owner && pendingOf(kind)) await confirm(kind);
   }
 
   /** Подтвердить прежнюю загрузку: тот же uploadId и ключ; неизвестный исход — держать. */
   async function confirm(kind: ProjectMediaKind) {
-    const pending = pendingOf(kind);
-    if (!pending) return;
+    if (!pendingOf(kind)) return;
     setBusy(kind);
     setNotice(null);
-    try {
-      await api.projects.finalizeMedia(projectId, kind, {
-        uploadId: pending.uploadId,
-        focusX: pending.focusX,
-        focusY: pending.focusY,
-      });
-      pendingFinalize.delete(slotOf(projectId, kind));
-      setNotice({ tone: 'ok', text: 'Изображение загружено' });
-      await load();
-    } catch (error) {
-      noteGroupError(error);
-      const kept = keyAfterError(pending.key, error);
-      if (kept) {
-        pendingFinalize.set(slotOf(projectId, kind), { ...pending, key: kept });
-        setNotice({
-          tone: 'error',
-          text: 'Исход подтверждения неизвестен: изображение могло уже сохраниться. Проверьте загрузку — повтор не обработает файл второй раз.',
-        });
-      } else {
-        pendingFinalize.delete(slotOf(projectId, kind));
-        setNotice({
-          tone: 'error',
-          text:
-            error instanceof ApiError
-              ? (error.problem?.errors?.[0]?.message ?? error.problem?.detail ?? error.message)
-              : 'Загрузка не удалась',
-        });
-      }
-    } finally {
+    const outcome = await runOwnedPending(
+      pendingFinalize,
+      slotOf(projectId, kind),
+      (pending) =>
+        api.projects.finalizeMedia(projectId, kind, {
+          uploadId: pending.uploadId,
+          focusX: pending.focusX,
+          focusY: pending.focusY,
+        }),
+      (pending, error) => {
+        const kept = keyAfterError(pending.key, error);
+        return kept ? { ...pending, key: kept } : null;
+      },
+    );
+    // Вкладка перешла к другому пользователю, пока шёл запрос: его экран не трогаем.
+    if (outcome.status === 'stale' || outcome.status === 'none') {
       setBusy(null);
       rerender((n) => n + 1);
+      return;
     }
+    if (outcome.status === 'done') {
+      setNotice({ tone: 'ok', text: 'Изображение загружено' });
+      await load();
+    } else {
+      noteGroupError(outcome.error);
+      setNotice(
+        outcome.status === 'kept'
+          ? {
+              tone: 'error',
+              text: 'Исход подтверждения неизвестен: изображение могло уже сохраниться. Проверьте загрузку — повтор не обработает файл второй раз.',
+            }
+          : {
+              tone: 'error',
+              text:
+                outcome.error instanceof ApiError
+                  ? (outcome.error.problem?.errors?.[0]?.message ??
+                    outcome.error.problem?.detail ??
+                    outcome.error.message)
+                  : 'Загрузка не удалась',
+            },
+      );
+    }
+    setBusy(null);
+    rerender((n) => n + 1);
   }
 
   async function remove(kind: ProjectMediaKind) {
@@ -198,7 +220,7 @@ export function MediaCard({ projectId }: { projectId: string }) {
             onCheck={() => void confirm(kind)}
             onDiscard={() => {
               // Явное решение: прежнюю загрузку не выяснять, следующая — новая операция.
-              pendingFinalize.delete(slotOf(projectId, kind));
+              pendingFinalize.deleteFor(pendingFinalize.owner(), slotOf(projectId, kind));
               setNotice(null);
               rerender((n) => n + 1);
             }}

@@ -38,6 +38,10 @@ export type GuardedPhase =
 
 /** Чей ключ: операция другого пользователя в этой вкладке не трогается и не выясняется. */
 let owner: string | null = null;
+/** Чей сейчас вкладка — для хранилищ незавершённых операций вне компонента. */
+export function getGuardOwner(): string | null {
+  return owner;
+}
 export function setGuardOwner(id: string | null): void {
   owner = id;
   rememberUser(id);

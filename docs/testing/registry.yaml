@@ -4032,6 +4032,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: UNIT-CABINET-OWNED-PENDING
+    file: packages/cabinet/tests/owned-pending.test.ts
+    command: npm run test -w packages/cabinet
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 2
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['логика без браузера — побочных действий нет']
+    note: >-
+      Блок 2, 2.6, пакет 7, замечание Тэнка к 5611f26. Чувствительность подтверждена: без
+      владельца в ключе хранилища падают оба случая.
+    purpose: 'Незавершённое подтверждение медиа принадлежит начавшему: A оставил неизвестный исход — B в той же вкладке его не видит и не отправляет, при возвращении A проверяется прежний uploadId; запоздавший ответ A после входа B экран B не трогает и меняет только запись A.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-CABINET-FILES-AVAILABILITY
     file: packages/cabinet/tests/files-availability.test.ts
     command: npm run test -w packages/cabinet
@@ -4901,6 +4919,7 @@ blocks:
         PRB-REQUEST-KEYS-MORE,
         RND-RETRY-KEYS,
         UNIT-API-RETRY-KEY,
+        UNIT-CABINET-OWNED-PENDING,
         UNIT-CORE-MEDIA-FINALIZE,
         RND-GUARDED-SEND,
         RND-CABINET-FAILURES,

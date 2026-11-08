@@ -89,3 +89,10 @@ export {
   serviceState,
   useServiceState,
 } from './service';
+export {
+  createOwnedPendingStore,
+  runOwnedPending,
+  type OwnedPendingStore,
+  type OwnedRunResult,
+} from './owned-pending';
+export { getGuardOwner } from './guarded-send';
