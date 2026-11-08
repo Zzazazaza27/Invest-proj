@@ -236,6 +236,29 @@ const resetToken = tokenFor(EMAIL, 'reset', markUnknown);
 // ------------------------------------------------------ 3. смена пароля
 console.warn('\n[3] Смена пароля по ссылке');
 {
+  // Страница спрашивает при открытии: живая ссылка — да, чужая — нет, токен не расходуется.
+  {
+    const r = await req('/v1/auth/password/reset/check', {
+      method: 'POST',
+      body: { token: resetToken },
+    });
+    check(
+      'проверка: живая ссылка действует',
+      r.response.status === 200,
+      `статус ${r.response.status}`,
+    );
+  }
+  {
+    const r = await req('/v1/auth/password/reset/check', {
+      method: 'POST',
+      body: { token: 'x'.repeat(43) },
+    });
+    check(
+      'проверка: чужая ссылка недействительна',
+      r.response.status === 400,
+      `статус ${r.response.status}`,
+    );
+  }
   const short = await req('/v1/auth/password/reset', {
     method: 'POST',
     body: { token: resetToken, password: 'short' },
@@ -271,6 +294,17 @@ console.warn('\n[3] Смена пароля по ссылке');
     again.response.status === 400,
     `статус ${again.response.status}`,
   );
+  {
+    const r = await req('/v1/auth/password/reset/check', {
+      method: 'POST',
+      body: { token: resetToken },
+    });
+    check(
+      'проверка: использованная ссылка недействительна',
+      r.response.status === 400,
+      `статус ${r.response.status}`,
+    );
+  }
 }
 
 // ------------------------------------------- 4. последствия смены пароля

@@ -182,6 +182,11 @@ export default function App() {
   const [consentGiven, setConsentGiven] = useState(false);
   const [passwordRepeat, setPasswordRepeat] = useState('');
   /**
+   * Действует ли ссылка смены пароля. Проверяется при открытии: просить новый пароль по
+   * устаревшей ссылке и отказывать после ввода — неудобно (Томас, 08.11).
+   */
+  const [resetLink, setResetLink] = useState<'checking' | 'alive' | 'dead' | 'unknown'>('checking');
+  /**
    * Страна обслуживания (этап 5.6.5, обеим ролям — владелец 2026-09-18): список
    * активных стран — публичный; язык от страны не зависит;
    * одна страна предлагается для подтверждения, несколько — выбор. Пустой
@@ -245,6 +250,25 @@ export default function App() {
     // сеттеры состояния, которые React гарантирует стабильными. Подписка
     // ставится один раз на жизнь экрана.
   }, []);
+
+  useEffect(() => {
+    if (mode !== 'reset' || !linkToken) return;
+    let cancelled = false;
+    setResetLink('checking');
+    api.auth.passwordResetCheck(linkToken).then(
+      () => !cancelled && setResetLink('alive'),
+      (err: unknown) => {
+        if (cancelled) return;
+        // Отказ ссылки — 400/422. Сбой сети или сервера не повод объявлять ссылку мёртвой:
+        // форма остаётся, сервер ответит при отправке.
+        const dead = err instanceof ApiError && (err.status === 400 || err.status === 422);
+        setResetLink(dead ? 'dead' : 'unknown');
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, linkToken]);
 
   useEffect(() => {
     let cancelled = false;
@@ -595,6 +619,58 @@ export default function App() {
 
   // Ссылка из письма: смена пароля. Экран отдельный, потому что здесь нет
   // почты и нет входа — только новый пароль и подтверждение опечатки.
+  if (mode === 'reset' && resetLink !== 'alive' && resetLink !== 'unknown') {
+    return (
+      <Container>
+        <div className="auth-shell">
+          <Card>
+            <Stack>
+              {resetLink === 'checking' ? (
+                <p className="auth-subtitle" data-reset-link="checking">
+                  Проверяем ссылку…
+                </p>
+              ) : (
+                <>
+                  <div data-reset-link="dead">
+                    <h1 className="auth-title">Ссылка устарела</h1>
+                    <p className="auth-subtitle">
+                      Ссылка из письма действует недолго и срабатывает один раз. Запросите новое
+                      письмо — пароль пока не менялся.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="brand"
+                    onClick={() => {
+                      setMode('forgot');
+                      setError(null);
+                      forgetHash();
+                    }}
+                  >
+                    Запросить новую ссылку
+                  </Button>
+                  <p className="auth-switch">
+                    <button
+                      type="button"
+                      className="auth-link"
+                      onClick={() => {
+                        setMode('login');
+                        setError(null);
+                        forgetHash();
+                      }}
+                    >
+                      Вернуться ко входу
+                    </button>
+                  </p>
+                </>
+              )}
+            </Stack>
+          </Card>
+        </div>
+      </Container>
+    );
+  }
+
   if (mode === 'reset') {
     return (
       <Container>

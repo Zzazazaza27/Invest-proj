@@ -111,6 +111,23 @@ export class VerificationService {
   }
 
   /**
+   * Действует ли ссылка смены пароля. Токен не расходуется: страница спрашивает при
+   * открытии, чтобы не просить новый пароль по устаревшей ссылке. Ответ один на
+   * просроченную, использованную и несуществующую.
+   */
+  async checkPasswordReset(ctx: RequestContext, token: string): Promise<void> {
+    this.assertMailAvailable();
+    const alive = await this.db.asServiceRole('app_auth', ctx, async (tx) => {
+      const { rows } = await tx.query<{ alive: boolean }>(
+        'SELECT identity.password_reset_token_alive($1) AS alive',
+        [sha256Of(token)],
+      );
+      return rows[0]?.alive === true;
+    });
+    if (!alive) throw errors.validation([{ path: 'token', message: 'ссылка недействительна' }]);
+  }
+
+  /**
    * Смена пароля по ссылке.
    *
    * Хеш пароля считается ДО обращения к базе: argon2 стоит десятки

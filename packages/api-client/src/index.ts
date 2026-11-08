@@ -216,6 +216,15 @@ export class FifthApi {
         schema: z.object({ ok: z.literal(true) }),
       }),
 
+    /** Действует ли ссылка смены пароля. Токен не расходуется. */
+    passwordResetCheck: (token: string) =>
+      this.http.request({
+        method: 'POST',
+        path: '/auth/password/reset/check',
+        body: { token },
+        schema: z.object({ ok: z.literal(true) }),
+      }),
+
     /** Письмо с подтверждением своего адреса. Нужна открытая сессия. */
     requestEmailVerification: () =>
       this.http.request({

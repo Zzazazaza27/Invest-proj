@@ -4,6 +4,7 @@ import {
   EmailVerificationStatusSchema,
   EmailVerifyRequestSchema,
   PasswordForgotRequestSchema,
+  PasswordResetCheckSchema,
   PasswordResetRequestSchema,
 } from '@fifth/contracts';
 import { Ctx, Public } from '../auth/guards';
@@ -57,6 +58,17 @@ export class VerificationController {
     // Сессия НЕ открывается: смена пароля — не вход. Автоматический вход по
     // ссылке из письма означал бы, что доступ к почте эквивалентен паролю не
     // только для восстановления, но и прямо сейчас, без ввода нового пароля.
+    return { ok: true };
+  }
+
+  /** Действует ли ссылка смены пароля: страница спрашивает при открытии. */
+  @Public()
+  @Post('password/reset/check')
+  @HttpCode(200)
+  async resetCheck(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    assertLocalAuthAvailable();
+    const input = parseOrThrow(PasswordResetCheckSchema, rawBody);
+    await this.verification.checkPasswordReset(ctx, input.token);
     return { ok: true };
   }
 

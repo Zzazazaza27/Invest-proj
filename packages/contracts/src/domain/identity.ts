@@ -124,6 +124,12 @@ export const PasswordResetRequestSchema = z.object({
 });
 export type PasswordResetRequest = z.infer<typeof PasswordResetRequestSchema>;
 
+/** Проверка ссылки смены пароля при открытии страницы: токен не расходуется. */
+export const PasswordResetCheckSchema = z.object({
+  token: boundedString(32, 128),
+});
+export type PasswordResetCheck = z.infer<typeof PasswordResetCheckSchema>;
+
 export const EmailVerifyRequestSchema = z.object({
   token: boundedString(32, 128),
 });

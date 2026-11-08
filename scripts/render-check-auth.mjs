@@ -305,28 +305,28 @@ if (mailOff) {
   );
 }
 
-// Ссылка из письма открывает форму нового пароля. Токен заведомо недействующий:
-// проверяется экран, а не смена пароля — её проверяет смоук-прогон.
+// Ссылка из письма. Токен заведомо недействующий: проверяется экран, а не смена пароля —
+// её проверяет смоук-прогон. С почтой страница проверяет ссылку при открытии и сразу
+// говорит, что она устарела (Томас, 08.11); без почты проверить нечем — форма и отказ после.
 await p3.goto(`${BASE}/login/#reset=${'z'.repeat(43)}`, { waitUntil: 'networkidle' });
-await p3.waitForTimeout(500);
-check(
-  'ссылка из письма открывает форму нового пароля',
-  (await p3.locator('#new-password').count()) === 1,
-);
-await p3.locator('#new-password').fill('Some-long-passw0rd!');
-await p3.locator('#repeat-password').fill('Other-long-passw0rd!');
-await p3.getByRole('button', { name: 'Сменить пароль' }).click();
-await p3.waitForTimeout(400);
-check(
-  'несовпадение паролей ловится до отправки',
-  ((await p3.locator('[role="alert"]').first().textContent()) ?? '').includes('не совпадают'),
-);
-
-await p3.locator('#repeat-password').fill('Some-long-passw0rd!');
-await p3.getByRole('button', { name: 'Сменить пароль' }).click();
-await p3.waitForTimeout(1500);
-const resetError = ((await p3.locator('[role="alert"]').first().textContent()) ?? '').trim();
+await p3.waitForTimeout(800);
 if (mailOff) {
+  check(
+    'ссылка из письма открывает форму нового пароля',
+    (await p3.locator('#new-password').count()) === 1,
+  );
+  await p3.locator('#new-password').fill('Some-long-passw0rd!');
+  await p3.locator('#repeat-password').fill('Other-long-passw0rd!');
+  await p3.getByRole('button', { name: 'Сменить пароль' }).click();
+  await p3.waitForTimeout(400);
+  check(
+    'несовпадение паролей ловится до отправки',
+    ((await p3.locator('[role="alert"]').first().textContent()) ?? '').includes('не совпадают'),
+  );
+  await p3.locator('#repeat-password').fill('Some-long-passw0rd!');
+  await p3.getByRole('button', { name: 'Сменить пароль' }).click();
+  await p3.waitForTimeout(1500);
+  const resetError = ((await p3.locator('[role="alert"]').first().textContent()) ?? '').trim();
   check(
     'без почты смена по ссылке тоже объяснена отключённой почтой',
     resetError.includes('Восстановление пароля пока недоступно'),
@@ -334,9 +334,15 @@ if (mailOff) {
   );
 } else {
   check(
-    'недействующая ссылка объяснена словами и предлагает выход',
-    resetError.includes('недействительна') && resetError.includes('новую'),
-    resetError.slice(0, 70),
+    'устаревшая ссылка видна сразу, без формы нового пароля',
+    (await p3.locator('[data-reset-link="dead"]').count()) === 1 &&
+      (await p3.locator('#new-password').count()) === 0,
+  );
+  await p3.getByRole('button', { name: 'Запросить новую ссылку' }).click();
+  await p3.waitForTimeout(400);
+  check(
+    'кнопка ведёт к запросу новой ссылки',
+    (await p3.locator('#forgot-email').count()) === 1,
   );
 }
 
