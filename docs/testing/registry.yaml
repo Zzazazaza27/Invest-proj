@@ -3322,6 +3322,47 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-01
 
+  - id: UNIT-CORE-HEALTH-POLICY
+    file: apps/core/tests/core-health-policy.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 6
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['только память']
+    note: >-
+      Блок 2, 2.4; решение Томаса 09.11 (предел перезапусков зависшего ядра).
+      Чувствительность: без сброса счётчика при смене процесса и со снятием отметки после
+      одного успеха — по одному FAIL.
+    purpose: 'Правило core-health-policy: три зависания за скользящие 30 минут — три убийства, четвёртое — recovery=stopped без убийства и без повторов; убийство старше окна не считается; отметка снимается только после трёх успешных /live подряд; счётчик отказов принадлежит процессу — перезапущенный не убивается до своего первого успеха; нет процесса — без счёта; выгрузка наблюдения — recoveryStopped по последней строке проверки, текст не выгружается.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
+  - id: CHK-CORE-HANG-LIMIT
+    file: scripts/check-core-hang-limit.mjs
+    command: node scripts/check-core-hang-limit.mjs
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 11
+    needs: [docker]
+    effects:
+      [
+        'собирает временный образ на базе node:22.23.2-bookworm-slim с настоящей проверкой здоровья и заглушкой ядра; контейнер и образ удаляются',
+        'около 5 минут',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Блок 2, 2.4. Механизм на настоящем Docker: init, SIGKILL, restart unless-stopped,
+      журнал здоровья, файл состояния, переживающий перезапуск. Заморозка — SIGSTOP.
+    purpose: 'Предел перезапусков зависшего ядра на Docker: три зависания — три автоматических перезапуска и снова здоров; четвёртое — recovery=stopped, процесс не убит, перезапусков не прибавилось, unhealthy, recoveryStopped в выгрузке; ручной перезапуск — после трёх успешных /live recovery=active, признака в выгрузке нет; медленный старт перезапущенного процесса не добивается.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-CORE-SAFE-LOG
     file: apps/core/tests/safe-log.test.ts
     command: npm run test -w apps/core
@@ -5152,6 +5193,8 @@ blocks:
         PRB-SHARED-RATE-LIMIT,
         PRB-SECRET-LEAK,
         UNIT-CORE-SAFE-LOG,
+        UNIT-CORE-HEALTH-POLICY,
+        CHK-CORE-HANG-LIMIT,
         UNIT-CORE-CLIENT-ERRORS,
         UNIT-CABINET-CLIENT-ERRORS,
         PRB-CLIENT-ERRORS,

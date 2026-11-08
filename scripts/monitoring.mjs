@@ -817,6 +817,26 @@ async function configure() {
   });
   await trigger('Контейнер не работает', `length(last(/${H}/containers.down))>0`, 4);
   await trigger('Контейнер перезапускался', `change(/${H}/containers.restarts)>0`, 2);
+  // Предел перезапусков зависшего ядра исчерпан (core-health-policy.mjs): процесс оставлен
+  // для разбора, нужен человек. Высокий уровень — тот же канал, что у «не работает».
+  await item({
+    name: 'Ядро: автовосстановление остановлено',
+    key_: 'containers.recovery_stopped',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/containers.json]'),
+    value_type: 1,
+    preprocessing: [
+      step(
+        JS,
+        "var c = JSON.parse(value).containers; return c.filter(function (x) { return x.recoveryStopped; }).map(function (x) { return x.name; }).join(', ');",
+      ),
+    ],
+  });
+  await trigger(
+    'Автовосстановление ядра остановлено',
+    `length(last(/${H}/containers.recovery_stopped))>0`,
+    4,
+  );
   await item({
     name: 'Контейнеры: возраст файла состояния, с',
     key_: 'vfs.file.time[/monitor/containers.json,modify]',
