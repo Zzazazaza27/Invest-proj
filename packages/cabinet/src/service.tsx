@@ -80,7 +80,9 @@ async function check(): Promise<void> {
  * замечают одновременно; без разброса они проверяли бы готовность в одни и те же моменты и
  * после восстановления разом перезагружали данные — одна волна запросов от всех вкладок.
  */
-export function recheckDelayMs(random: number = Math.random()): number {
+export function recheckDelayMs(
+  random: number = crypto.getRandomValues(new Uint32Array(1))[0]! / 2 ** 32,
+): number {
   return Math.round(POLL_MS * (0.8 + 0.4 * Math.min(Math.max(random, 0), 1)));
 }
 

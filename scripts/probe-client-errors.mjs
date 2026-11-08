@@ -179,6 +179,7 @@ console.warn('[6] С живой сессией (вкладка вошедшег�
 await sleep(60_000 - (Date.now() % 60_000) + 300);
 const reg = await fetch(`${API_BASE_URL}/auth/register`, {
   method: 'POST',
+  signal: AbortSignal.timeout(15_000),
   headers: { 'Content-Type': 'application/json', Origin: ORIGIN },
   body: JSON.stringify({
     email: `ce84-${Date.now()}@test.local`,

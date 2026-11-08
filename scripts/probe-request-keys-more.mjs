@@ -324,7 +324,7 @@ try {
   check(
     'повтор — already_issued без секрета',
     createdAgain.json?.secretDelivery === 'already_issued' &&
-      createdAgain.json?.clientSecret === null &&
+      [null].includes(createdAgain.json?.clientSecret) &&
       createdAgain.json?.id === issued[0].json.id,
   );
   const sa2 = { ...sa, clientId: `probe-rk7b-${stamp}` };

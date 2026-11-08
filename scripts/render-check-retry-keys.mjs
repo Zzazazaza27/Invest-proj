@@ -14,7 +14,7 @@
 import { chromium } from 'playwright';
 import pg from 'pg';
 import sharp from 'sharp';
-import { createHmac } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -52,12 +52,13 @@ async function session(label, admin = false) {
   const page = await context.newPage();
   page.on('pageerror', (e) => pageErrors.push(e.message));
   const email = `rk-keys-${label}-${stamp}@test.local`;
-  const password = `Pw-${stamp}-${Math.random().toString(36).slice(2)}`;
+  const password = `Pw-${stamp}-${randomUUID().slice(0, 12)}`;
   await page.goto(`${SITE}/login/`);
   await page.evaluate(
     async ([address, secret]) => {
       await fetch('/v1/auth/register', {
         method: 'POST',
+        signal: AbortSignal.timeout(15_000),
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -104,6 +105,7 @@ try {
     const tax = await (await fetch('/v1/taxonomy')).json();
     const r = await fetch('/v1/projects', {
       method: 'POST',
+      signal: AbortSignal.timeout(15_000),
       credentials: 'include',
       headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': c },
       body: JSON.stringify({
@@ -178,6 +180,7 @@ try {
     async ([c, s]) => {
       const r = await fetch('/v1/admin/service-accounts', {
         method: 'POST',
+        signal: AbortSignal.timeout(15_000),
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': c },
         body: JSON.stringify({

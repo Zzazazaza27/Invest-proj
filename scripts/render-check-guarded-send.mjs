@@ -20,6 +20,7 @@
 /* global document */
 import { chromium } from 'playwright';
 import pg from 'pg';
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,7 +55,7 @@ const page = await context.newPage();
 const errors = [];
 page.on('pageerror', (e) => errors.push(e.message));
 const email = `rk-form-${stamp}@test.local`;
-const password = `Pw-${stamp}-${Math.random().toString(36).slice(2)}`;
+const password = `Pw-${stamp}-${randomUUID().slice(0, 12)}`;
 let userId = null;
 
 /** Перехват создания проекта: `plan` — что сделать с очередным ответом. */
@@ -163,6 +164,7 @@ try {
     async ([address, secret]) => {
       const r = await fetch('/v1/auth/register', {
         method: 'POST',
+        signal: AbortSignal.timeout(15_000),
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -452,6 +454,7 @@ try {
     await page.evaluate(async (address) => {
       await fetch('/v1/auth/register', {
         method: 'POST',
+        signal: AbortSignal.timeout(15_000),
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

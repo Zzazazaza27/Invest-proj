@@ -196,7 +196,11 @@ try {
   const form = new FormData();
   for (const [k, v] of Object.entries(ready.ticket.json.formFields)) form.append(k, v);
   form.append('file', new Blob([ready.bytes], { type: 'application/pdf' }), 'deck.pdf');
-  await fetch(ready.ticket.json.uploadUrl, { method: 'POST', body: form });
+  await fetch(ready.ticket.json.uploadUrl, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(30_000),
+  });
   const fin = await owner.client.call(
     `/v1/projects/${projectId}/materials/${ready.ticket.json.materialId}/finalize`,
     { method: 'POST' },

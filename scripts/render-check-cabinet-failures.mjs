@@ -22,6 +22,7 @@
 import { chromium } from 'playwright';
 import pg from 'pg';
 import { spawnSync } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -90,12 +91,13 @@ await page.route('**/v1/projects/*/access/grants', async (route) => {
 
 async function register(label) {
   const email = `rk-fail-${label}-${stamp}@test.local`;
-  const password = `Pw-${stamp}-${Math.random().toString(36).slice(2)}`;
+  const password = `Pw-${stamp}-${randomUUID().slice(0, 12)}`;
   await page.goto(`${SITE}/login/`);
   const status = await page.evaluate(
     async ([address, secret, name]) => {
       const r = await fetch('/v1/auth/register', {
         method: 'POST',
+        signal: AbortSignal.timeout(15_000),
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -132,6 +134,7 @@ async function apiCreateProject(title) {
       const tax = await (await fetch('/v1/taxonomy')).json();
       const r = await fetch('/v1/projects', {
         method: 'POST',
+        signal: AbortSignal.timeout(15_000),
         credentials: 'include',
         headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': c },
         body: JSON.stringify({
