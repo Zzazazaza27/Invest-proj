@@ -37,7 +37,12 @@ set +e
 node scripts/release.mjs install "$ID" --kit "$BUILD" --expect "$EXPECT" \
   --actor maus --approved-by thomas $ROLLBACK | cut -c1-400
 CODE="${PIPESTATUS[0]}"
+# Отдельная итоговая сверка обязательна: её отказ — отказ шага, даже если установка
+# сообщила успех. Печатается при любом исходе установки, для разбора.
+node scripts/release.mjs verify "$ID" | cut -c1-400
+VERIFY="${PIPESTATUS[0]}"
 set -e
-node scripts/release.mjs verify "$ID" | cut -c1-400 || true
 echo "закрепления: $(tr -d '\n ' <".local/kits/pins/$ID.json")"
-exit "$CODE"
+echo "итог: установка $CODE, сверка $VERIFY"
+[ "$CODE" = 0 ] || exit "$CODE"
+[ "$VERIFY" = 0 ] || exit 1

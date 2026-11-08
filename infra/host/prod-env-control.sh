@@ -8,8 +8,8 @@ set -Eeuo pipefail
 ID="$1"
 WRITE="${2:-}"
 [[ "$ID" =~ ^test-[12]$ ]] || { echo 'среда: test-1 или test-2' >&2; exit 2; }
-[[ -z "$WRITE" || ( "$WRITE" == --write && "$ID" == test-1 ) ]] || {
-  echo '--write только для test-1' >&2
+[[ -z "$WRITE" || ( "$WRITE" =~ ^--(write|event)$ && "$ID" == test-1 ) ]] || {
+  echo '--write и --event только для test-1' >&2
   exit 2
 }
 ROOT=/opt/fifth-element
@@ -88,6 +88,43 @@ if [ "$WRITE" = --write ]; then
     --data '{"kind":"support","subject":"Контроль выпуска","body":"Повтор с тем же ключом"}' "$BASE/v1/support/tickets" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).id??"")}catch{console.log("")}})')"
   [ -n "$t1" ] && [ "$t1" = "$t2" ] && ok 'обращение с ключом повтора — повтор даёт прежний результат' || bad 'повтор обращения с ключом не дал прежний результат'
   rm -f "$jar"
+fi
+
+if [ "$WRITE" = --event ]; then
+  # Публикация нового события: администратор выдаёт роль (identity.role.granted идёт через
+  # outbox), затем строка события и подтверждение публикации. Пробные учётки test-1.
+  reg() {
+    curl -s -c "$1" -X POST -H 'Content-Type: application/json' -H "Origin: $ORIGIN" \
+      --data "{\"email\":\"$2\",\"password\":\"$3\",\"displayName\":\"Контроль события\",\"role\":\"founder\",\"locale\":\"ru-RU\",\"consents\":[{\"kind\":\"platform_rules\",\"version\":\"v1\",\"locale\":\"ru-RU\"},{\"kind\":\"tos\",\"version\":\"v1\",\"locale\":\"ru-RU\"},{\"kind\":\"pdn\",\"version\":\"v1\",\"locale\":\"ru-RU\"},{\"kind\":\"commission_terms\",\"version\":\"v1\",\"locale\":\"ru-RU\"}]}" \
+      "$BASE/v1/auth/register" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).userId??"")}catch{console.log("")}})'
+  }
+  ja="$(mktemp)"
+  jb="$(mktemp)"
+  stamp="$(date +%s)"
+  pa="Pw-$(cat /proc/sys/kernel/random/uuid)"
+  admin="$(reg "$ja" "evt-a-$stamp@test.local" "$pa")"
+  target="$(reg "$jb" "evt-b-$stamp@test.local" "Pw-$(cat /proc/sys/kernel/random/uuid)")"
+  [[ "$admin" =~ ^[0-9a-f-]{36}$ && "$target" =~ ^[0-9a-f-]{36}$ ]] && ok 'две пробные учётки' || bad 'регистрация пробных учёток'
+  psql_env "INSERT INTO identity.user_roles (user_id, role) VALUES ('$admin', 'admin') ON CONFLICT DO NOTHING" >/dev/null
+  rm -f "$ja"
+  ja="$(mktemp)"
+  curl -s -o /dev/null -c "$ja" -X POST -H 'Content-Type: application/json' -H "Origin: $ORIGIN" \
+    --data "{\"email\":\"evt-a-$stamp@test.local\",\"password\":\"$pa\"}" "$BASE/v1/auth/login"
+  csrf="$(awk '$6 ~ /csrf/ {print $7}' "$ja" | tail -1)"
+  before="$(psql_env "SELECT count(*) FROM audit.outbox_events WHERE event_type = 'identity.role.granted' AND aggregate_id = '$target'")"
+  code="$(curl -s -o /dev/null -w '%{http_code}' -b "$ja" -X POST -H 'Content-Type: application/json' \
+    -H "Origin: $ORIGIN" -H "X-CSRF-Token: $csrf" --data '{"role":"investor"}' "$BASE/v1/admin/users/$target/roles")"
+  [ "$code" -lt 300 ] && ok "администратор выдал роль — $code" || bad "выдача роли — $code"
+  created="$(psql_env "SELECT count(*) FROM audit.outbox_events WHERE event_type = 'identity.role.granted' AND aggregate_id = '$target'")"
+  [ "$created" = "$((before + 1))" ] && ok 'событие identity.role.granted создано в outbox' || bad "событий: было $before, стало $created"
+  published=0
+  for _ in $(seq 1 30); do
+    published="$(psql_env "SELECT count(*) FROM audit.outbox_events WHERE event_type = 'identity.role.granted' AND aggregate_id = '$target' AND published_at IS NOT NULL")"
+    [ "$published" -ge 1 ] && break
+    sleep 1
+  done
+  [ "$published" -ge 1 ] && ok "публикация подтверждена: $(psql_env "SELECT 'через ' || round(extract(epoch FROM published_at - created_at)::numeric, 1) || ' с, попыток ' || attempts FROM audit.outbox_events WHERE event_type = 'identity.role.granted' AND aggregate_id = '$target' ORDER BY created_at DESC LIMIT 1")" || bad 'событие не опубликовано за 30 с'
+  rm -f "$ja" "$jb"
 fi
 
 [ "$FAIL" = 0 ] && echo '▸ контроль пройден' || echo '▸ контроль НЕ пройден'

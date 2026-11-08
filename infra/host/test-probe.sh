@@ -69,6 +69,13 @@ fail() {
   exit "$code"
 }
 trap 'fail $LINENO' ERR
+# Учётные данные GHCR живут только в $WORK/docker. Их уборка не зависит от исхода — обычное
+# завершение, ошибка, прерывание — и не запускает восстановление среды: его делает только
+# обработчик ERR (cleanup).
+drop_credentials() { rm -rf "$WORK/docker"; }
+trap drop_credentials EXIT
+trap 'drop_credentials; exit 130' INT
+trap 'drop_credentials; exit 143' TERM
 
 vault_counts() {
   docker exec -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "$PROJECT-postgres"     psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -c     "SELECT count(*) FILTER (WHERE substring(contact_wrapped_dek from 1 for 6) = 'vault:'::bytea), count(contact_wrapped_dek) FROM identity.users"
@@ -97,6 +104,7 @@ if [ ! -f "$ROOT/.local/kits/$BUILD/kit.json" ]; then
   laptop ghcr-token | docker login ghcr.io -u probe --password-stdin >/dev/null
   node scripts/kit.mjs fetch --build "$BUILD" --dir "$WORK/kit" | cut -c1-160
   unset DOCKER_CONFIG
+  drop_credentials
 fi
 node scripts/kit.mjs load --build "$BUILD" | cut -c1-160
 # Ранний выход тоже убирает временный каталог: в нём учётные данные GHCR этого запуска.
