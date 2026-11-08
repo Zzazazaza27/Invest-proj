@@ -11,8 +11,15 @@ import {
   Select,
   Stack,
 } from '@fifth/ui';
-import type { ServiceCountry } from '@fifth/contracts';
-import { SessionCheckFailed, classifySessionFailure, type SessionFailure } from '@fifth/cabinet';
+import { uuidv7, type ServiceCountry } from '@fifth/contracts';
+import {
+  GroupNotice,
+  SessionCheckFailed,
+  classifySessionFailure,
+  noteGroupError,
+  useMailAvailability,
+  type SessionFailure,
+} from '@fifth/cabinet';
 import { ApiError, api, setCsrf } from './api';
 import { cabinetUrl, cabinetsForRoles, type Cabinet } from './routing';
 import './auth.css';
@@ -219,6 +226,13 @@ export default function App() {
    * уже отправляли: повторный вызов по тому же токену просто не нужен.
    */
   const confirmedTokens = useRef<Set<string>>(new Set());
+  /**
+   * Ключ повтора «Забыли пароль» (4.11, M162): один на адрес, пока ответ не получен. Повтор
+   * после обрыва связи идёт с тем же ключом — второго письма сервер не отправит.
+   */
+  const forgotKey = useRef<{ email: string; key: string } | null>(null);
+  /** Группа «Почта»: при закрытой отправке форма предупреждает и не отправляет. */
+  const mail = useMailAvailability(mode === 'forgot' ? api.features : undefined);
 
   /**
    * Уже вошедшего человека не заставляем входить снова.
@@ -448,8 +462,11 @@ export default function App() {
     event.preventDefault();
     setError(null);
     setBusy(true);
+    const address = toAddress(email);
+    if (forgotKey.current?.email !== address) forgotKey.current = { email: address, key: uuidv7() };
     try {
-      await api.auth.passwordForgot(toAddress(email));
+      await api.auth.passwordForgot(address, { idempotencyKey: forgotKey.current.key });
+      forgotKey.current = null;
       setNotice(
         'Если такой адрес зарегистрирован, письмо со ссылкой отправлено. ' +
           'Ссылка действует ограниченное время и срабатывает один раз.',
@@ -459,7 +476,16 @@ export default function App() {
       // Почта на платформе не подключена (MAIL_TRANSPORT=none): сервер
       // отказывает ДО поиска адреса, поэтому ответ одинаков для любого адреса
       // и перебора учёток не открывает. Человеку — прямо, что канала нет.
-      setError(isMailDisabled(err) ? MAIL_DISABLED_TEXT : describe(err));
+      noteGroupError(err);
+      setError(
+        isMailDisabled(err)
+          ? MAIL_DISABLED_TEXT
+          : err instanceof ApiError && err.code === 'group_unavailable'
+            ? 'Отправка писем сейчас недоступна. Попробуйте позже.'
+            : err instanceof ApiError && err.outcomeUnknown
+              ? 'Ответ не получен. Нажмите «Прислать ссылку» ещё раз — второго письма это не отправит.'
+              : describe(err),
+      );
     } finally {
       setBusy(false);
     }
@@ -759,6 +785,8 @@ export default function App() {
                   </p>
                 </div>
 
+                <GroupNotice group="mail" availability={mail} />
+
                 <Field label="Почта" htmlFor="forgot-email">
                   <Input
                     id="forgot-email"
@@ -778,7 +806,7 @@ export default function App() {
                   type="submit"
                   variant="brand"
                   loading={busy}
-                  disabled={busy || email.trim().length === 0}
+                  disabled={busy || email.trim().length === 0 || !mail.canWrite}
                 >
                   Прислать ссылку
                 </Button>

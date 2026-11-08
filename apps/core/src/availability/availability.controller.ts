@@ -1,8 +1,10 @@
-import { Body, Controller, Get, HttpCode, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, Post, Put } from '@nestjs/common';
 import {
   AdminGroupStatusSchema,
   ClearRestrictionRequestSchema,
+  FunctionGroupSchema,
   SetRestrictionRequestSchema,
+  type FunctionGroup,
 } from '@fifth/contracts';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
@@ -21,21 +23,39 @@ export class AvailabilityController {
 
   @Get()
   async status() {
-    return { items: [AdminGroupStatusSchema.parse(await this.availability.adminStatus())] };
+    return { items: await this.items() };
   }
 
-  @Put('files')
-  async restrict(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+  @Put(':group')
+  async restrict(
+    @Param('group') rawGroup: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const group = parseOrThrow(FunctionGroupSchema, rawGroup);
     const input = parseOrThrow(SetRestrictionRequestSchema, rawBody);
-    await this.availability.setRestriction(ctx, input);
-    return AdminGroupStatusSchema.parse(await this.availability.adminStatus());
+    await this.availability.setRestriction(ctx, group, input);
+    return this.one(group);
   }
 
-  @Post('files/clear')
+  @Post(':group/clear')
   @HttpCode(200)
-  async clear(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+  async clear(
+    @Param('group') rawGroup: string,
+    @Body() rawBody: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    const group = parseOrThrow(FunctionGroupSchema, rawGroup);
     const input = parseOrThrow(ClearRestrictionRequestSchema, rawBody);
-    await this.availability.clearRestriction(ctx, input.note);
-    return AdminGroupStatusSchema.parse(await this.availability.adminStatus());
+    await this.availability.clearRestriction(ctx, group, input.note);
+    return this.one(group);
+  }
+
+  private async items() {
+    return (await this.availability.adminStatus()).map((g) => AdminGroupStatusSchema.parse(g));
+  }
+
+  private async one(group: FunctionGroup) {
+    return (await this.items()).find((g) => g.group === group)!;
   }
 }

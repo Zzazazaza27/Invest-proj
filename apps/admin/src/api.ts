@@ -28,6 +28,7 @@ import {
   type GuardedOperationName,
   AdminGroupStatusSchema,
   type AdminGroupStatus,
+  type FunctionGroup,
   type SetRestrictionRequest,
   ServiceAccountWithSecretSchema,
   type AuthSession,
@@ -718,19 +719,19 @@ export const api = {
     return items;
   },
 
-  restrictFiles(body: SetRestrictionRequest): Promise<AdminGroupStatus> {
+  restrictGroup(group: FunctionGroup, body: SetRestrictionRequest): Promise<AdminGroupStatus> {
     return client.request({
       method: 'PUT',
-      path: '/v1/admin/availability/files',
+      path: `/v1/admin/availability/${group}`,
       body,
       schema: AdminGroupStatusSchema,
     });
   },
 
-  clearFilesRestriction(note: string): Promise<AdminGroupStatus> {
+  clearGroupRestriction(group: FunctionGroup, note: string): Promise<AdminGroupStatus> {
     return client.request({
       method: 'POST',
-      path: '/v1/admin/availability/files/clear',
+      path: `/v1/admin/availability/${group}/clear`,
       body: { note },
       schema: AdminGroupStatusSchema,
     });

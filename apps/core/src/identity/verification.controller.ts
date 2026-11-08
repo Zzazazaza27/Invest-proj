@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Post } from '@nestjs/common';
+import { Body, Controller, Get, Headers, HttpCode, Post } from '@nestjs/common';
 import {
   AcceptedSchema,
   EmailVerificationStatusSchema,
@@ -10,6 +10,7 @@ import {
 import { Ctx, Public } from '../auth/guards';
 import { errors } from '../common/errors';
 import { parseOrThrow } from '../common/validation';
+import { requestKeyFrom } from '../db/request-keys';
 import { getEnv } from '../config/env';
 import type { RequestContext } from '../db/unit-of-work';
 import { VerificationService } from './verification.service';
@@ -36,14 +37,22 @@ export class VerificationController {
    * 202 и один и тот же текст — всегда: и когда письмо ушло, и когда такого
    * адреса нет, и когда по этому адресу уже отправили слишком много писем.
    * Любое различие превращает форму в инструмент перечисления пользователей.
+   *
+   * Так же — при любом исходе отправки (принято релеем, точно не ушло, неизвестно) и при
+   * повторе тем же `Idempotency-Key`: письмо отправляется после ответа (4.11, M162).
    */
   @Public()
   @Post('password/forgot')
   @HttpCode(202)
-  async forgot(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+  async forgot(
+    @Body() rawBody: unknown,
+    @Headers('idempotency-key') rawKey: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
     assertLocalAuthAvailable();
+    const key = requestKeyFrom(rawKey);
     const input = parseOrThrow(PasswordForgotRequestSchema, rawBody);
-    await this.verification.requestPasswordReset(ctx, input.email);
+    await this.verification.requestPasswordReset(ctx, input.email, key);
     return AcceptedSchema.parse({ status: 'accepted' });
   }
 
@@ -75,8 +84,11 @@ export class VerificationController {
   /** Запрос письма с подтверждением своего адреса. Нужна открытая сессия. */
   @Post('email/verify/request')
   @HttpCode(202)
-  async requestEmailVerification(@Ctx() ctx: RequestContext) {
-    return this.verification.requestEmailVerification(ctx);
+  async requestEmailVerification(
+    @Headers('idempotency-key') rawKey: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
+    return this.verification.requestEmailVerification(ctx, requestKeyFrom(rawKey));
   }
 
   /** Переход по ссылке подтверждения. Сессия не нужна: письмо открывают где угодно. */

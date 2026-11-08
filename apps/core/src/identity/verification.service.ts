@@ -1,10 +1,21 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Optional } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
 import { uuidv7 } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { MailThrottleService } from '../auth/mail-throttle.service';
 import { SessionEpochService } from '../auth/session-epoch.service';
+import { AvailabilityService } from '../availability/availability.service';
+import {
+  claimDispatch,
+  digest,
+  keyHash,
+  markFinished,
+  markSkipped,
+  markStarted,
+  oneOffKey,
+  sendTracked,
+} from '../comms/mail-dispatch';
 import { MailTransport } from '../comms/mail.transport';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
@@ -50,6 +61,7 @@ export class VerificationService {
     private readonly mail: MailTransport,
     private readonly throttle: MailThrottleService,
     private readonly epochs: SessionEpochService,
+    @Optional() private readonly availability?: AvailabilityService,
   ) {}
 
   /**
@@ -59,18 +71,36 @@ export class VerificationService {
    * по-разному. Все ветки — нет пользователя, превышен счётчик писем, письмо
    * отправлено — заканчиваются одинаково.
    */
-  async requestPasswordReset(ctx: RequestContext, email: string): Promise<void> {
+  async requestPasswordReset(
+    ctx: RequestContext,
+    email: string,
+    key: string | null = null,
+  ): Promise<void> {
+    // Обе проверки — до любого обращения к адресу: отказ одинаков для любого адреса.
     this.assertMailAvailable();
+    await this.availability?.assert('mail', 'write');
     const index = await this.crypto.blindIndex(email, 'email');
     const indexHex = index.toString('hex');
     const traceHash = await this.crypto.contextHash(ctx.traceId);
 
-    // Счётчик крутится ДО поиска пользователя — в том числе для несуществующих
-    // адресов. Иначе «есть счётчик / нет счётчика» различало бы адреса.
-    const allowed = await this.throttle.allow(indexHex);
+    // Анонимная операция (M162): ключ не связан ни с аккаунтом, ни со ссылкой. Отпечаток —
+    // от blind index адреса: тот же ключ для другого адреса — отказ, одинаковый для любого.
+    const job = await this.db.asServiceRole('app_auth', ctx, async (tx) => {
+      const claim = await claimDispatch(tx, {
+        purpose: 'password_reset',
+        scope: 'anonymous',
+        keyHash: keyHash('password_reset', key ?? oneOffKey()),
+        requestHash: digest(index),
+      });
+      if (!claim.sameRequest) throw errors.idempotencyKeyReused();
+      // Повтор тем же ключом: письмо уже принято, начато, неизвестно, его не было или ключ
+      // просрочен — ничего не отправляется, ответ тот же.
+      if (!claim.mayStart) return null;
 
-    const token = this.newToken();
-    const userId = await this.db.asServiceRole('app_auth', ctx, async (tx) => {
+      // Счётчик крутится ДО поиска пользователя — в том числе для несуществующих
+      // адресов. Иначе «есть счётчик / нет счётчика» различало бы адреса.
+      const allowed = await this.throttle.allow(indexHex);
+      const token = this.newToken();
       const { rows } = await tx.query<{ user_id: string | null }>(
         'SELECT identity.issue_verification_token($1, $2, $3, $4, $5, $6) AS user_id',
         [
@@ -82,32 +112,53 @@ export class VerificationService {
           traceHash,
         ],
       );
-      return rows[0]?.user_id ?? null;
+      const userId = rows[0]?.user_id ?? null;
+      if (!userId || !allowed) {
+        await markSkipped(tx, claim.id);
+        this.logger.log({
+          msg: 'ссылка на смену пароля не отправлена',
+          reason: userId ? 'throttled' : 'no-user',
+          traceId: ctx.traceId,
+        });
+        return null;
+      }
+      // Начало внешней отправки — в той же транзакции, что и ссылка.
+      await markStarted(tx, claim.id);
+      return { dispatchId: claim.id, userId, token: token.value };
     });
 
-    if (!userId || !allowed) {
-      // Ни письма, ни ошибки. Причина остаётся во внутреннем логе — снаружи
-      // обе ветки неотличимы от успешной.
-      this.logger.log({
-        msg: 'ссылка на смену пароля не отправлена',
-        reason: userId ? 'throttled' : 'no-user',
-        traceId: ctx.traceId,
+    // Диалог с релеем — после ответа и вне запроса: код, тело и время ответа не зависят от
+    // того, есть ли адрес и чем кончилась отправка. Исход пишется отдельной записью.
+    if (job) void this.deliverReset(ctx, email, job);
+  }
+
+  private async deliverReset(
+    ctx: RequestContext,
+    email: string,
+    job: { dispatchId: string; userId: string; token: string },
+  ): Promise<void> {
+    try {
+      const outcome = await sendTracked(this.mail, {
+        to: email,
+        subject: 'Смена пароля — «Пятый элемент»',
+        text: this.letter(
+          'Вы (или кто-то другой) запросили смену пароля.',
+          `${getEnv().PUBLIC_BASE_URL}/login/#reset=${job.token}`,
+          getEnv().PASSWORD_RESET_TTL_SEC,
+          'Если это были не вы — просто не переходите по ссылке. Пароль не изменится.',
+        ),
       });
-      return;
+      await this.db.asServiceRole('app_auth', ctx, (tx) =>
+        markFinished(tx, job.dispatchId, outcome),
+      );
+      if (outcome.outcome !== 'not_sent') {
+        await this.record(ctx, job.userId, 'identity.password.reset_requested');
+      }
+    } catch (error) {
+      // Исход не записан — отметка останется «начатой» и после срока прочитается как
+      // «неизвестно»: повтор тем же ключом письма не отправит.
+      this.logger.warn({ msg: 'исход письма смены пароля не записан', error });
     }
-
-    await this.mail.send({
-      to: email,
-      subject: 'Смена пароля — «Пятый элемент»',
-      text: this.letter(
-        'Вы (или кто-то другой) запросили смену пароля.',
-        `${getEnv().PUBLIC_BASE_URL}/login/#reset=${token.value}`,
-        getEnv().PASSWORD_RESET_TTL_SEC,
-        'Если это были не вы — просто не переходите по ссылке. Пароль не изменится.',
-      ),
-    });
-
-    await this.record(ctx, userId, 'identity.password.reset_requested');
   }
 
   /**
@@ -163,22 +214,41 @@ export class VerificationService {
    * оказался бы адрес, который человек ввёл в форму, а не тот, что записан у
    * него в аккаунте.
    */
-  async requestEmailVerification(ctx: RequestContext): Promise<{ expiresAt: string }> {
+  /**
+   * Своё подтверждение адреса — вошедший пользователь, поэтому ответ конкретнее анонимного:
+   * `delivery` — «принято релеем» или «неизвестно» (письмо могло уйти — нового без нового
+   * запроса не будет). «Точно не ушло» — отказ 503; повтор тем же ключом отправит заново.
+   */
+  async requestEmailVerification(
+    ctx: RequestContext,
+    key: string | null = null,
+  ): Promise<{ expiresAt: string; delivery: 'accepted' | 'unknown' }> {
     this.assertMailAvailable();
+    await this.availability?.assert('mail', 'write');
     const email = await this.ownEmail(ctx);
-    const allowed = await this.throttle.allow(
-      (await this.crypto.blindIndex(email, 'email')).toString('hex'),
-    );
-    if (!allowed) {
-      // Здесь человек аутентифицирован и просит письмо себе: отказ ничего не
-      // выдаёт и честнее молчания, потому что письма он ждёт.
-      throw errors.limitExceeded('Слишком много писем подтверждения. Попробуйте позже');
-    }
-
-    const token = this.newToken();
+    const emailIndex = await this.crypto.blindIndex(email, 'email');
     const ttl = getEnv().EMAIL_VERIFY_TTL_SEC;
     const traceHash = await this.crypto.contextHash(ctx.traceId);
-    await this.db.transaction(ctx, async (tx) => {
+    const expiresFrom = (at: Date) => new Date(at.getTime() + ttl * 1000).toISOString();
+
+    const step = await this.db.transaction(ctx, async (tx) => {
+      const claim = await claimDispatch(tx, {
+        purpose: 'email_verify',
+        scope: 'user',
+        keyHash: keyHash('email_verify', key ?? oneOffKey()),
+        requestHash: digest(emailIndex),
+      });
+      if (!claim.sameRequest) throw errors.idempotencyKeyReused();
+      if (claim.expired) throw errors.idempotencyKeyExpired();
+      if (!claim.mayStart) return { replay: claim.state, createdAt: claim.createdAt };
+
+      const allowed = await this.throttle.allow(emailIndex.toString('hex'));
+      if (!allowed) {
+        // Здесь человек аутентифицирован и просит письмо себе: отказ ничего не
+        // выдаёт и честнее молчания, потому что письма он ждёт. Отметка откатывается.
+        throw errors.limitExceeded('Слишком много писем подтверждения. Попробуйте позже');
+      }
+      const token = this.newToken();
       await tx.query('SELECT identity.issue_email_verification_token($1, $2, $3, $4)', [
         uuidv7(),
         token.sha256,
@@ -194,20 +264,40 @@ export class VerificationService {
         context: { ttlSeconds: ttl },
         traceId: ctx.traceId,
       });
+      await markStarted(tx, claim.id);
+      return { dispatchId: claim.id, token: token.value };
     });
 
-    await this.mail.send({
+    if ('replay' in step) {
+      // Повтор тем же ключом: прежний исход, без нового письма.
+      if (step.replay === 'started') throw errors.operationInProgress();
+      return {
+        expiresAt: expiresFrom(step.createdAt ?? new Date()),
+        delivery: step.replay === 'accepted' ? 'accepted' : 'unknown',
+      };
+    }
+
+    const outcome = await sendTracked(this.mail, {
       to: email,
       subject: 'Подтверждение адреса — «Пятый элемент»',
       text: this.letter(
         'Подтвердите адрес почты, указанный в вашем аккаунте.',
-        `${getEnv().PUBLIC_BASE_URL}/login/#verify=${token.value}`,
+        `${getEnv().PUBLIC_BASE_URL}/login/#verify=${step.token}`,
         ttl,
         'Пока адрес не подтверждён, часть уведомлений платформа отправлять не будет.',
       ),
     });
-
-    return { expiresAt: new Date(Date.now() + ttl * 1000).toISOString() };
+    // Не записалось — отметка останется «начатой» и прочитается как «неизвестно».
+    await this.db
+      .transaction(ctx, (tx) => markFinished(tx, step.dispatchId, outcome))
+      .catch((error: unknown) =>
+        this.logger.warn({ msg: 'исход письма подтверждения не записан', error }),
+      );
+    if (outcome.outcome === 'not_sent') throw errors.upstreamUnavailable('mail');
+    return {
+      expiresAt: new Date(Date.now() + ttl * 1000).toISOString(),
+      delivery: outcome.outcome === 'accepted' ? 'accepted' : 'unknown',
+    };
   }
 
   /** Переход по ссылке подтверждения. Сессия не нужна: письмо могли открыть в другом браузере. */

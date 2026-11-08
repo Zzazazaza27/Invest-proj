@@ -208,13 +208,17 @@ export class FifthApi {
      * Ответ ОДИН И ТОТ ЖЕ независимо от того, существует ли адрес: сервер не
      * даёт клиенту способа различить, а клиент — не пытается. Показывать
      * «такого адреса нет» здесь было бы перечислением пользователей.
+     *
+     * Ключ повтора (4.11, M162): форма создаёт его до первой отправки и повторяет тот же,
+     * пока ответ не получен, — повтор второго письма не отправит.
      */
-    passwordForgot: (email: string) =>
+    passwordForgot: (email: string, opts: GuardedSend = {}) =>
       this.http.request({
         method: 'POST',
         path: '/auth/password/forgot',
         body: { email },
         schema: AcceptedSchema,
+        idempotencyKey: opts.idempotencyKey ?? uuidv7(),
       }),
 
     /** Смена пароля по ссылке из письма. Сессию НЕ открывает. */
@@ -235,12 +239,19 @@ export class FifthApi {
         schema: z.object({ ok: z.literal(true) }),
       }),
 
-    /** Письмо с подтверждением своего адреса. Нужна открытая сессия. */
-    requestEmailVerification: () =>
+    /**
+     * Письмо с подтверждением своего адреса. Нужна открытая сессия. `delivery`:
+     * `accepted` — принято релеем (не доставка адресату), `unknown` — письмо могло уйти.
+     */
+    requestEmailVerification: (opts: GuardedSend = {}) =>
       this.http.request({
         method: 'POST',
         path: '/auth/email/verify/request',
-        schema: z.object({ expiresAt: z.string() }),
+        schema: z.object({
+          expiresAt: z.string(),
+          delivery: z.enum(['accepted', 'unknown']),
+        }),
+        idempotencyKey: opts.idempotencyKey ?? uuidv7(),
       }),
 
     /** Переход по ссылке подтверждения: сессия не нужна. */

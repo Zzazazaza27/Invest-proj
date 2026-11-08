@@ -41,6 +41,7 @@ import { NotificationsController } from './comms/notifications.controller';
 import { FavoritesController } from './lab/favorites.controller';
 import { FavoritesService } from './lab/favorites.service';
 import { SupportController } from './comms/support.controller';
+import { MailQueueService } from './comms/mail-queue.service';
 import { SupportService } from './comms/support.service';
 import { NotificationsService } from './comms/notifications.service';
 import { CryptoService } from './crypto/crypto.service';
@@ -181,6 +182,7 @@ import { S3Service } from './storage/s3.service';
     TemplatesService,
     NotificationsService,
     SupportService,
+    MailQueueService,
     FavoritesService,
     IntegrationService,
     ServiceAccountStateService,

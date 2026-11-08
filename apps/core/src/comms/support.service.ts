@@ -12,7 +12,7 @@ import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
 import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
-import { MailTransport } from './mail.transport';
+import { MailQueueService } from './mail-queue.service';
 
 /**
  * Поддержка пользователей и сообщения об ошибках.
@@ -38,7 +38,7 @@ export class SupportService {
 
   constructor(
     private readonly db: Database,
-    private readonly mail: MailTransport,
+    private readonly queue: MailQueueService,
   ) {}
 
   // ------------------------------------------------------------- создание
@@ -119,20 +119,25 @@ export class SupportService {
               VALUES ($1, $2, $3, 'user', $4)`,
         [uuidv7(), ticketId, ctx.userId, input.body],
       );
+      // Копия на служебный ящик — в очередь той же транзакцией (4.11): обращение принято и
+      // при недоступной почте, копия ждёт отправки; повтор запроса второй копии не ставит.
+      await this.queue.enqueue(tx, {
+        source: 'support.ticket.opened',
+        sourceId: ticketId,
+        ...this.inboxLetter({
+          kind: input.kind,
+          ticketId,
+          subject: input.subject,
+          body: input.body,
+          context,
+          isFirstMessage: true,
+        }),
+      });
       return rows[0]!;
     });
 
     // Повтор: обращение читается заново с текущими правами (RLS), без второго письма.
     if ('replay' in ticket) return this.detail(ctx, ticket.replay);
-
-    await this.notifyInbox({
-      kind: input.kind,
-      ticketId: ticket.id,
-      subject: input.subject,
-      body: input.body,
-      context,
-      isFirstMessage: true,
-    });
 
     return this.detail(ctx, ticket.id);
   }
@@ -191,24 +196,27 @@ export class SupportService {
            RETURNING id, author_kind, body, created_at`,
         [messageId, ticketId, ctx.userId, authorKind, body],
       );
+      // На служебный ящик уходит только сообщение ПОЛЬЗОВАТЕЛЯ: ответ сотрудника
+      // отправлять самим себе бессмысленно, а ящик от этого становится нечитаемым.
+      if (authorKind === 'user') {
+        await this.queue.enqueue(tx, {
+          source: 'support.message.added',
+          sourceId: messageId,
+          ...this.inboxLetter({
+            kind: ticket.kind,
+            ticketId,
+            subject: ticket.subject,
+            body,
+            context: {},
+            isFirstMessage: false,
+          }),
+        });
+      }
       return { row: rows[0]!, authorKind, subject: ticket.subject, kind: ticket.kind };
     });
 
     // Повтор: прежнее сообщение, без второго письма в ящик поддержки.
     if (message.replay) return mapMessage(message.replay);
-
-    // На служебный ящик уходит только сообщение ПОЛЬЗОВАТЕЛЯ: ответ сотрудника
-    // отправлять самим себе бессмысленно, а ящик от этого становится нечитаемым.
-    if (message.authorKind === 'user') {
-      await this.notifyInbox({
-        kind: message.kind,
-        ticketId,
-        subject: message.subject,
-        body,
-        context: {},
-        isFirstMessage: false,
-      });
-    }
 
     return mapMessage(message.row);
   }
@@ -325,63 +333,40 @@ export class SupportService {
   /**
    * Копия обращения на служебный ящик.
    *
-   * Ошибка отправки НЕ роняет запрос: обращение уже сохранено, и человеку
-   * незачем видеть отказ из-за почты. Но и молчать нельзя — неудача уходит в
-   * лог предупреждением, иначе «письма не приходят» выяснялось бы через
-   * неделю по жалобе.
+   * Письмо ставится в очередь в транзакции обращения (4.11, M162) и уходит отправщиком:
+   * недоступная почта обращение не отменяет.
    *
    * В письме нет ни одного секрета: тема, номер обращения и текст, который
    * человек написал сам. Ссылка на обращение собирается из PUBLIC_BASE_URL,
    * а не из заголовка Host.
    */
-  private async notifyInbox(input: {
+  private inboxLetter(input: {
     kind: SupportTicketKind;
     ticketId: string;
     subject: string;
     body: string;
     context: Record<string, unknown>;
     isFirstMessage: boolean;
-  }): Promise<void> {
+  }): { subject: string; text: string } {
     const env = getEnv();
-    const inbox = env.SUPPORT_INBOX_EMAIL;
-    if (!inbox || !this.mail.available) {
-      this.logger.warn({
-        msg: 'копия обращения на служебный ящик не отправлена — канал не настроен',
-        ticketId: input.ticketId,
-        hasInbox: Boolean(inbox),
-        mailAvailable: this.mail.available,
-      });
-      return;
-    }
-
     const label = input.kind === 'bug_report' ? 'Сообщение об ошибке' : 'Обращение в поддержку';
     const heading = input.isFirstMessage ? label : `${label} — новое сообщение`;
     const contextLines = Object.entries(input.context)
       .filter(([, value]) => value !== undefined && value !== null && value !== '')
       .map(([key, value]) => `  ${key}: ${String(value)}`);
-
-    try {
-      await this.mail.send({
-        to: inbox,
-        subject: `[${input.kind}] ${input.subject}`,
-        text: [
-          heading,
-          '',
-          `Обращение: ${input.ticketId}`,
-          `Открыть: ${env.PUBLIC_BASE_URL}/admin/support/${input.ticketId}`,
-          '',
-          input.body,
-          ...(contextLines.length > 0 ? ['', 'Технический контекст:', ...contextLines] : []),
-          '',
-        ].join('\n'),
-      });
-    } catch (error) {
-      this.logger.warn({
-        msg: 'копия обращения на служебный ящик не ушла',
-        ticketId: input.ticketId,
-        error,
-      });
-    }
+    return {
+      subject: `[${input.kind}] ${input.subject}`.slice(0, 300),
+      text: [
+        heading,
+        '',
+        `Обращение: ${input.ticketId}`,
+        `Открыть: ${env.PUBLIC_BASE_URL}/admin/support/${input.ticketId}`,
+        '',
+        input.body,
+        ...(contextLines.length > 0 ? ['', 'Технический контекст:', ...contextLines] : []),
+        '',
+      ].join('\n'),
+    };
   }
 
   /** Строка обращения под текущими правами. Ноль строк — «нет такого». */

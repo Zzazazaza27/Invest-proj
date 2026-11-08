@@ -90,7 +90,18 @@ if (!existsSync(CLIENT_PATH)) {
   console.error(`Не найден ${CLIENT_PATH}. Сначала: npm run build -w apps/core`);
   process.exit(2);
 }
-const { smtpDeliver, assertUsable } = await import(pathToFileURL(CLIENT_PATH).href);
+const { smtpDeliver: deliverOutcome, assertUsable } = await import(pathToFileURL(CLIENT_PATH).href);
+
+/**
+ * С 4.11 исход отправки — значение (принято релеем / не ушло / неизвестно). Здесь проверки
+ * прежние: «не принято» — исключение с текстом отказа.
+ */
+async function smtpDeliver(target, envelope) {
+  const result = await deliverOutcome(target, envelope);
+  if (result.outcome !== 'accepted') {
+    throw new Error(result.detail ?? `${result.outcome}: ${result.stage}`);
+  }
+}
 
 const local = (over = {}) => ({
   host: '127.0.0.1',

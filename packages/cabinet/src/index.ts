@@ -14,7 +14,14 @@
 export { NotificationsCard, type NotificationsPort } from './NotificationsCard';
 export { BusinessEntitiesCard, type EntitiesPort } from './BusinessEntitiesCard';
 export { SupportCard, type SupportPort } from './SupportCard';
-export { FilesNotice, noteGroupError, useFilesAvailability } from './availability';
+export {
+  FilesNotice,
+  GroupNotice,
+  noteGroupError,
+  useFilesAvailability,
+  useGroupAvailability,
+  useMailAvailability,
+} from './availability';
 export {
   GuardedNotice,
   isOutcomeUnknown,

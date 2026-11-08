@@ -133,9 +133,11 @@ export const errors = {
   groupUnavailable: (group: string, mode: string, reason: string) =>
     new AppError(ErrorCode.GROUP_UNAVAILABLE, {
       publicDetail:
-        mode === 'write'
-          ? 'Работа с файлами сейчас недоступна: изменить их нельзя'
-          : 'Получить файл сейчас нельзя',
+        group === 'mail'
+          ? 'Отправка писем сейчас недоступна'
+          : mode === 'write'
+            ? 'Работа с файлами сейчас недоступна: изменить их нельзя'
+            : 'Получить файл сейчас нельзя',
       fieldErrors: [{ path: `${group}.${mode}`, message: reason }],
       internal: { group, mode, reason },
     }),

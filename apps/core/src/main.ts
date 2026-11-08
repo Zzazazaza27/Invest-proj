@@ -399,7 +399,13 @@ async function bootstrap(): Promise<void> {
       running: jobs.isStarted && !jobs.isStopping,
     }),
     // Группы функций (4.11): эксплуатация видит состояние «Файлов»; готовность не снимается.
-    groups: async () => ({ files: (await app.get(AvailabilityService).localStatus()).state }),
+    groups: async () => {
+      const availability = app.get(AvailabilityService);
+      return {
+        files: (await availability.localStatus('files')).state,
+        mail: (await availability.localStatus('mail')).state,
+      };
+    },
     queues: () => db.queueMetrics(),
     control: () =>
       runControl(

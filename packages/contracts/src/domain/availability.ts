@@ -9,7 +9,7 @@ import { IsoDateTimeSchema } from '../common/primitives';
  * Первая подключённая группа — «Файлы» (хранилище). «Почта» и «События» — следующими
  * пакетами.
  */
-export const FUNCTION_GROUPS = ['files'] as const;
+export const FUNCTION_GROUPS = ['files', 'mail'] as const;
 export const FunctionGroupSchema = z.enum(FUNCTION_GROUPS);
 export type FunctionGroup = z.infer<typeof FunctionGroupSchema>;
 
@@ -50,7 +50,7 @@ export const GroupStatusSchema = z.object({
 });
 export type GroupStatus = z.infer<typeof GroupStatusSchema>;
 
-export const FunctionGroupsSchema = z.object({ files: GroupStatusSchema });
+export const FunctionGroupsSchema = z.object({ files: GroupStatusSchema, mail: GroupStatusSchema });
 export type FunctionGroups = z.infer<typeof FunctionGroupsSchema>;
 
 /** Ручное ограничение эксплуатации: отдельно от продуктовых флагов. */

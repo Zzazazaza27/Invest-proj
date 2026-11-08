@@ -1,4 +1,10 @@
-import { Injectable, Logger, type OnModuleDestroy, type OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  Optional,
+  type OnModuleDestroy,
+  type OnModuleInit,
+} from '@nestjs/common';
 import type {
   AdminGroupStatus,
   FunctionGroup,
@@ -13,6 +19,7 @@ import { resultOf } from '../background/job';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
 import { Database, type RequestContext } from '../db/unit-of-work';
+import { MailTransport } from '../comms/mail.transport';
 import { assertCapability } from '../identity/capabilities.service';
 import { PROBE_PREFIX, S3Service } from '../storage/s3.service';
 import {
@@ -23,9 +30,12 @@ import {
   type Observation,
   type Restriction,
 } from './rules';
+import { mailBreaker } from './mail-health';
 import { storageBreaker } from './storage-health';
 
-/** Служебные ключи проб «Файлов»: вне материалов людей и квот. */
+const GROUPS = ['files', 'mail'] as const satisfies readonly FunctionGroup[];
+const breakerFor = (group: FunctionGroup) => (group === 'mail' ? mailBreaker() : storageBreaker());
+
 /** Контрольный объект чтения: известное маленькое содержимое, общее для всех экземпляров. */
 export const READ_CONTROL_KEY = `${PROBE_PREFIX}read-control`;
 export const READ_CONTROL_BODY = Buffer.from('fifth availability read control v1\n');
@@ -43,8 +53,11 @@ interface RestrictionRow {
 }
 
 /**
- * Доступность групп функций (блок 4, 4.11), первая группа — «Файлы».
+ * Доступность групп функций (блок 4, 4.11): «Файлы» и «Почта».
  *
+ *   * «Почта»: один режим — отправка (наблюдение пишется в оба режима одинаково). Проверка —
+ *     соединение, TLS и вход на релей без письма: подтверждает доступность транспорта, но НЕ
+ *     доставку адресату;
  *   * наблюдение: служебная задача блока 1 раз в AVAILABILITY_PROBE_INTERVAL_MS проверяет
  *     чтение (GET контрольного объекта и сверка с известным содержимым; отсутствие объекта
  *     успехом не считается — объект готовится один раз записью и сразу перечитывается) и
@@ -57,14 +70,20 @@ interface RestrictionRow {
 @Injectable()
 export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AvailabilityService.name);
-  private readonly local: Record<GroupMode, Observation | null> = { read: null, write: null };
-  private restriction: { value: RestrictionRow | null; at: number } | null = null;
+  private readonly local: Record<FunctionGroup, Record<GroupMode, Observation | null>> = {
+    files: { read: null, write: null },
+    mail: { read: null, write: null },
+  };
+  private readonly restriction: Partial<
+    Record<FunctionGroup, { value: RestrictionRow | null; at: number }>
+  > = {};
 
   constructor(
     private readonly db: Database,
     private readonly s3: S3Service,
     private readonly jobs: BackgroundJobsService,
     private readonly audit: AuditRepository,
+    @Optional() private readonly mail?: MailTransport,
   ) {}
 
   get instance(): string {
@@ -93,8 +112,32 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
       .catch(() => undefined);
   }
 
-  /** Одна служебная проверка группы «Файлы». Возвращает число исправных режимов. */
+  /** Один проход служебных проверок всех групп. Возвращает число исправных режимов. */
   async observe(): Promise<number> {
+    return (await this.observeFiles()) + (await this.observeMail());
+  }
+
+  /** Служебная проверка группы «Почта»: транспорт без письма. */
+  async observeMail(): Promise<number> {
+    const env = getEnv();
+    let result: { ok: boolean; reason: GroupReason };
+    if (!this.mail?.available) {
+      result = { ok: false, reason: 'not_configured' };
+    } else {
+      try {
+        await withTimeout(this.mail.check(), env.AVAILABILITY_PROBE_TIMEOUT_MS);
+        mailBreaker().probe('write', true);
+        result = { ok: true, reason: 'ok' };
+      } catch {
+        result = { ok: false, reason: 'dependency_failure' };
+      }
+    }
+    await this.store('mail', { read: result, write: result });
+    return Number(result.ok);
+  }
+
+  /** Служебная проверка группы «Файлы». Возвращает число исправных режимов. */
+  async observeFiles(): Promise<number> {
     const env = getEnv();
     const timeout = env.AVAILABILITY_PROBE_TIMEOUT_MS;
     const check = async (mode: GroupMode, probe: () => Promise<unknown>) => {
@@ -113,10 +156,20 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
         this.s3.putProbeObject(writeKey(this.instance), PROBE_BODY, timeout),
       ),
     };
+    await this.store('files', results);
+    return Number(results.read.ok) + Number(results.write.ok);
+  }
+
+  /** Наблюдение — локально и в БД, с пределом актуальности. */
+  private async store(
+    group: FunctionGroup,
+    results: Record<GroupMode, { ok: boolean; reason: GroupReason }>,
+  ): Promise<void> {
+    const env = getEnv();
     const observedAt = new Date();
     const validUntil = new Date(observedAt.getTime() + env.AVAILABILITY_FRESH_MS);
     for (const mode of ['read', 'write'] as const) {
-      this.local[mode] = {
+      this.local[group][mode] = {
         instance: this.instance,
         mode,
         ...results[mode],
@@ -130,15 +183,22 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
         await tx.query(
           `INSERT INTO availability.observations
              (instance, group_id, mode, ok, reason, observed_at, valid_until, stopped)
-           VALUES ($1, 'files', $2, $3, $4, $5, $6, false)
+           VALUES ($1, $7, $2, $3, $4, $5, $6, false)
            ON CONFLICT (instance, group_id, mode) DO UPDATE
              SET ok = EXCLUDED.ok, reason = EXCLUDED.reason, observed_at = EXCLUDED.observed_at,
                  valid_until = EXCLUDED.valid_until, stopped = false`,
-          [this.instance, mode, results[mode].ok, results[mode].reason, observedAt, validUntil],
+          [
+            this.instance,
+            mode,
+            results[mode].ok,
+            results[mode].reason,
+            observedAt,
+            validUntil,
+            group,
+          ],
         );
       }
     });
-    return Number(results.read.ok) + Number(results.write.ok);
   }
 
   /**
@@ -157,36 +217,37 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Своё наблюдение с поправкой на размыкатель этого экземпляра. */
-  private localDependency(mode: GroupMode, now: Date): DependencyState {
-    if (storageBreaker().isOpen(mode)) {
+  private localDependency(group: FunctionGroup, mode: GroupMode, now: Date): DependencyState {
+    // У «Почты» один режим — отправка: размыкатель ведётся по «записи».
+    if (breakerFor(group).isOpen(group === 'mail' ? 'write' : mode)) {
       return { health: 'fail', reason: 'circuit_open', observedAt: now };
     }
-    const own = this.local[mode];
+    const own = this.local[group][mode];
     return dependencyState(own ? [own] : [], mode, now);
   }
 
-  private async currentRestriction(): Promise<RestrictionRow | null> {
-    if (this.restriction && Date.now() - this.restriction.at < RESTRICTION_CACHE_MS) {
-      return this.restriction.value;
-    }
+  private async currentRestriction(group: FunctionGroup): Promise<RestrictionRow | null> {
+    const cached = this.restriction[group];
+    if (cached && Date.now() - cached.at < RESTRICTION_CACHE_MS) return cached.value;
     const value = await this.db.readOnly(SYSTEM('availability-restriction'), async (tx) => {
       const { rows } = await tx.query<RestrictionRow>(
         `SELECT mode, reason_code, note, set_at FROM availability.restrictions
-          WHERE group_id = 'files'`,
+          WHERE group_id = $1`,
+        [group],
       );
       return rows[0] ?? null;
     });
-    this.restriction = { value, at: Date.now() };
+    this.restriction[group] = { value, at: Date.now() };
     return value;
   }
 
   /** Состояние группы для операций ЭТОГО экземпляра. */
-  async localStatus(): Promise<GroupStatus> {
+  async localStatus(group: FunctionGroup = 'files'): Promise<GroupStatus> {
     const now = new Date();
-    const restriction = await this.currentRestriction();
+    const restriction = await this.currentRestriction(group);
     return groupStatus({
-      read: this.localDependency('read', now),
-      write: this.localDependency('write', now),
+      read: this.localDependency(group, 'read', now),
+      write: this.localDependency(group, 'write', now),
       restriction: restriction ? ({ mode: restriction.mode } satisfies Restriction) : null,
     });
   }
@@ -196,17 +257,17 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
    * причиной. Не заменяет права, валидацию и защиту от дублей.
    */
   async assert(group: FunctionGroup, mode: GroupMode): Promise<void> {
-    const status = await this.localStatus();
+    const status = await this.localStatus(group);
     const decision = status[mode];
     if (!decision.allowed) throw errors.groupUnavailable(group, mode, decision.reason);
   }
 
   /** Можно ли сейчас выполнять изменение (для фоновой сверки — без исключения). */
-  async allows(mode: GroupMode): Promise<boolean> {
-    return (await this.localStatus())[mode].allowed;
+  async allows(mode: GroupMode, group: FunctionGroup = 'files'): Promise<boolean> {
+    return (await this.localStatus(group))[mode].allowed;
   }
 
-  private async observations(): Promise<Observation[]> {
+  private async observations(group: FunctionGroup): Promise<Observation[]> {
     return this.db.readOnly(SYSTEM('availability-read'), async (tx) => {
       const { rows } = await tx.query<{
         instance: string;
@@ -218,7 +279,8 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
         stopped: boolean;
       }>(
         `SELECT instance, mode, ok, reason, observed_at, valid_until, stopped
-           FROM availability.observations WHERE group_id = 'files'`,
+           FROM availability.observations WHERE group_id = $1`,
+        [group],
       );
       return rows.map((r) => ({
         instance: r.instance,
@@ -233,10 +295,10 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Сводное состояние платформы — для показа в кабинетах. */
-  async platformStatus(): Promise<GroupStatus> {
+  async platformStatus(group: FunctionGroup = 'files'): Promise<GroupStatus> {
     const now = new Date();
-    const all = await this.observations();
-    const restriction = await this.currentRestriction();
+    const all = await this.observations(group);
+    const restriction = await this.currentRestriction(group);
     return groupStatus({
       read: dependencyState(all, 'read', now),
       write: dependencyState(all, 'write', now),
@@ -245,15 +307,21 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** Взгляд эксплуатации: исправность зависимости и ручной запрет — раздельно. */
-  async adminStatus(): Promise<AdminGroupStatus> {
+  async adminStatus(): Promise<AdminGroupStatus[]> {
+    const out: AdminGroupStatus[] = [];
+    for (const group of GROUPS) out.push(await this.adminGroupStatus(group));
+    return out;
+  }
+
+  private async adminGroupStatus(group: FunctionGroup): Promise<AdminGroupStatus> {
     const now = new Date();
-    const all = await this.observations();
-    this.restriction = null;
-    const restriction = await this.currentRestriction();
+    const all = await this.observations(group);
+    delete this.restriction[group];
+    const restriction = await this.currentRestriction(group);
     const read = dependencyState(all, 'read', now);
     const write = dependencyState(all, 'write', now);
     return {
-      group: 'files',
+      group,
       status: groupStatus({
         read,
         write,
@@ -280,16 +348,20 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
-  async setRestriction(ctx: RequestContext, input: SetRestrictionRequest): Promise<void> {
+  async setRestriction(
+    ctx: RequestContext,
+    group: FunctionGroup,
+    input: SetRestrictionRequest,
+  ): Promise<void> {
     await this.db.transaction(ctx, async (tx) => {
       await assertCapability(tx, 'ops.availability.update', 'ограничить группу функций');
       await tx.query(
         `INSERT INTO availability.restrictions (group_id, mode, reason_code, note, set_by)
-         VALUES ('files', $1, $2, $3, app.current_user_id())
+         VALUES ($4, $1, $2, $3, app.current_user_id())
          ON CONFLICT (group_id) DO UPDATE
            SET mode = EXCLUDED.mode, reason_code = EXCLUDED.reason_code, note = EXCLUDED.note,
                set_by = EXCLUDED.set_by, set_at = now()`,
-        [input.mode, input.reasonCode, input.note],
+        [input.mode, input.reasonCode, input.note, group],
       );
       await this.audit.emit(tx, {
         verb: 'ops.function_restriction.set',
@@ -298,7 +370,7 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
         subjectType: 'function_group',
         subjectId: null,
         context: {
-          group: 'files',
+          group,
           mode: input.mode,
           reasonCode: input.reasonCode,
           note: input.note,
@@ -306,19 +378,20 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
         traceId: ctx.traceId,
       });
     });
-    this.restriction = null;
+    delete this.restriction[group];
     this.logger.warn({
       msg: 'введено ручное ограничение группы функций',
-      group: 'files',
+      group,
       mode: input.mode,
     });
   }
 
-  async clearRestriction(ctx: RequestContext, note: string): Promise<void> {
+  async clearRestriction(ctx: RequestContext, group: FunctionGroup, note: string): Promise<void> {
     await this.db.transaction(ctx, async (tx) => {
       await assertCapability(tx, 'ops.availability.update', 'снять ограничение группы функций');
       const { rowCount } = await tx.query(
-        `DELETE FROM availability.restrictions WHERE group_id = 'files'`,
+        'DELETE FROM availability.restrictions WHERE group_id = $1',
+        [group],
       );
       if (!rowCount) throw errors.notFound({ subject: 'function_restriction' });
       await this.audit.emit(tx, {
@@ -327,12 +400,12 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
         actorRole: 'admin',
         subjectType: 'function_group',
         subjectId: null,
-        context: { group: 'files', note },
+        context: { group, note },
         traceId: ctx.traceId,
       });
     });
-    this.restriction = null;
-    this.logger.log({ msg: 'ручное ограничение группы функций снято', group: 'files' });
+    delete this.restriction[group];
+    this.logger.log({ msg: 'ручное ограничение группы функций снято', group });
   }
 }
 

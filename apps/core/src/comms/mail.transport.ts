@@ -1,10 +1,19 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { accessSync, constants, mkdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
-import { SmtpError, assertUsable, smtpDeliver, type SmtpTarget } from './smtp.client';
+import {
+  SmtpError,
+  assertUsable,
+  smtpCheck,
+  smtpDeliver,
+  type SmtpOutcome,
+  type SmtpTarget,
+} from './smtp.client';
+
+export type MailOutcome = SmtpOutcome;
 
 /**
  * Порт отправки почты.
@@ -24,11 +33,24 @@ export interface MailMessage {
   subject: string;
   /** Только текст. HTML-письмо — это ещё и XSS-поверхность в почтовом клиенте. */
   text: string;
+  /**
+   * Постоянный Message-ID (без угловых скобок) — у письма из очереди он один на все попытки.
+   * Не задан — новый на каждое письмо.
+   */
+  messageId?: string;
 }
 
 export abstract class MailTransport {
-  /** Отправить письмо. Бросает, если канал не настроен. */
-  abstract send(message: MailMessage): Promise<void>;
+  /**
+   * Отправить письмо. Исход — значение (принято релеем / точно не ушло / неизвестно), а не
+   * исключение. Бросает только когда канал не настроен.
+   */
+  abstract send(message: MailMessage): Promise<MailOutcome>;
+  /**
+   * Служебная проверка транспорта без письма (4.11): доступность и вход, не доставка
+   * адресату. Бросает при отказе.
+   */
+  abstract check(): Promise<void>;
   /** Настроен ли канал. Маршруты отвечают 503, когда нет. */
   abstract get available(): boolean;
 }
@@ -46,8 +68,12 @@ export class NullMailTransport extends MailTransport {
     return false;
   }
 
-  send(): Promise<void> {
+  send(): Promise<MailOutcome> {
     throw errors.featureDisabled('mail');
+  }
+
+  check(): Promise<void> {
+    return Promise.reject(new SmtpError('почтовый канал не настроен', 'config'));
   }
 }
 
@@ -70,12 +96,28 @@ export class FileMailTransport extends MailTransport {
     return true;
   }
 
-  async send(message: MailMessage): Promise<void> {
+  private dir(): string {
     const env = getEnv();
-    const dir = isAbsolute(env.MAIL_OUTBOX_DIR)
+    return isAbsolute(env.MAIL_OUTBOX_DIR)
       ? env.MAIL_OUTBOX_DIR
       : join(process.cwd(), env.MAIL_OUTBOX_DIR);
+  }
+
+  /** Каталог писем доступен для записи — проверка без письма. */
+  async check(): Promise<void> {
+    const dir = this.dir();
     mkdirSync(dir, { recursive: true });
+    accessSync(dir, constants.W_OK);
+  }
+
+  async send(message: MailMessage): Promise<MailOutcome> {
+    const env = getEnv();
+    const dir = this.dir();
+    try {
+      mkdirSync(dir, { recursive: true });
+    } catch {
+      return { outcome: 'not_sent', scope: 'transport', stage: 'file', code: null };
+    }
 
     // Имя файла собирается ТОЛЬКО из разрешённых символов. Адрес получателя
     // приходит из запроса, и подстановка его в путь как есть — это обход
@@ -87,16 +129,22 @@ export class FileMailTransport extends MailTransport {
       `From: ${env.MAIL_FROM}`,
       `To: ${message.to}`,
       `Subject: ${env.MAIL_SUBJECT_PREFIX}${message.subject}`,
+      `Message-ID: <${message.messageId ?? randomUUID()}>`,
       'Content-Type: text/plain; charset=utf-8',
       '',
       message.text,
       '',
     ].join('\n');
 
-    writeFileSync(join(dir, name), body, { encoding: 'utf8', mode: 0o600 });
+    try {
+      writeFileSync(join(dir, name), body, { encoding: 'utf8', mode: 0o600 });
+    } catch {
+      return { outcome: 'not_sent', scope: 'transport', stage: 'file', code: null };
+    }
     // В лог — ФАКТ отправки и получатель в маскированном виде, но не тело:
     // тело содержит токен, а логи читает больше людей, чем почтовый ящик.
     this.logger.log({ msg: 'письмо записано файлом', file: name });
+    return { outcome: 'accepted' };
   }
 }
 
@@ -144,7 +192,11 @@ export class SmtpMailTransport extends MailTransport {
     };
   }
 
-  async send(message: MailMessage): Promise<void> {
+  async check(): Promise<void> {
+    await smtpCheck(this.target());
+  }
+
+  async send(message: MailMessage): Promise<MailOutcome> {
     const env = getEnv();
     const target = this.target();
     const data = buildMessage({
@@ -152,26 +204,27 @@ export class SmtpMailTransport extends MailTransport {
       to: message.to,
       subject: `${env.MAIL_SUBJECT_PREFIX}${message.subject}`,
       text: message.text,
+      messageId: message.messageId,
     });
 
-    try {
-      await smtpDeliver(target, { from: env.MAIL_FROM, to: message.to, data });
-    } catch (error) {
-      // Наружу — generic-отказ: подробности релея (кто он, что ответил на
-      // вход) не дело того, кто нажал «восстановить пароль».
+    const result = await smtpDeliver(target, { from: env.MAIL_FROM, to: message.to, data });
+    const relay = `${target.host}:${target.port}`;
+    // Ни адреса, ни темы, ни тела: тема письма восстановления пароля сама по себе говорит,
+    // что у этого человека сейчас живая ссылка на смену. Подробности релея — только в лог.
+    if (result.outcome === 'accepted') {
+      this.logger.log({ msg: 'письмо принято релеем (не доставка адресату)', relay });
+    } else if (result.outcome === 'unknown') {
+      this.logger.warn({ msg: 'исход отправки письма неизвестен', stage: result.stage, relay });
+    } else {
       this.logger.error({
         msg: 'письмо не ушло',
-        stage: error instanceof SmtpError ? error.stage : 'unknown',
-        code: error instanceof SmtpError ? error.code : null,
-        relay: `${target.host}:${target.port}`,
+        scope: result.scope,
+        stage: result.stage,
+        code: result.code,
+        relay,
       });
-      // Отказ релея — это недоступная зависимость, а не выключенная функция:
-      // повтор через минуту имеет смысл, и клиент обязан их различать.
-      throw errors.upstreamUnavailable('mail');
     }
-    // Ни адреса целиком, ни темы, ни тела: тема письма восстановления пароля
-    // сама по себе говорит, что у этого человека сейчас живая ссылка на смену.
-    this.logger.log({ msg: 'письмо отправлено', relay: `${target.host}:${target.port}` });
+    return result;
   }
 }
 
@@ -196,6 +249,7 @@ export function buildMessage(input: {
   to: string;
   subject: string;
   text: string;
+  messageId?: string;
 }): string {
   for (const [field, value] of [
     ['from', input.from],
@@ -216,7 +270,7 @@ export function buildMessage(input: {
       `To: ${input.to}`,
       `Subject: ${encodeHeader(input.subject)}`,
       `Date: ${new Date().toUTCString().replace('GMT', '+0000')}`,
-      `Message-ID: <${randomUUID()}@${domainOf(input.from)}>`,
+      `Message-ID: <${input.messageId ?? `${randomUUID()}@${domainOf(input.from)}`}>`,
       'MIME-Version: 1.0',
       'Content-Type: text/plain; charset=utf-8',
       'Content-Transfer-Encoding: base64',
@@ -266,4 +320,9 @@ export function createMailTransport(): MailTransport {
     default:
       return new NullMailTransport();
   }
+}
+
+/** Новый Message-ID письма из очереди: один на все его попытки. */
+export function newMessageId(): string {
+  return `${randomUUID()}@${domainOf(getEnv().MAIL_FROM)}`;
 }

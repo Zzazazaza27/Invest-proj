@@ -249,6 +249,9 @@ const RawEnvSchema = z.object({
   /** Имя в EHLO. Пустое — берётся домен из MAIL_FROM. */
   MAIL_SMTP_EHLO_NAME: z.string().default(''),
   MAIL_SMTP_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
+  // Очередь служебных писем (4.11, M162): частота прохода и предел попыток по вине письма.
+  MAIL_QUEUE_POLL_MS: z.coerce.number().int().min(500).max(600_000).default(5_000),
+  MAIL_QUEUE_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(50).default(5),
   /**
    * Уведомлять ли служебный ящик о новых регистрациях.
    *

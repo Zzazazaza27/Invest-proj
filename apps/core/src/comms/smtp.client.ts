@@ -140,40 +140,120 @@ function isLoopbackLiteral(host: string): boolean {
   return octets[0] === 127;
 }
 
-/** Отдать одно письмо и закрыть соединение. */
-export async function smtpDeliver(target: SmtpTarget, envelope: SmtpEnvelope): Promise<void> {
-  assertUsable(target);
-  assertAddress(envelope.from, 'from');
-  assertAddress(envelope.to, 'to');
+/**
+ * Исход отправки одного письма (4.11).
+ *
+ *   * `accepted` — релей ответил 250 после DATA: «принято релеем». Это НЕ доставка адресату.
+ *   * `not_sent` — письмо точно не принято: отказ до передачи текста или явный отказ релея
+ *     на текст. `scope`: `transport` — виноват канал (соединение, TLS, вход, временный отказ
+ *     4xx, настройка) — повтор позже без расхода попыток письма; `message` — виновато само
+ *     письмо (получатель или текст отвергнуты 5xx) — попытка расходуется.
+ *   * `unknown` — текст передан, ответа нет (обрыв, таймаут): релей мог принять письмо.
+ *     Повтор может дать вторую копию (RFC 5321, §4.5.3.2.6).
+ */
+export type SmtpOutcome =
+  | { outcome: 'accepted' }
+  | {
+      outcome: 'not_sent';
+      scope: 'transport' | 'message';
+      stage: string;
+      code: number | null;
+      /** Текст отказа для диагностики: без пароля и тела письма (как у SmtpError). */
+      detail?: string;
+    }
+  | { outcome: 'unknown'; stage: string };
 
+/** Отказ на этапе: по вине канала или по вине письма. */
+function notSent(error: unknown): SmtpOutcome {
+  const stage = error instanceof SmtpError ? error.stage : 'socket';
+  const code = error instanceof SmtpError ? error.code : null;
+  const byMessage =
+    code !== null && code >= 500 && (stage === 'rcpt-to' || stage === 'data' || stage === 'body');
+  const detail = error instanceof Error ? error.message : undefined;
+  return { outcome: 'not_sent', scope: byMessage ? 'message' : 'transport', stage, code, detail };
+}
+
+/** Соединение, приветствие, STARTTLS с повтором EHLO и вход. */
+async function handshake(session: SmtpSession, target: SmtpTarget): Promise<void> {
+  await session.expect(220, 'greeting');
+  let caps = await session.ehlo(target.ehloName);
+
+  if (target.security === 'starttls') {
+    if (!caps.has('STARTTLS')) {
+      throw new SmtpError('релей не предлагает STARTTLS', 'starttls');
+    }
+    await session.startTls(target.host);
+    // EHLO повторяется обязательно: возможности, объявленные до шифрования,
+    // объявлены кем угодно — до TLS их мог подменить тот, кто сидит в канале.
+    caps = await session.ehlo(target.ehloName);
+  }
+
+  if (target.user) {
+    if (!session.encrypted) {
+      throw new SmtpError('канал не зашифрован — вход на релей отменён', 'auth');
+    }
+    await session.authenticate(target.user, target.password, caps);
+  }
+}
+
+/**
+ * Отдать одно письмо и закрыть соединение. Не бросает: исход — значение, потому что «точно не
+ * ушло» и «неизвестно» требуют разного поведения вызывающего.
+ */
+export async function smtpDeliver(
+  target: SmtpTarget,
+  envelope: SmtpEnvelope,
+): Promise<SmtpOutcome> {
+  try {
+    assertUsable(target);
+    assertAddress(envelope.from, 'from');
+    assertAddress(envelope.to, 'to');
+  } catch (error) {
+    return notSent(error);
+  }
+
+  let session: SmtpSession;
+  try {
+    session = await openSession(target);
+  } catch (error) {
+    return notSent(error);
+  }
+  try {
+    try {
+      await handshake(session, target);
+      await session.command(`MAIL FROM:<${envelope.from}>`, 250, 'mail-from');
+      await session.command(`RCPT TO:<${envelope.to}>`, 250, 'rcpt-to');
+      await session.command('DATA', 354, 'data');
+      await session.sendBody(envelope.data);
+    } catch (error) {
+      return notSent(error);
+    }
+    // Текст передан. Явный ответ релея — исход известен; обрыв или молчание — неизвестен.
+    try {
+      await session.expect(250, 'body');
+    } catch (error) {
+      if (error instanceof SmtpError && error.code !== null) return notSent(error);
+      return { outcome: 'unknown', stage: 'body' };
+    }
+    // Ответ на QUIT исхода не меняет: письмо уже принято релеем.
+    await session.quit().catch(() => undefined);
+    return { outcome: 'accepted' };
+  } finally {
+    session.close();
+  }
+}
+
+/**
+ * Проверка транспорта без письма: соединение, приветствие, TLS, вход и QUIT (4.11).
+ * Подтверждает, что релей доступен и принимает вход, — но не доставку адресату. Бросает
+ * `SmtpError` с этапом отказа.
+ */
+export async function smtpCheck(target: SmtpTarget): Promise<void> {
+  assertUsable(target);
   const session = await openSession(target);
   try {
-    await session.expect(220, 'greeting');
-    let caps = await session.ehlo(target.ehloName);
-
-    if (target.security === 'starttls') {
-      if (!caps.has('STARTTLS')) {
-        throw new SmtpError('релей не предлагает STARTTLS', 'starttls');
-      }
-      await session.startTls(target.host);
-      // EHLO повторяется обязательно: возможности, объявленные до шифрования,
-      // объявлены кем угодно — до TLS их мог подменить тот, кто сидит в канале.
-      caps = await session.ehlo(target.ehloName);
-    }
-
-    if (target.user) {
-      if (!session.encrypted) {
-        throw new SmtpError('канал не зашифрован — вход на релей отменён', 'auth');
-      }
-      await session.authenticate(target.user, target.password, caps);
-    }
-
-    await session.command(`MAIL FROM:<${envelope.from}>`, 250, 'mail-from');
-    await session.command(`RCPT TO:<${envelope.to}>`, 250, 'rcpt-to');
-    await session.command('DATA', 354, 'data');
-    await session.sendBody(envelope.data);
-    await session.expect(250, 'body');
-    await session.quit();
+    await handshake(session, target);
+    await session.quit().catch(() => undefined);
   } finally {
     session.close();
   }

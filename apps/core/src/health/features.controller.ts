@@ -57,7 +57,10 @@ export class FeaturesController {
       : DEFAULT_SKIN;
     // Доступность групп функций (4.11): сведение по экземплярам, только безопасные коды.
     // Чтение состояния ничего не повторяет и не выполняет.
-    const groups = { files: await this.availability.platformStatus() };
+    const groups = {
+      files: await this.availability.platformStatus('files'),
+      mail: await this.availability.platformStatus('mail'),
+    };
     return FeaturesSchema.parse({ flags, skin, groups });
   }
 }
