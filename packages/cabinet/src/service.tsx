@@ -75,12 +75,21 @@ async function check(): Promise<void> {
   }
 }
 
+/**
+ * Пауза до следующей проверки при общем отказе: 15 с ±20 %. Отказ ядра все открытые вкладки
+ * замечают одновременно; без разброса они проверяли бы готовность в одни и те же моменты и
+ * после восстановления разом перезагружали данные — одна волна запросов от всех вкладок.
+ */
+export function recheckDelayMs(random: number = Math.random()): number {
+  return Math.round(POLL_MS * (0.8 + 0.4 * Math.min(Math.max(random, 0), 1)));
+}
+
 function schedule(): void {
   if (timer) clearTimeout(timer);
   timer = setTimeout(() => {
     timer = null;
     void check();
-  }, POLL_MS);
+  }, recheckDelayMs());
 }
 
 /** От клиента API: возможный общий отказ — проверить готовность. */

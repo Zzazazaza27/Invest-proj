@@ -482,7 +482,7 @@
 | UNIT-CORE-SECRET-FILES | `npm run test -w apps/core` | 11 | CI | CI |
 | UNIT-PKG-CABINET-GUARDED-SEND | `npm run test -w packages/cabinet` | 3 | CI | CI |
 | UNIT-CABINET-LEAVE-GUARD | `npm run test -w packages/cabinet` | 6 | CI | CI |
-| UNIT-CABINET-RETURN-READY | `npm run test -w packages/cabinet` | 9 | CI | CI |
+| UNIT-CABINET-RETURN-READY | `npm run test -w packages/cabinet` | 10 | CI | CI |
 | UNIT-API-RETRY-KEY | `npm run test -w packages/api-client` | 4 | CI | CI |
 | UNIT-CABINET-OWNED-PENDING | `npm run test -w packages/cabinet` | 2 | CI | CI |
 | UNIT-CABINET-FILES-AVAILABILITY | `npm run test -w packages/cabinet` | 4 | CI | CI |
