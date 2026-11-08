@@ -13,7 +13,7 @@ import {
   Stack,
   formatMoney,
 } from '@fifth/ui';
-import { GuardedNotice, useGuardedSend } from '@fifth/cabinet';
+import { GuardedNotice, allowNextLeave, useGuardedSend, useLeaveGuard } from '@fifth/cabinet';
 import type { CreateProjectRequest, ProjectSummary, TaxonomyNode } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
@@ -45,10 +45,12 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
     state: (key) => api.operations.requestState('lab.project.create', key),
     onDone: (project) => {
       setCreating(false);
+      allowNextLeave();
       onOpen(project.id);
     },
     onResolved: (projectId) => {
       setCreating(false);
+      allowNextLeave();
       onOpen(projectId);
     },
     onFail: (caught) => {
@@ -228,6 +230,13 @@ function CreateProjectForm({
     investmentAsk: send.snapshot?.investmentAsk ?? '',
   }));
   const [loadError, setError] = useState<string | null>(null);
+  // Уход со страницы (2.2/2.3): введённое, но не отправленное. Отправленное и ещё не
+  // выясненное — признак защищённой отправки, его сообщает она сама.
+  useLeaveGuard('lab.project.create.form', {
+    dirty:
+      !send.unresolved &&
+      Boolean(form.title.trim() || form.tagline.trim() || form.investmentAsk.trim()),
+  });
   const error = sent.text || loadError;
   const fieldErrors = sent.fields;
 

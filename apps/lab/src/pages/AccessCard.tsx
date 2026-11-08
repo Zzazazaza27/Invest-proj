@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useLeaveGuard } from '@fifth/cabinet';
 import {
   Badge,
   Button,
@@ -51,6 +52,12 @@ export function AccessCard({
   const [fieldError, setFieldError] = useState<{ grant?: string; exclude?: string }>({});
   const [busy, setBusy] = useState<string | null>(null);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  // Уход со страницы (2.2/2.3): введённые адреса и основание; выдача и исключение доступа —
+  // обычные запросы без ключа повтора (2.6-б впереди): прерванный — результат неизвестен.
+  useLeaveGuard(`lab.access.form:${projectId}`, {
+    dirty: Boolean(email.trim() || reason.trim() || excludeEmail.trim()),
+    request: busy !== null,
+  });
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });

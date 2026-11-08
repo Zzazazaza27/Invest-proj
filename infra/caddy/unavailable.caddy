@@ -1,0 +1,54 @@
+# Недоступность платформы на входе (блок 2, 2.3; пакет 6 раздела 01).
+#
+# Caddy сам формирует ошибку, когда не отвечает веб-слой (контейнер fifth-web) или ядро
+# за ним: соединение не установлено — 502, не дождались — 504. Ответы самого
+# приложения (в том числе его 5xx) этот блок не трогает.
+#
+#   * /v1/* — машинный problem+json с ПРЕЖНИМ кодом: для изменения 502/504 — «результат
+#     неизвестен», корректное тело этого не отменяет;
+#   * остальное — HTML-страница для навигации: что случилось и ссылка «Обновить».
+#
+# Подключение в /etc/caddy/Caddyfile (основной файл не в Git — шаг выпуска):
+#   import /opt/fifth-element/infra/caddy/unavailable.caddy
+# и строкой `import fifth_unavailable` в блоке сайта платформы.
+
+(fifth_unavailable) {
+	handle_errors 502 503 504 {
+		@api path /v1/*
+		handle @api {
+			header Content-Type "application/problem+json; charset=utf-8"
+			header Cache-Control "no-store"
+			header Retry-After "15"
+			respond `{"type":"https://5espace.com/problems/dependency_unavailable","title":"Сервис временно недоступен","status":{err.status_code},"code":"dependency_unavailable","detail":"Сервис временно недоступен, попробуйте позже"}` {err.status_code}
+		}
+		handle {
+			header Content-Type "text/html; charset=utf-8"
+			header Cache-Control "no-store"
+			header Retry-After "15"
+			respond `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Сервис временно недоступен — Пятый элемент</title>
+<style>
+body{margin:0;font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f6f7f9;color:#1d2330}
+main{max-width:32rem;margin:15vh auto;padding:0 1rem}
+h1{font-size:1.5rem;margin:0 0 .75rem}
+p{line-height:1.5;color:#4a5263}
+a{display:inline-block;margin-top:1rem;padding:.6rem 1.1rem;border-radius:.5rem;background:#1d2330;color:#fff;text-decoration:none}
+@media (prefers-color-scheme:dark){body{background:#12151c;color:#e8ebf1}p{color:#a9b0bf}a{background:#e8ebf1;color:#12151c}}
+</style>
+</head>
+<body>
+<main data-unavailable-page>
+<h1>Сервис временно недоступен</h1>
+<p>Платформа сейчас не отвечает. Мы уже знаем о сбое. Попробуйте открыть страницу через несколько минут.</p>
+<p>Если вы что-то отправляли перед сбоем, после восстановления проверьте результат на странице — повторная отправка может создать дубль.</p>
+<a href="">Обновить</a>
+</main>
+</body>
+</html>` {err.status_code}
+		}
+	}
+}

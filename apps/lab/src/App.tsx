@@ -36,6 +36,8 @@ import {
   decideAccess,
   hrefFor,
   setGuardOwner,
+  goToLogin,
+  ServiceNotice,
   useSessionCheck,
   TestContextBanner,
 } from '@fifth/cabinet';
@@ -193,7 +195,7 @@ export default function App() {
     },
     // Единый вход — только по подтверждённому отсутствию сессии.
     onAbsent: () => {
-      window.location.replace(hrefFor('login', __CABINET_PORTS__));
+      goToLogin(__CABINET_PORTS__);
       // `false` — «уводим отсюда»: состояние проверки не снимаем, иначе на
       // месте уходящей страницы мелькнёт пустой каркас кабинета.
       return false;
@@ -222,11 +224,12 @@ export default function App() {
           // Уводим на единый вход: своей формы у кабинета больше нет, а
           // оставлять человека на странице кабинета без сессии — показывать
           // ему пустой каркас чужого раздела.
-          window.location.replace(hrefFor('login', __CABINET_PORTS__));
+          goToLogin(__CABINET_PORTS__);
         }}
       />
       <main id="content">
         <Container style={{ padding: 'var(--u-space-6) var(--u-space-4)' }}>
+          <ServiceNotice />
           {checking ? <LoadingState label="Проверяем сессию" /> : null}
           {!checking && failure ? (
             <SessionCheckFailed failure={failure} onRetry={retry} busy={checking} />
@@ -286,7 +289,7 @@ export default function App() {
                         // Сессии закрыты все, включая эту: держать человека на
                         // экране, который через секунду ответит 401, нечестно.
                         setCsrf(null);
-                        window.location.replace(hrefFor('login', __CABINET_PORTS__));
+                        goToLogin(__CABINET_PORTS__);
                       }}
                     />
                   }

@@ -17,6 +17,7 @@ import {
   SessionCheckFailed,
   classifySessionFailure,
   noteGroupError,
+  takeReturn,
   useMailAvailability,
   type SessionFailure,
 } from '@fifth/cabinet';
@@ -156,6 +157,7 @@ function forgetHash(): void {
 }
 
 interface SessionUser {
+  id?: string;
   displayName?: string;
   roles?: string[];
 }
@@ -320,6 +322,18 @@ export default function App() {
     setUser(me);
     const available = cabinetsForRoles(me.roles ?? []);
     setCabinets(available);
+    // Возврат на страницу, с которой ушли на вход (2.2/2.3): только тот же пользователь и
+    // только кабинет его ролей. Права на самой странице проверит сервер.
+    const back = me.id
+      ? takeReturn(
+          me.id,
+          available.map((c) => c.path),
+        )
+      : null;
+    if (back) {
+      window.location.assign(back);
+      return;
+    }
     // Один кабинет — выбирать не из чего: отправляем сразу. Экран «выберите
     // кабинет» с единственной кнопкой это лишний шаг, а не забота.
     if (available.length === 1) {

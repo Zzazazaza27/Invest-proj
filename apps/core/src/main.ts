@@ -10,7 +10,8 @@ import { randomUUID } from 'node:crypto';
 import { AppModule } from './app.module';
 import { BackgroundJobsService } from './background/background-jobs.service';
 import { startInternalServer } from './background/internal-server';
-import { runControl } from './background/readiness';
+import { checkReadiness, runControl, type ReadinessProbes } from './background/readiness';
+import { setPublicReadiness } from './health/public-readiness';
 import { Database } from './db/unit-of-work';
 import { NatsClient } from './events/nats.client';
 import { S3Service } from './storage/s3.service';
@@ -384,7 +385,7 @@ async function bootstrap(): Promise<void> {
   // Состояние процесса для готовности (4.9): «запускается» до конца запуска,
   // «останавливается» — первым шагом завершения.
   let lifecycle: 'starting' | 'running' | 'stopping' = 'starting';
-  const internal = await startInternalServer(jobs, {
+  const readinessProbes: ReadinessProbes = {
     lifecycle: () => lifecycle,
     database: () => db.ping(),
     // Хранилище: подписанный HEAD контрольного ключа — доступ и подпись,
@@ -413,7 +414,10 @@ async function bootstrap(): Promise<void> {
         () => db.controlObject('probe'),
         (key) => s3.getObjectDigest(key),
       ),
-  });
+  };
+  const internal = await startInternalServer(jobs, readinessProbes);
+  // Публичная готовность (2.3): тот же расчёт, наружу — только «готов / не готов».
+  setPublicReadiness(async () => (await checkReadiness(readinessProbes)).ready);
   logger.log(
     `служебный порт ${env.CORE_INTERNAL_BIND_HOST}:${internal.port} (/live, /ready, /jobs, /queues, /control)`,
   );

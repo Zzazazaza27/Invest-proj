@@ -1,3 +1,4 @@
+import { configureServiceCheck, noteTransportFailure } from '@fifth/cabinet';
 import { ApiError, FifthApi } from '@fifth/api-client';
 import {
   adoptTestContextFromUrl,
@@ -96,7 +97,10 @@ export const api = new FifthApi({
   // только CSRF-токен по схеме double-submit.
   auth: { kind: 'cookie', csrfToken: readCsrfCookie() },
   timeoutMs: 15_000,
+  // Возможный общий отказ (2.3): кабинет подтверждает его проверкой готовности API.
+  onTransportFailure: () => noteTransportFailure(),
 });
+configureServiceCheck(BASE_URL);
 
 /** После входа сервер отдаёт свежий CSRF-токен в теле — cookie может отстать. */
 export function setCsrf(token: string | null): void {

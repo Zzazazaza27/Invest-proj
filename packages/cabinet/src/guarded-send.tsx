@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Button } from '@fifth/ui';
 import type { GuardedOperationName, RequestKeyState } from '@fifth/contracts';
-import { hrefFor } from './access';
+import { useLeaveGuard } from './leave-guard';
+import { goToLogin, rememberUser } from './return-to';
 
 /**
  * Защищённая отправка формы (блок 2, 2.2 и 2.6).
@@ -39,6 +40,7 @@ export type GuardedPhase =
 let owner: string | null = null;
 export function setGuardOwner(id: string | null): void {
   owner = id;
+  rememberUser(id);
 }
 
 export interface Pending {
@@ -252,6 +254,8 @@ export function useGuardedSend<P, R>(options: GuardedOptions<P, R>) {
   const [pending, setPending] = useState<Pending | null>(() => memory.get(name) ?? null);
   /** «Не найдена» по ключу: форма открыта, ключ сохранён для следующей отправки. */
   const [note, setNote] = useState<'not_found' | 'earlier_done' | null>(null);
+  // Уход со страницы (2.2/2.3): незавершённая защищённая отправка — свой признак.
+  useLeaveGuard(`guarded:${name}`, { guarded: pending !== null });
 
   const finish = useCallback(
     (slotName: string) => {
@@ -403,11 +407,7 @@ export function GuardedNotice({
       </p>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 'var(--u-space-2)' }}>
         {guard.phase === 'login' ? (
-          <Button
-            size="sm"
-            onClick={() => window.location.assign(hrefFor('login'))}
-            data-guarded-login
-          >
+          <Button size="sm" onClick={() => goToLogin()} data-guarded-login>
             Войти
           </Button>
         ) : (

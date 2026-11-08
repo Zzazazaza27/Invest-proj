@@ -23,6 +23,7 @@ import {
   noteGroupError,
   useFilesAvailability,
   useGuardedSend,
+  useLeaveGuard,
 } from '@fifth/cabinet';
 import { ApiError, api } from '../api';
 import { useOperations } from '../operations';
@@ -216,6 +217,13 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
       void load();
     },
     onFail: (error) => setNotice({ tone: 'error', text: errorText(error) }),
+  });
+  // Уход со страницы (2.2/2.3): введённая ссылка и идущая загрузка презентации. Загрузка —
+  // не защищённая отправка 2.6: прерванная, она выясняется по своей операции, но файл
+  // уходом теряется.
+  useLeaveGuard(`lab.material.form:${projectId}`, {
+    dirty: url.trim() !== '' && !linkSend.unresolved,
+    request: uploading,
   });
 
   const addLink = useCallback(() => {

@@ -1633,6 +1633,28 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
+  - id: RND-CABINET-FAILURES
+    file: scripts/render-check-cabinet-failures.mjs
+    command: FIFTH_ENTRY=web node scripts/render-check-cabinet-failures.mjs
+    kind: render
+    level: сквозной
+    runner: manual
+    asserts: 28
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт двух пользователей и проекты через кабинет основателя; проекты убирает, учётки остаются',
+        'на время сценария отказа останавливает ядро стенда и поднимает его stand:up --no-build --restart-core',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Блок 2, 2.2/2.3, пакет 6 раздела 01. Запрос браузера при перезагрузке проверяется
+      событием beforeunload (defaultPrevented): сам диалог браузера Playwright не показывает.
+    purpose: 'Кабинет основателя при сбоях: несохранённые поля — диалог при переходе внутри кабинета («Остаться» сохраняет введённое, «Уйти» переходит) и запрос браузера при перезагрузке, без изменений — тихо; обычный запрос без защищённой отправки в полёте держит переход и называет потерю результата; защищённая отправка с неизвестным исходом переход не держит (ключ в памяти), перезагрузку держит; истечение сессии — метка возврата, вход тем же пользователем возвращает на страницу, исход по ключу без новой отправки, открыт созданный проект; вход другим пользователем — возврата нет, метка снята, чужая операция не показана и не отправлена; ядро остановлено — /v1 отвечает problem+json 502, изменение с ним — результат неизвестен, ключ сохранён, новой отправки нет, общее предупреждение, кабинет открывается; ядро поднято — «Работа восстановлена» один раз после свежей проверки готовности и исчезает; исключений на странице нет.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: RND-UPLOAD-OPERATIONS
     file: scripts/render-check-upload-operations.mjs
     command: FIFTH_ENTRY=web node scripts/render-check-upload-operations.mjs
@@ -3912,6 +3934,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
+  - id: UNIT-CABINET-RETURN-READY
+    file: packages/cabinet/tests/return-and-ready.test.ts
+    command: npm run test -w packages/cabinet
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 9
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['логика без браузера — побочных действий нет']
+    note: >-
+      Блок 2, 2.2/2.3, пакет 6 раздела 01.
+    purpose: 'Путь возврата после входа — только внутренний путь разрешённого кабинета (чужая схема, //, \, управляющие символы, чужой кабинет отвергаются); метка — только тот же пользователь, не старше 30 минут, снимается всегда; готовность API подтверждается только успешным ответом с service=fifth-core и ready=true, без кеша; problem+json 502 и сетевой отказ — не готов.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-CABINET-FILES-AVAILABILITY
     file: packages/cabinet/tests/files-availability.test.ts
     command: npm run test -w packages/cabinet
@@ -4762,6 +4801,8 @@ blocks:
         RND-UPLOAD-OPERATIONS,
         PRB-REQUEST-KEYS,
         RND-GUARDED-SEND,
+        RND-CABINET-FAILURES,
+        UNIT-CABINET-RETURN-READY,
         UNIT-PKG-CABINET-GUARDED-SEND,
         DBT-OPERATIONS,
         UNIT-CORE-UPLOAD-COMPLETION,

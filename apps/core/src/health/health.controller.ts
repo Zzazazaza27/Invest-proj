@@ -1,4 +1,6 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Res } from '@nestjs/common';
+import type { FastifyReply } from 'fastify';
+import { publicReady } from './public-readiness';
 import { HealthSchema, type Health } from '@fifth/contracts';
 import { Public } from '../auth/guards';
 import { Database } from '../db/unit-of-work';
@@ -30,5 +32,19 @@ export class HealthController {
       version: process.env.APP_VERSION ?? '0.1.0',
       checks,
     });
+  }
+
+  /**
+   * Готовность API (2.3): кабинет подтверждает ею восстановление после общего отказа.
+   * `/health` говорит лишь, что процесс отвечает; здесь — что API готов обслуживать
+   * (обязательные зависимости и состояние процесса). 503 и `ready: false`, пока не готов.
+   */
+  @Public()
+  @Get('ready')
+  async ready(@Res({ passthrough: true }) reply: FastifyReply) {
+    const ready = await publicReady();
+    reply.header('Cache-Control', 'no-store');
+    reply.status(ready ? 200 : 503);
+    return { service: 'fifth-core', ready };
   }
 }

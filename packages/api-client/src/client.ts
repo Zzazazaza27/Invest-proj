@@ -26,6 +26,13 @@ export interface ClientOptions {
   timeoutMs?: number;
   /** Хук для телеметрии и обработки 401 на уровне приложения. */
   onResponse?: (info: { url: string; status: number; durationMs: number }) => void;
+  /**
+   * Возможный общий отказ (2.3): сеть или 502/503/504 после всех повторов. Это ПОДОЗРЕНИЕ —
+   * тело ответа (даже корректный problem+json от прокси) его не опровергает и не
+   * подтверждает: приложение проверяет готовность API отдельно. Семантика ошибки не
+   * меняется — изменение после 502/504 по-прежнему «результат неизвестен».
+   */
+  onTransportFailure?: (info: { url: string; status: number }) => void;
   fetchImpl?: typeof fetch;
 }
 
@@ -109,6 +116,7 @@ export class ApiClient {
   readonly #timeoutMs: number;
   readonly #fetch: typeof fetch;
   readonly #onResponse: ClientOptions['onResponse'];
+  readonly #onTransportFailure: ClientOptions['onTransportFailure'];
   #auth: AuthMode;
   /**
    * Контекст доступа вкладки (M129): запрос выполняется от лица участника
@@ -127,6 +135,7 @@ export class ApiClient {
     this.#timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.#fetch = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
     this.#onResponse = options.onResponse;
+    this.#onTransportFailure = options.onTransportFailure;
   }
 
   setAuth(auth: AuthMode): void {
@@ -176,6 +185,20 @@ export class ApiClient {
   }
 
   async request<TResponse = unknown>(options: RequestOptions<TResponse>): Promise<TResponse> {
+    try {
+      return await this.#request(options);
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        (error.status === 0 || error.status === 502 || error.status === 503 || error.status === 504)
+      ) {
+        this.#onTransportFailure?.({ url: options.path, status: error.status });
+      }
+      throw error;
+    }
+  }
+
+  async #request<TResponse = unknown>(options: RequestOptions<TResponse>): Promise<TResponse> {
     const method = options.method ?? 'GET';
     const url = this.#buildUrl(options.path, options.query);
 

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useLeaveGuard } from './leave-guard';
 import {
   Badge,
   Button,
@@ -76,6 +77,10 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
   const [reply, setReply] = useState('');
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  // Уход со страницы (2.2/2.3): набранное обращение или ответ, ещё не отправленные.
+  useLeaveGuard('support.form', {
+    dirty: Boolean(subject.trim() || body.trim() || reply.trim()),
+  });
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });

@@ -66,3 +66,25 @@ export {
   setContextFileResolver,
   type TestContextPort,
 } from './test-context';
+export {
+  LeaveDialog,
+  allowNextLeave,
+  leaveState,
+  resetLeaveGuard,
+  shouldBlockInApp,
+  shouldWarnOnUnload,
+  useBeforeUnloadGuard,
+  useLeaveGuard,
+  useLeaveState,
+  type LeaveSignals,
+} from './leave-guard';
+export { goToLogin, rememberUser, safeReturnPath, takeReturn } from './return-to';
+export {
+  ServiceNotice,
+  apiReady,
+  configureServiceCheck,
+  noteTransportFailure,
+  resetServiceState,
+  serviceState,
+  useServiceState,
+} from './service';
