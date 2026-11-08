@@ -56,8 +56,7 @@ try {
 const proc = coreProcess();
 const now = Date.now();
 const prev = load();
-const result = decide(prev, { now, live, proc: proc?.id ?? null });
-// Петля падений (core-start.mjs): редкий режим и его снятие после трёх успехов этого процесса.
+// Запись обёртки о запуске (core-start.mjs): время запуска и опознание процесса.
 const readStart = () => {
   try {
     return existsSync(START) ? JSON.parse(readFileSync(START, 'utf8')) : {};
@@ -66,6 +65,17 @@ const readStart = () => {
   }
 };
 const start = readStart();
+// Предел запуска — только для процесса, о запуске которого есть запись обёртки.
+const startedAt = proc && start.startId === proc.id ? (start.lastStart ?? null) : null;
+const result = decide(prev, {
+  now,
+  live,
+  proc: proc?.id ?? null,
+  startedAt,
+  // Короче — только в пробе (check-core-hang-limit); в образе не задаётся.
+  deadlineMs: Number(process.env.CORE_STARTUP_DEADLINE_MS) || undefined,
+});
+// Петля падений (core-start.mjs): редкий режим и его снятие после трёх успехов этого процесса.
 const crash = crashMode(start, prev.slowClearedFor ?? null, {
   now,
   procId: proc?.id ?? null,

@@ -397,7 +397,7 @@
 | CHK-DNS-PRIMARY-APPLY | `node scripts/check-dns-primary-apply.mjs` | 16 | вручную | — |
 | CHK-MONITOR-APP-PROBE | `node scripts/monitor-app-probe.mjs` | 4 | вручную | — |
 | CHK-CORE-STARTUP-DEPS | `node scripts/check-core-startup-deps.mjs` | 3 | вручную | — |
-| CHK-CORE-HANG-LIMIT | `node scripts/check-core-hang-limit.mjs` | 21 | вручную | — |
+| CHK-CORE-HANG-LIMIT | `node scripts/check-core-hang-limit.mjs` | 29 | вручную | — |
 | CHK-SECRETS-TO-FILES | `node scripts/check-secrets-to-files.mjs` | 11 | вручную | — |
 | CHK-HOST-ACCESS | `node scripts/check-host-access.mjs` | 17 | вручную | — |
 | CHK-OPENBAO-LAB | `node scripts/check-openbao-lab.mjs` | 22 | вручную | — |
@@ -468,7 +468,7 @@
 | UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-READINESS | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-MONITORING-ACCOUNT | `npm run test -w apps/core` | 6 | CI | CI |
-| UNIT-CORE-HEALTH-POLICY | `npm run test -w apps/core` | 10 | CI | CI |
+| UNIT-CORE-HEALTH-POLICY | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 24 | CI | CI |
 | UNIT-CABINET-CLIENT-ERRORS | `npm run test -w packages/cabinet` | 7 | CI | CI |
 | UNIT-CORE-CLIENT-ERRORS | `npm run test -w apps/core` | 5 | CI | CI |

@@ -18,7 +18,12 @@
  *      выгрузке), docker stop во время ожидания — сразу, без запуска; поправилась — после
  *      трёх /live обычный режим, история падений сохранена; штатный перезапуск — не падение;
  *      SIGTERM ядру мимо обёртки — падение, и сразу снова редкий режим.
- * Ожидание редкого режима в пробе — CORE_START_SLOW_MS=20000 вместо 10 минут.
+ *   7. зависание при запуске (свежий контейнер): два зависания в работе, затем процесс без
+ *      /live снят по пределу запуска (stage=start) — третье снятие, общий счёт с W23; следующий
+ *      такой запуск — остановка автовосстановления; падением это не считается; после ручного
+ *      перезапуска — обычный запуск, время запуска в строке (startup=).
+ * Ожидание редкого режима в пробе — CORE_START_SLOW_MS=20000 вместо 10 минут, предел запуска —
+ * CORE_STARTUP_DEADLINE_MS=20000 вместо 5 минут.
  * Контейнер и образ пробы удаляются.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -84,8 +89,8 @@ try {
   // Заглушка: STUB_SLOW_MS — задержка перед /live (медленный старт после перезапуска).
   writeFileSync(
     join(work, 'main.js'),
-    `const fs=require('fs');const slow=fs.existsSync('/tmp/slow-start')?8000:0;
-setTimeout(()=>require('http').createServer((q,s)=>{s.writeHead(q.url==='/live'?200:404);s.end('ok')}).listen(4400,'127.0.0.1'),slow);
+    `const fs=require('fs');const slow=fs.existsSync('/tmp/slow-start')?8000:0;const noLive=fs.existsSync('/tmp/no-live');
+if(!noLive)setTimeout(()=>require('http').createServer((q,s)=>{s.writeHead(q.url==='/live'?200:404);s.end('ok')}).listen(4400,'127.0.0.1'),slow);
 setInterval(()=>{if(fs.existsSync('/tmp/crash-mode'))process.exit(1)},500);`,
   );
   writeFileSync(
@@ -94,7 +99,7 @@ setInterval(()=>{if(fs.existsSync('/tmp/crash-mode'))process.exit(1)},500);`,
 WORKDIR /app
 COPY core-health.mjs core-health-policy.mjs core-start.mjs core-start-policy.mjs ./
 COPY main.js ./apps/core/dist/main.js
-ENV CORE_START_SLOW_MS=20000
+ENV CORE_START_SLOW_MS=20000 CORE_STARTUP_DEADLINE_MS=20000
 USER node
 HEALTHCHECK --interval=5s --timeout=4s --start-period=30s --retries=3 CMD ["node", "core-health.mjs"]
 CMD ["node", "core-start.mjs"]
@@ -219,6 +224,46 @@ CMD ["node", "core-start.mjs"]
     again,
     `${lastHealth()}; падений ${crashes()}`,
   );
+
+  console.warn('[7] Зависание при запуске — общий счёт с W23');
+  docker('rm', '-f', NAME);
+  docker('run', '-d', '--name', NAME, '--init', '--restart', 'unless-stopped', IMAGE);
+  check(
+    'свежий контейнер здоров, время запуска в строке',
+    await waitFor(() => healthy() && /startup=/.test(lastHealth()), 60_000),
+    lastHealth(),
+  );
+  for (let n = 1; n <= 2; n += 1) {
+    const before = restarts();
+    freeze();
+    const back =
+      (await waitFor(() => restarts() > before, 60_000)) && (await waitFor(healthy, 60_000));
+    check(`зависание в работе ${n}: снят и снова здоров`, back, `перезапусков ${restarts()}`);
+  }
+  docker('exec', NAME, 'sh', '-c', 'touch /tmp/no-live');
+  // Ручной перезапуск обнуляет счётчик Docker: база сравнения — после него.
+  docker('restart', NAME);
+  const r7 = restarts();
+  const startKill = await waitFor(() => restarts() > r7, 90_000);
+  check(
+    'процесс без /live снят по пределу запуска — третье снятие',
+    startKill,
+    `перезапусков ${restarts()}`,
+  );
+  const stopped7 = await waitFor(() => /recovery=stopped.*stage=start/.test(lastHealth()), 90_000);
+  check(
+    'следующий запуск без /live — остановка автовосстановления, stage=start',
+    stopped7,
+    lastHealth(),
+  );
+  const r8 = restarts();
+  await sleep(25_000);
+  check('после остановки процесс не снимается', restarts() === r8, `перезапусков ${restarts()}`);
+  check('снятия при запуске падениями не считаются', crashes() === 0, `падений ${crashes()}`);
+  docker('exec', NAME, 'sh', '-c', 'rm -f /tmp/no-live');
+  docker('restart', NAME);
+  const back7 = await waitFor(() => /live=1 recovery=active.*startup=/.test(lastHealth()), 90_000);
+  check('ручной перезапуск — обычный запуск, отметка снята', back7, lastHealth());
 } finally {
   docker('rm', '-f', NAME);
   docker('rmi', '-f', IMAGE);

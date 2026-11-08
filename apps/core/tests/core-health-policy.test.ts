@@ -240,3 +240,56 @@ describe('петля падений', () => {
     expect(sp.beforeStart(after, 604_000).slow).toBe(true);
   });
 });
+
+/**
+ * Зависание при первоначальном запуске (решение Тэнка и Томаса 09.11.2026): предел 5 минут от
+ * запуска ЭТОГО процесса по записи обёртки; общий счёт с W23; первый /live — обычное правило.
+ */
+describe('зависание при запуске', () => {
+  type P = { now: number; live: boolean; proc: string | null; startedAt?: number | null };
+  const d = (s: State, p: P) =>
+    (
+      policy as { decide: (s: State, p: P) => { state: State; action: string; status: string } }
+    ).decide(s, p);
+  const MIN = 60_000;
+
+  it('без /live дольше 5 минут от запуска — снят, stage=start; до предела — нет', () => {
+    let s = initialState();
+    let r = d(s, { now: 4 * MIN, live: false, proc: 'p', startedAt: 0 });
+    expect(r.action).toBe('none');
+    s = r.state;
+    r = d(s, { now: 5 * MIN, live: false, proc: 'p', startedAt: 0 });
+    expect(r.action).toBe('kill');
+    expect(r.status).toContain('stage=start');
+  });
+
+  it('записи обёртки нет или она о другом процессе — предела запуска нет', () => {
+    const r1 = d(initialState(), { now: 60 * MIN, live: false, proc: 'p', startedAt: null });
+    expect(r1.action).toBe('none');
+  });
+
+  it('первый /live — обычное правило: дальше считаются отказы, а не предел запуска', () => {
+    let r = d(initialState(), { now: 2_000, live: true, proc: 'p', startedAt: 0 });
+    expect(r.status).toContain('startup=2.0s');
+    r = d(r.state, { now: 10 * MIN, live: false, proc: 'p', startedAt: 0 });
+    expect(r.action).toBe('none');
+  });
+
+  it('общий счёт с W23: два зависания в работе и одно при запуске — четвёртое останавливает', () => {
+    let s = initialState();
+    let t = 0;
+    for (const id of ['a', 'b']) {
+      s = d(s, { now: t, live: true, proc: id, startedAt: t }).state;
+      for (let i = 1; i <= 3; i += 1)
+        s = d(s, { now: t + i * 5_000, live: false, proc: id, startedAt: t }).state;
+      t += MIN;
+    }
+    const start = d(s, { now: t + 5 * MIN, live: false, proc: 'c', startedAt: t });
+    expect(start.action).toBe('kill');
+    t += 6 * MIN;
+    const fourth = d(start.state, { now: t + 5 * MIN, live: false, proc: 'd', startedAt: t });
+    expect(fourth.action).toBe('none');
+    expect(fourth.status).toContain('recovery=stopped');
+    expect(fourth.status).toContain('stage=start');
+  });
+});
