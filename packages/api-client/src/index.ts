@@ -32,6 +32,8 @@ import {
   ProjectMaterialSchema,
   MaterialUploadResultSchema,
   OperationNoticeResultSchema,
+  RequestKeyStateSchema,
+  type GuardedOperationName,
   UserOperationSchema,
   UserOperationsResponseSchema,
   type OperationKind,
@@ -851,6 +853,13 @@ export class FifthApi {
         method: 'POST',
         path: `/me/operations/${kind}/${id}/notice`,
         schema: OperationNoticeResultSchema,
+      }),
+
+    /** Исход своей защищённой отправки по ключу (2.6): только чтение, без повтора работы. */
+    requestState: (operation: GuardedOperationName, key: string) =>
+      this.http.request({
+        path: `/me/requests/${operation}/${encodeURIComponent(key)}`,
+        schema: RequestKeyStateSchema,
       }),
   };
 

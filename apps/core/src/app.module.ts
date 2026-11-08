@@ -82,6 +82,7 @@ import { ProjectsController } from './lab/projects.controller';
 import { ProjectsService } from './lab/projects.service';
 import { MaterialUploadsService } from './lab/material-uploads.service';
 import { OperationsController } from './lab/operations.controller';
+import { RequestKeysController } from './lab/request-keys.controller';
 import { UploadOperationsService } from './lab/upload-operations.service';
 import { ProjectMediaController } from './lab/project-media.controller';
 import { ProjectMediaService } from './lab/project-media.service';
@@ -113,6 +114,7 @@ import { S3Service } from './storage/s3.service';
     KycController,
     ProjectsController,
     OperationsController,
+    RequestKeysController,
     FeaturesController,
     CatalogController,
     ProjectAccessController,

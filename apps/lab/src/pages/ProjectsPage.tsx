@@ -14,12 +14,7 @@ import {
   formatMoney,
 } from '@fifth/ui';
 import { GuardedNotice, useGuardedSend } from '@fifth/cabinet';
-import type {
-  CreateProjectRequest,
-  ProjectFull,
-  ProjectSummary,
-  TaxonomyNode,
-} from '@fifth/contracts';
+import type { CreateProjectRequest, ProjectSummary, TaxonomyNode } from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
 
@@ -36,6 +31,38 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
     | { status: 'error'; message: string; traceId: string | null }
   >({ status: 'loading' });
   const [creating, setCreating] = useState(false);
+  const [formError, setFormError] = useState<{ text: string; fields: Record<string, string> }>({
+    text: '',
+    fields: {},
+  });
+  // Защищённая отправка (2.6) — на странице, а не в форме: закрытие формы, повторный вход и
+  // перезагрузка не превращают незавершённое создание во второй проект.
+  const createSend = useGuardedSend({
+    scope: 'lab.project.create',
+    operation: 'lab.project.create',
+    send: (body: CreateProjectRequest, key: string) =>
+      api.projects.create(body, { idempotencyKey: key }),
+    state: (key) => api.operations.requestState('lab.project.create', key),
+    onDone: (project) => {
+      setCreating(false);
+      onOpen(project.id);
+    },
+    onResolved: (projectId) => {
+      setCreating(false);
+      onOpen(projectId);
+    },
+    onFail: (caught) => {
+      if (caught instanceof ApiError) {
+        // Ошибки полей сервер отдаёт списком — показываем их у самих
+        // полей, а не одной строкой «проверьте данные».
+        const fields: Record<string, string> = {};
+        for (const item of caught.problem?.errors ?? []) fields[item.path] = item.message;
+        setFormError({ text: caught.problem?.detail ?? caught.message, fields });
+      } else {
+        setFormError({ text: 'Сервис недоступен', fields: {} });
+      }
+    },
+  });
 
   const load = useCallback(async () => {
     setState({ status: 'loading' });
@@ -73,12 +100,15 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
         }
       />
 
+      <GuardedNotice guard={createSend} />
+
       {creating ? (
         <CreateProjectForm
-          onCreated={(project) => {
-            setCreating(false);
-            void load();
-            onOpen(project.id);
+          send={createSend}
+          error={formError}
+          onSubmit={(body) => {
+            setFormError({ text: '', fields: {} });
+            void createSend.submit(body);
           }}
         />
       ) : null}
@@ -179,37 +209,27 @@ export function ProjectsPage({ onOpen }: { onOpen: (id: string) => void }) {
   );
 }
 
-function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) => void }) {
+function CreateProjectForm({
+  send,
+  error: sent,
+  onSubmit,
+}: {
+  send: { busy: boolean; unresolved: boolean; snapshot: CreateProjectRequest | null };
+  error: { text: string; fields: Record<string, string> };
+  onSubmit: (body: CreateProjectRequest) => void;
+}) {
   const [taxonomy, setTaxonomy] = useState<TaxonomyNode[]>([]);
-  const [form, setForm] = useState({
-    title: '',
-    tagline: '',
-    stage: 'mvp',
-    taxonomyId: '',
-    investmentAsk: '',
-  });
-  const [error, setError] = useState<string | null>(null);
-  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
-  // Защищённая отправка (2.6): потерянный ответ не превращает повтор во второй проект.
-  const send = useGuardedSend({
-    send: (body: CreateProjectRequest, key: string) =>
-      api.projects.create(body, { idempotencyKey: key }),
-    onDone: (project) => onCreated(project),
-    onFail: (caught) => {
-      if (caught instanceof ApiError) {
-        // Ошибки полей сервер отдаёт списком — показываем их у самих
-        // полей, а не одной строкой «проверьте данные».
-        const byField: Record<string, string> = {};
-        for (const item of caught.problem?.errors ?? []) {
-          byField[item.path] = item.message;
-        }
-        setFieldErrors(byField);
-        setError(caught.problem?.detail ?? caught.message);
-      } else {
-        setError('Сервис недоступен');
-      }
-    },
-  });
+  // Открыта заново при незавершённой отправке — на экране отправленное, а не пустая форма.
+  const [form, setForm] = useState(() => ({
+    title: send.snapshot?.title ?? '',
+    tagline: send.snapshot?.tagline ?? '',
+    stage: (send.snapshot?.stage ?? 'mvp') as string,
+    taxonomyId: send.snapshot?.taxonomyId ?? '',
+    investmentAsk: send.snapshot?.investmentAsk ?? '',
+  }));
+  const [loadError, setError] = useState<string | null>(null);
+  const error = sent.text || loadError;
+  const fieldErrors = sent.fields;
 
   useEffect(() => {
     api
@@ -229,8 +249,7 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
         onSubmit={(event) => {
           event.preventDefault();
           setError(null);
-          setFieldErrors({});
-          void send.submit({
+          onSubmit({
             title: form.title,
             tagline: form.tagline || undefined,
             stage: form.stage as 'idea' | 'mvp' | 'early_revenue' | 'growth',
@@ -319,8 +338,6 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
               />
             </Field>
           </fieldset>
-
-          <GuardedNotice phase={send.phase} onCheck={() => void send.check()} />
 
           {error ? (
             <div role="alert" style={{ color: 'var(--u-danger)', fontSize: 'var(--u-text-sm)' }}>

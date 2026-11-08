@@ -193,8 +193,16 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
   // Адрес не проверяется здесь на «внутренний»: этот запрет — правило сервера (SSRF), и
   // дублировать его в браузере значило бы завести второе место, где он может разойтись.
   const linkSend = useGuardedSend({
+    scope: `lab.material.link:${projectId}`,
+    operation: 'lab.material.link',
     send: (input: { projectId: string; url: string }, key: string) =>
       api.projects.addProductLink(input.projectId, input, { idempotencyKey: key }),
+    state: (key) => api.operations.requestState('lab.material.link', key),
+    onResolved: () => {
+      setUrl('');
+      setNotice({ tone: 'ok', text: 'Ссылка добавлена' });
+      void load();
+    },
     onDone: () => {
       setUrl('');
       setNotice({ tone: 'ok', text: 'Ссылка добавлена' });
@@ -490,7 +498,7 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
             onChange={(event) => setUrl(event.target.value)}
           />
         </Field>
-        <GuardedNotice phase={linkSend.phase} onCheck={() => void linkSend.check()} />
+        <GuardedNotice guard={linkSend} />
         {linkSend.unresolved ? null : (
           <Button
             onClick={addLink}

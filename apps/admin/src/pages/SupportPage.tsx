@@ -18,6 +18,7 @@ const port: SupportPort = {
   detail: (id) => api.supportTicket(id),
   open: (input, key) => api.openSupportTicket({ kind: 'support', ...input }, key),
   reply: (id, body, key) => api.replySupportTicket(id, body, key),
+  requestState: (operation, key) => api.requestState(operation, key),
   update: (id, input: { status?: SupportTicketStatus; assignToMe?: boolean }) =>
     api.updateSupportTicket(id, input),
 };

@@ -186,7 +186,7 @@ export class ApiClient {
         const response = await this.#send(url, method, options);
         this.#onResponse?.({ url, status: response.status, durationMs: Date.now() - started });
 
-        if (response.ok) return await this.#parseSuccess(response, options.schema);
+        if (response.ok) return await this.#parseSuccess(response, method, options.schema);
 
         if (
           RETRYABLE_METHODS.has(method) &&
@@ -309,7 +309,7 @@ export class ApiClient {
     });
   }
 
-  async #parseSuccess<T>(response: Response, schema?: z.ZodType<T>): Promise<T> {
+  async #parseSuccess<T>(response: Response, method: string, schema?: z.ZodType<T>): Promise<T> {
     if (response.status === 204) return undefined as T;
     const raw: unknown = await response.json();
     if (!schema) return raw as T;
@@ -322,6 +322,9 @@ export class ApiClient {
         code: ErrorCode.INTERNAL_ERROR,
         status: response.status,
         cause: parsed.error,
+        // Изменяющий запрос получил 2xx: сервер, скорее всего, уже записал. Нечитаемый
+        // ответ — не отказ, новая отправка с новым ключом недопустима (2.6).
+        outcomeUnknown: !RETRYABLE_METHODS.has(method),
       });
     }
     return parsed.data;

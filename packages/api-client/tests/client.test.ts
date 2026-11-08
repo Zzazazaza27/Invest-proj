@@ -338,4 +338,35 @@ describe('Неизвестный результат изменяющего за�
       .catch((e: unknown) => e);
     expect((error as ApiError).outcomeUnknown).toBe(false);
   });
+
+  it('201 с ответом не по схеме на POST — результат неизвестен, а не отказ', async () => {
+    const fetchImpl = mockFetch(async () => jsonResponse({}, 201));
+    const client = new ApiClient({
+      baseUrl: 'https://api.test/v1',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const error = await client
+      .request({
+        method: 'POST',
+        path: '/projects',
+        body: {},
+        schema: z.object({ id: z.string() }),
+      })
+      .catch((e: unknown) => e);
+    expect((error as ApiError).code).toBe('internal_error');
+    expect((error as ApiError).outcomeUnknown).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('ответ не по схеме на GET — обычная ошибка контракта', async () => {
+    const fetchImpl = mockFetch(async () => jsonResponse({}));
+    const client = new ApiClient({
+      baseUrl: 'https://api.test/v1',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const error = await client
+      .request({ path: '/projects', schema: z.object({ id: z.string() }) })
+      .catch((e: unknown) => e);
+    expect((error as ApiError).outcomeUnknown).toBe(false);
+  });
 });

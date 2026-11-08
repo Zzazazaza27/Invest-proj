@@ -23,6 +23,9 @@ import {
   SupportMessageSchema,
   SupportTicketDetailSchema,
   SupportTicketSchema,
+  RequestKeyStateSchema,
+  type RequestKeyState,
+  type GuardedOperationName,
   ServiceAccountWithSecretSchema,
   type AuthSession,
   type CreateServiceAccountRequest,
@@ -1079,6 +1082,14 @@ export const api = {
       body: { body },
       schema: SupportMessageSchema,
       idempotencyKey: key,
+    });
+  },
+
+  /** Исход своей защищённой отправки по ключу (2.6): только чтение. */
+  requestState(operation: GuardedOperationName, key: string): Promise<RequestKeyState> {
+    return client.request({
+      path: `/v1/me/requests/${operation}/${encodeURIComponent(key)}`,
+      schema: RequestKeyStateSchema,
     });
   },
 

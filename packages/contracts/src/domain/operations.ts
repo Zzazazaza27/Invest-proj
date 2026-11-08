@@ -69,3 +69,24 @@ export const MATERIAL_UPLOAD_HISTORY_LIMIT = 20;
 export const OperationNoticeResultSchema = z.object({
   noticed: z.literal(true),
 });
+
+/**
+ * Защищённые отправки (блок 2, 2.6; M159): операции, где сервер принимает ключ повтора.
+ * Состояние по ключу нужно вкладке, которая после повторного входа или перезагрузки
+ * помнит только ключ, но не отправленное содержимое.
+ */
+export const GUARDED_OPERATIONS = [
+  'lab.project.create',
+  'lab.material.link',
+  'support.ticket.open',
+  'support.message.add',
+] as const;
+export const GuardedOperationSchema = z.enum(GUARDED_OPERATIONS);
+export type GuardedOperationName = z.infer<typeof GuardedOperationSchema>;
+
+/** `done` — отправка выполнена; результат читается обычным маршрутом с проверкой прав. */
+export const RequestKeyStateSchema = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('done'), resultId: UuidSchema, objectId: UuidSchema.nullable() }),
+  z.object({ state: z.literal('absent') }),
+]);
+export type RequestKeyState = z.infer<typeof RequestKeyStateSchema>;

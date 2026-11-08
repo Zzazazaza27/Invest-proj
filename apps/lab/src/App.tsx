@@ -17,6 +17,7 @@ import {
 import type {
   CreateSupportTicketRequest,
   CurrentUser,
+  GuardedOperationName,
   ProjectFull,
   SupportTicketStatus,
 } from '@fifth/contracts';
@@ -34,6 +35,7 @@ import {
   VerificationCard,
   decideAccess,
   hrefFor,
+  setGuardOwner,
   useSessionCheck,
   TestContextBanner,
 } from '@fifth/cabinet';
@@ -111,6 +113,8 @@ const supportPort = {
     api.support.open({ kind: 'support' as const, ...input }, { idempotencyKey: key }),
   reply: (id: string, body: string, key: string) =>
     api.support.reply(id, body, { idempotencyKey: key }),
+  requestState: (operation: GuardedOperationName, key: string) =>
+    api.operations.requestState(operation, key),
   update: (id: string, input: { status?: SupportTicketStatus; assignToMe?: boolean }) =>
     api.support.update(id, input),
 };
@@ -181,6 +185,8 @@ export default function App() {
         return false;
       }
       setMe(profile);
+      // Владелец меток незавершённых отправок (2.6): чужая метка в этой вкладке не трогается.
+      setGuardOwner(profile.id);
       return true;
     },
     // Единый вход — только по подтверждённому отсутствию сессии.

@@ -10,7 +10,13 @@ import {
   LoadingState,
   Stack,
 } from '@fifth/ui';
-import type { SupportTicket, SupportTicketDetail, SupportTicketStatus } from '@fifth/contracts';
+import type {
+  GuardedOperationName,
+  RequestKeyState,
+  SupportTicket,
+  SupportTicketDetail,
+  SupportTicketStatus,
+} from '@fifth/contracts';
 import { GuardedNotice, useGuardedSend } from './guarded-send';
 
 /**
@@ -34,6 +40,8 @@ export interface SupportPort {
   /** `key` — ключ повтора (2.6): транспорт передаёт его серверу как есть. */
   open: (input: { subject: string; body: string }, key: string) => Promise<SupportTicketDetail>;
   reply: (id: string, body: string, key: string) => Promise<unknown>;
+  /** Исход защищённой отправки по ключу — после входа или перезагрузки (2.6). */
+  requestState: (operation: GuardedOperationName, key: string) => Promise<RequestKeyState>;
   update: (
     id: string,
     input: { status?: SupportTicketStatus; assignToMe?: boolean },
@@ -105,7 +113,16 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
   // Обращение и ответ — защищённые отправки (2.6): при потерянном ответе форма заперта на
   // отправленном и выясняет результат тем же ключом, второе обращение не создаётся.
   const ticketSend = useGuardedSend({
+    scope: 'support.ticket.open',
+    operation: 'support.ticket.open',
     send: (input: { subject: string; body: string }, key: string) => port.open(input, key),
+    state: (key) => port.requestState('support.ticket.open', key),
+    onResolved: (ticketId) => {
+      setSubject('');
+      setBody('');
+      setNotice({ tone: 'ok', text: 'Обращение принято. Мы ответим в этом же разделе.' });
+      void load().then(() => openThread(ticketId));
+    },
     onDone: (created) => {
       setSubject('');
       setBody('');
@@ -120,8 +137,15 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
   });
 
   const replySend = useGuardedSend({
+    scope: `support.message.add:${openId ?? ''}`,
+    operation: 'support.message.add',
     send: (input: { ticketId: string; body: string }, key: string) =>
       port.reply(input.ticketId, input.body, key),
+    state: (key) => port.requestState('support.message.add', key),
+    onResolved: (_messageId, ticketId) => {
+      setReply('');
+      if (ticketId) void openThread(ticketId).then(load);
+    },
     onDone: (_result, input) => {
       setReply('');
       void openThread(input.ticketId).then(load);
@@ -204,7 +228,7 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
                     minLength={3}
                     maxLength={200}
                     value={ticketSend.snapshot?.subject ?? subject}
-                    readOnly={ticketSend.unresolved}
+                    readOnly={ticketSend.unresolved || ticketSend.busy}
                     onChange={(event) => setSubject(event.target.value)}
                     placeholder="Коротко о вопросе"
                   />
@@ -216,7 +240,7 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
                     rows={5}
                     maxLength={5000}
                     value={ticketSend.snapshot?.body ?? body}
-                    readOnly={ticketSend.unresolved}
+                    readOnly={ticketSend.unresolved || ticketSend.busy}
                     onChange={(event) => setBody(event.target.value)}
                     style={{
                       padding: 'var(--u-space-3)',
@@ -231,7 +255,7 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
                     }}
                   />
                 </Field>
-                <GuardedNotice phase={ticketSend.phase} onCheck={() => void ticketSend.check()} />
+                <GuardedNotice guard={ticketSend} />
                 {ticketSend.unresolved ? null : (
                   <div>
                     <Button
@@ -415,7 +439,7 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
                           rows={4}
                           maxLength={5000}
                           value={replySend.snapshot?.body ?? reply}
-                          readOnly={replySend.unresolved}
+                          readOnly={replySend.unresolved || replySend.busy}
                           onChange={(event) => setReply(event.target.value)}
                           style={{
                             padding: 'var(--u-space-3)',
@@ -430,10 +454,7 @@ export function SupportCard({ port, staff = false }: { port: SupportPort; staff?
                           }}
                         />
                       </Field>
-                      <GuardedNotice
-                        phase={replySend.phase}
-                        onCheck={() => void replySend.check()}
-                      />
+                      <GuardedNotice guard={replySend} />
                       <div hidden={replySend.unresolved}>
                         <Button
                           type="submit"

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { errors } from '../common/errors';
-import type { RequestContext, Tx } from './unit-of-work';
+import type { Database, RequestContext, Tx } from './unit-of-work';
 
 /**
  * Ключ повтора изменяющей операции (блок 2, 2.6; M159).
@@ -128,4 +128,70 @@ export async function claimRequestKey(
   }
   if (row.expired) throw errors.idempotencyKeyExpired();
   return row.result_id;
+}
+
+export type RequestKeyState =
+  { state: 'done'; resultId: string; objectId: string | null } | { state: 'absent' };
+
+/** Откат пробной транзакции с ответом: изменений состояние не делает. */
+class ProbeAnswer {
+  constructor(readonly answer: RequestKeyState) {}
+}
+
+/**
+ * Состояние отправки по ключу — без её содержимого (вкладка после повторного входа или
+ * перезагрузки помнит только ключ). Только чтение: пробная вставка того же ключа
+ * откатывается всегда.
+ *
+ *   * ключ зафиксирован — `done` и идентификатор результата; сам результат клиент читает
+ *     обычным маршрутом, где права проверяются заново;
+ *   * транзакция с этим ключом ещё идёт — «выполняется» (ожидание не дольше LOCK_WAIT_MS);
+ *   * ключа нет и он ничем не занят — `absent`: отправка не дошла, ничего не записано.
+ *
+ * Свои ключи видны только своему пользователю (RLS): чужой ключ даёт `absent`, как
+ * несуществующий.
+ */
+export async function requestKeyState(
+  db: Database,
+  ctx: RequestContext,
+  operation: GuardedOperation,
+  key: string,
+): Promise<RequestKeyState> {
+  try {
+    await db.transaction(ctx, async (tx) => {
+      await tx.query(`SET LOCAL lock_timeout = ${LOCK_WAIT_MS}`);
+      let inserted: boolean;
+      try {
+        const { rowCount } = await tx.query(
+          `INSERT INTO requests.idempotency_keys
+             (actor_id, operation, key, object_id, request_hash, result_id, expires_at)
+           VALUES (app.current_user_id(), $1, $2, NULL, $3, gen_random_uuid(), now())
+           ON CONFLICT (actor_id, operation, key) DO NOTHING`,
+          [operation, key, Buffer.alloc(32)],
+        );
+        inserted = rowCount === 1;
+      } catch (error) {
+        if ((error as { code?: string }).code === LOCK_NOT_AVAILABLE) {
+          throw errors.operationInProgress();
+        }
+        throw error;
+      }
+      if (inserted) throw new ProbeAnswer({ state: 'absent' });
+      const { rows } = await tx.query<{ result_id: string; object_id: string | null }>(
+        `SELECT result_id, object_id FROM requests.idempotency_keys
+          WHERE actor_id = app.current_user_id() AND operation = $1 AND key = $2`,
+        [operation, key],
+      );
+      const row = rows[0];
+      throw new ProbeAnswer(
+        row
+          ? { state: 'done', resultId: row.result_id, objectId: row.object_id }
+          : { state: 'absent' },
+      );
+    });
+  } catch (signal) {
+    if (signal instanceof ProbeAnswer) return signal.answer;
+    throw signal;
+  }
+  throw new Error('пробная транзакция завершилась без ответа');
 }

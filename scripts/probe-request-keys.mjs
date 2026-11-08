@@ -416,6 +416,57 @@ try {
     bad.status === 400,
     `HTTP ${bad.status}`,
   );
+
+  console.warn('[9] Исход по ключу без повтора работы');
+  {
+    const state = (who, op, k) => who.client.call(`/v1/me/requests/${op}/${k}`);
+    const done = await state(owner, 'lab.project.create', k1);
+    check(
+      'выполненная — «done» и тот же проект',
+      done.json?.state === 'done' && done.json?.resultId === first.json?.id,
+      `HTTP ${done.status} ${JSON.stringify(done.json)}`,
+    );
+    const never = newKey();
+    const absent = await state(owner, 'lab.project.create', never);
+    check(
+      'неизвестный ключ — «не дошла»',
+      absent.json?.state === 'absent',
+      `HTTP ${absent.status}`,
+    );
+    const [{ left: probeLeft }] = await sql(
+      'SELECT count(*)::int AS left FROM requests.idempotency_keys WHERE key = $1',
+      [never],
+    );
+    check('проверка ничего не записала', probeLeft === 0);
+    const foreignState = await state(other, 'lab.project.create', k1);
+    check(
+      'чужой ключ — «не дошла», без чужого результата',
+      foreignState.json?.state === 'absent' || foreignState.json?.resultId !== first.json?.id,
+      JSON.stringify(foreignState.json),
+    );
+    const k = newKey();
+    const holder = await pool.connect();
+    try {
+      await holder.query('BEGIN');
+      await holder.query(
+        `INSERT INTO requests.idempotency_keys
+           (actor_id, operation, key, object_id, request_hash, result_id, expires_at)
+         VALUES ($1, 'lab.project.create', $2, NULL, $3, $4, now() + interval '7 days')`,
+        [owner.userId, k, randomBytes(32), randomUUID()],
+      );
+      const busy = await state(owner, 'lab.project.create', k);
+      check(
+        'идущая — «выполняется»',
+        busy.json?.code === 'operation_in_progress',
+        `HTTP ${busy.status} ${busy.json?.code}`,
+      );
+    } finally {
+      await holder.query('ROLLBACK');
+      holder.release();
+    }
+    const wrongOp = await state(owner, 'billing.pay', k1);
+    check('чужая операция — отказ', wrongOp.status === 400, `HTTP ${wrongOp.status}`);
+  }
 } finally {
   const users = [owner.userId, other.userId].filter(Boolean);
   for (const id of projectIds) {

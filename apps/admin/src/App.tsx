@@ -5,6 +5,7 @@ import {
   ProfileLink,
   ProfilePage,
   SessionCheckFailed,
+  setGuardOwner,
   useScrollToTopOnChange,
   useSessionCheck,
   type ProfilePort,
@@ -108,6 +109,8 @@ export function App() {
   const { checking, failure, retry } = useSessionCheck(() => api.me(), {
     onReady: (user) => {
       setMe(user);
+      // Владелец меток незавершённых отправок (2.6): чужая метка во вкладке не трогается.
+      setGuardOwner(user.id);
       return true;
     },
     onAbsent: () => setMe(null),
