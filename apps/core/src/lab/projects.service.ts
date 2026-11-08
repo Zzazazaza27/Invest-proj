@@ -14,6 +14,7 @@ import {
 import { AppError, errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
 import { getEnv } from '../config/env';
+import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
 import { MAX_UPLOAD_BYTES } from './material-rules';
@@ -41,9 +42,27 @@ export class ProjectsService {
     private readonly uploads: MaterialUploadsService,
   ) {}
 
-  async create(ctx: RequestContext, input: CreateProjectRequest): Promise<ProjectFull> {
+  async create(
+    ctx: RequestContext,
+    input: CreateProjectRequest,
+    key: string | null = null,
+  ): Promise<ProjectFull> {
     const id = uuidv7();
     return this.db.transaction(ctx, async (tx) => {
+      // Ключ повтора — первым действием (2.6, M159): тот же ключ после записи возвращает
+      // прежний проект, а не создаёт второй.
+      if (key) {
+        const earlier = await claimRequestKey(
+          tx,
+          ctx,
+          { key, operation: 'lab.project.create', objectId: null, payload: input },
+          id,
+        );
+        if (earlier) {
+          await this.assertReplayRights(tx, ctx, earlier);
+          return this.reread(tx, earlier);
+        }
+      }
       // RETURNING здесь недопустим, и это не стилистика: возврат строки требует
       // прав на SELECT, а видимость проекта даёт запись в founders_projects,
       // которой в этот момент ещё нет. INSERT ... RETURNING упал бы на RLS —
@@ -386,9 +405,37 @@ export class ProjectsService {
     };
   }
 
-  async addProductLink(ctx: RequestContext, input: AddProductLink): Promise<ProjectMaterial> {
+  async addProductLink(
+    ctx: RequestContext,
+    input: AddProductLink,
+    key: string | null = null,
+  ): Promise<ProjectMaterial> {
     return this.runMapped(async () =>
       this.db.transaction(ctx, async (tx) => {
+        const id = uuidv7();
+        if (key) {
+          const earlier = await claimRequestKey(
+            tx,
+            ctx,
+            {
+              key,
+              operation: 'lab.material.link',
+              objectId: input.projectId,
+              payload: { url: input.url },
+            },
+            id,
+          );
+          if (earlier) {
+            await this.assertReplayRights(tx, ctx, input.projectId);
+            const { rows } = await tx.query<MaterialRow>(
+              `SELECT id, project_id, type, version, url, created_at, visibility
+                 FROM lab.project_materials WHERE id = $1 AND project_id = $2`,
+              [earlier, input.projectId],
+            );
+            if (!rows[0]) throw errors.notFound({ subject: 'material' });
+            return mapMaterial(rows[0]);
+          }
+        }
         await this.assertProjectVisible(tx, input.projectId);
         // Тот же лок, что берёт проверка квоты на втором пути создания
         // материала. Без него два одновременных добавления ссылки считают ОДНУ
@@ -400,7 +447,6 @@ export class ProjectsService {
           `material-quota:${input.projectId}`,
         ]);
         const version = await this.nextMaterialVersion(tx, input.projectId, 'product_link');
-        const id = uuidv7();
 
         const { rows } = await tx.query<MaterialRow>(
           // `uploaded_at` проставляется явно: ссылка не проходит через
@@ -735,6 +781,21 @@ export class ProjectsService {
       [projectId],
     );
     return mapProject(rows[0]!);
+  }
+
+  /**
+   * Прежний результат повтора выдаётся по ТЕКУЩИМ правам (2.6): участник проекта или
+   * администратор. Совпадения действующего лица мало — доступ к проекту могли отозвать.
+   */
+  private async assertReplayRights(tx: Tx, ctx: RequestContext, projectId: string): Promise<void> {
+    await this.assertProjectVisible(tx, projectId);
+    if (ctx.roles.includes('admin')) return;
+    const { rows } = await tx.query(
+      `SELECT 1 FROM lab.founders_projects
+        WHERE project_id = $1 AND user_id = app.current_user_id()`,
+      [projectId],
+    );
+    if (rows.length === 0) throw errors.notFound({ subject: 'project' });
   }
 
   private async assertProjectVisible(tx: Tx, projectId: string): Promise<void> {

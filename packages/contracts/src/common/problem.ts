@@ -34,6 +34,10 @@ export const ErrorCode = {
   NOT_FOUND: 'not_found',
   CONFLICT: 'conflict',
   IDEMPOTENCY_KEY_REUSED: 'idempotency_key_reused',
+  /** Операция с этим ключом ещё выполняется: второй работы нет, результат — позже (2.6). */
+  OPERATION_IN_PROGRESS: 'operation_in_progress',
+  /** Окно повтора ключа истекло: прежний результат не выдаётся, новая работа не начата. */
+  IDEMPOTENCY_KEY_EXPIRED: 'idempotency_key_expired',
   STATE_TRANSITION_NOT_ALLOWED: 'state_transition_not_allowed',
   LIMIT_EXCEEDED: 'limit_exceeded',
   /**
@@ -112,6 +116,8 @@ export const ERROR_STATUS: Record<ErrorCodeValue, number> = {
   [ErrorCode.NOT_FOUND]: 404,
   [ErrorCode.CONFLICT]: 409,
   [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 409,
+  [ErrorCode.OPERATION_IN_PROGRESS]: 409,
+  [ErrorCode.IDEMPOTENCY_KEY_EXPIRED]: 409,
   [ErrorCode.STATE_TRANSITION_NOT_ALLOWED]: 409,
   [ErrorCode.LIMIT_EXCEEDED]: 422,
   [ErrorCode.RESIDENCY_VIOLATION]: 403,

@@ -3,6 +3,7 @@ import {
   Controller,
   Delete,
   Get,
+  Headers,
   HttpCode,
   Param,
   Patch,
@@ -28,6 +29,7 @@ import {
 } from '@fifth/contracts';
 import { Ctx, Roles } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
+import { requestKeyFrom } from '../db/request-keys';
 import type { RequestContext } from '../db/unit-of-work';
 import { ProjectsService } from './projects.service';
 import { UploadOperationsService } from './upload-operations.service';
@@ -51,9 +53,14 @@ export class ProjectsController {
 
   @Roles('founder', 'admin')
   @Post()
-  async create(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+  async create(
+    @Body() rawBody: unknown,
+    @Headers('idempotency-key') rawKey: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
     const input = parseOrThrow(CreateProjectRequestSchema, rawBody);
-    return ProjectFullSchema.parse(await this.projects.create(ctx, input));
+    const key = requestKeyFrom(rawKey);
+    return ProjectFullSchema.parse(await this.projects.create(ctx, input, key));
   }
 
   @Get()
@@ -137,12 +144,18 @@ export class ProjectsController {
 
   @Roles('founder', 'admin')
   @Post(':id/materials/link')
-  async addLink(@Param('id') rawId: string, @Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+  async addLink(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Headers('idempotency-key') rawKey: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
     const id = parseOrThrow(UuidSchema, rawId);
     // projectId берётся из пути, а не из тела: иначе один и тот же запрос имел
     // бы два источника адресата и разошёлся бы с проверкой прав.
     const input = parseOrThrow(AddProductLinkSchema, { ...asObject(rawBody), projectId: id });
-    return ProjectMaterialSchema.parse(await this.projects.addProductLink(ctx, input));
+    const key = requestKeyFrom(rawKey);
+    return ProjectMaterialSchema.parse(await this.projects.addProductLink(ctx, input, key));
   }
 
   @Roles('founder', 'admin')

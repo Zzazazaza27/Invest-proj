@@ -82,7 +82,17 @@ export const errors = {
 
   idempotencyKeyReused: () =>
     new AppError(ErrorCode.IDEMPOTENCY_KEY_REUSED, {
-      publicDetail: 'Этот ключ идемпотентности уже использован с другими параметрами',
+      publicDetail: 'Эта отправка уже выполнена с другими данными',
+    }),
+
+  operationInProgress: () =>
+    new AppError(ErrorCode.OPERATION_IN_PROGRESS, {
+      publicDetail: 'Отправка ещё выполняется. Проверьте результат чуть позже',
+    }),
+
+  idempotencyKeyExpired: () =>
+    new AppError(ErrorCode.IDEMPOTENCY_KEY_EXPIRED, {
+      publicDetail: 'Срок проверки этой отправки истёк. Проверьте, появился ли результат',
     }),
 
   validation: (fieldErrors: { path: string; message: string }[]) =>

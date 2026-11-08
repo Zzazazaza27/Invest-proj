@@ -10,6 +10,7 @@ import {
 } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
+import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { MailTransport } from './mail.transport';
 
@@ -61,6 +62,7 @@ export class SupportService {
       /** Заголовок `User-Agent` запроса. Берётся из запроса, а не из тела. */
       userAgent?: string;
     },
+    key: string | null = null,
   ): Promise<SupportTicketDetail> {
     if (!ctx.userId) throw errors.unauthenticated();
 
@@ -83,6 +85,28 @@ export class SupportService {
 
     const ticket = await this.db.transaction(ctx, async (tx) => {
       const ticketId = uuidv7();
+      // Ключ повтора — первым действием (2.6, M159). В отпечаток идёт присланное клиентом;
+      // время, роль и браузер добавляет сервер, повтор их не меняет.
+      if (key) {
+        const earlier = await claimRequestKey(
+          tx,
+          ctx,
+          {
+            key,
+            operation: 'support.ticket.open',
+            objectId: null,
+            payload: {
+              kind: input.kind,
+              subject: input.subject,
+              body: input.body,
+              context: input.context,
+            },
+          },
+          ticketId,
+        );
+        // Прежнее обращение: письмо в ящик поддержки не отправляется второй раз.
+        if (earlier) return { replay: earlier };
+      }
       const { rows } = await tx.query<TicketRow>(
         `INSERT INTO comms.support_tickets (id, user_id, kind, subject, context_jsonb)
               VALUES ($1, $2, $3, $4, $5::jsonb)
@@ -97,6 +121,9 @@ export class SupportService {
       );
       return rows[0]!;
     });
+
+    // Повтор: обращение читается заново с текущими правами (RLS), без второго письма.
+    if ('replay' in ticket) return this.detail(ctx, ticket.replay);
 
     await this.notifyInbox({
       kind: input.kind,
@@ -120,10 +147,36 @@ export class SupportService {
    * администратор, обратившийся в поддержку сам, отвечал бы себе от лица
    * поддержки.
    */
-  async reply(ctx: RequestContext, ticketId: string, body: string): Promise<SupportMessage> {
+  async reply(
+    ctx: RequestContext,
+    ticketId: string,
+    body: string,
+    key: string | null = null,
+  ): Promise<SupportMessage> {
     if (!ctx.userId) throw errors.unauthenticated();
 
     const message = await this.db.transaction(ctx, async (tx) => {
+      const messageId = uuidv7();
+      if (key) {
+        const earlier = await claimRequestKey(
+          tx,
+          ctx,
+          { key, operation: 'support.message.add', objectId: ticketId, payload: { body } },
+          messageId,
+        );
+        if (earlier) {
+          // Текущие права: обращение должно быть видно сейчас, а не в момент первой отправки.
+          await this.loadTicketRow(tx, ticketId);
+          const { rows } = await tx.query<MessageRow>(
+            `SELECT id, author_kind, body, created_at FROM comms.support_messages
+              WHERE id = $1 AND ticket_id = $2`,
+            [earlier, ticketId],
+          );
+          const earlierRow = rows[0];
+          if (!earlierRow) throw errors.notFound({ subject: 'support_message' });
+          return { replay: earlierRow };
+        }
+      }
       const ticket = await this.loadTicketRow(tx, ticketId);
       const isOwner = ticket.user_id === ctx.userId;
       const authorKind = isOwner ? 'user' : 'staff';
@@ -136,10 +189,13 @@ export class SupportService {
         `INSERT INTO comms.support_messages (id, ticket_id, author_id, author_kind, body)
               VALUES ($1, $2, $3, $4, $5)
            RETURNING id, author_kind, body, created_at`,
-        [uuidv7(), ticketId, ctx.userId, authorKind, body],
+        [messageId, ticketId, ctx.userId, authorKind, body],
       );
       return { row: rows[0]!, authorKind, subject: ticket.subject, kind: ticket.kind };
     });
+
+    // Повтор: прежнее сообщение, без второго письма в ящик поддержки.
+    if (message.replay) return mapMessage(message.replay);
 
     // На служебный ящик уходит только сообщение ПОЛЬЗОВАТЕЛЯ: ответ сотрудника
     // отправлять самим себе бессмысленно, а ящик от этого становится нечитаемым.

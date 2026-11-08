@@ -171,6 +171,8 @@ const TITLES: Partial<Record<string, string>> = {
   [ErrorCode.NOT_FOUND]: 'Не найдено',
   [ErrorCode.CONFLICT]: 'Конфликт состояния',
   [ErrorCode.IDEMPOTENCY_KEY_REUSED]: 'Повторное использование ключа',
+  [ErrorCode.OPERATION_IN_PROGRESS]: 'Операция выполняется',
+  [ErrorCode.IDEMPOTENCY_KEY_EXPIRED]: 'Срок повтора истёк',
   [ErrorCode.LIMIT_EXCEEDED]: 'Превышен лимит',
   [ErrorCode.RATE_LIMITED]: 'Слишком много запросов',
   [ErrorCode.FEATURE_DISABLED]: 'Функция недоступна',

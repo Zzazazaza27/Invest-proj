@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import {
   AddSupportMessageRequestSchema,
   CreateSupportTicketRequestSchema,
@@ -12,6 +12,7 @@ import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { Ctx } from '../auth/guards';
 import { parseOrThrow } from '../common/validation';
+import { requestKeyFrom } from '../db/request-keys';
 import type { RequestContext } from '../db/unit-of-work';
 import { SupportService } from './support.service';
 
@@ -34,15 +35,25 @@ export class SupportController {
   constructor(private readonly support: SupportService) {}
 
   @Post('tickets')
-  async open(@Body() rawBody: unknown, @Req() request: FastifyRequest, @Ctx() ctx: RequestContext) {
+  async open(
+    @Body() rawBody: unknown,
+    @Req() request: FastifyRequest,
+    @Headers('idempotency-key') rawKey: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
     const input = parseOrThrow(CreateSupportTicketRequestSchema, rawBody);
+    const key = requestKeyFrom(rawKey);
     // User-Agent берётся из ЗАГОЛОВКА, а не из тела: в баг-репорте нужен факт
     // о браузере, а не утверждение страницы о самой себе.
     const userAgent = request.headers['user-agent'];
-    const ticket = await this.support.open(ctx, {
-      ...input,
-      userAgent: typeof userAgent === 'string' ? userAgent : undefined,
-    });
+    const ticket = await this.support.open(
+      ctx,
+      {
+        ...input,
+        userAgent: typeof userAgent === 'string' ? userAgent : undefined,
+      },
+      key,
+    );
     return SupportTicketDetailSchema.parse(ticket);
   }
 
@@ -60,10 +71,16 @@ export class SupportController {
   }
 
   @Post('tickets/:id/messages')
-  async reply(@Param('id') rawId: string, @Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+  async reply(
+    @Param('id') rawId: string,
+    @Body() rawBody: unknown,
+    @Headers('idempotency-key') rawKey: unknown,
+    @Ctx() ctx: RequestContext,
+  ) {
     const id = parseOrThrow(UuidSchema, rawId);
     const input = parseOrThrow(AddSupportMessageRequestSchema, rawBody);
-    return SupportMessageSchema.parse(await this.support.reply(ctx, id, input.body));
+    const key = requestKeyFrom(rawKey);
+    return SupportMessageSchema.parse(await this.support.reply(ctx, id, input.body, key));
   }
 
   /**
