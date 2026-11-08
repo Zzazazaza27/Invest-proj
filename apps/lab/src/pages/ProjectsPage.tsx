@@ -13,7 +13,13 @@ import {
   Stack,
   formatMoney,
 } from '@fifth/ui';
-import type { ProjectFull, ProjectSummary, TaxonomyNode } from '@fifth/contracts';
+import { GuardedNotice, useGuardedSend } from '@fifth/cabinet';
+import type {
+  CreateProjectRequest,
+  ProjectFull,
+  ProjectSummary,
+  TaxonomyNode,
+} from '@fifth/contracts';
 import { ApiError, api } from '../api';
 import { ProjectBadges } from '../App';
 
@@ -182,9 +188,28 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
     taxonomyId: '',
     investmentAsk: '',
   });
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  // Защищённая отправка (2.6): потерянный ответ не превращает повтор во второй проект.
+  const send = useGuardedSend({
+    send: (body: CreateProjectRequest, key: string) =>
+      api.projects.create(body, { idempotencyKey: key }),
+    onDone: (project) => onCreated(project),
+    onFail: (caught) => {
+      if (caught instanceof ApiError) {
+        // Ошибки полей сервер отдаёт списком — показываем их у самих
+        // полей, а не одной строкой «проверьте данные».
+        const byField: Record<string, string> = {};
+        for (const item of caught.problem?.errors ?? []) {
+          byField[item.path] = item.message;
+        }
+        setFieldErrors(byField);
+        setError(caught.problem?.detail ?? caught.message);
+      } else {
+        setError('Сервис недоступен');
+      }
+    },
+  });
 
   useEffect(() => {
     api
@@ -201,110 +226,101 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
   return (
     <Card>
       <form
-        onSubmit={async (event) => {
+        onSubmit={(event) => {
           event.preventDefault();
-          setBusy(true);
           setError(null);
           setFieldErrors({});
-          try {
-            const project = await api.projects.create({
-              title: form.title,
-              tagline: form.tagline || undefined,
-              stage: form.stage as 'idea' | 'mvp' | 'early_revenue' | 'growth',
-              taxonomyId: form.taxonomyId,
-              investmentAsk: form.investmentAsk,
-              askCurrency: 'RUB',
-            });
-            onCreated(project);
-          } catch (caught) {
-            if (caught instanceof ApiError) {
-              // Ошибки полей сервер отдаёт списком — показываем их у самих
-              // полей, а не одной строкой «проверьте данные».
-              const byField: Record<string, string> = {};
-              for (const item of caught.problem?.errors ?? []) {
-                byField[item.path] = item.message;
-              }
-              setFieldErrors(byField);
-              setError(caught.problem?.detail ?? caught.message);
-            } else {
-              setError('Сервис недоступен');
-            }
-          } finally {
-            setBusy(false);
-          }
+          void send.submit({
+            title: form.title,
+            tagline: form.tagline || undefined,
+            stage: form.stage as 'idea' | 'mvp' | 'early_revenue' | 'growth',
+            taxonomyId: form.taxonomyId,
+            investmentAsk: form.investmentAsk,
+            askCurrency: 'RUB',
+          });
         }}
       >
         <Stack>
           <h2 style={{ margin: 0, fontSize: 'var(--u-text-lg)' }}>Новый проект</h2>
-
-          <Field label="Название" htmlFor="title" error={fieldErrors.title}>
-            <Input
-              id="title"
-              required
-              minLength={2}
-              maxLength={200}
-              value={form.title}
-              onChange={(event) => setForm({ ...form, title: event.target.value })}
-              aria-describedby={fieldErrors.title ? 'title-error' : undefined}
-            />
-          </Field>
-
-          <Field label="Короткое описание" htmlFor="tagline" error={fieldErrors.tagline}>
-            <Input
-              id="tagline"
-              maxLength={300}
-              value={form.tagline}
-              onChange={(event) => setForm({ ...form, tagline: event.target.value })}
-            />
-          </Field>
-
-          <Field label="Стадия" htmlFor="stage" error={fieldErrors.stage}>
-            <select
-              id="stage"
-              value={form.stage}
-              onChange={(event) => setForm({ ...form, stage: event.target.value })}
-              style={selectStyle}
-            >
-              <option value="idea">Идея</option>
-              <option value="mvp">MVP</option>
-              <option value="early_revenue">Первая выручка</option>
-              <option value="growth">Рост</option>
-            </select>
-          </Field>
-
-          <Field label="Направление" htmlFor="taxonomyId" error={fieldErrors.taxonomyId}>
-            <select
-              id="taxonomyId"
-              value={form.taxonomyId}
-              onChange={(event) => setForm({ ...form, taxonomyId: event.target.value })}
-              style={selectStyle}
-              required
-            >
-              {taxonomy.length === 0 ? <option value="">Загружается…</option> : null}
-              {taxonomy.map((node) => (
-                <option key={node.id} value={node.id}>
-                  {node.nameRu}
-                </option>
-              ))}
-            </select>
-          </Field>
-
-          <Field
-            label="Запрос инвестиций, ₽"
-            htmlFor="investmentAsk"
-            error={fieldErrors.investmentAsk}
-            hint="Сколько проект хочет привлечь — видно в карточке проекта"
+          {/*
+            Пока отправка идёт или её результат не выяснен, поля заперты: на экране ровно
+            то, что ушло на сервер, и правка не может стать вторым проектом.
+          */}
+          <fieldset
+            disabled={send.busy || send.unresolved}
+            style={{ border: 0, padding: 0, margin: 0, minWidth: 0, display: 'contents' }}
           >
-            <Input
-              id="investmentAsk"
-              inputMode="decimal"
-              pattern="^\d+(\.\d{1,2})?$"
-              placeholder="5000000.00"
-              required
-              value={form.investmentAsk}
-              onChange={(event) => setForm({ ...form, investmentAsk: event.target.value })}
-            />
-          </Field>
+            <Field label="Название" htmlFor="title" error={fieldErrors.title}>
+              <Input
+                id="title"
+                required
+                minLength={2}
+                maxLength={200}
+                value={form.title}
+                onChange={(event) => setForm({ ...form, title: event.target.value })}
+                aria-describedby={fieldErrors.title ? 'title-error' : undefined}
+              />
+            </Field>
+
+            <Field label="Короткое описание" htmlFor="tagline" error={fieldErrors.tagline}>
+              <Input
+                id="tagline"
+                maxLength={300}
+                value={form.tagline}
+                onChange={(event) => setForm({ ...form, tagline: event.target.value })}
+              />
+            </Field>
+
+            <Field label="Стадия" htmlFor="stage" error={fieldErrors.stage}>
+              <select
+                id="stage"
+                value={form.stage}
+                onChange={(event) => setForm({ ...form, stage: event.target.value })}
+                style={selectStyle}
+              >
+                <option value="idea">Идея</option>
+                <option value="mvp">MVP</option>
+                <option value="early_revenue">Первая выручка</option>
+                <option value="growth">Рост</option>
+              </select>
+            </Field>
+
+            <Field label="Направление" htmlFor="taxonomyId" error={fieldErrors.taxonomyId}>
+              <select
+                id="taxonomyId"
+                value={form.taxonomyId}
+                onChange={(event) => setForm({ ...form, taxonomyId: event.target.value })}
+                style={selectStyle}
+                required
+              >
+                {taxonomy.length === 0 ? <option value="">Загружается…</option> : null}
+                {taxonomy.map((node) => (
+                  <option key={node.id} value={node.id}>
+                    {node.nameRu}
+                  </option>
+                ))}
+              </select>
+            </Field>
+
+            <Field
+              label="Запрос инвестиций, ₽"
+              htmlFor="investmentAsk"
+              error={fieldErrors.investmentAsk}
+              hint="Сколько проект хочет привлечь — видно в карточке проекта"
+            >
+              <Input
+                id="investmentAsk"
+                inputMode="decimal"
+                pattern="^\d+(\.\d{1,2})?$"
+                placeholder="5000000.00"
+                required
+                value={form.investmentAsk}
+                onChange={(event) => setForm({ ...form, investmentAsk: event.target.value })}
+              />
+            </Field>
+          </fieldset>
+
+          <GuardedNotice phase={send.phase} onCheck={() => void send.check()} />
 
           {error ? (
             <div role="alert" style={{ color: 'var(--u-danger)', fontSize: 'var(--u-text-sm)' }}>
@@ -319,9 +335,16 @@ function CreateProjectForm({ onCreated }: { onCreated: (project: ProjectFull) =>
             ответа справочника. Кнопка, ведущая только к отказу, не должна быть
             нажимаемой; причина названа словами, а не спрятана в disabled.
           */}
-          <Button type="submit" variant="brand" loading={busy} disabled={taxonomy.length === 0}>
-            Создать
-          </Button>
+          {send.unresolved ? null : (
+            <Button
+              type="submit"
+              variant="brand"
+              loading={send.busy}
+              disabled={send.busy || taxonomy.length === 0}
+            >
+              Создать
+            </Button>
+          )}
           {taxonomy.length === 0 && !error ? (
             <div style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
               Загружается справочник направлений — без него проект создать нельзя.

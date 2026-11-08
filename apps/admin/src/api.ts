@@ -1061,21 +1061,24 @@ export const api = {
     });
   },
 
-  openSupportTicket(body: CreateSupportTicketRequest): Promise<SupportTicketDetail> {
+  /** `key` — ключ повтора защищённой отправки (2.6). */
+  openSupportTicket(body: CreateSupportTicketRequest, key?: string): Promise<SupportTicketDetail> {
     return client.request({
       method: 'POST',
       path: '/v1/support/tickets',
       body,
       schema: SupportTicketDetailSchema,
+      idempotencyKey: key,
     });
   },
 
-  replySupportTicket(id: string, body: string) {
+  replySupportTicket(id: string, body: string, key?: string) {
     return client.request({
       method: 'POST',
       path: `/v1/support/tickets/${encodeURIComponent(id)}/messages`,
       body: { body },
       schema: SupportMessageSchema,
+      idempotencyKey: key,
     });
   },
 

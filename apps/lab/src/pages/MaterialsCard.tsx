@@ -17,6 +17,7 @@ import {
   type ProjectMaterial,
   type UserOperation,
 } from '@fifth/contracts';
+import { GuardedNotice, useGuardedSend } from '@fifth/cabinet';
 import { ApiError, api } from '../api';
 import { useOperations } from '../operations';
 import { S } from '../strings';
@@ -188,23 +189,24 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
     [projectId, load],
   );
 
-  const addLink = useCallback(async () => {
-    setBusy(true);
-    setNotice(null);
-    try {
-      // Адрес не проверяется здесь на «внутренний»: этот запрет — правило
-      // сервера (SSRF), и дублировать его в браузере значило бы завести второе
-      // место, где он может разойтись с настоящим.
-      await api.projects.addProductLink(projectId, { projectId, url });
+  // Защищённая отправка (2.6): потерянный ответ не добавляет ссылку второй раз.
+  // Адрес не проверяется здесь на «внутренний»: этот запрет — правило сервера (SSRF), и
+  // дублировать его в браузере значило бы завести второе место, где он может разойтись.
+  const linkSend = useGuardedSend({
+    send: (input: { projectId: string; url: string }, key: string) =>
+      api.projects.addProductLink(input.projectId, input, { idempotencyKey: key }),
+    onDone: () => {
       setUrl('');
       setNotice({ tone: 'ok', text: 'Ссылка добавлена' });
-      await load();
-    } catch (error) {
-      setNotice({ tone: 'error', text: errorText(error) });
-    } finally {
-      setBusy(false);
-    }
-  }, [projectId, url, load]);
+      void load();
+    },
+    onFail: (error) => setNotice({ tone: 'error', text: errorText(error) }),
+  });
+
+  const addLink = useCallback(() => {
+    setNotice(null);
+    void linkSend.submit({ projectId, url });
+  }, [projectId, url, linkSend]);
 
   /**
    * Загрузка файла: сервер выдаёт подписанную форму, браузер отправляет файл
@@ -482,14 +484,22 @@ export function MaterialsCard({ projectId }: { projectId: string }) {
           <Input
             id="product-link"
             type="url"
-            value={url}
+            value={linkSend.snapshot?.url ?? url}
+            readOnly={linkSend.busy || linkSend.unresolved}
             placeholder="https://example.com"
             onChange={(event) => setUrl(event.target.value)}
           />
         </Field>
-        <Button onClick={() => void addLink()} loading={busy} disabled={url.trim().length === 0}>
-          Добавить ссылку
-        </Button>
+        <GuardedNotice phase={linkSend.phase} onCheck={() => void linkSend.check()} />
+        {linkSend.unresolved ? null : (
+          <Button
+            onClick={addLink}
+            loading={linkSend.busy}
+            disabled={busy || linkSend.busy || url.trim().length === 0}
+          >
+            Добавить ссылку
+          </Button>
+        )}
 
         {/*
           Одна кнопка — одно действие: выбор файла и есть начало загрузки

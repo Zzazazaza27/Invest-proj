@@ -37,6 +37,12 @@ export class ApiError extends Error {
   readonly traceId: string | null;
   /** Через сколько секунд сервер разрешает повтор (429 / 503 с `Retry-After`). */
   readonly retryAfterSeconds: number | null;
+  /**
+   * Результат изменяющего запроса неизвестен (2.6): ответ не получен или оборван на прокси
+   * (502/504) — сервер мог успеть записать. Это не отказ: показывать нельзя ни успех, ни
+   * окончательную неудачу. Выяснять — повтором с тем же ключом там, где маршрут защищён.
+   */
+  readonly outcomeUnknown: boolean;
 
   constructor(
     message: string,
@@ -46,6 +52,7 @@ export class ApiError extends Error {
       problem?: ProblemDetails | null;
       cause?: unknown;
       retryAfterSeconds?: number | null;
+      outcomeUnknown?: boolean;
     },
   ) {
     super(message, { cause: opts.cause });
@@ -55,6 +62,7 @@ export class ApiError extends Error {
     this.problem = opts.problem ?? null;
     this.traceId = opts.problem?.traceId ?? null;
     this.retryAfterSeconds = opts.retryAfterSeconds ?? null;
+    this.outcomeUnknown = opts.outcomeUnknown ?? false;
   }
 
   /** Требуется повышение уровня аутентификации (step-up MFA). */
@@ -194,6 +202,17 @@ export class ApiClient {
           await sleep(backoffMs(attempt));
           continue;
         }
+        // 502/504 на изменяющем запросе: прокси не дождался ядра, а оно могло записать.
+        if (
+          !RETRYABLE_METHODS.has(method) &&
+          (response.status === 502 || response.status === 504)
+        ) {
+          throw new ApiError('Не удалось получить ответ сервера', {
+            code: ErrorCode.DEPENDENCY_UNAVAILABLE,
+            status: response.status,
+            outcomeUnknown: true,
+          });
+        }
         throw await this.#toApiError(response);
       } catch (error) {
         if (error instanceof ApiError) throw error;
@@ -215,6 +234,9 @@ export class ApiClient {
             code: ErrorCode.DEPENDENCY_UNAVAILABLE,
             status: 0,
             cause: error,
+            // Изменяющий запрос мог дойти до сервера: обрыв не означает отказа. Чтение
+            // ничего не меняет, его неизвестность не важна.
+            outcomeUnknown: !RETRYABLE_METHODS.has(method),
           },
         );
       }

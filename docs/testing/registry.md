@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 211; требований: 41
+- Проверок: 213; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 80
+### Зарегистрированы, но ни в наборе, ни в CI — 82
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -191,6 +191,7 @@
 - `CHK-UPSTREAM-OWNER` — Гейт «в репозиторий коммитит только владелец».
 - `CHK-PRE-PUSH` — Быстрая проверка перед отправкой: только файлы, которые уходят в origin.
 - `PRB-UPLOAD-COMPLETION` — Приёмка завершения загрузок материалов на общем механизме: аренда, попытки, сверка, отказы и режим отката.
+- `PRB-REQUEST-KEYS` — Ключ повтора на четырёх операциях (создание проекта, ссылка-материал, обращение, сообщение): повтор после потерянного ответа даёт прежний результат без второ…
 - `PRB-UPLOAD-CANCEL` — Отмена загрузки — состояние «отменено» без удаления: место в квоте освобождено, поздний файл не публикуется ни завершением, ни сверкой, гонка отмены с публик…
 - `PRB-CSRF-BINDING` — Проверка привязки CSRF-токена к сессии.
 - `PRB-DNS-REBINDING` — Проверка защиты доставки вебхуков от DNS rebinding.
@@ -219,6 +220,7 @@
 - `RND-LAB` — Проверка кабинета основателя в РЕАЛЬНОМ рендере (`RULES.md` §2): вход настоящей учётной записью, создание проекта, отображение своих проектов, страница проек…
 - `RND-MEDIA-EMBEDDING` — Проверка встраивания изображений проекта (7.2, уточнение).
 - `RND-PROJECT-MEDIA` — Рендер-проверка логотипа и обложки НА ТЕЛЕФОНЕ (7.2).
+- `RND-GUARDED-SEND` — Защищённая отправка формы «Новый проект» (2.2, 2.6): при потерянном ответе — предупреждение о неизвестном результате без ложного успеха и без ошибки; поля за…
 - `RND-UPLOAD-OPERATIONS` — Длительные операции в кабинете основателя (2.1-W04, блок 1 1.5): окончательная ошибка — всплывающее сообщение; скрытая вкладка показ не подтверждает, видимая…
 - `RND-PROJECT-PAGE` — Рендер-проверка страницы проекта для ТРЁХ зрителей (этап 7.3).
 - `RND-SUPPORT` — Поддержка и сообщение об ошибке в РЕАЛЬНОМ рендере (`RULES.md` §2).
@@ -413,6 +415,7 @@
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
 | PRB-UPLOAD-COMPLETION | `node scripts/probe-upload-completion.mjs` | 55 | вручную | — |
+| PRB-REQUEST-KEYS | `node scripts/probe-request-keys.mjs` | 25 | вручную | — |
 | PRB-UPLOAD-CANCEL | `node scripts/probe-upload-cancel.mjs` | 48 | вручную | — |
 | PRB-CSRF-BINDING | `node scripts/probe-csrf-binding.mjs` | 6 | вручную | — |
 | PRB-DNS-REBINDING | `node scripts/probe-dns-rebinding.mjs` | 6 | вручную | — |
@@ -449,6 +452,7 @@
 | RND-MEDIA-EMBEDDING | `node scripts/render-check-media-embedding.mjs` | 12 | вручную | — |
 | RND-PROFILE | `node scripts/render-check-profile.mjs` | 17 | вручную | `suite:regression` |
 | RND-PROJECT-MEDIA | `node scripts/render-check-project-media.mjs` | 16 | вручную | — |
+| RND-GUARDED-SEND | `FIFTH_ENTRY=web node scripts/render-check-guarded-send.mjs` | 12 | вручную | — |
 | RND-UPLOAD-OPERATIONS | `FIFTH_ENTRY=web node scripts/render-check-upload-operations.mjs` | 48 | вручную | — |
 | RND-PROJECT-PAGE | `node scripts/render-check-project-page.mjs` | 15 | вручную | — |
 | RND-SUPPORT | `node scripts/render-check-support.mjs` | 26 | вручную | — |
@@ -527,7 +531,7 @@
 | UNIT-CORE-TECHDEBT | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-VERIFICATION | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-SECRET-FILES | `npm run test -w apps/core` | 11 | CI | CI |
-| UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 17 | CI | CI |
+| UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 20 | CI | CI |
 | UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |
 | UNIT-PKG-CONTRACTS-VISIBILITY | `npm run test -w packages/contracts` | 10 | CI | CI |
 | UNIT-PKG-UI-MARKDOWN | `npm run test -w packages/ui` | 10 | CI | CI |

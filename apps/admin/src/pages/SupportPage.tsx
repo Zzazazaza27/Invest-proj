@@ -16,8 +16,8 @@ import { api } from '../api';
 const port: SupportPort = {
   list: () => api.supportTickets(),
   detail: (id) => api.supportTicket(id),
-  open: (input) => api.openSupportTicket({ kind: 'support', ...input }),
-  reply: (id, body) => api.replySupportTicket(id, body),
+  open: (input, key) => api.openSupportTicket({ kind: 'support', ...input }, key),
+  reply: (id, body, key) => api.replySupportTicket(id, body, key),
   update: (id, input: { status?: SupportTicketStatus; assignToMe?: boolean }) =>
     api.updateSupportTicket(id, input),
 };

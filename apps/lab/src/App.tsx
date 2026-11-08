@@ -107,9 +107,10 @@ const verificationPort = {
 const supportPort = {
   list: () => api.support.list(),
   detail: (id: string) => api.support.detail(id),
-  open: (input: { subject: string; body: string }) =>
-    api.support.open({ kind: 'support' as const, ...input }),
-  reply: (id: string, body: string) => api.support.reply(id, body),
+  open: (input: { subject: string; body: string }, key: string) =>
+    api.support.open({ kind: 'support' as const, ...input }, { idempotencyKey: key }),
+  reply: (id: string, body: string, key: string) =>
+    api.support.reply(id, body, { idempotencyKey: key }),
   update: (id: string, input: { status?: SupportTicketStatus; assignToMe?: boolean }) =>
     api.support.update(id, input),
 };

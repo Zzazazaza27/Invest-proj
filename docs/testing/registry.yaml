@@ -880,6 +880,29 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: PRB-REQUEST-KEYS
+    file: scripts/probe-request-keys.mjs
+    command: node scripts/probe-request-keys.mjs
+    kind: probe
+    level: интеграционный
+    runner: manual
+    asserts: 25
+    needs: [db, core]
+    effects:
+      [
+        'создаёт двух пользователей, проекты, ссылку-материал, обращение и сообщение',
+        'убирает проекты, обращения и ключи повтора; учётки и записи аудита остаются',
+      ]
+    studied: code
+    studiedOn: 2026-11-08
+    note: >-
+      Блок 2, 2.6, первый пакет (M159). Незавершённая транзакция с ключом
+      имитируется прямой вставкой без фиксации: второй запрос получает
+      «выполняется», после отката ключ свободен.
+    purpose: 'Ключ повтора на четырёх операциях (создание проекта, ссылка-материал, обращение, сообщение): повтор после потерянного ответа даёт прежний результат без второго объекта; другое содержимое или другой объект с тем же ключом — конфликт без изменения; тот же ключ у другого участника — его своя работа; три одновременных запроса — одно изменение; незавершённая первая транзакция — «выполняется», после отката ключ не заблокирован; отзыв прав перед повтором — прежний результат не выдан; ошибка с откатом не оставляет ключа; просроченный ключ — явный отказ без новой работы; повтор обращения не шлёт второе письмо в ящик поддержки; неверный ключ — отказ.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
+
   - id: PRB-UPLOAD-CANCEL
     file: scripts/probe-upload-cancel.mjs
     command: node scripts/probe-upload-cancel.mjs
@@ -1459,6 +1482,28 @@ checks:
     studiedOn: 2026-09-22
     purpose: 'Рендер-проверка логотипа и обложки НА ТЕЛЕФОНЕ (7.2). Размер экрана выбран не для красоты: загрузка файла, ползунки кадрирования и кнопки замены — это ровно то, что ломается на узком экране и что человек будет делать с т'
     confirmation: reviewed-in-code
+
+  - id: RND-GUARDED-SEND
+    file: scripts/render-check-guarded-send.mjs
+    command: FIFTH_ENTRY=web node scripts/render-check-guarded-send.mjs
+    kind: render
+    level: сквозной
+    runner: manual
+    asserts: 12
+    needs: [db, core, web]
+    effects:
+      [
+        'создаёт пользователя и проект через форму кабинета основателя',
+        'убирает проект и ключи повтора; учётка остаётся',
+      ]
+    studied: code
+    studiedOn: 2026-11-08
+    note: >-
+      Ответ теряется после записи: Playwright пропускает запрос к ядру и обрывает
+      соединение до браузера (route.fetch + abort).
+    purpose: 'Защищённая отправка формы «Новый проект» (2.2, 2.6): при потерянном ответе — предупреждение о неизвестном результате без ложного успеха и без ошибки; поля заперты на отправленном, кнопки «Создать» нет; автоматическая проверка и проверка кнопкой идут с тем же ключом; после выяснения — один проект, кабинет его открывает; исключений на странице нет.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-08
 
   - id: RND-UPLOAD-OPERATIONS
     file: scripts/render-check-upload-operations.mjs
@@ -3727,7 +3772,7 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 17
+    asserts: 20
     studied: code
     studiedOn: 2026-09-22
     needs: []
@@ -4489,6 +4534,8 @@ blocks:
         PRB-UPLOAD-COMPLETION,
         PRB-UPLOAD-CANCEL,
         RND-UPLOAD-OPERATIONS,
+        PRB-REQUEST-KEYS,
+        RND-GUARDED-SEND,
         DBT-OPERATIONS,
         UNIT-CORE-UPLOAD-COMPLETION,
         DBT-INVARIANTS,

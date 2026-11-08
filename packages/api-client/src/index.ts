@@ -81,6 +81,14 @@ import { ApiClient, type ClientOptions } from './client';
 export { ApiClient, ApiError, type AuthMode, type ClientOptions } from './client';
 
 /**
+ * Ключ повтора защищённой операции (2.6): форма создаёт его до первой отправки и передаёт
+ * тот же при выяснении неизвестного результата. Без него метод создаёт новый на каждый вызов.
+ */
+export interface GuardedSend {
+  idempotencyKey?: string;
+}
+
+/**
  * Фасад API /v1.
  *
  * Каждый метод знает свою схему ответа, поэтому расхождение сервера с
@@ -409,13 +417,14 @@ export class FifthApi {
         idempotencyKey: uuidv7(),
       }),
 
-    create: (body: CreateProjectRequest) =>
+    /** Ключ повтора задаёт форма (2.6): повтор после неизвестного результата — с тем же. */
+    create: (body: CreateProjectRequest, opts: GuardedSend = {}) =>
       this.http.request({
         method: 'POST',
         path: '/projects',
         body,
         schema: ProjectFullSchema,
-        idempotencyKey: uuidv7(),
+        idempotencyKey: opts.idempotencyKey ?? uuidv7(),
       }),
 
     update: (id: string, body: UpdateProjectRequest) =>
@@ -523,12 +532,13 @@ export class FifthApi {
         schema: MaterialUploadResultSchema,
       }),
 
-    addProductLink: (id: string, body: AddProductLink) =>
+    addProductLink: (id: string, body: AddProductLink, opts: GuardedSend = {}) =>
       this.http.request({
         method: 'POST',
         path: `/projects/${id}/materials/link`,
         body,
         schema: ProjectMaterialSchema,
+        idempotencyKey: opts.idempotencyKey ?? uuidv7(),
       }),
 
     // askMentor удалён: маршрута `/projects/mentor` на сервере нет. AI Mentor
@@ -702,20 +712,22 @@ export class FifthApi {
         schema: SupportTicketDetailSchema,
       }),
 
-    open: (body: CreateSupportTicketRequest) =>
+    open: (body: CreateSupportTicketRequest, opts: GuardedSend = {}) =>
       this.http.request({
         method: 'POST',
         path: '/support/tickets',
         body,
         schema: SupportTicketDetailSchema,
+        idempotencyKey: opts.idempotencyKey ?? uuidv7(),
       }),
 
-    reply: (id: string, body: string) =>
+    reply: (id: string, body: string, opts: GuardedSend = {}) =>
       this.http.request({
         method: 'POST',
         path: `/support/tickets/${encodeURIComponent(id)}/messages`,
         body: { body },
         schema: SupportMessageSchema,
+        idempotencyKey: opts.idempotencyKey ?? uuidv7(),
       }),
 
     /** Взять в работу и закрыть. Право проверяет сервер, не клиент. */

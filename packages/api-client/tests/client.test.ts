@@ -288,3 +288,54 @@ describe('Фабрики клиентов', () => {
     expect(() => api.http.setCsrfToken('csrf-2')).not.toThrow();
   });
 });
+
+describe('Неизвестный результат изменяющего запроса (2.6)', () => {
+  const failing = () =>
+    mockFetch(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+
+  it('обрыв на POST — результат неизвестен, автоматического повтора нет', async () => {
+    const fetchImpl = failing();
+    const client = new ApiClient({
+      baseUrl: 'https://api.test/v1',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const error = await client
+      .request({ method: 'POST', path: '/projects', body: {} })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).outcomeUnknown).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('504 прокси на POST — результат неизвестен', async () => {
+    const fetchImpl = mockFetch(async () => new Response('', { status: 504 }));
+    const client = new ApiClient({
+      baseUrl: 'https://api.test/v1',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const error = await client
+      .request({ method: 'POST', path: '/projects', body: {} })
+      .catch((e: unknown) => e);
+    expect((error as ApiError).outcomeUnknown).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('отказ сервера с ответом — известный результат', async () => {
+    const fetchImpl = mockFetch(async () =>
+      jsonResponse(
+        { type: 'https://x/problems/conflict', title: 'x', status: 409, code: 'conflict' },
+        409,
+      ),
+    );
+    const client = new ApiClient({
+      baseUrl: 'https://api.test/v1',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const error = await client
+      .request({ method: 'POST', path: '/projects', body: {} })
+      .catch((e: unknown) => e);
+    expect((error as ApiError).outcomeUnknown).toBe(false);
+  });
+});
