@@ -44,6 +44,9 @@ Object.assign(process.env, {
   WEBHOOK_DESTINATION_PAUSE_S: '2',
   WEBHOOK_DESTINATION_PAUSE_MAX_S: '8',
   WEBHOOK_EGRESS_PAUSE_MS: '1500',
+  // Короткая аренда доставки (предел 3 с + 10 с) — сценарий «запрос пересекает срок».
+  WEBHOOK_TIMEOUT_MS: '1000',
+  WEBHOOK_DNS_RETRY_S: '1',
 });
 const DIST = join(ROOT, 'apps/core/dist');
 if (!existsSync(join(DIST, 'events/webhook-delivery.service.js'))) {
@@ -93,12 +96,29 @@ const crypto = { openDirect: async () => Buffer.from('probe-secret') };
 
 /** Подставной исходящий HTTP: поведение по хосту, учёт вызовов. */
 const behaviour = new Map();
+const delays = new Map();
 const calls = [];
+const inflight = new Map();
+const maxInflight = new Map();
 const transport = {
-  resolve: async () => ['93.184.216.34'],
+  resolve: async (url) => {
+    const host = new URL(url).hostname;
+    if (behaviour.get(host) === 'dns') {
+      // Так помечает отказ резолвера настоящая проверка адреса (assertPublicDestination).
+      throw Object.assign(new Error('имя не разрешается'), { dnsCode: 'EAI_AGAIN' });
+    }
+    return ['93.184.216.34'];
+  },
   post: async (url) => {
     const host = new URL(url).hostname;
     calls.push(host);
+    inflight.set(host, (inflight.get(host) ?? 0) + 1);
+    maxInflight.set(host, Math.max(maxInflight.get(host) ?? 0, inflight.get(host)));
+    try {
+      if (delays.get(host)) await sleep(delays.get(host));
+    } finally {
+      inflight.set(host, inflight.get(host) - 1);
+    }
     const mode = behaviour.get(host) ?? 'ok';
     if (mode === 'refuse') {
       throw Object.assign(new Error('connect ECONNREFUSED'), {
@@ -121,6 +141,7 @@ const tag = randomUUID().slice(0, 8);
 const hostA = `a-${tag}.probe.test`;
 const hostB = `b-${tag}.probe.test`;
 const created = { endpoints: [], events: [], account: null };
+const helpers = {};
 async function setup() {
   const [admin] = await sql(`SELECT user_id FROM identity.user_roles WHERE role = 'admin' LIMIT 1`);
   const account = randomUUID();
@@ -164,6 +185,8 @@ async function setup() {
     );
     return id;
   };
+  helpers.endpoint = endpoint;
+  helpers.delivery = delivery;
   // Три подписки на один адрес A и одна на B.
   const a1 = await endpoint(`https://${hostA}/hook`);
   const a2 = await endpoint(`https://${hostA.toUpperCase()}:443/other`);
@@ -305,9 +328,89 @@ try {
     'размыкатель брокера открыт, доставки B ушли',
     health.brokerBreaker().isOpen('write') && callsTo(hostB) === before + 3,
   );
+
+  console.warn('[8] Временный сбой DNS на последней попытке');
+  const hostC = `c-${tag}.probe.test`;
+  const epC = await helpers.endpoint(`https://${hostC}/hook`);
+  const dC = await helpers.delivery(epC, 5);
+  await sql(
+    `UPDATE integration.webhook_deliveries SET status = 'failed', attempts = 7 WHERE id = $1`,
+    [dC],
+  );
+  behaviour.set(hostC, 'dns');
+  await make().runOnce();
+  const [c1] = await sql(
+    'SELECT status, attempts, next_retry_at > now() AS later FROM integration.webhook_deliveries WHERE id = $1',
+    [dC],
+  );
+  check(
+    'доставка сохранена, счётчик тот же, повтор отложен',
+    c1.status === 'failed' && c1.attempts === 7 && c1.later,
+    JSON.stringify(c1),
+  );
+  check(
+    'узел на паузу не поставлен, запроса не было',
+    !(await destination(hostC)) && callsTo(hostC) === 0,
+  );
+  behaviour.delete(hostC);
+  await sleep(1300);
+  await make().runOnce();
+  const [c2] = await sql(
+    'SELECT status, attempts FROM integration.webhook_deliveries WHERE id = $1',
+    [dC],
+  );
+  check(
+    'после восстановления DNS доставка прошла',
+    c2.status === 'delivered' && c2.attempts === 8,
+    JSON.stringify(c2),
+  );
+
+  console.warn('[9] Проба пересекает первоначальный срок аренды');
+  const lease =
+    health.destinationPause &&
+    (
+      await import(pathToFileURL(join(DIST, 'events/webhook-delivery.service.js')).href)
+    ).deliveryLeaseSeconds();
+  const hostD = `d-${tag}.probe.test`;
+  const hostE = `e-${tag}.probe.test`;
+  const epD = await helpers.endpoint(`https://${hostD}/hook`);
+  const epE = await helpers.endpoint(`https://${hostE}/hook`);
+  // E — старше: в пачке перед пробой D. Три доставки E съедают почти весь срок аренды.
+  for (const off of [300, 299, 298]) await helpers.delivery(epE, off);
+  for (const off of [200, 199]) await helpers.delivery(epD, off);
+  await sql(
+    `INSERT INTO integration.webhook_destinations
+       (destination, failures, pause_seconds, paused_until, last_failure_kind)
+     VALUES ($1, 1, 2, now() - interval '1 second', 'transport')`,
+    [`${hostD}:443`],
+  );
+  const eDelay = Math.floor(((lease - 3) * 1000) / 3);
+  delays.set(hostE, eDelay);
+  delays.set(hostD, 6000);
+  const started = Date.now();
+  const first = make().runOnce();
+  // Ждём, пока проба D начнёт запрос, затем — до первоначального срока аренды + 1 с.
+  while (callsTo(hostD) === 0 && Date.now() - started < (lease + 10) * 1000) await sleep(100);
+  const dStartedAt = Date.now() - started;
+  await sleep(Math.max(0, lease * 1000 + 1000 - (Date.now() - started)));
+  const crossed = Date.now() - started > lease * 1000 && inflight.get(hostD) === 1;
+  const dBefore = callsTo(hostD);
+  await make().runOnce();
+  check(
+    'запрос пробы пересёк первоначальный срок аренды',
+    crossed,
+    `аренда ${lease} с, запрос с ${Math.round(dStartedAt / 1000)} с`,
+  );
+  check(
+    'второй исполнитель в это время пробу не получил',
+    callsTo(hostD) === dBefore && (maxInflight.get(hostD) ?? 0) === 1,
+    `вызовов D ${callsTo(hostD)}, одновременно ${maxInflight.get(hostD)}`,
+  );
+  await first;
+  delays.clear();
 } finally {
-  await sql(`DELETE FROM integration.webhook_destinations WHERE destination = ANY($1)`, [
-    [`${hostA}:443`, `${hostB}:443`],
+  await sql(`DELETE FROM integration.webhook_destinations WHERE destination LIKE $1`, [
+    `%-${tag}.probe.test:443`,
   ]).catch(() => undefined);
   if (created.endpoints.length > 0) {
     await sql(`DELETE FROM integration.webhook_deliveries WHERE endpoint_id = ANY($1)`, [

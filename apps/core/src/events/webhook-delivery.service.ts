@@ -11,6 +11,7 @@ import {
   classifyDeliveryFailure,
   destinationPause,
   egressMonitor,
+  isTransientDns,
   type DeliveryFailureKind,
 } from './events-health';
 import { absoluteDeadlineMs, postPinned } from './pinned-fetch';
@@ -123,7 +124,7 @@ export class WebhookDeliveryService implements OnModuleInit {
       // экземпляр забирал те же строки и слал вебхук ВТОРОЙ раз — а побочный
       // эффект у получателя настоящий: списание, сделка, запись в CRM
       // (SEC-06).
-      if (!(await this.renewLease(traceId, item))) {
+      if (!(await this.renewLease(traceId, item).catch(lostProbe))) {
         // Захват уже не наш: дальше не идём вовсе — пачка могла уйти другому исполнителю.
         this.logger.warn({
           msg: 'аренда доставки потеряна, проход остановлен',
@@ -273,7 +274,20 @@ export class WebhookDeliveryService implements OnModuleInit {
           WHERE id = $1 AND lease_id = $2::uuid AND lease_until > now()`,
         [item.id, item.lease_id, deliveryLeaseSeconds()],
       );
-      return (rowCount ?? 0) === 1;
+      if ((rowCount ?? 0) !== 1) return false;
+      // Проба узла (M163): её аренда продлевается тем же шагом. Пробу перехватили или её срок
+      // вышел — отправку не начинать, иначе второй исполнитель уже проверяет узел своей
+      // доставкой и проб станет две. Откат транзакции снимает и продление доставки.
+      if (item.is_probe) {
+        const { rowCount: probe } = await tx.query(
+          `UPDATE integration.webhook_destinations
+              SET probe_until = now() + make_interval(secs => $3)
+            WHERE destination = $1 AND probe_lease_id = $2::uuid AND probe_until > now()`,
+          [item.destination, item.lease_id, deliveryLeaseSeconds()],
+        );
+        if ((probe ?? 0) !== 1) throw new ProbeLost();
+      }
+      return true;
     });
   }
 
@@ -346,6 +360,16 @@ export class WebhookDeliveryService implements OnModuleInit {
         if (item.is_probe) await this.releaseProbe(traceId, item);
         return (await this.postponeForKeys(traceId, item)) ? 'not_delivered' : 'lease_lost';
       }
+      if (isTransientDns(error)) {
+        // Временный сбой нашего резолвера: получатель ни при чём — попытка не расходуется,
+        // узел на паузу не ставится. В общий сигнал сбоя это входит.
+        this.lastFailure = 'platform';
+        egressMonitor().transportFailure(item.destination);
+        if (item.is_probe) await this.releaseProbe(traceId, item);
+        return (await this.postponeWithoutAttempt(traceId, item, DNS_RETRY_SECONDS, 'dns'))
+          ? 'not_delivered'
+          : 'lease_lost';
+      }
       if (kind === 'transport') egressMonitor().transportFailure(item.destination);
       else egressMonitor().networkWorks();
       const reason =
@@ -365,18 +389,34 @@ export class WebhookDeliveryService implements OnModuleInit {
    * отказ OpenBao исчерпал бы доставки, которые дошли бы через минуту.
    */
   private async postponeForKeys(traceId: string, item: DeliveryRow): Promise<boolean> {
+    return this.postponeWithoutAttempt(traceId, item, KEYS_RETRY_SECONDS, 'keys');
+  }
+
+  /** Отложить без расхода попытки: служба ключей или временный сбой резолвера — наши. */
+  private async postponeWithoutAttempt(
+    traceId: string,
+    item: DeliveryRow,
+    seconds: number,
+    why: 'keys' | 'dns',
+  ): Promise<boolean> {
     const kept = await this.db.asServiceRole('app_integration', { traceId }, async (tx) => {
       const { rowCount } = await tx.query(
         `UPDATE integration.webhook_deliveries
             SET status = 'failed', next_retry_at = now() + make_interval(secs => $2),
                 lease_id = NULL, lease_until = NULL
           WHERE id = $1 AND lease_id = $3::uuid AND lease_until > now()`,
-        [item.id, KEYS_RETRY_SECONDS, item.lease_id],
+        [item.id, seconds, item.lease_id],
       );
       return (rowCount ?? 0) === 1;
     });
     if (kept) {
-      this.logger.warn({ msg: 'доставка отложена: служба ключей недоступна', deliveryId: item.id });
+      this.logger.warn({
+        msg:
+          why === 'keys'
+            ? 'доставка отложена: служба ключей недоступна'
+            : 'доставка отложена: временный сбой DNS, попытка не расходуется',
+        deliveryId: item.id,
+      });
     }
     return kept;
   }
@@ -568,6 +608,15 @@ const LEASE_MARGIN_SECONDS = 10;
 
 const MAX_ATTEMPTS = 8;
 const KEYS_RETRY_SECONDS = 60;
+/** Повтор после временного сбоя резолвера; настраивается для проверок. */
+const DNS_RETRY_SECONDS = Number(process.env.WEBHOOK_DNS_RETRY_S ?? 30);
+
+/** Аренда пробы узла уже не наша: отправку не начинать. */
+class ProbeLost extends Error {}
+const lostProbe = (error: unknown): false => {
+  if (error instanceof ProbeLost) return false;
+  throw error;
+};
 const MAX_BACKOFF_SECONDS = 3600;
 
 interface DeliveryRow {

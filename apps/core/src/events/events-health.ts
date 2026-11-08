@@ -53,6 +53,15 @@ export function classifyDeliveryFailure(error: unknown): DeliveryFailureKind {
   return 'receiver';
 }
 
+/**
+ * Временный сбой нашего резолвера (EAI_AGAIN, таймаут и т. п.): доставка откладывается БЕЗ
+ * расхода попытки. Только DNS — обычные отказы соединения попытку расходуют.
+ */
+export function isTransientDns(error: unknown): boolean {
+  const code = (error as { dnsCode?: unknown } | null)?.dnsCode;
+  return code !== undefined && DNS_TRANSIENT.has(String(code));
+}
+
 /** Нормализованный узел назначения «хост:порт» — как столбец `destination` (M163). */
 export function destinationOf(url: string): string {
   const parsed = new URL(url);
