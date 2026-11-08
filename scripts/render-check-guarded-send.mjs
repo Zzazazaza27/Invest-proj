@@ -60,10 +60,20 @@ let userId = null;
 /** Перехват создания проекта: `plan` — что сделать с очередным ответом. */
 const sent = [];
 let plan = [];
+/** Запросы, задержанные «до сервера»: исходная отправка, которая придёт позже. */
+const held = [];
 await page.route('**/v1/projects', async (route) => {
   if (route.request().method() !== 'POST') return route.continue();
   const step = plan.shift() ?? 'pass';
-  const key = route.request().headers()['idempotency-key'];
+  const headers = route.request().headers();
+  const key = headers['idempotency-key'];
+  const title = JSON.parse(route.request().postData() ?? '{}').title;
+  if (step === 'hold') {
+    // До ядра запрос не доходит сейчас; браузер видит обрыв. Повторим его позже сами.
+    sent.push({ key, step, title, reached: false });
+    held.push({ url: route.request().url(), headers, body: route.request().postData() });
+    return route.abort('connectionreset');
+  }
   if (step === '401' || step === '503') {
     sent.push({ key, step, reached: false });
     const status = Number(step);
@@ -79,7 +89,7 @@ await page.route('**/v1/projects', async (route) => {
     });
   }
   const response = await route.fetch();
-  sent.push({ key, step, reached: true, status: response.status() });
+  sent.push({ key, step, title, reached: true, status: response.status() });
   if (step === 'drop') return route.abort('connectionreset');
   if (step === 'garble') {
     return route.fulfill({
@@ -91,12 +101,27 @@ await page.route('**/v1/projects', async (route) => {
   return route.fulfill({ response });
 });
 
+/** Кабинет; при ограничении частоты с адреса (429) — дождаться сброса, как в RND-UPLOAD-OPERATIONS. */
+async function openLab() {
+  for (let i = 0; i < 4; i += 1) {
+    await page.goto(`${SITE}/lab/`);
+    await page.waitForTimeout(800);
+    if ((await page.getByText('Слишком много запросов').count()) === 0) return;
+    await page.waitForTimeout(30_000);
+  }
+}
+
 async function openForm(title) {
-  await page.goto(`${SITE}/lab/`);
+  await openLab();
   await page
     .getByRole('button', { name: /Новый проект/ })
     .first()
-    .click();
+    .click({ timeout: 15_000 })
+    .catch(async (error) => {
+      const text = (await page.locator('main, body').first().innerText()).slice(0, 300);
+      console.warn(`  (нет кнопки: ${page.url()} — ${text.replace(/\s+/g, ' ')})`);
+      throw error;
+    });
   // Без направления сервер отвечает 400: ждём справочник, иначе проверяется не то.
   await page.waitForFunction(() => document.querySelector('#taxonomyId')?.value);
   await page.locator('#title').fill(title);
@@ -207,7 +232,7 @@ try {
     );
     // Вход «восстановился» (здесь 401 был подставной): страница открыта заново — исход
     // выясняется по метке вкладки, без повтора создания.
-    await page.goto(`${SITE}/lab/`);
+    await openLab();
     check('после возвращения кабинет сам открыл тот же проект', await waitProjectOpened());
     check(
       'создание вызвано дважды, с одним ключом',
@@ -315,11 +340,195 @@ try {
     check('проект один', (await projectCount(title)) === 1);
   }
 
-  const [owner] = await sql(
-    'SELECT id FROM identity.users WHERE display_name = $1 ORDER BY created_at DESC LIMIT 1',
-    ['RK форма'],
+  /** Задержанная исходная отправка доходит до ядра — с её ключом и сессией. */
+  async function replayHeld() {
+    const h = held.shift();
+    for (let i = 0; ; i += 1) {
+      const response = await page.request.post(h.url, {
+        headers: {
+          'content-type': 'application/json',
+          'idempotency-key': h.headers['idempotency-key'],
+          'x-csrf-token': h.headers['x-csrf-token'],
+        },
+        data: h.body,
+      });
+      // Ограничение частоты с адреса — не ответ на операцию: подождать и повторить.
+      if (response.status() === 429 && i < 3) {
+        await page.waitForTimeout(1000 * (Number(response.headers()['retry-after']) || 30));
+        continue;
+      }
+      return { status: response.status(), json: await response.json().catch(() => null) };
+    }
+  }
+  /** Пауза перед сценарием: окно ограничения частоты с адреса сбрасывается. */
+  const cool = () => page.waitForTimeout(45_000);
+  /** Неизвестная отправка, о которой сервер ещё не знает: после перезагрузки — «не найдена». */
+  async function notFoundYet(title) {
+    held.length = 0;
+    plan = ['hold', 'hold'];
+    await openForm(title);
+    await waitPhase('unknown');
+    await page.waitForTimeout(2500);
+    await openLab();
+    return waitPhase('not_found');
+  }
+
+  await cool();
+  console.warn('[F1] «Не найдена», затем поздняя исходная, затем новая отправка');
+  {
+    const t1 = `RK F1 исходная ${stamp}`;
+    const t2 = `RK F1 новая ${stamp}`;
+    titles.push(t1, t2);
+    const from = sent.length;
+    check(
+      'по ключу «не найдена» — не окончательный отказ',
+      (await notFoundYet(t1)) === 'not_found',
+    );
+    const late = await replayHeld();
+    check('поздняя исходная выполнилась', late.status === 201, `HTTP ${late.status}`);
+    await page
+      .getByRole('button', { name: /Новый проект/ })
+      .first()
+      .click();
+    await page.waitForFunction(() => document.querySelector('#taxonomyId')?.value);
+    check('форма открыта для новой отправки', !(await page.locator('#title').isDisabled()));
+    await page.locator('#title').fill(t2);
+    await page.locator('#investmentAsk').fill('1000000');
+    plan = ['pass'];
+    await page.getByRole('button', { name: 'Создать', exact: true }).click();
+    check('новая получила конфликт — открыт результат поздней исходной', await waitProjectOpened());
+    check('новая отправка шла прежним ключом', keysOf(from) === 1, `ключей ${keysOf(from)}`);
+    const n1 = await projectCount(t1);
+    const n2 = await projectCount(t2);
+    check('выполнилась ровно одна', n1 + n2 === 1 && n1 === 1, `исходная ${n1}, новая ${n2}`);
+  }
+
+  await cool();
+  console.warn('[F2] «Не найдена», затем новая отправка, затем поздняя исходная');
+  {
+    const t1 = `RK F2 исходная ${stamp}`;
+    const t2 = `RK F2 новая ${stamp}`;
+    titles.push(t1, t2);
+    const from = sent.length;
+    check('по ключу «не найдена»', (await notFoundYet(t1)) === 'not_found');
+    await page
+      .getByRole('button', { name: /Новый проект/ })
+      .first()
+      .click();
+    await page.waitForFunction(() => document.querySelector('#taxonomyId')?.value);
+    await page.locator('#title').fill(t2);
+    await page.locator('#investmentAsk').fill('1000000');
+    plan = ['pass'];
+    await page.getByRole('button', { name: 'Создать', exact: true }).click();
+    check('новая выполнена', await waitProjectOpened());
+    const late = await replayHeld();
+    check(
+      'поздняя исходная получила конфликт ключа',
+      late.status === 409 && late.json?.code === 'idempotency_key_reused',
+      `HTTP ${late.status} ${late.json?.code}`,
+    );
+    check('один ключ', keysOf(from) === 1);
+    const n1 = await projectCount(t1);
+    const n2 = await projectCount(t2);
+    check('выполнилась ровно одна', n1 === 0 && n2 === 1, `исходная ${n1}, новая ${n2}`);
+  }
+
+  await cool();
+  console.warn('[G] A оставил неизвестную отправку → вошёл B и отправил свою → вернулся A');
+  {
+    const ta = `RK G A ${stamp}`;
+    const tb = `RK G B ${stamp}`;
+    titles.push(ta, tb);
+    const from = sent.length;
+    plan = ['drop', 'drop'];
+    await openForm(ta);
+    await waitPhase('unknown');
+    await page.waitForTimeout(2500);
+    const keyA = sent[sent.length - 1].key;
+    // Вход B в этой же вкладке.
+    await context.clearCookies();
+    await page.goto(`${SITE}/login/`);
+    const emailB = `rk-form-b-${stamp}@test.local`;
+    await page.evaluate(async (address) => {
+      await fetch('/v1/auth/register', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: address,
+          password: `Pw-${crypto.randomUUID()}`,
+          displayName: 'RK форма B',
+          role: 'founder',
+          locale: 'ru-RU',
+          consents: ['platform_rules', 'tos', 'pdn', 'commission_terms'].map((kind) => ({
+            kind,
+            version: 'v1',
+            locale: 'ru-RU',
+          })),
+        }),
+      });
+    }, emailB);
+    await openLab();
+    await page
+      .getByRole('button', { name: /Новый проект/ })
+      .first()
+      .waitFor();
+    check(
+      'у B чужой незавершённой отправки нет',
+      (await page.locator('[data-guarded]').count()) === 0,
+    );
+    const beforeB = sent.length;
+    plan = ['drop', 'drop'];
+    await openForm(tb);
+    await waitPhase('unknown');
+    await page.waitForTimeout(2500);
+    const marks = await page.evaluate(() =>
+      Object.keys(sessionStorage)
+        .filter((k) => k.startsWith('fifth.pending.'))
+        .map((k) => JSON.parse(sessionStorage.getItem(k)).owner),
+    );
+    check(
+      'во вкладке две метки разных владельцев',
+      marks.length === 2 && new Set(marks).size === 2,
+      JSON.stringify(marks),
+    );
+    const asB = sent.slice(beforeB);
+    check(
+      'под B не ушло ни ключа, ни содержимого A',
+      asB.every((s) => s.key !== keyA && s.title !== ta),
+      JSON.stringify(asB.map((s) => s.title)),
+    );
+    await page.locator('[data-guarded-check]').click();
+    check('B выяснил свою отправку', await waitProjectOpened());
+    // Возвращается A.
+    await context.clearCookies();
+    await page.goto(`${SITE}/login/`);
+    await page.locator('#email').fill(email);
+    await page.locator('#password').fill(password);
+    await page.locator('#password').press('Enter');
+    check('A после входа получил свою отправку', await waitProjectOpened());
+    const aCount = await projectCount(ta);
+    const bCount = await projectCount(tb);
+    check('у каждого по одному проекту', aCount === 1 && bCount === 1, `A ${aCount}, B ${bCount}`);
+    const ownerOf = async (t) =>
+      (
+        await sql(
+          `SELECT u.display_name FROM lab.projects p JOIN lab.founders_projects f ON f.project_id = p.id
+             JOIN identity.users u ON u.id = f.user_id WHERE p.title = $1`,
+          [t],
+        )
+      )[0]?.display_name;
+    check(
+      'проекты у своих владельцев',
+      (await ownerOf(ta)) === 'RK форма' && (await ownerOf(tb)) === 'RK форма B',
+    );
+    check('A и B — разные ключи', keysOf(from) === 2);
+  }
+
+  const owners = await sql(
+    "SELECT id FROM identity.users WHERE display_name IN ('RK форма', 'RK форма B') AND created_at > now() - interval '1 hour'",
   );
-  userId = owner?.id ?? null;
+  userId = owners.map((o) => o.id);
   check('исключений на странице нет', errors.length === 0, errors.join('; ').slice(0, 200));
 } finally {
   for (const title of titles) {
@@ -328,7 +537,9 @@ try {
       await sql('DELETE FROM lab.projects WHERE id = $1', [id]);
     }
   }
-  if (userId) await sql('DELETE FROM requests.idempotency_keys WHERE actor_id = $1', [userId]);
+  if (userId?.length) {
+    await sql('DELETE FROM requests.idempotency_keys WHERE actor_id = ANY($1::uuid[])', [userId]);
+  }
   await browser.close();
   await pool.end();
 }

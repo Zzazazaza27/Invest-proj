@@ -452,7 +452,7 @@
 | RND-MEDIA-EMBEDDING | `node scripts/render-check-media-embedding.mjs` | 12 | вручную | — |
 | RND-PROFILE | `node scripts/render-check-profile.mjs` | 17 | вручную | `suite:regression` |
 | RND-PROJECT-MEDIA | `node scripts/render-check-project-media.mjs` | 16 | вручную | — |
-| RND-GUARDED-SEND | `FIFTH_ENTRY=web node scripts/render-check-guarded-send.mjs` | 36 | вручную | — |
+| RND-GUARDED-SEND | `FIFTH_ENTRY=web node scripts/render-check-guarded-send.mjs` | 55 | вручную | — |
 | RND-UPLOAD-OPERATIONS | `FIFTH_ENTRY=web node scripts/render-check-upload-operations.mjs` | 48 | вручную | — |
 | RND-PROJECT-PAGE | `node scripts/render-check-project-page.mjs` | 15 | вручную | — |
 | RND-SUPPORT | `node scripts/render-check-support.mjs` | 26 | вручную | — |
