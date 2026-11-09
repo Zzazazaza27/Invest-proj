@@ -83,10 +83,11 @@ const PILOT_STATE = process.env.FIFTH_MONITOR_STATE || '/var/lib/fifth-monitor';
 const PILOT_BACKUP_HOURS = 30;
 // Ноутбук бывает выключен: порог с запасом на выходные.
 const PILOT_OFFSITE_HOURS = 72;
-// Выгрузка аудита (2.1.5): порция каждый час; 2 ч — цель на сервере, 3 ч — вне сервера при
-// доступном ноутбуке (цель, не гарантия).
+// Выгрузка аудита (2.1.5): порция каждый час; 2 ч — цель на сервере. Вне сервера — 72 ч:
+// пока на prod нет пользователей, ноутбук забирает раз в сутки (Томас, 09.11). При выходе в
+// прод — ежечасно и 3 ч (TODO сейфа, «Перед выходом в прод»).
 const AUDIT_EXPORT_HOURS = 2;
-const AUDIT_OFFSITE_HOURS = 3;
+const AUDIT_OFFSITE_HOURS = 72;
 let secretsError = null;
 try {
   loadEnv();

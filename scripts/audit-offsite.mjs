@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Вынос выгрузки журнала аудита с сервера (2.1.5; согласовано Тэнком 09.11.2026) — на
- * ноутбуке Томаса, по расписанию раз в час (infra/laptop/install-audit-offsite.ps1; ставится
+ * ноутбуке Томаса, по расписанию раз в сутки (infra/laptop/install-audit-offsite.ps1; ставится
  * только по согласованию с Томасом). Среды — рабочая и test-2, у каждой свой каталог и
  * своя контрольная точка.
  *
@@ -49,7 +49,8 @@ const TASK = '5E audit offsite';
 // соединении (09.11.2026), а вынос делает по соединению на файл.
 const GIT_SSH = 'C:/Program Files/Git/usr/bin/ssh.exe';
 const SSH = process.platform === 'win32' && existsSync(GIT_SSH) ? GIT_SSH : 'ssh';
-const STALE_HOURS = 3;
+// Как AUDIT_OFFSITE_HOURS в backup.mjs: 72 ч до выхода в прод, затем 3 ч (Томас, 09.11).
+const STALE_HOURS = 72;
 
 function remote(command) {
   if (SOURCE_DIR) {
