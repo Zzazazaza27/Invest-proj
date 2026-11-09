@@ -23,8 +23,8 @@
  * Прежние запуски не затираются.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync, createWriteStream } from 'node:fs';
-import { cpus, hostname, release, totalmem, platform } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
+import { cpus, homedir, hostname, release, totalmem, platform } from 'node:os';
 import { join } from 'node:path';
 import { BASE, ROOT, basicAuthHeader, isLocalBase, parseArgs, runDir } from './lib.mjs';
 
@@ -166,6 +166,41 @@ writeFileSync(join(outDir, 'meta.json'), JSON.stringify(meta, null, 2));
 console.log(`\n=== НАГРУЗКА p1: ${mode}, прогон ${runId} → ${BASE} ===`);
 console.log(`  отчёт: ${outDir}\n`);
 
+// Сборщик на сервере (infra/host/prod-load-collect.sh): ресурсы, пороги прекращения, журнал ядра.
+// --server-collect <секунд> — предел сбора; без флага (локальная цель) не запускается.
+const SSH = [
+  '-i',
+  join(homedir(), '.ssh', 'maus_5e'),
+  '-o',
+  'IdentitiesOnly=yes',
+  '-o',
+  'BatchMode=yes',
+  '-o',
+  'ConnectTimeout=20',
+  process.env.FIFTH_VPS ?? 'maus@193.233.217.210',
+];
+const collectId = `${runId}-${stamp}`.replace(/[^A-Za-z0-9._-]/g, '-').slice(0, 64);
+const collectSecs = Number(args['server-collect'] ?? 0);
+const onServer = (...a) =>
+  spawnSync(
+    'ssh',
+    [...SSH, ['sudo -n /usr/local/sbin/fifth-test op prod-load-collect', ...a].join(' ')],
+    {
+      encoding: 'utf8',
+      timeout: 120_000,
+    },
+  );
+let watch = null;
+if (collectSecs > 0) {
+  const started = onServer('start', collectId, String(Math.min(collectSecs, 14_400)));
+  if (started.status !== 0) {
+    console.error(`сборщик на сервере не запущен: ${(started.stderr || started.stdout).trim()}`);
+    process.exit(2);
+  }
+  meta.serverCollect = { id: collectId, limitSec: collectSecs };
+  console.log(`  сборщик на сервере: ${collectId}`);
+}
+
 const log = createWriteStream(join(outDir, 'k6.log'));
 const child = spawn('docker', dockerArgs, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
 child.stdout.on('data', (d) => {
@@ -179,10 +214,35 @@ child.stderr.on('data', (d) => {
 const stop = () => {
   spawnSync('docker', ['stop', '--time', '30', containerName], { stdio: 'ignore' });
 };
+if (collectSecs > 0) {
+  // Порог на сервере сработал — прогон прекращается, причина пишется в meta.json.
+  watch = setInterval(() => {
+    const st = onServer('status', collectId).stdout?.trim() ?? '';
+    if (st.startsWith('STOP')) {
+      meta.stoppedByServer = st.slice(5);
+      console.error(`\n  ПОРОГ НА СЕРВЕРЕ: ${meta.stoppedByServer} — прогон прекращается`);
+      clearInterval(watch);
+      stop();
+    }
+  }, 10_000);
+}
 process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 child.on('close', (code) => {
   log.end();
+  if (watch) clearInterval(watch);
+  if (collectSecs > 0) {
+    onServer('stop', collectId);
+    const exp = onServer('export', collectId);
+    // Разделы выгрузки — отдельными файлами; серверное время API — сводкой по маршрутам.
+    const parts = (exp.stdout ?? '').split(/^### /m).filter(Boolean);
+    mkdirSync(join(outDir, 'server'), { recursive: true });
+    for (const part of parts) {
+      const nl = part.indexOf('\n');
+      writeFileSync(join(outDir, 'server', part.slice(0, nl).trim()), part.slice(nl + 1));
+    }
+    meta.serverSummary = serverSummary(join(outDir, 'server', 'core-requests.csv'));
+  }
   meta.finishedAt = new Date().toISOString();
   meta.exitCode = code;
   writeFileSync(join(outDir, 'meta.json'), JSON.stringify(meta, null, 2));
@@ -192,3 +252,25 @@ child.on('close', (code) => {
   );
   process.exit(hasSummary ? (code ?? 1) : 1);
 });
+
+/** Серверное время API по шаблону маршрута: p95, p99, максимум, число, 5xx — из общей выборки. */
+function serverSummary(file) {
+  if (!existsSync(file)) return null;
+  const by = new Map();
+  for (const line of readFileSync(file, 'utf8').split('\n').slice(1)) {
+    const [, method, route, status, ms] = line.split(',');
+    if (!route) continue;
+    const key = `${method} ${route}`;
+    const e = by.get(key) ?? { d: [], s5: 0 };
+    e.d.push(Number(ms));
+    if (Number(status) >= 500) e.s5 += 1;
+    by.set(key, e);
+  }
+  const q = (a, p) => a[Math.min(a.length - 1, Math.ceil((p / 100) * a.length) - 1)];
+  return Object.fromEntries(
+    [...by].map(([k, e]) => {
+      const d = e.d.sort((x, y) => x - y);
+      return [k, { count: d.length, p95: q(d, 95), p99: q(d, 99), max: d.at(-1), err5xx: e.s5 }];
+    }),
+  );
+}
