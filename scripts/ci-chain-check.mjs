@@ -82,6 +82,10 @@ try {
         'base64',
       );
     }
+    const kit = JSON.parse(bytes.toString('utf8'));
+    for (const name of Object.keys(kit.sbom?.files ?? {})) {
+      files[`sbom/${name}`] = readFileSync(join(art, 'sbom', name)).toString('base64');
+    }
     return JSON.stringify({
       build,
       expect,

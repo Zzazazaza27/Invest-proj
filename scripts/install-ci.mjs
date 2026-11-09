@@ -92,6 +92,14 @@ function stageFiles(request, kit) {
     const name = basename(file);
     writeFileSync(join(dir, 'prod-compose', name), take(`prod-compose/${name}`, sum));
   }
+  if (kit.sbom) {
+    // Опись — только файлы, названные подписанным манифестом, с его суммами.
+    mkdirSync(join(dir, 'sbom'));
+    for (const [name, sum] of Object.entries(kit.sbom.files ?? {})) {
+      if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) refuse(`опись: недопустимое имя ${name}`);
+      writeFileSync(join(dir, 'sbom', name), take(`sbom/${name}`, sum));
+    }
+  }
   return dir;
 }
 

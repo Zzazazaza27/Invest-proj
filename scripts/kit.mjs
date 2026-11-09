@@ -4,7 +4,7 @@
  *
  *   node scripts/kit.mjs manifest --build <номер> --commit <sha> --images <файл.json> --out <файл>
  *   node scripts/kit.mjs fetch    --build <номер> [--run <запуск CI>] [--dir <артефакт>]
- *   node scripts/kit.mjs pack     --build <номер> --from <метка>
+ *   node scripts/kit.mjs pack     --build <номер> --from <метка> [--sbom <каталог описи>]
  *   node scripts/kit.mjs load     --build <номер>
  *   node scripts/kit.mjs check    --build <номер>
  *   node scripts/kit.mjs pin      --env <среда> [--current <номер>] [--rollback <номер>] [--pending <номер|none>] [--partial <номер|none>]
@@ -211,8 +211,31 @@ function manifest() {
 
 const kitDir = (build) => join(KITS, build);
 
+const SBOM_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
+/**
+ * Опись в комплекте (блок 11; замечание Тэнка 09.11): каждый файл из манифеста есть и
+ * совпадает по сумме. Комплект без поля sbom (выпущенный до описи) — совместим.
+ */
+function sbomProblems(dir, kit) {
+  if (!kit.sbom) return [];
+  const files = kit.sbom.files ?? {};
+  if (!Object.keys(files).length) return [`опись сборки ${kit.build}: в манифесте нет файлов`];
+  const problems = [];
+  for (const [name, sum] of Object.entries(files)) {
+    if (!SBOM_NAME.test(name)) {
+      problems.push(`опись: недопустимое имя ${name}`);
+      continue;
+    }
+    const path = join(dir, 'sbom', name);
+    if (!existsSync(path)) problems.push(`опись: ${name} нет в комплекте ${kit.build}`);
+    else if (sha256(readFileSync(path)) !== sum) problems.push(`опись: ${name} — хеш не сошёлся`);
+  }
+  return problems;
+}
+
 /** Комплект только добавляется: занятый номер не заменяется. */
-function storeKit(build, kit, composeFile, tarOf, prodSource = ROOT) {
+function storeKit(build, kit, composeFile, tarOf, prodSource = ROOT, sbomSource = null) {
   const dir = kitDir(build);
   if (existsSync(join(dir, 'kit.json'))) throw new Refused(`комплект ${build} уже есть`);
   const composeText = readFileSync(composeFile);
@@ -229,6 +252,22 @@ function storeKit(build, kit, composeFile, tarOf, prodSource = ROOT) {
     const text = readFileSync(existsSync(source) ? source : join(ROOT, file));
     if (sha256(text) !== kit.prodCompose[file]) throw new Error(`${file} не совпал с манифестом`);
     writeFileSync(join(tmp, 'prod-compose', prodFileName(file)), text);
+  }
+  if (kit.sbom) {
+    // Опись переносится из артефакта и сверяется до сохранения: подписанный манифест не
+    // должен ссылаться на отсутствующие или чужие файлы.
+    if (!sbomSource) throw new Refused(`в артефакте сборки ${build} нет описи`);
+    mkdirSync(join(tmp, 'sbom'));
+    for (const name of Object.keys(kit.sbom.files ?? {})) {
+      if (!SBOM_NAME.test(name)) throw new Refused(`опись: недопустимое имя ${name}`);
+      const from = join(sbomSource, name);
+      if (existsSync(from)) cpSync(from, join(tmp, 'sbom', name));
+    }
+    const problems = sbomProblems(tmp, kit);
+    if (problems.length) {
+      rmSync(tmp, { recursive: true, force: true });
+      throw new Refused(problems.join('; '));
+    }
   }
   tarOf(join(tmp, 'images.tar'));
   return { tmp, dir, kit };
@@ -303,6 +342,7 @@ async function fetchKit() {
     stagedCompose,
     (tar) => run('docker', ['save', '-o', tar, ...tags]),
     join(staging, 'prod-compose'),
+    join(staging, 'sbom'),
   );
   rmSync(staging, { recursive: true, force: true });
   const sealed = await commitKit(staged);
@@ -319,15 +359,22 @@ async function pack() {
     const imageId = run('docker', ['image', 'inspect', ref, '--format', '{{.Id}}']);
     images[c] = { ref, digest: ref, imageId };
   }
+  const sbomDir = flag('--sbom');
   const kit = manifestOf({
     build,
     commit: run('git', ['rev-parse', 'HEAD']),
     images,
     previous: flag('--previous'),
+    sbom: sbomDir ? sbomOf(sbomDir) : null,
   });
   const tags = tagForKit(build, (c) => images[c].ref);
-  const staged = storeKit(build, kit, COMPOSE, (tar) =>
-    run('docker', ['save', '-o', tar, ...tags]),
+  const staged = storeKit(
+    build,
+    kit,
+    COMPOSE,
+    (tar) => run('docker', ['save', '-o', tar, ...tags]),
+    ROOT,
+    sbomDir,
   );
   const sealed = await commitKit(staged);
   finish({ ok: true, build, tar: sealed.tar }, 0);
@@ -339,7 +386,10 @@ async function readKit(build) {
   const kit = JSON.parse(readFileSync(file, 'utf8'));
   const tar = await sha256File(join(kitDir(build), 'images.tar'));
   if (tar !== kit.tar.sha256) throw new Error(`images.tar сборки ${build}: хеш не сошёлся`);
-  const prodProblems = prodFileProblems(kitDir(build), kit);
+  const prodProblems = [
+    ...prodFileProblems(kitDir(build), kit),
+    ...sbomProblems(kitDir(build), kit),
+  ];
   if (prodProblems.length) throw new Error(prodProblems.join('; '));
   const composeFile = join(kitDir(build), 'compose.yml');
   if (!existsSync(composeFile) || sha256(readFileSync(composeFile)) !== kit.compose.sha256) {

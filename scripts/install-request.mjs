@@ -25,6 +25,10 @@ const files = {
 for (const name of readdirSync(join(dir, 'prod-compose'))) {
   files[`prod-compose/${name}`] = b64(join(dir, 'prod-compose', name));
 }
+// Опись сборки (блок 11): ровно файлы, названные манифестом; узел сверит их с суммами.
+for (const name of Object.keys(kit.sbom?.files ?? {})) {
+  files[`sbom/${name}`] = b64(join(dir, 'sbom', name));
+}
 process.stdout.write(
   JSON.stringify({
     build: kit.build,

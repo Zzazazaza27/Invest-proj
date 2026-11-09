@@ -4008,6 +4008,29 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: CHK-KIT-SBOM
+    file: scripts/check-kit-sbom.mjs
+    command: node scripts/check-kit-sbom.mjs
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 7
+    needs: [docker]
+    effects:
+      [
+        'метки fifth/{core,web,postgres}:sbom-check на маленький локальный образ, комплекты 2.1-b9101…9103 в .local/check-kit-sbom — удаляются прогоном',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Замечание Тэнка 09.11 к W31: опись переносится в сохраняемый комплект и сверяется по суммам
+      манифеста. Полный путь pack → сохранение → kit check: исправная опись, удалённый файл и
+      изменённый файл — отказ, комплект без поля описи — совместим, подменённая до сборки опись —
+      комплект не создаётся. Передачу описи на узел (install-request → install-ci → fetch) не
+      проверяет: fetch тянет образы из реестра.
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: CHK-RELEASE-TRIALS
     file: scripts/check-release-trials.mjs
     command: node scripts/check-release-trials.mjs
@@ -5782,6 +5805,7 @@ blocks:
         CHK-COMPAT-SIGNATURE,
         CHK-SLOTS-ENV,
         CHK-RELEASE-TRIALS,
+        CHK-KIT-SBOM,
         CHK-ENV-ISOLATION,
         CHK-ENV-IMAGES,
         CHK-INSTALLER,
