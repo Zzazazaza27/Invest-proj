@@ -27,7 +27,7 @@
  * Выгрузка и применение — в Linux-контейнере (gpg); на сервере они идут так же.
  */
 import { spawnSync } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import {
   cpSync,
@@ -279,7 +279,7 @@ async function restored(text, params = []) {
 
 // ------------------------------------------------------------ ядро-worker на копии
 
-const WORKER_PORT = 18300 + Math.floor(Math.random() * 400);
+const WORKER_PORT = 18300 + randomInt(400);
 let worker = null;
 const MAIL_DIR = join(WORK, 'mail');
 const mailFiles = () => (existsSync(MAIL_DIR) ? readdirSync(MAIL_DIR).length : 0);
