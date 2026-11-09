@@ -28,6 +28,7 @@ const DEFAULTS = {
   readyWaitMs: 120_000,
   confirmSamples: 5,
   confirmWaitMs: 15_000,
+  stopWaitMs: 60_000,
   confirmIntervalMs: 200,
   observeMs: 600_000,
   drainWaitMs: 300_000,
@@ -69,11 +70,23 @@ export async function switchSlots(ops, plan) {
         };
       }
     }
+    // Кандидат останавливается ДО возобновления фона старого, и остановка подтверждается:
+    // незавершённый проход кандидата не должен пересечься с фоном старого (Тэнк, 09.11).
+    // Пауза кандидата (`pausing`) этого не доказывает — доказывает остановленный процесс.
+    await ops.stopSlot(to);
+    const stopped = await until(async () => (await ops.slotStopped(to)) === true, o.stopWaitMs);
+    say('stop-candidate', stopped ? 'ok' : 'fail', stopped ? '' : 'остановка не подтверждена');
+    if (!stopped) {
+      return {
+        ok: false,
+        stage: 'stop-candidate',
+        detail: `${why}; кандидат не остановлен — фон старого не возобновлён, решение за Томасом`,
+        active: from,
+      };
+    }
     ops.writeGrant(from);
     const mode = await ops.resume(from);
     say('resume-old', mode === 'running' ? 'ok' : 'fail', mode);
-    await ops.stopSlot(to);
-    say('stop-candidate', 'ok');
     return { ok: false, stage, detail: why, active: from };
   };
 
@@ -145,6 +158,11 @@ export async function switchSlots(ops, plan) {
   ops.writeGrant(to);
   const resumed = await ops.resume(to);
   say('grant', resumed === 'running' ? 'ok' : 'fail', `owner=${to}, фон ${resumed}`);
+  if (resumed !== 'running') {
+    // Фон кандидата не запустился — выпуск не успешен: всё возвращается старому (Тэнк, 09.11).
+    ops.writeGrant(null);
+    return backToOld('grant', `фон кандидата не запустился: ${resumed}`, { routeChanged: true });
+  }
 
   // 6. Наблюдение.
   const watch = await ops.observe(o.observeMs);
@@ -160,17 +178,29 @@ export async function switchSlots(ops, plan) {
   }
   say('observe', 'ok');
 
-  // 7. Завершение старого — по доказательству, а не по времени.
+  // 7. Завершение старого — по доказательству, а не по времени. Не прочитано (null) —
+  // неизвестно, а не ноль: ждём до срока, затем принудительная остановка с причиной.
+  const read = async (fn) => {
+    try {
+      const v = await fn();
+      return Number.isFinite(v) ? v : null;
+    } catch {
+      return null;
+    }
+  };
   const drained = await until(
-    async () => (await ops.nginxOldWorkers()) === 0 && (await ops.activeRequests(from)) === 0,
+    async () =>
+      (await read(() => ops.nginxOldWorkers())) === 0 &&
+      (await read(() => ops.activeRequests(from))) === 0,
     o.drainWaitMs,
   );
   if (!drained) {
-    const left = await ops.activeRequests(from);
+    const left = await read(() => ops.activeRequests(from));
+    const workers = await read(() => ops.nginxOldWorkers());
     say(
       'drain',
       'timeout',
-      `незавершённых запросов ${left}, старых обработчиков nginx ${await ops.nginxOldWorkers()}`,
+      `незавершённых запросов ${left ?? 'неизвестно'}, старых обработчиков nginx ${workers ?? 'неизвестно'} — остановка по сроку`,
     );
   } else {
     say('drain', 'ok');

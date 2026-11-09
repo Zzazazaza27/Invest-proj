@@ -109,6 +109,8 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
       coordination: 'local',
       // Первая проверка — сразу при запуске: без неё запись была бы «неизвестна» до 30 с.
       runAtStart: true,
+      // Здоровье экземпляра, а не работа: идёт в каждом слоте независимо от разрешения фона.
+      alwaysOn: true,
       run: async () => resultOf(await this.observe()),
     });
   }

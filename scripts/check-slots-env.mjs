@@ -18,12 +18,13 @@
  *  [8] фактическое состояние согласовано.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
 import { s3Object } from './lib/s3.mjs';
+import sharp from 'sharp';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const ENV = 'test-78';
@@ -209,8 +210,23 @@ envTool(['destroy', ENV, '--confirm', ENV]);
 try {
   // ---------------------------------------------------------------- [1]
   console.warn('\n[1] Перевод среды на слоты');
-  const created = envTool(['create', ENV, '--kit', 'slot1', '--web-port', String(PORT)]);
+  // Адрес загрузки — хранилище стенда, проброшенное на узел (загрузка файла в [2]).
+  const created = envTool([
+    'create',
+    ENV,
+    '--kit',
+    'slot1',
+    '--web-port',
+    String(PORT),
+    '--files-url',
+    'http://localhost:9000',
+  ]);
   check('среда создана', created.code === 0, created.out.slice(-200));
+  // Режим испытаний ядра: долгий проход фона (8 с) и маршрут долгого запроса.
+  appendFileSync(
+    join(ROOT, '.local', 'envs', ENV, 'settings.env'),
+    'BACKGROUND_TEST_SLOW_MS=8000\n',
+  );
   await controlInit();
   check('контрольный объект среды заведён', true);
   const enabled = envTool(['slots-enable', ENV]);
@@ -264,6 +280,60 @@ try {
       await new Promise((r) => setTimeout(r, 700));
     }
   })();
+  // Загрузка: билет выдаёт старое ядро до переключения, сборку завершает новое после.
+  const csrf = /ul_csrf=([^;]+)/.exec(cookie)?.[1] ?? '';
+  const png = await sharp({
+    create: { width: 200, height: 200, channels: 3, background: { r: 30, g: 90, b: 160 } },
+  })
+    .png()
+    .toBuffer();
+  const ticketRes = await fetch(`${BASE}/v1/me/avatar/upload`, {
+    method: 'POST',
+    headers: { cookie, 'x-csrf-token': csrf, 'content-type': 'application/json' },
+    body: JSON.stringify({ contentType: 'image/png', sizeBytes: png.byteLength }),
+  });
+  const ticket = await ticketRes.json().catch(() => null);
+  check(
+    'загрузка: билет выдан старым ядром',
+    Boolean(ticket?.uploadUrl) && ticketRes.headers.get('x-fifth-build') === 'slot1',
+    `HTTP ${ticketRes.status}`,
+  );
+  // Долгий запрос на самом ядре: начат на старом до переключения.
+  const slow = fetch(`${BASE}/v1/__test/slow?ms=40000`, {
+    signal: AbortSignal.timeout(120_000),
+  }).then(
+    async (r) => ({ status: r.status, body: await r.json().catch(() => null), at: Date.now() }),
+    (e) => ({ status: 0, error: e.cause?.code ?? e.message, at: Date.now() }),
+  );
+  // Занятый фон: в наблюдении сравнить проход старого и первый проход кандидата.
+  const jobsOf = (slot) => {
+    const r = run('docker', [
+      'exec',
+      container(slot),
+      'node',
+      '-e',
+      "fetch('http://127.0.0.1:4400/jobs').then((r)=>r.json()).then((b)=>console.log(JSON.stringify(b.jobs.find((j)=>j.name==='test.slow-pass')??null)),()=>console.log('null'))",
+    ]);
+    try {
+      return JSON.parse(r.stdout.trim());
+    } catch {
+      return null;
+    }
+  };
+  let busy = null;
+  const watchBusy = (async () => {
+    for (let i = 0; i < 300 && !busy; i += 1) {
+      if (
+        journal().some(
+          (l) => l.stage === 'grant' && l.status === 'ok' && /owner=core-b/.test(l.detail),
+        )
+      ) {
+        await new Promise((r) => setTimeout(r, 3000));
+        busy = { old: jobsOf('core-a'), cand: jobsOf('core-b') };
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  })();
   // Выпуск — отдельным процессом без блокировки: поток запросов идёт параллельно.
   const up = await envToolAsync([
     'slots-update',
@@ -273,10 +343,59 @@ try {
     '--observe-ms',
     '20000',
     '--drain-ms',
-    '60000',
+    '90000',
   ]);
   stop = true;
   await load;
+  await watchBusy;
+  const slowRes = await slow;
+  check(
+    'долгий запрос завершён старым ядром, без обрыва',
+    slowRes.status === 200 && slowRes.body?.build === 'slot1',
+    JSON.stringify(slowRes).slice(0, 120),
+  );
+  const drain = journal().find((l) => l.op === up.json?.op && l.stage === 'drain');
+  const stopOld = journal().find((l) => l.op === up.json?.op && l.stage === 'stop-old');
+  check(
+    'старое ядро остановлено после завершения долгого запроса',
+    drain?.status === 'ok' && Date.parse(stopOld?.at) >= slowRes.at,
+    `${drain?.status} ${drain?.detail ?? ''}`,
+  );
+  check(
+    'занятый фон: первый проход кандидата — после окончания прохода старого',
+    busy?.old?.lastFinishedAt &&
+      busy?.cand?.lastStartedAt &&
+      Date.parse(busy.cand.lastStartedAt) >= Date.parse(busy.old.lastFinishedAt) &&
+      !busy.old.running,
+    JSON.stringify({
+      oldFinished: busy?.old?.lastFinishedAt,
+      oldRunning: busy?.old?.running,
+      candStarted: busy?.cand?.lastStartedAt,
+    }),
+  );
+  if (ticket?.uploadUrl) {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(ticket.formFields)) form.append(k, v);
+    form.append('file', new Blob([png], { type: 'image/png' }), 'a.png');
+    const put = await fetch(ticket.uploadUrl, { method: 'POST', body: form });
+    const fin = await fetch(`${BASE}/v1/me/avatar/finalize`, {
+      method: 'POST',
+      headers: { cookie, 'x-csrf-token': csrf },
+    });
+    const prof = await (
+      await fetch(`${BASE}/v1/me/profile`, { headers: { cookie } })
+    )
+      .json()
+      .catch(() => null);
+    check(
+      'загрузка: файл принят, сборку завершило новое ядро',
+      put.status < 400 &&
+        fin.status === 200 &&
+        fin.headers.get('x-fifth-build') === 'slot2' &&
+        Boolean(prof?.avatar),
+      `хранилище ${put.status}, сборка ${fin.status} (${fin.headers.get('x-fifth-build')})`,
+    );
+  }
   check(
     'выпуск прошёл',
     up.code === 0 && up.json?.active === 'core-b',

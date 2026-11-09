@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 254; требований: 41
+- Проверок: 257; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 101
+### Зарегистрированы, но ни в наборе, ни в CI — 104
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -271,6 +271,9 @@
 - `CHK-RELEASE` — Блок 9, задание 1: комплект, блокировка, реестр и сверка версий.
 - `CHK-MIGRATE-INTERRUPT` — Блок 9, задание 2: прерванная миграция безопасна, миграция не держит запросы бесконечно.
 - `CHK-SLOTS-ENV` — Блок 9, задание 3: переключение слотов на Docker и nginx (уточнения Тэнка 09.11).
+- `CHK-CONTRACT-RELEASE` — Блок 9, задание 4: несовместимая миграция не идёт поверх обслуживающего старого ядра (Тэнк 09.11).
+- `CHK-COMPAT-SIGNATURE` — Блок 9, задание 2: доверенное происхождение отчёта — основания точки возврата (Тэнк 09.11).
+- `CHK-RELEASE-STATE` — Блок 9, задание 4: тревоги выпуска с учётом этапа (уточнения Тэнка 09.11).
 - `CHK-SLOT-SWITCH` — Блок 9, задание 3: порядок переключения слотов и пути отказа (уточнения Тэнка 09.11).
 - `CHK-ROLLBACK-POLICY` — Блок 9, задание 2: отметка точки возврата и решение о возврате — одно правило (Тэнк, 09.11).
 - `CHK-MIGRATION-COMPAT` — Блок 9, задание 2: несовместимый возврат выявлен до рабочей выкладки; отчёт — точка возврата для установщика.
@@ -419,10 +422,13 @@
 | CHK-TRANSITION-KIT | `node scripts/check-transition-kit.mjs` | 22 | вручную | — |
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
-| CHK-RELEASE | `node scripts/check-release.mjs` | 61 | вручную | — |
+| CHK-RELEASE | `node scripts/check-release.mjs` | 62 | вручную | — |
 | CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 43 | вручную | — |
-| CHK-SLOTS-ENV | `node scripts/check-slots-env.mjs` | 25 | вручную | — |
-| CHK-SLOT-SWITCH | `node scripts/check-slot-switch.mjs` | 27 | вручную | — |
+| CHK-SLOTS-ENV | `node scripts/check-slots-env.mjs` | 30 | вручную | — |
+| CHK-CONTRACT-RELEASE | `node scripts/check-contract-release.mjs` | 9 | вручную | — |
+| CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 7 | вручную | — |
+| CHK-RELEASE-STATE | `node scripts/check-release-state.mjs` | 17 | вручную | — |
+| CHK-SLOT-SWITCH | `node scripts/check-slot-switch.mjs` | 36 | вручную | — |
 | CHK-ROLLBACK-POLICY | `node scripts/check-rollback-policy.mjs` | 8 | вручную | — |
 | CHK-MIGRATION-COMPAT | `node scripts/check-migration-compat.mjs --previous <сборка> --candidate <сборка>` | 36 | вручную | — |
 | CHK-INSTALLER | `node scripts/check-installer.mjs` | 37 | вручную | — |
@@ -481,7 +487,7 @@
 | UNIT-CORE-AVAILABILITY-RULES | `npm run test -w apps/core` | 19 | CI | CI |
 | UNIT-CORE-OUTBOX-FAILURES | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
-| UNIT-CORE-BACKGROUND-SLOTS | `npm run test -w apps/core` | 14 | CI | CI |
+| UNIT-CORE-BACKGROUND-SLOTS | `npm run test -w apps/core` | 16 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 21 | CI | CI |
 | UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-READINESS | `npm run test -w apps/core` | 14 | CI | CI |

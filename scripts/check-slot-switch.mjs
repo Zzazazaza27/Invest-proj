@@ -65,12 +65,15 @@ function world(over = {}) {
     readGrant: () => s.grant,
     pause: async (slot) => {
       if (over.stuckPause && slot === 'core-a') return 'pausing';
+      if (over.candidatePausing && slot === 'core-b') return 'pausing';
       s.slots[slot].bg = 'paused';
       s.hooks.afterPause?.(slot, restart);
       return 'paused';
     },
     resume: async (slot) => {
       if (s.grant?.owner !== slot) return s.slots[slot].bg; // ядро откажет без разрешения
+      if (over.candidateResumeFails && slot === 'core-b') return 'paused';
+      s.log.push(`resume ${slot}`);
       s.slots[slot].bg = 'running';
       return 'running';
     },
@@ -91,9 +94,11 @@ function world(over = {}) {
       s.hooks.observe?.(restart);
       return over.observeFail ? { ok: false, detail: 'ошибки 5xx выше порога' } : { ok: true };
     },
-    nginxOldWorkers: async () => s.oldWorkers,
-    activeRequests: async (slot) => s.slots[slot].active,
+    nginxOldWorkers: async () => (over.unknownDrain ? null : s.oldWorkers),
+    activeRequests: async (slot) => (over.unknownDrain ? null : s.slots[slot].active),
+    slotStopped: async (slot) => !s.slots[slot].up,
     stopSlot: async (slot) => {
+      if (over.stopFails && slot === 'core-b') return;
       s.slots[slot].up = false;
       s.slots[slot].bg = 'stopped';
       s.log.push(`stop ${slot}`);
@@ -281,5 +286,59 @@ console.warn('\n[10] Фактическое состояние после обр
   check('прежнее состояние — согласованно', g.consistent === true);
 }
 
+console.warn('\n[11] Регрессии Тэнка 09.11');
+{
+  // 1. Фон кандидата не запустился — выпуск не успешен, всё старому.
+  const { s, ops } = world({ candidateResumeFails: true });
+  const r = await switchSlots(ops, plan);
+  check(
+    'фон кандидата не запустился — выпуск не успешен',
+    !r.ok && r.stage === 'grant' && r.active === 'core-a',
+    r.detail,
+  );
+  check(
+    'старый не остановлен, его фон идёт, кандидат остановлен',
+    s.slots['core-a'].up && s.slots['core-a'].bg === 'running' && !s.slots['core-b'].up,
+  );
+  check('маршрут возвращён старому', s.route.slot === 'core-a' && s.nginx.slot === 'core-a');
+}
+{
+  // 2. Возврат при паузе кандидата pausing: старый возобновлён только после остановки кандидата.
+  const { s, ops } = world({ observeFail: true, candidatePausing: true });
+  const r = await switchSlots(ops, { ...plan, autoRollback: true });
+  check('возврат выполнен', !r.ok && r.active === 'core-a', r.detail);
+  check(
+    'кандидат остановлен ДО возобновления фона старого',
+    idx(s, 'stop core-b') >= 0 && idx(s, 'stop core-b') < idx(s, 'resume core-a'),
+    s.log.filter((l) => /^(stop|resume)/.test(l)).join(' → '),
+  );
+}
+{
+  // 2б. Остановку кандидата подтвердить не удалось — фон старого не возобновляется.
+  const { s, ops } = world({ observeFail: true, candidatePausing: true, stopFails: true });
+  const r = await switchSlots(ops, { ...plan, autoRollback: true, limits: { stopWaitMs: 10_000 } });
+  check(
+    'кандидат не остановлен — решение за Томасом',
+    !r.ok && r.stage === 'stop-candidate',
+    r.detail,
+  );
+  check(
+    'фон старого не возобновлён',
+    s.slots['core-a'].bg !== 'running' && idx(s, 'resume core-a') < 0,
+  );
+}
+{
+  // 3. Неизвестное состояние завершения — не ноль: ждём до срока, затем остановка с причиной.
+  const { s, ops } = world({ unknownDrain: true });
+  const t0 = s.t;
+  const r = await switchSlots(ops, { ...plan, limits: { drainWaitMs: 20_000 } });
+  const line = s.log.find((l) => l.startsWith('drain:'));
+  check('ожидание до срока, а не сразу', r.ok && s.t - t0 >= 20_000, `${(s.t - t0) / 1000} с`);
+  check(
+    'в журнале — «неизвестно» и остановка по сроку',
+    /drain:timeout .*неизвестно.*остановка по сроку/.test(line ?? ''),
+    line,
+  );
+}
 console.warn(`\nИтог: ${passed} проверок пройдено, ${failed} провалено.\n`);
 if (failed > 0) process.exitCode = 1;

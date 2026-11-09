@@ -2894,7 +2894,7 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 14
+    asserts: 16
     studied: code
     studiedOn: 2026-11-09
     needs: []
@@ -3781,7 +3781,7 @@ checks:
     kind: check
     level: сквозной
     runner: manual
-    asserts: 61
+    asserts: 62
     needs: [docker, s3]
     effects:
       ['временные среды test-73 и test-74, комплекты во временном каталоге; удаляются прогоном']
@@ -3820,7 +3820,7 @@ checks:
     kind: check
     level: сквозной
     runner: manual
-    asserts: 25
+    asserts: 30
     needs: [docker, s3]
     effects:
       [
@@ -3832,8 +3832,62 @@ checks:
       Два ядра на настоящей временной среде: перевод на слоты, выпуск под потоком запросов с живой
       сессией, перезапуск неактивного слота, перезапуск обоих в наблюдении, отказ reload после
       паузы, перезапуск старого после паузы и кандидата после записи маршрута, фактическое
-      состояние. Раскладку рабочей среды (сеть узла, свои порты) не испытывает.
+      состояние; долгий запрос на старом ядре, загрузка через переключение, занятый фон. Раскладку рабочей среды (сеть узла, свои порты) не испытывает.
     purpose: 'Блок 9, задание 3: переключение слотов на Docker и nginx (уточнения Тэнка 09.11).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
+  - id: CHK-CONTRACT-RELEASE
+    file: scripts/check-contract-release.mjs
+    command: node scripts/check-contract-release.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 9
+    needs: []
+    effects: ['нет']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Выпуск с contract-миграцией на имитации: миграция только после подтверждённой остановки старого ядра; отказ до миграции — старое в работе; отказ после — возврата нет, исправление вперёд.
+    purpose: 'Блок 9, задание 4: несовместимая миграция не идёт поверх обслуживающего старого ядра (Тэнк 09.11).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
+  - id: CHK-COMPAT-SIGNATURE
+    file: scripts/check-compat-signature.mjs
+    command: node scripts/check-compat-signature.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 7
+    needs: []
+    effects: ['нет']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Отчёт совместимости принят, только если подписан ключом CI (вся запись, своя метка домена) и проверен закреплённым ключом узла и описывает эту пару комплектов; без подписи, подделка, чужой ключ, подпись комплекта, другая пара, нет ключа узла — отклонён.
+    purpose: 'Блок 9, задание 2: доверенное происхождение отчёта — основания точки возврата (Тэнк 09.11).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
+  - id: CHK-RELEASE-STATE
+    file: scripts/check-release-state.mjs
+    command: node scripts/check-release-state.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 17
+    needs: []
+    effects: ['нет']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Вывод наблюдения о выпуске (scripts/lib/release-state.mjs): зависание — нет продвижения
+      сверх срока этапа; сосуществование версий во время выпуска — норма, нарушение состояния
+      этапа — проблема; непрочитанный источник (база, журнал, слоты, ответ через nginx) — unknown;
+      неудача, возврат и отказ наблюдения — проблема до следующего удачного выпуска.
+    purpose: 'Блок 9, задание 4: тревоги выпуска с учётом этапа (уточнения Тэнка 09.11).'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
@@ -3843,7 +3897,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 27
+    asserts: 36
     needs: []
     effects: ['нет']
     studied: code
@@ -5524,6 +5578,9 @@ blocks:
         CHK-MIGRATION-COMPAT,
         CHK-ROLLBACK-POLICY,
         CHK-SLOT-SWITCH,
+        CHK-RELEASE-STATE,
+        CHK-CONTRACT-RELEASE,
+        CHK-COMPAT-SIGNATURE,
         CHK-SLOTS-ENV,
         CHK-ENV-ISOLATION,
         CHK-ENV-IMAGES,

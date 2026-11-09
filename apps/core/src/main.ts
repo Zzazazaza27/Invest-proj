@@ -15,7 +15,7 @@ import { checkReadiness, runControl, type ReadinessProbes } from './background/r
 import { setPublicReadiness } from './health/public-readiness';
 import { passesClosedGate, restoreGateOpen, setRestoreGate } from './health/restore-gate';
 import { ErrorCode, problemTypeUri } from '@fifth/contracts';
-import { Database } from './db/unit-of-work';
+import { Database, type RequestContext } from './db/unit-of-work';
 import { NatsClient } from './events/nats.client';
 import { S3Service } from './storage/s3.service';
 import { AvailabilityService } from './availability/availability.service';
@@ -129,6 +129,52 @@ async function bootstrap(): Promise<void> {
     logger: env.isTest ? false : json,
     bufferLogs: true,
   });
+
+  // Испытание выпуска с двумя ядрами: долгий запрос на самом ядре — проверка, что старое ядро
+  // дорабатывает начатое до остановки. Только вне production и только при
+  // BACKGROUND_TEST_SLOW_MS; маршрута в рабочей среде нет.
+  if (env.BACKGROUND_TEST_SLOW_MS && env.NODE_ENV !== 'production') {
+    app
+      .getHttpAdapter()
+      .getInstance()
+      .get('/v1/__test/slow', async (request) => {
+        const ms = Math.min(60_000, Number((request.query as { ms?: string }).ms) || 1_000);
+        await new Promise((resolve) => setTimeout(resolve, ms));
+        return { ok: true, slept: ms, build: env.FIFTH_BUILD ?? 'dev' };
+      });
+    // Испытание возврата с новыми данными (блок 09, задание 4): пробная таблица
+    // public.compat_probe создаётся только миграцией кандидата. Кандидат пишет и читает её;
+    // прежний код её не знает и не обязан (Тэнк 09.11, п. 4) — испытание проверяет, что запись
+    // переживает возврат и снова читается кандидатом.
+    const probeDb = app.get(Database);
+    const sys = { userId: null, roles: ['system'], traceId: 'compat-probe' } as RequestContext;
+    const probeExists = async () =>
+      probeDb.transaction(sys, async (tx) => {
+        const { rows } = await tx.query<{ t: string | null }>(
+          "SELECT to_regclass('public.compat_probe')::text AS t",
+        );
+        return Boolean(rows[0]?.t);
+      });
+    const fastify = app.getHttpAdapter().getInstance();
+    fastify.post('/v1/__test/compat-probe', async (request, reply) => {
+      if (!(await probeExists())) return reply.status(404).send({ error: 'нет пробной таблицы' });
+      const note = String((request.body as { note?: string })?.note ?? '').slice(0, 200);
+      await probeDb.transaction(sys, (tx) =>
+        tx.query('INSERT INTO public.compat_probe (note) VALUES ($1)', [note]),
+      );
+      return { ok: true, build: env.FIFTH_BUILD ?? 'dev' };
+    });
+    fastify.get('/v1/__test/compat-probe', async (_request, reply) => {
+      if (!(await probeExists())) return reply.status(404).send({ error: 'нет пробной таблицы' });
+      const notes = await probeDb.transaction(sys, async (tx) => {
+        const { rows } = await tx.query<{ note: string }>(
+          'SELECT note FROM public.compat_probe ORDER BY id',
+        );
+        return rows.map((r) => r.note);
+      });
+      return { notes, build: env.FIFTH_BUILD ?? 'dev' };
+    });
+  }
 
   // ---- Сборка и активные запросы (блок 09, задание 3) ---------------------
   // Переключение слотов подтверждается запросом через nginx: ответ несёт сборку и слот. Счётчик
@@ -423,6 +469,21 @@ async function bootstrap(): Promise<void> {
   }
 
   const jobs = app.get(BackgroundJobsService);
+  // Испытание выпуска с двумя ядрами (блок 09, задание 3): долгий проход, который сигнал не
+  // слушает, — «занятый фон» при паузе. Только вне production и только по переменной.
+  if (env.BACKGROUND_TEST_SLOW_MS && env.NODE_ENV !== 'production') {
+    const ms = env.BACKGROUND_TEST_SLOW_MS;
+    jobs.register({
+      name: 'test.slow-pass',
+      intervalMs: 1_000,
+      coordination: 'local',
+      runAtStart: true,
+      run: async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+        return { status: 'done', processed: 1 };
+      },
+    });
+  }
   const background = BackgroundJobsService.allowedByConfig();
   const db = app.get(Database);
   const s3 = app.get(S3Service);

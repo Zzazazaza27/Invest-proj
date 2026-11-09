@@ -158,7 +158,9 @@ export class BackgroundJobsService {
 
   /** Имена задач, чьи проходы ещё идут во время паузы. */
   get pendingPasses(): string[] {
-    return [...this.jobs.values()].filter((e) => e.current).map((e) => e.def.name);
+    return [...this.jobs.values()]
+      .filter((e) => e.current && !e.def.alwaysOn)
+      .map((e) => e.def.name);
   }
 
   /**
@@ -175,17 +177,22 @@ export class BackgroundJobsService {
       // Фон ещё не запускался: пауза означает «не запускать» — то же для продолжения.
       this.paused = true;
       this.started = true;
+      for (const entry of this.jobs.values()) {
+        if (entry.def.alwaysOn)
+          this.schedule(entry, entry.def.runAtStart ? 0 : entry.def.intervalMs);
+      }
       return this.mode;
     }
     if (!this.paused) {
       this.paused = true;
       for (const entry of this.jobs.values()) {
+        if (entry.def.alwaysOn) continue;
         if (entry.timer) clearTimeout(entry.timer);
         entry.timer = null;
         entry.nextRunAt = null;
       }
       for (const entry of this.jobs.values()) {
-        if (!entry.current) continue;
+        if (!entry.current || entry.def.alwaysOn) continue;
         const pass = entry.current;
         this.pausePending.add(pass);
         void pass.finally(() => this.pausePending.delete(pass));
@@ -226,7 +233,9 @@ export class BackgroundJobsService {
     if (this.isStopping || !this.paused || this.pausePending.size > 0) return this.mode;
     this.paused = false;
     this.epoch = new AbortController();
-    for (const entry of this.jobs.values()) this.schedule(entry, entry.def.intervalMs);
+    for (const entry of this.jobs.values()) {
+      if (!entry.def.alwaysOn) this.schedule(entry, entry.def.intervalMs);
+    }
     this.logger.log({ msg: 'фон: продолжен', instance: this.instanceId });
     return this.mode;
   }
@@ -307,7 +316,7 @@ export class BackgroundJobsService {
       overdue:
         e.enabled &&
         this.started &&
-        !this.paused &&
+        (!this.paused || e.def.alwaysOn === true) &&
         !this.isStopping &&
         ((e.runningSince !== null && now - e.runningSince > e.def.intervalMs) ||
           (e.runningSince === null &&
@@ -317,7 +326,7 @@ export class BackgroundJobsService {
   }
 
   private schedule(entry: Entry, delayMs: number): void {
-    if (!entry.enabled || this.isStopping || this.paused) return;
+    if (!entry.enabled || this.isStopping || (this.paused && !entry.def.alwaysOn)) return;
     entry.nextRunAt = Date.now() + delayMs;
     entry.timer = setTimeout(() => {
       entry.timer = null;
@@ -340,7 +349,10 @@ export class BackgroundJobsService {
       entry.nextRunAt = null;
       entry.lastInterrupted = false;
       // Прерывание — остановкой процесса или паузой (эпоха прохода фиксируется на старте).
-      let signal = AbortSignal.any([this.stopController.signal, this.epoch.signal]);
+      // Проверки экземпляра (alwaysOn) пауза не прерывает — только остановка процесса.
+      let signal = entry.def.alwaysOn
+        ? this.stopController.signal
+        : AbortSignal.any([this.stopController.signal, this.epoch.signal]);
       let release: (() => Promise<void>) | null = null;
 
       try {

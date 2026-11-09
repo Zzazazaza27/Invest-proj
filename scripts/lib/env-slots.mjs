@@ -340,16 +340,29 @@ export function slotOps(ctx, op) {
         ? { ok: true }
         : { ok: false, detail: `неуспешных ответов через nginx ${bad} из ${total}` };
     },
+    // Не прочитано — null (неизвестно), не ноль: ноль доказывал бы завершение (Тэнк, 09.11).
     nginxOldWorkers: async () => {
-      const r = webExec("ps -o args | grep -c '[s]hutting down' || true");
-      return Number(r.stdout.trim()) || 0;
+      const r = webExec("ps -o args | grep -c '[s]hutting down'; echo rc=$?");
+      const m = /^(\d+)\s*\nrc=[01]\s*$/.exec(r.stdout ?? '');
+      return r.status === 0 && m ? Number(m[1]) : null;
     },
     activeRequests: async (slot) => {
       const r = internal(slot, 'GET', '/state');
-      return r.status === 200 ? (r.body?.activeRequests ?? 0) : 0;
+      const n = r.body?.activeRequests;
+      return r.status === 200 && Number.isFinite(n) ? n : null;
     },
     stopSlot: async (slot) => {
       env.compose(['--profile', 'slot-b', 'stop', L.service(slot)], { allowFail: true });
+    },
+    // Остановлен ли процесс слота: true — не работает или контейнера нет, null — не известно.
+    slotStopped: async (slot) => {
+      const r = spawnSync('docker', ['inspect', '-f', '{{.State.Running}}', container(slot)], {
+        encoding: 'utf8',
+        env: dockerEnv,
+        timeout: 15_000,
+      });
+      if (r.status === 0) return r.stdout.trim() === 'false';
+      return /No such (object|container)/i.test(r.stderr ?? '') ? true : null;
     },
     backgroundMode: async (slot) => internal(slot, 'GET', '/background').body?.mode ?? 'нет ответа',
   };

@@ -60,6 +60,8 @@ const RawEnvSchema = z.object({
   BACKGROUND_CONTROL_TOKEN: z.string().min(32).optional(),
   /** Предел ожидания идущих проходов при паузе фона. */
   BACKGROUND_PAUSE_WAIT_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
+  /** Только испытания (вне production): долгий проход фона, мс — «занятый фон» при паузе. */
+  BACKGROUND_TEST_SLOW_MS: z.coerce.number().int().min(100).max(120_000).optional(),
   /** Сборка процесса — в заголовке X-Fifth-Build: переключение подтверждается запросом. */
   FIFTH_BUILD: z.string().optional(),
   /**

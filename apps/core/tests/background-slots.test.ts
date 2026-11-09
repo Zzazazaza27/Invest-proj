@@ -165,6 +165,50 @@ describe('фон: обратимая пауза', () => {
   });
 });
 
+describe('фон: проверки экземпляра идут всегда (alwaysOn)', () => {
+  const probe = (jobs: BackgroundJobsService, ms = 5) => {
+    const c = { started: 0 };
+    jobs.register({
+      name: 'проверка',
+      intervalMs: 20,
+      coordination: 'local',
+      runAtStart: true,
+      alwaysOn: true,
+      run: async () => {
+        c.started += 1;
+        await sleep(ms);
+        return resultOf(1);
+      },
+    });
+    return c;
+  };
+
+  it('без разрешения (пауза до запуска) проверка экземпляра всё равно идёт, работа — нет', async () => {
+    const jobs = service();
+    const p = probe(jobs);
+    const work = stubborn(jobs, 'работа', 5);
+    await jobs.pause(0);
+    await sleep(80);
+    expect(p.started).toBeGreaterThan(0);
+    expect(work.started).toBe(0);
+    expect(jobs.mode).toBe('paused');
+  });
+
+  it('пауза не ждёт проверку экземпляра и не прерывает её; продолжение не запускает её дважды', async () => {
+    const jobs = service();
+    const p = probe(jobs, 300);
+    jobs.start();
+    await sleep(20);
+    expect(await jobs.pause(100, 50)).toBe('paused');
+    expect(jobs.pendingPasses).toEqual([]);
+    const before = p.started;
+    jobs.resume();
+    await sleep(320);
+    // Один проход идёт 300 мс, проходы одной задачи не накладываются.
+    expect(p.started - before).toBeLessThanOrEqual(1);
+  });
+});
+
 describe('фон: служебные команды на внутреннем порту', () => {
   const TOKEN = 't'.repeat(40);
   async function server(extra: NodeJS.ProcessEnv) {
