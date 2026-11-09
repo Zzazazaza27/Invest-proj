@@ -387,7 +387,52 @@ function pin() {
 
 const source = () => finish({ ok: true, source: postgresSource() }, 0);
 
-const COMMANDS = { manifest, fetch: fetchKit, pack, load, check, pin, source };
+/**
+ * Доставка отчёта совместимости к комплекту кандидата (блок 09, задание 2; Тэнк 09.11):
+ * `kit.mjs compat-put --build <кандидат> --dir <каталог артефактов compat.yml>`. Отчёт и
+ * подпись — из отдельных артефактов процесса CI; принимаются, только если подпись сходится с
+ * закреплённым ключом узла (тем же, что у комплектов). Пару комплектов установщик сверяет
+ * при возврате (scripts/lib/compat-report.mjs).
+ */
+async function compatPut() {
+  const build = needBuild();
+  const from = flag('--dir');
+  if (!from || !existsSync(join(kitDir(build), 'kit.json'))) {
+    throw new Refused(`нужны --dir и комплект ${build} на узле`);
+  }
+  const { compatSignatureValid } = await import('./lib/kit-sign.mjs');
+  const pub = join(process.env.FIFTH_INSTALL_ETC || '/etc/fifth-install', 'kit-signing.pub');
+  if (!existsSync(pub)) throw new Refused('нет закреплённого ключа узла');
+  const reports = readdirSync(from).filter((f) => /^compat-.+\.json$/.test(f));
+  if (!reports.length) throw new Refused(`в ${from} нет отчёта совместимости`);
+  const put = [];
+  for (const name of reports) {
+    const bytes = readFileSync(join(from, name));
+    const sig = join(from, `${name}.sig`);
+    if (!existsSync(sig)) throw new Refused(`${name}: нет подписи`);
+    if (!compatSignatureValid(bytes, readFileSync(sig, 'utf8'), readFileSync(pub, 'utf8'))) {
+      throw new Refused(`${name}: подпись не сходится с закреплённым ключом`);
+    }
+    if (JSON.parse(bytes.toString('utf8')).candidate?.build !== build) {
+      throw new Refused(`${name}: отчёт о другом кандидате`);
+    }
+    writeFileSync(join(kitDir(build), name), bytes);
+    writeFileSync(join(kitDir(build), `${name}.sig`), readFileSync(sig));
+    put.push(name);
+  }
+  finish({ ok: true, build, reports: put }, 0);
+}
+
+const COMMANDS = {
+  manifest,
+  fetch: fetchKit,
+  pack,
+  load,
+  check,
+  pin,
+  source,
+  'compat-put': compatPut,
+};
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {

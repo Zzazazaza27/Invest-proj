@@ -6,12 +6,16 @@
  *
  * Запуск: node scripts/check-compat-signature.mjs
  */
+import { spawnSync } from 'node:child_process';
 import { generateKeyPairSync } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { readCompatReport } from './lib/compat-report.mjs';
 import { signCompat, signKit } from './lib/kit-sign.mjs';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 let passed = 0;
 let failed = 0;
@@ -75,6 +79,42 @@ try {
 
   write({ ...good, previous: { build: 'b1', kitSha256: 'другой' } }, (b) => signCompat(b, ci.priv));
   check('подписан, но о другой паре комплектов — stale', read()?.result === 'stale');
+
+  // Доставка на узел: kit.mjs compat-put из каталога артефактов.
+  const art = join(dir, 'artifacts');
+  mkdirSync(art);
+  writeFileSync(join(kitsDir, 'b2', 'kit.json'), JSON.stringify({ build: 'b2' }));
+  const put = (report, signer) => {
+    rmSync(join(art, 'compat-b1.json.sig'), { force: true });
+    const bytes = Buffer.from(`${JSON.stringify(report)}\n`);
+    writeFileSync(join(art, 'compat-b1.json'), bytes);
+    if (signer) writeFileSync(join(art, 'compat-b1.json.sig'), signer(bytes));
+    const r = spawnSync(
+      process.execPath,
+      [join(ROOT, 'scripts', 'kit.mjs'), 'compat-put', '--build', '2.1-b2.1', '--dir', art],
+      {
+        encoding: 'utf8',
+        env: { ...process.env, FIFTH_KITS_DIR: kitsDir, FIFTH_INSTALL_ETC: etcDir },
+      },
+    );
+    return { code: r.status, out: `${r.stdout}${r.stderr}` };
+  };
+  mkdirSync(join(kitsDir, '2.1-b2.1'));
+  writeFileSync(join(kitsDir, '2.1-b2.1', 'kit.json'), JSON.stringify({ build: '2.1-b2.1' }));
+  const forCand = { ...good, candidate: { build: '2.1-b2.1', kitSha256: 'bbb' } };
+  check(
+    'доставка: подписанный отчёт принят',
+    put(forCand, (b) => signCompat(b, ci.priv)).code === 0,
+  );
+  check('доставка: без подписи — отказ', put(forCand, null).code === 2);
+  check(
+    'доставка: подпись чужим ключом — отказ',
+    put(forCand, (b) => signCompat(b, stranger.priv)).code === 2,
+  );
+  check(
+    'доставка: отчёт о другом кандидате — отказ',
+    put(good, (b) => signCompat(b, ci.priv)).code === 2,
+  );
 
   write(good, (b) => signCompat(b, ci.priv));
   rmSync(join(etcDir, 'kit-signing.pub'));

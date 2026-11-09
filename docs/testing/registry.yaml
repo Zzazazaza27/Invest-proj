@@ -3026,6 +3026,26 @@ checks:
     purpose: 'Запрос к защищённому установщику'
     confirmation: reviewed-in-code
 
+  - id: TOOL-CI-COMPAT
+    file: scripts/ci-compat.mjs
+    command: node scripts/ci-compat.mjs --previous <сборка> --candidate <сборка> --out <каталог> [--sign-key-file <pem>] [--plan]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker, s3]
+    effects:
+      [
+        'в CI: одноразовые ключи и узлы Garage, временная среда прогона совместимости; отчёт и подпись в --out',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Шаг .github/workflows/compat.yml: оба комплекта — готовые артефакты CI по дайджестам со сверкой, прогон
+      check-migration-compat, подпись только при ok ключом защищённого процесса. Первый запуск в CI — Томасом.
+    purpose: 'Блок 9, задание 2: происхождение отчёта совместимости из CI'
+    confirmation: reviewed-in-code
+
   - id: TOOL-CI-CHAIN
     file: scripts/ci-chain-check.mjs
     command: node scripts/ci-chain-check.mjs --commit <sha> --run <запуск CI> --build <сборка>
@@ -3860,13 +3880,13 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 7
+    asserts: 11
     needs: []
     effects: ['нет']
     studied: code
     studiedOn: 2026-11-09
     note: >-
-      Отчёт совместимости принят, только если подписан ключом CI (вся запись, своя метка домена) и проверен закреплённым ключом узла и описывает эту пару комплектов; без подписи, подделка, чужой ключ, подпись комплекта, другая пара, нет ключа узла — отклонён.
+      Отчёт совместимости принят, только если подписан ключом CI (вся запись, своя метка домена) и проверен закреплённым ключом узла и описывает эту пару комплектов; без подписи, подделка, чужой ключ, подпись комплекта, другая пара, нет ключа узла — отклонён; доставка kit.mjs compat-put принимает только подписанный отчёт о том же кандидате.
     purpose: 'Блок 9, задание 2: доверенное происхождение отчёта — основания точки возврата (Тэнк 09.11).'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09

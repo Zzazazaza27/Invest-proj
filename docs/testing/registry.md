@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 257; требований: 41
+- Проверок: 258; требований: 41
 
 ## Что защищено без участия человека
 
@@ -356,6 +356,7 @@
 | TOOL-RELEASE | `node scripts/release.mjs install|verify|replay|recover <среда>` | 0 | вручную, по поводу | — |
 | TOOL-INSTALL-CI | `fifth-install (обёртка на узле), запрос в stdin` | 0 | вручную, по поводу | — |
 | TOOL-INSTALL-REQUEST | `node scripts/install-request.mjs --dir <артефакт> --expect <сборка> --sign-key-file <файл> --token-file <файл>` | 0 | вручную, по поводу | — |
+| TOOL-CI-COMPAT | `node scripts/ci-compat.mjs --previous <сборка> --candidate <сборка> --out <каталог> [--sign-key-file <pem>] [--plan]` | 0 | вручную, по поводу | — |
 | TOOL-CI-CHAIN | `node scripts/ci-chain-check.mjs --commit <sha> --run <запуск CI> --build <сборка>` | 0 | вручную, по поводу | — |
 | TOOL-RENAME-STAND | `node scripts/rename-stand.mjs copy|back` | 0 | вручную, по поводу | — |
 | TOOL-SECRETS-TO-FILES | `node scripts/secrets-to-files.mjs apply|back` | 0 | вручную, по поводу | — |
@@ -426,7 +427,7 @@
 | CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 43 | вручную | — |
 | CHK-SLOTS-ENV | `node scripts/check-slots-env.mjs` | 30 | вручную | — |
 | CHK-CONTRACT-RELEASE | `node scripts/check-contract-release.mjs` | 9 | вручную | — |
-| CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 7 | вручную | — |
+| CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 11 | вручную | — |
 | CHK-RELEASE-STATE | `node scripts/check-release-state.mjs` | 17 | вручную | — |
 | CHK-SLOT-SWITCH | `node scripts/check-slot-switch.mjs` | 36 | вручную | — |
 | CHK-ROLLBACK-POLICY | `node scripts/check-rollback-policy.mjs` | 8 | вручную | — |

@@ -1,0 +1,71 @@
+# Проверка совместимости миграций с подписью отчёта (блок 09, задание 2; способ согласован
+# Тэнком 09.11). Ручной процесс владельца, без выкладки: на рабочую среду ничего не ставит.
+#
+# Оба комплекта — готовые артефакты CI (kit-<сборка>), образы по дайджесту, сверка
+# kit.mjs check; без пересборки. Ключ подписи — только в окружении production, доступном
+# запуску с main; подпись — только после успешного прогона. Отчёт и подпись — отдельные
+# артефакты. Узел принимает отчёт как основание возврата, только если подпись сходится с
+# закреплённым ключом и пара комплектов совпадает с фактической (scripts/lib/compat-report.mjs).
+name: Совместимость миграций
+
+on:
+  workflow_dispatch:
+    inputs:
+      previous:
+        description: 'Сборка, установленная на среде (прежняя), например 2.1-b132.1'
+        required: true
+      candidate:
+        description: 'Сборка кандидата, например 2.1-b140.1'
+        required: true
+
+permissions:
+  contents: read
+  actions: read
+  packages: read
+
+env:
+  NODE_VERSION: '22'
+
+jobs:
+  compat:
+    name: Прежний код на схеме кандидата
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: production
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Вход в реестр образов (только чтение)
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Прогон и подпись
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SIGN_KEY: ${{ secrets.KIT_SIGNING_KEY }}
+          PREVIOUS: ${{ inputs.previous }}
+          CANDIDATE: ${{ inputs.candidate }}
+        run: |
+          umask 077
+          printf '%s\n' "$SIGN_KEY" > "$RUNNER_TEMP/sign.pem"
+          node scripts/ci-compat.mjs --previous "$PREVIOUS" --candidate "$CANDIDATE" \
+            --out "$RUNNER_TEMP/compat" --sign-key-file "$RUNNER_TEMP/sign.pem"
+          rm -f "$RUNNER_TEMP/sign.pem"
+      - name: Отчёт
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: compat-${{ inputs.candidate }}-vs-${{ inputs.previous }}
+          path: ${{ runner.temp }}/compat/compat-${{ inputs.previous }}.json
+          if-no-files-found: error
+          retention-days: 90
+      - name: Подпись отчёта
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: compat-${{ inputs.candidate }}-vs-${{ inputs.previous }}-sig
+          path: ${{ runner.temp }}/compat/compat-${{ inputs.previous }}.json.sig
+          if-no-files-found: error
+          retention-days: 90
