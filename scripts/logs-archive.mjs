@@ -2284,6 +2284,10 @@ async function journalRisk(state) {
   let result;
   try {
     if (PARTIAL_JOURNAL) throw new RiskUnknown('journal-args');
+    // Конец журнала — ДО списка файлов: все номера до него уже в файлах, которые прочитаем.
+    // Наоборот (prod 09.11 11:06) файл, созданный между чтениями (журнал сеанса), давал
+    // «пропуск» последних номеров и ложное lost.
+    const t = await tailCursor();
     const hdr = spawnSync('journalctl', ['--header', '--no-pager', ...JOURNAL_ARGS], {
       encoding: 'utf8',
       maxBuffer: 64 * 1024 * 1024,
@@ -2319,7 +2323,6 @@ async function journalRisk(state) {
     } catch {
       /* настройки не разобраны — config: null */
     }
-    const t = await tailCursor();
     const cursor =
       state?.seqId && state.lastSeq !== null && state.lastSeq !== undefined
         ? { seqId: state.seqId, seq: BigInt(state.lastSeq), realtime: cursorTime(state) }
