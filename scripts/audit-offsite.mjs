@@ -45,6 +45,10 @@ const PUBLIC_KEY =
   process.env.AUDIT_EXPORT_PUBLIC_KEY || join(ROOT, 'infra/audit/export-signing.pub');
 const SOURCE_DIR = process.env.FIFTH_AUDIT_SOURCE_DIR || null;
 const TASK = '5E audit offsite';
+// SSH из Git для Windows: системный OpenSSH Windows на этом ноутбуке ждёт ~30 с на каждом
+// соединении (09.11.2026), а вынос делает по соединению на файл.
+const GIT_SSH = 'C:/Program Files/Git/usr/bin/ssh.exe';
+const SSH = process.platform === 'win32' && existsSync(GIT_SSH) ? GIT_SSH : 'ssh';
 const STALE_HOURS = 3;
 
 function remote(command) {
@@ -69,7 +73,7 @@ function remote(command) {
     }
   }
   const r = spawnSync(
-    'ssh',
+    SSH,
     [
       '-i',
       join(homedir(), '.ssh', 'maus_5e'),
