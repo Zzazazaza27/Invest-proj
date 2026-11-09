@@ -10,6 +10,30 @@ const payload = (bytes) => Buffer.concat([DOMAIN, bytes]);
 export const signKit = (bytes, privatePem) =>
   sign(null, payload(bytes), createPrivateKey(privatePem)).toString('base64');
 
+/**
+ * Подпись отчёта совместимости (блок 09, задание 2; Тэнк 09.11): тот же ключ CI, своя метка
+ * домена — подпись отчёта нельзя выдать за подпись комплекта и наоборот. Подписываются байты
+ * файла целиком: результат, оба комплекта и хеши, миграции, проверки, версия средств проверки.
+ */
+const COMPAT_DOMAIN = Buffer.from('fifth-compat-v1\n');
+export const signCompat = (bytes, privatePem) =>
+  sign(null, Buffer.concat([COMPAT_DOMAIN, bytes]), createPrivateKey(privatePem)).toString(
+    'base64',
+  );
+
+export function compatSignatureValid(bytes, signature, publicPem) {
+  try {
+    return verify(
+      null,
+      Buffer.concat([COMPAT_DOMAIN, bytes]),
+      createPublicKey(publicPem),
+      Buffer.from(String(signature).trim(), 'base64'),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function kitSignatureValid(bytes, signature, publicPem) {
   try {
     return verify(

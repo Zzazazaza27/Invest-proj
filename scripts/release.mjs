@@ -27,14 +27,23 @@
  */
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildOrder } from './kit.mjs';
 import { activeCore, routeJsonPath } from './lib/core-slot.mjs';
-import { extractStatic, prepareSlots, prodLayout, slotOps } from './lib/env-slots.mjs';
+import { envLayout, extractStatic, prepareSlots, prodLayout, slotOps } from './lib/env-slots.mjs';
+import { releaseState } from './lib/release-state.mjs';
 import { switchSlots } from './lib/slot-switch.mjs';
 import { formatProtocol } from './lib/release-report.mjs';
+import { readCompatReport } from './lib/compat-report.mjs';
 import { rollbackVerdict } from './lib/rollback-policy.mjs';
 import { parseEnvFile } from './lib/backup.mjs';
 import { activateProdFiles, prodFileProblems } from './lib/prod-compose.mjs';
@@ -491,13 +500,14 @@ async function testHold(name = 'FIFTH_TEST_HOLD') {
  * совпадают с проверенными по хешу — иначе проверяли другие образы.
  */
 function compatReport(candidate, previous) {
-  const file = join(KITS, candidate, `compat-${previous}.json`);
-  if (!existsSync(file)) return null;
-  const report = JSON.parse(readFileSync(file, 'utf8'));
-  const same =
-    report.candidate?.kitSha256 === readKit(candidate).tar.sha256 &&
-    report.previous?.kitSha256 === readKit(previous).tar.sha256;
-  return same ? report : { ...report, result: 'stale' };
+  // Подпись CI и пара комплектов — scripts/lib/compat-report.mjs (Тэнк 09.11).
+  return readCompatReport({
+    kitsDir: KITS,
+    etcDir: process.env.FIFTH_INSTALL_ETC || '/etc/fifth-install',
+    candidate,
+    previous,
+    kitSha: (build) => readKit(build).tar.sha256,
+  });
 }
 
 /** Точка возврата нового выпуска: прежняя сборка и разрешён ли будет возврат на неё. */
@@ -945,6 +955,110 @@ function slotsDisable(id) {
   finish({ ok: true, env: id, op, message: 'рабочая среда — одно ядро, без слотов' }, 0);
 }
 
+/** Журнал JSON-строк: события или ошибка чтения (отсутствие файла — пустой журнал). */
+function readJournal(file, map) {
+  if (!existsSync(file)) return { ok: true, events: [] };
+  try {
+    return {
+      ok: true,
+      events: readFileSync(file, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => map(JSON.parse(l))),
+    };
+  } catch (e) {
+    return { ok: false, error: `${file}: ${e.message}` };
+  }
+}
+
+/**
+ * Состояние выпуска для наблюдения (блок 09, задание 4): `release.mjs watch <среда> [--out <файл>]`.
+ * Реестр установок, журналы установщика и слотов, состояние слотов → вывод
+ * scripts/lib/release-state.mjs. Источник не прочитан — «неизвестно» (Тэнк, 09.11).
+ */
+async function watch(id) {
+  let db;
+  try {
+    const running = JSON.parse(
+      psql(
+        id,
+        `SELECT coalesce(json_agg(r), '[]') FROM (SELECT id, build, started_at AS "startedAt" FROM ops.installations WHERE env = ${q(id)} AND status = 'running') r;`,
+      ) || '[]',
+    );
+    const last = JSON.parse(
+      psql(
+        id,
+        `SELECT row_to_json(r) FROM (SELECT id, status, kind, detail, finished_at AS "finishedAt" FROM ops.installations WHERE env = ${q(id)} AND status <> 'running' ORDER BY finished_at DESC NULLS LAST LIMIT 1) r;`,
+      ) || 'null',
+    );
+    db = { ok: true, running, last };
+  } catch (e) {
+    db = { ok: false, error: e.message };
+  }
+  const slotDir = id === PROD ? join(HOME, '.local') : dirOf(id);
+  const installer = readJournal(join(dirOf(id), 'release-journal.jsonl'), (e) => ({
+    at: e.at,
+    op: e.op,
+    stage: e.stage,
+    status: e.result ?? e.status,
+    detail: e.detail,
+  }));
+  const switching = readJournal(join(slotDir, 'release', 'journal.jsonl'), (e) => e);
+  const journal =
+    installer.ok && switching.ok
+      ? {
+          ok: true,
+          events: [...installer.events, ...switching.events].sort((a, b) =>
+            String(a.at).localeCompare(String(b.at)),
+          ),
+        }
+      : { ok: false, error: installer.error ?? switching.error };
+
+  let slots = null;
+  const slotsMode =
+    id === PROD
+      ? prodSlots()
+      : existsSync(join(dirOf(id), 'compose.env')) &&
+        /^FIFTH_SLOTS=1$/m.test(readFileSync(join(dirOf(id), 'compose.env'), 'utf8'));
+  if (slotsMode) {
+    try {
+      const layout = id === PROD ? prodLayout(prodEnv('CORE_HOST')) : envLayout(`fifth-${id}`);
+      const webPort =
+        id === PROD
+          ? Number(prodEnv('WEB_PORT') || 80)
+          : JSON.parse(readFileSync(join(dirOf(id), 'install.json'), 'utf8')).webPort;
+      const ops = slotOps(
+        { dir: slotDir, layout, webPort, compose: () => {}, setImage: () => {} },
+        'watch',
+      );
+      const route = ops.readRoute();
+      const grant = ops.readGrant();
+      if (!route || !grant) throw new Error('файл маршрута или разрешения не прочитан');
+      const background = {};
+      for (const slot of ['core-a', 'core-b']) {
+        const stopped = await ops.slotStopped(slot);
+        background[slot] =
+          stopped === true
+            ? 'не работает'
+            : stopped === null
+              ? 'нет ответа'
+              : await ops.backgroundMode(slot);
+      }
+      const via = await ops.viaNginx().catch(() => null);
+      slots = { ok: true, route, grant, background, via };
+    } catch (e) {
+      slots = { ok: false, error: e.message };
+    }
+  }
+  const state = { env: id, ...releaseState({ db, journal, slots }) };
+  const out = flag('--out');
+  if (out) {
+    writeFileSync(`${out}.tmp`, `${JSON.stringify(state, null, 2)}\n`);
+    renameSync(`${out}.tmp`, out);
+  }
+  finish({ ok: state.verdict !== 'problem', ...state }, state.verdict === 'problem' ? 1 : 0);
+}
+
 /**
  * Протокол выпуска (блок 09, задание 4): `release.mjs report <среда> [--op <id>] [--text]`.
  * Без --op — последняя операция среды. Источник — реестр и журналы; секретов нет.
@@ -1018,6 +1132,7 @@ function report(id) {
 }
 
 const COMMANDS = {
+  watch,
   report,
   install,
   verify,

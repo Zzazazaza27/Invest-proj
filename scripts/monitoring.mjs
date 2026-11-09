@@ -487,6 +487,70 @@ async function configure() {
     },
   );
 
+  // ---- Выпуск (блок 09, задание 4): файл пишет `release.mjs watch` из выгрузки наблюдения ----
+  // Вывод учитывает этап: сосуществование версий во время выпуска — норма; непрочитанный
+  // источник — «неизвестно», а не «проблем нет» (Тэнк, 09.11).
+  await item({
+    name: 'Выпуск: состояние, исходный файл',
+    key_: 'vfs.file.contents[/monitor/release.json]',
+    type: AGENT,
+    value_type: 4,
+    history: '0',
+  });
+  await item({
+    name: 'Выпуск: вывод (0 ok, 1 проблема, 2 неизвестно)',
+    key_: 'release.verdict',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/release.json]'),
+    value_type: 3,
+    preprocessing: [step(JS, 'return JSON.parse(value).code;', 2, '2')],
+  });
+  await item({
+    name: 'Выпуск: причины',
+    key_: 'release.reasons',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/release.json]'),
+    value_type: 1,
+    preprocessing: [
+      step(
+        JS,
+        "var s = JSON.parse(value); return s.problems.map(function (p) { return p.text; }).concat(s.unknown).join('; ') || 'нет';",
+        2,
+        'файл не читается',
+      ),
+    ],
+  });
+  await trigger('Выпуск требует внимания', `last(/${H}/release.verdict)=1`, 4, {
+    comments:
+      'Неудача или возврат выпуска, зависание без продвижения сверх срока этапа, отказ в наблюдении (решение за Томасом), нарушение ожидаемого состояния слотов. Причины — в «Выпуск: причины»; протокол — release.mjs report.',
+  });
+  await trigger('Состояние выпуска неизвестно', `last(/${H}/release.verdict)=2`, 2, {
+    comments:
+      'Не прочитан реестр установок, журнал выпуска или состояние слотов. Это не «проблем нет»: причина — в «Выпуск: причины».',
+  });
+  await item({
+    name: 'Выпуск: возраст состояния, с',
+    key_: 'vfs.file.time[/monitor/release.json,modify]',
+    type: AGENT,
+    value_type: 3,
+    preprocessing: [
+      UNSUP('missing'),
+      step(
+        JS,
+        "if (value === 'missing') return 999999; return Math.floor(Date.now() / 1000) - Number(value);",
+      ),
+    ],
+  });
+  await trigger(
+    'Состояние выпуска не обновляется',
+    `last(/${H}/vfs.file.time[/monitor/release.json,modify])>${THRESHOLDS.containersStaleSec}`,
+    2,
+    {
+      comments:
+        'Выгрузка наблюдения не обновляла release.json дольше 5 минут — состояние неизвестно.',
+    },
+  );
+
   // ---- OpenBao (блок 5): файл пишет таймер узла, Zabbix от OpenBao не зависит ----
   await item({
     name: 'OpenBao: состояние, исходный файл',

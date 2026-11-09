@@ -25,11 +25,12 @@
  * тогда не пишется.
  */
 import { spawnSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import sharp from 'sharp';
+import { signCompat } from './lib/kit-sign.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
@@ -397,9 +398,36 @@ if (kits[PREVIOUS] && kits[CANDIDATE]) {
     probes: newIds.filter((id) => existsSync(join(ROOT, 'database', 'compat', `${id}.mjs`))),
     fatal,
     checks: results,
+    // Версия средств проверки (Тэнк 09.11): коммит и хеши самого прогона и проверок миграций.
+    tools: {
+      commit: spawnSync('git', ['rev-parse', 'HEAD'], {
+        cwd: ROOT,
+        encoding: 'utf8',
+      }).stdout.trim(),
+      script: createHash('sha256')
+        .update(readFileSync(fileURLToPath(import.meta.url)))
+        .digest('hex'),
+      probes: Object.fromEntries(
+        newIds
+          .map((id) => join(ROOT, 'database', 'compat', `${id}.mjs`))
+          .filter(existsSync)
+          .map((f) => [
+            f.split(/[\\/]/).pop(),
+            createHash('sha256').update(readFileSync(f)).digest('hex'),
+          ]),
+      ),
+    },
   };
   const out = join(KITS, CANDIDATE, `compat-${PREVIOUS}.json`);
-  writeFileSync(out, `${JSON.stringify(report, null, 2)}\n`);
+  const bytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
+  writeFileSync(out, bytes);
+  // Подпись — только защищённой задачей CI после успешного прогона (ключ CI недоступен
+  // проверкам недоверенных изменений). Без ключа отчёт не подписан и основанием возврата не служит.
+  const keyFile = opt('--sign-key-file');
+  if (keyFile && result === 'ok') {
+    writeFileSync(`${out}.sig`, `${signCompat(bytes, readFileSync(keyFile, 'utf8'))}\n`);
+    console.warn(`Отчёт подписан: ${out}.sig`);
+  }
   console.warn(`Отчёт: ${out}`);
 }
 process.exitCode = failed.length ? 1 : 0;

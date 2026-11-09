@@ -20,9 +20,11 @@ import {
   writeFileSync,
   writeSync,
 } from 'node:fs';
+import { generateKeyPairSync } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { signCompat } from './lib/kit-sign.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const fromArg = process.argv.indexOf('--from');
@@ -42,7 +44,22 @@ const K4 = '2.1-b9003.1';
 const K5 = '2.1-b9004.1';
 const REPO_COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
 const MARK = '      W09_MARK: changed\n';
-const env0 = { ...process.env, MSYS_NO_PATHCONV: '1', FIFTH_KITS_DIR: KITS };
+// Отчёт совместимости — основание возврата, только подписанный ключом CI и проверенный
+// закреплённым ключом узла (Тэнк 09.11). Прогон заводит свою пару ключей.
+const ETC = join(ROOT, '.local', 'check-release-etc');
+const signing = generateKeyPairSync('ed25519');
+const SIGN_PEM = signing.privateKey.export({ type: 'pkcs8', format: 'pem' });
+mkdirSync(ETC, { recursive: true });
+writeFileSync(
+  join(ETC, 'kit-signing.pub'),
+  signing.publicKey.export({ type: 'spki', format: 'pem' }),
+);
+const env0 = {
+  ...process.env,
+  MSYS_NO_PATHCONV: '1',
+  FIFTH_KITS_DIR: KITS,
+  FIFTH_INSTALL_ETC: ETC,
+};
 
 let passed = 0;
 let failed = 0;
@@ -346,9 +363,8 @@ try {
   );
   const tarSha = (b) => JSON.parse(readFileSync(join(KITS, b, 'kit.json'), 'utf8')).tar.sha256;
   const reportFile = join(KITS, K2, `compat-${K1}.json`);
-  const report = (result, previousSha) =>
-    writeFileSync(
-      reportFile,
+  const report = (result, previousSha, { sign = true } = {}) => {
+    const bytes = Buffer.from(
       JSON.stringify({
         result,
         candidate: { build: K2, kitSha256: tarSha(K2) },
@@ -356,6 +372,17 @@ try {
         newMigrations: ['M999_probe'],
       }),
     );
+    writeFileSync(reportFile, bytes);
+    rmSync(`${reportFile}.sig`, { force: true });
+    if (sign) writeFileSync(`${reportFile}.sig`, signCompat(bytes, SIGN_PEM));
+  };
+  report('ok', tarSha(K1), { sign: false });
+  const unsignedReport = install(B, K1, K2, '--rollback');
+  check(
+    'пройденный, но неподписанный отчёт — отказ',
+    unsignedReport.code === 2 && /unsigned/.test(unsignedReport.json?.error ?? ''),
+    unsignedReport.json?.error?.slice(0, 120),
+  );
   report('ok', 'чужой-комплект');
   const staleReport = install(B, K1, K2, '--rollback');
   check(

@@ -14,7 +14,7 @@
  *
  *   node scripts/monitor-export.mjs        записать MONITOR_STATE_DIR/containers.json
  */
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ROOT, loadEnv } from './lib/backup.mjs';
@@ -42,3 +42,13 @@ renameSync(`${target}.tmp`, target);
 console.log(
   `контейнеров: ${containers.length}, не работают: ${containers.filter((c) => c.expected && c.state !== 'running').length}, автовосстановление остановлено: ${containers.filter((c) => c.recoveryStopped).length}, петля падений: ${containers.filter((c) => c.crashLoop).length}`,
 );
+
+// Состояние выпуска рабочей среды (блок 09, задание 4): release.json для агента Zabbix. Сбой
+// команды файл не обновляет — тревога «состояние выпуска не обновляется», то есть неизвестно.
+const release = spawnSync(
+  process.execPath,
+  [join(ROOT, 'scripts', 'release.mjs'), 'watch', 'prod', '--out', join(dir, 'release.json')],
+  { encoding: 'utf8', timeout: 60_000 },
+);
+const verdict = /"verdict":"(\w+)"/.exec(release.stdout ?? '')?.[1] ?? 'не получено';
+console.log(`выпуск: ${verdict}`);
