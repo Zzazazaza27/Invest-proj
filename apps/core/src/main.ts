@@ -553,7 +553,10 @@ async function bootstrap(): Promise<void> {
     jobs.start();
   }
   // Сигнал «в очереди появилась работа» (M175): будит уснувшие опросы пустых очередей.
-  const queueWake = background.allowed ? startQueueWake(jobs, logger) : null;
+  const queueWake =
+    background.allowed && env.QUEUE_WAKE_LISTEN === 'true' ? startQueueWake(jobs, logger) : null;
+  if (background.allowed && !queueWake)
+    logger.warn('сигнал очередей выключен: опросы будит только пауза');
   lifecycle = 'running';
 
   // Общий предел на всё завершение, включая закрытие приложения и пулов.

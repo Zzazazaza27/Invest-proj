@@ -342,6 +342,11 @@ const RawEnvSchema = z.object({
    * Предел сна пустой очереди (outbox, вебхуки, почта): пауза растёт от своего интервала до
    * этого значения, пока работы нет; сигнал M175 будит сразу (расход в простое, 10.11).
    */
+  /**
+   * Подписка на сигнал очередей M175. false — опросы будит только пауза сна (страховка):
+   * эксплуатационный выключатель и стендовая проверка страховочного опроса (Тэнк 10.11).
+   */
+  QUEUE_WAKE_LISTEN: z.enum(['true', 'false']).default('true'),
   QUEUE_IDLE_MAX_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
   WEBHOOK_POLL_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(2_000),
   WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(5_000),

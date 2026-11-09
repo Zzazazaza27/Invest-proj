@@ -436,7 +436,7 @@
 | CHK-CONTRACT-RELEASE | `node scripts/check-contract-release.mjs` | 9 | вручную | — |
 | CHK-UPLOAD-PUBLISH-RIGHT | `node scripts/check-upload-publish-right.mjs` | 6 | вручную | — |
 | CHK-ACTOR-CONTEXT | `node scripts/check-actor-context.mjs` | 17 | вручную | — |
-| CHK-QUEUE-WAKE | `node scripts/check-queue-wake.mjs` | 6 | вручную | — |
+| CHK-QUEUE-WAKE | `node scripts/check-queue-wake.mjs` | 11 | вручную | — |
 | CHK-KIT-SBOM | `node scripts/check-kit-sbom.mjs` | 7 | вручную | — |
 | CHK-RELEASE-TRIALS | `node scripts/check-release-trials.mjs` | 24 | вручную | — |
 | CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 11 | вручную | — |

@@ -9,12 +9,16 @@
  *  2. письмо в очереди почты после простоя;
  *  3. потерянный сигнал: соединение слушателя обрывается (pg_terminate_backend) — событие
  *     всё равно публикуется не позже паузы сна, слушатель переподключается, следующее
- *     событие снова быстрое.
+ *     событие снова быстрое;
+ *  4. подписки нет и она не переподключается (QUEUE_WAKE_LISTEN=false, ядро стенда
+ *     перезапускается с этим значением и затем возвращается): очередь уже спит на полной
+ *     паузе, появляется работа — её берёт страховочный опрос, без потери и без дубля
+ *     (Тэнк 10.11).
  * Задержка — по времени базы: created_at → published_at / accepted_at.
  */
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { registerProbeUser, startProbeRun } from './lib/probe-run.mjs';
 
@@ -113,6 +117,34 @@ const listenerPids = () =>
     "SELECT string_agg(pid::text, ',') FROM pg_stat_activity WHERE application_name = 'fifth-core-queue-wake';",
   );
 
+const ENV_FILE = '.env';
+// Загрузчик .env стенда не знает комментариев в конце строки — метка без них.
+const SWITCH = 'QUEUE_WAKE_LISTEN=false';
+/** Перезапуск ядра стенда с выключенной подпиской (off) или возврат. Метка в .env — только на время. */
+function withoutListener(off) {
+  const kept = readFileSync(ENV_FILE, 'utf8')
+    .split('\n')
+    .filter((l) => l !== SWITCH)
+    .join('\n');
+  writeFileSync(ENV_FILE, off ? `${kept.replace(/\n*$/, '\n')}${SWITCH}\n` : kept);
+  const r = spawnSync('npm', ['run', 'stand:up', '--', '--no-build', '--restart-core'], {
+    encoding: 'utf8',
+    shell: true,
+    timeout: 300_000,
+  });
+  if (r.status !== 0) throw new Error(`перезапуск ядра: ${(r.stdout ?? '').slice(-300)}`);
+}
+async function waitListener() {
+  for (let i = 0; i < 60; i += 1) {
+    const pid = listenerPids();
+    if (pid) return pid;
+    await sleep(500);
+  }
+  return '';
+}
+// Оборванный прошлый прогон мог оставить ядро без подписки.
+if (readFileSync(ENV_FILE, 'utf8').split('\n').includes(SWITCH)) withoutListener(false);
+
 console.log('\n=== СОН ПУСТЫХ ОЧЕРЕДЕЙ И ПРОБУЖДЕНИЕ (M175) ===\n');
 const run = await startProbeRun('CHK-QUEUE-WAKE');
 let ok = false;
@@ -133,8 +165,11 @@ try {
   const userId = (await self.call('/v1/auth/me')).json?.id;
   if (!userId) throw new Error('нет id участника');
 
+  // Начало последнего действия: событие ищется только после него — прежние того же вида не в счёт.
+  let lastSince = '';
   const roleEvent = async (method, label) => {
     await untilAsleep('outbox.publish');
+    lastSince = sql('SELECT now();');
     const path =
       method === 'POST'
         ? `/v1/admin/users/${userId}/roles`
@@ -148,6 +183,7 @@ try {
     const ms = await untilSet(
       `SELECT round(extract(epoch FROM published_at - created_at) * 1000) FROM audit.outbox_events
         WHERE aggregate_id = '${userId}' AND event_type = '${verb}' AND published_at IS NOT NULL
+          AND created_at >= '${lastSince}'
         ORDER BY created_at DESC LIMIT 1;`,
       IDLE_MAX_MS + 5_000,
     );
@@ -211,6 +247,41 @@ try {
   const after = await roleEvent('POST', 'повторная выдача');
   results.push({ case: 'outbox после переподключения', ms: after });
   check('после переподключения снова быстро', after !== null && after < FAST_MS, `${after} мс`);
+
+  // 4. Подписки нет и она не вернётся: только страховочный опрос.
+  console.log('  (ядро стенда перезапускается без подписки)');
+  withoutListener(true);
+  try {
+    check('подписки нет', !listenerPids());
+    await admin.call('/v1/auth/login', {
+      method: 'POST',
+      body: { email: 'demo-admin@fifth.local', password: demoPassword() },
+    });
+    const asleep = await untilAsleep('outbox.publish');
+    const fallback = await roleEvent('DELETE', 'снятие роли без подписки');
+    results.push({ case: 'outbox без подписки (страховочный опрос)', ms: fallback });
+    check(
+      `без подписки событие взял страховочный опрос не позже паузы ${asleep.sleepMs} мс`,
+      fallback !== null && fallback <= asleep.sleepMs + 1_500,
+      `${fallback} мс`,
+    );
+    const copies = sql(
+      `SELECT count(*) || '|' || count(published_at) || '|' || coalesce(max(attempts), 0)
+         FROM audit.outbox_events
+        WHERE aggregate_id = '${userId}' AND event_type = 'identity.role.revoked'
+          AND created_at >= '${lastSince}';`,
+    );
+    // Одна строка, опубликована, без неудачных попыток (attempts считает отказы публикации).
+    check(
+      'событие одно, опубликовано, без повторов',
+      copies === '1|1|0',
+      `строк|опубл.|отказов ${copies}`,
+    );
+    check('подписка не появилась', !listenerPids());
+  } finally {
+    withoutListener(false);
+  }
+  check('после возврата подписка снова действует', !!(await waitListener()));
   ok = failed === 0;
 } catch (error) {
   failed += 1;
