@@ -1,7 +1,7 @@
 #!/bin/bash
 # Администратор test-1 для подготовки данных нагрузочного прогона (W32). Только test-1.
 # Учётная запись заранее зарегистрирована через API test-1 (пароль сгенерирован Маусом и
-# хранится вне Git); этот шаг выдаёт ей роль admin и полномочие testing.sessions.manage.
+# хранится вне Git); этот шаг выдаёт ей роль admin — с ней и testing.sessions.manage (M097).
 #   fifth-test op prod-test1-load-admin grant <user_id>
 #   fifth-test op prod-test1-load-admin revoke <user_id>
 set -Eeuo pipefail
@@ -22,12 +22,9 @@ SELECT count(*) FROM identity.users WHERE id = :'uid' AND status = 'active' \gse
   SELECT :'uid', 'admin', :'uid'
    WHERE NOT EXISTS (SELECT 1 FROM identity.user_roles
                       WHERE user_id = :'uid' AND role = 'admin' AND revoked_at IS NULL);
-  INSERT INTO identity.staff_capability_grants (id, user_id, capability, reason, granted_by)
-  SELECT gen_random_uuid(), :'uid', 'testing.sessions.manage', 'нагрузочный прогон W32', :'uid'
-   WHERE NOT EXISTS (SELECT 1 FROM identity.staff_capability_grants
-                      WHERE user_id = :'uid' AND capability = 'testing.sessions.manage'
-                        AND revoked_at IS NULL);
-  SELECT 'выдано: admin и testing.sessions.manage';
+  -- Отдельная выдача полномочий не нужна: администратор держит все (app.has_capability,
+  -- M097); выдавать её может только администратор через API — триггер M097.
+  SELECT 'выдано: admin (полномочия администратора включают testing.sessions.manage)';
 \else
   SELECT 'нет активной учётной записи с таким id';
 \endif
