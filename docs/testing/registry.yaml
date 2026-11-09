@@ -3916,6 +3916,30 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: CHK-RELEASE-TRIALS
+    file: scripts/check-release-trials.mjs
+    command: node scripts/check-release-trials.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 24
+    needs: [docker, s3]
+    effects:
+      [
+        'образы fifth/{core,web,postgres}:t1…t4 и комплекты 2.1-b9201…9204 из зафиксированного кода с пробными миграциями M900–M902; временная среда test-79, удаляется прогоном',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Три сквозных сценария через установщик (release.mjs install) на среде со слотами: выпуск с
+      миграцией-расширением, протокол и наблюдение; возврат с новыми данными — без отчёта отказ,
+      по подписанному отчёту прежний код обслуживает, запись кандидата цела, кандидат снова её
+      читает; contract-миграция — без --allow-contract отказ, с ним порядок с остановкой, возврат
+      за неё запрещён, исправление вперёд бесшовно. Раскладку рабочей среды не испытывает.
+    purpose: 'Блок 9, задание 4: условие приёмки Тэнка — установщик и три сквозных сценария.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: CHK-COMPAT-SIGNATURE
     file: scripts/check-compat-signature.mjs
     command: node scripts/check-compat-signature.mjs
@@ -5646,6 +5670,7 @@ blocks:
         CHK-CONTRACT-RELEASE,
         CHK-COMPAT-SIGNATURE,
         CHK-SLOTS-ENV,
+        CHK-RELEASE-TRIALS,
         CHK-ENV-ISOLATION,
         CHK-ENV-IMAGES,
         CHK-INSTALLER,
