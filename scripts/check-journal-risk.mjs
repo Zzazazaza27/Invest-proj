@@ -151,9 +151,17 @@ try {
   console.log('\n▸ 1. Заголовки, отсрочка «неизвестно»');
   gen(50, 'a');
   setBoundary(entries().at(-1));
+  // Отсутствие невыгруженного подтверждено без притока: clear, прогноза нет.
+  const r0 = risk();
+  check(
+    'всё выгружено, приток не измерен — clear без прогноза',
+    r0.state === 'clear' && r0.ifStoppedHours === null && r0.forecastProblem === 'no-rate',
+    show(r0),
+  );
+  gen(10, 'a2');
   const r1 = risk();
   check(
-    'приток ещё не измерен — unknown, отсрочка идёт',
+    'есть невыгруженное, приток не измерен — unknown, отсрочка идёт',
     r1.state === 'unknown' && r1.reason === 'no-rate' && r1.grace === true,
     show(r1),
   );

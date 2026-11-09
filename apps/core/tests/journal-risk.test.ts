@@ -304,6 +304,57 @@ describe('переход нумерации', () => {
   });
 });
 
+describe('заголовок не доказывает полноту диапазона (замечание Тэнка к 35d9fe8)', () => {
+  it('файл 1–100 с 50 записями, C = 40 — полнота 41–100 не доказана: unknown', () => {
+    const f = { ...closed(A, 1, 100, 3, 8 * MiB), entries: 50 };
+    const r = computeRisk({
+      ...base,
+      files: [f, active(A, 101, 120, 1, 8 * MiB)],
+      cursor: at(A, 40),
+      tail: at(A, 120),
+    });
+    expect(r).toMatchObject({ state: 'unknown', reason: 'continuity-unproven' });
+  });
+
+  it('удалён user-файл с номерами внутри диапазона system-файла — unknown, а не ok', () => {
+    // System и user делят нумерацию: вместе 70 + 30 = 100 номеров 1–100.
+    const sys = { ...closed(A, 1, 100, 3, 40 * MiB), entries: 70 };
+    const usr = {
+      ...closed(A, 10, 90, 3, 4 * MiB),
+      path: `${DIR}/user-1000@${A}-${hex16(10)}-${hex16(us(NOW - 3 * H))}.journal`,
+      entries: 30,
+    };
+    const act = active(A, 101, 120, 1, 8 * MiB);
+    const both = computeRisk({
+      ...base,
+      files: [sys, usr, act],
+      cursor: at(A, 40),
+      tail: at(A, 120),
+    });
+    expect(both.state).toBe('ok');
+    const gone = computeRisk({ ...base, files: [sys, act], cursor: at(A, 40), tail: at(A, 120) });
+    expect(gone).toMatchObject({ state: 'unknown', reason: 'continuity-unproven' });
+  });
+});
+
+describe('непрерывность не зависит от прогноза (замечание Тэнка к 35d9fe8)', () => {
+  const files = [closed(A, 50, 100, 3, 8 * MiB), active(A, 101, 120, 1, 8 * MiB)];
+  it.each([
+    ['известен приток', {}],
+    ['нет притока', { rate: null }],
+    ['нет настроек', { config: null }],
+    ['нет места', { fsAvail: null }],
+  ])('доказанный пропуск 41–49 — lost: %s', (_n, over) => {
+    const r = computeRisk({ ...base, files, cursor: at(A, 40), tail: at(A, 120), ...over });
+    expect(r).toMatchObject({ state: 'lost', lost: { first: '41', last: '49' } });
+  });
+
+  it('всё выгружено без измеренного притока — clear, прогноза нет', () => {
+    const r = computeRisk({ ...base, rate: null, files, cursor: at(A, 120), tail: at(A, 120) });
+    expect(r).toMatchObject({ state: 'clear', ifStoppedHours: null, forecastProblem: 'no-rate' });
+  });
+});
+
 describe('неизвестное не безопасно', () => {
   const files = [active(A, 1, 100, 1, 8 * MiB)];
   it.each([

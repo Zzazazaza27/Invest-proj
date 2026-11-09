@@ -2301,12 +2301,24 @@ async function journalRisk(state) {
     });
     rs.track = trackGrowth(rs.track, files, nowMs);
     const { rate, source } = diskRate(rs.track, files, nowMs);
-    const fsst = statfsSync(dirname(files[0].path));
-    const cfg = spawnSync('systemd-analyze', ['cat-config', 'systemd/journald.conf'], {
-      encoding: 'utf8',
-    });
-    if (cfg.status !== 0) throw new RiskUnknown('config');
-    const config = parseJournaldConfig(cfg.stdout, fsst.blocks * fsst.bsize);
+    // Настройки и место нужны только прогнозу: их отсутствие не мешает
+    // доказать потерю или «всё выгружено» (computeRisk).
+    let fsst = null;
+    try {
+      fsst = statfsSync(dirname(files[0].path));
+    } catch {
+      /* место неизвестно */
+    }
+    let config = null;
+    try {
+      const cfg = spawnSync('systemd-analyze', ['cat-config', 'systemd/journald.conf'], {
+        encoding: 'utf8',
+      });
+      if (cfg.status === 0 && fsst)
+        config = parseJournaldConfig(cfg.stdout, fsst.blocks * fsst.bsize);
+    } catch {
+      /* настройки не разобраны — config: null */
+    }
     const t = await tailCursor();
     const cursor =
       state?.seqId && state.lastSeq !== null && state.lastSeq !== undefined
@@ -2317,15 +2329,15 @@ async function journalRisk(state) {
       cursor,
       tail: t && { seqId: t.seqId, seq: t.seq },
       config,
-      fsAvail: fsst.bavail * fsst.bsize,
+      fsAvail: fsst ? fsst.bavail * fsst.bsize : null,
       rate,
       nowMs,
     });
     Object.assign(result, {
       rateBytesHour: rate,
       rateSource: source,
-      fileMaxBytes: config.fileMax,
-      maxFiles: config.maxFiles,
+      fileMaxBytes: config?.fileMax ?? null,
+      maxFiles: config?.maxFiles ?? null,
     });
   } catch (error) {
     result = { state: 'unknown', reason: error instanceof RiskUnknown ? error.reason : 'error' };

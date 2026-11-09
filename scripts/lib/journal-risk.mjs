@@ -255,32 +255,44 @@ export function parseJournaldConfig(text, fsSize) {
 
 // ------------------------------------------------------------ непрерывность
 
-function mergeSpans(spans) {
-  const sorted = [...spans].sort((x, y) => cmp(x.first, y.first));
-  const out = [];
-  for (const r of sorted) {
-    const last = out.at(-1);
-    if (last && r.first <= last.last + 1n) {
-      if (r.last > last.last) last.last = r.last;
-    } else out.push({ ...r });
+/**
+ * Что заголовки доказывают о номерах [a, b] одной нумерации. Системный и
+ * user-файлы делят нумерацию, поэтому диапазон head…tail файла не значит, что
+ * все его номера в нём. Группа перекрывающихся файлов доказывает полноту,
+ * только если записей в ней ровно столько, сколько номеров в её диапазоне
+ * (номер — ровно в одном файле). Иначе часть номеров пропала, но где — по
+ * заголовкам не установить: ambiguous. Номера между группами нет ни в одном
+ * файле — доказанный пропуск: holes.
+ */
+export function coverage(files, a, b) {
+  const sorted = [...files].sort((x, y) => cmp(x.head, y.head));
+  const groups = [];
+  for (const f of sorted) {
+    const g = groups.at(-1);
+    if (g && f.head <= g.last) {
+      if (f.tail > g.last) g.last = f.tail;
+      g.entries += BigInt(f.entries);
+    } else groups.push({ first: f.head, last: f.tail, entries: BigInt(f.entries) });
   }
-  return out;
+  const holes = [];
+  let ambiguous = false;
+  let at = a;
+  for (const g of groups) {
+    if (g.last < a || g.first > b) continue;
+    if (g.entries !== g.last - g.first + 1n) ambiguous = true;
+    if (g.first > at) holes.push({ first: at, last: g.first - 1n });
+    if (g.last + 1n > at) at = g.last + 1n;
+  }
+  if (at <= b) holes.push({ first: at, last: b });
+  return { holes, ambiguous };
 }
 
-/** Номера из [a, b], которых нет ни в одном файле нумерации. */
-export function holes(files, a, b) {
-  const spans = mergeSpans(files.map((f) => ({ first: f.head, last: f.tail })));
-  const out = [];
-  let at = a;
-  for (const r of spans) {
-    if (at > b) break;
-    if (r.last < at) continue;
-    if (r.first > b) break;
-    if (r.first > at) out.push({ first: at, last: r.first - 1n });
-    at = r.last + 1n;
-  }
-  if (at <= b) out.push({ first: at, last: b });
-  return out;
+/** Доказанный пропуск — lost; неоднозначная полнота — unknown. */
+function proveRange(files, sid, a, b) {
+  const c = coverage(files, a, b);
+  if (c.holes.length) return { lost: { seqId: sid, ...c.holes[0] } };
+  if (c.ambiguous) unknown('continuity-unproven');
+  return null;
 }
 
 /**
@@ -322,8 +334,8 @@ export function backlogOf(files, cursor, tail) {
     if (tail.seq <= C.seq) return { clear: true };
     // Наличие C подтверждает только саму запись C: проверяется весь
     // невыгруженный отрезок.
-    const h = holes(own, C.seq + 1n, tail.seq);
-    if (h.length) return { lost: { seqId: C.seqId, ...h[0] } };
+    const p = proveRange(own, C.seqId, C.seq + 1n, tail.seq);
+    if (p) return p;
     return { unarchived: (f) => f.seqId === C.seqId && f.entries > 0 && f.tail > C.seq };
   }
 
@@ -337,8 +349,8 @@ export function backlogOf(files, cursor, tail) {
     if (!allClosed(files.filter((f) => f.seqId === C.seqId))) unknown('transition-open');
     const end = max(own.map((f) => f.tail));
     if (end > C.seq) {
-      const h = holes(own, C.seq + 1n, end);
-      if (h.length) return { lost: { seqId: C.seqId, ...h[0] } };
+      const p = proveRange(own, C.seqId, C.seq + 1n, end);
+      if (p) return p;
     }
     prevEnd = end > C.seq ? end : C.seq;
   } else {
@@ -355,8 +367,8 @@ export function backlogOf(files, cursor, tail) {
     const lo = min(n.files.map((f) => f.head));
     const hi = max(n.files.map((f) => f.tail));
     if (lo !== 1n && lo !== prevEnd + 1n) unknown('transition-unproven');
-    const h = holes(n.files, lo, hi);
-    if (h.length) return { lost: { seqId: n.seqId, ...h[0] } };
+    const p = proveRange(n.files, n.seqId, lo, hi);
+    if (p) return p;
     prevEnd = hi;
   }
   const laterIds = new Set(later.map((n) => n.seqId));
@@ -439,12 +451,9 @@ export function computeRisk(input) {
     if (!cursor || cursor.seq === null || cursor.seq === undefined || !cursor.seqId)
       unknown('no-cursor');
     if (!tail) unknown('no-tail');
-    if (!config) unknown('config');
-    if (!Number.isFinite(fsAvail)) unknown('no-fs');
-    if (!Number.isFinite(rate) || rate === null) unknown('no-rate');
-    if (rate <= 0) unknown('no-inflow');
     const files = input.files.map((f) => ({ ...f, vac: vacuumInfo(f.path) }));
-    if (files.some((f) => !Number.isFinite(f.size) || f.size < 0)) unknown('no-size');
+    // Непрерывность — до условий прогноза: доказанная потеря и подтверждённое
+    // отсутствие невыгруженного не зависят от притока и настроек.
     const b = backlogOf(files, cursor, tail);
     if (b.lost) {
       return {
@@ -453,21 +462,35 @@ export function computeRisk(input) {
         lost: { seqId: b.lost.seqId, first: String(b.lost.first), last: String(b.lost.last) },
       };
     }
+    // Для прогноза — настройки, место, приток и размеры.
+    const forecastProblem = !config
+      ? 'config'
+      : !Number.isFinite(fsAvail)
+        ? 'no-fs'
+        : rate === null || rate === undefined || !Number.isFinite(rate)
+          ? 'no-rate'
+          : rate <= 0
+            ? 'no-inflow'
+            : files.some((f) => !Number.isFinite(f.size) || f.size < 0)
+              ? 'no-size'
+              : null;
     const base = { files, config, fsAvail, rate, nowMs };
     // Запас, если выгрузка остановится сейчас: первая невыгруженная запись
     // будет в активном файле — справочно.
-    const ifStopped = horizon({ ...base, unarchived: null });
+    const ifStopped = forecastProblem ? null : horizon({ ...base, unarchived: null });
     if (b.clear) {
       return {
         state: 'clear',
         reason: '',
         hours: null,
-        ifStoppedHours: ifStopped.hours,
-        ...pick(ifStopped),
+        ifStoppedHours: ifStopped?.hours ?? null,
+        forecastProblem,
+        ...(ifStopped ? pick(ifStopped) : {}),
         backlogBytes: 0,
         backlogFiles: 0,
       };
     }
+    if (forecastProblem) unknown(forecastProblem);
     const h = horizon({ ...base, unarchived: b.unarchived });
     return {
       state: 'ok',
