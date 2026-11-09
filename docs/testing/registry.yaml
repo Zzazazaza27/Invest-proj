@@ -4035,7 +4035,10 @@ checks:
     runner: manual
     asserts: 6
     needs: [stand]
-    effects: ['участник прогона (probe-run), выдача и снятие роли, обращение в поддержку; обрыв соединения слушателя pg_terminate_backend']
+    effects:
+      [
+        'участник прогона (probe-run), выдача и снятие роли, обращение в поддержку; обрыв соединения слушателя pg_terminate_backend',
+      ]
     studied: code
     studiedOn: 2026-11-10
     note: >-

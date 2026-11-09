@@ -247,17 +247,9 @@ const CB_DENIED = http.expectedStatuses(403, 404);
 
 // ---------------------------------------------------------------------- HTTP
 
+/** Ключ повтора: криптостойкий UUID (webcrypto k6). */
 function uuid() {
-  const h = '0123456789abcdef';
-  let s = '';
-  for (let i = 0; i < 32; i += 1) {
-    let d = Math.floor(Math.random() * 16);
-    if (i === 12) d = 4;
-    if (i === 16) d = (d & 0x3) | 0x8;
-    s += h[d];
-    if (i === 7 || i === 11 || i === 15 || i === 19) s += '-';
-  }
-  return s;
+  return crypto.randomUUID();
 }
 
 function statusTag(status) {
@@ -307,6 +299,7 @@ function json(res) {
 }
 
 function pick(list) {
+  // nosemgrep: unicorn-no-math-random-for-security — выбор действия профиля, не секрет
   return list[Math.floor(Math.random() * list.length)];
 }
 
@@ -404,6 +397,7 @@ function ownProject(session) {
 const ACTIONS = {
   catalog_filter() {
     let q = `stage=${pick(DATA.stages)}&limit=20`;
+    // nosemgrep: unicorn-no-math-random-for-security — выбор действия профиля, не секрет
     if (Math.random() < 0.5 && DATA.taxonomyIds.length)
       q += `&taxonomyId=${pick(DATA.taxonomyIds)}`;
     return api(null, 'GET', `/v1/catalog?${q}`, undefined, {
@@ -482,6 +476,7 @@ const ACTIONS = {
 };
 
 function chooseAction() {
+  // nosemgrep: unicorn-no-math-random-for-security — выбор действия профиля, не секрет
   let r = Math.random() * MIX_TOTAL;
   for (const [name, w] of MIX) {
     r -= w;
