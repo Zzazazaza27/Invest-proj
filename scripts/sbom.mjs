@@ -169,11 +169,13 @@ const IMAGE_FILES = [
   'infra/docker-compose.env-production.yml',
   'infra/openbao/docker-compose.yml',
   'scripts/dns-primary.mjs',
+  // Локальный инструмент нагрузки (k6, AGPL-3.0): запускается на ноутбуке, в поставку не входит.
+  'scripts/load/run.mjs',
 ];
 const images = [];
 for (const file of IMAGE_FILES) {
   const text = readFileSync(join(ROOT, file), 'utf8');
-  const re = /^[ \t]*(?:FROM\s+(\S+)|image:\s*(\S+)|const IMAGE = '([^']+)')/gm;
+  const re = /^[ \t]*(?:FROM\s+(\S+)|image:\s*(\S+)|const (?:K6_)?IMAGE =\s*'([^']+)')/gm;
   for (const m of text.matchAll(re)) {
     const ref = m[1] ?? m[2] ?? m[3];
     if (ref.startsWith('${')) continue; // свои образы: дайджест — в kit.json

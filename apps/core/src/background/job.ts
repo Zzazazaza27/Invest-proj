@@ -58,6 +58,14 @@ export interface JobDefinition {
    * письма и доставки не уходят до применения учёта удалений — независимо от HTTP.
    */
   readonly externalEffects?: boolean;
+  /**
+   * Сон пустой очереди (расход в простое; Тэнк 10.11). Проход без работы (`idle`) удваивает
+   * паузу от `intervalMs` до `maxMs`; проход с работой, отказ и пробуждение возвращают её к
+   * `intervalMs`. `wake` — имя очереди в уведомлении `fifth_queue_wake` (M175): после
+   * фиксации вставки в очередь опрос будится сразу. Сигнал — подсказка: потерянный
+   * сигнал работу не теряет, опрос раз в `maxMs` остаётся страховкой.
+   */
+  readonly idle?: { readonly maxMs: number; readonly wake?: string };
   run(ctx: JobContext): Promise<JobResult>;
 }
 

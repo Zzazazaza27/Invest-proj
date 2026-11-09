@@ -338,6 +338,11 @@ const RawEnvSchema = z.object({
   OUTBOX_BATCH_SIZE: z.coerce.number().int().min(1).max(500).default(50),
   // Доставка вебхуков — отдельный ритм: у внешнего потребителя свои таймауты,
   // и частить к нему смысла нет.
+  /**
+   * Предел сна пустой очереди (outbox, вебхуки, почта): пауза растёт от своего интервала до
+   * этого значения, пока работы нет; сигнал M175 будит сразу (расход в простое, 10.11).
+   */
+  QUEUE_IDLE_MAX_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
   WEBHOOK_POLL_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(2_000),
   WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(30_000).default(5_000),
   /**

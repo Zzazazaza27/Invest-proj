@@ -74,6 +74,7 @@ export class OutboxPublisherService implements OnModuleInit {
     this.jobs.register({
       name: 'outbox.publish',
       intervalMs: env.OUTBOX_POLL_INTERVAL_MS,
+      idle: { maxMs: env.QUEUE_IDLE_MAX_MS, wake: 'outbox' },
       coordination: 'local',
       run: async ({ signal }) => resultOf(await this.runOnce(signal)),
     });
@@ -82,6 +83,8 @@ export class OutboxPublisherService implements OnModuleInit {
     this.jobs.register({
       name: 'outbox.fanout',
       intervalMs: env.OUTBOX_POLL_INTERVAL_MS,
+      // Повторная рассылка — по отказам прошлых: новых событий не ждёт, просыпается по паузе.
+      idle: { maxMs: env.QUEUE_IDLE_MAX_MS },
       coordination: 'local',
       run: async ({ signal }) => resultOf(await this.runFanOutOnce(signal)),
     });

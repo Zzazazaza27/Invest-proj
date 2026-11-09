@@ -35,7 +35,7 @@ COPY --chown=node:node scripts/lib/secret-files.mjs ./scripts/lib/secret-files.m
 USER node
 EXPOSE 4300
 # Живость — служебный /live; публичный /v1/health её не заменяет.
-HEALTHCHECK --interval=5s --timeout=4s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=10s --timeout=4s --start-period=60s --start-interval=2s --retries=3 \
   CMD ["node", "core-health.mjs"]
 # Ядро — дочерний процесс обёртки: учёт падений и редкий режим (core-start.mjs).
 CMD ["node", "core-start.mjs"]

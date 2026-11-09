@@ -29,5 +29,5 @@ COPY --from=build /src/apps/admin/dist /srv/admin
 # Каталог по адресу: /login/ — root $static_root (блок 09, задание 3).
 COPY --from=build /src/apps/auth/dist /srv/login
 COPY --from=build /src/apps/console/dist /srv/console
-HEALTHCHECK --interval=10s --timeout=5s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --start-interval=2s --retries=3 \
   CMD wget -q -O- http://127.0.0.1/ >/dev/null || exit 1

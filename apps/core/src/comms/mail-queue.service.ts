@@ -79,6 +79,7 @@ export class MailQueueService implements OnModuleInit {
     this.jobs.register({
       name: 'mail.queue.send',
       intervalMs: getEnv().MAIL_QUEUE_POLL_MS,
+      idle: { maxMs: getEnv().QUEUE_IDLE_MAX_MS, wake: 'mail' },
       coordination: 'local',
       externalEffects: true,
       run: async ({ signal }) => resultOf(await this.runOnce(signal)),

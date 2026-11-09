@@ -9,6 +9,7 @@ import rateLimit from '@fastify/rate-limit';
 import { randomUUID } from 'node:crypto';
 import { AppModule } from './app.module';
 import { BackgroundJobsService } from './background/background-jobs.service';
+import { startQueueWake } from './background/queue-wake';
 import { readGrant } from './background/grant';
 import { startInternalServer } from './background/internal-server';
 import { checkReadiness, runControl, type ReadinessProbes } from './background/readiness';
@@ -551,6 +552,8 @@ async function bootstrap(): Promise<void> {
   } else {
     jobs.start();
   }
+  // Сигнал «в очереди появилась работа» (M175): будит уснувшие опросы пустых очередей.
+  const queueWake = background.allowed ? startQueueWake(jobs, logger) : null;
   lifecycle = 'running';
 
   // Общий предел на всё завершение, включая закрытие приложения и пулов.
@@ -563,6 +566,9 @@ async function bootstrap(): Promise<void> {
       // из-за открытого сокета и завершение выглядит зависанием.
       async () => {
         if (counters) await counters.close();
+      },
+      async () => {
+        if (queueWake) await queueWake.close();
       },
     ],
     graceMs: env.BACKGROUND_STOP_GRACE_MS,

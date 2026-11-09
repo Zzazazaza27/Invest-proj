@@ -77,6 +77,7 @@ export class WebhookDeliveryService implements OnModuleInit {
     this.jobs.register({
       name: 'webhooks.deliver',
       intervalMs: env.WEBHOOK_POLL_INTERVAL_MS,
+      idle: { maxMs: env.QUEUE_IDLE_MAX_MS, wake: 'webhooks' },
       coordination: 'local',
       externalEffects: true,
       run: async ({ signal }) => resultOf(await this.runOnce(signal)),

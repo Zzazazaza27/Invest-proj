@@ -46,9 +46,25 @@ export interface JobState {
   /** Ошибок подряд: повтор идёт следующим проходом по интервалу. */
   consecutiveFailures: number;
   nextRunAt: string | null;
+  /** Запланированная пауза до следующего прохода: больше интервала — очередь пуста, сон. */
+  sleepMs: number;
+  /**
+   * Что с задачей сейчас (Тэнк 10.11: сон, зависший проход и остановленный исполнитель —
+   * разные состояния):
+   *  - `disabled` — выключена выключателем; `stopped` — фон процесса не запущен или
+   *    останавливается; `paused` — пауза фона;
+   *  - `running` — проход идёт; `stuck` — идёт дольше интервала;
+   *  - `sleeping` — очередь пуста, пауза больше интервала, следующий проход запланирован;
+   *  - `waiting` — обычное ожидание следующего прохода;
+   *  - `late` — запланированный проход не начался вовремя: исполнитель не идёт.
+   */
+  phase: JobPhase;
   /** Ожидаемый проход не начался вовремя либо идёт дольше интервала. */
   overdue: boolean;
 }
+
+export type JobPhase =
+  'disabled' | 'stopped' | 'paused' | 'running' | 'stuck' | 'sleeping' | 'waiting' | 'late';
 
 interface Entry {
   def: JobDefinition;
@@ -67,6 +83,10 @@ interface Entry {
   lastError: string | null;
   lastErrorAt: number | null;
   consecutiveFailures: number;
+  /** Текущая пауза между проходами; растёт во сне пустой очереди. */
+  sleepMs: number;
+  /** Пробуждение пришло во время прохода: следующий — сразу после него. */
+  wakePending: boolean;
 }
 
 const iso = (ms: number | null): string | null => (ms === null ? null : new Date(ms).toISOString());
@@ -127,6 +147,8 @@ export class BackgroundJobsService {
       lastError: null,
       lastErrorAt: null,
       consecutiveFailures: 0,
+      sleepMs: def.intervalMs,
+      wakePending: false,
     });
     if (this.started) this.schedule(this.jobs.get(def.name)!, def.runAtStart ? 0 : def.intervalMs);
   }
@@ -294,6 +316,51 @@ export class BackgroundJobsService {
     return this.pass(entry);
   }
 
+  /**
+   * Пробуждение по сигналу очереди (M175, `fifth_queue_wake`): задачи с этим `idle.wake`
+   * идут сразу, пауза сбрасывается к интервалу. Идёт проход — следующий сразу после него.
+   * Пауза и остановка фона пробуждением не обходятся.
+   */
+  wake(queue: string): number {
+    let woken = 0;
+    for (const entry of this.jobs.values()) {
+      if (entry.def.idle?.wake !== queue) continue;
+      entry.sleepMs = entry.def.intervalMs;
+      if (entry.current) {
+        entry.wakePending = true;
+        woken += 1;
+        continue;
+      }
+      if (!entry.timer || (entry.nextRunAt !== null && entry.nextRunAt - Date.now() <= 50))
+        continue;
+      clearTimeout(entry.timer);
+      entry.timer = null;
+      this.schedule(entry, 0);
+      woken += 1;
+    }
+    return woken;
+  }
+
+  /** Очереди, которые слушают задачи этого процесса. */
+  get wakeQueues(): string[] {
+    return [
+      ...new Set(
+        [...this.jobs.values()].map((e) => e.def.idle?.wake).filter((q): q is string => !!q),
+      ),
+    ];
+  }
+
+  private phaseOf(e: Entry, now: number): JobPhase {
+    if (!e.enabled) return 'disabled';
+    if (!this.started || this.isStopping) return 'stopped';
+    if (this.paused && !e.def.alwaysOn) return 'paused';
+    if (e.runningSince !== null)
+      return now - e.runningSince > e.def.intervalMs ? 'stuck' : 'running';
+    if (e.nextRunAt === null) return 'late';
+    if (now - e.nextRunAt > e.def.intervalMs) return 'late';
+    return e.sleepMs > e.def.intervalMs ? 'sleeping' : 'waiting';
+  }
+
   snapshot(now = Date.now()): JobState[] {
     return [...this.jobs.values()].map((e) => ({
       name: e.def.name,
@@ -313,6 +380,8 @@ export class BackgroundJobsService {
       lastErrorAt: iso(e.lastErrorAt),
       consecutiveFailures: e.consecutiveFailures,
       nextRunAt: iso(e.nextRunAt),
+      sleepMs: e.sleepMs,
+      phase: this.phaseOf(e, now),
       overdue:
         e.enabled &&
         this.started &&
@@ -334,10 +403,32 @@ export class BackgroundJobsService {
       // текущего, поэтому два прохода одной задачи в процессе не идут.
       void this.pass(entry).finally(() => {
         const elapsed = Date.now() - (entry.lastStartedAt ?? Date.now());
-        this.schedule(entry, Math.max(0, entry.def.intervalMs - elapsed));
+        this.schedule(entry, Math.max(0, this.nextSleep(entry) - elapsed));
       });
     }, delayMs);
     entry.timer.unref();
+  }
+
+  /**
+   * Пауза после прохода. Пробуждение во время прохода — сразу. Пустая очередь (`idle`) у
+   * задачи со сном — удвоение до `idle.maxMs`; работа, отказ, пропуск — интервал.
+   */
+  private nextSleep(entry: Entry): number {
+    if (entry.wakePending) {
+      entry.wakePending = false;
+      entry.sleepMs = entry.def.intervalMs;
+      return 0;
+    }
+    const idle = entry.def.idle;
+    if (idle && entry.lastStatus === 'idle') {
+      entry.sleepMs = Math.min(
+        Math.max(entry.sleepMs * 2, entry.def.intervalMs),
+        Math.max(idle.maxMs, entry.def.intervalMs),
+      );
+    } else {
+      entry.sleepMs = entry.def.intervalMs;
+    }
+    return entry.sleepMs;
   }
 
   /** Один проход. Никогда не отклоняется: отказ задачи — её состояние, а не падение ядра. */

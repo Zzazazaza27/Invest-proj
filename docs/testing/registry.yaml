@@ -2888,6 +2888,25 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: UNIT-CORE-BACKGROUND-IDLE
+    file: apps/core/tests/background-idle.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 7
+    studied: code
+    studiedOn: 2026-11-10
+    needs: []
+    effects: ['таймеры в памяти процесса']
+    note: >-
+      Расход в простое (Томас и Тэнк 10.11): пустые проходы удваивают паузу до предела, работа,
+      отказ и пробуждение возвращают интервал; пробуждение во сне — проход сразу, во время прохода —
+      следующий сразу после него; сон, зависший проход (stuck), просроченный план (late) и
+      остановленный фон (stopped) различаются в состоянии задачи.
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-10
+
   - id: UNIT-CORE-BACKGROUND-SLOTS
     file: apps/core/tests/background-slots.test.ts
     command: npm run test -w apps/core
@@ -4007,6 +4026,25 @@ checks:
     purpose: 'Блок 10: контекст автора на настоящем ядре и базе (параллельность, события до входа).'
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
+
+  - id: CHK-QUEUE-WAKE
+    file: scripts/check-queue-wake.mjs
+    command: node scripts/check-queue-wake.mjs
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 6
+    needs: [stand]
+    effects: ['участник прогона (probe-run), выдача и снятие роли, обращение в поддержку; обрыв соединения слушателя pg_terminate_backend']
+    studied: code
+    studiedOn: 2026-11-10
+    note: >-
+      M175: фактическая задержка доставки после сна пустой очереди — первое событие outbox и первое
+      письмо после паузы 10 с; обрыв подписки — событие всё равно опубликовано, слушатель
+      переподключается. Чистую страховку опросом без подписки не проверяет: переподключение
+      будит очереди раньше.
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-10
 
   - id: CHK-KIT-SBOM
     file: scripts/check-kit-sbom.mjs
@@ -5684,6 +5722,8 @@ blocks:
         PRB-BACKGROUND-JOBS,
         UNIT-CORE-BACKGROUND,
         UNIT-CORE-BACKGROUND-SLOTS,
+        UNIT-CORE-BACKGROUND-IDLE,
+        CHK-QUEUE-WAKE,
         UNIT-CORE-EVENTS,
         CHK-DB-RECONNECT,
         CHK-DB-RESILIENCE,

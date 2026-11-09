@@ -62,9 +62,11 @@ services:
       CORE_HOST: ${CORE_HOST:-host.docker.internal}
     healthcheck:
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1/ >/dev/null || exit 1']
-      interval: 10s
+      interval: 30s
       timeout: 5s
-      retries: 5
+      retries: 3
+      start_period: 90s
+      start_interval: 2s
 
   # ВРЕМЕННАЯ ТОЧКА ВХОДА для прогонов, меняющих общие справочники.
   #
@@ -94,9 +96,11 @@ services:
       - 'host.docker.internal:host-gateway'
     healthcheck:
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1/ >/dev/null || exit 1']
-      interval: 5s
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
+      start_period: 90s
+      start_interval: 2s
 
   postgres:
     build:
@@ -205,9 +209,11 @@ services:
       - ${BACKUP_PGBACKREST_DIR:-pgbackrest}:/var/lib/pgbackrest
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U unicorn_owner -d fifth_element']
-      interval: 5s
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
+      start_period: 90s
+      start_interval: 2s
 
   # Общие счётчики ограничений (4.8, D-008). Valkey вместо Redis 7.4 с
   # 29.10.2026: открытая лицензия BSD, протокол тот же — переменные REDIS_*
@@ -231,9 +237,11 @@ services:
       - valkeydata:/data
     healthcheck:
       test: ['CMD-SHELL', 'valkey-cli -a "$$REDIS_PASSWORD" --no-auth-warning ping | grep PONG']
-      interval: 5s
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
+      start_period: 90s
+      start_interval: 2s
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-local_dev_only_redis_change_me}
 
@@ -258,9 +266,11 @@ services:
       - natsdata:/data
     healthcheck:
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:8222/healthz || exit 1']
-      interval: 5s
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
+      start_period: 90s
+      start_interval: 2s
 
   # Брокер ДЛЯ РАЗРУШИТЕЛЬНЫХ ПРОВЕРОК.
   #
@@ -294,9 +304,11 @@ services:
       - natstestdata:/data
     healthcheck:
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:8222/healthz || exit 1']
-      interval: 5s
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
+      start_period: 90s
+      start_interval: 2s
 
   # Garage — файловое хранилище (D-001; переход с MinIO, план
   # docs/architecture/garage-migration-plan.md). Три узла, три копии; на одном
@@ -324,9 +336,11 @@ services:
       - '127.0.0.1:${GARAGE_ADMIN_PORT:-3903}:3903'
     healthcheck:
       test: ['CMD', '/garage', 'status']
-      interval: 10s
+      interval: 30s
       timeout: 5s
-      retries: 20
+      retries: 3
+      start_period: 90s
+      start_interval: 2s
 
   garage-2:
     <<: *garage
