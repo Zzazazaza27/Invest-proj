@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { claimLeases, completeUnderLease, renewLease, type Lease } from '../background/lease';
 import type { Database, Tx } from '../db/unit-of-work';
 import type { S3Service } from './s3.service';
+import { jobScope, type ActorScope, type Origin } from '../audit/actor-context';
 
 /**
  * Общая функция завершения загрузки (2.1.2, 3.3; работа 2.1-W03).
@@ -29,8 +30,24 @@ import type { S3Service } from './s3.service';
 
 export type UploadState = 'pending' | 'ready' | 'rejected' | 'needs_attention' | 'cancelled';
 
+/** Кто завершает загрузку — для журнала (блок 10). */
+export interface Author {
+  userId: string | null;
+  actor: ActorScope;
+}
+
+export interface CompleteOptions {
+  executor: 'browser' | 'reconcile';
+  actorId: string | null;
+  traceId: string;
+  /** Человек и его контекст при завершении из браузера. */
+  who?: Author;
+}
+
 export interface UploadRow {
   id: string;
+  /** Происхождение операции загрузки (блок 10); у старых строк — null. */
+  upload_origin: Origin | null;
   project_id: string;
   type: string;
   uploaded_by: string;
@@ -100,7 +117,7 @@ export const UPLOAD_COMPLETION = {
 const SELECT_ROW = `id, project_id, type, uploaded_by, upload_state, upload_state_reason,
   upload_key, upload_expires_at, upload_max_bytes::text AS upload_max_bytes,
   object_received_at, not_received_at, s3_key, size_bytes::text AS size_bytes,
-  content_hash, check_failures, unknown_since`;
+  content_hash, check_failures, unknown_since, upload_origin`;
 
 /** Пауза перед следующей проверкой после n-й неудачи подряд: 1, 2, 4 … 60 мин. */
 export function failureBackoffMs(failures: number): number {
@@ -122,8 +139,21 @@ export class UploadCompletion {
     private readonly target: UploadTarget,
   ) {}
 
-  private tx<T>(traceId: string, work: (tx: Tx) => Promise<T>): Promise<T> {
-    return this.db.asServiceRole('app_maintenance', { traceId }, work);
+  private tx<T>(traceId: string, work: (tx: Tx) => Promise<T>, who?: Author): Promise<T> {
+    return this.db.asServiceRole('app_maintenance', { traceId, ...who }, work);
+  }
+
+  /**
+   * Автор публикации для журнала (блок 10). Из браузера — человек, завершивший свою
+   * загрузку. Сверка — система, а автор операции — из сохранённого происхождения;
+   * у старых строк его нет, и он не выдумывается.
+   */
+  private authorOf(row: UploadRow, options: CompleteOptions): Author | undefined {
+    if (options.executor === 'browser') return options.who;
+    return {
+      userId: null,
+      actor: jobScope('uploads.reconcile', options.traceId, row.upload_origin ?? null),
+    };
   }
 
   /**
@@ -135,11 +165,16 @@ export class UploadCompletion {
     traceId: string,
     signal: AbortSignal,
     work: (tx: Tx) => Promise<T>,
+    who?: Author,
   ): Promise<T> {
-    return this.tx(traceId, async (tx) => {
-      signal.throwIfAborted();
-      return work(tx);
-    });
+    return this.tx(
+      traceId,
+      async (tx) => {
+        signal.throwIfAborted();
+        return work(tx);
+      },
+      who,
+    );
   }
 
   async readRow(id: string, traceId: string): Promise<UploadRow | null> {
@@ -158,12 +193,7 @@ export class UploadCompletion {
    */
   async complete(
     id: string,
-    options: {
-      executor: 'browser' | 'reconcile';
-      actorId: string | null;
-      traceId: string;
-      signal?: AbortSignal;
-    },
+    options: CompleteOptions & { signal?: AbortSignal },
   ): Promise<CompletionOutcome> {
     const { traceId } = options;
     const external = options.signal ?? new AbortController().signal;
@@ -226,7 +256,7 @@ export class UploadCompletion {
     row: UploadRow,
     lease: Lease,
     signal: AbortSignal,
-    options: { executor: 'browser' | 'reconcile'; actorId: string | null; traceId: string },
+    options: CompleteOptions,
   ): Promise<CompletionOutcome> {
     const { traceId } = options;
     // Прерывание — не неудача: ни записи о сбое, ни отсчёта неизвестности.
@@ -382,7 +412,7 @@ export class UploadCompletion {
           actorId: options.actorId,
           traceId,
         });
-      });
+      }, this.authorOf(row, options));
     } catch (error) {
       return stop(error) ?? this.unknown(row, lease, signal, traceId, error);
     }

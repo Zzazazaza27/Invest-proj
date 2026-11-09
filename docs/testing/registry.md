@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 258; требований: 41
+- Проверок: 260; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 104
+### Зарегистрированы, но ни в наборе, ни в CI — 105
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -272,6 +272,7 @@
 - `CHK-MIGRATE-INTERRUPT` — Блок 9, задание 2: прерванная миграция безопасна, миграция не держит запросы бесконечно.
 - `CHK-SLOTS-ENV` — Блок 9, задание 3: переключение слотов на Docker и nginx (уточнения Тэнка 09.11).
 - `CHK-CONTRACT-RELEASE` — Блок 9, задание 4: несовместимая миграция не идёт поверх обслуживающего старого ядра (Тэнк 09.11).
+- `CHK-ACTOR-CONTEXT` — Блок 10: контекст автора на настоящем ядре и базе (параллельность, события до входа).
 - `CHK-COMPAT-SIGNATURE` — Блок 9, задание 2: доверенное происхождение отчёта — основания точки возврата (Тэнк 09.11).
 - `CHK-RELEASE-STATE` — Блок 9, задание 4: тревоги выпуска с учётом этапа (уточнения Тэнка 09.11).
 - `CHK-SLOT-SWITCH` — Блок 9, задание 3: порядок переключения слотов и пути отказа (уточнения Тэнка 09.11).
@@ -427,6 +428,7 @@
 | CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 43 | вручную | — |
 | CHK-SLOTS-ENV | `node scripts/check-slots-env.mjs` | 30 | вручную | — |
 | CHK-CONTRACT-RELEASE | `node scripts/check-contract-release.mjs` | 9 | вручную | — |
+| CHK-ACTOR-CONTEXT | `node scripts/check-actor-context.mjs` | 15 | вручную | — |
 | CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 11 | вручную | — |
 | CHK-RELEASE-STATE | `node scripts/check-release-state.mjs` | 17 | вручную | — |
 | CHK-SLOT-SWITCH | `node scripts/check-slot-switch.mjs` | 36 | вручную | — |
@@ -499,6 +501,7 @@
 | UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 24 | CI | CI |
 | UNIT-CABINET-CLIENT-ERRORS | `npm run test -w packages/cabinet` | 7 | CI | CI |
 | UNIT-CORE-CLIENT-ERRORS | `npm run test -w apps/core` | 5 | CI | CI |
+| UNIT-CORE-ACTOR-CONTEXT | `npm run test -w apps/core` | 15 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |

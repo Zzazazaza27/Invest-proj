@@ -65,7 +65,7 @@ export class WebhooksService {
     const fingerprint = createHash('sha256').update(secret, 'utf8').digest();
     const id = uuidv7();
 
-    return this.db.asServiceRole('app_integration', { traceId: ctx.traceId }, async (tx) => {
+    return this.db.asServiceRole('app_integration', { traceId: ctx.traceId, actor: ctx.actor }, async (tx) => {
       let row: EndpointRow;
       try {
         const { rows } = await tx.query<EndpointRow>(
@@ -99,7 +99,7 @@ export class WebhooksService {
       await this.audit.emit(tx, {
         verb: 'integration.webhook.registered',
         actorId: null,
-        actorRole: 'system',
+        actorRole: 'service',
         subjectType: 'webhook_endpoint',
         subjectId: id,
         // Ни секрета, ни его отпечатка в журнале: событие фиксирует подписку.
@@ -120,7 +120,7 @@ export class WebhooksService {
   }
 
   async list(ctx: IntegrationContext): Promise<WebhookEndpoint[]> {
-    return this.db.asServiceRole('app_integration', { traceId: ctx.traceId }, async (tx) => {
+    return this.db.asServiceRole('app_integration', { traceId: ctx.traceId, actor: ctx.actor }, async (tx) => {
       const { rows } = await tx.query<EndpointRow>(
         `SELECT id, url, subscribed_verbs, status, created_at
            FROM integration.webhook_endpoints
@@ -135,7 +135,7 @@ export class WebhooksService {
 
   /** Отключение подписки. Строка остаётся: история подписок — часть аудита. */
   async disable(ctx: IntegrationContext, endpointId: string): Promise<void> {
-    await this.db.asServiceRole('app_integration', { traceId: ctx.traceId }, async (tx) => {
+    await this.db.asServiceRole('app_integration', { traceId: ctx.traceId, actor: ctx.actor }, async (tx) => {
       const { rowCount } = await tx.query(
         `UPDATE integration.webhook_endpoints SET status = 'disabled'
           WHERE id = $1 AND service_account_id = $2 AND status <> 'disabled'`,
@@ -148,7 +148,7 @@ export class WebhooksService {
       await this.audit.emit(tx, {
         verb: 'integration.webhook.disabled',
         actorId: null,
-        actorRole: 'system',
+        actorRole: 'service',
         subjectType: 'webhook_endpoint',
         subjectId: endpointId,
         context: { serviceAccountId: ctx.serviceAccountId },

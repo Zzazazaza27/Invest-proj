@@ -13,6 +13,7 @@ import {
 } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
+import { actingSelf } from '../audit/actor-context';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { encodeIntegrationCursor } from '../common/keyset-cursor';
@@ -92,7 +93,7 @@ export class KycService {
       await this.audit.emit(tx, {
         verb: 'kyc.verification.submitted',
         actorId: ctx.userId,
-        actorRole: primaryRole(ctx),
+        actorRole: actingSelf(ctx),
         subjectType: 'kyc_verification',
         subjectId: id,
         // В контекст события идёт вид проверки, но не документ и не страна
@@ -245,7 +246,7 @@ export class KycService {
       await this.audit.emit(tx, {
         verb: 'kyc.entity.created',
         actorId: ctx.userId,
-        actorRole: primaryRole(ctx),
+        actorRole: actingSelf(ctx),
         subjectType: 'business_entity',
         subjectId: id,
         context: { jurisdiction: input.jurisdiction },
@@ -330,7 +331,7 @@ export class KycService {
         await this.audit.emit(tx, {
           verb: 'kyc.entity.member_added',
           actorId: ctx.userId,
-          actorRole: primaryRole(ctx),
+          actorRole: actingSelf(ctx),
           subjectType: 'business_entity',
           subjectId: entityId,
           context: { memberRole: input.memberRole },
@@ -382,7 +383,7 @@ export class KycService {
       await this.audit.emit(tx, {
         verb: 'kyc.kyb.submitted',
         actorId: ctx.userId,
-        actorRole: primaryRole(ctx),
+        actorRole: actingSelf(ctx),
         subjectType: 'kyb_verification',
         subjectId: id,
         context: { kind },
@@ -710,6 +711,3 @@ function isoInDays(days: number): string {
 }
 
 /** Роль актора для журнала: реестр событий проверяет её по allowlist. */
-function primaryRole(ctx: RequestContext): string {
-  return ctx.roles[0] ?? 'system';
-}

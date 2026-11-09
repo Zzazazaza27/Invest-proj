@@ -20,7 +20,8 @@ import { MailTransport } from '../comms/mail.transport';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
 import { CryptoService } from '../crypto/crypto.service';
-import { Database, type RequestContext } from '../db/unit-of-work';
+import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { actingSelf, noteBasis } from '../audit/actor-context';
 import { ARGON2_OPTIONS } from './identity.service';
 
 /**
@@ -211,12 +212,16 @@ export class VerificationService {
     const hash = await argon2.hash(password, ARGON2_OPTIONS);
     const sha256 = sha256Of(token);
 
-    const userId = await this.db.asServiceRole('app_auth', ctx, async (tx) => {
+    // Событие пишется В ТОЙ ЖЕ транзакции, что и смена пароля (блок 10, Тэнк п. 5):
+    // не записалось — пароль не сменён, успешного изменения без журнала не бывает.
+    const userId = await this.db.asServiceRole('app_auth', anonymous(ctx, 'password_reset'), async (tx) => {
       const { rows } = await tx.query<{ user_id: string | null }>(
         'SELECT identity.reset_password_with_token($1, $2) AS user_id',
         [sha256, hash],
       );
-      return rows[0]?.user_id ?? null;
+      const id = rows[0]?.user_id ?? null;
+      if (id) await this.emitLink(tx, id, 'identity.password.reset_completed', ctx.traceId);
+      return id;
     });
 
     // Просроченная, использованная и несуществующая ссылка отвечают одинаково:
@@ -226,7 +231,6 @@ export class VerificationService {
     // Рубеж сессий сдвинут внутри функции БД, но в процессе он ещё закеширован:
     // без сброса кеша старая сессия проживёт до конца окна кеша.
     this.epochs.forget(userId);
-    await this.record(ctx, userId, 'identity.password.reset_completed');
   }
 
   /**
@@ -280,7 +284,7 @@ export class VerificationService {
       await this.audit.emit(tx, {
         verb: 'identity.email.verification_sent',
         actorId: ctx.userId,
-        actorRole: 'system',
+        actorRole: actingSelf(ctx),
         subjectType: 'user',
         subjectId: ctx.userId,
         context: { ttlSeconds: ttl },
@@ -325,15 +329,17 @@ export class VerificationService {
   /** Переход по ссылке подтверждения. Сессия не нужна: письмо могли открыть в другом браузере. */
   async confirmEmail(ctx: RequestContext, token: string): Promise<void> {
     const sha256 = sha256Of(token);
-    const userId = await this.db.asServiceRole('app_auth', ctx, async (tx) => {
+    // Подтверждение и его событие — одна транзакция (блок 10, Тэнк п. 5).
+    const userId = await this.db.asServiceRole('app_auth', anonymous(ctx, 'email_verify'), async (tx) => {
       const { rows } = await tx.query<{ user_id: string | null }>(
         'SELECT identity.confirm_email_with_token($1, $2) AS user_id',
         [sha256, uuidv7()],
       );
-      return rows[0]?.user_id ?? null;
+      const id = rows[0]?.user_id ?? null;
+      if (id) await this.emitLink(tx, id, 'identity.email.verified', ctx.traceId);
+      return id;
     });
     if (!userId) throw errors.validation([{ path: 'token', message: 'ссылка недействительна' }]);
-    await this.record(ctx, userId, 'identity.email.verified');
   }
 
   /** Состояние подтверждения для интерфейса: подтверждён ли адрес и есть ли живая ссылка. */
@@ -420,24 +426,31 @@ export class VerificationService {
     ].join('\n');
   }
 
+  /** Событие перехода по ссылке: автор — аноним с действующей ссылкой, предмет — учётная запись. */
+  private async emitLink(tx: Tx, userId: string, verb: string, traceId: string): Promise<void> {
+    await this.audit.emit(tx, {
+      verb,
+      actorId: null,
+      actorRole: 'anonymous',
+      subjectType: 'user',
+      subjectId: userId,
+      context: {},
+      traceId,
+    });
+  }
+
   /**
-   * Событие в журнал.
-   *
-   * Актор — сам пользователь, роль актора — `system`: действие инициировал он,
-   * но подтверждения личности у нас на этот момент нет, ссылку мог открыть
-   * кто угодно. Та же форма, что у `identity.login.failed` (M055).
-   *
-   * Неудача записи не отменяет уже совершённое действие: пароль сменён, и
-   * ронять ответ из-за журнала значило бы оставить человека в неведении о том,
-   * что его пароль всё-таки изменился.
+   * Запрос смены пароля: письмо уже ушло, событие пишется после. Автор — аноним (блок 10):
+   * подтверждения личности нет, просьбу мог отправить кто угодно; учётная запись — предмет.
+   * Изменения здесь нет (отправка — не смена данных), поэтому сбой журнала ответ не роняет.
    */
   private async record(ctx: RequestContext, userId: string, verb: string): Promise<void> {
     try {
       await this.db.transaction({ ...ctx, userId: null, roles: [] }, async (tx) => {
         await this.audit.emit(tx, {
           verb,
-          actorId: userId,
-          actorRole: 'system',
+          actorId: null,
+          actorRole: 'anonymous',
           subjectType: 'user',
           subjectId: userId,
           context: {},
@@ -456,4 +469,14 @@ export class VerificationService {
 
 function sha256Of(value: string): Buffer {
   return createHash('sha256').update(value, 'utf8').digest();
+}
+
+/**
+ * Контекст перехода по ссылке из письма (блок 10): действует тот, у кого ссылка, —
+ * аноним, даже если в браузере открыта чья-то сессия. Основание — назначение ссылки.
+ */
+function anonymous(ctx: RequestContext, purpose: string): RequestContext {
+  const actor = ctx.actor ? { ...ctx.actor, basis: [...ctx.actor.basis], kind: 'anonymous' as const } : undefined;
+  noteBasis(actor, { check: 'token-purpose', purpose });
+  return { ...ctx, userId: null, roles: [], actor };
 }

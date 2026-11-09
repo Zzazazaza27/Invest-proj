@@ -16,6 +16,7 @@ import {
 function baseRow(): UploadRow {
   return {
     id: 'm1',
+    upload_origin: null,
     project_id: 'p1',
     type: 'deck',
     uploaded_by: 'u1',

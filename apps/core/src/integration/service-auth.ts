@@ -10,6 +10,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { FastifyRequest } from 'fastify';
 import { INTEGRATION_SCOPES, type IntegrationScope } from '@fifth/contracts';
 import { errors } from '../common/errors';
+import { newScope, type ActorScope } from '../audit/actor-context';
 import { addressInCidrs } from '../events/ip-classifier';
 import { getEnv } from '../config/env';
 import {
@@ -47,6 +48,8 @@ export interface IntegrationContext {
   clientId: string;
   scopes: readonly string[];
   traceId: string;
+  /** Автор для журнала (блок 10): сервисная учётная запись и пройденный скоуп. */
+  actor?: ActorScope;
 }
 
 export interface IntegrationRequest extends FastifyRequest {
@@ -194,6 +197,11 @@ export class IntegrationGuard implements CanActivate {
       clientId: payload.cid,
       scopes: payload.scopes,
       traceId,
+      actor: {
+        ...newScope([{ check: 'service-scope', scope: required }]),
+        kind: 'service_account',
+        serviceAccountId: payload.sub,
+      },
     };
     return true;
   }

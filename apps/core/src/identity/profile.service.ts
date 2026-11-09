@@ -10,6 +10,7 @@ import {
   type MyProfile,
 } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
+import { actingSelf } from '../audit/actor-context';
 import { sha256Hex } from '../audit/deletion-record';
 import { SessionEpochService } from '../auth/session-epoch.service';
 import { LoginThrottleService } from '../auth/login-throttle.service';
@@ -80,7 +81,7 @@ export class ProfileService {
       await this.audit.emit(tx, {
         verb: 'identity.user.profile_updated',
         actorId: ctx.userId,
-        actorRole: primaryRoleOf(ctx),
+        actorRole: actingSelf(ctx),
         subjectType: 'user',
         subjectId: ctx.userId,
         // Поле — да, значение — нет: имя тоже персональные данные.
@@ -155,7 +156,7 @@ export class ProfileService {
       await this.audit.emit(tx, {
         verb: 'identity.password.changed',
         actorId: userId,
-        actorRole: primaryRoleOf(ctx),
+        actorRole: actingSelf(ctx),
         subjectType: 'user',
         subjectId: userId,
         context: {},
@@ -294,7 +295,7 @@ export class ProfileService {
       await this.audit.emit(tx, {
         verb: 'identity.avatar.set',
         actorId: userId,
-        actorRole: primaryRoleOf(ctx),
+        actorRole: actingSelf(ctx),
         subjectType: 'user',
         subjectId: userId,
         // Учёт удалений (2.1.5): что теперь в профиле и какой файл заменён.
@@ -335,7 +336,7 @@ export class ProfileService {
       await this.audit.emit(tx, {
         verb: 'identity.avatar.removed',
         actorId: userId,
-        actorRole: primaryRoleOf(ctx),
+        actorRole: actingSelf(ctx),
         subjectType: 'user',
         subjectId: userId,
         // Учёт удалений (2.1.5): какой файл убран.
@@ -457,10 +458,6 @@ export class ProfileService {
  * несколько. Берём первую из объявленных в реестре — она есть у каждого
  * пользователя платформы.
  */
-function primaryRoleOf(ctx: RequestContext): string {
-  return ctx.roles?.[0] ?? 'founder';
-}
-
 function avatarUrl(userId: string, size: AvatarSize): string {
   return `/v1/users/${userId}/avatar/${size}`;
 }

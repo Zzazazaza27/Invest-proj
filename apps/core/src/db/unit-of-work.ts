@@ -2,6 +2,7 @@ import { Injectable, Logger, type OnModuleDestroy } from '@nestjs/common';
 import pg from 'pg';
 import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
+import type { ActorScope } from '../audit/actor-context';
 
 /**
  * Доступ к БД.
@@ -47,6 +48,24 @@ export interface RequestContext {
    * это человеку будет нечем.
    */
   testSessionId?: string | null;
+  /**
+   * Автор действия для журнала (блок 10): операция, пройденные проверки, фон.
+   * Прав не даёт — только записывает уже проверенное.
+   */
+  actor?: ActorScope;
+}
+
+/**
+ * Контекст, с которым открыта транзакция на этом соединении (блок 10).
+ *
+ * Журнал берёт автора ТОЛЬКО отсюда, а не из аргументов вызова: так все записи
+ * получают контекст без правки каждого места, а клиентские поля автора не
+ * подменяют. Соединения в пуле общие, поэтому связь снимается в `finally`.
+ */
+const bound = new WeakMap<object, RequestContext>();
+
+export function contextOf(tx: Tx): RequestContext | undefined {
+  return bound.get(tx);
 }
 
 export type Tx = pg.PoolClient;
@@ -185,6 +204,7 @@ export class Database implements OnModuleDestroy {
     try {
       await client.query('BEGIN');
       await this.applyContext(client, ctx);
+      bound.set(client, ctx);
       const result = await work(client);
       await client.query('COMMIT');
       return result;
@@ -192,6 +212,7 @@ export class Database implements OnModuleDestroy {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
+      bound.delete(client);
       release();
     }
   }
@@ -202,6 +223,7 @@ export class Database implements OnModuleDestroy {
     try {
       await client.query('BEGIN READ ONLY');
       await this.applyContext(client, ctx);
+      bound.set(client, ctx);
       const result = await work(client);
       await client.query('COMMIT');
       return result;
@@ -209,6 +231,7 @@ export class Database implements OnModuleDestroy {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
+      bound.delete(client);
       release();
     }
   }
@@ -236,6 +259,8 @@ export class Database implements OnModuleDestroy {
       await client.query('SELECT set_config($1, $2, true)', ['app.current_user_id', '']);
       await client.query('SELECT set_config($1, $2, true)', ['app.current_roles', 'system']);
       await client.query('SELECT set_config($1, $2, true)', ['app.trace_id', ctx.traceId]);
+      // Для журнала: роль БД сервисная, но автор — тот, чей контекст передан (если передан).
+      bound.set(client, { userId: null, roles: [role], ...ctx } as RequestContext);
       const result = await work(client);
       await client.query('COMMIT');
       return result;
@@ -243,6 +268,7 @@ export class Database implements OnModuleDestroy {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
+      bound.delete(client);
       release();
     }
   }
@@ -287,6 +313,7 @@ export class Database implements OnModuleDestroy {
       await client.query('ROLLBACK').catch(() => undefined);
       throw error;
     } finally {
+      bound.delete(client);
       release();
     }
   }

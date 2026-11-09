@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { uuidv7 } from '@fifth/contracts';
-import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { Database, contextOf, type RequestContext, type Tx } from '../db/unit-of-work';
+import { roleFromBasis, type ActorKind, type ActorRecord } from './actor-context';
 import { errors } from '../common/errors';
 
 /**
@@ -84,15 +85,16 @@ export class AuditRepository {
       traceId?: string | null;
     },
   ): Promise<string> {
+    const actor = buildActor(tx, input);
     const { rows } = await tx.query<{ id: string }>(
       `SELECT audit.app_emit_event($1, $2, $3, $4, $5, $6::jsonb, $7) AS id`,
       [
         input.verb,
-        input.actorId,
-        input.actorRole,
+        actor.userId,
+        actor.role,
         input.subjectType,
         input.subjectId,
-        JSON.stringify(input.context ?? {}),
+        JSON.stringify({ ...(input.context ?? {}), actor }),
         input.traceId ?? null,
       ],
     );
@@ -235,4 +237,54 @@ export class AuditRepository {
     );
     return rows.map((r) => ({ eventId: r.broken_event_id, reason: r.reason }));
   }
+}
+
+/**
+ * Автор записи журнала из контекста транзакции (блок 10).
+ *
+ * Аргументы `actorId`/`actorRole` остаются, но сверяются с контекстом: расхождение —
+ * ошибка кода, и запись отклоняется вместе с изменением, а не пишется «как-нибудь».
+ * Ключ `actor` в содержимом зарезервирован: подставить автора через данные нельзя.
+ */
+export function buildActor(
+  tx: Tx,
+  input: { verb: string; actorId: string | null; actorRole: string; context?: Record<string, unknown> },
+): ActorRecord {
+  const ctx = contextOf(tx);
+  if (!ctx) throw new Error(`журнал: ${input.verb} пишется вне транзакции с контекстом`);
+  if (input.context && Object.prototype.hasOwnProperty.call(input.context, 'actor')) {
+    throw new Error(`журнал: ${input.verb} — ключ actor в содержимом зарезервирован`);
+  }
+  const scope = ctx.actor;
+  const kind: ActorKind =
+    scope?.kind ??
+    (ctx.userId ? 'person' : scope?.serviceAccountId ? 'service_account' : scope ? 'anonymous' : 'system');
+  const userId = kind === 'person' ? ctx.userId : null;
+  if ((input.actorId ?? null) !== userId) {
+    throw new Error(`журнал: ${input.verb} — автор вызова не совпадает с контекстом запроса`);
+  }
+  const basis = scope?.basis ?? [];
+  const derived = roleFromBasis(basis, kind);
+  if (derived !== null && derived !== input.actorRole) {
+    throw new Error(
+      `журнал: ${input.verb} — роль ${input.actorRole} не следует из пройденной проверки (${derived})`,
+    );
+  }
+  const viewed = ctx.initiatorUserId ?? null;
+  return {
+    v: 1,
+    kind,
+    userId,
+    serviceAccountId: kind === 'service_account' ? (scope?.serviceAccountId ?? null) : null,
+    role: derived ?? input.actorRole,
+    basis: [...basis],
+    onBehalfOf: viewed ? ctx.userId : null,
+    testSessionId: ctx.testSessionId ?? null,
+    viewMode: ctx.viewOnly === true,
+    operationId: scope?.operationId ?? ctx.traceId,
+    requestId: scope?.job ? null : ctx.traceId,
+    job: scope?.job ?? null,
+    initiator: scope?.initiator ?? (viewed ? { kind: 'person', userId: viewed } : null),
+    ...(scope?.originUnknown ? { originUnknown: true as const } : {}),
+  };
 }

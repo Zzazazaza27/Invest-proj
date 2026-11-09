@@ -3874,6 +3874,48 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: UNIT-CORE-ACTOR-CONTEXT
+    file: apps/core/tests/actor-context.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 15
+    needs: []
+    effects: ['нет — поддельные соединения в памяти']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Блок 10, задание 1: форма context_jsonb.actor v1, роль из пройденной проверки (разные роли у
+      оснований — отказ), уточнение роли маршрута проверкой объекта, отказ вне транзакции с
+      контекстом, ключ actor зарезервирован, автор и роль вызова сверяются с контекстом, до входа —
+      аноним, фон — система с инициатором и операцией из происхождения, два человека и фон
+      одновременно на общем пуле без смешения, соединение не уносит контекст.
+    purpose: 'Блок 10: общий контекст автора действия (Тэнк 09.11, п. 1–6).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
+  - id: CHK-ACTOR-CONTEXT
+    file: scripts/check-actor-context.mjs
+    command: node scripts/check-actor-context.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 15
+    needs: [db, core, web]
+    effects: ['два участника прогона (probe-run, убираются), их проекты и материал, записи журнала']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      На стенде одновременно: два основателя правят свои проекты, администратор — чужой, фоновая
+      сверка завершает брошенную браузером загрузку. По базе: у каждой записи свой автор и своя
+      операция; регистрация и неудачный вход — аноним, учётная запись — предмет; действие над
+      собой — user; администратор — по проверке маршрута; фон — система, инициатор и операция из
+      происхождения загрузки; все новые записи с контекстом; цепочка цела.
+    purpose: 'Блок 10: контекст автора на настоящем ядре и базе (параллельность, события до входа).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: CHK-COMPAT-SIGNATURE
     file: scripts/check-compat-signature.mjs
     command: node scripts/check-compat-signature.mjs
@@ -5538,6 +5580,8 @@ blocks:
     title: Секреты, роли БД, шифрование, выкат
     members:
       [
+        UNIT-CORE-ACTOR-CONTEXT,
+        CHK-ACTOR-CONTEXT,
         TOOL-SECURITY-AUDIT-FULL,
         TOOL-NETWORK-AUDIT,
         PRB-SHARED-RATE-LIMIT,

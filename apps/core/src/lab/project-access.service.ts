@@ -10,6 +10,7 @@ import {
 } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
+import { actingOnProject } from './acting-role';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 
@@ -136,7 +137,7 @@ export class ProjectAccessService {
       await this.audit.emit(tx, {
         verb: 'lab.project_access.granted',
         actorId: ctx.userId,
-        actorRole: actorRole(ctx),
+        actorRole: await actingOnProject(tx, ctx, projectId),
         subjectType: 'project',
         subjectId: projectId,
         // grantId — поколение выдачи (учёт удалений, 2.1.5): «выдать → отозвать → выдать
@@ -180,7 +181,7 @@ export class ProjectAccessService {
       await this.audit.emit(tx, {
         verb: 'lab.project_access.revoked',
         actorId: ctx.userId,
-        actorRole: actorRole(ctx),
+        actorRole: await actingOnProject(tx, ctx, projectId),
         subjectType: 'project',
         subjectId: projectId,
         context: { grantId, granteeUserId: row.grantee_user_id },
@@ -236,7 +237,7 @@ export class ProjectAccessService {
       await this.audit.emit(tx, {
         verb: 'lab.project_access.excluded',
         actorId: ctx.userId,
-        actorRole: actorRole(ctx),
+        actorRole: await actingOnProject(tx, ctx, projectId),
         subjectType: 'project',
         subjectId: projectId,
         // exclusionId — поколение исключения (учёт удалений, 2.1.5).
@@ -287,7 +288,7 @@ export class ProjectAccessService {
       await this.audit.emit(tx, {
         verb: 'lab.project_access.exclusion_revoked',
         actorId: ctx.userId,
-        actorRole: actorRole(ctx),
+        actorRole: await actingOnProject(tx, ctx, projectId),
         subjectType: 'project',
         subjectId: projectId,
         context: { exclusionId, excludedUserId: row.excluded_user_id },
@@ -367,10 +368,6 @@ export class ProjectAccessService {
       });
     }
   }
-}
-
-function actorRole(ctx: RequestContext): string {
-  return ctx.roles.includes('admin') ? 'admin' : 'founder';
 }
 
 interface EntryRow {

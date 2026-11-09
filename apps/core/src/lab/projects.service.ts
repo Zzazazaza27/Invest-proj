@@ -13,6 +13,8 @@ import {
 } from '@fifth/contracts';
 import { AppError, errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
+import { actingOnProject } from './acting-role';
+import { originOf, settleBasis } from '../audit/actor-context';
 import { getEnv } from '../config/env';
 import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
@@ -117,7 +119,7 @@ export class ProjectsService {
       await this.audit.emit(tx, {
         verb: 'lab.project.created',
         actorId: ctx.userId,
-        actorRole: 'founder',
+        actorRole: await actingOnProject(tx, ctx, id),
         subjectType: 'project',
         subjectId: id,
         context: { investmentAsk: input.investmentAsk, stage: input.stage },
@@ -233,7 +235,7 @@ export class ProjectsService {
         await this.audit.emit(tx, {
           verb: 'lab.project.updated',
           actorId: ctx.userId,
-          actorRole: 'founder',
+          actorRole: await actingOnProject(tx, ctx, projectId),
           subjectType: 'project',
           subjectId: projectId,
           context: { fields: Object.keys(input) },
@@ -307,13 +309,22 @@ export class ProjectsService {
     // показывает незавершённую загрузку только её автору и администратору.
     // Чужой идентификатор неотличим от несуществующего.
     const visible = await this.db.readOnly(ctx, async (tx) => {
-      const { rows } = await tx.query<{ type: string }>(
-        `SELECT type FROM lab.project_materials WHERE id = $1 AND project_id = $2`,
+      const { rows } = await tx.query<{ type: string; mine: boolean }>(
+        `SELECT type, uploaded_by = app.current_user_id() AS mine
+           FROM lab.project_materials WHERE id = $1 AND project_id = $2`,
         [materialId, projectId],
       );
       return rows[0];
     });
     if (!visible) throw errors.notFound({ subject: 'material' });
+    // Основание для журнала (блок 10): своя загрузка — участник проекта, иначе прошла
+    // проверка администратора. Прав это не даёт: видимость уже решила политика.
+    settleBasis(
+      ctx.actor,
+      visible.mine
+        ? { check: 'member', object: `project:${projectId}` }
+        : { check: 'route-role', role: 'admin' },
+    );
     if (visible.type === 'product_link') {
       throw errors.conflict('Этот материал не требует подтверждения загрузки');
     }
@@ -321,7 +332,7 @@ export class ProjectsService {
     // Завершение — общая функция (2.1-W03), та же, что у фоновой сверки.
     // Срока подтверждения больше нет: истечение формы запрещает новую
     // передачу, но не завершение уже полученного файла (2.1.2).
-    const outcome = await this.uploads.finalizeFromBrowser(materialId, ctx.userId, ctx.traceId);
+    const outcome = await this.uploads.finalizeFromBrowser(materialId, ctx);
 
     let material: ProjectMaterial | null = null;
     if (outcome.state === 'ready') {
@@ -476,7 +487,7 @@ export class ProjectsService {
         await this.audit.emit(tx, {
           verb: 'lab.material.added',
           actorId: ctx.userId,
-          actorRole: 'founder',
+          actorRole: await actingOnProject(tx, ctx, input.projectId),
           subjectType: 'project',
           subjectId: input.projectId,
           context: { type: 'product_link' },
@@ -530,8 +541,8 @@ export class ProjectsService {
           `INSERT INTO lab.project_materials
              (id, project_id, type, version, upload_key, upload_expires_at,
               upload_content_type, upload_max_bytes, next_check_at, uploaded_by,
-              upload_file_name)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + interval '1 minute', $9, $10)`,
+              upload_file_name, upload_origin)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now() + interval '1 minute', $9, $10, $11::jsonb)`,
           [
             materialId,
             input.projectId,
@@ -544,13 +555,15 @@ export class ProjectsService {
             ctx.userId,
             // Имя — для сообщений пользователю о ЕГО файле (2.1-W04).
             input.fileName.slice(0, 255),
+            // Происхождение операции (блок 10): сверка допишет загрузку от системы, но с автором.
+            JSON.stringify(originOf(ctx)),
           ],
         );
 
         await this.audit.emit(tx, {
           verb: 'lab.material.added',
           actorId: ctx.userId,
-          actorRole: 'founder',
+          actorRole: await actingOnProject(tx, ctx, input.projectId),
           subjectType: 'project',
           subjectId: input.projectId,
           context: { type: input.type, sizeBytes: input.sizeBytes },
@@ -666,7 +679,7 @@ export class ProjectsService {
         await this.audit.record(tx, {
           verb: 'lab.listing.published',
           actorId: ctx.userId,
-          actorRole: 'founder',
+          actorRole: await actingOnProject(tx, ctx, projectId),
           aggregateType: 'project',
           aggregateId: projectId,
           // Листинг публикуется и снимается многократно: постоянная «1» на
@@ -733,7 +746,7 @@ export class ProjectsService {
       await this.audit.record(tx, {
         verb: 'lab.listing.unpublished',
         actorId: ctx.userId,
-        actorRole: 'founder',
+        actorRole: await actingOnProject(tx, ctx, projectId),
         aggregateType: 'project',
         aggregateId: projectId,
         aggregateVersion: await this.audit.nextAggregateVersion(
@@ -762,7 +775,7 @@ export class ProjectsService {
     await this.audit.emit(tx, {
       verb: 'lab.project.visibility_changed',
       actorId: ctx.userId,
-      actorRole: ctx.roles.includes('admin') ? 'admin' : 'founder',
+      actorRole: await actingOnProject(tx, ctx, projectId),
       subjectType: 'project',
       subjectId: projectId,
       context: { from, to },
@@ -807,7 +820,7 @@ export class ProjectsService {
       await this.audit.emit(tx, {
         verb: 'lab.project_material.visibility_changed',
         actorId: ctx.userId,
-        actorRole: ctx.roles.includes('admin') ? 'admin' : 'founder',
+        actorRole: await actingOnProject(tx, ctx, projectId),
         subjectType: 'project',
         subjectId: projectId,
         context: { materialId, visibility },

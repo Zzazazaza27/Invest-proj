@@ -6,6 +6,7 @@ import {
   type UserDevice,
 } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
+import { actingSelf } from '../audit/actor-context';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 
@@ -122,16 +123,13 @@ export class NotificationsService {
         return;
       }
       // Учёт удалений (2.1.5): после восстановления старой копии устройство не оживает.
-      // Роль актора — из перечня вида события; без неё событие не пишется (как у отзыва
-      // токена): фальшивая роль в журнале хуже её отсутствия.
-      const actorRole = ctx.roles.find((r) =>
-        ['founder', 'investor', 'expert', 'organizer', 'admin'].includes(r),
-      );
-      if (actorRole) {
+      // Своё устройство отзывает сам человек: основание «сам», роль журнала `user`
+      // (блок 10). Прежде событие пропускалось, если подходящей роли не находилось.
+      {
         await this.audit.emit(tx, {
           verb: 'comms.device.revoked',
           actorId: ctx.userId,
-          actorRole,
+          actorRole: actingSelf(ctx),
           subjectType: 'device',
           subjectId: deviceId,
           context: {},

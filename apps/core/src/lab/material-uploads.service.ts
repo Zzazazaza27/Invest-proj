@@ -4,7 +4,8 @@ import type { UploadableMaterialType } from '@fifth/contracts';
 import { randomUUID } from 'node:crypto';
 import { AuditRepository } from '../audit/audit.repository';
 import { BackgroundJobsService } from '../background/background-jobs.service';
-import { Database } from '../db/unit-of-work';
+import { Database, contextOf, type RequestContext } from '../db/unit-of-work';
+import { roleFromBasis } from '../audit/actor-context';
 import { S3Service } from '../storage/s3.service';
 import {
   UploadCompletion,
@@ -73,12 +74,13 @@ export class MaterialUploadsService implements OnModuleInit {
   }
 
   /** Завершение из браузера: тот же путь, что у сверки. */
-  finalizeFromBrowser(
-    materialId: string,
-    actorId: string | null,
-    traceId: string,
-  ): Promise<CompletionOutcome> {
-    return this.completion.complete(materialId, { executor: 'browser', actorId, traceId });
+  finalizeFromBrowser(materialId: string, ctx: RequestContext): Promise<CompletionOutcome> {
+    return this.completion.complete(materialId, {
+      executor: 'browser',
+      actorId: ctx.userId,
+      traceId: ctx.traceId,
+      who: ctx.actor ? { userId: ctx.userId, actor: ctx.actor } : undefined,
+    });
   }
 
   /**
@@ -141,7 +143,11 @@ export class MaterialUploadsService implements OnModuleInit {
         await this.audit.emit(tx, {
           verb: 'lab.material.added',
           actorId: info.executor === 'browser' ? info.actorId : null,
-          actorRole: info.executor === 'browser' ? 'founder' : 'system',
+          // Роль — из основания, отмеченного при проверке запроса (блок 10).
+          actorRole:
+            info.executor === 'browser'
+              ? (roleFromBasis(contextOf(tx)?.actor?.basis ?? [], 'person') ?? 'founder')
+              : 'system',
           subjectType: 'project',
           subjectId: row.project_id,
           context: {

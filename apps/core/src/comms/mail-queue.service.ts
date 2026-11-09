@@ -6,7 +6,8 @@ import { BackgroundJobsService } from '../background/background-jobs.service';
 import { resultOf } from '../background/job';
 import { claimLeases, completeUnderLease, renewLease, type Lease } from '../background/lease';
 import { getEnv } from '../config/env';
-import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { Database, contextOf, type RequestContext, type Tx } from '../db/unit-of-work';
+import { originOf } from '../audit/actor-context';
 import { sendTracked, startedWindowSeconds } from './mail-dispatch';
 import { MailTransport, newMessageId, type MailOutcome } from './mail.transport';
 
@@ -107,7 +108,9 @@ export class MailQueueService implements OnModuleInit {
     // Только функцией (M166): у роли пользовательских запросов нет ни чтения очереди, ни
     // прямой записи. Вызов — в транзакции события: её откат убирает и письмо; повтор того
     // же события прежнее письмо не перезаписывает.
-    await tx.query(`SELECT comms.enqueue_service_mail($1, $2, $3, $4, $5, $6, $7)`, [
+    // Происхождение операции (блок 10, M171): повторы отправки несут тот же operationId.
+    const ctx = contextOf(tx);
+    await tx.query(`SELECT comms.enqueue_service_mail($1, $2, $3, $4, $5, $6, $7, $8::jsonb)`, [
       uuidv7(),
       input.source,
       input.sourceId,
@@ -115,6 +118,7 @@ export class MailQueueService implements OnModuleInit {
       input.subject,
       input.text,
       newMessageId(),
+      ctx ? JSON.stringify(originOf(ctx)) : null,
     ]);
   }
 

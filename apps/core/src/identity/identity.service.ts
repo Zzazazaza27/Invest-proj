@@ -12,6 +12,7 @@ import { randomBytes } from 'node:crypto';
 import { errors } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
 import { AuditRepository } from '../audit/audit.repository';
+import { actingSelf } from '../audit/actor-context';
 import { Database, type RequestContext } from '../db/unit-of-work';
 import { getEnv } from '../config/env';
 import { issueCsrfToken } from '../auth/csrf';
@@ -19,12 +20,6 @@ import { TokenRevocationService } from '../auth/token-revocation.service';
 import { LoginThrottleService } from '../auth/login-throttle.service';
 import { MailQueueService } from '../comms/mail-queue.service';
 
-/**
- * Роли, от имени которых разрешено писать глагол `identity.token.revoked`
- * (перечень задан в M038). Список нужен здесь, чтобы не отправлять в журнал
- * роль, которую реестр глаголов отвергнет ошибкой прав уже внутри транзакции.
- */
-const AUDITABLE_ACTOR_ROLES = new Set(['founder', 'investor', 'admin']);
 
 /**
  * Регистрация, вход и согласия.
@@ -108,11 +103,13 @@ export class IdentityService {
     indexHex: string,
   ): Promise<void> {
     try {
-      await this.db.transaction(ctx, async (tx) => {
+      // Попытка входа — от анонима, даже если в браузере осталась чужая сессия (блок 10).
+      await this.db.transaction({ ...ctx, userId: null, roles: [] }, async (tx) => {
         await this.audit.emit(tx, {
           verb: 'identity.login.failed',
-          actorId: userId,
-          actorRole: 'system',
+          // Пытался войти неизвестно кто: учётная запись — предмет, а не автор (блок 10).
+          actorId: null,
+          actorRole: 'anonymous',
           subjectType: 'user',
           subjectId: userId,
           context: { contactFingerprint: indexHex.slice(0, 16) },
@@ -157,7 +154,8 @@ export class IdentityService {
       phone: input.phone ?? null,
     });
 
-    const created = await this.db.transaction(ctx, async (tx) => {
+    // Регистрация — до входа: автор журнала аноним, даже если в браузере осталась сессия.
+    const created = await this.db.transaction({ ...ctx, userId: null, roles: [] }, async (tx) => {
       // Занятость контакта проверяется до вставки, чтобы вернуть внятную
       // ошибку. UNIQUE-индекс по blind index закрывает ГОНКУ — но только от
       // появления дубликата: ответ при этом был 500, пока его не перевели в
@@ -253,8 +251,9 @@ export class IdentityService {
 
       await this.audit.emit(tx, {
         verb: 'identity.user.registered',
-        actorId: userId,
-        actorRole: 'system',
+        // До входа автор — аноним (блок 10): учётной записи ещё нет, она — предмет события.
+        actorId: null,
+        actorRole: 'anonymous',
         subjectType: 'user',
         subjectId: userId,
         context: { role: input.role, locale: input.locale },
@@ -521,12 +520,13 @@ export class IdentityService {
       // токене нет ни одной из известных, событие не пишется: фальшивая роль
       // актора в журнале хуже её отсутствия, а сам факт отзыва остаётся в
       // реестре с отметкой времени и инициатором.
-      const actorRole = ctx.roles.find((role) => AUDITABLE_ACTOR_ROLES.has(role));
-      if (actorRole) {
+      // Свой токен закрывает сам человек: основание «сам», роль `user` (блок 10).
+      // Прежде событие пропускалось, если подходящей роли в токене не было.
+      {
         await this.audit.emit(tx, {
           verb: 'identity.token.revoked',
           actorId: ctx.userId,
-          actorRole,
+          actorRole: actingSelf(ctx),
           subjectType: 'user',
           subjectId: ctx.userId,
           // Идентификатор токена в журнал не пишется: он попадает в выгрузки и

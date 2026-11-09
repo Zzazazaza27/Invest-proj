@@ -9,6 +9,7 @@ import {
   type ServiceAccountWithSecret,
 } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
+import { newScope } from '../audit/actor-context';
 import { errors } from '../common/errors';
 import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
@@ -389,11 +390,17 @@ export class IntegrationService {
       tokenEpoch: Number(found.token_epoch),
     });
 
-    await this.db.asServiceRole('app_integration', { traceId: input.traceId }, async (tx) => {
+    // Автор — сервисная учётная запись, подтвердившая секрет (блок 10), а не «система».
+    const actor = {
+      ...newScope([{ check: 'service-scope' as const, scope: 'client-credentials' }]),
+      kind: 'service_account' as const,
+      serviceAccountId: found.id,
+    };
+    await this.db.asServiceRole('app_integration', { traceId: input.traceId, actor }, async (tx) => {
       await this.audit.emit(tx, {
         verb: 'integration.token.issued',
         actorId: null,
-        actorRole: 'system',
+        actorRole: 'service',
         subjectType: 'service_account',
         subjectId: found.id,
         context: { clientId: found.client_id, scopes: found.scopes },

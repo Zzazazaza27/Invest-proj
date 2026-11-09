@@ -12,6 +12,7 @@ import {
 } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
+import { actingOnProject } from './acting-role';
 import { sha256Hex } from '../audit/deletion-record';
 import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
@@ -266,7 +267,7 @@ export class ProjectMediaService {
       await this.audit.emit(tx, {
         verb: 'lab.project_media.set',
         actorId: ctx.userId,
-        actorRole: ctx.roles?.includes('admin') ? 'admin' : 'founder',
+        actorRole: await actingOnProject(tx, ctx, projectId),
         subjectType: 'project',
         subjectId: projectId,
         // Учёт удалений (2.1.5): что теперь в слоте и какой файл заменён. Ключи и SHA-256,
@@ -285,7 +286,7 @@ export class ProjectMediaService {
           focusX: input.focusX,
           focusY: input.focusY,
           replacedMasterKey: previous?.master_key ?? null,
-          basis: ctx.roles?.includes('admin') ? 'admin' : 'owner',
+          basis: ctx.actor?.basis.some((b) => b.check === 'member') ? 'owner' : 'admin',
         },
         traceId: ctx.traceId,
       });
@@ -315,14 +316,14 @@ export class ProjectMediaService {
       await this.audit.emit(tx, {
         verb: 'lab.project_media.removed',
         actorId: ctx.userId,
-        actorRole: ctx.roles?.includes('admin') ? 'admin' : 'founder',
+        actorRole: await actingOnProject(tx, ctx, projectId),
         subjectType: 'project',
         subjectId: projectId,
         // Учёт удалений (2.1.5): какой файл убран из слота и по чьему решению.
         context: {
           kind,
           masterKey: existing.master_key,
-          basis: ctx.roles?.includes('admin') ? 'admin' : 'owner',
+          basis: ctx.actor?.basis.some((b) => b.check === 'member') ? 'owner' : 'admin',
         },
         traceId: ctx.traceId,
       });

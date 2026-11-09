@@ -14,6 +14,7 @@ import { RoleSchema, type Role } from '@fifth/contracts';
 import { getEnv } from '../config/env';
 import { errors } from '../common/errors';
 import type { RequestContext } from '../db/unit-of-work';
+import { newScope, noteBasis, type ActorScope } from '../audit/actor-context';
 import { TokenVerifier } from './token.verifier';
 import { SessionEpochService } from './session-epoch.service';
 import { TokenRevocationService } from './token-revocation.service';
@@ -177,7 +178,7 @@ export class AuthGuard implements CanActivate {
     if (!token) {
       if (isPublic) {
         // Анонимный контекст: RLS покажет ровно то, что разрешено публично.
-        request.ctx = { userId: null, roles: [], traceId };
+        request.ctx = { userId: null, roles: [], traceId, actor: newScope([{ check: 'public' }]) };
         return true;
       }
       throw errors.unauthenticated({ stage: 'no-token' });
@@ -204,7 +205,7 @@ export class AuthGuard implements CanActivate {
       }
     } catch (error) {
       if (!isPublic) throw error;
-      request.ctx = { userId: null, roles: [], traceId };
+      request.ctx = { userId: null, roles: [], traceId, actor: newScope([{ check: 'public' }]) };
       return true;
     }
 
@@ -218,7 +219,7 @@ export class AuthGuard implements CanActivate {
       tokenId: verified.tokenId,
       expiresAt: verified.expiresAt,
     };
-    request.ctx = { userId: verified.subject, roles, traceId };
+    request.ctx = { userId: verified.subject, roles, traceId, actor: newScope() };
 
     const originFallback =
       this.reflector.getAllAndOverride<boolean>(CSRF_ORIGIN_FALLBACK, [
@@ -266,7 +267,7 @@ export class AuthGuard implements CanActivate {
         // предъявлена: иначе «гостевая» страница показывала бы то, что
         // видно администратору.
         if (!isPublic) throw errors.unauthenticated({ stage: 'guest-context' });
-        request.ctx = { userId: null, roles: [], traceId };
+        request.ctx = { userId: null, roles: [], traceId, actor: newScope([{ check: 'public' }]) };
         void this.contexts.touch(resolved.id, { userId: verified.subject, roles }, traceId);
         return true;
       }
@@ -284,6 +285,7 @@ export class AuthGuard implements CanActivate {
         viewOnly: resolved.kind === 'readonly',
         initiatorUserId: resolved.initiatorUserId,
         testSessionId: resolved.sessionId,
+        actor: newScope(),
       };
       void this.contexts.touch(resolved.id, { userId: verified.subject, roles }, traceId);
 
@@ -295,6 +297,7 @@ export class AuthGuard implements CanActivate {
         const has = requiredInContext.some((role) => resolved.subjectRoles.includes(role));
         if (!has)
           throw errors.forbidden({ required: requiredInContext, actual: resolved.subjectRoles });
+        noteRouteRole(request.ctx.actor, requiredInContext, resolved.subjectRoles);
       }
       return true;
     }
@@ -306,6 +309,7 @@ export class AuthGuard implements CanActivate {
     if (required && required.length > 0) {
       const has = required.some((role) => roles.includes(role));
       if (!has) throw errors.forbidden({ required, actual: roles });
+      noteRouteRole(request.ctx.actor, required, roles);
     }
 
     const needsStepUp = this.reflector.getAllAndOverride<boolean>(REQUIRES_STEP_UP, [
@@ -397,4 +401,18 @@ export class AuthGuard implements CanActivate {
       throw errors.forbidden({ stage: 'cross-site', site });
     }
   }
+}
+
+/**
+ * Основание «пропустил страж маршрута» (блок 10). Роли маршрута перечислены от меньших
+ * прав к большим (`'founder', 'admin'`); записывается первая, которой человек
+ * владеет, — достаточная. Сервис, проверивший объект, уточняет её (`actingOnProject`).
+ */
+function noteRouteRole(
+  scope: ActorScope | undefined,
+  required: readonly string[],
+  held: readonly string[],
+): void {
+  const role = required.find((r) => held.includes(r));
+  if (role) noteBasis(scope, { check: 'route-role', role });
 }

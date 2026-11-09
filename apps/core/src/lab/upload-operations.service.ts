@@ -6,6 +6,7 @@ import {
   type UserOperation,
 } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
+import { actingOnProject } from './acting-role';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 
@@ -183,7 +184,7 @@ export class UploadOperationsService {
         await this.audit.emit(tx, {
           verb: 'lab.material.upload_cancelled',
           actorId: ctx.userId,
-          actorRole: ctx.roles.includes('admin') ? 'admin' : 'founder',
+          actorRole: await actingOnProject(tx, ctx, projectId),
           subjectType: 'project',
           subjectId: projectId,
           context: { materialId, received: rows[0].received },
