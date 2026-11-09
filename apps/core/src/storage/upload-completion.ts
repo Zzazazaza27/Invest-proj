@@ -77,6 +77,11 @@ export interface UploadTarget {
   contentType(row: UploadRow, head: Buffer): string | null;
   /** Событие журнала публикации — в той же транзакции. */
   emitPublished(tx: Tx, row: UploadRow, info: PublishInfo): Promise<void>;
+  /**
+   * Есть ли у автора загрузки право публиковать СЕЙЧАС (блок 10, вопрос 3). Проверяется в
+   * транзакции публикации: между билетом и публикацией право могли отозвать.
+   */
+  authorMayPublish(tx: Tx, row: UploadRow): Promise<boolean>;
 }
 
 export interface PublishInfo {
@@ -122,6 +127,13 @@ const SELECT_ROW = `id, project_id, type, uploaded_by, upload_state, upload_stat
 /** Пауза перед следующей проверкой после n-й неудачи подряд: 1, 2, 4 … 60 мин. */
 export function failureBackoffMs(failures: number): number {
   return Math.min(2 ** Math.max(0, failures - 1), 60) * 60_000;
+}
+
+/** У автора больше нет права на объект загрузки: это отказ, а не временная недоступность. */
+class RightRevoked extends Error {
+  constructor() {
+    super('право автора на проект отозвано');
+  }
 }
 
 class LeaseLost extends Error {
@@ -382,6 +394,9 @@ export class UploadCompletion {
     // 4. Публикация — одна транзакция; сигнал проверяется внутри неё.
     try {
       await this.change(traceId, signal, async (tx) => {
+        // Право автора — на момент публикации. Нет права — отказ; ошибка самой проверки
+        // уходит в «неизвестно» ниже и означает только задержку, не отзыв.
+        if (!(await this.target.authorMayPublish(tx, row))) throw new RightRevoked();
         const published = await completeUnderLease(tx, {
           table: this.target.table,
           lease,
@@ -414,6 +429,16 @@ export class UploadCompletion {
         });
       }, this.authorOf(row, options));
     } catch (error) {
+      if (error instanceof RightRevoked) {
+        return this.settle(
+          row,
+          lease,
+          signal,
+          traceId,
+          'rejected',
+          'У автора больше нет права менять проект — файл не опубликован',
+        );
+      }
       return stop(error) ?? this.unknown(row, lease, signal, traceId, error);
     }
     return { state: 'ready', received: true, busy: false, reason: null };

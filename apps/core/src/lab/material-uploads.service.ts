@@ -137,6 +137,13 @@ export class MaterialUploadsService implements OnModuleInit {
         return null;
       },
       contentType: (_row, head) => detectMaterialContentType(head),
+      authorMayPublish: async (tx, row) => {
+        const { rows } = await tx.query<{ ok: boolean }>(
+          'SELECT lab.uploader_may_publish($1, $2) AS ok',
+          [row.project_id, row.uploaded_by],
+        );
+        return rows[0]?.ok === true;
+      },
       emitPublished: async (tx, row, info) => {
         // Исполнитель и лицо, от имени которого шла загрузка, различаются
         // (блок 10): сверка — система, а загрузку начал автор.

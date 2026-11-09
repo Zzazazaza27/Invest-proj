@@ -86,6 +86,7 @@ const target: UploadTarget = {
   validate: () => null,
   contentType: () => 'application/pdf',
   emitPublished: async () => undefined,
+  authorMayPublish: async () => true,
 };
 
 const failureWrites = (queries: string[]) => queries.filter((q) => /check_failures = \$1/.test(q));
@@ -201,5 +202,35 @@ describe('завершение загрузки: прерывание — не �
     });
     expect(failureWrites(queries)).toHaveLength(1);
     expect(outcome.state).toBe('pending');
+  });
+});
+
+describe('право автора на момент публикации (блок 10, вопрос 3)', () => {
+  it('право отозвано — материал отклонён, не опубликован', async () => {
+    const { db, queries } = fakeDb();
+    const { s3 } = fakeS3();
+    const completion = new UploadCompletion(db as never, s3 as never, {
+      ...target,
+      authorMayPublish: async () => false,
+    });
+    const outcome = await completion.complete('m1', { executor: 'reconcile', actorId: null, traceId: 't' });
+    expect(outcome.state).toBe('rejected');
+    expect(outcome.reason).toMatch(/права/);
+    expect(publishWrites(queries)).toHaveLength(0);
+  });
+
+  it('проверка права недоступна — задержка, а не отказ: загрузка ожидает', async () => {
+    const { db, queries } = fakeDb();
+    const { s3 } = fakeS3();
+    const completion = new UploadCompletion(db as never, s3 as never, {
+      ...target,
+      authorMayPublish: async () => {
+        throw new Error('база недоступна');
+      },
+    });
+    const outcome = await completion.complete('m1', { executor: 'reconcile', actorId: null, traceId: 't' });
+    expect(outcome.state).toBe('pending');
+    expect(publishWrites(queries)).toHaveLength(0);
+    expect(queries.some((q) => /'rejected'/.test(q))).toBe(false);
   });
 });

@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 262; требований: 41
+- Проверок: 263; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 106
+### Зарегистрированы, но ни в наборе, ни в CI — 107
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -272,6 +272,7 @@
 - `CHK-MIGRATE-INTERRUPT` — Блок 9, задание 2: прерванная миграция безопасна, миграция не держит запросы бесконечно.
 - `CHK-SLOTS-ENV` — Блок 9, задание 3: переключение слотов на Docker и nginx (уточнения Тэнка 09.11).
 - `CHK-CONTRACT-RELEASE` — Блок 9, задание 4: несовместимая миграция не идёт поверх обслуживающего старого ядра (Тэнк 09.11).
+- `CHK-UPLOAD-PUBLISH-RIGHT` — Блок 10, вопрос 3 (Тэнк 09.11, M174): право автора на момент публикации загрузки.
 - `CHK-ACTOR-CONTEXT` — Блок 10: контекст автора на настоящем ядре и базе (параллельность, события до входа).
 - `CHK-RELEASE-TRIALS` — Блок 9, задание 4: условие приёмки Тэнка — установщик и три сквозных сценария.
 - `CHK-COMPAT-SIGNATURE` — Блок 9, задание 2: доверенное происхождение отчёта — основания точки возврата (Тэнк 09.11).
@@ -429,6 +430,7 @@
 | CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 43 | вручную | — |
 | CHK-SLOTS-ENV | `node scripts/check-slots-env.mjs` | 30 | вручную | — |
 | CHK-CONTRACT-RELEASE | `node scripts/check-contract-release.mjs` | 9 | вручную | — |
+| CHK-UPLOAD-PUBLISH-RIGHT | `node scripts/check-upload-publish-right.mjs` | 6 | вручную | — |
 | CHK-ACTOR-CONTEXT | `node scripts/check-actor-context.mjs` | 17 | вручную | — |
 | CHK-RELEASE-TRIALS | `node scripts/check-release-trials.mjs` | 24 | вручную | — |
 | CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 11 | вручную | — |

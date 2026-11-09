@@ -3916,6 +3916,24 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: CHK-UPLOAD-PUBLISH-RIGHT
+    file: scripts/check-upload-publish-right.mjs
+    command: node scripts/check-upload-publish-right.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 6
+    needs: [db, core, web]
+    effects: ['участник прогона (probe-run; приостанавливается и восстанавливается), его проект и два материала']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Автор приостановлен между загрузкой и публикацией: фоновая сверка материал не публикует —
+      отклонён с причиной «права нет», события публикации нет; опубликованный раньше остаётся.
+    purpose: 'Блок 10, вопрос 3 (Тэнк 09.11, M174): право автора на момент публикации загрузки.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: CHK-ACTOR-CONTEXT
     file: scripts/check-actor-context.mjs
     command: node scripts/check-actor-context.mjs
@@ -5628,6 +5646,7 @@ blocks:
         UNIT-CORE-ACTOR-CONTEXT,
         UNIT-CORE-ACTOR-CONTEXT-REVIEW,
         CHK-ACTOR-CONTEXT,
+        CHK-UPLOAD-PUBLISH-RIGHT,
         TOOL-SECURITY-AUDIT-FULL,
         TOOL-NETWORK-AUDIT,
         PRB-SHARED-RATE-LIMIT,
