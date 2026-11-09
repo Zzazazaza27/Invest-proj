@@ -543,10 +543,10 @@ async function bootstrap(): Promise<void> {
     const grant = readGrant(env.BACKGROUND_GRANT_PATH!, env.CORE_SLOT!);
     if (grant.granted) {
       jobs.start();
-      logger.log(`фон слота ${env.CORE_SLOT}: разрешён (выпуск ${grant.op ?? '—'})`);
+      logger.log({ msg: 'фон слота разрешён', slot: env.CORE_SLOT, op: grant.op ?? null });
     } else {
       await jobs.pause(0);
-      logger.warn(`фон слота ${env.CORE_SLOT}: на паузе — ${grant.reason}`);
+      logger.warn({ msg: 'фон слота на паузе', slot: env.CORE_SLOT, reason: grant.reason });
     }
   } else {
     jobs.start();
