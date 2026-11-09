@@ -415,8 +415,10 @@ jobs:
           done
       - name: Манифест
         run: |
+          # Опись компонентов и отчёт лицензий этой сборки; суммы — в манифесте (блок 11).
+          node scripts/sbom.mjs --out sbom --commit "${{ github.sha }}"
           node scripts/kit.mjs manifest --build "$BUILD" --commit "${{ github.sha }}" \
-            --images images.json --out kit.json
+            --images images.json --out kit.json --sbom sbom
           cp infra/docker-compose.env.yml compose.yml
           mkdir prod-compose
           cp infra/docker-compose.yml infra/docker-compose.prod.yml infra/docker-compose.journald.yml prod-compose/
@@ -427,6 +429,7 @@ jobs:
             kit.json
             compose.yml
             prod-compose/
+            sbom/
           retention-days: 90
 
   # Только кнопкой владельца. Границы — в установщике на узле: здесь лишь подпись и доставка.

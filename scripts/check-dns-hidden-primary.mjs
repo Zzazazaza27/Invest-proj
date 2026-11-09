@@ -27,7 +27,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { nextSerial, SERIAL_MAX } from './lib/dns-serial.mjs';
 
-const IMAGE = 'cznic/knot:3.4';
+const IMAGE =
+  'cznic/knot:3.4@sha256:87c31a79960b8401eda340e121c8110e02176496693e1ca2eae2a97bf6978f92';
 const NET = 'dnslab';
 const SUBNET = '172.30.53.0/24';
 const IP = {

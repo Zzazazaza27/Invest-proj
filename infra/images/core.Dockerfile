@@ -2,7 +2,7 @@
 # секреты приходят при установке (переменные и `<ИМЯ>_FILE`), в образ не зашиваются.
 # Сборка из корня репозитория:
 #   docker build -f infra/images/core.Dockerfile -t fifth/core:<версия> .
-FROM node:22.23.2-bookworm-slim AS build
+FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9 AS build
 WORKDIR /src
 COPY package.json package-lock.json tsconfig*.json ./
 COPY packages ./packages
@@ -16,7 +16,7 @@ RUN npm ci --ignore-scripts --no-audit --no-fund \
  && npm run build -w apps/core \
  && npm prune --omit=dev --ignore-scripts --no-audit --no-fund
 
-FROM node:22.23.2-bookworm-slim
+FROM node:22.23.2-bookworm-slim@sha256:48e4b67d85f87bd551df43704e24d252f56cc5f8e9718841aace50f19948f0f9
 ARG GIT_COMMIT=unknown
 ENV NODE_ENV=production \
     RELEASE_SHA=$GIT_COMMIT \

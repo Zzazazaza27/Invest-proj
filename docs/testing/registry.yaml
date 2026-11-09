@@ -2976,6 +2976,37 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-04
 
+  - id: TOOL-SBOM
+    file: scripts/sbom.mjs
+    command: node scripts/sbom.mjs --out <каталог> [--commit <sha>]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    effects: ['пишет опись и отчёт лицензий в указанный каталог']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Опись npm-компонентов (CycloneDX) по package-lock с видами поставляемые / средства
+      сборки / локальные инструменты, список образов с закреплением и отчёт лицензий для
+      разбора. Вызывается заданием kit в CI; суммы файлов — в kit.json. Ничего не запрещает.
+
+  - id: TOOL-CADDY-DRIFT
+    file: scripts/caddy-drift.mjs
+    command: node scripts/caddy-drift.mjs
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [ssh]
+    effects: ['только читает /etc/caddy/Caddyfile на VPS; хеши паролей в вывод не попадают']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Сверка основного Caddyfile сервера с копией infra/caddy/Caddyfile (хеши basic_auth
+      заменены подстановками окружения).
+
   - id: TOOL-RELEASE
     file: scripts/release.mjs
     command: node scripts/release.mjs install|verify|replay|recover <среда>
@@ -4814,6 +4845,21 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: UNIT-PKG-CONTRACTS-PROBLEM-TYPE
+    file: packages/contracts/tests/problem-type-base.test.ts
+    command: npm run test -w packages/contracts
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 2
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['читает два файла конфигурации — побочных действий нет']
+    purpose: 'Блок 13: идентификатор вида ошибки — постоянный. Ответы nginx (502, 504) и Caddy при недоступности пишут его строкой; префикс совпадает с PROBLEM_TYPE_BASE, код — известный.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-PKG-UI-MARKDOWN
     file: packages/ui/tests/markdown.test.ts
     command: npm run test -w packages/ui
@@ -5654,6 +5700,7 @@ blocks:
       [
         UNIT-CORE-INTEGRATION,
         UNIT-PKG-CONTRACTS-CONTRACTS,
+        UNIT-PKG-CONTRACTS-PROBLEM-TYPE,
         UNIT-PKG-API-CLIENT-CLIENT,
         UNIT-PKG-UI-MARKDOWN,
         SMK-API-CLIENT,

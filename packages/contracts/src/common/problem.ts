@@ -62,7 +62,15 @@ export const ErrorCodeSchema = z.enum(
   Object.values(ErrorCode) as [ErrorCodeValue, ...ErrorCodeValue[]],
 );
 
-/** База URI для `type`. Документация по коду доступна человеку и машине. */
+/**
+ * База URI для `type`. Документация по коду доступна человеку и машине.
+ *
+ * Правило совместимости (блок 13; Тэнк 09.11): это постоянный идентификатор вида ошибки,
+ * а не адрес площадки. Смена домена платформы его НЕ меняет; клиенты сравнивают `type`
+ * как строку. Менять только отдельным решением с переходным периодом. Тот же префикс
+ * повторён в infra/nginx/default.conf и infra/caddy/unavailable.caddy — совпадение
+ * проверяет tests/problem-type-base.test.ts.
+ */
 export const PROBLEM_TYPE_BASE = 'https://5espace.com/problems';
 
 export const ProblemDetailsSchema = z.object({

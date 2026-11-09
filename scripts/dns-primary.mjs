@@ -54,7 +54,8 @@ import { nextSerial } from './lib/dns-serial.mjs';
 
 loadEnv();
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const IMAGE = 'cznic/knot:3.4';
+const IMAGE =
+  'cznic/knot:3.4@sha256:87c31a79960b8401eda340e121c8110e02176496693e1ca2eae2a97bf6978f92';
 const NAME = process.env.DNS_CONTAINER_NAME || 'fifth-dns-primary';
 const NETWORK = process.env.DNS_DOCKER_NETWORK || 'host';
 const env = process.env;

@@ -12,6 +12,10 @@ case "$1" in
   dirty) g status --porcelain | head -20 ;;
   containers) docker ps --format '{{.Names}} {{.Status}}' ;;
   pins) cat /opt/fifth-element/.local/kits/pins/prod.json ;;
+  # Точные версии запущенных образов (блок 11: закрепление по digest). Только чтение.
+  images) docker ps --format '{{.Image}}' | sort -u | while read -r i; do
+      printf '%s %s\n' "$i" "$(docker image inspect --format '{{join .RepoDigests " "}}' "$i")"
+    done ;;
   zabbix-openbao) cd /opt/fifth-element && node scripts/monitoring.mjs openbao-status ;;
-  *) echo 'fifth-diag: команды: sha, subject, date, dirty, containers, pins, zabbix-openbao' >&2; exit 2 ;;
+  *) echo 'fifth-diag: команды: sha, subject, date, dirty, containers, pins, images, zabbix-openbao' >&2; exit 2 ;;
 esac

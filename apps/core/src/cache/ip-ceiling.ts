@@ -1,4 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
+import { ErrorCode, problemTypeUri } from '@fifth/contracts';
 import { getEnv } from '../config/env';
 import type { Counters } from './counters';
 
@@ -60,7 +61,7 @@ export function registerIpCeiling(app: FastifyInstance, counters: Counters | nul
       });
       // Счётчик недоступен — отказ, а не проход мимо потолка.
       return reply.code(503).send({
-        type: 'https://5espace.com/problems/dependency_unavailable',
+        type: problemTypeUri(ErrorCode.DEPENDENCY_UNAVAILABLE),
         title: 'Сервис временно недоступен',
         status: 503,
         code: 'dependency_unavailable',
@@ -74,7 +75,7 @@ export function registerIpCeiling(app: FastifyInstance, counters: Counters | nul
         .code(429)
         .header('retry-after', String(retryAfter))
         .send({
-          type: 'https://5espace.com/problems/rate_limited',
+          type: problemTypeUri(ErrorCode.RATE_LIMITED),
           title: 'Слишком много запросов',
           status: 429,
           code: 'rate_limited',

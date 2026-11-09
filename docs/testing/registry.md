@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 264; требований: 41
+- Проверок: 267; требований: 41
 
 ## Что защищено без участия человека
 
@@ -356,6 +356,8 @@
 | TOOL-TEMP-RUN | `npm run temp:run` | 0 | вручную, по поводу | — |
 | TOOL-VITE-BUILD | `node scripts/vite-build.mjs` | 0 | вручную, по поводу | — |
 | TOOL-KIT | `node scripts/kit.mjs manifest|fetch|pack|load|check --build <номер>` | 0 | вручную, по поводу | — |
+| TOOL-SBOM | `node scripts/sbom.mjs --out <каталог> [--commit <sha>]` | 0 | вручную, по поводу | — |
+| TOOL-CADDY-DRIFT | `node scripts/caddy-drift.mjs` | 0 | вручную, по поводу | — |
 | TOOL-RELEASE | `node scripts/release.mjs install|verify|replay|recover <среда>` | 0 | вручную, по поводу | — |
 | TOOL-INSTALL-CI | `fifth-install (обёртка на узле), запрос в stdin` | 0 | вручную, по поводу | — |
 | TOOL-INSTALL-REQUEST | `node scripts/install-request.mjs --dir <артефакт> --expect <сборка> --sign-key-file <файл> --token-file <файл>` | 0 | вручную, по поводу | — |
@@ -537,6 +539,7 @@
 | UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 24 | CI | CI |
 | UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |
 | UNIT-PKG-CONTRACTS-VISIBILITY | `npm run test -w packages/contracts` | 10 | CI | CI |
+| UNIT-PKG-CONTRACTS-PROBLEM-TYPE | `npm run test -w packages/contracts` | 2 | CI | CI |
 | UNIT-PKG-UI-MARKDOWN | `npm run test -w packages/ui` | 10 | CI | CI |
 
 ### Браузерные проходы (`render-check-*`)

@@ -136,7 +136,7 @@ function needBuild() {
   return build;
 }
 
-function manifestOf({ build, commit, images, previous }) {
+function manifestOf({ build, commit, images, previous, sbom = null }) {
   const migrations = readdirSync(MIGRATIONS)
     .filter((f) => f.endsWith('.sql'))
     .sort()
@@ -167,6 +167,9 @@ function manifestOf({ build, commit, images, previous }) {
     postgresSource: postgresSource(),
     migrations,
     previous: previous ?? null,
+    // Опись компонентов и отчёт лицензий этой сборки (scripts/sbom.mjs): контрольные суммы
+    // файлов, лежащих рядом с манифестом. Подпись манифеста покрывает и их.
+    sbom,
     checks: ['status: /live и /ready', 'verify: дайджесты экземпляров и миграции'],
     stopConditions: [
       'нет блокировки',
@@ -174,6 +177,19 @@ function manifestOf({ build, commit, images, previous }) {
       'проверка готовности не прошла',
     ],
   };
+}
+
+/** Суммы из SHA256SUMS, сверенные с самими файлами: опись не расходится с манифестом. */
+function sbomOf(dir) {
+  const files = {};
+  for (const line of readFileSync(join(dir, 'SHA256SUMS'), 'utf8').split('\n').filter(Boolean)) {
+    const [sum, name] = line.split(/\s+/);
+    if (sha256(readFileSync(join(dir, name))) !== sum)
+      throw new Refused(`опись: ${name} не совпал с суммой`);
+    files[name] = sum;
+  }
+  if (!files['sbom-shipped.cdx.json'] || !files['licenses.md']) throw new Refused('опись неполна');
+  return { dir: 'sbom', files };
 }
 
 function manifest() {
@@ -186,7 +202,9 @@ function manifest() {
   for (const c of COMPONENTS) {
     if (!images[c]?.digest || !images[c]?.imageId) throw new Refused(`в образах нет ${c}`);
   }
-  const kit = manifestOf({ build, commit, images, previous: flag('--previous') });
+  const sbomDir = flag('--sbom');
+  const sbom = sbomDir ? sbomOf(sbomDir) : null;
+  const kit = manifestOf({ build, commit, images, previous: flag('--previous'), sbom });
   writeFileSync(out, `${JSON.stringify(kit, null, 2)}\n`);
   finish({ ok: true, build, file: out }, 0);
 }

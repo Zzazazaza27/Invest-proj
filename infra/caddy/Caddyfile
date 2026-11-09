@@ -1,0 +1,123 @@
+# Основной Caddyfile площадки (VPS, /etc/caddy/Caddyfile) — воспроизводимая копия.
+#
+# Снят с сервера 2026-11-09 только чтением; конфигурация сервера этим файлом НЕ изменена.
+# Хеши паролей basic_auth в Git не хранятся: на их месте подстановки окружения Caddy
+# ({$CADDY_AUTH_<ИМЯ>}), значения — из защищённого источника (переменные службы caddy).
+# Применение этого файла на сервер — отдельный шаг выпуска, пока не выполнен.
+# Расхождение с сервером: node scripts/caddy-drift.mjs
+#
+{
+	servers {
+		timeouts {
+			read_body 90m
+		}
+	}
+}
+
+import /opt/fifth-element/infra/caddy/access-log.caddy
+import /opt/fifth-element/infra/caddy/unavailable.caddy
+
+# Caddy — терминирование TLS для стенда UNICORN LAUNCH.
+#
+# Сертификат Let's Encrypt Caddy получает и продлевает сам; отдельного шага
+# для этого нет и быть не должно — просроченный сертификат обычно результат
+# забытой ручной процедуры.
+#
+# Схема: Caddy (80/443, наружу) -> nginx в контейнере (127.0.0.1:8080) ->
+# статика кабинетов и /v1/ в ядро. Наружу открыты только 80 и 443; сам nginx
+# и ядро остаются на петле и docker-мосту.
+#
+# Логи идут в journald (journalctl -u caddy): systemd-юнит Caddy ограничен
+# в записи вне своих каталогов, и файловый лог в /var/log/caddy не давал
+# службе стартовать вовсе.
+
+5espace.com {
+	import fifth_access_log
+	import fifth_unavailable
+	tls {
+		client_auth {
+			mode verify_if_given
+			trust_pool file {
+				pem_file /etc/fifth-tls/integration-ca.crt
+			}
+		}
+	}
+	header X-Robots-Tag "noindex, nofollow"
+	basic_auth {
+		thomas {$CADDY_AUTH_THOMAS}
+		monitor {$CADDY_AUTH_MONITOR}
+		watch {$CADDY_AUTH_WATCH}
+	}
+	reverse_proxy 127.0.0.1:8080 {
+		# Ядро стоит за двумя прокси. Реальный адрес клиента передаётся дальше,
+		# иначе счётчик частоты видел бы один и тот же адрес у всех посетителей
+		# и ограничивал бы их общим ведром.
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		# Заменяет присланное клиентом: значение даёт только проверенный сертификат.
+		header_up X-Client-Cert-Fingerprint {http.request.tls.client.fingerprint}
+	}
+
+	encode zstd gzip
+}
+
+# Один канонический адрес: cookie сессии (__Host-) привязана к имени хоста,
+# и вход на www не был бы входом на основной адрес.
+www.5espace.com {
+	import fifth_access_log
+	redir https://5espace.com{uri}
+}
+
+# Панель HestiaCP под нормальным сертификатом.
+#
+# Сама панель слушает 8083 со своим самоподписанным сертификатом, и наружу
+# этот порт не открыт: ufw его не пускает. Снаружи её отдаёт Caddy, у которого
+# уже есть Let's Encrypt для этого домена.
+#
+# tls_insecure_skip_verify допустим ЗДЕСЬ И ТОЛЬКО ЗДЕСЬ: соединение идёт по
+# петле к сертификату самой же машины, проверять в нём нечего — цепочка
+# доверия начинается снаружи, у Caddy.
+panel.5espace.com {
+	import fifth_access_log
+	reverse_proxy https://127.0.0.1:8083 {
+		transport http {
+			tls_insecure_skip_verify
+		}
+		# Панель сверяет заголовок Origin с собственным Host и без этой строки
+		# видит адрес апстрима, а не тот, по которому пришёл человек: любой POST
+		# (вход в том числе) отбивается как «Potential CSRF use detected».
+		header_up Host {host}
+		header_up X-Real-IP {remote_host}
+	}
+}
+
+# Имя почтового сервера. Сайта здесь нет: блок нужен, чтобы Caddy получал и
+# продлевал сертификат mail.5espace.com, а его копию берут exim и dovecot
+# (/usr/local/bin/sync-mail-cert).
+mail.5espace.com {
+	import fifth_access_log
+	redir https://5espace.com/
+}
+
+# 2.1-W06 — вход файлов
+import /opt/fifth-element/infra/caddy/files.caddy
+
+# Тестовая среда по требованию (блок 12): закрыта на входе, индексация запрещена.
+test-1.5espace.com {
+	import fifth_unavailable
+	header X-Robots-Tag "noindex, nofollow"
+	basic_auth {
+		tester {$CADDY_AUTH_TESTER}
+	}
+	reverse_proxy 127.0.0.1:18081
+}
+
+# Пилотная среда (решение Томаса 06.11): люди и сохраняемые данные, индексация запрещена.
+test-2.5espace.com {
+	import fifth_access_log
+	import fifth_unavailable
+	header X-Robots-Tag "noindex, nofollow"
+	reverse_proxy 127.0.0.1:18082 {
+		header_up -X-Client-Cert-Fingerprint
+	}
+}

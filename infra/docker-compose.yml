@@ -20,7 +20,7 @@ services:
   # Запускается отдельным профилем: инфраструктуре (БД, очереди, хранилище)
   # прокси не нужен, и поднимать его при каждом `infra:up` незачем.
   web:
-    image: nginx:1.27-alpine
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     container_name: fifth-web
     restart: unless-stopped
     profiles: ['web']
@@ -76,7 +76,7 @@ services:
   # Рабочий стенд не затрагивается ничем: свой порт, свой конфиг, свой
   # контейнер. Конфигурацию работающего nginx править не пришлось.
   web-test:
-    image: nginx:1.27-alpine
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
     container_name: fifth-web-test
     profiles: ['testing']
     restart: 'no'
@@ -214,7 +214,7 @@ services:
   # прежние. Версия закреплена точно; ветка 8.1 сопровождается до 03.2028.
   # Данные — только временные счётчики: новый том, перенос не нужен.
   valkey:
-    image: valkey/valkey:8.1.11
+    image: valkey/valkey:8.1.11@sha256:8f836008e0986c36adf50da714c7060cf689dbb335f61fe077939d90fa650809
     container_name: fifth-valkey
     restart: unless-stopped
     command:
@@ -238,7 +238,7 @@ services:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-local_dev_only_redis_change_me}
 
   nats:
-    image: nats:2.10-alpine
+    image: nats:2.10-alpine@sha256:b83efabe3e7def1e0a4a31ec6e078999bb17c80363f881df35edc70fcb6bb927
     container_name: fifth-nats
     restart: unless-stopped
     command:
@@ -273,7 +273,7 @@ services:
   # обычный `stand:up` его не поднимает — он нужен только прогонам
   # устойчивости и поднимается ими же.
   nats-test:
-    image: nats:2.10-alpine
+    image: nats:2.10-alpine@sha256:b83efabe3e7def1e0a4a31ec6e078999bb17c80363f881df35edc70fcb6bb927
     container_name: fifth-nats-test
     profiles: ['testing']
     restart: 'no'
@@ -421,7 +421,7 @@ services:
     profiles: ['idp']
 
   mailpit:
-    image: axllent/mailpit:v1.21
+    image: axllent/mailpit:v1.21@sha256:81370195cd4a0eab9604d17c2617a7525b0486f9365555253b6c5376c6350f1a
     container_name: fifth-mailpit
     restart: unless-stopped
     ports:
@@ -480,7 +480,7 @@ services:
   # этом слушается на узле — снаружи его закрывает ufw (входящие запрещены),
   # разрешены только сети Docker (веб-интерфейс).
   zabbix-server: &zabbix-server
-    image: zabbix/zabbix-server-pgsql:alpine-7.0.31
+    image: zabbix/zabbix-server-pgsql:alpine-7.0.31@sha256:bdfe90847bd259a6da448db1e6ae83f5f439224654ed767296a8d57a088975b9
     container_name: fifth-zabbix-server
     profiles: ['monitoring-local']
     restart: unless-stopped
@@ -525,7 +525,7 @@ services:
       DB_SERVER_PORT: '${POSTGRES_PORT:-5433}'
 
   zabbix-web:
-    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.31
+    image: zabbix/zabbix-web-nginx-pgsql:alpine-7.0.31@sha256:d9ce0774cb6036ce5d49c9c8d46bf1474dad98aae810350de0d5068dd679b92d
     container_name: fifth-zabbix-web
     profiles: ['monitoring']
     restart: unless-stopped
@@ -554,7 +554,7 @@ services:
     cpus: 0.5
 
   zabbix-agent2: &zabbix-agent
-    image: zabbix/zabbix-agent2:alpine-7.0.31
+    image: zabbix/zabbix-agent2:alpine-7.0.31@sha256:a9d9bb8e12fe7dea3917d9630507a9ded97b85913f3195b3b08a1354a49661a3
     container_name: fifth-zabbix-agent
     profiles: ['monitoring-local']
     restart: unless-stopped
