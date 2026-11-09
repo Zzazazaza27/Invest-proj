@@ -17,9 +17,10 @@ bad() { echo "  FAIL  $1"; FAIL=1; }
 FAIL=0
 
 wait_for '[ "$(health)" = healthy ]' 120 || { echo 'test-1 не здорова — не начинаю' >&2; exit 1; }
-before="$(restarts)"
 since="$(date -u +%FT%TZ)"
 docker restart -t 35 "$C" >/dev/null
+# Ручной docker restart обнуляет RestartCount — базовое значение только после него.
+before="$(restarts)"
 pid=''
 for _ in $(seq 1 100); do
   pid="$(docker exec "$C" node -e "const fs=require('fs');for(const p of fs.readdirSync('/proc').filter((d)=>/^\d+\$/.test(d)&&d!=='1')){try{if(fs.readFileSync('/proc/'+p+'/cmdline','utf8').startsWith('node\\0apps/core/dist/main.js')){process.kill(Number(p),'SIGSTOP');console.log(p)}}catch{}}" 2>/dev/null || true)"
