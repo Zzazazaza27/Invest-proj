@@ -21,9 +21,13 @@ for u in https://5espace.com/v1/health https://www.5espace.com/ https://test-2.5
   printf '%s %s\n' "$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 "$u")" "$u"
 done
 echo '== CORS хранилища для сред'
-for o in https://5espace.com https://test-1.5espace.com https://test-2.5espace.com; do
-  h=$(curl -s -o /dev/null -D - --max-time 15 -X OPTIONS -H "Origin: $o" -H 'Access-Control-Request-Method: POST' https://files.5espace.com/ | grep -i '^access-control-allow-origin' | tr -d '\r')
-  echo "$o -> ${h:-нет заголовка}"
+# Своя среда — 204, чужой сайт — 403: бакет среды принимает только свой кабинет.
+for pair in 5espace.com:fifth-element test-1.5espace.com:fifth-test-1 test-2.5espace.com:fifth-test-2; do
+  o="https://${pair%%:*}"
+  b="${pair##*:}"
+  own=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X OPTIONS -H "Origin: $o" -H 'Access-Control-Request-Method: POST' "https://files.5espace.com/$b")
+  alien=$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 -X OPTIONS -H 'Origin: https://example.org' -H 'Access-Control-Request-Method: POST' "https://files.5espace.com/$b")
+  echo "$b: свой $o -> $own, чужой -> $alien"
 done
 echo '== сертификаты (срок)'
 for h in 5espace.com www.5espace.com files.5espace.com test-1.5espace.com test-2.5espace.com mail.5espace.com panel.5espace.com; do
