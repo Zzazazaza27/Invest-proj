@@ -20,7 +20,9 @@ declare -A LOAD=([RATE_LIMIT_IP_CEILING_PER_MIN]=100000 [RATE_LIMIT_AUTH_PER_MIN
 show() {
   for k in $KEYS; do
     v=$(grep -E "^$k=" "$FILE" | tail -1 | cut -d= -f2-)
-    echo "$k=${v:-(по умолчанию)}"
+    # Действующее в ядре — из окружения контейнера, а не только из файла.
+    live=$(docker exec fifth-test-1-core printenv "$k" 2>/dev/null)
+    echo "$k=${v:-(по умолчанию)} в ядре: ${live:-(по умолчанию)}"
   done
 }
 restart() {
