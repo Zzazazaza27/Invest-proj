@@ -17,6 +17,8 @@ case "$ENV_ID" in
     secret=/run/fifth-secrets/DATABASE_URL_APP_ARCHIVE
     [ -s "$secret" ] || { echo 'нет секрета DATABASE_URL_APP_ARCHIVE у prod' >&2; exit 1; }
     url="$(cat "$secret")"
+    # Рабочая база — только по TLS с проверкой сертификата, как у ядра.
+    export AUDIT_EXPORT_DB_SSL=true NODE_EXTRA_CA_CERTS=/run/fifth-secrets/internal-ca.crt
     ;;
   test-2)
     secret="$ROOT/.local/envs/test-2/secrets/DATABASE_URL_APP_ARCHIVE"

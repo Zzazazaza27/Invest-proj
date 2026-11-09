@@ -105,7 +105,12 @@ async function run() {
   if (!url) throw new Error('нет AUDIT_EXPORT_DB_URL');
   const privateKey = createPrivateKey(readFileSync(KEY));
   const state = existsSync(STATE) ? JSON.parse(readFileSync(STATE, 'utf8')) : null;
-  const db = new pg.Client({ connectionString: url });
+  // TLS с проверкой сертификата, как у ядра (DATABASE_SSL): рабочая база требует шифрования;
+  // доверенный центр — NODE_EXTRA_CA_CERTS.
+  const db = new pg.Client({
+    connectionString: url,
+    ssl: env.AUDIT_EXPORT_DB_SSL === 'true' ? { rejectUnauthorized: true } : undefined,
+  });
   await db.connect();
   try {
     const databaseId = (await db.query('SELECT id::text FROM ops.database_identity')).rows[0]?.id;
