@@ -2888,6 +2888,27 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: UNIT-CORE-BACKGROUND-SLOTS
+    file: apps/core/tests/background-slots.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 14
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects:
+      ['таймеры в памяти процесса, временный каталог для файла разрешения, служебный порт на петле']
+    note: >-
+      Блок 9, задание 3: обратимая пауза фона (paused — только после окончания проходов, во время
+      pausing продолжение отклоняется, остановка окончательна), разрешение фона слоту из файла
+      (неоднозначное — без фона; перезапуск кандидата до подтверждения и старого после паузы — без
+      фона), служебные команды только POST с токеном, продолжение только при разрешении слоту.
+    purpose: 'Пауза фона и разрешение слоту для выпуска с двумя ядрами (уточнения Тэнка 09.11).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-CORE-BACKGROUND
     file: apps/core/tests/background.test.ts
     command: npm run test -w apps/core
@@ -5369,6 +5390,7 @@ blocks:
         PRB-OUTBOX-LEASE,
         PRB-BACKGROUND-JOBS,
         UNIT-CORE-BACKGROUND,
+        UNIT-CORE-BACKGROUND-SLOTS,
         UNIT-CORE-EVENTS,
         CHK-DB-RECONNECT,
         CHK-DB-RESILIENCE,
