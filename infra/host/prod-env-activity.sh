@@ -10,9 +10,12 @@
 set -Eeuo pipefail
 ID="$1"
 case "$ID" in
-  prod) CORE=fifth-core; BASE=http://127.0.0.1:4300 ;;
+  prod)
+    # Активное ядро и его порты (блок 09, задание 3).
+    . "$(dirname "$(readlink -f "$0")")/core-slot.sh"
+    CORE="$(active_core)" || exit 2; BASE="http://127.0.0.1:$(active_core_port)"; INTERNAL="$(active_core_internal_port)" ;;
   test-1 | test-2)
-    CORE="fifth-$ID-core"
+    CORE="fifth-$ID-core"; INTERNAL=4400
     PORT="$(sed -n 's/^FIFTH_WEB_PORT=//p' "/opt/fifth-element/.local/envs/$ID/compose.env")"
     BASE="http://127.0.0.1:$PORT"
     ;;
@@ -25,7 +28,7 @@ code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content
 if [ "$code" = 401 ]; then echo "  OK    вход несуществующей учёткой — 401 (путь входа и чтение учёток)"
 else echo "  FAIL  вход — $code"; FAIL=1; fi
 docker exec "$CORE" node -e "
-fetch('http://127.0.0.1:4400/jobs').then((r) => r.json()).then((b) => {
+fetch('http://127.0.0.1:$INTERNAL/jobs').then((r) => r.json()).then((b) => {
   const bad = b.jobs.filter((j) => j.enabled && j.lastStatus === 'failed');
   console.log('  ·     фон: ' + b.jobs.map((j) => j.name + '=' + (j.enabled ? j.lastStatus : 'выкл')).join(' '));
   console.log(bad.length ? '  FAIL  фоновые задачи с отказом: ' + bad.map((j) => j.name).join(', ') : '  OK    фоновые задачи без отказов');

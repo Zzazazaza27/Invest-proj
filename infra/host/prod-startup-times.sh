@@ -6,9 +6,12 @@
 #
 #   fifth-test op prod-startup-times
 set -Eeuo pipefail
+# Активное ядро (блок 09, задание 3): в режиме слотов — по файлу маршрута.
+. "$(dirname "$(readlink -f "$0")")/core-slot.sh"
+CORE="$(active_core)" || exit 2
 all="$(docker events --since 336h --until "$(date -u +%FT%TZ)" --format '{{.Type}}' 2>/dev/null | wc -l)"
 echo "событий Docker в журнале за 14 суток: $all"
-for c in fifth-core fifth-test-1-core fifth-test-2-core; do
+for c in "$CORE" fifth-test-1-core fifth-test-2-core; do
   docker events --since 336h --until "$(date -u +%FT%TZ)" --filter "container=$c" \
     --filter event=start --filter event=health_status --format '{{.TimeNano}} {{.Action}}' 2>/dev/null |
     node -e '

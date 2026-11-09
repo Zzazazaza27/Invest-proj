@@ -31,6 +31,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildOrder } from './kit.mjs';
+import { activeCore } from './lib/core-slot.mjs';
 import { rollbackVerdict } from './lib/rollback-policy.mjs';
 import { parseEnvFile } from './lib/backup.mjs';
 import { activateProdFiles, prodFileProblems } from './lib/prod-compose.mjs';
@@ -61,8 +62,13 @@ const q = (v) => (v === null || v === undefined ? 'NULL' : `'${String(v).replace
 const dirOf = (id) => join(ENVS, id);
 const instanceId = (id, component) => `${id}/${SERVER}/${component}`;
 const PROD = 'prod';
+// Ядро рабочей среды — активный слот (блок 09, задание 3); остальное — по имени компонента.
 const containerOf = (id, component) =>
-  id === PROD ? `fifth-${component}` : `fifth-${id}-${component}`;
+  id !== PROD
+    ? `fifth-${id}-${component}`
+    : component === 'core'
+      ? activeCore(HOME).container
+      : `fifth-${component}`;
 const PROD_PROFILES = 'web,monitoring,monitoring-host';
 
 /** Значение настройки рабочей среды, в том числе секрет из файла. */
@@ -281,14 +287,16 @@ function observe(id, kit) {
 
 function readiness(id) {
   if (id === PROD) {
+    // Активное ядро (блок 09, задание 3): в режиме слотов — по файлу маршрута.
+    const core = activeCore(HOME);
     const r = spawnSync(
       'docker',
       [
         'exec',
-        'fifth-core',
+        core.container,
         'node',
         '-e',
-        "fetch('http://127.0.0.1:4400/ready',{signal:AbortSignal.timeout(8000)}).then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))",
+        `fetch('http://127.0.0.1:${core.internalPort}/ready',{signal:AbortSignal.timeout(8000)}).then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))`,
       ],
       { env: dockerEnv, timeout: 15_000 },
     );

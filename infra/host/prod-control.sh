@@ -6,6 +6,9 @@
 #
 #   fifth-test op prod-control
 set -Eeuo pipefail
+# Активное ядро (блок 09, задание 3): в режиме слотов — по файлу маршрута.
+. "$(dirname "$(readlink -f "$0")")/core-slot.sh"
+CORE="$(active_core)" || exit 2
 ROOT=/opt/fifth-element
 SITE=https://5espace.com
 CREDENTIALS=/etc/fifth-gate/monitor.credentials
@@ -52,10 +55,10 @@ echo "  ·     группы: $(q "SELECT string_agg(g, ' ' ORDER BY g) FROM (SEL
 echo "  ·     outbox: $(q "SELECT count(*) || ' неопубликованных, старейшее ' || coalesce(extract(epoch FROM now() - min(created_at))::int::text || ' с', '—') FROM audit.outbox_events WHERE published_at IS NULL")"
 echo "  ·     outbox за 10 мин: $(q "SELECT count(*) FILTER (WHERE published_at IS NOT NULL) || ' опубликовано из ' || count(*) FROM audit.outbox_events WHERE created_at > now() - interval '10 minutes'")"
 echo "  ·     данные: $(q "SELECT 'пользователей ' || (SELECT count(*) FROM identity.users) || ', проектов ' || (SELECT count(*) FROM lab.projects)")"
-restarts="$(docker inspect -f '{{.RestartCount}}' fifth-core)"
+restarts="$(docker inspect -f '{{.RestartCount}}' "$CORE")"
 [ "$restarts" = 0 ] && ok 'ядро без перезапусков' || bad "перезапусков ядра: $restarts"
 # Строка проверки здоровья: время запуска (startup=), предел зависаний, петля падений.
-echo "  ·     проверка здоровья: $(docker inspect -f '{{range .State.Health.Log}}{{.Output}}{{end}}' fifth-core | grep -o 'core-health[^|]*' | tail -1)"
+echo "  ·     проверка здоровья: $(docker inspect -f '{{range .State.Health.Log}}{{.Output}}{{end}}' "$CORE" | grep -o 'core-health[^|]*' | tail -1)"
 
 RID="$(cat /proc/sys/kernel/random/uuid)"
 body="{\"cabinet\":\"lab\",\"screen\":\"/\",\"version\":\"unknown\",\"code\":\"js.uncaught\",\"stage\":\"unknown\",\"requestId\":\"$RID\",\"count\":1}"
@@ -63,7 +66,7 @@ code="$(auth -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: applicatio
 if [ "$code" = 202 ]; then
   ok 'приём ошибок интерфейса через Caddy — 202'
   sleep 2
-  docker logs --since 2m fifth-core 2>&1 | grep "$RID" | grep -q '"reported":"browser"' &&
+  docker logs --since 2m "$CORE" 2>&1 | grep "$RID" | grep -q '"reported":"browser"' &&
     ok 'запись reported: browser в журнале ядра' || bad 'записи в журнале ядра нет'
 else
   bad "приём ошибок интерфейса — $code"

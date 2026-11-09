@@ -1,6 +1,9 @@
 #!/bin/bash
 # Осмотр рабочей среды перед переходом на OpenBao. Ничего не меняет, значений не печатает.
 set -uo pipefail
+# Активное ядро (блок 09, задание 3): в режиме слотов — по файлу маршрута.
+. "$(dirname "$(readlink -f "$0")")/core-slot.sh"
+CORE="$(active_core)" || exit 2
 ROOT=/opt/fifth-element
 cd "$ROOT"
 BUILD="${1:-2.1-b120.1}"
@@ -11,9 +14,9 @@ grep -oE '^[A-Z0-9_]+_FILE=' .env | sed 's/_FILE=//' | tr '\n' ' '
 echo
 echo '== образ и состав'
 cat .local/kits/pins/prod.json | cut -c1-200
-docker inspect fifth-core --format '{{.Config.Image}} {{.HostConfig.NetworkMode}}' 2>&1
-docker inspect fifth-core --format '{{range .Mounts}}{{.Source}} -> {{.Destination}} ({{.RW}}){{"\n"}}{{end}}' 2>&1
-docker inspect fifth-core --format '{{.Config.User}}' 2>&1
+docker inspect "$CORE" --format '{{.Config.Image}} {{.HostConfig.NetworkMode}}' 2>&1
+docker inspect "$CORE" --format '{{range .Mounts}}{{.Source}} -> {{.Destination}} ({{.RW}}){{"\n"}}{{end}}' 2>&1
+docker inspect "$CORE" --format '{{.Config.User}}' 2>&1
 stat -c '%a %u %g %n' .env .local/secrets
 echo '== проверка настроек production на новой сборке'
 set -a
