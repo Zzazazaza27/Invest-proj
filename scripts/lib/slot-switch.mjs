@@ -42,7 +42,8 @@ const DEFAULTS = {
 export async function switchSlots(ops, plan) {
   const o = { ...DEFAULTS, ...plan.limits };
   const { from, to, build, prevBuild, autoRollback = false } = plan;
-  const say = (stage, status, detail = '') => ops.record(stage, status, detail);
+  // expectMs — объявленный срок этапа: наблюдение отличает долгий этап от зависания (задание 4).
+  const say = (stage, status, detail = '', expectMs) => ops.record(stage, status, detail, expectMs);
   const until = async (check, ms) => {
     const end = ops.now() + ms;
     for (;;) {
@@ -165,6 +166,7 @@ export async function switchSlots(ops, plan) {
   }
 
   // 6. Наблюдение.
+  say('observe', 'start', `${Math.round(o.observeMs / 1000)} с`, o.observeMs);
   const watch = await ops.observe(o.observeMs);
   if (!watch.ok) {
     if (!autoRollback) {
@@ -188,6 +190,7 @@ export async function switchSlots(ops, plan) {
       return null;
     }
   };
+  say('drain', 'start', `до ${Math.round(o.drainWaitMs / 1000)} с`, o.drainWaitMs);
   const drained = await until(
     async () =>
       (await read(() => ops.nginxOldWorkers())) === 0 &&

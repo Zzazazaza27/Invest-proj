@@ -237,8 +237,15 @@ export function slotOps(ctx, op) {
       req.on('error', rejectVia);
     });
 
-  const record = (stage, status, detail = '') => {
-    const line = { at: new Date().toISOString(), op, stage, status, detail };
+  const record = (stage, status, detail = '', expectMs) => {
+    const line = {
+      at: new Date().toISOString(),
+      op,
+      stage,
+      status,
+      detail,
+      ...(expectMs ? { expectMs } : {}),
+    };
     appendFileSync(d.journal, `${JSON.stringify(line)}\n`);
     console.error(`  · ${stage}: ${status}${detail ? ` — ${detail}` : ''}`);
   };

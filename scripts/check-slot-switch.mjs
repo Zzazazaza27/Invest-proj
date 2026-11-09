@@ -332,7 +332,7 @@ console.warn('\n[11] Регрессии Тэнка 09.11');
   const { s, ops } = world({ unknownDrain: true });
   const t0 = s.t;
   const r = await switchSlots(ops, { ...plan, limits: { drainWaitMs: 20_000 } });
-  const line = s.log.find((l) => l.startsWith('drain:'));
+  const line = s.log.find((l) => l.startsWith('drain:timeout'));
   check('ожидание до срока, а не сразу', r.ok && s.t - t0 >= 20_000, `${(s.t - t0) / 1000} с`);
   check(
     'в журнале — «неизвестно» и остановка по сроку',

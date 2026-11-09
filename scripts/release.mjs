@@ -75,12 +75,17 @@ const dirOf = (id) => join(ENVS, id);
 const instanceId = (id, component) => `${id}/${SERVER}/${component}`;
 const PROD = 'prod';
 // Ядро рабочей среды — активный слот (блок 09, задание 3); остальное — по имени компонента.
-const containerOf = (id, component) =>
-  id !== PROD
-    ? `fifth-${id}-${component}`
-    : component === 'core'
-      ? activeCore(HOME).container
-      : `fifth-${component}`;
+const containerOf = (id, component) => {
+  if (id === PROD) return component === 'core' ? activeCore(HOME).container : `fifth-${component}`;
+  // Тестовая среда на слотах: ядро — активный слот по её файлу маршрута (задание 4).
+  if (component === 'core') {
+    const file = join(dirOf(id), 'release', 'core-route.json');
+    if (existsSync(file) && JSON.parse(readFileSync(file, 'utf8')).slot === 'core-b') {
+      return `fifth-${id}-core-b`;
+    }
+  }
+  return `fifth-${id}-${component}`;
+};
 const PROD_PROFILES = 'web,monitoring,monitoring-host';
 
 /** Значение настройки рабочей среды, в том числе секрет из файла. */
@@ -127,6 +132,14 @@ function setProdEnv(key, value) {
 }
 
 const prodSlots = () => /^FIFTH_SLOTS=1$/m.test(readFileSync(join(HOME, '.env'), 'utf8'));
+
+/** Тестовая среда на слотах: FIFTH_SLOTS=1 в её compose.env. */
+const envSlots = (id) => {
+  const file = join(dirOf(id), 'compose.env');
+  return existsSync(file) && /^FIFTH_SLOTS=1$/m.test(readFileSync(file, 'utf8'));
+};
+const passFlags = (names) => names.filter((n) => argv.includes(n));
+const passValues = (names) => names.flatMap((n) => (flag(n) ? [n, flag(n)] : []));
 
 /**
  * Выпуск рабочей среды переключением слотов ядра (блок 09, задание 3). Web не
@@ -671,7 +684,20 @@ async function install(id) {
           prodSlots()
           ? await prodSlotsUpdate(build, loaded, op, imagesOnly)
           : prodUpdate(build, loaded, imagesOnly)
-        : envTool('update', id, '--kit', build, ...(imagesOnly ? ['--images-only'] : []));
+        : envSlots(id)
+          ? // Тестовая среда на слотах (задание 4): тот же выпуск через переключение, журнал
+            // слотов связан с этой операцией.
+            envTool(
+              'slots-update',
+              id,
+              '--kit',
+              build,
+              '--op',
+              op,
+              ...passFlags(['--allow-contract', '--auto-rollback']),
+              ...passValues(['--observe-ms', '--drain-ms']),
+            )
+          : envTool('update', id, '--kit', build, ...(imagesOnly ? ['--images-only'] : []));
     if (up.code !== 0) throw new Error(`установка: ${up.out.slice(0, 200)}`);
     record(id, op, 'update', 'ok');
     const v = verifyAgainst(id, loaded);

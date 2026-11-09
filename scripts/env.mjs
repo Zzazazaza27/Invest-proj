@@ -35,6 +35,7 @@ import { s3Object } from './lib/s3.mjs';
 import { parseEnvFile } from './lib/backup.mjs';
 import { envLayout, envSlotOps, extractStatic, prepareSlots } from './lib/env-slots.mjs';
 import { factualState, switchSlots } from './lib/slot-switch.mjs';
+import { contractRelease } from './lib/contract-release.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
@@ -385,13 +386,24 @@ function schemaVersion(id) {
 }
 
 /** Служебный /ready ядра изнутри контейнера. */
+/** Активный слот ядра среды по её файлу маршрута; без слотов — core. */
+function activeSlotService(id) {
+  const routeFile = join(names(id).dir, 'release', 'core-route.json');
+  return existsSync(routeFile) && JSON.parse(readFileSync(routeFile, 'utf8')).slot === 'core-b'
+    ? 'core-b'
+    : 'core';
+}
+
 function readiness(id) {
+  // Среда на слотах — активный слот по её файлу маршрута (блок 09, задание 4).
+  const service = activeSlotService(id);
   const r = compose(
     id,
     [
+      ...(service === 'core-b' ? ['--profile', 'slot-b'] : []),
       'exec',
       '-T',
-      'core',
+      service,
       'node',
       '-e',
       `Promise.all(['live','ready'].map((p)=>fetch('http://127.0.0.1:${INTERNAL_PORT}/'+p,{signal:AbortSignal.timeout(8000)}).then(async(r)=>({status:r.status,body:await r.json()})))).then((x)=>console.log(JSON.stringify(x)),(e)=>{console.log(JSON.stringify({error:e.message}));process.exit(1)})`,
@@ -510,7 +522,10 @@ async function create(id) {
 
 async function status(id) {
   const install = loadInstall(id);
-  const ps = compose(id, ['ps', '--format', '{{.Service}}={{.State}}'], { allowFail: true });
+  // Все профили: на слотах активным может быть core-b (блок 09, задание 4).
+  const ps = compose(id, ['--profile', 'slot-b', 'ps', '--format', '{{.Service}}={{.State}}'], {
+    allowFail: true,
+  });
   const services = Object.fromEntries(
     ps.stdout
       .trim()
@@ -518,7 +533,10 @@ async function status(id) {
       .filter(Boolean)
       .map((l) => l.split('=')),
   );
-  const state = services.core === 'running' ? readiness(id) : { live: false, ready: false };
+  // Готовность — по активному слоту: после переключения на core-b прежний core остановлен,
+  // и проверка по нему называла рабочую среду неготовой (испытания задания 4).
+  const active = activeSlotService(id);
+  const state = services[active] === 'running' ? readiness(id) : { live: false, ready: false };
   finish(
     {
       ok: state.ready,
@@ -658,6 +676,51 @@ function images(id) {
   finish({ ok: true, env: id, images: list, message: list.join(' ') }, 0);
 }
 
+/** Применённые миграции среды (реестр в её базе). */
+function appliedMigrations(id) {
+  const r = compose(id, [
+    'exec',
+    '-T',
+    'postgres',
+    'sh',
+    '-c',
+    'PGPASSWORD="$(cat /run/secrets/POSTGRES_PASSWORD)" psql -h 127.0.0.1 -U fifth_owner -d fifth_element -Atc "select id from public.schema_migrations order by id"',
+  ]);
+  return r.stdout
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean);
+}
+
+/** Contract-миграции в образе ядра сборки: по метке `-- migrate:contract` в файле. */
+function contractMigrationsOf(label) {
+  const r = spawnSync(
+    'docker',
+    [
+      'run',
+      '--rm',
+      '--entrypoint',
+      'sh',
+      `fifth/core:${label}`,
+      '-c',
+      "grep -l '^-- migrate:contract' /app/database/migrations/*.sql || true",
+    ],
+    { encoding: 'utf8', env: composeEnv(), timeout: 120_000 },
+  );
+  if (r.status !== 0)
+    throw new Error(`образ ядра ${label}: ${(r.stderr ?? '').trim().slice(-200)}`);
+  return r.stdout
+    .split('\n')
+    .map((l) =>
+      l
+        .trim()
+        .split('/')
+        .pop()
+        ?.replace(/\.sql$/, ''),
+    )
+    .filter(Boolean);
+}
+
 /** Строка KEY=VALUE в compose.env среды: заменить или добавить. */
 function setComposeEnv(id, key, value) {
   const file = join(names(id).dir, 'compose.env');
@@ -724,25 +787,59 @@ async function slotsUpdate(id) {
   const from = install.slots.active;
   const to = from === 'core-a' ? 'core-b' : 'core-a';
   const prev = install.slots.build;
-  const op = `slots-${Date.now()}`;
+  // Журнал слотов связан с операцией установщика, если она есть (release.mjs install).
+  const op = flag('--op') ?? `slots-${Date.now()}`;
+  // Contract-миграция кандидата (задание 4; Тэнк 09.11, п. 5) не идёт поверх обслуживающего
+  // старого ядра: отдельный порядок с остановкой и только с явным согласием на перерыв.
+  const applied = new Set(appliedMigrations(id));
+  const contract = contractMigrationsOf(kit).filter((m) => !applied.has(m));
+  if (contract.length && !process.argv.includes('--allow-contract')) {
+    throw new Refused(
+      `в кандидате contract-миграции ${contract.join(', ')}: бесшовный выпуск невозможен — порядок с остановкой только с --allow-contract`,
+    );
+  }
+  // Изменения среды — только после проверки на contract: отказ ничего не трогает.
   extractStatic(names(id).dir, kit);
-  // Расширение схемы — до кандидата (9.2): прежний код совместим с ним (задание 2).
   setComposeEnv(id, 'FIFTH_CORE_IMAGE', `fifth/core:${kit}`);
-  compose(id, ['run', '--rm', 'migrate']);
-  const observeMs = Number(flag('--observe-ms') ?? 600_000);
-  const result = await switchSlots(envSlotOps(slotEnv(id), op), {
-    from,
-    to,
-    build: kit,
-    prevBuild: prev,
-    autoRollback: process.argv.includes('--auto-rollback'),
-    limits: {
-      observeMs,
-      drainWaitMs: Number(flag('--drain-ms') ?? 300_000),
-      confirmSamples: 5,
-    },
-  });
-  if (result.active !== 'unknown') {
+  const ops = envSlotOps(slotEnv(id), op);
+  let result;
+  if (contract.length) {
+    ops.migrate = async () => {
+      const before = appliedMigrations(id).length;
+      const r = compose(id, ['run', '--rm', 'migrate'], { allowFail: true });
+      const after = appliedMigrations(id).length;
+      return r.status === 0
+        ? { ok: true, detail: `применено ${after - before}` }
+        : { ok: false, applied: after > before, detail: `миграции: код ${r.status}` };
+    };
+    ops.startSlot = async (slot) => {
+      compose(id, [
+        '--profile',
+        'slot-b',
+        'up',
+        '-d',
+        '--no-deps',
+        slot === 'core-b' ? 'core-b' : 'core',
+      ]);
+    };
+    result = await contractRelease(ops, { from, to, build: kit, prevBuild: prev });
+  } else {
+    // Расширение схемы — до кандидата (9.2): прежний код совместим с ним (задание 2).
+    compose(id, ['run', '--rm', 'migrate']);
+    result = await switchSlots(ops, {
+      from,
+      to,
+      build: kit,
+      prevBuild: prev,
+      autoRollback: process.argv.includes('--auto-rollback'),
+      limits: {
+        observeMs: Number(flag('--observe-ms') ?? 600_000),
+        drainWaitMs: Number(flag('--drain-ms') ?? 300_000),
+        confirmSamples: 5,
+      },
+    });
+  }
+  if (result.active !== 'unknown' && result.active !== 'none') {
     install.slots = {
       active: result.active,
       build: result.active === to ? kit : prev,
