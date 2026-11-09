@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 261; требований: 41
+- Проверок: 262; требований: 41
 
 ## Что защищено без участия человека
 
@@ -429,7 +429,7 @@
 | CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 43 | вручную | — |
 | CHK-SLOTS-ENV | `node scripts/check-slots-env.mjs` | 30 | вручную | — |
 | CHK-CONTRACT-RELEASE | `node scripts/check-contract-release.mjs` | 9 | вручную | — |
-| CHK-ACTOR-CONTEXT | `node scripts/check-actor-context.mjs` | 15 | вручную | — |
+| CHK-ACTOR-CONTEXT | `node scripts/check-actor-context.mjs` | 17 | вручную | — |
 | CHK-RELEASE-TRIALS | `node scripts/check-release-trials.mjs` | 24 | вручную | — |
 | CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 11 | вручную | — |
 | CHK-RELEASE-STATE | `node scripts/check-release-state.mjs` | 17 | вручную | — |
@@ -504,6 +504,7 @@
 | UNIT-CABINET-CLIENT-ERRORS | `npm run test -w packages/cabinet` | 7 | CI | CI |
 | UNIT-CORE-CLIENT-ERRORS | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-ACTOR-CONTEXT | `npm run test -w apps/core` | 15 | CI | CI |
+| UNIT-CORE-ACTOR-CONTEXT-REVIEW | `npm run test -w apps/core` | 11 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |

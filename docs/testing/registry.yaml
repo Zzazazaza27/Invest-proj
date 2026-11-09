@@ -3895,13 +3895,34 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: UNIT-CORE-ACTOR-CONTEXT-REVIEW
+    file: apps/core/tests/actor-context-review.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 11
+    needs: []
+    effects: ['нет — поддельные соединения в памяти']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Замечания Тэнка 09.11 к блоку 10: пустое основание и системный контекст без задачи —
+      отказ; явное неизвестное происхождение видно в записи; проект без участия и без
+      администратора — отказ, а не founder; в контексте доступа автор — сотрудник, onBehalfOf —
+      учётная запись контекста; запись во время просмотра остаётся просмотром; ключ повтора
+      хранит operationId, повтор продолжает операцию, ключ до M173 операции не получает.
+    purpose: 'Блок 10: регрессии по замечаниям Тэнка к контексту автора.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: CHK-ACTOR-CONTEXT
     file: scripts/check-actor-context.mjs
     command: node scripts/check-actor-context.mjs
     kind: check
     level: сквозной
     runner: manual
-    asserts: 15
+    asserts: 17
     needs: [db, core, web]
     effects: ['два участника прогона (probe-run, убираются), их проекты и материал, записи журнала']
     studied: code
@@ -5605,6 +5626,7 @@ blocks:
     members:
       [
         UNIT-CORE-ACTOR-CONTEXT,
+        UNIT-CORE-ACTOR-CONTEXT-REVIEW,
         CHK-ACTOR-CONTEXT,
         TOOL-SECURITY-AUDIT-FULL,
         TOOL-NETWORK-AUDIT,

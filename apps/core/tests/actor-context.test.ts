@@ -167,7 +167,10 @@ describe('запись журнала берёт автора из контек�
     const { db } = fakeDb();
     const audit = new AuditRepository(db);
     await expect(
-      db.transaction(person('u1', ['founder']), (tx) => emitAs(audit, tx, 'u2', 'founder')),
+      db.transaction(
+        person('u1', ['founder'], newScope([{ check: 'member', object: 'p' }])),
+        (tx) => emitAs(audit, tx, 'u2', 'founder'),
+      ),
     ).rejects.toThrow(/не совпадает/);
   });
 

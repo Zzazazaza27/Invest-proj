@@ -46,7 +46,7 @@ function client() {
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     const csrf = [...jar].find(([k]) => /csrf/i.test(k))?.[1];
     if (method !== 'GET' && csrf) headers['X-CSRF-Token'] = csrf;
-    if (key) headers['Idempotency-Key'] = randomUUID();
+    if (key) headers['Idempotency-Key'] = key === true ? randomUUID() : key;
     const response = await fetch(`${BASE}${path}`, {
       method,
       headers,
@@ -142,6 +142,26 @@ try {
 
   const pa = await createProject(ca, 'Проект A контекста автора');
   const pb = await createProject(cb, 'Проект B контекста автора');
+
+  // --- повтор защищённой операции тем же ключом: та же операция, другой запрос
+  console.log('▸ Повтор тем же ключом');
+  const retryKey = randomUUID();
+  const taxonomy = await cb.call('/v1/taxonomy');
+  const body = {
+    title: 'Проект B2 повтор',
+    stage: 'mvp',
+    taxonomyId: taxonomy.json?.items?.[0]?.id,
+    investmentAsk: '1000000',
+    askCurrency: 'RUB',
+  };
+  const first = await cb.call('/v1/projects', { method: 'POST', key: retryKey, body });
+  const again = await cb.call('/v1/projects', { method: 'POST', key: retryKey, body });
+  check(
+    'повтор тем же ключом — тот же проект',
+    first.json?.id && again.json?.id === first.json.id,
+    `${first.status}/${again.status}`,
+  );
+  const pb2 = first.json?.id;
 
   // --- загрузка, брошенная браузером: её завершит фоновая сверка
   console.log('▸ Одновременно: два основателя, администратор, фоновая сверка');
@@ -254,6 +274,16 @@ try {
   check(
     'операция фона — та же, что у запроса загрузки',
     added.length === 1 && origin?.operationId && added[0].actor?.operationId === origin.operationId,
+  );
+
+  const created = events(`verb = 'lab.project.created' AND subject_id = '${pb2}'`);
+  const keyOp = sql(
+    `SELECT operation_id FROM requests.idempotency_keys WHERE key = '${retryKey}';`,
+  );
+  check(
+    'операция повтора сохранена с ключом и совпадает с записью журнала; событие одно',
+    created.length === 1 && keyOp && created[0].actor?.operationId === keyOp,
+    `событий ${created.length}, ключ ${keyOp || 'нет'}`,
   );
 
   const all = events('true');

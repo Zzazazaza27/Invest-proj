@@ -51,7 +51,8 @@ export class AuditRepository {
     // Признак просмотра снимается ТОЛЬКО здесь и только для этой операции:
     // сам контекст запроса не меняется, и следующая доменная транзакция
     // по-прежнему получит отказ.
-    const auditCtx: RequestContext = { ...ctx, viewOnly: false };
+    // Смысл записи не меняется: техническое разрешение помечено отдельно (auditViewMode).
+    const auditCtx: RequestContext = { ...ctx, viewOnly: false, auditViewMode: true };
     return this.db.transaction(auditCtx, (tx) =>
       this.emit(tx, {
         verb: input.verb,
@@ -256,21 +257,34 @@ export function buildActor(
     throw new Error(`журнал: ${input.verb} — ключ actor в содержимом зарезервирован`);
   }
   const scope = ctx.actor;
+  const basis = scope?.basis ?? [];
+  // Единый источник: без отмеченной проверки (или явно названного неизвестного
+  // происхождения) запись не пишется — роль из аргумента вызова не подставляется.
+  if (basis.length === 0) {
+    throw new Error(`журнал: ${input.verb} — основание не отмечено`);
+  }
   const kind: ActorKind =
     scope?.kind ??
-    (ctx.userId ? 'person' : scope?.serviceAccountId ? 'service_account' : scope ? 'anonymous' : 'system');
-  const userId = kind === 'person' ? ctx.userId : null;
-  if ((input.actorId ?? null) !== userId) {
+    (ctx.userId ? 'person' : scope?.serviceAccountId ? 'service_account' : 'anonymous');
+
+  // Сотрудник в контексте доступа: автор — он сам, учётная запись контекста — onBehalfOf.
+  // Действие сотрудника владельцу учётной записи не приписывается.
+  const staff = ctx.initiatorUserId ?? null;
+  const userId = kind === 'person' ? (staff ?? ctx.userId) : null;
+  const callerOk =
+    (input.actorId ?? null) === userId || (staff !== null && input.actorId === ctx.userId);
+  if (!callerOk) {
     throw new Error(`журнал: ${input.verb} — автор вызова не совпадает с контекстом запроса`);
   }
-  const basis = scope?.basis ?? [];
   const derived = roleFromBasis(basis, kind);
+  if (derived === null && !basis.some((b) => b.check === 'unknown')) {
+    throw new Error(`журнал: ${input.verb} — основание не даёт роли`);
+  }
   if (derived !== null && derived !== input.actorRole) {
     throw new Error(
       `журнал: ${input.verb} — роль ${input.actorRole} не следует из пройденной проверки (${derived})`,
     );
   }
-  const viewed = ctx.initiatorUserId ?? null;
   return {
     v: 1,
     kind,
@@ -278,13 +292,14 @@ export function buildActor(
     serviceAccountId: kind === 'service_account' ? (scope?.serviceAccountId ?? null) : null,
     role: derived ?? input.actorRole,
     basis: [...basis],
-    onBehalfOf: viewed ? ctx.userId : null,
+    onBehalfOf: staff ? ctx.userId : null,
     testSessionId: ctx.testSessionId ?? null,
-    viewMode: ctx.viewOnly === true,
+    viewMode: ctx.viewOnly === true || ctx.auditViewMode === true,
     operationId: scope?.operationId ?? ctx.traceId,
     requestId: scope?.job ? null : ctx.traceId,
     job: scope?.job ?? null,
-    initiator: scope?.initiator ?? (viewed ? { kind: 'person', userId: viewed } : null),
+    initiator: scope?.initiator ?? null,
+    accessContext: ctx.access ?? null,
     ...(scope?.originUnknown ? { originUnknown: true as const } : {}),
   };
 }

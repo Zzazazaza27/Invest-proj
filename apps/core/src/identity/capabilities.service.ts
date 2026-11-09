@@ -8,7 +8,8 @@ import {
 } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
-import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { Database, contextOf, type RequestContext, type Tx } from '../db/unit-of-work';
+import { noteBasis } from '../audit/actor-context';
 
 /**
  * Функциональные полномочия сотрудников (M097).
@@ -176,6 +177,8 @@ export async function assertCapability(tx: Tx, code: string, action: string): Pr
       `Недостаточно полномочий: «${action}» требует «${code}»`,
     );
   }
+  // Основание для журнала (блок 10): пройдено полномочие, а не только роль.
+  noteBasis(contextOf(tx)?.actor, { check: 'capability', code });
 }
 
 interface CapabilityRow {

@@ -286,6 +286,13 @@ export class AuthGuard implements CanActivate {
         initiatorUserId: resolved.initiatorUserId,
         testSessionId: resolved.sessionId,
         actor: newScope(),
+        // Для журнала (блок 10): автор — сотрудник; полномочие, по которому контекст открыт
+        // и проверен при разборе (initiator_capable).
+        access: {
+          kind: resolved.kind,
+          capability:
+            resolved.kind === 'readonly' ? 'identity.user.view_as' : 'testing.sessions.manage',
+        },
       };
       void this.contexts.touch(resolved.id, { userId: verified.subject, roles }, traceId);
 

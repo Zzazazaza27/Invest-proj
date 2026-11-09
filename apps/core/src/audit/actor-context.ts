@@ -17,7 +17,13 @@ export type Basis =
   | { check: 'token-purpose'; purpose: string }
   | { check: 'service-scope'; scope: string }
   | { check: 'job'; name: string }
-  | { check: 'public' };
+  | { check: 'capability'; code: string }
+  | { check: 'public' }
+  /**
+   * Явно обозначенное неизвестное происхождение: проверка не отмечена, и это сказано в
+   * записи, а не скрыто. Только с причиной; роль тогда — из вызова.
+   */
+  | { check: 'unknown'; reason: string };
 
 export interface Initiator {
   kind: ActorKind;
@@ -59,6 +65,12 @@ export interface ActorRecord {
   requestId: string | null;
   job: { name: string; runId: string; attempt: number } | null;
   initiator: Initiator | null;
+  /**
+   * Действие сотрудника через контекст доступа (M129): вид контекста и полномочие,
+   * которое сотрудник для него прошёл. Автор (`userId`) — сам сотрудник, `onBehalfOf` —
+   * учётная запись, от лица которой шёл запрос.
+   */
+  accessContext: { kind: 'participant' | 'readonly'; capability: string } | null;
   originUnknown?: true;
 }
 
@@ -100,6 +112,7 @@ export function roleFromBasis(basis: readonly Basis[], kind: ActorKind): string 
     else if (b.check === 'self') roles.add('user');
     else if (b.check === 'service-scope') roles.add('service');
     else if (b.check === 'job') roles.add('system');
+    else if (b.check === 'capability') roles.add('admin');
     else if ((b.check === 'public' || b.check === 'token-purpose') && kind === 'anonymous')
       roles.add('anonymous');
   }
@@ -148,4 +161,20 @@ export function settleBasis(scope: ActorScope | undefined, basis: Basis): void {
 export function actingSelf(ctx: { actor?: ActorScope }): 'user' {
   settleBasis(ctx.actor, { check: 'self' });
   return 'user';
+}
+
+/**
+ * Контекст «до входа» для одной транзакции: действует аноним, даже если в браузере
+ * осталась чья-то сессия. Основание задаётся явно — открытый маршрут или ссылка.
+ */
+export function anonymousContext<C extends { userId: string | null; roles: readonly string[]; actor?: ActorScope }>(
+  ctx: C,
+  basis: Basis,
+): C {
+  const actor: ActorScope = {
+    operationId: ctx.actor?.operationId ?? uuidv7(),
+    basis: [basis],
+    kind: 'anonymous',
+  };
+  return { ...ctx, userId: null, roles: [], actor };
 }

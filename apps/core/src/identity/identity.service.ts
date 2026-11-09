@@ -12,7 +12,7 @@ import { randomBytes } from 'node:crypto';
 import { errors } from '../common/errors';
 import { CryptoService } from '../crypto/crypto.service';
 import { AuditRepository } from '../audit/audit.repository';
-import { actingSelf } from '../audit/actor-context';
+import { anonymousContext, actingSelf } from '../audit/actor-context';
 import { Database, type RequestContext } from '../db/unit-of-work';
 import { getEnv } from '../config/env';
 import { issueCsrfToken } from '../auth/csrf';
@@ -104,7 +104,7 @@ export class IdentityService {
   ): Promise<void> {
     try {
       // Попытка входа — от анонима, даже если в браузере осталась чужая сессия (блок 10).
-      await this.db.transaction({ ...ctx, userId: null, roles: [] }, async (tx) => {
+      await this.db.transaction(anonymousContext(ctx, { check: 'public' }), async (tx) => {
         await this.audit.emit(tx, {
           verb: 'identity.login.failed',
           // Пытался войти неизвестно кто: учётная запись — предмет, а не автор (блок 10).
@@ -155,7 +155,7 @@ export class IdentityService {
     });
 
     // Регистрация — до входа: автор журнала аноним, даже если в браузере осталась сессия.
-    const created = await this.db.transaction({ ...ctx, userId: null, roles: [] }, async (tx) => {
+    const created = await this.db.transaction(anonymousContext(ctx, { check: 'public' }), async (tx) => {
       // Занятость контакта проверяется до вставки, чтобы вернуть внятную
       // ошибку. UNIQUE-индекс по blind index закрывает ГОНКУ — но только от
       // появления дубликата: ответ при этом был 500, пока его не перевели в

@@ -98,10 +98,10 @@ export async function claimRequestKey(
   try {
     const { rowCount } = await tx.query(
       `INSERT INTO requests.idempotency_keys
-         (actor_id, operation, key, object_id, request_hash, result_id, expires_at)
-       VALUES (app.current_user_id(), $1, $2, $3, $4, $5, now() + $6::interval)
+         (actor_id, operation, key, object_id, request_hash, result_id, expires_at, operation_id)
+       VALUES (app.current_user_id(), $1, $2, $3, $4, $5, now() + $6::interval, $7)
        ON CONFLICT (actor_id, operation, key) DO NOTHING`,
-      [rk.operation, rk.key, rk.objectId, hash, resultId, KEY_WINDOW],
+      [rk.operation, rk.key, rk.objectId, hash, resultId, KEY_WINDOW, ctx.actor?.operationId ?? null],
     );
     inserted = rowCount === 1;
   } catch (error) {
@@ -120,8 +120,9 @@ export async function claimRequestKey(
     request_hash: Buffer;
     result_id: string;
     expired: boolean;
+    operation_id: string | null;
   }>(
-    `SELECT object_id, request_hash, result_id, expires_at <= now() AS expired
+    `SELECT object_id, request_hash, result_id, expires_at <= now() AS expired, operation_id
        FROM requests.idempotency_keys
       WHERE actor_id = app.current_user_id() AND operation = $1 AND key = $2`,
     [rk.operation, rk.key],
@@ -133,6 +134,9 @@ export async function claimRequestKey(
     throw errors.idempotencyKeyReused();
   }
   if (row.expired) throw errors.idempotencyKeyExpired();
+  // Повтор продолжает ту же операцию (блок 10): прежний operationId — журналу и фону этого
+  // запроса; сам запрос (trace) остаётся своим. У ключа до M173 операции нет — не выдумываем.
+  if (row.operation_id && ctx.actor) ctx.actor.operationId = row.operation_id;
   return row.result_id;
 }
 

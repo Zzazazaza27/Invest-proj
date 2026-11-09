@@ -12,6 +12,7 @@ import { AuditRepository } from '../audit/audit.repository';
 import { isKmsUnavailable, CryptoService } from '../crypto/crypto.service';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { noteBasis } from '../audit/actor-context';
 import { SessionEpochService } from '../auth/session-epoch.service';
 import { maskEmail, maskPhone } from '../identity/identity.service';
 
@@ -313,6 +314,7 @@ export class AdminUsersService {
       if (allowed[0]?.allowed !== true) {
         throw errors.forbidden({ capability: CONTACTS_CAPABILITY });
       }
+      noteBasis(ctx.actor, { check: 'capability', code: CONTACTS_CAPABILITY });
 
       const { rows } = await tx.query<ContactRow>(
         `SELECT email_ciphertext, phone_ciphertext, contact_wrapped_dek

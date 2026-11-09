@@ -1,4 +1,5 @@
 import { settleBasis } from '../audit/actor-context';
+import { errors } from '../common/errors';
 import type { RequestContext, Tx } from '../db/unit-of-work';
 
 /**
@@ -27,6 +28,7 @@ export async function actingOnProject(
     settleBasis(ctx.actor, { check: 'route-role', role: 'admin' });
     return 'admin';
   }
-  // Ни одно не выполнилось: запись журнала будет отклонена расхождением с основанием.
-  return 'founder';
+  // Ни одно не выполнилось — неподтверждённое участие не записывается: отказ, и изменение
+  // откатывается вместе с записью. Сюда доходить не должно (RLS/проверка сервиса раньше).
+  throw errors.forbidden({ stage: 'project-acting-unverified' });
 }

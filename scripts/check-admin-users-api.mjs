@@ -511,7 +511,9 @@ try {
   check('Имя возвращено на место', back.json?.displayName === originalName, originalName);
 
   const profileJournal = await sql(
-    `SELECT context_jsonb::text AS ctx FROM audit.events
+    // Контекст автора (блок 10) — отдельный ключ actor: содержимое сверяется без него.
+    `SELECT (context_jsonb - 'actor')::text AS ctx, context_jsonb->'actor'->>'role' AS role,
+            context_jsonb->'actor'->'basis'->0->>'check' AS basis FROM audit.events
       WHERE subject_id = $1 AND verb = 'identity.user.profile_updated'
       ORDER BY ts DESC LIMIT 1`,
     [victimId],
@@ -520,6 +522,11 @@ try {
     'В журнале — что изменено, но не само значение',
     profileJournal[0]?.ctx === '{"field": "displayName"}',
     profileJournal[0]?.ctx,
+  );
+  check(
+    'Автор правки в журнале — администратор по пройденной проверке маршрута',
+    profileJournal[0]?.role === 'admin' && profileJournal[0]?.basis === 'route-role',
+    `${profileJournal[0]?.role} / ${profileJournal[0]?.basis}`,
   );
 } catch (error) {
   failed += 1;

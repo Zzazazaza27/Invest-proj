@@ -81,6 +81,8 @@ function tx(
     query: vi.fn(async (sql: string, params: unknown[] = []) => {
       if (sql.startsWith('SHOW lock_timeout')) return { rows: [{ lock_timeout: '0' }] };
       if (sql.includes('can_edit')) return { rows: [{ can_edit: true }] };
+      // Кем действует человек над проектом (блок 10): участник.
+      if (sql.includes('is_project_member')) return { rows: [{ member: true }] };
       if (sql.includes('INSERT INTO requests.idempotency_keys')) {
         const key = String(params[1]);
         if (committed.keys.has(key)) return { rowCount: 0, rows: [] };

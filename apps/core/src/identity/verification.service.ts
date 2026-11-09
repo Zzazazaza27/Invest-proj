@@ -21,7 +21,7 @@ import { errors } from '../common/errors';
 import { getEnv } from '../config/env';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
-import { actingSelf, noteBasis } from '../audit/actor-context';
+import { actingSelf, anonymousContext } from '../audit/actor-context';
 import { ARGON2_OPTIONS } from './identity.service';
 
 /**
@@ -446,7 +446,7 @@ export class VerificationService {
    */
   private async record(ctx: RequestContext, userId: string, verb: string): Promise<void> {
     try {
-      await this.db.transaction({ ...ctx, userId: null, roles: [] }, async (tx) => {
+      await this.db.transaction(anonymousContext(ctx, { check: 'public' }), async (tx) => {
         await this.audit.emit(tx, {
           verb,
           actorId: null,
@@ -476,7 +476,5 @@ function sha256Of(value: string): Buffer {
  * аноним, даже если в браузере открыта чья-то сессия. Основание — назначение ссылки.
  */
 function anonymous(ctx: RequestContext, purpose: string): RequestContext {
-  const actor = ctx.actor ? { ...ctx.actor, basis: [...ctx.actor.basis], kind: 'anonymous' as const } : undefined;
-  noteBasis(actor, { check: 'token-purpose', purpose });
-  return { ...ctx, userId: null, roles: [], actor };
+  return anonymousContext(ctx, { check: 'token-purpose', purpose });
 }

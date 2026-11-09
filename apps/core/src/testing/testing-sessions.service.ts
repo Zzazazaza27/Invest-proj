@@ -6,6 +6,7 @@ import { getEnv } from '../config/env';
 import { AuditRepository } from '../audit/audit.repository';
 import { CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
+import { noteBasis } from '../audit/actor-context';
 import { AccessContextService } from '../auth/access-context.service';
 import type { TestingSession } from '@fifth/contracts';
 
@@ -735,6 +736,7 @@ export class TestingSessionsService {
         `SELECT app.has_capability('identity.user.view_as') AS ok`,
       );
       if (rows[0]?.ok !== true) throw errors.forbidden({ stage: 'capability-required' });
+      noteBasis(ctx.actor, { check: 'capability', code: 'identity.user.view_as' });
 
       await tx.query(
         `INSERT INTO testing.access_contexts
