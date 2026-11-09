@@ -61,6 +61,62 @@ async function appliedMigrations(client: pg.Client): Promise<Map<string, Buffer>
   return new Map(rows.map((r) => [r.id, r.checksum]));
 }
 
+/**
+ * Ограничения времени миграции (блок 09, задание 2; Тэнк 09.11): ожидание блокировки 5 с и
+ * выполнение 5 мин по умолчанию. Миграция не держит запросы пользователей бесконечно:
+ * превышение — ошибка, прогон и выпуск останавливаются. Переопределение — метками в файле
+ * (`-- migrate:lock-timeout=30s`, `-- migrate:statement-timeout=20min`); тяжёлой миграции
+ * нужна отдельная оценка длительности, метка её не заменяет.
+ */
+export const DEFAULT_LOCK_TIMEOUT = '5s';
+export const DEFAULT_STATEMENT_TIMEOUT = '5min';
+const DURATION = /^\d{1,6}(ms|s|min)$/;
+
+export function timeoutsOf(sql: string): { lock: string; statement: string } {
+  const pick = (name: string, fallback: string) => {
+    const match = new RegExp(`^\\s*--\\s*migrate:${name}=(\\S+)\\s*$`, 'm').exec(sql);
+    if (!match) return fallback;
+    if (!DURATION.test(match[1]!)) {
+      throw new Error(`метка migrate:${name}=${match[1]} — нужен вид 500ms, 30s или 10min`);
+    }
+    return match[1]!;
+  };
+  return {
+    lock: pick('lock-timeout', DEFAULT_LOCK_TIMEOUT),
+    statement: pick('statement-timeout', DEFAULT_STATEMENT_TIMEOUT),
+  };
+}
+
+/**
+ * Индексы, которые строит миграция вне транзакции: `CREATE [UNIQUE] INDEX CONCURRENTLY IF
+ * NOT EXISTS имя ON [схема.]таблица`. Только для них есть предусмотренное продолжение после
+ * обрыва: непригодный индекс удаляется и строится заново этой же миграцией.
+ */
+export function concurrentIndexesOf(sql: string): { schema: string; name: string }[] {
+  const re =
+    /CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+IF\s+NOT\s+EXISTS\s+"?(\w+)"?\s+ON\s+(?:ONLY\s+)?"?(\w+)"?(?:\."?(\w+)"?)?/gi;
+  const found: { schema: string; name: string }[] = [];
+  for (const m of sql.matchAll(re)) {
+    found.push({ name: m[1]!, schema: m[3] ? m[2]! : 'public' });
+  }
+  return found;
+}
+
+/** Непригодные индексы кластера: оборванный CREATE INDEX CONCURRENTLY оставляет такой. */
+async function invalidIndexes(client: pg.Client): Promise<{ schema: string; name: string }[]> {
+  const { rows } = await client.query<{ schema: string; name: string }>(
+    `SELECT n.nspname AS schema, c.relname AS name
+       FROM pg_index i
+       JOIN pg_class c ON c.oid = i.indexrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+      WHERE NOT i.indisvalid OR NOT i.indisready
+      ORDER BY 1, 2`,
+  );
+  return rows;
+}
+
+const qualified = (ix: { schema: string; name: string }) => `${ix.schema}.${ix.name}`;
+
 async function main(): Promise<void> {
   const statusOnly = process.argv.includes('--status');
   const client = new pg.Client({
@@ -101,6 +157,27 @@ async function main(): Promise<void> {
       return;
     }
 
+    // Непригодный индекс до прогона. Свой — тот, что строит ожидающая миграция вне
+    // транзакции: его продолжение предусмотрено (удалить и построить заново). Чужой —
+    // остановка с диагностикой: общая починка могла бы задеть не тот объект и скрыть
+    // причину отказа (Тэнк, 09.11).
+    const owned = new Map<string, string>();
+    for (const file of pending) {
+      if (!/^\s*--\s*migrate:no-transaction\s*$/m.test(file.sql)) continue;
+      for (const ix of concurrentIndexesOf(file.sql)) owned.set(qualified(ix), file.id);
+    }
+    const invalid = await invalidIndexes(client);
+    const foreign = invalid.filter((ix) => !owned.has(qualified(ix)));
+    if (foreign.length > 0) {
+      throw new Error(
+        `Найдены непригодные индексы, которых не строит ни одна ожидающая миграция: ` +
+          `${foreign.map(qualified).join(', ')}.\n` +
+          'Прогон остановлен: автоматически такой индекс не чинится. Выясни, откуда он ' +
+          '(SELECT * FROM pg_stat_progress_create_index; журнал прошлого прогона), и реши ' +
+          'отдельно — удалить или достроить.',
+      );
+    }
+
     if (pending.length === 0) {
       console.warn(`Миграции актуальны (применено ${applied.size}).`);
       return;
@@ -109,6 +186,7 @@ async function main(): Promise<void> {
     for (const file of pending) {
       const started = Date.now();
       console.warn(`→ ${file.id}`);
+      const limits = timeoutsOf(file.sql);
       // Часть операций PostgreSQL не выполняется внутри транзакции —
       // в первую очередь CREATE INDEX CONCURRENTLY, единственный способ
       // построить индекс на живой таблице без блокировки записи. Такая
@@ -120,14 +198,39 @@ async function main(): Promise<void> {
       // линтер миграций, а не доверие к автору.
       const concurrent = /^\s*--\s*migrate:no-transaction\s*$/m.test(file.sql);
       try {
-        if (!concurrent) await client.query('BEGIN');
+        if (!concurrent) {
+          await client.query('BEGIN');
+          // SET LOCAL — только на эту транзакцию: реестр и следующая миграция не наследуют.
+          await client.query(`SET LOCAL lock_timeout = '${limits.lock}'`);
+          await client.query(`SET LOCAL statement_timeout = '${limits.statement}'`);
+        }
         if (concurrent) {
+          // Вне транзакции SET LOCAL не действует — ограничения на сеанс, снимаются в finally.
+          await client.query(`SET lock_timeout = '${limits.lock}'`);
+          await client.query(`SET statement_timeout = '${limits.statement}'`);
+          // Свой непригодный индекс от прошлого оборванного прогона — продолжение,
+          // предусмотренное этой миграцией: удалить и построить заново. IF NOT EXISTS сам
+          // по себе пропустил бы его и оставил непригодным.
+          for (const ix of invalid.filter((i) => owned.get(qualified(i)) === file.id)) {
+            console.warn(
+              `  непригодный индекс ${qualified(ix)} от прошлого прогона — строится заново`,
+            );
+            await client.query(`DROP INDEX CONCURRENTLY IF EXISTS "${ix.schema}"."${ix.name}"`);
+          }
           // Несколько выражений, отправленных ОДНОЙ строкой, PostgreSQL
           // оборачивает в неявную транзакцию — и CONCURRENTLY снова падает,
           // хотя явного BEGIN нет. Поэтому такая миграция выполняется по
           // одному выражению за запрос.
           for (const statement of splitStatements(file.sql)) {
             await client.query(statement);
+          }
+          // Построенные индексы обязаны быть пригодными: иначе миграция не применена.
+          const after = await invalidIndexes(client);
+          const broken = concurrentIndexesOf(file.sql).filter((ix) =>
+            after.some((a) => qualified(a) === qualified(ix)),
+          );
+          if (broken.length > 0) {
+            throw new Error(`индекс построен непригодным: ${broken.map(qualified).join(', ')}`);
           }
         } else {
           await client.query(file.sql);
@@ -140,11 +243,29 @@ async function main(): Promise<void> {
           [file.id, file.checksum, Date.now() - started],
         );
         if (!concurrent) await client.query('COMMIT');
+        else {
+          await client.query('RESET lock_timeout');
+          await client.query('RESET statement_timeout');
+        }
         console.warn(
           `  применена за ${Date.now() - started} мс${concurrent ? ' (вне транзакции)' : ''}`,
         );
       } catch (error) {
         if (!concurrent) await client.query('ROLLBACK').catch(() => undefined);
+        // Превышение ограничения — отдельный понятный текст: это не ошибка SQL, а сигнал
+        // остановить выпуск и оценить миграцию.
+        const code = (error as { code?: string }).code;
+        if (code === '55P03' || code === '57014') {
+          throw new Error(
+            `Миграция ${file.id} остановлена: ${code === '55P03' ? `ожидание блокировки дольше ${limits.lock}` : `выполнение дольше ${limits.statement}`}. ` +
+              'Выпуск не продолжается; миграции нужна оценка длительности или другой порядок.',
+            { cause: error },
+          );
+        }
+        if (concurrent) {
+          await client.query('RESET lock_timeout').catch(() => undefined);
+          await client.query('RESET statement_timeout').catch(() => undefined);
+        }
         const detail = error instanceof Error ? error.message : String(error);
         // cause сохраняется: без него теряются position/hint из ошибки PostgreSQL,
         // а именно они показывают конкретное место в SQL.

@@ -368,6 +368,78 @@ async function testHold(name = 'FIFTH_TEST_HOLD') {
   }
 }
 
+/**
+ * Отчёт прогона совместимости: прежний комплект `previous` на схеме и данных комплекта
+ * `candidate` (scripts/check-migration-compat.mjs). Годится, только если оба комплекта
+ * совпадают с проверенными по хешу — иначе проверяли другие образы.
+ */
+function compatReport(candidate, previous) {
+  const file = join(KITS, candidate, `compat-${previous}.json`);
+  if (!existsSync(file)) return null;
+  const report = JSON.parse(readFileSync(file, 'utf8'));
+  const same =
+    report.candidate?.kitSha256 === readKit(candidate).tar.sha256 &&
+    report.previous?.kitSha256 === readKit(previous).tar.sha256;
+  return same ? report : { ...report, result: 'stale' };
+}
+
+/** Точка возврата нового выпуска: прежняя сборка и проверена ли она на новой схеме. */
+function rollbackPoint(build, current) {
+  let previousKit;
+  try {
+    previousKit = readKit(current);
+  } catch {
+    return { build: current, checked: false, reason: `комплекта ${current} нет на узле` };
+  }
+  const added = newMigrations(readKit(build), previousKit);
+  if (added.length === 0) return { build: current, checked: true, reason: 'миграций нет' };
+  const report = compatReport(build, current);
+  return {
+    build: current,
+    checked: report?.result === 'ok',
+    reason: report ? `прогон совместимости: ${report.result}` : 'прогона совместимости нет',
+  };
+}
+
+const newMigrations = (to, from) => {
+  const known = new Set(from.migrations.map((m) => m.id));
+  return to.migrations.filter((m) => !known.has(m.id));
+};
+
+/**
+ * Возврат на прежний комплект. Схема остаётся новой (старую копию БД поверх рабочей не
+ * восстанавливаем), поэтому прежний код должен её понимать:
+ *  - применённая contract-миграция, которой нет в целевом комплекте, — отказ: прежний код
+ *    опирается на удалённое, только исправление вперёд;
+ *  - иная незнакомая ему миграция — нужен пройденный прогон совместимости именно этой пары
+ *    комплектов. Отсутствие признака contract совместимости не доказывает (Тэнк, 09.11).
+ */
+function rollbackGuard(id, target, current) {
+  const applied = psql(id, 'SELECT id FROM public.schema_migrations ORDER BY id;')
+    .split('\n')
+    .filter(Boolean);
+  const known = new Set(target.migrations.map((m) => m.id));
+  const unknown = applied.filter((m) => !known.has(m));
+  if (unknown.length === 0) return;
+  const currentKit = readKit(current);
+  const contract = currentKit.migrations.filter((m) => unknown.includes(m.id) && m.contract);
+  if (contract.length > 0) {
+    throw new Refused(
+      `возврат на ${target.build} невозможен: применены contract-миграции ` +
+        `${contract.map((m) => m.id).join(', ')} — только исправление вперёд (9.3)`,
+    );
+  }
+  const report = compatReport(current, target.build);
+  const covered = new Set(report?.newMigrations ?? []);
+  if (report?.result !== 'ok' || !unknown.every((m) => covered.has(m))) {
+    throw new Refused(
+      `возврат на ${target.build} не проверен: в базе ${unknown.length} незнакомых ему миграций ` +
+        `(${unknown.slice(0, 5).join(', ')}${unknown.length > 5 ? '…' : ''}), отчёт совместимости ` +
+        `${report ? `«${report.result}»` : 'отсутствует'} — остановить выпуск и решить с Томасом`,
+    );
+  }
+}
+
 async function install(id) {
   const build = flag('--kit');
   const expect = flag('--expect');
@@ -401,6 +473,9 @@ async function install(id) {
   if (current && older(build, current) && !rollback) {
     throw new Refused(`сборка ${build} старше текущей ${current}: откат только с --rollback`);
   }
+  // Возврат на прежний код при новой схеме — только на проверенную точку (блок 09, 9.2–9.3).
+  if (current && older(build, current)) rollbackGuard(id, kit, current);
+  const point = current && !older(build, current) ? rollbackPoint(build, current) : null;
   await testHold();
   const row = `${q(op)}, ${q(id)}, ${q(build)}, ${q(kit.commit)}, ${q(kit.tar.sha256)},
                ${q(current)}, ${q(actor)}, ${q(approved)}, ${q(rollback ? 'rollback' : 'install')}`;
@@ -448,7 +523,10 @@ async function install(id) {
     op,
     'lock',
     'ok',
-    `сборка ${build}, было ${current ?? 'none'}${scripts ? `, скрипты ${scripts}` : ''}`,
+    `сборка ${build}, было ${current ?? 'none'}${scripts ? `, скрипты ${scripts}` : ''}` +
+      (point
+        ? `, точка возврата ${point.build}: ${point.checked ? 'проверена' : 'НЕ проверена'} (${point.reason})`
+        : ''),
   );
   const close = (status, detail) => {
     record(id, op, 'finish', status, detail);
@@ -494,7 +572,10 @@ async function install(id) {
     psql(id, upsertInstances(id, v));
     if (!v.ok) throw new Error(`сверка: подтверждено ${v.confirmed} из ${v.total}`);
     if (hold) {
-      finish({ ok: true, env: id, op, build, held: true, previous: current }, 0);
+      finish(
+        { ok: true, env: id, op, build, held: true, previous: current, rollbackPoint: point },
+        0,
+      );
     }
     // Закрепления меняются под блокировкой: после `close` идёт следующий выпуск, и
     // поздняя запись затёрла бы его значения.
@@ -512,7 +593,18 @@ async function install(id) {
     );
     await testHold('FIFTH_TEST_HOLD_CLOSE');
     close('succeeded', `подтверждено ${v.confirmed} из ${v.total}`);
-    finish({ ok: true, env: id, op, build, confirmed: v.confirmed, total: v.total }, 0);
+    finish(
+      {
+        ok: true,
+        env: id,
+        op,
+        build,
+        confirmed: v.confirmed,
+        total: v.total,
+        rollbackPoint: point,
+      },
+      0,
+    );
   } catch (e) {
     if (hold && touched) {
       record(id, op, 'finish', 'held', e.message);

@@ -140,10 +140,17 @@ function manifestOf({ build, commit, images, previous }) {
   const migrations = readdirSync(MIGRATIONS)
     .filter((f) => f.endsWith('.sql'))
     .sort()
-    .map((f) => ({
-      id: f.replace(/\.sql$/, ''),
-      sha256: sha256(readFileSync(join(MIGRATIONS, f))),
-    }));
+    .map((f) => {
+      const text = readFileSync(join(MIGRATIONS, f));
+      return {
+        id: f.replace(/\.sql$/, ''),
+        sha256: sha256(text),
+        // Удаляет то, на что опирается прежний код: возврат на сборку без этой миграции
+        // запрещён (блок 09, 9.2). Отсутствие признака совместимости не доказывает — её
+        // подтверждает прогон check-migration-compat.
+        contract: /^\s*--\s*migrate:contract\s*$/m.test(text.toString('utf8')),
+      };
+    });
   return {
     format: 1,
     build,

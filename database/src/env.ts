@@ -12,7 +12,11 @@ import { applySecretFiles } from '../../scripts/lib/secret-files.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = join(HERE, '..', '..');
-export const MIGRATIONS_DIR = join(HERE, '..', 'migrations');
+/**
+ * Каталог миграций. Переменная — только для испытаний прогона на своём наборе миграций
+ * (scripts/check-migrate-interrupt.mjs); выпуск и стенд её не задают.
+ */
+export const MIGRATIONS_DIR = process.env.FIFTH_MIGRATIONS_DIR || join(HERE, '..', 'migrations');
 
 /**
  * Минимальный загрузчик .env: подтягивает переменные, если они не заданы в

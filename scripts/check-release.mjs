@@ -323,6 +323,77 @@ try {
     ) === '1',
   );
 
+  // Блок 09, задание 2: возврат на прежний код при новой схеме — только на проверенную точку.
+  // «Новая» миграция имитируется строкой в реестре среды: прежнему комплекту K1 она незнакома.
+  console.log('\n▸ Точка возврата');
+  const fwd = install(B, K2, K1);
+  check(
+    'выпуск без новых миграций: точка возврата проверена',
+    fwd.code === 0 &&
+      fwd.json?.rollbackPoint?.build === K1 &&
+      fwd.json?.rollbackPoint?.checked === true,
+    JSON.stringify(fwd.json?.rollbackPoint ?? fwd.json?.error ?? '').slice(0, 120),
+  );
+  owner(
+    B,
+    "insert into public.schema_migrations (id, checksum, duration_ms) values ('M999_probe', '\\\\x00', 0)",
+  );
+  const unchecked = install(B, K1, K2, '--rollback');
+  check(
+    'незнакомая прежнему коду миграция без отчёта — отказ, код 2',
+    unchecked.code === 2 && /не проверен/.test(unchecked.json?.error ?? ''),
+    unchecked.json?.error?.slice(0, 120),
+  );
+  const tarSha = (b) => JSON.parse(readFileSync(join(KITS, b, 'kit.json'), 'utf8')).tar.sha256;
+  const reportFile = join(KITS, K2, `compat-${K1}.json`);
+  const report = (result, previousSha) =>
+    writeFileSync(
+      reportFile,
+      JSON.stringify({
+        result,
+        candidate: { build: K2, kitSha256: tarSha(K2) },
+        previous: { build: K1, kitSha256: previousSha },
+        newMigrations: ['M999_probe'],
+      }),
+    );
+  report('ok', 'чужой-комплект');
+  const staleReport = install(B, K1, K2, '--rollback');
+  check(
+    'отчёт о другом комплекте не принимается',
+    staleReport.code === 2 && /stale/.test(staleReport.json?.error ?? ''),
+    staleReport.json?.error?.slice(0, 120),
+  );
+  report('failed', tarSha(K1));
+  const failedReport = install(B, K1, K2, '--rollback');
+  check(
+    'непройденный прогон совместимости — отказ',
+    failedReport.code === 2 && /failed/.test(failedReport.json?.error ?? ''),
+    failedReport.json?.error?.slice(0, 120),
+  );
+  report('ok', tarSha(K1));
+  const checked = install(B, K1, K2, '--rollback');
+  check(
+    'пройденный прогон этой пары комплектов — возврат проходит',
+    checked.code === 0,
+    checked.out.slice(0, 120),
+  );
+  const again2 = install(B, K2, K1);
+  check('снова на K2', again2.code === 0, again2.out.slice(0, 100));
+  const k2File = join(KITS, K2, 'kit.json');
+  const k2Text = readFileSync(k2File, 'utf8');
+  const k2 = JSON.parse(k2Text);
+  k2.migrations.push({ id: 'M999_probe', sha256: '0', contract: true });
+  writeFileSync(k2File, JSON.stringify(k2, null, 2));
+  const contract = install(B, K1, K2, '--rollback');
+  check(
+    'contract-миграция — отказ даже с пройденным отчётом',
+    contract.code === 2 && /contract-миграции M999_probe/.test(contract.json?.error ?? ''),
+    contract.json?.error?.slice(0, 120),
+  );
+  writeFileSync(k2File, k2Text);
+  rmSync(reportFile, { force: true });
+  owner(B, "delete from public.schema_migrations where id = 'M999_probe'");
+
   console.log('\n▸ Недоступная база');
   docker('stop', `fifth-${A}-postgres`);
   const noDb = install(A, K1, K2, '--rollback');

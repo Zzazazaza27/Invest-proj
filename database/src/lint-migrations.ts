@@ -6,7 +6,7 @@
  * Гейт CI: 0 находок уровня ERROR.
  * Запуск: npm run lint:migrations -w database
  */
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MIGRATIONS_DIR } from './env.ts';
 
@@ -147,6 +147,94 @@ for (const [fileIndex, file] of files.entries()) {
           `${label} — необратимая contract-операция. Она выносится в отдельную миграцию ` +
             'после того, как код перестал использовать объект (docs/architecture/Database_Launch.md §16), ' +
             'и помечается строкой `-- migrate:contract`.',
+        );
+      }
+    }
+  }
+
+  // --- 1a. Совместимость с прежним кодом (блок 09, задание 2; Тэнк 09.11) -------
+  //
+  // Действует с M171: применённые миграции не правятся (контрольная сумма), их совместимость
+  // подтверждена выпусками. Прежний код работает на новой схеме при возврате и при двух
+  // ядрах; несовместимость бывает и без DROP — переименование, обязательное поле, смена
+  // функции, прав, RLS, новых значений.
+  //
+  //   * Ломает прежний код всегда — только отдельной миграцией `-- migrate:contract`.
+  //   * Может сломать — нужна проверка в прогоне совместимости: файл
+  //     database/compat/<миграция>.mjs (scripts/check-migration-compat.mjs), либо строка
+  //     `-- migrate:compat-none: <почему прежний код не затронут>`. Обе видны в обзоре.
+  if (Number(file.slice(1, 4)) >= 171) {
+    const breaking: [RegExp, string][] = [
+      [/\bRENAME\b/i, 'переименование'],
+      [/\bALTER\s+COLUMN\s+\w+\s+SET\s+NOT\s+NULL\b/i, 'SET NOT NULL'],
+      [
+        /\bADD\s+COLUMN\s+(?:IF\s+NOT\s+EXISTS\s+)?\w+\s+[^,;]*?\bNOT\s+NULL\b(?![^,;]*\bDEFAULT\b)/i,
+        'обязательная колонка без DEFAULT',
+      ],
+      [/\bDROP\s+FUNCTION\b/i, 'удаление функции'],
+      [/\bDROP\s+(?:TYPE|VIEW|SCHEMA)\b/i, 'удаление типа, представления или схемы'],
+    ];
+    for (const [re, label] of breaking) {
+      if (re.test(sql) && !contractMarker) {
+        add(
+          'ERROR',
+          file,
+          lineOf(re),
+          'old-code-compat',
+          `${label} ломает прежний код: возврат и два ядра его не переживут. Сначала добавить ` +
+            'новое и переключить код, убрать старое — отдельной миграцией `-- migrate:contract` ' +
+            'следующим выпуском (блок 09, 9.2).',
+        );
+      }
+    }
+
+    // Существующая функция — объявлена в одной из прежних миграций.
+    const earlier = allSql.slice(0, fileIndex).join('\n');
+    const replaced = [...sql.matchAll(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+([\w.]+)/gi)]
+      .map((m) => m[1]!)
+      .filter((name) =>
+        new RegExp(
+          `CREATE\\s+(?:OR\\s+REPLACE\\s+)?FUNCTION\\s+${name.replace('.', '\\.')}\\b`,
+          'i',
+        ).test(earlier),
+      );
+    const risky: string[] = [];
+    if (replaced.length) risky.push(`смена существующих функций (${replaced.join(', ')})`);
+    if (/\bREVOKE\b/i.test(sql)) risky.push('отзыв прав');
+    if (/\b(?:DROP|ALTER)\s+POLICY\b/i.test(sql)) risky.push('смена политик RLS');
+    if (/\bALTER\s+TYPE\b[\s\S]{0,80}?\bADD\s+VALUE\b/i.test(sql))
+      risky.push('новое значение перечисления');
+    if (/\bADD\s+CONSTRAINT\b[\s\S]{0,80}?\b(?:CHECK|UNIQUE|FOREIGN\s+KEY)\b/i.test(sql)) {
+      risky.push('новое ограничение');
+    }
+    if (risky.length) {
+      const probeFile = join(MIGRATIONS_DIR, '..', 'compat', `${file.replace(/\.sql$/, '')}.mjs`);
+      const none = /^\s*--\s*migrate:compat-none:\s*\S.{9,}$/m.test(raw);
+      if (existsSync(probeFile)) {
+        add(
+          'WARN',
+          file,
+          1,
+          'old-code-compat',
+          `${risky.join('; ')} — проверка: compat/${file.replace(/\.sql$/, '')}.mjs`,
+        );
+      } else if (none) {
+        add(
+          'WARN',
+          file,
+          lineOf(/migrate:compat-none/),
+          'old-code-compat',
+          `${risky.join('; ')} — проверка не нужна по объяснению в файле`,
+        );
+      } else {
+        add(
+          'ERROR',
+          file,
+          1,
+          'old-code-compat',
+          `${risky.join('; ')}: прежний код может перестать работать. Нужна проверка в прогоне ` +
+            `совместимости — database/compat/${file.replace(/\.sql$/, '')}.mjs — или строка ` +
+            '`-- migrate:compat-none: <почему прежний код не затронут>`.',
         );
       }
     }
