@@ -173,7 +173,11 @@ async function uploadAvatar(c) {
   form.append('file', new Blob([png], { type: 'image/png' }), 'a.png');
   let put;
   try {
-    put = await fetch(ticket.json.uploadUrl, { method: 'POST', body: form });
+    put = await fetch(ticket.json.uploadUrl, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+    });
   } catch (e) {
     return {
       ok: false,

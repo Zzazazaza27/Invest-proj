@@ -396,17 +396,21 @@ export class IntegrationService {
       kind: 'service_account' as const,
       serviceAccountId: found.id,
     };
-    await this.db.asServiceRole('app_integration', { traceId: input.traceId, actor }, async (tx) => {
-      await this.audit.emit(tx, {
-        verb: 'integration.token.issued',
-        actorId: null,
-        actorRole: 'service',
-        subjectType: 'service_account',
-        subjectId: found.id,
-        context: { clientId: found.client_id, scopes: found.scopes },
-        traceId: input.traceId,
-      });
-    });
+    await this.db.asServiceRole(
+      'app_integration',
+      { traceId: input.traceId, actor },
+      async (tx) => {
+        await this.audit.emit(tx, {
+          verb: 'integration.token.issued',
+          actorId: null,
+          actorRole: 'service',
+          subjectType: 'service_account',
+          subjectId: found.id,
+          context: { clientId: found.client_id, scopes: found.scopes },
+          traceId: input.traceId,
+        });
+      },
+    );
 
     return { accessToken: token, expiresIn, scopes: found.scopes };
   }

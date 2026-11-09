@@ -392,6 +392,7 @@ console.warn('\n[9] Ссылки из писем: открытие, кнопка
         async ({ base, t }) =>
           (
             await fetch(`${base}/v1/auth/link/check`, {
+              signal: AbortSignal.timeout(30_000),
               method: 'POST',
               headers: { 'content-type': 'application/json' },
               body: JSON.stringify({ purpose: 'email_verify', token: t }),

@@ -173,8 +173,16 @@ try {
   const form = new FormData();
   for (const [k, v] of Object.entries(ticket.json?.formFields ?? {})) form.append(k, v);
   form.append('file', new Blob([Buffer.from('%PDF-1.4 материал контекста автора')]), 'deck.pdf');
-  const put = await fetch(ticket.json?.uploadUrl, { method: 'POST', body: form });
-  check('файл в хранилище, подтверждения из браузера нет', put.status < 400 && !!materialId, `HTTP ${put.status}`);
+  const put = await fetch(ticket.json?.uploadUrl, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(30_000),
+  });
+  check(
+    'файл в хранилище, подтверждения из браузера нет',
+    put.status < 400 && !!materialId,
+    `HTTP ${put.status}`,
+  );
 
   const N = 8;
   const edits = (c, project, who) =>
@@ -195,7 +203,10 @@ try {
   check(
     'все правки приняты',
     results.every((r) => r.status === 200),
-    results.filter((r) => r.status !== 200).map((r) => `${r.status} ${r.text.slice(0, 80)}`).join('; '),
+    results
+      .filter((r) => r.status !== 200)
+      .map((r) => `${r.status} ${r.text.slice(0, 80)}`)
+      .join('; '),
   );
 
   // Сверка подхватывает загрузку не раньше чем через минуту (next_check_at).
@@ -213,7 +224,9 @@ try {
   check(
     'регистрация: автор — аноним, учётная запись — предмет',
     reg.length === 2 &&
-      reg.every((e) => e.actorId === null && e.actorRole === 'anonymous' && e.actor?.kind === 'anonymous'),
+      reg.every(
+        (e) => e.actorId === null && e.actorRole === 'anonymous' && e.actor?.kind === 'anonymous',
+      ),
     JSON.stringify(reg.map((e) => [e.actorRole, e.actor?.kind])),
   );
   const fail = events(`verb = 'identity.login.failed' AND subject_id = '${idA}'`);
@@ -234,12 +247,19 @@ try {
       byA.every((e) => e.subjectId === pa) &&
       byB.every((e) => e.subjectId === pb) &&
       [...byA, ...byB].every(
-        (e) => e.actorRole === 'founder' && e.actor?.basis?.[0]?.check === 'member' && e.actor.userId === e.actorId,
+        (e) =>
+          e.actorRole === 'founder' &&
+          e.actor?.basis?.[0]?.check === 'member' &&
+          e.actor.userId === e.actorId,
       ),
     `A ${byA.length}, B ${byB.length}`,
   );
   const ops = new Set([...byA, ...byB, ...byAdmin].map((e) => e.actor?.operationId));
-  check('у каждого запроса своя операция', ops.size === byA.length + byB.length + byAdmin.length, `${ops.size}`);
+  check(
+    'у каждого запроса своя операция',
+    ops.size === byA.length + byB.length + byAdmin.length,
+    `${ops.size}`,
+  );
   check(
     'запрос в контексте = trace события',
     upd.every((e) => e.actor?.requestId === e.traceId),
@@ -248,7 +268,8 @@ try {
     'администратор над чужим проектом: роль admin по пройденной проверке',
     byAdmin.length === 3 &&
       byAdmin.every(
-        (e) => e.subjectId === pa && e.actorRole === 'admin' && e.actor?.basis?.[0]?.role === 'admin',
+        (e) =>
+          e.subjectId === pa && e.actorRole === 'admin' && e.actor?.basis?.[0]?.role === 'admin',
       ),
     JSON.stringify(byAdmin.map((e) => [e.actorRole, e.actor?.basis])),
   );
@@ -256,12 +277,18 @@ try {
   const self = events(`verb = 'identity.user.profile_updated' AND actor_id = '${idA}'`);
   check(
     'действие над собой: роль user, основание self',
-    self.length === 1 && self[0].actorRole === 'user' && self[0].actor?.basis?.[0]?.check === 'self',
+    self.length === 1 &&
+      self[0].actorRole === 'user' &&
+      self[0].actor?.basis?.[0]?.check === 'self',
     JSON.stringify(self.map((e) => [e.actorRole, e.actor?.basis])),
   );
 
-  const added = events(`verb = 'lab.material.added' AND subject_id = '${pa}' AND context_jsonb->>'materialId' = '${materialId}'`);
-  const origin = JSON.parse(sql(`SELECT upload_origin FROM lab.project_materials WHERE id = '${materialId}';`) || 'null');
+  const added = events(
+    `verb = 'lab.material.added' AND subject_id = '${pa}' AND context_jsonb->>'materialId' = '${materialId}'`,
+  );
+  const origin = JSON.parse(
+    sql(`SELECT upload_origin FROM lab.project_materials WHERE id = '${materialId}';`) || 'null',
+  );
   check(
     'фон: автор — система, задача и попытка отдельно, инициатор — A',
     added.length === 1 &&
@@ -290,7 +317,10 @@ try {
   check(
     'все новые записи несут контекст автора',
     all.length > 0 && all.every((e) => e.actor?.v === 1),
-    `без контекста: ${all.filter((e) => !e.actor).map((e) => e.verb).join(', ')}`,
+    `без контекста: ${all
+      .filter((e) => !e.actor)
+      .map((e) => e.verb)
+      .join(', ')}`,
   );
   const broken = sql(`SELECT count(*) FROM audit.verify_event_chain('${started}');`);
   check('цепочка журнала цела', broken === '0', `разрывов: ${broken}`);

@@ -249,7 +249,12 @@ export class AuditRepository {
  */
 export function buildActor(
   tx: Tx,
-  input: { verb: string; actorId: string | null; actorRole: string; context?: Record<string, unknown> },
+  input: {
+    verb: string;
+    actorId: string | null;
+    actorRole: string;
+    context?: Record<string, unknown>;
+  },
 ): ActorRecord {
   const ctx = contextOf(tx);
   if (!ctx) throw new Error(`журнал: ${input.verb} пишется вне транзакции с контекстом`);

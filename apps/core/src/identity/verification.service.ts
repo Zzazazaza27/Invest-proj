@@ -214,15 +214,19 @@ export class VerificationService {
 
     // Событие пишется В ТОЙ ЖЕ транзакции, что и смена пароля (блок 10, Тэнк п. 5):
     // не записалось — пароль не сменён, успешного изменения без журнала не бывает.
-    const userId = await this.db.asServiceRole('app_auth', anonymous(ctx, 'password_reset'), async (tx) => {
-      const { rows } = await tx.query<{ user_id: string | null }>(
-        'SELECT identity.reset_password_with_token($1, $2) AS user_id',
-        [sha256, hash],
-      );
-      const id = rows[0]?.user_id ?? null;
-      if (id) await this.emitLink(tx, id, 'identity.password.reset_completed', ctx.traceId);
-      return id;
-    });
+    const userId = await this.db.asServiceRole(
+      'app_auth',
+      anonymous(ctx, 'password_reset'),
+      async (tx) => {
+        const { rows } = await tx.query<{ user_id: string | null }>(
+          'SELECT identity.reset_password_with_token($1, $2) AS user_id',
+          [sha256, hash],
+        );
+        const id = rows[0]?.user_id ?? null;
+        if (id) await this.emitLink(tx, id, 'identity.password.reset_completed', ctx.traceId);
+        return id;
+      },
+    );
 
     // Просроченная, использованная и несуществующая ссылка отвечают одинаково:
     // различие подсказывало бы подбирающему, что он близко.
@@ -330,15 +334,19 @@ export class VerificationService {
   async confirmEmail(ctx: RequestContext, token: string): Promise<void> {
     const sha256 = sha256Of(token);
     // Подтверждение и его событие — одна транзакция (блок 10, Тэнк п. 5).
-    const userId = await this.db.asServiceRole('app_auth', anonymous(ctx, 'email_verify'), async (tx) => {
-      const { rows } = await tx.query<{ user_id: string | null }>(
-        'SELECT identity.confirm_email_with_token($1, $2) AS user_id',
-        [sha256, uuidv7()],
-      );
-      const id = rows[0]?.user_id ?? null;
-      if (id) await this.emitLink(tx, id, 'identity.email.verified', ctx.traceId);
-      return id;
-    });
+    const userId = await this.db.asServiceRole(
+      'app_auth',
+      anonymous(ctx, 'email_verify'),
+      async (tx) => {
+        const { rows } = await tx.query<{ user_id: string | null }>(
+          'SELECT identity.confirm_email_with_token($1, $2) AS user_id',
+          [sha256, uuidv7()],
+        );
+        const id = rows[0]?.user_id ?? null;
+        if (id) await this.emitLink(tx, id, 'identity.email.verified', ctx.traceId);
+        return id;
+      },
+    );
     if (!userId) throw errors.validation([{ path: 'token', message: 'ссылка недействительна' }]);
   }
 

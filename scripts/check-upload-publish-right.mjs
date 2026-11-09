@@ -93,13 +93,21 @@ async function upload(c, projectId, finalize) {
   const form = new FormData();
   for (const [k, v] of Object.entries(ticket.json?.formFields ?? {})) form.append(k, v);
   form.append('file', new Blob([Buffer.from('%PDF-1.4 право автора')]), 'deck.pdf');
-  const put = await fetch(ticket.json?.uploadUrl, { method: 'POST', body: form });
-  if (!id || put.status >= 400) throw new Error(`загрузка: билет ${ticket.status}, файл ${put.status}`);
-  if (finalize) await c.call(`/v1/projects/${projectId}/materials/${id}/finalize`, { method: 'POST' });
+  const put = await fetch(ticket.json?.uploadUrl, {
+    method: 'POST',
+    body: form,
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!id || put.status >= 400)
+    throw new Error(`загрузка: билет ${ticket.status}, файл ${put.status}`);
+  if (finalize)
+    await c.call(`/v1/projects/${projectId}/materials/${id}/finalize`, { method: 'POST' });
   return id;
 }
 const stateOf = (id) =>
-  sql(`SELECT upload_state || '|' || coalesce(upload_state_reason, '') FROM lab.project_materials WHERE id = '${id}';`);
+  sql(
+    `SELECT upload_state || '|' || coalesce(upload_state_reason, '') FROM lab.project_materials WHERE id = '${id}';`,
+  );
 
 console.log('\n=== ПРАВО АВТОРА ПЕРЕД ПУБЛИКАЦИЕЙ ЗАГРУЗКИ (M174) ===\n');
 const run = await startProbeRun('CHK-UPLOAD-PUBLISH-RIGHT');

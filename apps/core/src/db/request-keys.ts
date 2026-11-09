@@ -101,7 +101,15 @@ export async function claimRequestKey(
          (actor_id, operation, key, object_id, request_hash, result_id, expires_at, operation_id)
        VALUES (app.current_user_id(), $1, $2, $3, $4, $5, now() + $6::interval, $7)
        ON CONFLICT (actor_id, operation, key) DO NOTHING`,
-      [rk.operation, rk.key, rk.objectId, hash, resultId, KEY_WINDOW, ctx.actor?.operationId ?? null],
+      [
+        rk.operation,
+        rk.key,
+        rk.objectId,
+        hash,
+        resultId,
+        KEY_WINDOW,
+        ctx.actor?.operationId ?? null,
+      ],
     );
     inserted = rowCount === 1;
   } catch (error) {

@@ -393,41 +393,46 @@ export class UploadCompletion {
 
     // 4. Публикация — одна транзакция; сигнал проверяется внутри неё.
     try {
-      await this.change(traceId, signal, async (tx) => {
-        // Право автора — на момент публикации. Нет права — отказ; ошибка самой проверки
-        // уходит в «неизвестно» ниже и означает только задержку, не отзыв.
-        if (!(await this.target.authorMayPublish(tx, row))) throw new RightRevoked();
-        const published = await completeUnderLease(tx, {
-          table: this.target.table,
-          lease,
-          set: `upload_state = 'ready', upload_state_reason = NULL,
+      await this.change(
+        traceId,
+        signal,
+        async (tx) => {
+          // Право автора — на момент публикации. Нет права — отказ; ошибка самой проверки
+          // уходит в «неизвестно» ниже и означает только задержку, не отзыв.
+          if (!(await this.target.authorMayPublish(tx, row))) throw new RightRevoked();
+          const published = await completeUnderLease(tx, {
+            table: this.target.table,
+            lease,
+            set: `upload_state = 'ready', upload_state_reason = NULL,
                 upload_state_changed_at = now(), uploaded_at = now(),
                 s3_key = $1, size_bytes = $2, content_hash = $3, content_type = $4,
                 check_failures = 0, unknown_since = NULL, last_error = NULL,
                 next_check_at = NULL`,
-          params: [
-            finalKey,
-            digest.sizeBytes,
-            `sha256:${digest.sha256}`,
-            this.target.contentType(row, digest.head),
-          ],
-        });
-        if (!published) throw new LeaseLost();
-        await tx.query(
-          `UPDATE ${this.target.attemptsTable}
+            params: [
+              finalKey,
+              digest.sizeBytes,
+              `sha256:${digest.sha256}`,
+              this.target.contentType(row, digest.head),
+            ],
+          });
+          if (!published) throw new LeaseLost();
+          await tx.query(
+            `UPDATE ${this.target.attemptsTable}
               SET state = 'published', updated_at = now()
             WHERE id = $1 AND state = 'copied'`,
-          [attemptId],
-        );
-        await this.target.emitPublished(tx, row, {
-          sizeBytes: digest.sizeBytes,
-          sha256: digest.sha256!,
-          finalKey,
-          executor: options.executor,
-          actorId: options.actorId,
-          traceId,
-        });
-      }, this.authorOf(row, options));
+            [attemptId],
+          );
+          await this.target.emitPublished(tx, row, {
+            sizeBytes: digest.sizeBytes,
+            sha256: digest.sha256!,
+            finalKey,
+            executor: options.executor,
+            actorId: options.actorId,
+            traceId,
+          });
+        },
+        this.authorOf(row, options),
+      );
     } catch (error) {
       if (error instanceof RightRevoked) {
         return this.settle(

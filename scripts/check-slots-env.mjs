@@ -244,6 +244,7 @@ try {
   const cons = await (await fetch(`${BASE}/v1/auth/consents/templates?locale=ru-RU`)).json();
   const email = `slots-${Date.now() % 1e9}@test.local`;
   const reg = await fetch(`${BASE}/v1/auth/register`, {
+    signal: AbortSignal.timeout(30_000),
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
@@ -288,6 +289,7 @@ try {
     .png()
     .toBuffer();
   const ticketRes = await fetch(`${BASE}/v1/me/avatar/upload`, {
+    signal: AbortSignal.timeout(30_000),
     method: 'POST',
     headers: { cookie, 'x-csrf-token': csrf, 'content-type': 'application/json' },
     body: JSON.stringify({ contentType: 'image/png', sizeBytes: png.byteLength }),
@@ -377,13 +379,21 @@ try {
     const form = new FormData();
     for (const [k, v] of Object.entries(ticket.formFields)) form.append(k, v);
     form.append('file', new Blob([png], { type: 'image/png' }), 'a.png');
-    const put = await fetch(ticket.uploadUrl, { method: 'POST', body: form });
+    const put = await fetch(ticket.uploadUrl, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(30_000),
+    });
     const fin = await fetch(`${BASE}/v1/me/avatar/finalize`, {
+      signal: AbortSignal.timeout(30_000),
       method: 'POST',
       headers: { cookie, 'x-csrf-token': csrf },
     });
     const prof = await (
-      await fetch(`${BASE}/v1/me/profile`, { headers: { cookie } })
+      await fetch(`${BASE}/v1/me/profile`, {
+        headers: { cookie },
+        signal: AbortSignal.timeout(30_000),
+      })
     )
       .json()
       .catch(() => null);
@@ -411,7 +421,10 @@ try {
     stats.builds.has('slot1') && stats.builds.has('slot2'),
     [...stats.builds].join(','),
   );
-  const me = await fetch(`${BASE}/v1/me/profile`, { headers: { cookie } });
+  const me = await fetch(`${BASE}/v1/me/profile`, {
+    headers: { cookie },
+    signal: AbortSignal.timeout(30_000),
+  });
   check('сессия жива после переключения', me.status === 200, `HTTP ${me.status}`);
   const v2 = await via();
   check(

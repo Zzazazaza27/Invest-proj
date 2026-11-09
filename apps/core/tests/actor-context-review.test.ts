@@ -17,7 +17,11 @@ interface Emitted {
 }
 
 /** Поддельный пул; `answer` отвечает на прочие запросы (участие в проекте и т. п.). */
-function fakeDb(answer: (sql: string, params: unknown[]) => { rows: any[]; rowCount?: number } = () => ({ rows: [] })) {
+function fakeDb(
+  answer: (sql: string, params: unknown[]) => { rows: any[]; rowCount?: number } = () => ({
+    rows: [],
+  }),
+) {
   const emitted: Emitted[] = [];
   const client: any = {
     on() {},
@@ -67,9 +71,9 @@ describe('основание без проверки', () => {
   it('системный контекст без задачи — тоже отказ', async () => {
     const { db, audit } = fakeDb();
     const ctx: RequestContext = { userId: null, roles: ['system'], traceId: 't' };
-    await expect(db.transaction(ctx, (tx) => emitUpdate(audit, tx, null, 'system'))).rejects.toThrow(
-      /основание не отмечено/,
-    );
+    await expect(
+      db.transaction(ctx, (tx) => emitUpdate(audit, tx, null, 'system')),
+    ).rejects.toThrow(/основание не отмечено/);
   });
 
   it('явно обозначенное неизвестное происхождение пишется и видно в записи', async () => {
@@ -81,7 +85,9 @@ describe('основание без проверки', () => {
       actor: { ...newScope([{ check: 'unknown', reason: 'миграция данных' }]), kind: 'system' },
     };
     await db.transaction(ctx, (tx) => emitUpdate(audit, tx, null, 'system'));
-    expect(emitted[0]!.context.actor.basis).toEqual([{ check: 'unknown', reason: 'миграция данных' }]);
+    expect(emitted[0]!.context.actor.basis).toEqual([
+      { check: 'unknown', reason: 'миграция данных' },
+    ]);
   });
 
   it('проект: ни участия, ни администратора — отказ, а не «founder»', async () => {
@@ -95,9 +101,11 @@ describe('основание без проверки', () => {
       traceId: 't',
       actor: newScope([{ check: 'route-role', role: 'founder' }]),
     };
-    await expect(db.transaction(ctx, (tx) => actingOnProject(tx, ctx, 'p1'))).rejects.toMatchObject({
-      status: 403,
-    });
+    await expect(db.transaction(ctx, (tx) => actingOnProject(tx, ctx, 'p1'))).rejects.toMatchObject(
+      {
+        status: 403,
+      },
+    );
   });
 
   it('проект: участник — основание member, роль founder', async () => {
@@ -147,7 +155,7 @@ describe('контекст доступа сотрудника', () => {
   });
 
   it('запись во время просмотра остаётся «просмотром»: viewMode=true', async () => {
-    const { db, audit, emitted } = fakeDb();
+    const { audit, emitted } = fakeDb();
     const ctx: RequestContext = {
       userId: 'owner',
       roles: ['founder'],
@@ -229,7 +237,13 @@ describe('ID операции при повторе', () => {
       if (sql.includes('FROM requests.idempotency_keys'))
         return {
           rows: [
-            { object_id: null, request_hash: requestHash(rk as any), result_id: 'r1', expired: false, operation_id: null },
+            {
+              object_id: null,
+              request_hash: requestHash(rk as any),
+              result_id: 'r1',
+              expired: false,
+              operation_id: null,
+            },
           ],
         };
       return { rows: [] };

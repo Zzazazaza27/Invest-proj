@@ -65,96 +65,108 @@ export class WebhooksService {
     const fingerprint = createHash('sha256').update(secret, 'utf8').digest();
     const id = uuidv7();
 
-    return this.db.asServiceRole('app_integration', { traceId: ctx.traceId, actor: ctx.actor }, async (tx) => {
-      let row: EndpointRow;
-      try {
-        const { rows } = await tx.query<EndpointRow>(
-          `INSERT INTO integration.webhook_endpoints
+    return this.db.asServiceRole(
+      'app_integration',
+      { traceId: ctx.traceId, actor: ctx.actor },
+      async (tx) => {
+        let row: EndpointRow;
+        try {
+          const { rows } = await tx.query<EndpointRow>(
+            `INSERT INTO integration.webhook_endpoints
              (id, service_account_id, url, subscribed_verbs, secret_ciphertext,
               secret_kms_key_id, secret_fingerprint)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
            RETURNING id, url, subscribed_verbs, status, created_at`,
-          [
-            id,
-            ctx.serviceAccountId,
-            input.url,
-            input.subscribedVerbs,
-            ciphertext,
-            this.crypto.keyId('webhook_secrets'),
-            fingerprint,
-          ],
-        );
-        row = rows[0]!;
-      } catch (error) {
-        // CHECK адреса в БД — последний барьер: если он сработал, значит
-        // прикладная проверка что-то пропустила, и это ошибка ввода, а не сбой.
-        if ((error as { code?: string }).code === '23514') {
-          throw errors.validation([
-            { path: 'url', message: 'адрес недопустим: только внешний https' },
-          ]);
+            [
+              id,
+              ctx.serviceAccountId,
+              input.url,
+              input.subscribedVerbs,
+              ciphertext,
+              this.crypto.keyId('webhook_secrets'),
+              fingerprint,
+            ],
+          );
+          row = rows[0]!;
+        } catch (error) {
+          // CHECK адреса в БД — последний барьер: если он сработал, значит
+          // прикладная проверка что-то пропустила, и это ошибка ввода, а не сбой.
+          if ((error as { code?: string }).code === '23514') {
+            throw errors.validation([
+              { path: 'url', message: 'адрес недопустим: только внешний https' },
+            ]);
+          }
+          throw error;
         }
-        throw error;
-      }
 
-      await this.audit.emit(tx, {
-        verb: 'integration.webhook.registered',
-        actorId: null,
-        actorRole: 'service',
-        subjectType: 'webhook_endpoint',
-        subjectId: id,
-        // Ни секрета, ни его отпечатка в журнале: событие фиксирует подписку.
-        // В журнал идёт ТОЛЬКО хост адреса: путь вебхука часто содержит
-        // секрет (Slack/Telegram-стиль), а журнал читается шире, чем
-        // комплаенс-контур (LOW внешнего аудита №2). Userinfo запрещён
-        // валидацией ещё раньше.
-        context: {
-          clientId: ctx.clientId,
-          verbs: input.subscribedVerbs,
-          urlHost: new URL(input.url).host,
-        },
-        traceId: ctx.traceId,
-      });
+        await this.audit.emit(tx, {
+          verb: 'integration.webhook.registered',
+          actorId: null,
+          actorRole: 'service',
+          subjectType: 'webhook_endpoint',
+          subjectId: id,
+          // Ни секрета, ни его отпечатка в журнале: событие фиксирует подписку.
+          // В журнал идёт ТОЛЬКО хост адреса: путь вебхука часто содержит
+          // секрет (Slack/Telegram-стиль), а журнал читается шире, чем
+          // комплаенс-контур (LOW внешнего аудита №2). Userinfo запрещён
+          // валидацией ещё раньше.
+          context: {
+            clientId: ctx.clientId,
+            verbs: input.subscribedVerbs,
+            urlHost: new URL(input.url).host,
+          },
+          traceId: ctx.traceId,
+        });
 
-      return { ...mapEndpoint(row), signingSecret: secret };
-    });
+        return { ...mapEndpoint(row), signingSecret: secret };
+      },
+    );
   }
 
   async list(ctx: IntegrationContext): Promise<WebhookEndpoint[]> {
-    return this.db.asServiceRole('app_integration', { traceId: ctx.traceId, actor: ctx.actor }, async (tx) => {
-      const { rows } = await tx.query<EndpointRow>(
-        `SELECT id, url, subscribed_verbs, status, created_at
+    return this.db.asServiceRole(
+      'app_integration',
+      { traceId: ctx.traceId, actor: ctx.actor },
+      async (tx) => {
+        const { rows } = await tx.query<EndpointRow>(
+          `SELECT id, url, subscribed_verbs, status, created_at
            FROM integration.webhook_endpoints
           WHERE service_account_id = $1
           ORDER BY created_at DESC
           LIMIT 100`,
-        [ctx.serviceAccountId],
-      );
-      return rows.map(mapEndpoint);
-    });
+          [ctx.serviceAccountId],
+        );
+        return rows.map(mapEndpoint);
+      },
+    );
   }
 
   /** Отключение подписки. Строка остаётся: история подписок — часть аудита. */
   async disable(ctx: IntegrationContext, endpointId: string): Promise<void> {
-    await this.db.asServiceRole('app_integration', { traceId: ctx.traceId, actor: ctx.actor }, async (tx) => {
-      const { rowCount } = await tx.query(
-        `UPDATE integration.webhook_endpoints SET status = 'disabled'
+    await this.db.asServiceRole(
+      'app_integration',
+      { traceId: ctx.traceId, actor: ctx.actor },
+      async (tx) => {
+        const { rowCount } = await tx.query(
+          `UPDATE integration.webhook_endpoints SET status = 'disabled'
           WHERE id = $1 AND service_account_id = $2 AND status <> 'disabled'`,
-        [endpointId, ctx.serviceAccountId],
-      );
-      // Условие по владельцу — второй барьер поверх политики: чужую подписку
-      // не отключить, и ответ не отличает «чужая» от «не существует».
-      if (rowCount === 0) throw errors.notFound({ subject: 'webhook' });
-      // Учёт удалений (2.1.5): после восстановления старой копии подписка не оживает.
-      await this.audit.emit(tx, {
-        verb: 'integration.webhook.disabled',
-        actorId: null,
-        actorRole: 'service',
-        subjectType: 'webhook_endpoint',
-        subjectId: endpointId,
-        context: { serviceAccountId: ctx.serviceAccountId },
-        traceId: ctx.traceId,
-      });
-    });
+          [endpointId, ctx.serviceAccountId],
+        );
+        // Условие по владельцу — второй барьер поверх политики: чужую подписку
+        // не отключить, и ответ не отличает «чужая» от «не существует».
+        if (rowCount === 0) throw errors.notFound({ subject: 'webhook' });
+        // Учёт удалений (2.1.5): после восстановления старой копии подписка не оживает.
+        await this.audit.emit(tx, {
+          verb: 'integration.webhook.disabled',
+          actorId: null,
+          actorRole: 'service',
+          subjectType: 'webhook_endpoint',
+          subjectId: endpointId,
+          context: { serviceAccountId: ctx.serviceAccountId },
+          traceId: ctx.traceId,
+        });
+      },
+    );
   }
 
   /** Verb должен быть зарегистрирован: подписка на опечатку молча не работает. */

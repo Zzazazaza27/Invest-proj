@@ -141,7 +141,8 @@ export function originOf(ctx: {
   // доступа это сотрудник, а не учётная запись, от лица которой он действовал.
   const staff = ctx.initiatorUserId ?? null;
   const kind: ActorKind =
-    scope?.kind ?? (ctx.userId ? 'person' : scope?.serviceAccountId ? 'service_account' : 'anonymous');
+    scope?.kind ??
+    (ctx.userId ? 'person' : scope?.serviceAccountId ? 'service_account' : 'anonymous');
   const userId = kind === 'person' ? (staff ?? ctx.userId) : null;
   return {
     operationId: scope?.operationId ?? uuidv7(),
@@ -180,10 +181,9 @@ export function actingSelf(ctx: { actor?: ActorScope }): 'user' {
  * Контекст «до входа» для одной транзакции: действует аноним, даже если в браузере
  * осталась чья-то сессия. Основание задаётся явно — открытый маршрут или ссылка.
  */
-export function anonymousContext<C extends { userId: string | null; roles: readonly string[]; actor?: ActorScope }>(
-  ctx: C,
-  basis: Basis,
-): C {
+export function anonymousContext<
+  C extends { userId: string | null; roles: readonly string[]; actor?: ActorScope },
+>(ctx: C, basis: Basis): C {
   const actor: ActorScope = {
     operationId: ctx.actor?.operationId ?? uuidv7(),
     basis: [basis],

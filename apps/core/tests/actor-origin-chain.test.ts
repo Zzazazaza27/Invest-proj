@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { AuditRepository } from '../src/audit/audit.repository';
 import { newScope, originOf, roleFromBasis } from '../src/audit/actor-context';
 import { Database, contextOf, type RequestContext } from '../src/db/unit-of-work';
-import { UploadCompletion, type UploadRow, type UploadTarget } from '../src/storage/upload-completion';
+import {
+  UploadCompletion,
+  type UploadRow,
+  type UploadTarget,
+} from '../src/storage/upload-completion';
 
 /**
  * Блок 10, замечание Тэнка 09.11 к originOf: сотрудник A действует за участника B.

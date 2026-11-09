@@ -232,6 +232,7 @@ describe('фон: служебные команды на внутреннем п
   }
   const post = (url: string, token?: string) =>
     fetch(url, {
+      signal: AbortSignal.timeout(30_000),
       method: 'POST',
       headers: token ? { authorization: `Bearer ${token}` } : {},
     });

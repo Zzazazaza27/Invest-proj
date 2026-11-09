@@ -20,7 +20,6 @@ import { TokenRevocationService } from '../auth/token-revocation.service';
 import { LoginThrottleService } from '../auth/login-throttle.service';
 import { MailQueueService } from '../comms/mail-queue.service';
 
-
 /**
  * Регистрация, вход и согласия.
  *
@@ -155,123 +154,126 @@ export class IdentityService {
     });
 
     // Регистрация — до входа: автор журнала аноним, даже если в браузере осталась сессия.
-    const created = await this.db.transaction(anonymousContext(ctx, { check: 'public' }), async (tx) => {
-      // Занятость контакта проверяется до вставки, чтобы вернуть внятную
-      // ошибку. UNIQUE-индекс по blind index закрывает ГОНКУ — но только от
-      // появления дубликата: ответ при этом был 500, пока его не перевели в
-      // доменный отказ ниже.
-      if (emailIndex) await this.assertContactFree(tx, 'email_hmac', emailIndex);
-      if (phoneIndex) await this.assertContactFree(tx, 'phone_hmac', phoneIndex);
+    const created = await this.db.transaction(
+      anonymousContext(ctx, { check: 'public' }),
+      async (tx) => {
+        // Занятость контакта проверяется до вставки, чтобы вернуть внятную
+        // ошибку. UNIQUE-индекс по blind index закрывает ГОНКУ — но только от
+        // появления дубликата: ответ при этом был 500, пока его не перевели в
+        // доменный отказ ниже.
+        if (emailIndex) await this.assertContactFree(tx, 'email_hmac', emailIndex);
+        if (phoneIndex) await this.assertContactFree(tx, 'phone_hmac', phoneIndex);
 
-      // Страна обслуживания — только из активных стран справочника (5.6.5):
-      // выключенную выбрать нельзя ни в кабинете, ни при регистрации.
-      if (input.serviceCountry) {
-        const { rows: countries } = await tx.query<{ code: string }>(
-          `SELECT code FROM billing.service_countries WHERE code = $1 AND is_active`,
-          [input.serviceCountry],
-        );
-        if (countries.length === 0) {
-          throw errors.validation([
-            { path: 'serviceCountry', message: 'страна обслуживания недоступна для выбора' },
-          ]);
+        // Страна обслуживания — только из активных стран справочника (5.6.5):
+        // выключенную выбрать нельзя ни в кабинете, ни при регистрации.
+        if (input.serviceCountry) {
+          const { rows: countries } = await tx.query<{ code: string }>(
+            `SELECT code FROM billing.service_countries WHERE code = $1 AND is_active`,
+            [input.serviceCountry],
+          );
+          if (countries.length === 0) {
+            throw errors.validation([
+              { path: 'serviceCountry', message: 'страна обслуживания недоступна для выбора' },
+            ]);
+          }
         }
-      }
 
-      try {
-        await tx.query(
-          `INSERT INTO identity.users
+        try {
+          await tx.query(
+            `INSERT INTO identity.users
              (id, email_ciphertext, phone_ciphertext, contact_wrapped_dek, email_hmac, phone_hmac,
               password_hash, display_name, primary_role, status, locale, service_country, origin)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'pending_consents', $10, $11,
                    coalesce($12, 'self_registration'))`,
-          [
-            userId,
-            contact.ciphertexts.email,
-            contact.ciphertexts.phone,
-            contact.wrappedDek,
-            emailIndex,
-            phoneIndex,
-            passwordHash,
-            input.displayName,
-            input.role,
-            input.locale,
-            input.serviceCountry ?? null,
-            origin ?? null,
-          ],
-        );
-        /*
-         * ПРИНАДЛЕЖНОСТЬ ЗАПИСЫВАЕТСЯ ЗДЕСЬ ЖЕ, в одной транзакции со
-         * вставкой человека.
-         *
-         * Два шага — «создать, потом зарегистрировать за прогоном» — дают
-         * окно: упав между ними, прогон оставляет запись, по которой уже
-         * нельзя установить, чей это след. Одна транзакция такого окна не
-         * оставляет: либо есть и человек, и принадлежность, либо нет ничего.
-         */
-        if (runSessionId) {
-          // Через функцию-владельца (M134): у публичной регистрации нет
-          // пользователя в контексте, а политики session_objects построены на
-          // нём — прямая вставка отвергается RLS.
-          await tx.query(`SELECT testing.track_run_object($1, 'identity.users', $2)`, [
-            runSessionId,
-            userId,
-          ]);
+            [
+              userId,
+              contact.ciphertexts.email,
+              contact.ciphertexts.phone,
+              contact.wrappedDek,
+              emailIndex,
+              phoneIndex,
+              passwordHash,
+              input.displayName,
+              input.role,
+              input.locale,
+              input.serviceCountry ?? null,
+              origin ?? null,
+            ],
+          );
+          /*
+           * ПРИНАДЛЕЖНОСТЬ ЗАПИСЫВАЕТСЯ ЗДЕСЬ ЖЕ, в одной транзакции со
+           * вставкой человека.
+           *
+           * Два шага — «создать, потом зарегистрировать за прогоном» — дают
+           * окно: упав между ними, прогон оставляет запись, по которой уже
+           * нельзя установить, чей это след. Одна транзакция такого окна не
+           * оставляет: либо есть и человек, и принадлежность, либо нет ничего.
+           */
+          if (runSessionId) {
+            // Через функцию-владельца (M134): у публичной регистрации нет
+            // пользователя в контексте, а политики session_objects построены на
+            // нём — прямая вставка отвергается RLS.
+            await tx.query(`SELECT testing.track_run_object($1, 'identity.users', $2)`, [
+              runSessionId,
+              userId,
+            ]);
+          }
+        } catch (error) {
+          // Проверка занятости выше и сама вставка — разные моменты времени:
+          // между ними другая транзакция успевает зарегистрировать тот же
+          // контакт. Дубликата не возникает — его не пускает UNIQUE-индекс, — но
+          // до этого исправления наружу уходил 500 «внутренняя ошибка» вместо
+          // доменного отказа. Воспроизведено четырьмя одновременными
+          // регистрациями с одинаковым адресом.
+          //
+          // Текст отказа ТОТ ЖЕ, что у предпроверки: две разные формулировки для
+          // одного и того же исхода отличали бы гонку от обычной занятости и
+          // помогали бы перечислять пользователей.
+          if (isContactUniqueViolation(error)) {
+            throw errors.conflict('Регистрация с указанными данными невозможна', {
+              reason: 'contact-taken-race',
+            });
+          }
+          throw error;
         }
-      } catch (error) {
-        // Проверка занятости выше и сама вставка — разные моменты времени:
-        // между ними другая транзакция успевает зарегистрировать тот же
-        // контакт. Дубликата не возникает — его не пускает UNIQUE-индекс, — но
-        // до этого исправления наружу уходил 500 «внутренняя ошибка» вместо
-        // доменного отказа. Воспроизведено четырьмя одновременными
-        // регистрациями с одинаковым адресом.
-        //
-        // Текст отказа ТОТ ЖЕ, что у предпроверки: две разные формулировки для
-        // одного и того же исхода отличали бы гонку от обычной занятости и
-        // помогали бы перечислять пользователей.
-        if (isContactUniqueViolation(error)) {
-          throw errors.conflict('Регистрация с указанными данными невозможна', {
-            reason: 'contact-taken-race',
+        await tx.query('INSERT INTO identity.user_roles (user_id, role) VALUES ($1, $2)', [
+          userId,
+          input.role,
+        ]);
+
+        // Контекст сессии выставлен на анонима, поэтому политика «акцепт только
+        // за себя» не пропустит вставку. Переключаем контекст в рамках той же
+        // транзакции на созданного пользователя.
+        await tx.query('SELECT set_config($1, $2, true)', ['app.current_user_id', userId]);
+        await tx.query('SELECT set_config($1, $2, true)', ['app.current_roles', input.role]);
+
+        await this.storeConsents(tx, userId, input.consents, ctx, traceHash);
+        await this.activateIfComplete(tx, userId, input.locale);
+
+        await this.audit.emit(tx, {
+          verb: 'identity.user.registered',
+          // До входа автор — аноним (блок 10): учётной записи ещё нет, она — предмет события.
+          actorId: null,
+          actorRole: 'anonymous',
+          subjectType: 'user',
+          subjectId: userId,
+          context: { role: input.role, locale: input.locale },
+          traceId: ctx.traceId,
+        });
+
+        // Уведомление служебного ящика — в очередь этой же транзакцией (4.11, M162): SMTP
+        // вне транзакции, отказ релея регистрацию не откатывает, повтор не ставит второе.
+        if (getEnv().NOTIFY_INBOX_ON_REGISTRATION === 'true') {
+          await this.queue.enqueue(tx, {
+            source: 'identity.user.registered',
+            sourceId: userId,
+            ...registrationLetter(userId, input.role, input.locale),
           });
         }
-        throw error;
-      }
-      await tx.query('INSERT INTO identity.user_roles (user_id, role) VALUES ($1, $2)', [
-        userId,
-        input.role,
-      ]);
 
-      // Контекст сессии выставлен на анонима, поэтому политика «акцепт только
-      // за себя» не пропустит вставку. Переключаем контекст в рамках той же
-      // транзакции на созданного пользователя.
-      await tx.query('SELECT set_config($1, $2, true)', ['app.current_user_id', userId]);
-      await tx.query('SELECT set_config($1, $2, true)', ['app.current_roles', input.role]);
-
-      await this.storeConsents(tx, userId, input.consents, ctx, traceHash);
-      await this.activateIfComplete(tx, userId, input.locale);
-
-      await this.audit.emit(tx, {
-        verb: 'identity.user.registered',
-        // До входа автор — аноним (блок 10): учётной записи ещё нет, она — предмет события.
-        actorId: null,
-        actorRole: 'anonymous',
-        subjectType: 'user',
-        subjectId: userId,
-        context: { role: input.role, locale: input.locale },
-        traceId: ctx.traceId,
-      });
-
-      // Уведомление служебного ящика — в очередь этой же транзакцией (4.11, M162): SMTP
-      // вне транзакции, отказ релея регистрацию не откатывает, повтор не ставит второе.
-      if (getEnv().NOTIFY_INBOX_ON_REGISTRATION === 'true') {
-        await this.queue.enqueue(tx, {
-          source: 'identity.user.registered',
-          sourceId: userId,
-          ...registrationLetter(userId, input.role, input.locale),
-        });
-      }
-
-      return { userId, roles: [input.role as Role] };
-    });
+        return { userId, roles: [input.role as Role] };
+      },
+    );
     return created;
   }
 

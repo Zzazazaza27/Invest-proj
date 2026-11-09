@@ -213,7 +213,11 @@ describe('право автора на момент публикации (бло
       ...target,
       authorMayPublish: async () => false,
     });
-    const outcome = await completion.complete('m1', { executor: 'reconcile', actorId: null, traceId: 't' });
+    const outcome = await completion.complete('m1', {
+      executor: 'reconcile',
+      actorId: null,
+      traceId: 't',
+    });
     expect(outcome.state).toBe('rejected');
     expect(outcome.reason).toMatch(/права/);
     expect(publishWrites(queries)).toHaveLength(0);
@@ -228,7 +232,11 @@ describe('право автора на момент публикации (бло
         throw new Error('база недоступна');
       },
     });
-    const outcome = await completion.complete('m1', { executor: 'reconcile', actorId: null, traceId: 't' });
+    const outcome = await completion.complete('m1', {
+      executor: 'reconcile',
+      actorId: null,
+      traceId: 't',
+    });
     expect(outcome.state).toBe('pending');
     expect(publishWrites(queries)).toHaveLength(0);
     expect(queries.some((q) => /'rejected'/.test(q))).toBe(false);

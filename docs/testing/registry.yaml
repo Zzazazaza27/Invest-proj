@@ -3924,7 +3924,10 @@ checks:
     runner: manual
     asserts: 6
     needs: [db, core, web]
-    effects: ['участник прогона (probe-run; приостанавливается и восстанавливается), его проект и два материала']
+    effects:
+      [
+        'участник прогона (probe-run; приостанавливается и восстанавливается), его проект и два материала',
+      ]
     studied: code
     studiedOn: 2026-11-09
     note: >-
