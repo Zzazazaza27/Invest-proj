@@ -309,8 +309,28 @@ const APPLY = {
           [final.generation, projectId, userId, final.permissions, final.actorId, final.ts],
         ),
     }),
-  'project-exclusion': (client, identity, final) =>
-    generational(client, final, {
+  // Исключение — ЗАПРЕТ: безопасный итог неоднозначности противоположен выдаче. Снимать
+  // его нельзя — это открыло бы доступ; запрет сохраняется (или ставится), объект в отчёте.
+  'project-exclusion': async (client, identity, final) => {
+    const [projectId, userId] = identity.split(':');
+    if (final.ambiguous) {
+      const { rows } = await client.query(
+        `SELECT 1 FROM lab.project_access_exclusions
+          WHERE project_id = $1 AND excluded_user_id = $2 AND revoked_at IS NULL`,
+        [projectId, userId],
+      );
+      if (!rows.length) {
+        await client.query(
+          `INSERT INTO lab.project_access_exclusions
+             (id, project_id, excluded_user_id, created_by, created_at, reason)
+           VALUES (public.uuid_generate_v7(), $1, $2, $3, $4,
+                   'восстановление: исключение без поколения — запрет сохранён')`,
+          [projectId, userId, final.actorId, final.ts],
+        );
+      }
+      return { result: 'closed', note: `${final.ambiguous} — запрет сохранён` };
+    }
+    return generational(client, final, {
       table: 'lab.project_access_exclusions',
       match: 'project_id = $1 AND excluded_user_id = $2',
       params: identity.split(':'),
@@ -322,7 +342,8 @@ const APPLY = {
            VALUES ($1, $2, $3, $4, $5)`,
           [final.generation, projectId, userId, final.actorId, final.ts],
         ),
-    }),
+    });
+  },
   capability: (client, identity, final) =>
     generational(client, final, {
       table: 'identity.staff_capability_grants',

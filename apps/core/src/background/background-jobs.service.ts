@@ -4,6 +4,7 @@ import { hostname } from 'node:os';
 import { getEnv } from '../config/env';
 import { pgAdvisoryLocks, type AdvisoryLockProvider } from './advisory';
 import type { JobCoordination, JobDefinition, JobResult } from './job';
+import { restoreGateOpen } from '../health/restore-gate';
 
 /**
  * Общий механизм фоновой работы ядра (блок 1, 1.2).
@@ -260,6 +261,11 @@ export class BackgroundJobsService {
         if (signal.aborted) {
           entry.lastInterrupted = true;
           this.finish(entry, started, 'interrupted', null);
+          return;
+        }
+        // Ворота восстановленной среды закрыты — внешних последствий нет (2.1.5).
+        if (entry.def.externalEffects && !(await restoreGateOpen())) {
+          this.finish(entry, started, 'skipped', null);
           return;
         }
         const result = await entry.def.run({ name: entry.def.name, signal });

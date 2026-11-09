@@ -79,6 +79,7 @@ export class MailQueueService implements OnModuleInit {
       name: 'mail.queue.send',
       intervalMs: getEnv().MAIL_QUEUE_POLL_MS,
       coordination: 'local',
+      externalEffects: true,
       run: async ({ signal }) => resultOf(await this.runOnce(signal)),
     });
   }

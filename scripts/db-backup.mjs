@@ -112,6 +112,8 @@ try {
       database,
       '--format=custom',
       '--no-owner',
+      // Без строки ворот среды (2.1.5, M167): восстановленная из копии база закрыта.
+      '--exclude-table-data=ops.restore_gate',
     ],
     { encoding: 'buffer', maxBuffer: 1024 * 1024 * 1024 },
   );

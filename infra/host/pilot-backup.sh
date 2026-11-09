@@ -26,7 +26,9 @@ seal() { gpg --homedir "$work" --batch -q --trust-model always --encrypt --recip
 pg() {
   docker exec -i -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "fifth-$ID-postgres" "$@"
 }
-pg pg_dump -h 127.0.0.1 -U fifth_owner -d fifth_element -Fc | seal "$target/db.dump.gpg"
+# Без строки ворот среды (2.1.5, M167): восстановленная из копии база стартует закрытой.
+pg pg_dump -h 127.0.0.1 -U fifth_owner -d fifth_element -Fc --exclude-table-data=ops.restore_gate |
+  seal "$target/db.dump.gpg"
 # Политики доступа ссылаются на роли, а копия базы их не содержит.
 pg pg_dumpall -h 127.0.0.1 -U fifth_owner --roles-only | seal "$target/roles.sql.gpg"
 counts="$(pg psql -h 127.0.0.1 -U fifth_owner -d fifth_element -At -F= -c \

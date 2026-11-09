@@ -28,7 +28,7 @@ install -d -m 700 "$DUMPS"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DUMP="$DUMPS/$ID-$STAMP-before-$BUILD.dump"
 docker exec -e PGPASSWORD="$(cat "$DIR/secrets/POSTGRES_PASSWORD")" "$PROJECT-postgres" \
-  pg_dump -h 127.0.0.1 -U fifth_owner -d fifth_element -Fc >"$DUMP"
+  pg_dump -h 127.0.0.1 -U fifth_owner -d fifth_element -Fc --exclude-table-data=ops.restore_gate >"$DUMP"
 chmod 600 "$DUMP"
 ENTRIES="$(docker exec -i "$PROJECT-postgres" pg_restore --list <"$DUMP" | grep -vc '^;')"
 [ "$ENTRIES" -gt 100 ] || { echo "копия базы неполная: $ENTRIES записей" >&2; exit 1; }

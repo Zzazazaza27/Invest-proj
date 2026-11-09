@@ -4,6 +4,7 @@ import { BackgroundJobsService } from '../src/background/background-jobs.service
 import type { AdvisoryLock, AdvisoryLockProvider } from '../src/background/advisory';
 import { resultOf } from '../src/background/job';
 import { createShutdown } from '../src/background/shutdown';
+import { setRestoreGate } from '../src/health/restore-gate';
 import { resetEnvCache } from '../src/config/env';
 import { TokenRevocationService } from '../src/auth/token-revocation.service';
 import { PartitionMaintenanceService } from '../src/maintenance/partitions.service';
@@ -502,5 +503,64 @@ describe('задачи обслуживания: сигнал перед изм�
     // Без прерывания те же задачи доходят до запроса.
     await maintenance.runOnce(new AbortController().signal);
     expect(queries.length).toBe(1);
+  });
+});
+
+describe('ворота восстановленной среды (2.1.5): внешние последствия', () => {
+  afterEach(() => setRestoreGate(null));
+
+  function pair(jobs: BackgroundJobsService) {
+    const runs = { external: 0, internal: 0 };
+    jobs.register({
+      name: 'send-out',
+      intervalMs: 10,
+      coordination: 'local',
+      runAtStart: true,
+      externalEffects: true,
+      run: async () => {
+        runs.external += 1;
+        return resultOf(1);
+      },
+    });
+    jobs.register({
+      name: 'inside',
+      intervalMs: 10,
+      coordination: 'local',
+      runAtStart: true,
+      run: async () => {
+        runs.internal += 1;
+        return resultOf(0);
+      },
+    });
+    return runs;
+  }
+
+  it('ворота закрыты — отправщик не запускается, проход «пропущен»; внутренние задачи идут', async () => {
+    setRestoreGate(async () => 'closed');
+    const jobs = service();
+    const runs = pair(jobs);
+    jobs.start();
+    await sleep(80);
+    expect(runs.external).toBe(0);
+    expect(state(jobs, 'send-out').lastStatus).toBe('skipped');
+    expect(runs.internal).toBeGreaterThan(0);
+  });
+
+  it('удержание восстановления закрывает при открытой строке ворот', async () => {
+    setRestoreGate(async () => 'open', { hold: 'restore-1' });
+    const jobs = service();
+    const runs = pair(jobs);
+    jobs.start();
+    await sleep(80);
+    expect(runs.external).toBe(0);
+  });
+
+  it('ворота открыты — отправщик работает', async () => {
+    setRestoreGate(async () => 'open');
+    const jobs = service();
+    const runs = pair(jobs);
+    jobs.start();
+    await sleep(80);
+    expect(runs.external).toBeGreaterThan(0);
   });
 });

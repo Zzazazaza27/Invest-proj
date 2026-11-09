@@ -256,7 +256,7 @@
 - `CHK-CORE-STARTUP-DEPS` — Старт ядра при недоступной зависимости: база, Valkey и NATS по очереди — ядро не падает (/live 200), после возврата зависимости само становится готовым без п…
 - `CHK-CORE-HANG-LIMIT` — Предел перезапусков зависшего ядра на Docker: три зависания — три автоматических перезапуска и снова здоров; четвёртое — recovery=stopped, процесс не убит, п…
 - `CHK-JOURNAL-RISK` — Риск потери невыгруженного на настоящем journald: заголовки читаются, занятость равна блокам на диске; всё выгружено без притока — clear без прогноза; невыгр…
-- `CHK-DELETIONS-REPLAY` — Удалить → восстановить старую копию → применить журнал из ВЫНЕСЕННОЙ выгрузки: восстановленная из копии база закрыта сама (другой отпечаток); логотип: в копи…
+- `CHK-DELETIONS-REPLAY` — Исправления по Тэнку к 1a7ef69: исключение без поколения сохраняет запрет — фактическая проверка доступа (lab.can_view_project) до и после; при закрытых воро…
 - `PRB-SERVICE-TABLES-RLS` — Матрица доступа к availability.observations и comms.mail_queue после M166 на настоящей БД: пользовательский и анонимный контекст app_backend не читает и не м…
 - `PRB-CLIENT-ERRORS` — Приём ошибок интерфейса на стенде: запись с полями перечня и reported: browser; секрет в имени и значении неизвестного поля — ни в журнале, ни в ответе, имён…
 - `CHK-SECRETS-TO-FILES` — Перенос секретов не теряет значений и не печатает их.
@@ -404,7 +404,7 @@
 | CHK-CORE-STARTUP-DEPS | `node scripts/check-core-startup-deps.mjs` | 3 | вручную | — |
 | CHK-CORE-HANG-LIMIT | `node scripts/check-core-hang-limit.mjs` | 29 | вручную | — |
 | CHK-JOURNAL-RISK | `node scripts/check-journal-risk.mjs` | 11 | вручную | — |
-| CHK-DELETIONS-REPLAY | `node scripts/check-deletions-replay.mjs` | 21 | вручную | — |
+| CHK-DELETIONS-REPLAY | `node scripts/check-deletions-replay.mjs` | 29 | вручную | — |
 | CHK-SECRETS-TO-FILES | `node scripts/check-secrets-to-files.mjs` | 11 | вручную | — |
 | CHK-HOST-ACCESS | `node scripts/check-host-access.mjs` | 17 | вручную | — |
 | CHK-OPENBAO-LAB | `node scripts/check-openbao-lab.mjs` | 22 | вручную | — |
@@ -471,7 +471,7 @@
 | UNIT-CORE-AVAILABILITY-RULES | `npm run test -w apps/core` | 19 | CI | CI |
 | UNIT-CORE-OUTBOX-FAILURES | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
-| UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 18 | CI | CI |
+| UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 21 | CI | CI |
 | UNIT-CORE-UPLOAD-ADDRESS | `npm run test -w apps/core` | 10 | CI | CI |
 | UNIT-CORE-READINESS | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-CORE-MONITORING-ACCOUNT | `npm run test -w apps/core` | 6 | CI | CI |

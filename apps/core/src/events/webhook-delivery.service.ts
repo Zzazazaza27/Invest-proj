@@ -78,6 +78,7 @@ export class WebhookDeliveryService implements OnModuleInit {
       name: 'webhooks.deliver',
       intervalMs: env.WEBHOOK_POLL_INTERVAL_MS,
       coordination: 'local',
+      externalEffects: true,
       run: async ({ signal }) => resultOf(await this.runOnce(signal)),
     });
   }

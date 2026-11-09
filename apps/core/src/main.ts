@@ -134,7 +134,7 @@ async function bootstrap(): Promise<void> {
   // иначе правомерно удалённое из старой копии стало бы видно. Читатель ворот ставится
   // до открытия порта — окна, когда запросы проходят без проверки, нет.
   const gateDb = app.get(Database);
-  setRestoreGate(() => gateDb.restoreGate());
+  setRestoreGate(() => gateDb.restoreGate(), { hold: getEnv().CORE_RESTORE_HOLD });
   app
     .getHttpAdapter()
     .getInstance()

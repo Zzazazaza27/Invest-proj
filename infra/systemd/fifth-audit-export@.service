@@ -1,0 +1,10 @@
+[Unit]
+Description=5E: ежечасная выгрузка журнала аудита среды %i (2.1.5)
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fifth-element
+ExecStart=/bin/bash /opt/fifth-element/infra/host/audit-export-run.sh %i
+TimeoutStartSec=20min
+Nice=10

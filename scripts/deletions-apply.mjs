@@ -7,8 +7,18 @@
  *        --secret-key <файл> --passphrase-file <файл>) [--report <файл>]
  *   node scripts/deletions-apply.mjs verify …те же аргументы…
  *   node scripts/deletions-apply.mjs open   …те же аргументы… --coverage-ack <покрыто до>
+ *   node scripts/deletions-apply.mjs close  --db <URL> --restore-id <метка>
  *
- * Восстановленная база закрыта сама (ворота M167 привязаны к отпечатку базы). Граница —
+ * Выгрузка как источник — только с --checkpoint <checkpoint.json получателя>: серия должна
+ * содержать принятую им порцию с тем же хешем описи и не быть короче неё (удалённые
+ * последние порции иначе прошли бы как полная серия).
+ *
+ * close — ЯВНОЕ закрытие до восстановления и после загрузки данных (строка ворот). Вместе с
+ * удержанием процесса ядра (CORE_RESTORE_HOLD) держит запрет до проверки; отпечаток базы —
+ * дополнительная защита: логическое восстановление в ту же базу его не меняет.
+ *
+ * Среду закрывают ЯВНО до восстановления (CORE_RESTORE_HOLD у ядра и `close`); отпечаток
+ * базы (M167) — дополнительная защита, не доказательство любого восстановления. Граница —
  * последнее общее звено цепочки аудита восстановленной базы и источника: так база
  * узнаётся как та же самая, на какой бы машине её ни восстановили. События источника
  * после границы сводятся к итоговому состоянию каждой идентичности
@@ -110,6 +120,7 @@ function sourceFromExport(dir) {
     ].sort((a, b) => a - b);
     let point = null;
     const events = [];
+    const accepted = new Map();
     for (const seq of seqs) {
       const name = String(seq).padStart(6, '0');
       const cipher = readFileSync(join(dir, `${name}.jsonl.gpg`));
@@ -132,8 +143,22 @@ function sourceFromExport(dir) {
       if (problem) throw new Error(`порция ${seq}: ${problem}`);
       events.push(...portion);
       point = next;
+      accepted.set(next.seq, next.manifestSha256);
     }
     if (!point) throw new Error('в серии нет порций');
+    // Доверенный хвост: контрольная точка получателя, сохранённая независимо от серии.
+    const cpFile = arg('--checkpoint');
+    if (!cpFile) throw new Error('нужен --checkpoint (контрольная точка получателя выгрузки)');
+    const cp = JSON.parse(readFileSync(cpFile, 'utf8'));
+    if (cp.databaseId !== point.databaseId) throw new Error('контрольная точка другой базы');
+    if (point.seq < cp.seq) {
+      throw new Error(
+        `серия короче принятой контрольной точки: порций ${point.seq}, принято ${cp.seq} — хвост утрачен или подменён`,
+      );
+    }
+    if (!accepted.has(cp.seq) || accepted.get(cp.seq) !== cp.manifestSha256) {
+      throw new Error('порция контрольной точки в серии другая — подмена');
+    }
     return {
       kind: 'выгрузка',
       databaseId: point.databaseId,
@@ -411,10 +436,31 @@ async function open() {
   }
 }
 
-const commands = { apply, verify, open };
+/** Явное закрытие: строка ворот закрыта с меткой восстановления. Источник не нужен. */
+async function close() {
+  const restoreId = arg('--restore-id');
+  if (!/^[A-Za-z0-9._:-]{3,80}$/.test(restoreId ?? '')) throw new Error('нужен --restore-id');
+  const db = new pg.Client({ connectionString: arg('--db') });
+  await db.connect();
+  try {
+    await db.query(
+      `INSERT INTO ops.restore_gate (singleton, state, restore_id, reason)
+       VALUES (true, 'closed', $1, 'закрыто до восстановления')
+       ON CONFLICT (singleton) DO UPDATE
+         SET state = 'closed', restore_id = EXCLUDED.restore_id, base_event_id = NULL,
+             base_row_hash = NULL, reason = EXCLUDED.reason, changed_at = now()`,
+      [restoreId],
+    );
+    console.log(`ворота закрыты: ${restoreId}`);
+  } finally {
+    await db.end().catch(() => undefined);
+  }
+}
+
+const commands = { apply, verify, open, close };
 const command = process.argv[2];
 if (!commands[command]) {
-  console.error('команды: apply, verify, open');
+  console.error('команды: apply, verify, open, close');
   process.exit(2);
 }
 try {

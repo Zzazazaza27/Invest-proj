@@ -11,6 +11,12 @@
  *      выдана снова (G3); исключение E1 снято; выдача второму получателю и её отзыв.
  *   4. Ежечасная выгрузка (подпись Ed25519, тестовый ключ gpg) → вынос в отдельный каталог
  *      с контрольной точкой → применение к восстановленной копии ИЗ ВЫНЕСЕННОЙ ВЫГРУЗКИ.
+ *   Исправления по Тэнку к 1a7ef69: неоднозначное исключение сохраняет запрет (фактическая
+ *   проверка доступа); при закрытых воротах ядро-«worker» на восстановленной базе не
+ *   отправляет ожидающее письмо и пропускает проходы почты и вебхуков, после открытия —
+ *   отправляет; восстановление в ту же базу при неизменном отпечатке — закрыто, если копия
+ *   без строки ворот, а копия со строкой открытой — закрывается явным close; применение
+ *   сверяет серию с контрольной точкой получателя — без последней порции отказ.
  *   5. Итог: удалённое не вернулось (v1 логотипа скрыт), новый аватар основателя на месте,
  *      аватар с недоступным файлом скрыт без ссылки, G3 действует, G1 снята, E1 снято;
  *      повтор ничего не меняет; ворота закрыты до итоговой проверки; открытие — только с
@@ -22,7 +28,16 @@
  */
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { spawn } from 'node:child_process';
+import {
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import pg from 'pg';
@@ -223,11 +238,11 @@ const S3 = {
   S3_SECRET_ACCESS_KEY: process.env.S3_SECRET_ACCESS_KEY,
 };
 const KEYS = {
-  AUDIT_EXPORT_DIR: '/w/server',
+  AUDIT_EXPORT_DIR: '/w/server/prod',
   AUDIT_EXPORT_SIGNING_KEY: '/w/key/signing.key',
   AUDIT_EXPORT_PUBLIC_KEY: '/w/key/signing.pub',
   AUDIT_EXPORT_RECIPIENT: '/w/gpg/recipient.asc',
-  AUDIT_EXPORT_MONITOR_FILE: '/w/server/monitor.json',
+  AUDIT_EXPORT_MONITOR_FILE: '/w/server/monitor-prod.json',
 };
 
 function exportRun() {
@@ -241,7 +256,8 @@ function exportRun() {
 function applyCmd(command, extra = '') {
   const r = inCt(
     `node /src/scripts/deletions-apply.mjs ${command} --db "$RESTORED_URL" --restore-id chk-${tag} ` +
-      `--source-export /w/offsite/series --secret-key /w/gpg/secret.asc --passphrase-file /w/gpg/pass ${extra}`,
+      '--source-export /w/offsite/prod/series --checkpoint /w/offsite/prod/checkpoint.json ' +
+      `--secret-key /w/gpg/secret.asc --passphrase-file /w/gpg/pass ${extra}`,
     {
       ...S3,
       AUDIT_EXPORT_PUBLIC_KEY: '/w/key/signing.pub',
@@ -261,6 +277,65 @@ async function restored(text, params = []) {
   }
 }
 
+// ------------------------------------------------------------ ядро-worker на копии
+
+const WORKER_PORT = 18300 + Math.floor(Math.random() * 400);
+let worker = null;
+const MAIL_DIR = join(WORK, 'mail');
+const mailFiles = () => (existsSync(MAIL_DIR) ? readdirSync(MAIL_DIR).length : 0);
+
+function startWorker() {
+  const wenv = { ...process.env };
+  for (const key of Object.keys(wenv)) {
+    if (!key.startsWith('DATABASE_URL') || key === 'DATABASE_URL_TEST') continue;
+    try {
+      const u = new URL(wenv[key]);
+      u.pathname = `/${RESTORED}`;
+      wenv[key] = u.toString();
+    } catch {
+      /* не адрес */
+    }
+  }
+  Object.assign(wenv, {
+    CORE_ROLE: 'worker',
+    CORE_INTERNAL_PORT: String(WORKER_PORT),
+    MAIL_TRANSPORT: 'file',
+    MAIL_OUTBOX_DIR: MAIL_DIR,
+    // Восстановленные события в общий брокер стенда не публикуются.
+    BACKGROUND_JOBS_DISABLED: 'outbox.publish,outbox.fanout',
+    CORE_RESTORE_HOLD: '',
+  });
+  const child = spawn(process.execPath, ['apps/core/dist/main.js'], {
+    cwd: ROOT,
+    env: wenv,
+    stdio: 'ignore',
+  });
+  return child;
+}
+
+function stopWorker() {
+  if (worker && worker.exitCode === null) worker.kill();
+  worker = null;
+}
+
+async function waitJobs(ok, timeoutMs = 90_000) {
+  const until = Date.now() + timeoutMs;
+  while (Date.now() < until) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${WORKER_PORT}/jobs`, {
+        signal: AbortSignal.timeout(3000),
+      });
+      const body = await r.json();
+      const map = Object.fromEntries(body.jobs.map((j) => [j.name, j.lastStatus]));
+      if (ok(map)) return map;
+    } catch {
+      /* ещё не поднялся */
+    }
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  return null;
+}
+
 console.log(`=== УЧЁТ УДАЛЕНИЙ ПОСЛЕ ВОССТАНОВЛЕНИЯ (${tag}) ===`);
 mkdirSync(WORK, { recursive: true });
 try {
@@ -270,7 +345,16 @@ try {
   const second = await register('founder', 's');
   const inv1 = await register('investor', 'i1');
   const inv2 = await register('investor', 'i2');
+  const inv3 = await register('investor', 'i3');
   const { project } = await createProject({ json: founder.call }, sql, tag);
+  // Выдача действует только в режиме «выбранным инвесторам».
+  await sql(`UPDATE lab.projects SET visibility = 'selected_investors' WHERE id = $1`, [
+    project.id,
+  ]);
+  await founder.call(`/v1/projects/${project.id}/access/grants`, {
+    method: 'POST',
+    body: { email: inv3.email, permissions: ['profile'] },
+  });
   await setLogo(founder.call, project.id, { r: 200, g: 40, b: 40 });
   await setAvatar(founder.call, { r: 40, g: 200, b: 40 });
   await setAvatar(second.call, { r: 40, g: 40, b: 200 });
@@ -321,7 +405,7 @@ try {
   );
   const gateRestored = (await restored('SELECT ops.restore_gate_state() AS s'))[0].s;
   check(
-    'восстановленная из копии база закрыта сама (другой отпечаток базы)',
+    'копия в новую базу: ворота закрыты (отпечаток — дополнительная защита)',
     gateRestored === 'closed',
     `${gateRestored}; ${pr.stdout.trim().slice(0, 120)}`,
   );
@@ -356,6 +440,12 @@ try {
     body: { email: inv2.email, permissions: ['profile'] },
   });
   await founder.call(`/v1/projects/${project.id}/access/grants/${g2.id}`, { method: 'DELETE' });
+  // Исключение прежнего формата — без exclusionId: итог неоднозначен.
+  await sql(
+    `SELECT audit.app_emit_event('lab.project_access.excluded', $1, 'founder', 'project', $2,
+                                 $3::jsonb, NULL)`,
+    [founder.userId, project.id, JSON.stringify({ excludedUserId: inv3.userId })],
+  );
   check(
     'после копии: удаление, замены, повторная выдача',
     g3.id !== g1.id,
@@ -366,9 +456,11 @@ try {
   console.log('\n▸ 4. Выгрузка, вынос, применение из вынесенной выгрузки');
   const e1out = exportRun();
   check('выгрузка после копии — порция 2', /порция 000002/.test(e1out), e1out);
+  const e2out = exportRun();
+  check('третья порция', /порция 000003/.test(e2out), e2out);
   const off = spawnSync(
     process.execPath,
-    ['scripts/audit-offsite.mjs', 'pull', '--to', `${WORK}/offsite`],
+    ['scripts/audit-offsite.mjs', 'pull', '--env', 'prod', '--to', `${WORK}/offsite`],
     {
       env: {
         ...env,
@@ -383,8 +475,37 @@ try {
     off.status === 0,
     `${off.stdout}${off.stderr}`.trim(),
   );
-  const ack = readFileSync(`${WORK}/server/ack.txt`, 'utf8');
-  check('отметка выноса на сервере — номер и покрытие', /^2@\d{4}-/.test(ack), ack);
+  const ack = readFileSync(`${WORK}/server/ack-prod.txt`, 'utf8');
+  check('отметка выноса на сервере — номер и покрытие', /^3@\d{4}-/.test(ack), ack);
+
+  const canView = async (userId) =>
+    (
+      await restored('SELECT lab.can_view_project($1, $2, $3) AS v', [
+        project.id,
+        userId,
+        'profile',
+      ])
+    )[0].v;
+  check(
+    'до применения: у третьего инвестора доступ по выдаче',
+    (await canView(inv3.userId)) === true,
+  );
+
+  // Доверенный хвост: принята серия из трёх порций, применению дают первые две — отказ.
+  cpSync(`${WORK}/offsite/prod/series`, `${WORK}/short`, { recursive: true });
+  for (const ext of ['jsonl.gpg', 'manifest.json', 'manifest.sig'])
+    rmSync(`${WORK}/short/000003.${ext}`);
+  const short = inCt(
+    `node /src/scripts/deletions-apply.mjs apply --db "$RESTORED_URL" --restore-id chk-${tag} ` +
+      '--source-export /w/short --checkpoint /w/offsite/prod/checkpoint.json ' +
+      '--secret-key /w/gpg/secret.asc --passphrase-file /w/gpg/pass',
+    { AUDIT_EXPORT_PUBLIC_KEY: '/w/key/signing.pub', RESTORED_URL: inNetwork(restoredUrl()) },
+  );
+  check(
+    'серия без последней принятой порции — отказ по контрольной точке',
+    short.status !== 0 && /короче принятой контрольной точки/.test(short.stderr),
+    short.stderr.trim().split('\n').pop(),
+  );
 
   const a1 = applyCmd('apply');
   check('применение', a1.code === 0, a1.out);
@@ -412,7 +533,7 @@ try {
   ]);
   check(
     'аватар второго: новый файл недоступен — прежний скрыт, ссылки на отсутствующий нет',
-    sa.length === 0 && /закрыто 1/.test(a1.out) && /файл недоступен/.test(a1.out),
+    sa.length === 0 && /avatar [^\n]*файл недоступен/.test(a1.out),
     JSON.stringify(sa),
   );
   const grants = await restored(
@@ -435,8 +556,42 @@ try {
     ex[0]?.active === false,
     JSON.stringify(ex),
   );
+  const ex3 = await restored(
+    `SELECT count(*)::int AS n FROM lab.project_access_exclusions
+      WHERE project_id = $1 AND excluded_user_id = $2 AND revoked_at IS NULL`,
+    [project.id, inv3.userId],
+  );
+  check(
+    'исключение без поколения: запрет сохранён — доступа у третьего инвестора нет',
+    ex3[0].n === 1 &&
+      (await canView(inv3.userId)) === false &&
+      /project-exclusion [^\n]*запрет сохранён/.test(a1.out),
+    `исключений ${ex3[0].n}`,
+  );
   const gate = (await restored('SELECT ops.restore_gate_state() AS s'))[0].s;
   check('ворота закрыты до итоговой проверки', gate === 'closed', gate);
+
+  // Внешние последствия при закрытых воротах: ожидающее письмо в восстановленной базе,
+  // рядом — ядро в роли worker на этой базе.
+  const letterId = (await restored(`SELECT public.uuid_generate_v7()::text AS id`))[0].id;
+  await restored(
+    `SELECT comms.enqueue_service_mail($1::uuid, 'identity.user.registered', $2::uuid,
+            'chk-gate-${tag}@test.local', 'Проверка ворот', 'Письмо восстановленной среды', $3)`,
+    [letterId, founder.userId, `<chk-${tag}@test.local>`],
+  );
+  worker = startWorker();
+  const jobs = await waitJobs(
+    (j) => j['mail.queue.send'] === 'skipped' && j['webhooks.deliver'] === 'skipped',
+  );
+  await new Promise((r) => setTimeout(r, 8000));
+  const letter = (
+    await restored('SELECT state FROM comms.mail_queue WHERE id = $1', [letterId])
+  )[0];
+  check(
+    'ворота закрыты: письмо не ушло, проходы почты и вебхуков пропущены',
+    letter?.state === 'pending' && mailFiles() === 0 && Boolean(jobs),
+    `письмо ${letter?.state}, файлов ${mailFiles()}, проходы ${JSON.stringify(jobs)}`,
+  );
 
   const a2 = applyCmd('apply');
   check(
@@ -460,7 +615,7 @@ try {
     foreign.status !== 0 && /другой базы|нет общего звена/.test(foreign.stderr),
     foreign.stderr.trim().split('\n').pop(),
   );
-  cpSync(`${WORK}/offsite/series`, `${WORK}/gap`, { recursive: true });
+  cpSync(`${WORK}/offsite/prod/series`, `${WORK}/gap`, { recursive: true });
   for (const ext of ['jsonl.gpg', 'manifest.json', 'manifest.sig'])
     rmSync(`${WORK}/gap/000001.${ext}`);
   const gap = inCt(
@@ -493,10 +648,55 @@ try {
     opened.code === 0 && after.s === 'open' && new Date(after.t) > new Date(before),
     opened.out,
   );
+  let sent = null;
+  for (let i = 0; i < 30 && !sent; i++) {
+    await new Promise((r) => setTimeout(r, 1000));
+    const row = (await restored('SELECT state FROM comms.mail_queue WHERE id = $1', [letterId]))[0];
+    if (row?.state === 'accepted') sent = row.state;
+  }
+  check(
+    'после открытия то же ядро отправляет письмо (контроль проверки)',
+    sent === 'accepted' && mailFiles() > 0,
+    `${sent}, файлов ${mailFiles()}`,
+  );
+  stopWorker();
+
+  // Восстановление в ТУ ЖЕ базу: отпечаток не меняется.
+  const same = (gateData) => {
+    const ex = gateData ? '' : '--exclude-table-data=ops.restore_gate';
+    pgExec(
+      `pg_dump -h 127.0.0.1 -U ${owner.username} -d ${RESTORED} -Fc ${ex} -f /tmp/${RESTORED}.same`,
+    );
+    pgExec(
+      `pg_restore -h 127.0.0.1 -U ${owner.username} -d ${RESTORED} --clean --if-exists --no-owner /tmp/${RESTORED}.same >/dev/null 2>&1; rm -f /tmp/${RESTORED}.same; true`,
+    );
+  };
+  // Сначала копия с открытой строкой ворот (среда открыта): отпечаток тот же — open.
+  same(true);
+  const withRow = (await restored('SELECT ops.restore_gate_state() AS s'))[0].s;
+  const closeCmd = inCt(
+    `node /src/scripts/deletions-apply.mjs close --db "$RESTORED_URL" --restore-id chk-${tag}-2`,
+    { RESTORED_URL: inNetwork(restoredUrl()) },
+  );
+  const afterClose = (await restored('SELECT ops.restore_gate_state() AS s'))[0].s;
+  check(
+    'копия с открытой строкой в ту же базу — отпечаток не спасает (open), явный close закрывает',
+    withRow === 'open' && closeCmd.status === 0 && afterClose === 'closed',
+    `до close: ${withRow}, после: ${afterClose}`,
+  );
+  // Копия без строки ворот (как снимают комплекты) в ту же базу — закрыто.
+  same(false);
+  const sameGate = (await restored('SELECT ops.restore_gate_state() AS s'))[0].s;
+  check(
+    'в ту же базу при неизменном отпечатке, копия без строки ворот — закрыто',
+    sameGate === 'closed',
+    sameGate,
+  );
 } catch (error) {
   failed++;
   console.log(`  FAIL  испытание прервано: ${error.message}`);
 } finally {
+  stopWorker();
   await pool.end().catch(() => undefined);
   if (keep) console.log(`\n(--keep: база ${RESTORED}, каталог ${WORK})`);
   else {

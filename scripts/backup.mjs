@@ -901,28 +901,29 @@ async function check() {
     );
   }
 
-  // Выгрузка журнала аудита (2.1.5): на сервере каждый час, вне сервера — ноутбук Томаса.
-  // Покрытие — по времени проверки последней порции, а не по наличию файла. Где выгрузка
-  // не включена, сигналов нет.
-  const audit = pilotState('audit-export.json');
-  if (audit) {
+  // Выгрузка журнала аудита (2.1.5) по средам: на сервере каждый час, вне сервера — ноутбук
+  // Томаса. Покрытие — по времени проверки последней порции, а не по наличию файла. Где
+  // выгрузка среды не включена, сигналов этой среды нет.
+  for (const envId of ['prod', 'test-2']) {
+    const audit = pilotState(`audit-export-${envId}.json`);
+    if (!audit) continue;
     const covered = audit.coveredUntil ?? null;
     const age = covered ? hoursSince(covered) : Infinity;
     await say(
-      'audit-export',
+      `audit-export-${envId}`,
       !audit.ok || age > AUDIT_EXPORT_HOURS,
       audit.ok
-        ? `выгрузка аудита покрывает до ${covered} (${age.toFixed(1)} ч назад)`
-        : `выгрузка аудита не удалась: ${audit.detail}`,
+        ? `выгрузка аудита ${envId} покрывает до ${covered} (${age.toFixed(1)} ч назад)`
+        : `выгрузка аудита ${envId} не удалась: ${audit.detail}`,
     );
-    const offsite = pilotState('audit-offsite.json');
+    const offsite = pilotState(`audit-offsite-${envId}.json`);
     const offAge = offsite?.coveredUntil ? hoursSince(offsite.coveredUntil) : Infinity;
     await say(
-      'audit-offsite',
+      `audit-offsite-${envId}`,
       offAge > AUDIT_OFFSITE_HOURS,
       offsite
-        ? `выгрузка аудита вне сервера покрывает до ${offsite.coveredUntil} (${offAge.toFixed(1)} ч назад)`
-        : 'выгрузка аудита ни разу не вынесена с сервера',
+        ? `выгрузка аудита ${envId} вне сервера покрывает до ${offsite.coveredUntil} (${offAge.toFixed(1)} ч назад)`
+        : `выгрузка аудита ${envId} ни разу не вынесена с сервера`,
     );
   }
 

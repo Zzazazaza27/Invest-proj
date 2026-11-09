@@ -45,6 +45,12 @@ export interface JobDefinition {
   readonly coordination: JobCoordination;
   /** Первый проход сразу после старта, а не через интервал. */
   readonly runAtStart?: boolean;
+  /**
+   * Проход делает что-то за пределами платформы (письмо, вебхук). При закрытых воротах
+   * восстановленной среды (2.1.5, M167) такой проход не запускается: восстановленные
+   * письма и доставки не уходят до применения учёта удалений — независимо от HTTP.
+   */
+  readonly externalEffects?: boolean;
   run(ctx: JobContext): Promise<JobResult>;
 }
 

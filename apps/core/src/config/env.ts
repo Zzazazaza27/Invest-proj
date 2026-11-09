@@ -123,6 +123,12 @@ const RawEnvSchema = z.object({
   // В production префикс обязателен и проверяется ниже.
   SESSION_COOKIE_NAME: z.string().default('ul_session'),
   SESSION_TTL_SECONDS: z.coerce.number().int().min(60).max(86_400).default(3600),
+  /**
+   * Удержание восстановленной среды (2.1.5): непустое значение (метка восстановления)
+   * закрывает ворота независимо от содержимого базы. Ставится ДО восстановления и
+   * снимается только после открытия проверкой (scripts/deletions-apply.mjs open).
+   */
+  CORE_RESTORE_HOLD: z.string().max(100).default(''),
   CSRF_COOKIE_NAME: z.string().default('ul_csrf'),
   /**
    * Ключ подписи CSRF-токенов. Отдельный от ключа сессий: тот обязателен только

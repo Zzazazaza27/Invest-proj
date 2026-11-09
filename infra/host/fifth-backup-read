@@ -14,9 +14,9 @@
  *   fifth-backup-read openbao-keys-meta  его описание, без значений
  *   fifth-backup-read transition-kit       зашифрованный переходный комплект
  *   fifth-backup-read transition-kit-meta  его описание, без значений
- *   fifth-backup-read audit-list         порции выгрузки аудита (2.1.5)
- *   fifth-backup-read audit-file <имя>   одна порция: NNNNNN.jsonl.gpg | .manifest.json | .manifest.sig
- *   fifth-backup-read audit-ack <N>@<покрыто до>  отметка: порция N сохранена вне сервера
+ *   fifth-backup-read audit-list <среда>  порции выгрузки аудита (2.1.5): prod | test-2
+ *   fifth-backup-read audit-file <среда>/<имя>  порция: NNNNNN.jsonl.gpg | .manifest.json | .manifest.sig
+ *   fifth-backup-read audit-ack <среда>:<N>@<покрыто до>  отметка: порция N сохранена вне сервера
  *
  * Пути снаружи не принимаются: список файлов берётся из описи комплекта и проверяется.
  * Каталог задаётся переменной только для проверок без root.
@@ -95,24 +95,30 @@ if (command === 'pilot-latest') {
     `${JSON.stringify({ at: new Date().toISOString(), set: id })}\n`,
   );
 } else if (command === 'audit-list' || command === 'audit-file' || command === 'audit-ack') {
-  // Выгрузка журнала аудита (2.1.5): порции только читаются; имена — строго по шаблону.
-  const AUDIT = isRoot ? '/var/lib/fifth-audit-export/out' : path.join(ROOT, 'audit-out');
+  // Выгрузка журнала аудита (2.1.5): порции только читаются; среда — из перечня, имена —
+  // строго по шаблону.
+  const ENVS = ['prod', 'test-2'];
   const NAME = /^[0-9]{6}\.(jsonl\.gpg|manifest\.json|manifest\.sig)$/;
+  const [envId, rest] = String(id).split(/[/:](.*)/s);
+  if (!ENVS.includes(envId)) fail('неизвестная среда');
+  const AUDIT = isRoot
+    ? `/var/lib/fifth-audit-export/${envId}/out`
+    : path.join(ROOT, 'audit-out', envId);
   if (command === 'audit-list') {
-    if (id !== undefined) fail('лишние аргументы');
+    if (rest !== undefined) fail('лишние аргументы');
     const names = fs.existsSync(AUDIT) ? fs.readdirSync(AUDIT).filter((n) => NAME.test(n)) : [];
     process.stdout.write(names.sort().join('\n') + (names.length ? '\n' : ''));
   } else if (command === 'audit-file') {
-    if (!NAME.test(String(id))) fail('неверное имя порции');
-    const full = path.join(AUDIT, id);
+    if (!NAME.test(String(rest))) fail('неверное имя порции');
+    const full = path.join(AUDIT, rest);
     const stat = fs.lstatSync(full, { throwIfNoEntry: false });
     if (!stat || !stat.isFile()) fail('нет такой порции');
     fs.createReadStream(full).pipe(process.stdout);
   } else {
     // Единственная запись: номер порции и покрытие, проверенные на стороне выноса.
-    const [seq, covered] = String(id).split('@');
+    const [seq, covered] = String(rest).split('@');
     if (!/^[0-9]{1,6}$/.test(seq) || Number.isNaN(Date.parse(covered ?? ''))) {
-      fail('нужно <номер>@<покрыто до>');
+      fail('нужно <среда>:<номер>@<покрыто до>');
     }
     const manifest = path.join(AUDIT, `${seq.padStart(6, '0')}.manifest.json`);
     if (!fs.existsSync(manifest)) fail('нет такой порции');
@@ -120,7 +126,7 @@ if (command === 'pilot-latest') {
     if (real.checkedAt !== covered) fail('покрытие не совпадает с описью порции');
     const state = isRoot ? '/var/lib/fifth-monitor' : ROOT;
     fs.writeFileSync(
-      path.join(state, 'audit-offsite.json'),
+      path.join(state, `audit-offsite-${envId}.json`),
       `${JSON.stringify({ at: new Date().toISOString(), seq: Number(seq), coveredUntil: covered })}\n`,
     );
   }

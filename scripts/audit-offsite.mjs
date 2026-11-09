@@ -2,20 +2,21 @@
 /**
  * Вынос выгрузки журнала аудита с сервера (2.1.5; согласовано Тэнком 09.11.2026) — на
  * ноутбуке Томаса, по расписанию раз в час (infra/laptop/audit-offsite-task.xml; ставится
- * только по согласованию с Томасом).
+ * только по согласованию с Томасом). Среды — рабочая и test-2, у каждой свой каталог и
+ * своя контрольная точка.
  *
- *   node scripts/audit-offsite.mjs pull  [--to <каталог>]   забрать новые порции
- *   node scripts/audit-offsite.mjs check [--to <каталог>]   проверить всю серию и расписание
+ *   node scripts/audit-offsite.mjs pull  [--env prod|test-2] [--to <каталог>]
+ *   node scripts/audit-offsite.mjs check [--env prod|test-2] [--to <каталог>]
  *
  * Порция принимается, только если подпись описи верна закреплённым ключом выгрузки
  * (infra/audit/export-signing.pub), шифротекст совпал с описью, и опись ПРОДОЛЖАЕТ
- * доверенную контрольную точку (checkpoint.json в каталоге выноса): старая выгрузка вместо
+ * доверенную контрольную точку (<каталог>/<среда>/checkpoint.json): старая выгрузка вместо
  * новой, пропуск порции и усечённый хвост отвергаются. Контрольная точка хранится здесь, а
- * не на сервере. После приёма — отметка на сервере (номер и покрытие), по ней наблюдение
- * видит давность выноса. Файлы остаются зашифрованными на ключ Томаса. Значения не
- * печатаются.
+ * не на сервере, и при восстановлении передаётся применению (--checkpoint). После приёма —
+ * отметка на сервере (номер и покрытие), по ней наблюдение видит давность выноса. Файлы
+ * остаются зашифрованными на ключ Томаса. Значения не печатаются.
  *
- * Для испытаний источник — каталог (FIFTH_AUDIT_SOURCE_DIR) вместо сервера.
+ * Для испытаний источник — каталог (FIFTH_AUDIT_SOURCE_DIR/<среда>/out) вместо сервера.
  */
 import { spawnSync } from 'node:child_process';
 import {
@@ -36,9 +37,10 @@ const option = (name, fallback) => {
   const i = process.argv.indexOf(name);
   return i >= 0 ? process.argv[i + 1] : fallback;
 };
+const ENVS = ['prod', 'test-2'];
+const ONLY = option('--env', null);
+if (ONLY && !ENVS.includes(ONLY)) throw new Error('среда: prod или test-2');
 const TO = resolve(option('--to', 'D:/cloud@mail.ru/projects/5E/audit-export'));
-const SERIES = join(TO, 'series');
-const CHECKPOINT = join(TO, 'checkpoint.json');
 const PUBLIC_KEY =
   process.env.AUDIT_EXPORT_PUBLIC_KEY || join(ROOT, 'infra/audit/export-signing.pub');
 const SOURCE_DIR = process.env.FIFTH_AUDIT_SOURCE_DIR || null;
@@ -48,17 +50,21 @@ const STALE_HOURS = 3;
 function remote(command) {
   if (SOURCE_DIR) {
     const [cmd, arg] = command.split(' ');
+    const [envId, rest] = arg.split(/[/:](.*)/s);
+    const out = join(SOURCE_DIR, envId, 'out');
     if (cmd === 'audit-list') {
       return Buffer.from(
-        readdirSync(join(SOURCE_DIR, 'out'))
-          .filter((n) => /^[0-9]{6}\./.test(n))
-          .sort()
-          .join('\n'),
+        existsSync(out)
+          ? readdirSync(out)
+              .filter((n) => /^[0-9]{6}\./.test(n))
+              .sort()
+              .join('\n')
+          : '',
       );
     }
-    if (cmd === 'audit-file') return readFileSync(join(SOURCE_DIR, 'out', arg));
+    if (cmd === 'audit-file') return readFileSync(join(out, rest));
     if (cmd === 'audit-ack') {
-      writeFileSync(join(SOURCE_DIR, 'ack.txt'), arg);
+      writeFileSync(join(SOURCE_DIR, `ack-${envId}.txt`), rest);
       return Buffer.alloc(0);
     }
   }
@@ -93,71 +99,89 @@ function atomic(path, data) {
 const accept = (checkpoint, manifestBytes, sig, cipher) =>
   acceptPortion(checkpoint, manifestBytes, sig, cipher, readFileSync(PUBLIC_KEY, 'utf8')).point;
 
-async function pull() {
-  if (!existsSync(PUBLIC_KEY)) throw new Error('нет закреплённого ключа выгрузки');
-  let checkpoint = readJson(CHECKPOINT);
-  const names = remote('audit-list').toString('utf8').split('\n').filter(Boolean);
+function pullEnv(envId) {
+  const series = join(TO, envId, 'series');
+  const cpFile = join(TO, envId, 'checkpoint.json');
+  let checkpoint = readJson(cpFile);
+  const names = remote(`audit-list ${envId}`).toString('utf8').split('\n').filter(Boolean);
   const seqs = [...new Set(names.map((n) => Number(n.slice(0, 6))))].sort((a, b) => a - b);
   const pending = seqs.filter((s) => s > (checkpoint?.seq ?? 0));
   let taken = 0;
   for (const seq of pending) {
     const name = String(seq).padStart(6, '0');
-    const manifestBytes = remote(`audit-file ${name}.manifest.json`);
-    const sig = remote(`audit-file ${name}.manifest.sig`).toString('utf8');
-    const cipher = remote(`audit-file ${name}.jsonl.gpg`);
+    const manifestBytes = remote(`audit-file ${envId}/${name}.manifest.json`);
+    const sig = remote(`audit-file ${envId}/${name}.manifest.sig`).toString('utf8');
+    const cipher = remote(`audit-file ${envId}/${name}.jsonl.gpg`);
     const next = accept(checkpoint, manifestBytes, sig, cipher);
-    atomic(join(SERIES, `${name}.jsonl.gpg`), cipher);
-    atomic(join(SERIES, `${name}.manifest.json`), manifestBytes);
-    atomic(join(SERIES, `${name}.manifest.sig`), sig);
-    atomic(CHECKPOINT, `${JSON.stringify(next, null, 2)}\n`);
+    atomic(join(series, `${name}.jsonl.gpg`), cipher);
+    atomic(join(series, `${name}.manifest.json`), manifestBytes);
+    atomic(join(series, `${name}.manifest.sig`), sig);
+    atomic(cpFile, `${JSON.stringify(next, null, 2)}\n`);
     checkpoint = next;
     taken++;
   }
-  if (checkpoint) remote(`audit-ack ${checkpoint.seq}@${checkpoint.checkedAt}`);
+  if (checkpoint) remote(`audit-ack ${envId}:${checkpoint.seq}@${checkpoint.checkedAt}`);
   console.log(
-    `принято порций: ${taken}; покрыто до ${checkpoint?.checkedAt ?? '—'} (порция ${checkpoint?.seq ?? '—'})`,
+    `${envId}: принято порций ${taken}; покрыто до ${checkpoint?.checkedAt ?? '—'} (порция ${checkpoint?.seq ?? '—'})`,
   );
 }
 
-/** Вся локальная серия с начала: подписи, шифротексты, продолжение; и расписание. */
+function pull() {
+  if (!existsSync(PUBLIC_KEY)) throw new Error('нет закреплённого ключа выгрузки');
+  let failed = 0;
+  for (const envId of ONLY ? [ONLY] : ENVS) {
+    try {
+      pullEnv(envId);
+    } catch (error) {
+      failed++;
+      console.error(`${envId}: ОШИБКА: ${error.message}`);
+    }
+  }
+  process.exitCode = failed ? 1 : 0;
+}
+
+/** Вся локальная серия среды с начала: подписи, шифротексты, продолжение; и расписание. */
 function check() {
   let failed = false;
   const say = (ok, text) => {
     if (!ok) failed = true;
     console.log(`  ${ok ? 'OK  ' : 'FAIL'}  ${text}`);
   };
-  let point = null;
-  const files = existsSync(SERIES) ? readdirSync(SERIES) : [];
-  const seqs = [
-    ...new Set(
-      files.filter((n) => /^[0-9]{6}\.manifest\.json$/.test(n)).map((n) => Number(n.slice(0, 6))),
-    ),
-  ].sort((a, b) => a - b);
-  try {
-    for (const seq of seqs) {
-      const name = String(seq).padStart(6, '0');
-      point = accept(
-        point,
-        readFileSync(join(SERIES, `${name}.manifest.json`)),
-        readFileSync(join(SERIES, `${name}.manifest.sig`), 'utf8'),
-        readFileSync(join(SERIES, `${name}.jsonl.gpg`)),
+  for (const envId of ONLY ? [ONLY] : ENVS) {
+    const series = join(TO, envId, 'series');
+    let point = null;
+    const files = existsSync(series) ? readdirSync(series) : [];
+    const seqs = [
+      ...new Set(
+        files.filter((n) => /^[0-9]{6}\.manifest\.json$/.test(n)).map((n) => Number(n.slice(0, 6))),
+      ),
+    ].sort((a, b) => a - b);
+    try {
+      for (const seq of seqs) {
+        const name = String(seq).padStart(6, '0');
+        point = accept(
+          point,
+          readFileSync(join(series, `${name}.manifest.json`)),
+          readFileSync(join(series, `${name}.manifest.sig`), 'utf8'),
+          readFileSync(join(series, `${name}.jsonl.gpg`)),
+        );
+      }
+      say(seqs.length > 0, `${envId}: серия с начала проверена, порций ${seqs.length}`);
+    } catch (error) {
+      say(false, `${envId}: серия не сходится: ${error.message}`);
+    }
+    const cp = readJson(join(TO, envId, 'checkpoint.json'));
+    say(
+      Boolean(cp && point && cp.seq === point.seq && cp.manifestSha256 === point.manifestSha256),
+      `${envId}: контрольная точка совпадает с концом серии`,
+    );
+    if (point) {
+      const age = (Date.now() - Date.parse(point.checkedAt)) / 3_600_000;
+      say(
+        age <= STALE_HOURS,
+        `${envId}: покрыто до ${point.checkedAt} (${age.toFixed(1)} ч назад; цель ≤ ${STALE_HOURS} ч)`,
       );
     }
-    say(seqs.length > 0, `серия с начала проверена: порций ${seqs.length}`);
-  } catch (error) {
-    say(false, `серия не сходится: ${error.message}`);
-  }
-  const cp = readJson(CHECKPOINT);
-  say(
-    Boolean(cp && point && cp.seq === point.seq && cp.manifestSha256 === point.manifestSha256),
-    'контрольная точка совпадает с концом серии',
-  );
-  if (point) {
-    const age = (Date.now() - Date.parse(point.checkedAt)) / 3_600_000;
-    say(
-      age <= STALE_HOURS,
-      `покрыто до ${point.checkedAt} (${age.toFixed(1)} ч назад; цель ≤ ${STALE_HOURS} ч)`,
-    );
   }
   // Расписание Windows: задание есть и последний запуск успешен.
   const q = spawnSync('schtasks', ['/Query', '/TN', TASK, '/V', '/FO', 'LIST'], {
@@ -182,7 +206,7 @@ function check() {
 
 const command = process.argv[2];
 try {
-  if (command === 'pull') await pull();
+  if (command === 'pull') pull();
   else if (command === 'check') check();
   else {
     console.error('команды: pull, check');
