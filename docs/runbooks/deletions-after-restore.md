@@ -20,7 +20,7 @@
   (`fifth-audit-export@<среда>.timer`), роль `app_archive_user`. Это копия на том же
   сервере, независимой она не считается.
 - **Вынос** — ноутбук Томаса (`scripts/audit-offsite.mjs pull`, задание
-  `infra/laptop/audit-offsite-task.xml`), свой каталог и контрольная точка на каждую
+  `infra/laptop/install-audit-offsite.ps1`), свой каталог и контрольная точка на каждую
   среду. Давность видна по сигналам `audit-export-<среда>` (> 2 ч) и
   `audit-offsite-<среда>` (> 3 ч). Два часа — цель при доступном ноутбуке, не гарантия.
 

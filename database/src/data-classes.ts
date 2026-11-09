@@ -80,10 +80,22 @@ export const PREFIX_CLASSES: ReadonlyArray<{ prefix: string; kind: DataClass }> 
 export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   // -------------------------------------------------------------------- ops
   // Реестр установок (M157): история выпусков среды.
+  'ops.database_identity': {
+    kind: 'system',
+    note: 'идентификатор базы (2.1.5); переезжает с копией',
+  },
+  'ops.deletions_applied': {
+    kind: 'journal',
+    note: 'применённый учёт удалений после восстановления (2.1.5)',
+  },
   'ops.installation_events': { kind: 'journal' },
   'ops.installation_targets': { kind: 'journal' },
   'ops.installations': { kind: 'journal' },
   'ops.instances': { kind: 'operational', note: 'подтверждённые версии экземпляров' },
+  'ops.restore_gate': {
+    kind: 'system',
+    note: 'ворота восстановленной среды (2.1.5): уборка не трогает — без строки среда закрыта; в копии pg_dump не входит',
+  },
   // ----------------------------------------------------------- availability
   // Группы функций (M161, 4.11): наблюдения экземпляров пересоздаются служебной задачей,
   // ограничения ставит оператор на время работ — рабочее состояние среды, не содержимое.
