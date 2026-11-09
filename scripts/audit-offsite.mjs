@@ -188,21 +188,21 @@ function check() {
     }
   }
   // Расписание Windows: задание есть и последний запуск успешен.
-  const q = spawnSync('schtasks', ['/Query', '/TN', TASK, '/V', '/FO', 'LIST'], {
-    encoding: 'utf8',
-  });
+  // Поля берутся из Get-ScheduledTaskInfo, а не из текста schtasks: подписи там зависят от
+  // языка Windows.
+  const q = spawnSync(
+    'powershell',
+    [
+      '-NoProfile',
+      '-Command',
+      `$i = Get-ScheduledTaskInfo -TaskName '${TASK}' -ErrorAction Stop; ` +
+        `$i.LastRunTime.ToString('s') + '|' + $i.LastTaskResult`,
+    ],
+    { encoding: 'utf8' },
+  );
   if (q.status !== 0) say(false, `задания «${TASK}» в расписании нет — не установлено`);
   else {
-    const field = (re) =>
-      q.stdout
-        .split(/\r?\n/)
-        .find((l) => re.test(l))
-        ?.split(':')
-        .slice(1)
-        .join(':')
-        .trim() ?? '—';
-    const last = field(/^(Last Run Time|Время прошлого запуска)/i);
-    const result = field(/^(Last Result|Прошлый результат)/i);
+    const [last, result] = q.stdout.trim().split('|');
     say(result === '0', `расписание: последний запуск ${last}, результат ${result}`);
   }
   process.exitCode = failed ? 1 : 0;
