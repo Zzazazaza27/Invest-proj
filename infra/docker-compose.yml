@@ -35,7 +35,9 @@ services:
       - ../apps/lab/dist:/srv/lab:ro
       - ../apps/investor/dist:/srv/investor:ro
       - ../apps/admin/dist:/srv/admin:ro
-      - ../apps/auth/dist:/srv/auth:ro
+      - ../apps/auth/dist:/srv/login:ro
+      # Файл маршрута по умолчанию (блок 09, задание 3) — как в образе web.
+      - ../infra/images/web-route.sh:/docker-entrypoint.d/15-fifth-route.sh:ro
       # Служебная консоль монтируется наравне с остальными. Прежде её прятали
       # от боевого контура тремя рубежами (отдельная сборка, отдельный
       # compose-файл, отдельный каталог конфигов) — и все три снимало одно
