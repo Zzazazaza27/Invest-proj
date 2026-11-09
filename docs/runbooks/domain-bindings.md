@@ -80,6 +80,28 @@
   служебных учётных записей, письма туда не уходят.
 - Тесты (`apps/core/tests`, `packages/*/tests`, `scripts/check-*`) — образцы значений.
 
+## Действующие настройки — проверено 2026-11-10
+
+Снято с сервера только чтением (`infra/host/prod-domain-facts.sh`). Единая переменная
+домена отложена до переезда (Тэнк 10.11) — при условии, что этот перечень полон и проверен.
+
+| Среда  | Где                                    | Значения                                                                                                                                                                                                                                                                                             |
+| ------ | -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| prod   | `/opt/fifth-element/.env`              | `CORE_PUBLIC_URL`, `PUBLIC_BASE_URL`, `CORS_ALLOWED_ORIGINS` = https://5espace.com; `S3_PUBLIC_ENDPOINT` = https://files.5espace.com; `S3_CORS_ALLOW_ORIGIN` = https://5espace.com; `MAIL_FROM`, `MAIL_SMTP_USER` = no-reply@5espace.com; `MAIL_SMTP_HOST`, `MAIL_SMTP_EHLO_NAME` = mail.5espace.com |
+| test-1 | `.local/envs/test-1/settings.env`      | адреса https://test-1.5espace.com, хранилище https://files.5espace.com; почты наружу нет                                                                                                                                                                                                             |
+| test-2 | `.local/envs/test-2/settings.env`      | адреса https://test-2.5espace.com, хранилище https://files.5espace.com, почта no-reply-test-2@5espace.com через mail.5espace.com                                                                                                                                                                     |
+| Caddy  | `infra/caddy/Caddyfile`, `files.caddy` | сайты 5espace.com, www, panel, mail, test-1, test-2, files                                                                                                                                                                                                                                           |
+
+Проверка:
+
+- адреса отвечают: prod закрыт входом (401 — ожидаемо), www → перенаправление, test-2 /v1/health — 200;
+- CORS хранилища: каждый бакет (`fifth-element`, `fifth-test-1`, `fifth-test-2`) отвечает своему
+  кабинету 204, чужому сайту — 403;
+- сертификаты действуют до 27.01–04.02.2027, продлевает Caddy.
+
+Остаток прежнего домена: в prod `.env` есть `SMTP_FROM=no-reply@unicorn.vc` — код ядра этот ключ
+не читает (отправитель — `MAIL_FROM`). Удалить шагом ближайшего выпуска.
+
 ## Открыто
 
 - Единая переменная домена площадки вместо строк в скриптах — не сделано.
