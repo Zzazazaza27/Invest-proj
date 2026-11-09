@@ -52,6 +52,8 @@ echo "  ·     outbox старше часа: $(psql_env "SELECT coalesce(string_
 echo "  ·     outbox за 10 мин: $(psql_env "SELECT count(*) FILTER (WHERE published_at IS NOT NULL) || ' опубликовано из ' || count(*) FROM audit.outbox_events WHERE created_at > now() - interval '10 minutes'")"
 restarts="$(docker inspect -f '{{.RestartCount}}' "$PROJECT-core")"
 [ "$restarts" = 0 ] && ok 'ядро без перезапусков' || bad "перезапусков ядра: $restarts"
+# Строка проверки здоровья: время запуска (startup=), предел зависаний, петля падений.
+echo "  ·     проверка здоровья: $(docker inspect -f '{{range .State.Health.Log}}{{.Output}}{{end}}' "$PROJECT-core" | grep -o 'core-health[^|]*' | tail -1)"
 
 RID="$(cat /proc/sys/kernel/random/uuid)"
 body="{\"cabinet\":\"lab\",\"screen\":\"/\",\"version\":\"unknown\",\"code\":\"js.uncaught\",\"stage\":\"unknown\",\"requestId\":\"$RID\",\"count\":1}"

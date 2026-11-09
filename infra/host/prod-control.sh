@@ -54,6 +54,8 @@ echo "  ·     outbox за 10 мин: $(q "SELECT count(*) FILTER (WHERE publish
 echo "  ·     данные: $(q "SELECT 'пользователей ' || (SELECT count(*) FROM identity.users) || ', проектов ' || (SELECT count(*) FROM lab.projects)")"
 restarts="$(docker inspect -f '{{.RestartCount}}' fifth-core)"
 [ "$restarts" = 0 ] && ok 'ядро без перезапусков' || bad "перезапусков ядра: $restarts"
+# Строка проверки здоровья: время запуска (startup=), предел зависаний, петля падений.
+echo "  ·     проверка здоровья: $(docker inspect -f '{{range .State.Health.Log}}{{.Output}}{{end}}' fifth-core | grep -o 'core-health[^|]*' | tail -1)"
 
 RID="$(cat /proc/sys/kernel/random/uuid)"
 body="{\"cabinet\":\"lab\",\"screen\":\"/\",\"version\":\"unknown\",\"code\":\"js.uncaught\",\"stage\":\"unknown\",\"requestId\":\"$RID\",\"count\":1}"
