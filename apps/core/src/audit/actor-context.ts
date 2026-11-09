@@ -29,6 +29,12 @@ export interface Initiator {
   kind: ActorKind;
   userId?: string | null;
   serviceAccountId?: string | null;
+  /**
+   * Сотрудник действовал в контексте доступа (M129): `userId` — сам сотрудник, здесь —
+   * учётная запись, от лица которой он действовал. Связь переходит в фон вместе с операцией.
+   */
+  onBehalfOf?: string | null;
+  testSessionId?: string | null;
 }
 
 /** Сохранённое происхождение операции — то, что фон берёт из своей очереди. */
@@ -127,16 +133,23 @@ export function originOf(ctx: {
   userId: string | null;
   traceId: string;
   actor?: ActorScope;
+  initiatorUserId?: string | null;
+  testSessionId?: string | null;
 }): Origin {
   const scope = ctx.actor;
+  // Инициатор — тот же, кого записала бы прямая запись журнала (buildActor): в контексте
+  // доступа это сотрудник, а не учётная запись, от лица которой он действовал.
+  const staff = ctx.initiatorUserId ?? null;
   const kind: ActorKind =
     scope?.kind ?? (ctx.userId ? 'person' : scope?.serviceAccountId ? 'service_account' : 'anonymous');
+  const userId = kind === 'person' ? (staff ?? ctx.userId) : null;
   return {
     operationId: scope?.operationId ?? uuidv7(),
     initiator: scope?.initiator ?? {
       kind,
-      ...(ctx.userId ? { userId: ctx.userId } : {}),
+      ...(userId ? { userId } : {}),
       ...(scope?.serviceAccountId ? { serviceAccountId: scope.serviceAccountId } : {}),
+      ...(staff ? { onBehalfOf: ctx.userId, testSessionId: ctx.testSessionId ?? null } : {}),
     },
     requestId: ctx.traceId,
   };

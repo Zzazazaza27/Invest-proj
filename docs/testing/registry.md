@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 263; требований: 41
+- Проверок: 264; требований: 41
 
 ## Что защищено без участия человека
 
@@ -507,6 +507,7 @@
 | UNIT-CORE-CLIENT-ERRORS | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-ACTOR-CONTEXT | `npm run test -w apps/core` | 15 | CI | CI |
 | UNIT-CORE-ACTOR-CONTEXT-REVIEW | `npm run test -w apps/core` | 11 | CI | CI |
+| UNIT-CORE-ACTOR-ORIGIN-CHAIN | `npm run test -w apps/core` | 2 | CI | CI |
 | UNIT-CORE-COUNTERS | `npm run test -w apps/core` | 8 | CI | CI |
 | UNIT-CORE-UPLOAD-COMPLETION | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-EVENTS | `npm run test -w apps/core` | 24 | CI | CI |

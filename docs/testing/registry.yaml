@@ -3934,6 +3934,25 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: UNIT-CORE-ACTOR-ORIGIN-CHAIN
+    file: apps/core/tests/actor-origin-chain.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 2
+    needs: []
+    effects: ['нет — поддельные соединения и хранилище в памяти']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Сотрудник A за участника B: сохранённое происхождение (upload_origin) → фоновое завершение
+      загрузки → запись журнала. Исполнитель — система, инициатор — A, связь с B (onBehalfOf,
+      тестовая сессия) и ID операции сохранены. На прежнем originOf падает (инициатор — B).
+    purpose: 'Блок 10: замечание Тэнка 09.11 к originOf — инициатор в контексте доступа.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: CHK-ACTOR-CONTEXT
     file: scripts/check-actor-context.mjs
     command: node scripts/check-actor-context.mjs
@@ -5645,6 +5664,7 @@ blocks:
       [
         UNIT-CORE-ACTOR-CONTEXT,
         UNIT-CORE-ACTOR-CONTEXT-REVIEW,
+        UNIT-CORE-ACTOR-ORIGIN-CHAIN,
         CHK-ACTOR-CONTEXT,
         CHK-UPLOAD-PUBLISH-RIGHT,
         TOOL-SECURITY-AUDIT-FULL,
