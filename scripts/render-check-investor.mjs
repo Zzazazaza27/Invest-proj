@@ -13,7 +13,7 @@
  */
 import { chromium } from 'playwright';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -148,6 +148,107 @@ const overflow = await page.evaluate(
   () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
 );
 check('горизонтальной прокрутки нет на 390px', overflow <= 1, `переполнение: ${overflow}px`);
+
+// «Мой профиль» в оболочке инвестора — тот же общий профиль аккаунта, временно до блока 03
+// (Тэнк, 09.11). Узкая проверка: вход из шапки и прямое открытие, повторное письмо,
+// подтверждение адреса, понятное ограничение при недоступной почте.
+console.warn('\n[3a] Мой профиль: повторное письмо подтверждения');
+await page.setViewportSize({ width: 1280, height: 900 });
+await page.getByTestId('profile-link').click();
+await page.waitForURL(/\/investor\/profile/, { timeout: 15_000 }).catch(() => undefined);
+await page
+  .waitForSelector('text=Почта не подтверждена', { timeout: 15_000 })
+  .catch(() => undefined);
+check('ссылка из шапки открывает профиль', /\/investor\/profile$/.test(page.url()), page.url());
+await page.reload({ waitUntil: 'networkidle' });
+await page
+  .waitForSelector('text=Почта не подтверждена', { timeout: 15_000 })
+  .catch(() => undefined);
+check(
+  'прямое открытие профиля: блок «Почта не подтверждена»',
+  (await page.getByText('Почта не подтверждена').count()) === 1,
+);
+const mailDir = join(ROOT, process.env.MAIL_OUTBOX_DIR ?? 'var/mail');
+const lettersBefore = existsSync(mailDir) ? readdirSync(mailDir).length : 0;
+await page.getByTestId('email-verify-resend').click();
+await page.waitForSelector('[data-testid="email-verify-notice"]', { timeout: 15_000 });
+const resendNotice = (await page.getByTestId('email-verify-notice').textContent()) ?? '';
+check('повторное письмо отправлено', /Письмо.*отправлено/.test(resendNotice), resendNotice.trim());
+const safe = email.replace(/[^a-zA-Z0-9._@-]/g, '_').slice(0, 64);
+const letters = existsSync(mailDir)
+  ? readdirSync(mailDir)
+      .filter((f) => f.includes(safe))
+      .sort()
+  : [];
+const token = letters.length
+  ? /#verify=([A-Za-z0-9_-]+)/.exec(readFileSync(join(mailDir, letters.at(-1)), 'utf8'))?.[1]
+  : null;
+check(
+  'новое письмо со ссылкой в почте',
+  Boolean(token) && readdirSync(mailDir).length > lettersBefore,
+  `писем адресату ${letters.length}`,
+);
+if (token) {
+  const verifyPage = await context.newPage();
+  await verifyPage.goto(`${APP_URL.replace(/\/investor\/?$/, '')}/login/#verify=${token}`, {
+    waitUntil: 'networkidle',
+  });
+  await verifyPage.getByRole('button', { name: 'Подтвердить почту' }).click();
+  await verifyPage.waitForTimeout(1500);
+  const done = (await verifyPage.locator('[role="status"]').first().textContent()) ?? '';
+  check(
+    'адрес подтверждён по ссылке из нового письма',
+    done.includes('Адрес подтверждён'),
+    done.trim(),
+  );
+  await verifyPage.close();
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForTimeout(1000);
+  check(
+    'после подтверждения блока в профиле нет',
+    (await page.getByText('Почта не подтверждена').count()) === 0,
+  );
+}
+
+// Недоступная почта — подменённые ответы сервера: выключать почту стенда ради экрана незачем.
+{
+  const p = await context.newPage();
+  await p.route('**/v1/auth/email/verify/status', (route) =>
+    route.fulfill({ json: { verified: false, pendingUntil: null, mailAvailable: false } }),
+  );
+  await p.goto(`${APP_URL.replace(/\/$/, '')}/profile`, { waitUntil: 'networkidle' });
+  await p.waitForSelector('text=Почта не подтверждена', { timeout: 15_000 }).catch(() => undefined);
+  check(
+    'почта не подключена: сказано прямо, кнопки нет',
+    (await p.getByText('Отправка писем на платформе пока не подключена').count()) === 1 &&
+      (await p.getByTestId('email-verify-resend').count()) === 0,
+  );
+  await p.unroute('**/v1/auth/email/verify/status');
+  await p.route('**/v1/auth/email/verify/status', (route) =>
+    route.fulfill({ json: { verified: false, pendingUntil: null, mailAvailable: true } }),
+  );
+  await p.route('**/v1/features', async (route) => {
+    const real = await (await route.fetch()).json();
+    const closed = {
+      allowed: false,
+      reason: 'dependency_failure',
+      observedAt: new Date().toISOString(),
+    };
+    real.groups.mail = { state: 'unavailable', read: closed, write: closed };
+    await route.fulfill({ json: real });
+  });
+  await p.reload({ waitUntil: 'networkidle' });
+  await p
+    .waitForSelector('[data-testid="email-verify-resend"]', { timeout: 15_000 })
+    .catch(() => undefined);
+  check(
+    'группа «Почта» закрыта: предупреждение и кнопка недоступна',
+    (await p.locator('[data-group-notice="mail"]').count()) === 1 &&
+      (await p.getByTestId('email-verify-resend').isDisabled()),
+  );
+  await p.close();
+}
+await page.goto(APP_URL, { waitUntil: 'networkidle' });
 
 console.warn('\n[4] Выход');
 await page.getByRole('button', { name: 'Выйти' }).click();

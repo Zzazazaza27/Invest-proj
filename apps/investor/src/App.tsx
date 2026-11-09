@@ -11,13 +11,42 @@ import {
 } from '@fifth/ui';
 import type { CurrentUser } from '@fifth/contracts';
 import {
+  ProfileLink,
+  ProfilePage,
   SessionCheckFailed,
   TestContextBanner,
   decideAccess,
+  goToLogin,
   hrefFor,
   useSessionCheck,
+  type ProfilePort,
 } from '@fifth/cabinet';
 import { api, setCsrf, testContextId, testContextPort } from './api';
+
+/**
+ * «Мой профиль» — тот же общий экран профиля аккаунта, что у основателя (Тэнк, 09.11:
+ * временное размещение до проработки блока 03, без отдельного инвесторского профиля).
+ * Маршрутизатора в оболочке нет: nginx отдаёт index.html на любой путь под /investor/,
+ * поэтому прямое открытие /investor/profile работает, а ссылка из шапки — обычный переход.
+ */
+const BASE_PATH = import.meta.env.BASE_URL.replace(/\/$/, '');
+const PROFILE_HREF = `${BASE_PATH}/profile`;
+const onProfilePage = () => window.location.pathname.replace(/\/+$/, '') === PROFILE_HREF;
+
+const profilePort: ProfilePort = {
+  features: () => api.features(),
+  load: () => api.profile.me(),
+  updateName: (displayName) => api.profile.updateName(displayName),
+  uploadAvatar: (file) => api.profile.uploadAvatar(file),
+  removeAvatar: () => api.profile.removeAvatar(),
+  changePassword: async (input) => {
+    await api.profile.changePassword(input);
+  },
+  emailVerification: {
+    status: () => api.auth.emailVerificationStatus(),
+    request: (idempotencyKey) => api.auth.requestEmailVerification({ idempotencyKey }),
+  },
+};
 
 /**
  * Кабинет инвестора — пустая оболочка.
@@ -75,18 +104,25 @@ export default function App() {
         icon="chart"
         actions={
           me ? (
-            <Button
-              variant="secondary"
-              onClick={async () => {
-                await api.auth.logout().catch(() => undefined);
-                setCsrf(null);
-                setMe(null);
-                window.location.replace(hrefFor('login', __CABINET_PORTS__));
-              }}
-            >
-              <Icon name="logout" size={16} />
-              Выйти
-            </Button>
+            <>
+              <ProfileLink
+                name={me.displayName}
+                avatar={me.avatarUrl ? { urls: { sm: me.avatarUrl } } : null}
+                href={PROFILE_HREF}
+              />
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  await api.auth.logout().catch(() => undefined);
+                  setCsrf(null);
+                  setMe(null);
+                  window.location.replace(hrefFor('login', __CABINET_PORTS__));
+                }}
+              >
+                <Icon name="logout" size={16} />
+                Выйти
+              </Button>
+            </>
           ) : null
         }
       />
@@ -96,7 +132,28 @@ export default function App() {
           {!checking && failure ? (
             <SessionCheckFailed failure={failure} onRetry={retry} busy={checking} />
           ) : null}
-          {!checking && me ? (
+          {!checking && me && onProfilePage() ? (
+            <ProfilePage
+              port={profilePort}
+              onProfileChanged={(next) =>
+                setMe((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        displayName: next.displayName,
+                        avatarUrl: next.avatar?.urls.sm ?? null,
+                      }
+                    : prev,
+                )
+              }
+              onPasswordChanged={() => {
+                // Сессии закрыты все, включая эту — общий порядок, как у основателя.
+                setCsrf(null);
+                goToLogin(__CABINET_PORTS__);
+              }}
+            />
+          ) : null}
+          {!checking && me && !onProfilePage() ? (
             <EmptyState
               title="Кабинет в разработке"
               description="Возможности для инвесторов сейчас прорабатываются заново. Когда они появятся, они будут здесь."
