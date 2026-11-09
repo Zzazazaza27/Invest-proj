@@ -21,7 +21,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
 import { appendFileSync, readFileSync } from 'node:fs';
 import { ENV_PATH, loadEnv } from './lib/backup.mjs';
-import { LOGS_ITEMS, logsTriggers } from './lib/logs-metrics-zabbix.mjs';
+import { LOGS_ITEMS, logsTriggers, RETIRED_LOGS_TRIGGERS } from './lib/logs-metrics-zabbix.mjs';
 import { zabbixApi } from './lib/zabbix-api.mjs';
 import { peek } from './lib/zabbix-peek.mjs';
 import { s3Object } from './lib/s3.mjs';
@@ -1000,7 +1000,12 @@ async function configure() {
   });
   for (const d of defaults) await api.call('host.update', { hostid: d.hostid, status: 1 });
 
-  const retired = ['Нет данных о живости ядра', 'Нет данных об очередях ядра', 'Нет данных с узла'];
+  const retired = [
+    'Нет данных о живости ядра',
+    'Нет данных об очередях ядра',
+    'Нет данных с узла',
+    ...RETIRED_LOGS_TRIGGERS,
+  ];
   const oldTriggers = await api.call('trigger.get', {
     hostids: hostid,
     filter: { description: retired },

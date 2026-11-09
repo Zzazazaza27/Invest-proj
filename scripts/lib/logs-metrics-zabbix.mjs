@@ -16,6 +16,12 @@ export const STALE_SEC = 300;
 export const SKEW_SEC = 120;
 export const BASELINE_MIN_HOURS = 72;
 const FILL_STATES = ['ok', 'no-inflow', 'no-rate', 'no-limit', 'no-usage'];
+const RISK_STATES = ['clear', 'ok', 'lost', 'unknown'];
+/** Тревоги прежней формулы (заполнение предела) — сняты 09.11.2026: штатная ротация не авария. */
+export const RETIRED_LOGS_TRIGGERS = [
+  'Журналы: journald заполнится меньше чем за 48 ч',
+  'Журналы: запас journald не вычисляется',
+];
 
 const LIB = [
   'function chk(value) {',
@@ -90,8 +96,56 @@ export const LOGS_ITEMS = [
     js: js("return int(hour(s).suppressed, 'lastHour.suppressed');"),
   },
   {
+    key: 'logs.journald.risk_state',
+    name: 'Журналы: риск потери невыгруженного — состояние (clear / ok / lost / unknown)',
+    valueType: 1,
+    js: js(
+      `var r = obj(obj(s.journald, 'journald').risk, 'journald.risk'); if (${JSON.stringify(RISK_STATES)}.indexOf(r.state) < 0) throw 'нет значения: risk.state'; return r.state;`,
+    ),
+  },
+  {
+    key: 'logs.journald.risk_reason',
+    name: 'Журналы: риск потери невыгруженного — причина «неизвестно» (пусто — вычислен)',
+    valueType: 1,
+    js: js(
+      "var r = obj(obj(s.journald, 'journald').risk, 'journald.risk'); if (r.state !== 'unknown') return ''; if (typeof r.reason !== 'string' || !/^[a-z-]{1,32}$/.test(r.reason)) throw 'нет значения: risk.reason'; return r.reason;",
+    ),
+  },
+  {
+    key: 'logs.journald.risk_grace',
+    name: 'Журналы: риск потери — отсрочка первого запуска (1 — идёт)',
+    valueType: 3,
+    js: js(
+      "var r = obj(obj(s.journald, 'journald').risk, 'journald.risk'); if (typeof r.grace !== 'boolean') throw 'нет значения: risk.grace'; return r.grace ? 1 : 0;",
+    ),
+  },
+  {
+    key: 'logs.journald.risk_hours',
+    name: 'Журналы: невыгруженное — оценка запаса при текущем притоке, ч',
+    valueType: 0,
+    js: js(
+      "var r = obj(obj(s.journald, 'journald').risk, 'journald.risk'); if (r.state !== 'ok') throw 'оценки нет: ' + r.state; var h = num(r.hours, 'risk.hours'); if (h < 0) throw 'нет значения: risk.hours'; return h;",
+    ),
+  },
+  {
+    key: 'logs.journald.risk_if_stopped_hours',
+    name: 'Журналы: запас при остановке выгрузки сейчас, ч (справочно)',
+    valueType: 0,
+    js: js(
+      "var r = obj(obj(s.journald, 'journald').risk, 'journald.risk'); if (r.state !== 'ok' && r.state !== 'clear') throw 'оценки нет: ' + r.state; var h = num(r.ifStoppedHours, 'risk.ifStoppedHours'); if (h < 0) throw 'нет значения: risk.ifStoppedHours'; return h;",
+    ),
+  },
+  {
+    key: 'logs.journald.backlog_bytes',
+    name: 'Журналы: невыгруженное — верхняя граница объёма на диске, байт',
+    valueType: 3,
+    js: js(
+      "var r = obj(obj(s.journald, 'journald').risk, 'journald.risk'); if (r.state !== 'ok' && r.state !== 'clear') throw 'оценки нет: ' + r.state; return int(r.backlogBytes, 'risk.backlogBytes');",
+    ),
+  },
+  {
     key: 'logs.journald.fill_state',
-    name: 'Журналы: запас journald — состояние расчёта',
+    name: 'Журналы: до штатной ротации — состояние расчёта (справочно)',
     valueType: 1,
     js: js(
       `var j = obj(s.journald, 'journald'); if (${JSON.stringify(FILL_STATES)}.indexOf(j.fillState) < 0) throw 'нет значения: journald.fillState'; return j.fillState;`,
@@ -99,7 +153,7 @@ export const LOGS_ITEMS = [
   },
   {
     key: 'logs.journald.fill_hours',
-    name: 'Журналы: запас journald до заполнения, ч',
+    name: 'Журналы: до штатной ротации journald при текущем притоке, ч (справочно)',
     valueType: 0,
     js: js(
       "var j = obj(s.journald, 'journald'); if (j.fillState !== 'ok') throw 'запас не вычислен: ' + j.fillState; var h = num(j.fillHours, 'journald.fillHours'); if (h < 0) throw 'нет значения: journald.fillHours'; return h;",
@@ -228,19 +282,26 @@ export function logsTriggers(H, file) {
     ['Журналы: новая учтённая потеря', `change(/${H}/logs.losses.segments)>0`, 3],
     ['Журналы: пропуск архива не закрыт', `${l('logs.archive.gaps')}>0`, 4],
     ['Журналы: journald подавляет записи', `${l('logs.journald.suppressed')}>0`, 2],
+    // Риск потери невыгруженного (решение Тэнка и Томаса 09.11.2026). Время —
+    // оценка при текущем притоке, не гарантия; отставание, всплеск притока и
+    // учтённая потеря — своими тревогами. Без «state=ok» тревога висела бы на
+    // прежнем значении: Zabbix не закрывает её по неподдерживаемой проверке.
     [
-      // Без «запас вычислен» прежняя тревога висела бы, когда значение стало
-      // неизвестным: Zabbix не закрывает тревогу по неподдерживаемой проверке.
-      'Журналы: journald заполнится меньше чем за 48 ч',
-      `${l('logs.journald.fill_hours')}<48 and ${l('logs.journald.fill_state')}="ok"`,
+      'Журналы: невыгруженные записи удалены из journald',
+      `${l('logs.journald.risk_state')}="lost"`,
+      4,
+    ],
+    [
+      'Журналы: при текущем притоке невыгруженное может быть вытеснено меньше чем за 48 ч (оценка)',
+      `${l('logs.journald.risk_hours')}<48 and ${l('logs.journald.risk_state')}="ok"`,
       3,
     ],
     [
-      // Нет лимита или занятости — запас нельзя вычислить; нет измеренной
-      // скорости дольше 90 минут (первый час счёта — норма) — тоже.
-      'Журналы: запас journald не вычисляется',
-      `find(/${H}/logs.journald.fill_state,,"regexp","^no-(usage|limit)$")=1 or count(/${H}/logs.journald.fill_state,90m,"eq","no-rate")>=85`,
-      2,
+      // Неизвестное не считается безопасным; отсрочка — только первые 10
+      // минут после первого расчёта на узле.
+      'Журналы: риск потери невыгруженного не вычисляется',
+      `${l('logs.journald.risk_state')}="unknown" and ${l('logs.journald.risk_grace')}=0`,
+      3,
     ],
     [
       'Журналы: приток за час втрое выше среднего',

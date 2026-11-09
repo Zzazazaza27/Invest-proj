@@ -42,6 +42,7 @@ import {
   readSync,
   readdirSync,
   statSync,
+  statfsSync,
   renameSync,
   rmSync,
   truncateSync,
@@ -70,6 +71,15 @@ import {
   sha256Hex,
 } from './lib/logs-archive.mjs';
 import { docker, ENV_PATH, parseEnvFile, TOOL_IMAGE } from './lib/backup.mjs';
+import {
+  computeRisk,
+  diskRate,
+  parseHeaders,
+  parseJournaldConfig,
+  RISK_GRACE_SEC,
+  RiskUnknown,
+  trackGrowth,
+} from './lib/journal-risk.mjs';
 import { BASELINE_MIN_HOURS } from './lib/logs-metrics-zabbix.mjs';
 import { s3Object } from './lib/s3.mjs';
 
@@ -2244,6 +2254,96 @@ function journalUsage() {
   return Math.round(Number(m[1]) * 1024 ** 'BKMGT'.indexOf(m[2]));
 }
 
+/**
+ * Риск потери невыгруженных записей (scripts/lib/journal-risk.mjs):
+ * заголовки файлов, их размер на диске, настройки journald, свободное место
+ * и подтверждённая граница архива. Свой файл состояния — прирост файлов и
+ * момент первого расчёта (отсрочка «неизвестно» — 10 минут только от него;
+ * восстановление state.json её не возобновляет).
+ */
+const RISK = join(STATE_DIR, 'risk.json');
+// С аргументами, скрывающими часть файлов (--system, --user, -u …), пропуск
+// номеров ничего не доказывает.
+const PARTIAL_JOURNAL = JOURNAL_ARGS.some(
+  (a, i) =>
+    !/^(-D|--directory(=.+)?)$/.test(a) && !/^(-D|--directory)$/.test(JOURNAL_ARGS[i - 1] ?? ''),
+);
+
+function cursorTime(state) {
+  const c = state?.lastCursor;
+  if (!c || cursorParts(c).seqId !== state.seqId) return null;
+  const t = c.match(/(?:^|;)t=([0-9a-f]+)/)?.[1];
+  return t ? Number(BigInt(`0x${t}`)) : null;
+}
+
+async function journalRisk(state) {
+  const nowMs = Date.now();
+  const saved = readJson(RISK);
+  const rs = saved?.format === 'journal-risk/v1' ? saved : { format: 'journal-risk/v1' };
+  rs.since ??= nowMs;
+  let result;
+  try {
+    if (PARTIAL_JOURNAL) throw new RiskUnknown('journal-args');
+    const hdr = spawnSync('journalctl', ['--header', '--no-pager', ...JOURNAL_ARGS], {
+      encoding: 'utf8',
+      maxBuffer: 64 * 1024 * 1024,
+    });
+    if (hdr.status !== 0) throw new RiskUnknown('header-unreadable');
+    const files = parseHeaders(hdr.stdout).map((f) => {
+      let st;
+      try {
+        st = statSync(f.path);
+      } catch {
+        throw new RiskUnknown('files-changed');
+      }
+      // Как считает journald: занятые блоки, а не длина файла.
+      return { ...f, size: st.blocks * 512, ino: `${st.dev}:${st.ino}` };
+    });
+    rs.track = trackGrowth(rs.track, files, nowMs);
+    const { rate, source } = diskRate(rs.track, files, nowMs);
+    const fsst = statfsSync(dirname(files[0].path));
+    const cfg = spawnSync('systemd-analyze', ['cat-config', 'systemd/journald.conf'], {
+      encoding: 'utf8',
+    });
+    if (cfg.status !== 0) throw new RiskUnknown('config');
+    const config = parseJournaldConfig(cfg.stdout, fsst.blocks * fsst.bsize);
+    const t = await tailCursor();
+    const cursor =
+      state?.seqId && state.lastSeq !== null && state.lastSeq !== undefined
+        ? { seqId: state.seqId, seq: BigInt(state.lastSeq), realtime: cursorTime(state) }
+        : null;
+    result = computeRisk({
+      files,
+      cursor,
+      tail: t && { seqId: t.seqId, seq: t.seq },
+      config,
+      fsAvail: fsst.bavail * fsst.bsize,
+      rate,
+      nowMs,
+    });
+    Object.assign(result, {
+      rateBytesHour: rate,
+      rateSource: source,
+      fileMaxBytes: config.fileMax,
+      maxFiles: config.maxFiles,
+    });
+  } catch (error) {
+    result = { state: 'unknown', reason: error instanceof RiskUnknown ? error.reason : 'error' };
+  }
+  result.grace = result.state === 'unknown' && nowMs - rs.since < RISK_GRACE_SEC * 1000;
+  try {
+    writeJsonAtomic(RISK, rs);
+  } catch {
+    /* не записалось — следующий проход начнёт замер прироста заново */
+  }
+  return result;
+}
+
+/** Риск по текущему состоянию — для проверки на месте (только чтение журнала). */
+async function risk() {
+  console.log(JSON.stringify(await journalRisk(loadState())));
+}
+
 /** Записи journald за подтверждённым курсором: очередь и её возраст. */
 async function queueAfter(pos) {
   if (!pos) return null;
@@ -2369,10 +2469,12 @@ async function writeMetrics(state, failure) {
     journald: {
       usageBytes: usage,
       limitBytes: limit,
-      // Запас до вытеснения неархивированного: при остановке архива это
-      // время, за которое journald заполнится текущим притоком.
+      // Справочно: время до штатной ротации (заполнения предела) при текущем
+      // притоке. Ротация удаляет выгруженное — это не авария; риск потери
+      // невыгруженного — в risk.
       fillState,
       fillHours: fillState === 'ok' ? Math.round(((limit - usage) / rate) * 10) / 10 : null,
+      risk: await journalRisk(state),
     },
     snapshot: snaps?.lastAt
       ? {
@@ -3156,6 +3258,7 @@ const commands = {
   'legacy-gap': legacyGap,
   'secrets-draft': secretsDraft,
   find,
+  risk,
 };
 const command = process.argv[2];
 if (!commands[command]) {

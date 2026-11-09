@@ -3385,6 +3385,48 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: UNIT-JOURNAL-RISK
+    file: apps/core/tests/journal-risk.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 28
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['только память']
+    note: >-
+      Блок 8, 8.4; решение Тэнка и Томаса 09.11 (риск потери невыгруженного вместо
+      «journald заполнится < 48 ч»). Чувствительность: объём без файла первой невыгруженной
+      записи и без проверки пропусков после границы — по FAIL.
+    purpose: 'scripts/lib/journal-risk.mjs: всё выгружено — clear (не unknown), запас при остановке справочно; невыгруженное — ok, объём по целым файлам в порядке удаления journald, первая невыгруженная в середине файла — файл целиком; много мелких выгруженных и крупные невыгруженные — запас не завышается (меньше оценки по доле записей); предел — меньшее из SystemMaxUse и места с SystemKeepFree; предел числа файлов и срок хранения ограничивают запас; C удалён ротацией, C+1 на месте — не потеря; после C нет записей — lost с номерами; потеря внутри отрезка не скрыта наличием C; переход нумерации: прежняя закрыта и дочитана, новая с 1 или продолжает счёт — норма; файл прежней может пополниться — transition-open; прежней нет или новая начинается не там — transition-unproven; нет границы, конца, притока, настроек — unknown; разбор заголовков systemd 255 и неоднозначные заголовки — unknown; настройки journald и умолчания; прирост по inode без двойного счёта при ротации; проверки и тревоги Zabbix (оценка только при ok, отсрочка, прежней тревоги нет).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
+  - id: CHK-JOURNAL-RISK
+    file: scripts/check-journal-risk.mjs
+    command: node scripts/check-journal-risk.mjs
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 10
+    needs: [docker]
+    effects:
+      [
+        'контейнер с systemd из infra/testbed/journald.Dockerfile (systemd 252), без сети стенда и без S3; удаляется',
+        'около 1 минуты',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Блок 8, 8.4. Граница архива подставляется в state.json, расчёт — командой
+      архиватора risk. Ротация и удаление — journalctl --rotate и --vacuum-size; переход
+      нумерации — аварийная остановка journald.
+    purpose: 'Риск потери невыгруженного на настоящем journald: заголовки читаются, занятость равна блокам на диске; приток не измерен — unknown с отсрочкой, через 10 минут без неё, повторная ошибка отсрочку не возобновляет; всё выгружено — clear; невыгруженное — ok, объём не меньше активного файла; ротация удалила C, C+1 сохранён — ok; после C удалены записи — lost с номерами пропуска; аварийная остановка journald — новая нумерация с 1, прежняя закрыта и дочитана — ok; файлов прежней нумерации нет — unknown transition-unproven.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-CORE-SAFE-LOG
     file: apps/core/tests/safe-log.test.ts
     command: npm run test -w apps/core
@@ -5182,6 +5224,8 @@ blocks:
         CHK-MONITOR-APP-PROBE,
         CHK-MONITORING-ACCOUNT,
         CHK-LOGS-ARCHIVE,
+        UNIT-JOURNAL-RISK,
+        CHK-JOURNAL-RISK,
         CHK-LOGS-APPLY,
         CHK-MONITOR-PULSE,
         CHK-MONITOR-PROBE-DISABLE,
