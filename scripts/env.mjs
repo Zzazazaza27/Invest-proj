@@ -33,10 +33,13 @@ import { fileURLToPath } from 'node:url';
 import { garageApi } from './lib/garage-admin.mjs';
 import { s3Object } from './lib/s3.mjs';
 import { parseEnvFile } from './lib/backup.mjs';
+import { envLayout, envSlotOps, extractStatic, prepareSlots } from './lib/env-slots.mjs';
+import { factualState, switchSlots } from './lib/slot-switch.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
 const PRODUCTION_OVERLAY = join(ROOT, 'infra', 'docker-compose.env-production.yml');
+const SLOTS_OVERLAY = join(ROOT, 'infra', 'docker-compose.env-slots.yml');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
 const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
 // Пределы пилотной среды: бюджет узла считается по ним, а не по текущему расходу.
@@ -144,8 +147,13 @@ function composeEnv() {
  */
 function overlays(id) {
   const file = join(names(id).dir, 'compose.env');
-  if (!existsSync(file) || !/^FIFTH_AGENT_DIR=/m.test(readFileSync(file, 'utf8'))) return [];
-  return ['-f', PRODUCTION_OVERLAY];
+  if (!existsSync(file)) return [];
+  const text = readFileSync(file, 'utf8');
+  return [
+    ...(/^FIFTH_AGENT_DIR=/m.test(text) ? ['-f', PRODUCTION_OVERLAY] : []),
+    // Слоты ядра (блок 09, задание 3): включает `slots-enable`.
+    ...(/^FIFTH_SLOTS=1$/m.test(text) ? ['-f', SLOTS_OVERLAY] : []),
+  ];
 }
 
 function compose(id, args, { allowFail = false, timeout = 300_000 } = {}) {
@@ -630,7 +638,7 @@ async function destroy(id) {
   if (flag('--confirm') !== id) throw new Refused(`удаление данных: нужен --confirm ${id}`);
   guardPilot(id, loadInstall(id));
   const n = names(id);
-  compose(id, ['--profile', 'tools', 'down', '-v', '--remove-orphans']);
+  compose(id, ['--profile', 'tools', '--profile', 'slot-b', 'down', '-v', '--remove-orphans']);
   const keys = JSON.parse(readFileSync(join(n.dir, 'storage.json'), 'utf8'));
   await removeBucket(n.bucket, keys.app);
   await removeBucket(n.archive, keys.archive);
@@ -650,7 +658,131 @@ function images(id) {
   finish({ ok: true, env: id, images: list, message: list.join(' ') }, 0);
 }
 
-const COMMANDS = { create, status, stop, start, seed, update, destroy, images };
+/** Строка KEY=VALUE в compose.env среды: заменить или добавить. */
+function setComposeEnv(id, key, value) {
+  const file = join(names(id).dir, 'compose.env');
+  const text = readFileSync(file, 'utf8');
+  const re = new RegExp(`^${key}=.*$`, 'm');
+  writeFileSync(
+    file,
+    re.test(text)
+      ? text.replace(re, `${key}=${value}`)
+      : `${text.replace(/\n?$/, '\n')}${key}=${value}\n`,
+  );
+}
+
+const slotEnv = (id) => ({
+  dir: names(id).dir,
+  project: names(id).project,
+  webPort: loadInstall(id).webPort,
+  compose: (args, opts) => compose(id, args, opts),
+  setComposeEnv: (key, value) => setComposeEnv(id, key, value),
+});
+
+/**
+ * Перевод среды на слоты ядра (блок 09, задание 3) — разовый, с коротким перерывом: ядро
+ * и web пересоздаются с файлами маршрута и разрешения. Пилотную среду — только с
+ * --pilot-confirm.
+ */
+async function slotsEnable(id) {
+  const install = loadInstall(id);
+  guardPilot(id, install);
+  if (install.slots) throw new Refused(`среда ${id} уже на слотах`);
+  const label = install.kit?.label;
+  if (!label) throw new Refused('у среды нет сборки');
+  prepareSlots(names(id).dir, label, envLayout(names(id).project));
+  setComposeEnv(id, 'FIFTH_SLOTS', '1');
+  setComposeEnv(id, 'FIFTH_CORE_A_IMAGE', `fifth/core:${label}`);
+  setComposeEnv(id, 'FIFTH_CORE_A_BUILD', label);
+  compose(id, ['up', '-d', '--force-recreate', 'core', 'web']);
+  const state = await waitReady(id);
+  install.slots = { active: 'core-a', build: label, since: new Date().toISOString() };
+  saveInstall(id, install);
+  const ok = Boolean(state?.ready);
+  finish(
+    {
+      ok,
+      env: id,
+      slots: install.slots,
+      message: `среда ${id}: слоты ${ok ? 'включены' : 'включены, ядро не готово'}`,
+    },
+    ok ? 0 : 1,
+  );
+}
+
+/**
+ * Выпуск через переключение слотов (блок 09, задание 3): расширение схемы, кандидат в
+ * свободном слоте, пауза фона старого, маршрут, подтверждение запросом, фон кандидату,
+ * наблюдение, завершение старого. Возврат в наблюдении — только с --auto-rollback.
+ */
+async function slotsUpdate(id) {
+  const kit = flag('--kit');
+  if (!kit) throw new Refused('нужен --kit <метка>');
+  const install = loadInstall(id);
+  guardPilot(id, install);
+  if (!install.slots) throw new Refused(`среда ${id} не на слотах: сначала slots-enable`);
+  const from = install.slots.active;
+  const to = from === 'core-a' ? 'core-b' : 'core-a';
+  const prev = install.slots.build;
+  const op = `slots-${Date.now()}`;
+  extractStatic(names(id).dir, kit);
+  // Расширение схемы — до кандидата (9.2): прежний код совместим с ним (задание 2).
+  setComposeEnv(id, 'FIFTH_CORE_IMAGE', `fifth/core:${kit}`);
+  compose(id, ['run', '--rm', 'migrate']);
+  const observeMs = Number(flag('--observe-ms') ?? 600_000);
+  const result = await switchSlots(envSlotOps(slotEnv(id), op), {
+    from,
+    to,
+    build: kit,
+    prevBuild: prev,
+    autoRollback: process.argv.includes('--auto-rollback'),
+    limits: {
+      observeMs,
+      drainWaitMs: Number(flag('--drain-ms') ?? 300_000),
+      confirmSamples: 5,
+    },
+  });
+  if (result.active !== 'unknown') {
+    install.slots = {
+      active: result.active,
+      build: result.active === to ? kit : prev,
+      since: new Date().toISOString(),
+    };
+    install.kit = { ...install.kit, label: install.slots.build };
+    install.schema = schemaVersion(id);
+    saveInstall(id, install);
+  }
+  finish(
+    {
+      ...result,
+      env: id,
+      op,
+      message: `среда ${id}: ${result.ok ? 'переключена' : `отказ на шаге ${result.stage}`} — ${result.detail}`,
+    },
+    result.ok ? 0 : 1,
+  );
+}
+
+/** Фактическое состояние слотов после обрыва: маршрут, разрешение, ответ через nginx, фон. */
+async function slotsState(id) {
+  loadInstall(id);
+  const state = await factualState(envSlotOps(slotEnv(id), 'state'));
+  finish({ ok: state.consistent, env: id, ...state }, state.consistent ? 0 : 1);
+}
+
+const COMMANDS = {
+  create,
+  status,
+  stop,
+  start,
+  seed,
+  update,
+  destroy,
+  images,
+  'slots-enable': slotsEnable,
+  'slots-update': slotsUpdate,
+  'slots-state': slotsState,
+};
 
 try {
   const [command, id] = argv;

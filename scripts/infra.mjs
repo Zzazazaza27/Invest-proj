@@ -34,6 +34,7 @@ const JOURNALD_PATH = join(ROOT, 'infra', 'docker-compose.journald.yml');
 const PROD_PATH = join(ROOT, 'infra', 'docker-compose.prod.yml');
 const SECRETS_PATH = join(ROOT, 'infra', 'docker-compose.secrets.yml');
 const TLS_PATH = join(ROOT, 'infra', 'docker-compose.tls.yml');
+const SLOTS_PATH = join(ROOT, 'infra', 'docker-compose.slots.yml');
 // Файлы запуска рабочей среды из установленного комплекта (W09e): рабочая копия не участвует.
 const ACTIVE_DIR =
   process.env.FIFTH_PROD_COMPOSE_DIR || join(ROOT, '.local', 'envs', 'prod', 'compose');
@@ -130,6 +131,17 @@ if (existsSync(ENV_PATH) && /^FIFTH_SECRETS_DIR=./m.test(readFileSync(ENV_PATH, 
 // TLS внутренних служб рабочей среды: файл из репозитория, как и каталог секретов.
 if (existsSync(ENV_PATH) && /^FIFTH_TLS_DIR=./m.test(readFileSync(ENV_PATH, 'utf8'))) {
   args.push('-f', TLS_PATH);
+}
+
+// Слоты ядра (блок 09, задание 3): только рабочая среда из комплекта и только вместе с
+// секретами в файлах — второму слоту нужны те же ключи, что первому.
+if (existsSync(ENV_PATH) && /^FIFTH_SLOTS=1$/m.test(readFileSync(ENV_PATH, 'utf8'))) {
+  const text = readFileSync(ENV_PATH, 'utf8');
+  if (!/^FIFTH_CORE_IMAGE=./m.test(text) || !/^FIFTH_SECRETS_DIR=./m.test(text)) {
+    console.error('infra: FIFTH_SLOTS=1 требует FIFTH_CORE_IMAGE и FIFTH_SECRETS_DIR');
+    process.exit(2);
+  }
+  args.push('-f', SLOTS_PATH);
 }
 
 // Файлы, которые Compose возьмёт на самом деле, с хешами: их закрепляет установщик.

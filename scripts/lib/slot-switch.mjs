@@ -27,6 +27,8 @@
 const DEFAULTS = {
   readyWaitMs: 120_000,
   confirmSamples: 5,
+  confirmWaitMs: 15_000,
+  confirmIntervalMs: 200,
   observeMs: 600_000,
   drainWaitMs: 300_000,
   pollMs: 2_000,
@@ -75,12 +77,21 @@ export async function switchSlots(ops, plan) {
     return { ok: false, stage, detail: why, active: from };
   };
 
+  // Подтверждение: N ответов подряд от ожидаемого слота и сборки по НОВЫМ соединениям
+  // (viaNginx не переиспользует соединение). Сразу после мягкой перезагрузки старые
+  // обработчики nginx ещё дорабатывают — ждём до предела, а не судим по первому ответу.
+  // Испытание 09.11: запрос по прежнему keep-alive видел старое ядро, и переключение
+  // ошибочно считалось неподтверждённым.
   const confirmed = async (slot, expectBuild) => {
-    for (let i = 0; i < o.confirmSamples; i += 1) {
-      const r = await ops.viaNginx();
-      if (r.slot !== slot || r.build !== expectBuild) return false;
+    let streak = 0;
+    const end = ops.now() + o.confirmWaitMs;
+    while (ops.now() <= end) {
+      const r = await ops.viaNginx().catch(() => ({}));
+      streak = r.slot === slot && r.build === expectBuild ? streak + 1 : 0;
+      if (streak >= o.confirmSamples) return true;
+      await ops.sleep(o.confirmIntervalMs);
     }
-    return true;
+    return false;
   };
 
   // 1. Кандидат.

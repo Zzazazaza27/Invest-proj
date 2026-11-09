@@ -3814,6 +3814,29 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: CHK-SLOTS-ENV
+    file: scripts/check-slots-env.mjs
+    command: node scripts/check-slots-env.mjs
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 25
+    needs: [docker, s3]
+    effects:
+      [
+        'образы fifth/{core,web,postgres}:slot1…slot4 из снимка кода; временная среда test-78, удаляется прогоном (--keep — оставить)',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Два ядра на настоящей временной среде: перевод на слоты, выпуск под потоком запросов с живой
+      сессией, перезапуск неактивного слота, перезапуск обоих в наблюдении, отказ reload после
+      паузы, перезапуск старого после паузы и кандидата после записи маршрута, фактическое
+      состояние. Раскладку рабочей среды (сеть узла, свои порты) не испытывает.
+    purpose: 'Блок 9, задание 3: переключение слотов на Docker и nginx (уточнения Тэнка 09.11).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: CHK-SLOT-SWITCH
     file: scripts/check-slot-switch.mjs
     command: node scripts/check-slot-switch.mjs
@@ -5501,6 +5524,7 @@ blocks:
         CHK-MIGRATION-COMPAT,
         CHK-ROLLBACK-POLICY,
         CHK-SLOT-SWITCH,
+        CHK-SLOTS-ENV,
         CHK-ENV-ISOLATION,
         CHK-ENV-IMAGES,
         CHK-INSTALLER,

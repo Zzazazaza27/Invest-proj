@@ -31,7 +31,10 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildOrder } from './kit.mjs';
-import { activeCore } from './lib/core-slot.mjs';
+import { activeCore, routeJsonPath } from './lib/core-slot.mjs';
+import { extractStatic, prepareSlots, prodLayout, slotOps } from './lib/env-slots.mjs';
+import { switchSlots } from './lib/slot-switch.mjs';
+import { formatProtocol } from './lib/release-report.mjs';
 import { rollbackVerdict } from './lib/rollback-policy.mjs';
 import { parseEnvFile } from './lib/backup.mjs';
 import { activateProdFiles, prodFileProblems } from './lib/prod-compose.mjs';
@@ -101,6 +104,111 @@ function prodCompose(args) {
 }
 
 /** Перевод рабочей среды на комплект: миграции одним шагом, затем ядро и статика. */
+/** Строка KEY=VALUE в .env рабочей среды: заменить или добавить. */
+function setProdEnv(key, value) {
+  const file = join(HOME, '.env');
+  const text = readFileSync(file, 'utf8');
+  const re = new RegExp(`^${key}=.*$`, 'm');
+  writeFileSync(
+    file,
+    re.test(text)
+      ? text.replace(re, `${key}=${value}`)
+      : `${text.replace(/\n?$/, '\n')}${key}=${value}\n`,
+  );
+}
+
+const prodSlots = () => /^FIFTH_SLOTS=1$/m.test(readFileSync(join(HOME, '.env'), 'utf8'));
+
+/**
+ * Выпуск рабочей среды переключением слотов ядра (блок 09, задание 3). Web не
+ * пересоздаётся: статика сборки выкладывается в каталог, переключение — файлом маршрута.
+ * Изменилась конфигурация nginx в образе web — это отдельный переходный шаг, здесь только
+ * запись в журнал. Расширение схемы — до кандидата, его образом (9.2, задание 2).
+ */
+async function prodSlotsUpdate(build, kit, op, imagesOnly = false) {
+  activateProdFiles(join(KITS, build), kit, join(dirOf(PROD), 'compose'));
+  const dir = join(HOME, '.local');
+  const route = activeCore(HOME);
+  if (!route.slot)
+    throw new Error('FIFTH_SLOTS=1, но файла маршрута нет — переходный выпуск не выполнен');
+  const from = route.slot;
+  const to = from === 'core-a' ? 'core-b' : 'core-a';
+  const prev = JSON.parse(readFileSync(routeJsonPath(HOME), 'utf8')).build;
+  const layout = prodLayout(prodEnv('CORE_HOST'));
+  const setImage = (slot, label) => {
+    const key = slot === 'core-b' ? 'B' : 'A';
+    setProdEnv(`FIFTH_CORE_${key}_IMAGE`, `fifth/core:${label}`);
+    setProdEnv(`FIFTH_CORE_${key}_BUILD`, label);
+  };
+  extractStatic(dir, build);
+  const webConf = (image) =>
+    spawnSync(
+      'docker',
+      ['run', '--rm', '--entrypoint', 'cat', image, '/etc/nginx/templates/default.conf.template'],
+      {
+        encoding: 'utf8',
+        env: dockerEnv,
+      },
+    ).stdout;
+  if (webConf(`fifth/web:${build}`) !== webConf(`fifth/web:${prev}`)) {
+    record(
+      PROD,
+      op,
+      'web',
+      'differs',
+      'конфигурация nginx в новой сборке изменилась — пересоздание web отдельным шагом',
+    );
+  }
+  setImage(to, build);
+  // «Только образы» — без миграций и ролей; переключение то же.
+  if (!imagesOnly)
+    prodCompose([
+      '--profile',
+      'slot-b',
+      'run',
+      '--rm',
+      '--no-deps',
+      '-w',
+      '/app/database',
+      layout.service(to),
+      'sh',
+      '-c',
+      'node --experimental-strip-types src/migrate.ts && node --experimental-strip-types src/bootstrap-roles.ts',
+    ]);
+  const result = await switchSlots(
+    slotOps(
+      {
+        dir,
+        layout,
+        webPort: Number(prodEnv('WEB_PORT') || 80),
+        compose: (args, opts = {}) => {
+          try {
+            prodCompose(args);
+          } catch (e) {
+            if (!opts.allowFail) throw e;
+          }
+        },
+        setImage,
+      },
+      op,
+    ),
+    {
+      from,
+      to,
+      build,
+      prevBuild: prev,
+      autoRollback: argv.includes('--auto-rollback'),
+      limits: { observeMs: Number(flag('--observe-ms') ?? 600_000) },
+    },
+  );
+  if (result.active === to) setProdEnv('FIFTH_CORE_IMAGE', `fifth/core:${build}`);
+  return {
+    code: result.ok ? 0 : 1,
+    out: `${result.stage}: ${result.detail}`.trim(),
+    slots: result,
+  };
+}
+
 function prodUpdate(build, kit, imagesOnly) {
   activateProdFiles(join(KITS, build), kit, join(dirOf(PROD), 'compose'));
   // База перезапускается только при новом образе, а не при смене метки.
@@ -549,7 +657,10 @@ async function install(id) {
     if (process.env.FIFTH_TEST_CRASH === 'during-update') process.exit(96);
     const up =
       id === PROD
-        ? prodUpdate(build, loaded, imagesOnly)
+        ? // Слоты (блок 09, задание 3): переключение без остановки; иначе — прежний выпуск.
+          prodSlots()
+          ? await prodSlotsUpdate(build, loaded, op, imagesOnly)
+          : prodUpdate(build, loaded, imagesOnly)
         : envTool('update', id, '--kit', build, ...(imagesOnly ? ['--images-only'] : []));
     if (up.code !== 0) throw new Error(`установка: ${up.out.slice(0, 200)}`);
     record(id, op, 'update', 'ok');
@@ -744,7 +855,179 @@ function state(id) {
   finish({ ok: true, build: currentBuild(id), running: running !== '0', migrations }, 0);
 }
 
-const COMMANDS = { install, verify, replay, recover, state, close };
+/**
+ * Переходный выпуск рабочей среды на слоты ядра (блок 09, задание 3) — разовый, с коротким
+ * перерывом и своим возвратом (`slots-disable`). Запускает Томас по действующему порядку.
+ * Ядро пересоздаётся раньше web: оно освобождает служебный 4400 (уходит на 4401), затем web
+ * занимает 4400 как постоянный служебный адрес. Не подтвердилось — возврат сам.
+ */
+async function slotsEnable(id) {
+  if (id !== PROD)
+    throw new Refused(
+      'переходный выпуск слотов — только рабочая среда; тестовые — env.mjs slots-enable',
+    );
+  if (!flag('--actor') || !flag('--approved-by'))
+    throw new Refused('нужны --actor и --approved-by');
+  if (prodSlots()) throw new Refused('рабочая среда уже на слотах');
+  if (!prodEnv('FIFTH_SECRETS_DIR'))
+    throw new Refused('слоты требуют секретов в файлах (FIFTH_SECRETS_DIR)');
+  const build = currentBuild(id);
+  if (!build) throw new Refused('текущая сборка среды неизвестна');
+  const layout = prodLayout(prodEnv('CORE_HOST'));
+  const op = `slots-enable-${Date.now()}`;
+  record(
+    id,
+    op,
+    'slots-enable',
+    'start',
+    `сборка ${build}, ${flag('--actor')}, разрешил ${flag('--approved-by')}`,
+  );
+  prepareSlots(join(HOME, '.local'), build, layout);
+  setProdEnv('FIFTH_SLOTS', '1');
+  setProdEnv('FIFTH_CORE_A_IMAGE', `fifth/core:${build}`);
+  setProdEnv('FIFTH_CORE_A_BUILD', build);
+  try {
+    prodCompose(['up', '-d', '--force-recreate', '--no-deps', 'core']);
+    prodCompose(['up', '-d', '--force-recreate', '--no-deps', 'web']);
+    const until = Date.now() + 120_000;
+    let via = null;
+    while (Date.now() < until) {
+      via = spawnSync(
+        'curl',
+        [
+          '-s',
+          '-o',
+          '/dev/null',
+          '-D',
+          '-',
+          `http://127.0.0.1:${prodEnv('WEB_PORT') || 80}/v1/features`,
+        ],
+        { encoding: 'utf8' },
+      ).stdout;
+      if (
+        readiness(PROD).ready &&
+        /x-fifth-slot: core-a/i.test(via) &&
+        new RegExp(`x-fifth-build: ${build}`, 'i').test(via)
+      ) {
+        record(id, op, 'slots-enable', 'ok', 'через nginx — core-a');
+        finish({ ok: true, env: id, op, slot: 'core-a', build }, 0);
+      }
+      spawnSync(process.execPath, ['-e', 'setTimeout(()=>{},2000)']);
+    }
+    throw new Error('через nginx не подтверждён core-a');
+  } catch (e) {
+    record(id, op, 'slots-enable', 'fail', e.message);
+    disableSlots(id, op);
+    finish({ ok: false, env: id, op, error: `${e.message}; возвращено без слотов` }, 1);
+  }
+}
+
+/** Возврат с режима слотов: прежняя раскладка одного ядра, каталог выпуска остаётся для разбора. */
+function disableSlots(id, op) {
+  const file = join(HOME, '.env');
+  writeFileSync(file, readFileSync(file, 'utf8').replace(/^FIFTH_SLOTS=1\n?/m, ''));
+  try {
+    prodCompose(['--profile', 'slot-b', 'stop', 'core-b']);
+  } catch {
+    /* второго слота могло не быть */
+  }
+  prodCompose(['up', '-d', '--force-recreate', '--no-deps', 'web']);
+  prodCompose(['up', '-d', '--force-recreate', '--no-deps', 'core']);
+  record(id, op, 'slots-disable', 'done');
+}
+
+function slotsDisable(id) {
+  if (id !== PROD) throw new Refused('только рабочая среда');
+  if (!flag('--actor') || !flag('--approved-by'))
+    throw new Refused('нужны --actor и --approved-by');
+  const op = `slots-disable-${Date.now()}`;
+  disableSlots(id, op);
+  finish({ ok: true, env: id, op, message: 'рабочая среда — одно ядро, без слотов' }, 0);
+}
+
+/**
+ * Протокол выпуска (блок 09, задание 4): `release.mjs report <среда> [--op <id>] [--text]`.
+ * Без --op — последняя операция среды. Источник — реестр и журналы; секретов нет.
+ */
+function report(id) {
+  const op = flag('--op');
+  const where = op ? `id = ${q(op)}` : `env = ${q(id)} ORDER BY started_at DESC LIMIT 1`;
+  const row = psql(id, `SELECT row_to_json(i) FROM ops.installations i WHERE ${where};`);
+  if (!row) throw new Refused(op ? `операции ${op} нет` : 'выпусков ещё не было');
+  const installation = JSON.parse(row);
+  const events = JSON.parse(
+    psql(
+      id,
+      `SELECT coalesce(json_agg(e ORDER BY e.at), '[]') FROM (SELECT at, stage, result, detail FROM ops.installation_events WHERE installation_id = ${q(installation.id)}) e;`,
+    ) || '[]',
+  );
+  const slotJournal =
+    id === PROD
+      ? join(HOME, '.local', 'release', 'journal.jsonl')
+      : join(dirOf(id), 'release', 'journal.jsonl');
+  const slotEvents = existsSync(slotJournal)
+    ? readFileSync(slotJournal, 'utf8')
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((l) => JSON.parse(l))
+        .filter((e) => e.op === installation.id)
+    : [];
+  let migrations;
+  let point = null;
+  try {
+    const after = readKit(installation.build);
+    migrations = installation.expected_build
+      ? newMigrations(after, readKit(installation.expected_build)).map((m) => ({
+          id: m.id,
+          contract: m.contract,
+        }))
+      : [];
+    if (installation.expected_build && installation.kind === 'install') {
+      point = rollbackPoint(installation.build, installation.expected_build);
+    }
+  } catch {
+    migrations = [
+      { id: 'комплекты не найдены на узле — миграции не перечислены', contract: false },
+    ];
+  }
+  let route;
+  try {
+    route =
+      id === PROD
+        ? activeCore(HOME)
+        : JSON.parse(readFileSync(join(dirOf(id), 'release', 'core-route.json'), 'utf8'));
+    route = route?.slot ? { slot: route.slot, build: route.build ?? installation.build } : null;
+  } catch {
+    route = null;
+  }
+  const text = formatProtocol({
+    installation,
+    events,
+    slotEvents,
+    migrations,
+    rollbackPoint: point,
+    route,
+    incident: null,
+  });
+  if (argv.includes('--text')) {
+    console.log(text);
+    process.exit(0);
+  }
+  finish({ ok: true, env: id, op: installation.id, protocol: text }, 0);
+}
+
+const COMMANDS = {
+  report,
+  install,
+  verify,
+  replay,
+  recover,
+  state,
+  close,
+  'slots-enable': slotsEnable,
+  'slots-disable': slotsDisable,
+};
 
 try {
   const [command, id] = argv;

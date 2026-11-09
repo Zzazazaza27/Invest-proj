@@ -1,0 +1,441 @@
+#!/usr/bin/env node
+/**
+ * Два ядра на настоящей временной среде (блок 09, задание 3; уточнения Тэнка 09.11).
+ *
+ *   node scripts/check-slots-env.mjs [--keep]
+ *
+ * Образы из чистого снимка кода (git archive — как CI), метки slot1…slot4 — одни образы,
+ * сборка различается FIFTH_BUILD слота. Среда test-78 создаётся и удаляется прогоном.
+ *
+ *  [1] перевод на слоты; через nginx — slot1/core-a;
+ *  [2] выпуск slot2 под потоком запросов с живой сессией: нет неуспешных ответов, сессия
+ *      жива, через nginx — slot2/core-b, фон только у core-b, старый остановлен;
+ *  [3] перезапуск неактивного слота — фон не стартует;
+ *  [4] перезапуск обоих слотов в окне наблюдения — фон только у активного;
+ *  [5] отказ перезагрузки nginx после паузы старого фона — прежняя работа восстановлена;
+ *  [6] перезапуск старого слота сразу после паузы — пауза сохраняется;
+ *  [7] перезапуск кандидата после записи маршрута, до подтверждения — фон не стартует;
+ *  [8] фактическое состояние согласовано.
+ */
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { createHash, randomBytes } from 'node:crypto';
+import { s3Object } from './lib/s3.mjs';
+
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const ENV = 'test-78';
+const PORT = 18178;
+const BASE = `http://127.0.0.1:${PORT}`;
+const dockerEnv = { ...process.env, MSYS_NO_PATHCONV: '1' };
+const JOURNAL = join(ROOT, '.local', 'envs', ENV, 'release', 'journal.jsonl');
+
+let passed = 0;
+let failed = 0;
+const check = (name, ok, detail = '') => {
+  if (ok) passed += 1;
+  else failed += 1;
+  console.warn(
+    `  ${ok ? 'OK  ' : 'FAIL'}  ${name}${detail ? ` — ${String(detail).slice(0, 200)}` : ''}`,
+  );
+};
+const run = (cmd, args, opts = {}) =>
+  spawnSync(cmd, args, {
+    encoding: 'utf8',
+    env: { ...dockerEnv, ...opts.env },
+    timeout: opts.timeout ?? 1_800_000,
+    cwd: opts.cwd ?? ROOT,
+  });
+const envTool = (args, extra = {}) => {
+  const r = run(process.execPath, [join(ROOT, 'scripts', 'env.mjs'), ...args], { env: extra });
+  let json = null;
+  try {
+    json = JSON.parse(r.stdout.trim().split('\n').pop());
+  } catch {
+    /* проверка покажет */
+  }
+  return { code: r.status, json, out: `${r.stdout}${r.stderr}`.trim() };
+};
+const envToolAsync = (args, extra = {}) =>
+  new Promise((resolveRun) => {
+    const child = spawn(process.execPath, [join(ROOT, 'scripts', 'env.mjs'), ...args], {
+      env: { ...dockerEnv, ...extra },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let out = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (out += d));
+    child.on('close', (code) => {
+      let json = null;
+      try {
+        json = JSON.parse(
+          out
+            .trim()
+            .split('\n')
+            .filter((l) => l.startsWith('{'))
+            .pop(),
+        );
+      } catch {
+        /* проверка покажет */
+      }
+      resolveRun({ code, json, out: out.trim() });
+    });
+  });
+/**
+ * Контрольный объект среды (M153) — как `monitoring.mjs control-init` на prod: файл в бакете
+ * среды и запись с размером и SHA-256. Без него контрольная операция кандидата — 503.
+ */
+async function controlInit() {
+  const keys = JSON.parse(readFileSync(join(ROOT, '.local', 'envs', ENV, 'storage.json'), 'utf8'));
+  const body = Buffer.concat([Buffer.from('5E control object v1\n'), randomBytes(4096)]);
+  const sha256 = createHash('sha256').update(body).digest('hex');
+  const put = await s3Object(
+    {
+      endpoint: 'http://127.0.0.1:9000',
+      bucket: `fifth-${ENV}`,
+      region: readFileSync(join(ROOT, '.local', 'envs', ENV, 'settings.env'), 'utf8')
+        .match(/^S3_REGION=(.*)$/m)[1]
+        .trim(),
+      accessKey: keys.app.accessKeyId,
+      secretKey: keys.app.secretAccessKey,
+    },
+    'PUT',
+    'control/probe-v1',
+    body,
+    { 'content-type': 'application/octet-stream' },
+  );
+  if (put.status !== 200) throw new Error(`контрольный объект: HTTP ${put.status}`);
+  const sql = `INSERT INTO audit.control_objects (name, s3_key, size_bytes, sha256) VALUES ('probe', 'control/probe-v1', ${body.length}, '${sha256}') ON CONFLICT DO NOTHING`;
+  const r = run('docker', [
+    'exec',
+    `fifth-${ENV}-postgres`,
+    'sh',
+    '-c',
+    `PGPASSWORD="$(cat /run/secrets/POSTGRES_PASSWORD)" psql -h 127.0.0.1 -U fifth_owner -d fifth_element -v ON_ERROR_STOP=1 -c "$0"`,
+    sql,
+  ]);
+  if (r.status !== 0) throw new Error(`контрольная запись: ${r.stderr.slice(-200)}`);
+}
+const container = (slot) => (slot === 'core-b' ? `fifth-${ENV}-core-b` : `fifth-${ENV}-core`);
+const bg = (slot) => {
+  const r = run('docker', [
+    'exec',
+    container(slot),
+    'node',
+    '-e',
+    "fetch('http://127.0.0.1:4400/background').then((r)=>r.json()).then((b)=>console.log(b.mode),()=>console.log('нет ответа'))",
+  ]);
+  return r.status === 0 ? r.stdout.trim() : 'не работает';
+};
+const via = async () => {
+  const r = await fetch(`${BASE}/v1/features`, { signal: AbortSignal.timeout(10_000) });
+  await r.arrayBuffer();
+  return {
+    status: r.status,
+    build: r.headers.get('x-fifth-build'),
+    slot: r.headers.get('x-fifth-slot'),
+  };
+};
+const waitMode = async (slot) => {
+  for (let i = 0; i < 60; i += 1) {
+    const m = bg(slot);
+    if (!['нет ответа', 'не работает'].includes(m)) return m;
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+  return 'нет ответа';
+};
+const journal = () => {
+  try {
+    return readFileSync(JOURNAL, 'utf8')
+      .trim()
+      .split('\n')
+      .map((l) => JSON.parse(l));
+  } catch {
+    return [];
+  }
+};
+
+console.warn('\n=== ДВА ЯДРА НА ВРЕМЕННОЙ СРЕДЕ ===\n');
+
+// ------------------------------------------------------------------ образы
+console.warn('▸ Образы из чистого снимка');
+{
+  const snap =
+    run('git', ['stash', 'create']).stdout.trim() ||
+    run('git', ['rev-parse', 'HEAD']).stdout.trim();
+  const src = mkdtempSync(join(tmpdir(), 'fifth-slots-src-'));
+  const tar = spawnSync(
+    'sh',
+    ['-c', `git archive ${snap} | tar -x -C "${src.replace(/\\/g, '/')}"`],
+    { cwd: ROOT, encoding: 'utf8' },
+  );
+  if (tar.status !== 0) throw new Error(`снимок: ${tar.stderr}`);
+  for (const [file, image] of [
+    ['infra/images/core.Dockerfile', 'core'],
+    ['infra/images/web.Dockerfile', 'web'],
+  ]) {
+    const b = run(
+      'docker',
+      [
+        'build',
+        '-q',
+        '--build-arg',
+        `GIT_COMMIT=${snap}`,
+        '-f',
+        file,
+        '-t',
+        `fifth/${image}:slot1`,
+        '.',
+      ],
+      { cwd: src },
+    );
+    if (b.status !== 0) throw new Error(`сборка ${image}: ${b.stderr.slice(-300)}`);
+  }
+  const pg = run('docker', ['build', '-q', '-t', 'fifth/postgres:slot1', 'infra/postgres'], {
+    cwd: src,
+  });
+  if (pg.status !== 0) throw new Error(`сборка postgres: ${pg.stderr.slice(-300)}`);
+  rmSync(src, { recursive: true, force: true });
+  for (const n of ['slot2', 'slot3', 'slot4']) {
+    for (const c of ['core', 'web', 'postgres'])
+      run('docker', ['tag', `fifth/${c}:slot1`, `fifth/${c}:${n}`]);
+  }
+  check('образы собраны', true, snap.slice(0, 12));
+}
+
+envTool(['destroy', ENV, '--confirm', ENV]);
+try {
+  // ---------------------------------------------------------------- [1]
+  console.warn('\n[1] Перевод среды на слоты');
+  const created = envTool(['create', ENV, '--kit', 'slot1', '--web-port', String(PORT)]);
+  check('среда создана', created.code === 0, created.out.slice(-200));
+  await controlInit();
+  check('контрольный объект среды заведён', true);
+  const enabled = envTool(['slots-enable', ENV]);
+  check('слоты включены', enabled.code === 0, enabled.json?.message ?? enabled.out.slice(-200));
+  const v1 = await via();
+  check(
+    'через nginx — slot1/core-a',
+    v1.build === 'slot1' && v1.slot === 'core-a',
+    JSON.stringify(v1),
+  );
+  check('фон у core-a', bg('core-a') === 'running', bg('core-a'));
+
+  // ---------------------------------------------------------------- [2]
+  console.warn('\n[2] Выпуск slot2 под потоком запросов');
+  const cons = await (await fetch(`${BASE}/v1/auth/consents/templates?locale=ru-RU`)).json();
+  const email = `slots-${Date.now() % 1e9}@test.local`;
+  const reg = await fetch(`${BASE}/v1/auth/register`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email,
+      password: `Pw-${Date.now()}-slots-check`,
+      displayName: 'Слоты',
+      role: 'founder',
+      locale: 'ru-RU',
+      consents: (cons.items ?? []).map((t) => ({
+        kind: t.kind,
+        version: t.version,
+        locale: 'ru-RU',
+      })),
+    }),
+  });
+  const cookie = (reg.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0]).join('; ');
+  check('сессия открыта', reg.status === 201 && cookie.length > 0, `HTTP ${reg.status}`);
+  const stats = { total: 0, bad: [], builds: new Set() };
+  let stop = false;
+  const load = (async () => {
+    while (!stop) {
+      stats.total += 1;
+      try {
+        const r = await fetch(`${BASE}/v1/me/profile`, {
+          headers: { cookie },
+          signal: AbortSignal.timeout(15_000),
+        });
+        await r.arrayBuffer();
+        stats.builds.add(r.headers.get('x-fifth-build'));
+        if (r.status !== 200) stats.bad.push(r.status);
+      } catch (e) {
+        stats.bad.push(e.cause?.code ?? 'обрыв');
+      }
+      await new Promise((r) => setTimeout(r, 700));
+    }
+  })();
+  // Выпуск — отдельным процессом без блокировки: поток запросов идёт параллельно.
+  const up = await envToolAsync([
+    'slots-update',
+    ENV,
+    '--kit',
+    'slot2',
+    '--observe-ms',
+    '20000',
+    '--drain-ms',
+    '60000',
+  ]);
+  stop = true;
+  await load;
+  check(
+    'выпуск прошёл',
+    up.code === 0 && up.json?.active === 'core-b',
+    up.json?.message ?? up.out.slice(-300),
+  );
+  check(
+    'неуспешных ответов под потоком нет',
+    stats.bad.length === 0,
+    `запросов ${stats.total}, неуспешных ${stats.bad.length}: ${[...new Set(stats.bad)].join(',')}`,
+  );
+  check(
+    'поток видел обе сборки',
+    stats.builds.has('slot1') && stats.builds.has('slot2'),
+    [...stats.builds].join(','),
+  );
+  const me = await fetch(`${BASE}/v1/me/profile`, { headers: { cookie } });
+  check('сессия жива после переключения', me.status === 200, `HTTP ${me.status}`);
+  const v2 = await via();
+  check(
+    'через nginx — slot2/core-b',
+    v2.build === 'slot2' && v2.slot === 'core-b',
+    JSON.stringify(v2),
+  );
+  check(
+    'фон только у core-b, core-a остановлен',
+    bg('core-b') === 'running' && bg('core-a') === 'не работает',
+    `${bg('core-b')} / ${bg('core-a')}`,
+  );
+  check(
+    'журнал: разрешение снято до паузы, фон кандидату после подтверждения',
+    (() => {
+      const j = journal()
+        .filter((l) => l.op === up.json?.op)
+        .map((l) => `${l.stage}:${l.status}`);
+      return (
+        j.indexOf('grant:ok') < j.indexOf('pause:ok') &&
+        j.indexOf('confirm:ok') < j.lastIndexOf('grant:ok')
+      );
+    })(),
+  );
+
+  // ---------------------------------------------------------------- [3]
+  console.warn('\n[3] Перезапуск неактивного слота');
+  run('docker', ['start', container('core-a')]);
+  const inactive = await waitMode('core-a');
+  check('неактивный core-a после старта — без фона', inactive === 'paused', inactive);
+  run('docker', ['stop', container('core-a')]);
+
+  // ---------------------------------------------------------------- [4]
+  console.warn('\n[4] Перезапуск обоих слотов в окне наблюдения');
+  const child = spawn(
+    process.execPath,
+    [
+      join(ROOT, 'scripts', 'env.mjs'),
+      'slots-update',
+      ENV,
+      '--kit',
+      'slot3',
+      '--observe-ms',
+      '60000',
+      '--drain-ms',
+      '30000',
+    ],
+    { env: dockerEnv, stdio: ['ignore', 'pipe', 'pipe'] },
+  );
+  let out = '';
+  child.stdout.on('data', (d) => (out += d));
+  const done = new Promise((r) => child.on('close', r));
+  for (let i = 0; i < 300; i += 1) {
+    if (
+      journal().some(
+        (l) => l.stage === 'grant' && l.status === 'ok' && /owner=core-a/.test(l.detail),
+      )
+    )
+      break;
+    await new Promise((r) => setTimeout(r, 1000));
+  }
+  run('docker', ['restart', container('core-a')]);
+  run('docker', ['restart', container('core-b')]);
+  const modesDuring = { a: await waitMode('core-a'), b: await waitMode('core-b') };
+  check(
+    'в наблюдении после перезапуска обоих: фон только у активного core-a',
+    modesDuring.a === 'running' && modesDuring.b === 'paused',
+    JSON.stringify(modesDuring),
+  );
+  await done;
+  const r4 = JSON.parse(out.trim().split('\n').pop() || '{}');
+  // Перезапуск активного слота — настоящий короткий отказ: наблюдение обязано его поймать и,
+  // без разрешённого возврата, остановиться с решением за Томасом, не переключая назад.
+  check(
+    'наблюдение поймало отказ активного, возврат без разрешения не сделан',
+    r4.ok === false && r4.stage === 'observe' && r4.active === 'core-a',
+    r4.message,
+  );
+
+  // ---------------------------------------------------------------- [5]
+  console.warn('\n[5] Отказ перезагрузки nginx после паузы старого фона');
+  const f5 = envTool(
+    ['slots-update', ENV, '--kit', 'slot4', '--observe-ms', '5000', '--drain-ms', '10000'],
+    { FIFTH_TEST_SLOT_HOOK: 'reload-fail' },
+  );
+  check(
+    'отказ на перезагрузке',
+    f5.code !== 0 && f5.json?.stage === 'reload',
+    f5.json?.message ?? f5.out.slice(-200),
+  );
+  const v5 = await via();
+  check(
+    'обслуживает прежний: slot3/core-a',
+    v5.build === 'slot3' && v5.slot === 'core-a',
+    JSON.stringify(v5),
+  );
+  check(
+    'прежняя работа восстановлена: фон core-a идёт, кандидат остановлен',
+    bg('core-a') === 'running' && bg('core-b') === 'не работает',
+    `${bg('core-a')} / ${bg('core-b')}`,
+  );
+
+  // ---------------------------------------------------------------- [6]
+  console.warn('\n[6] Перезапуск старого слота сразу после паузы');
+  const f6 = envTool(
+    ['slots-update', ENV, '--kit', 'slot4', '--observe-ms', '5000', '--drain-ms', '20000'],
+    { FIFTH_TEST_SLOT_HOOK: 'restart-after-pause' },
+  );
+  const h6 = journal().find((l) => l.op === f6.json?.op && l.stage === 'hook');
+  check(
+    'после перезапуска старый остался на паузе',
+    /: paused$/.test(h6?.detail ?? ''),
+    h6?.detail,
+  );
+  check('выпуск slot4 прошёл', f6.code === 0 && f6.json?.active === 'core-b', f6.json?.message);
+
+  // ---------------------------------------------------------------- [7]
+  console.warn('\n[7] Перезапуск кандидата после записи маршрута, до подтверждения');
+  const f7 = envTool(
+    ['slots-update', ENV, '--kit', 'slot1', '--observe-ms', '5000', '--drain-ms', '20000'],
+    { FIFTH_TEST_SLOT_HOOK: 'restart-candidate-after-route' },
+  );
+  const h7 = journal().find((l) => l.op === f7.json?.op && l.stage === 'hook');
+  check('кандидат после перезапуска — без фона', /: paused$/.test(h7?.detail ?? ''), h7?.detail);
+  check(
+    'выпуск slot1 прошёл, фон у кандидата после подтверждения',
+    f7.code === 0 && bg('core-a') === 'running',
+    f7.json?.message,
+  );
+
+  // ---------------------------------------------------------------- [8]
+  console.warn('\n[8] Фактическое состояние');
+  const st = envTool(['slots-state', ENV]);
+  check(
+    'согласовано',
+    st.code === 0 && st.json?.consistent === true,
+    JSON.stringify(st.json?.background ?? st.out.slice(-200)),
+  );
+} catch (e) {
+  check('прогон дошёл до конца', false, e.message);
+} finally {
+  if (!process.argv.includes('--keep')) envTool(['destroy', ENV, '--confirm', ENV]);
+}
+
+console.warn(`\nИТОГО: ${passed} пройдено, ${failed} провалено\n`);
+process.exitCode = failed > 0 ? 1 : 0;
