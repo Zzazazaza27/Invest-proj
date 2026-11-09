@@ -1,0 +1,10 @@
+[Unit]
+Description=5E: ежечасная выгрузка журнала аудита (2.1.5)
+After=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fifth-element
+ExecStart=/bin/bash /opt/fifth-element/infra/host/audit-export-run.sh
+TimeoutStartSec=20min
+Nice=10

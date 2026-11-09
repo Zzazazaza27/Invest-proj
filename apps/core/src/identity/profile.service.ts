@@ -10,6 +10,7 @@ import {
   type MyProfile,
 } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
+import { sha256Hex } from '../audit/deletion-record';
 import { SessionEpochService } from '../auth/session-epoch.service';
 import { LoginThrottleService } from '../auth/login-throttle.service';
 import { errors } from '../common/errors';
@@ -252,6 +253,8 @@ export class ProfileService {
 
     const stamp = Date.now().toString(36);
     const variants: Record<string, { key: string; width: number; height: number }> = {};
+    // SHA-256 вариантов — для учёта удалений (2.1.5); в строку не пишется.
+    const variantSha: Record<string, string> = {};
     for (const [size, box] of Object.entries(AVATAR_VARIANTS) as [
       AvatarSize,
       { width: number; height: number },
@@ -265,12 +268,15 @@ export class ProfileService {
       const variantKey = variantObjectKey(userId, stamp, size);
       await putObject({ key: variantKey, body: buffer, contentType: 'image/webp' });
       variants[size] = { key: variantKey, width: box.width, height: box.height };
+      variantSha[size] = sha256Hex(buffer);
     }
 
     const masterKey = masterObjectKey(userId, stamp);
     await putObject({ key: masterKey, body: object.body, contentType: mime });
 
     await this.db.transaction(ctx, async (tx) => {
+      // Прежний аватар — для учёта замены (2.1.5).
+      const previous = await this.readAvatarRow(tx, userId);
       await tx.query(
         `INSERT INTO identity.user_avatars
            (user_id, master_key, variants, mime, bytes, width, height, updated_at)
@@ -291,7 +297,20 @@ export class ProfileService {
         actorRole: primaryRoleOf(ctx),
         subjectType: 'user',
         subjectId: userId,
-        context: { mime, width, height, bytes: object.body.byteLength },
+        // Учёт удалений (2.1.5): что теперь в профиле и какой файл заменён.
+        context: {
+          mime,
+          width,
+          height,
+          bytes: object.body.byteLength,
+          masterKey,
+          masterSha256: sha256Hex(object.body),
+          variants: Object.fromEntries(
+            Object.entries(variants).map(([size, v]) => [size, { ...v, sha256: variantSha[size] }]),
+          ),
+          replacedMasterKey: previous?.master_key ?? null,
+          basis: 'owner',
+        },
         traceId: ctx.traceId,
       });
     });
@@ -319,7 +338,8 @@ export class ProfileService {
         actorRole: primaryRoleOf(ctx),
         subjectType: 'user',
         subjectId: userId,
-        context: {},
+        // Учёт удалений (2.1.5): какой файл убран.
+        context: { masterKey: existing.master_key, basis: 'owner' },
         traceId: ctx.traceId,
       });
     });

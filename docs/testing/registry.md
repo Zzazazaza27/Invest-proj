@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 243; требований: 41
+- Проверок: 248; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 95
+### Зарегистрированы, но ни в наборе, ни в CI — 96
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -256,6 +256,7 @@
 - `CHK-CORE-STARTUP-DEPS` — Старт ядра при недоступной зависимости: база, Valkey и NATS по очереди — ядро не падает (/live 200), после возврата зависимости само становится готовым без п…
 - `CHK-CORE-HANG-LIMIT` — Предел перезапусков зависшего ядра на Docker: три зависания — три автоматических перезапуска и снова здоров; четвёртое — recovery=stopped, процесс не убит, п…
 - `CHK-JOURNAL-RISK` — Риск потери невыгруженного на настоящем journald: заголовки читаются, занятость равна блокам на диске; всё выгружено без притока — clear без прогноза; невыгр…
+- `CHK-DELETIONS-REPLAY` — Удалить → восстановить старую копию → применить журнал из ВЫНЕСЕННОЙ выгрузки: восстановленная из копии база закрыта сама (другой отпечаток); логотип: в копи…
 - `PRB-SERVICE-TABLES-RLS` — Матрица доступа к availability.observations и comms.mail_queue после M166 на настоящей БД: пользовательский и анонимный контекст app_backend не читает и не м…
 - `PRB-CLIENT-ERRORS` — Приём ошибок интерфейса на стенде: запись с полями перечня и reported: browser; секрет в имени и значении неизвестного поля — ни в журнале, ни в ответе, имён…
 - `CHK-SECRETS-TO-FILES` — Перенос секретов не теряет значений и не печатает их.
@@ -296,6 +297,9 @@
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
 | TOOL-ARCHIVE-EVENTS | `node scripts/archive-events.mjs` | 0 | вручную, по поводу | — |
+| TOOL-AUDIT-EXPORT | `node scripts/audit-export.mjs run` | 0 | вручную, по поводу | — |
+| TOOL-AUDIT-OFFSITE | `node scripts/audit-offsite.mjs check` | 0 | вручную, по поводу | — |
+| TOOL-DELETIONS-APPLY | `node scripts/deletions-apply.mjs verify` | 0 | вручную, по поводу | — |
 | TOOL-BACKFILL-MATERIAL-SIZES | `node scripts/backfill-material-sizes.mjs` | 0 | вручную, по поводу | — |
 | TOOL-BUILD-TEST-REGISTRY-DOC | `npm run docs:registry` | 0 | вручную, по поводу | — |
 | TOOL-BUILD-LOCAL-REDACTORS | `npm run secrets:redactors` | 0 | вручную, по поводу | — |
@@ -400,6 +404,7 @@
 | CHK-CORE-STARTUP-DEPS | `node scripts/check-core-startup-deps.mjs` | 3 | вручную | — |
 | CHK-CORE-HANG-LIMIT | `node scripts/check-core-hang-limit.mjs` | 29 | вручную | — |
 | CHK-JOURNAL-RISK | `node scripts/check-journal-risk.mjs` | 11 | вручную | — |
+| CHK-DELETIONS-REPLAY | `node scripts/check-deletions-replay.mjs` | 21 | вручную | — |
 | CHK-SECRETS-TO-FILES | `node scripts/check-secrets-to-files.mjs` | 11 | вручную | — |
 | CHK-HOST-ACCESS | `node scripts/check-host-access.mjs` | 17 | вручную | — |
 | CHK-OPENBAO-LAB | `node scripts/check-openbao-lab.mjs` | 22 | вручную | — |
@@ -472,6 +477,7 @@
 | UNIT-CORE-MONITORING-ACCOUNT | `npm run test -w apps/core` | 6 | CI | CI |
 | UNIT-CORE-HEALTH-POLICY | `npm run test -w apps/core` | 14 | CI | CI |
 | UNIT-JOURNAL-RISK | `npm run test -w apps/core` | 35 | CI | CI |
+| UNIT-DELETIONS-REPLAY | `npm run test -w apps/core` | 15 | CI | CI |
 | UNIT-CORE-SAFE-LOG | `npm run test -w apps/core` | 24 | CI | CI |
 | UNIT-CABINET-CLIENT-ERRORS | `npm run test -w packages/cabinet` | 7 | CI | CI |
 | UNIT-CORE-CLIENT-ERRORS | `npm run test -w apps/core` | 5 | CI | CI |

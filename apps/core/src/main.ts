@@ -12,6 +12,8 @@ import { BackgroundJobsService } from './background/background-jobs.service';
 import { startInternalServer } from './background/internal-server';
 import { checkReadiness, runControl, type ReadinessProbes } from './background/readiness';
 import { setPublicReadiness } from './health/public-readiness';
+import { passesClosedGate, restoreGateOpen, setRestoreGate } from './health/restore-gate';
+import { ErrorCode, problemTypeUri } from '@fifth/contracts';
 import { Database } from './db/unit-of-work';
 import { NatsClient } from './events/nats.client';
 import { S3Service } from './storage/s3.service';
@@ -126,6 +128,32 @@ async function bootstrap(): Promise<void> {
     logger: env.isTest ? false : json,
     bufferLogs: true,
   });
+
+  // ---- Ворота восстановленной среды (2.1.5, M167) ------------------------
+  // До итоговой проверки журнала удалений восстановленная база людей не обслуживает:
+  // иначе правомерно удалённое из старой копии стало бы видно. Читатель ворот ставится
+  // до открытия порта — окна, когда запросы проходят без проверки, нет.
+  const gateDb = app.get(Database);
+  setRestoreGate(() => gateDb.restoreGate());
+  app
+    .getHttpAdapter()
+    .getInstance()
+    .addHook('onRequest', async (request, reply) => {
+      if (passesClosedGate(request.url) || (await restoreGateOpen())) return;
+      return reply
+        .status(503)
+        .header('Content-Type', 'application/problem+json; charset=utf-8')
+        .header('Retry-After', '300')
+        .header('Cache-Control', 'no-store')
+        .send({
+          type: problemTypeUri(ErrorCode.DEPENDENCY_UNAVAILABLE),
+          title: 'Сервис временно недоступен',
+          status: 503,
+          code: ErrorCode.DEPENDENCY_UNAVAILABLE,
+          detail: 'Сервис временно недоступен, попробуйте позже',
+          instance: request.url.split('?')[0],
+        });
+    });
 
   // ---- Журнал запросов (8.4) ---------------------------------------------
   // Метод, ШАБЛОН маршрута (не адрес: в нём query и идентификаторы),
@@ -417,7 +445,10 @@ async function bootstrap(): Promise<void> {
   };
   const internal = await startInternalServer(jobs, readinessProbes);
   // Публичная готовность (2.3): тот же расчёт, наружу — только «готов / не готов».
-  setPublicReadiness(async () => (await checkReadiness(readinessProbes)).ready);
+  // Закрытые ворота восстановленной среды (2.1.5) — «не готов».
+  setPublicReadiness(
+    async () => (await restoreGateOpen()) && (await checkReadiness(readinessProbes)).ready,
+  );
   logger.log(
     `служебный порт ${env.CORE_INTERNAL_BIND_HOST}:${internal.port} (/live, /ready, /jobs, /queues, /control)`,
   );

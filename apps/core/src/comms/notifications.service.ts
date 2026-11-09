@@ -5,6 +5,7 @@ import {
   type NotificationPreference,
   type UserDevice,
 } from '@fifth/contracts';
+import { AuditRepository } from '../audit/audit.repository';
 import { errors } from '../common/errors';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 
@@ -26,7 +27,10 @@ import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 export class NotificationsService {
   private readonly logger = new Logger(NotificationsService.name);
 
-  constructor(private readonly db: Database) {}
+  constructor(
+    private readonly db: Database,
+    private readonly audit: AuditRepository,
+  ) {}
 
   // ------------------------------------------------------------- устройства
 
@@ -115,6 +119,24 @@ export class NotificationsService {
           [deviceId, ctx.userId],
         );
         if (rows.length === 0) throw errors.notFound({ subject: 'device' });
+        return;
+      }
+      // Учёт удалений (2.1.5): после восстановления старой копии устройство не оживает.
+      // Роль актора — из перечня вида события; без неё событие не пишется (как у отзыва
+      // токена): фальшивая роль в журнале хуже её отсутствия.
+      const actorRole = ctx.roles.find((r) =>
+        ['founder', 'investor', 'expert', 'organizer', 'admin'].includes(r),
+      );
+      if (actorRole) {
+        await this.audit.emit(tx, {
+          verb: 'comms.device.revoked',
+          actorId: ctx.userId,
+          actorRole,
+          subjectType: 'device',
+          subjectId: deviceId,
+          context: {},
+          traceId: ctx.traceId,
+        });
       }
     });
   }

@@ -12,6 +12,7 @@ import {
 } from '@fifth/contracts';
 import { errors } from '../common/errors';
 import { AuditRepository } from '../audit/audit.repository';
+import { sha256Hex } from '../audit/deletion-record';
 import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service, putObject } from '../storage/s3.service';
@@ -206,6 +207,9 @@ export class ProjectMediaService {
       // не переносится. Ключи — под новым mediaId: незафиксированная попытка оставляет
       // лишь неиспользуемые объекты (уборка по 3.3), а не портит действующие.
       const variants: Record<string, { key: string; width: number; height: number }> = {};
+      // SHA-256 вариантов — для учёта удалений (2.1.5): по нему после восстановления видно,
+      // есть ли в хранилище именно этот файл. В строку не пишется.
+      const variantSha: Record<string, string> = {};
       for (const [size, box] of Object.entries(MEDIA_VARIANTS[kind]) as [
         ProjectMediaSize,
         { width: number; height: number },
@@ -220,9 +224,12 @@ export class ProjectMediaService {
         const variantKey = variantObjectKey(projectId, kind, mediaId, size);
         await putObject({ key: variantKey, body: buffer, contentType: 'image/webp' });
         variants[size] = { key: variantKey, width: box.width, height: box.height };
+        variantSha[size] = sha256Hex(buffer);
       }
 
       const masterKey = masterObjectKey(projectId, kind, mediaId);
+      // Прежний файл слота — для учёта замены (2.1.5).
+      const previous = await this.readRow(tx, projectId, kind);
       await putObject({ key: masterKey, body: object.body, contentType: mime });
 
       await tx.query(
@@ -262,7 +269,24 @@ export class ProjectMediaService {
         actorRole: ctx.roles?.includes('admin') ? 'admin' : 'founder',
         subjectType: 'project',
         subjectId: projectId,
-        context: { kind, mime, width, height, bytes: object.body.byteLength },
+        // Учёт удалений (2.1.5): что теперь в слоте и какой файл заменён. Ключи и SHA-256,
+        // без содержимого.
+        context: {
+          kind,
+          mime,
+          width,
+          height,
+          bytes: object.body.byteLength,
+          masterKey,
+          masterSha256: sha256Hex(object.body),
+          variants: Object.fromEntries(
+            Object.entries(variants).map(([size, v]) => [size, { ...v, sha256: variantSha[size] }]),
+          ),
+          focusX: input.focusX,
+          focusY: input.focusY,
+          replacedMasterKey: previous?.master_key ?? null,
+          basis: ctx.roles?.includes('admin') ? 'admin' : 'owner',
+        },
         traceId: ctx.traceId,
       });
       return { media: (await this.readRow(tx, projectId, kind))!, replay: false };
@@ -294,7 +318,12 @@ export class ProjectMediaService {
         actorRole: ctx.roles?.includes('admin') ? 'admin' : 'founder',
         subjectType: 'project',
         subjectId: projectId,
-        context: { kind },
+        // Учёт удалений (2.1.5): какой файл убран из слота и по чьему решению.
+        context: {
+          kind,
+          masterKey: existing.master_key,
+          basis: ctx.roles?.includes('admin') ? 'admin' : 'owner',
+        },
         traceId: ctx.traceId,
       });
       return existing;

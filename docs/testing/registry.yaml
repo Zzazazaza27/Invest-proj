@@ -75,6 +75,42 @@ checks:
     purpose: 'Выгрузка журнала событий в холодное хранилище. Закрывает эксплуатационный пункт: «архив событий старше 90 дней уезжает в холодное хранилище отдельной процедурой». Процедура — эта. Решения, каждое со своей причиной. 1. **'
     confirmation: reviewed-in-code
 
+  - id: TOOL-AUDIT-EXPORT
+    file: scripts/audit-export.mjs
+    command: node scripts/audit-export.mjs run
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db]
+    studied: code
+    purpose: 'Ежечасная выгрузка журнала аудита (2.1.5): порция событий по цепочке, шифрованная на ключ Томаса, опись с подписью Ed25519, продолжение серии; пишется и без событий (конец периода). Испытана в CHK-DELETIONS-REPLAY.'
+    confirmation: reviewed-in-code
+
+  - id: TOOL-AUDIT-OFFSITE
+    file: scripts/audit-offsite.mjs
+    command: node scripts/audit-offsite.mjs check
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    studied: code
+    purpose: 'Вынос выгрузки аудита на ноутбук (2.1.5): приём порций только с верной подписью и продолжением доверенной контрольной точки, отметка на сервере; check — вся серия с начала и задание расписания. Испытан в CHK-DELETIONS-REPLAY (pull).'
+    confirmation: reviewed-in-code
+
+  - id: TOOL-DELETIONS-APPLY
+    file: scripts/deletions-apply.mjs
+    command: node scripts/deletions-apply.mjs verify
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db]
+    studied: code
+    purpose: 'Применение учёта удалений после восстановления (2.1.5): итог по идентичностям из источника после общего звена цепочки, применение и отметка одной транзакцией, итоговая проверка, открытие ворот только с подтверждением покрытия. Испытано в CHK-DELETIONS-REPLAY.'
+    confirmation: reviewed-in-code
+
   - id: TOOL-BACKFILL-MATERIAL-SIZES
     file: scripts/backfill-material-sizes.mjs
     command: node scripts/backfill-material-sizes.mjs
@@ -3427,6 +3463,48 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: UNIT-DELETIONS-REPLAY
+    file: apps/core/tests/deletions-replay.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 15
+    studied: code
+    studiedOn: 2026-11-09
+    needs: []
+    effects: ['только память']
+    note: >-
+      Блок 2, 2.1.5; согласовано Тэнком 09.11. Модули scripts/lib/deletions-replay.mjs и
+      scripts/lib/audit-export.mjs.
+    purpose: 'Итог по идентичности после границы: копия с v1, затем v2 и удаление — итог «удалено» при любом поколении; замена — итог с ключом и SHA-256, событие прежнего формата — закрыто; «выдать → отозвать → выдать снова» — третье поколение; выдача без поколения — закрыто; снятие исключения и повторная публикация — последнее событие; идентичность не установить — неустранимо, посторонние события не учитываются. Выгрузка: первая порция начинает серию, следующая продолжает контрольную точку; старая порция, пропуск, усечённый хвост, другая база, время раньше точки — отвергнуты; подпись чужим ключом и изменённая опись — отвергнуты; шифротекст не по описи — отвергнут; разрыв цепочки и чужой хвост ловятся.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
+  - id: CHK-DELETIONS-REPLAY
+    file: scripts/check-deletions-replay.mjs
+    command: node scripts/check-deletions-replay.mjs
+    kind: check
+    level: интеграционный
+    runner: manual
+    asserts: 21
+    needs: [stand, docker]
+    effects:
+      [
+        'заводит на стенде своих участников и проект (основатель, второй, два инвестора), загружает изображения в Garage стенда',
+        'создаёт в кластере стенда отдельную базу fifth_restore_<метка> из копии и удаляет её в конце; временный каталог выгрузки удаляется',
+        'около 2 минут',
+      ]
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Блок 2, 2.1.5. Выгрузка и применение — в Linux-контейнере стенда (gpg), тестовые ключи
+      подписи и шифрования; ключ Томаса не нужен. Мутация «без сверки файла в хранилище» —
+      FAIL «аватар второго».
+    purpose: 'Удалить → восстановить старую копию → применить журнал из ВЫНЕСЕННОЙ выгрузки: восстановленная из копии база закрыта сама (другой отпечаток); логотип: в копии v1, после копии v2 и удаление — v1 не вернулся; замена аватара с доступным файлом — новый на месте; замена, новый файл недоступен — прежний скрыт, ссылки на отсутствующий нет; выдать → отозвать → выдать снова — G1 снята, G3 действует, выдача второму не появилась; снятое исключение снято; ворота закрыты до итоговой проверки; повтор ничего не меняет; итоговая проверка; источник другой базы и разрыв серии отвергнуты; вынос проверяет подписи и продолжение, ставит отметку с покрытием; открытие без подтверждения покрытия — отказ, после — ворота открыты, прежние сессии недействительны.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: UNIT-CORE-SAFE-LOG
     file: apps/core/tests/safe-log.test.ts
     command: npm run test -w apps/core
@@ -5225,6 +5303,8 @@ blocks:
         CHK-MONITORING-ACCOUNT,
         CHK-LOGS-ARCHIVE,
         UNIT-JOURNAL-RISK,
+        UNIT-DELETIONS-REPLAY,
+        CHK-DELETIONS-REPLAY,
         CHK-JOURNAL-RISK,
         CHK-LOGS-APPLY,
         CHK-MONITOR-PULSE,

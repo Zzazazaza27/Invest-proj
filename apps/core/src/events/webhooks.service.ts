@@ -144,6 +144,16 @@ export class WebhooksService {
       // Условие по владельцу — второй барьер поверх политики: чужую подписку
       // не отключить, и ответ не отличает «чужая» от «не существует».
       if (rowCount === 0) throw errors.notFound({ subject: 'webhook' });
+      // Учёт удалений (2.1.5): после восстановления старой копии подписка не оживает.
+      await this.audit.emit(tx, {
+        verb: 'integration.webhook.disabled',
+        actorId: null,
+        actorRole: 'system',
+        subjectType: 'webhook_endpoint',
+        subjectId: endpointId,
+        context: { serviceAccountId: ctx.serviceAccountId },
+        traceId: ctx.traceId,
+      });
     });
   }
 

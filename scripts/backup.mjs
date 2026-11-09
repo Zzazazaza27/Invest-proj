@@ -83,6 +83,10 @@ const PILOT_STATE = process.env.FIFTH_MONITOR_STATE || '/var/lib/fifth-monitor';
 const PILOT_BACKUP_HOURS = 30;
 // Ноутбук бывает выключен: порог с запасом на выходные.
 const PILOT_OFFSITE_HOURS = 72;
+// Выгрузка аудита (2.1.5): порция каждый час; 2 ч — цель на сервере, 3 ч — вне сервера при
+// доступном ноутбуке (цель, не гарантия).
+const AUDIT_EXPORT_HOURS = 2;
+const AUDIT_OFFSITE_HOURS = 3;
 let secretsError = null;
 try {
   loadEnv();
@@ -894,6 +898,31 @@ async function check() {
       offsite
         ? `копия вне сервера ${Math.round(offsiteAge)} ч назад`
         : 'копия пилотной среды ни разу не вынесена с сервера',
+    );
+  }
+
+  // Выгрузка журнала аудита (2.1.5): на сервере каждый час, вне сервера — ноутбук Томаса.
+  // Покрытие — по времени проверки последней порции, а не по наличию файла. Где выгрузка
+  // не включена, сигналов нет.
+  const audit = pilotState('audit-export.json');
+  if (audit) {
+    const covered = audit.coveredUntil ?? null;
+    const age = covered ? hoursSince(covered) : Infinity;
+    await say(
+      'audit-export',
+      !audit.ok || age > AUDIT_EXPORT_HOURS,
+      audit.ok
+        ? `выгрузка аудита покрывает до ${covered} (${age.toFixed(1)} ч назад)`
+        : `выгрузка аудита не удалась: ${audit.detail}`,
+    );
+    const offsite = pilotState('audit-offsite.json');
+    const offAge = offsite?.coveredUntil ? hoursSince(offsite.coveredUntil) : Infinity;
+    await say(
+      'audit-offsite',
+      offAge > AUDIT_OFFSITE_HOURS,
+      offsite
+        ? `выгрузка аудита вне сервера покрывает до ${offsite.coveredUntil} (${offAge.toFixed(1)} ч назад)`
+        : 'выгрузка аудита ни разу не вынесена с сервера',
     );
   }
 

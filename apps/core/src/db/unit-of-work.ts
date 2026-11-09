@@ -343,6 +343,17 @@ export class Database implements OnModuleDestroy {
     return rows[0]?.v === true;
   }
 
+  /**
+   * Ворота среды (2.1.5, M167): строки нет — закрыто (база восстановлена из комплекта,
+   * снятого без неё).
+   */
+  async restoreGate(): Promise<'open' | 'closed'> {
+    const { rows } = await this.pool.query<{ state: string }>(
+      'SELECT ops.restore_gate_state() AS state',
+    );
+    return rows[0]?.state === 'open' ? 'open' : 'closed';
+  }
+
   /** Проверка живости для /v1/health. */
   async ping(): Promise<boolean> {
     try {

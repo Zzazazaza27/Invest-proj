@@ -139,7 +139,9 @@ export class ProjectAccessService {
         actorRole: actorRole(ctx),
         subjectType: 'project',
         subjectId: projectId,
-        context: { granteeUserId: grantee.userId, permissions },
+        // grantId — поколение выдачи (учёт удалений, 2.1.5): «выдать → отозвать → выдать
+        // снова» даёт новое поколение; правка набора — то же поколение, новая версия.
+        context: { grantId: row.id, granteeUserId: grantee.userId, permissions },
         traceId: ctx.traceId,
       });
 
@@ -237,7 +239,8 @@ export class ProjectAccessService {
         actorRole: actorRole(ctx),
         subjectType: 'project',
         subjectId: projectId,
-        context: { excludedUserId: subject.userId },
+        // exclusionId — поколение исключения (учёт удалений, 2.1.5).
+        context: { exclusionId: row.id, excludedUserId: subject.userId },
         traceId: ctx.traceId,
       });
 

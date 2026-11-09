@@ -115,7 +115,8 @@ export class CapabilitiesService {
         actorRole: 'admin',
         subjectType: 'user',
         subjectId: input.userId,
-        context: { capability: input.capability, reason: input.reason },
+        // grantId — поколение полномочия (учёт удалений, 2.1.5).
+        context: { grantId: rows[0].id, capability: input.capability, reason: input.reason },
         traceId: ctx.traceId,
       });
       return mapGrant(rows[0]);
