@@ -356,7 +356,10 @@ try {
     slowRes.status === 200 && slowRes.body?.build === 'slot1',
     JSON.stringify(slowRes).slice(0, 120),
   );
-  const drain = journal().find((l) => l.op === up.json?.op && l.stage === 'drain');
+  // Итоговая запись этапа (ok или timeout): с задания 4 у этапа есть и запись «start».
+  const drain = journal()
+    .filter((l) => l.op === up.json?.op && l.stage === 'drain' && l.status !== 'start')
+    .at(-1);
   const stopOld = journal().find((l) => l.op === up.json?.op && l.stage === 'stop-old');
   check(
     'старое ядро остановлено после завершения долгого запроса',
