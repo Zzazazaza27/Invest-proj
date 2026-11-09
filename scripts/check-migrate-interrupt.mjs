@@ -335,6 +335,61 @@ try {
       (await sharedState())?.valid === true && !/UNIQUE/.test((await sharedState())?.def ?? ''),
     );
   }
+
+  // Тэнк 09.11: сравнение не должно путать литералы и идентификаторы в кавычках. Прежнее
+  // приведение всего текста к нижнему регистру со снятием кавычек считало эти пары равными.
+  const stateOf = async (name) =>
+    (
+      await probe(
+        `SELECT i.indisvalid AS valid, pg_get_indexdef(i.indexrelid) AS def
+           FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = $1`,
+        [name],
+      )
+    )[0] ?? null;
+
+  console.warn("\n[9] Литерал 'ACTIVE' против 'active' — индекс не тронут");
+  {
+    await probe('CREATE TABLE public.st (state text)');
+    await probe("INSERT INTO public.st VALUES ('ACTIVE'), ('ACTIVE')");
+    await probe(
+      "CREATE UNIQUE INDEX CONCURRENTLY part_idx ON public.st (state) WHERE state = 'ACTIVE'",
+    ).catch(() => undefined);
+    const before = await stateOf('part_idx');
+    check('подготовлен непригодный part_idx с WHERE ACTIVE', before?.valid === false, before?.def);
+    put(
+      'M009_part',
+      `-- migrate:no-transaction
+       CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS part_idx ON public.st (state) WHERE state = 'active';`,
+    );
+    const r = migrate();
+    check('прогон остановлен', !r.ok && /не совпадает/.test(r.out), r.out.slice(-160));
+    const after = await stateOf('part_idx');
+    check('индекс не тронут', after?.valid === false && after?.def === before?.def, after?.def);
+    check('миграция не применена', !(await applied()).includes('M009_part'));
+    drop('M009_part');
+    await probe('DROP INDEX public.part_idx');
+  }
+
+  console.warn('\n[10] Колонка "Status" против status — индекс не тронут');
+  {
+    await probe('CREATE TABLE public.q ("Status" int, status int)');
+    await probe('INSERT INTO public.q VALUES (1, 1), (1, 2)');
+    await probe('CREATE UNIQUE INDEX CONCURRENTLY cap_idx ON public.q ("Status")').catch(
+      () => undefined,
+    );
+    const before = await stateOf('cap_idx');
+    check('подготовлен непригодный cap_idx по "Status"', before?.valid === false, before?.def);
+    put(
+      'M010_cap',
+      `-- migrate:no-transaction
+       CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS cap_idx ON public.q (status);`,
+    );
+    const r = migrate();
+    check('прогон остановлен', !r.ok && /не совпадает/.test(r.out), r.out.slice(-160));
+    const after = await stateOf('cap_idx');
+    check('индекс не тронут', after?.valid === false && after?.def === before?.def, after?.def);
+    check('миграция не применена', !(await applied()).includes('M010_cap'));
+  }
 } finally {
   await admin(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`).catch(() => undefined);
   rmSync(DIR, { recursive: true, force: true });

@@ -418,7 +418,7 @@
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
 | CHK-RELEASE | `node scripts/check-release.mjs` | 61 | вручную | — |
-| CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 35 | вручную | — |
+| CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 43 | вручную | — |
 | CHK-ROLLBACK-POLICY | `node scripts/check-rollback-policy.mjs` | 8 | вручную | — |
 | CHK-MIGRATION-COMPAT | `node scripts/check-migration-compat.mjs --previous <сборка> --candidate <сборка>` | 36 | вручную | — |
 | CHK-INSTALLER | `node scripts/check-installer.mjs` | 37 | вручную | — |

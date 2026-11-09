@@ -97,8 +97,10 @@ export interface ExpectedIndex {
   name: string;
   /** Таблица, на которой миграция строит индекс. */
   table: string;
-  /** Определение из миграции, приведённое к сравнимому виду (normalizeIndexDef). */
-  definition: string;
+  /** Определение из миграции в однозначной форме; null — форма не разбирается однозначно. */
+  definition: SimpleIndex | null;
+  /** Текст оператора — для диагностики. */
+  text: string;
 }
 
 export function concurrentIndexesOf(sql: string): ExpectedIndex[] {
@@ -113,30 +115,49 @@ export function concurrentIndexesOf(sql: string): ExpectedIndex[] {
       name: m[1]!,
       schema: m[3] ? m[2]! : 'public',
       table: m[3] ?? m[2]!,
-      definition: normalizeIndexDef(body),
+      definition: parseSimpleIndex(body),
+      text: body,
     });
   }
   return found;
 }
 
 /**
- * Определение индекса в сравнимом виде: без CONCURRENTLY, IF NOT EXISTS, кавычек, метода по
- * умолчанию (btree) и ссылки на таблицу (таблица сверяется отдельно), регистр и пробелы
- * выровнены. Сравнивается с pg_get_indexdef. Не совпало — соответствие не доказано, и
- * индекс не удаляется: лучше остановка, чем удаление чужого объекта (Тэнк, 09.11).
+ * Однозначно разбираемая форма индекса — только для неё доказывается соответствие и
+ * допускается автоматическое восстановление (Тэнк, 09.11):
+ *
+ *   CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] имя ON [ONLY] [схема.]таблица
+ *     [USING метод] (колонка[, колонка…])
+ *
+ * Имена — только без кавычек: PostgreSQL приводит их к нижнему регистру, поэтому сравнение
+ * в нижнем регистре здесь точное. Кавычки, выражения, WHERE, INCLUDE, порядок сортировки,
+ * классы операторов, WITH — всё, где регистр и литералы значимы, не разбирается: null, и
+ * непригодный индекс не удаляется — остановка. Универсального разбора SQL здесь нет
+ * намеренно: прежнее упрощение (нижний регистр и снятые кавычки для всего текста) путало
+ * 'ACTIVE' с 'active' и "Status" со status.
  */
-export function normalizeIndexDef(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/;\s*$/, '')
-    .replace(/"/g, '')
-    .replace(/\bconcurrently\b/g, ' ')
-    .replace(/\bif\s+not\s+exists\b/g, ' ')
-    .replace(/\bon\s+(?:only\s+)?[\w.]+/g, ' on ')
-    .replace(/\busing\s+btree\b/g, ' ')
-    .replace(/\s+/g, ' ')
-    .replace(/\s*([(),])\s*/g, '$1')
-    .trim();
+export interface SimpleIndex {
+  unique: boolean;
+  method: string;
+  columns: string[];
+}
+
+const IDENT = '[A-Za-z_][A-Za-z0-9_]*';
+const SIMPLE_INDEX = new RegExp(
+  `^CREATE\\s+(UNIQUE\\s+)?INDEX\\s+(?:CONCURRENTLY\\s+)?(?:IF\\s+NOT\\s+EXISTS\\s+)?${IDENT}` +
+    `\\s+ON\\s+(?:ONLY\\s+)?(?:${IDENT}\\.)?${IDENT}\\s*(?:USING\\s+(${IDENT})\\s*)?` +
+    `\\(\\s*(${IDENT}(?:\\s*,\\s*${IDENT})*)\\s*\\)\\s*;?\\s*$`,
+  'i',
+);
+
+export function parseSimpleIndex(text: string): SimpleIndex | null {
+  const m = SIMPLE_INDEX.exec(text.trim());
+  if (!m) return null;
+  return {
+    unique: Boolean(m[1]),
+    method: (m[2] ?? 'btree').toLowerCase(),
+    columns: m[3]!.split(',').map((c) => c.trim().toLowerCase()),
+  };
 }
 
 interface InvalidIndex {
@@ -166,12 +187,18 @@ async function invalidIndexes(client: pg.Client): Promise<InvalidIndex[]> {
 
 /** Совпадает ли непригодный индекс с тем, что строит миграция: имя, таблица, определение. */
 function sameIndex(found: InvalidIndex, expected: ExpectedIndex): boolean {
+  const actual = parseSimpleIndex(found.definition);
+  const want = expected.definition;
+  // Любая из сторон не в однозначной форме — соответствие не доказано.
+  if (!actual || !want) return false;
   return (
     found.schema === expected.schema &&
     found.name === expected.name &&
     found.tableSchema === expected.schema &&
     found.table === expected.table &&
-    normalizeIndexDef(found.definition) === expected.definition
+    actual.unique === want.unique &&
+    actual.method === want.method &&
+    actual.columns.join(',') === want.columns.join(',')
   );
 }
 
@@ -243,7 +270,10 @@ async function main(): Promise<void> {
               const own = owned.get(qualified(ix))!;
               return (
                 `  ${qualified(ix)} на ${ix.tableSchema}.${ix.table}: ${ix.definition}\n` +
-                `  ожидалось (${own.file}) на ${own.expected.schema}.${own.expected.table}: ${own.expected.definition}`
+                `  ожидалось (${own.file}) на ${own.expected.schema}.${own.expected.table}: ${own.expected.text}` +
+                (own.expected.definition && parseSimpleIndex(ix.definition)
+                  ? ''
+                  : '\n  (форма индекса не разбирается однозначно — автоматическое восстановление только для простых индексов по колонкам)')
               );
             })
             .join('\n') +
