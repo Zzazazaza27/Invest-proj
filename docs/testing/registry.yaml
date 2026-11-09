@@ -3793,6 +3793,28 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-09
 
+  - id: CHK-SLOT-SWITCH
+    file: scripts/check-slot-switch.mjs
+    command: node scripts/check-slot-switch.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 27
+    needs: []
+    effects: ['нет']
+    studied: code
+    studiedOn: 2026-11-09
+    note: >-
+      Логика scripts/lib/slot-switch.mjs на имитации среды: успешное переключение и порядок
+      (разрешение снято до паузы, фон кандидату после подтверждения), отказ кандидата, пауза не
+      завершилась, отказ reload после паузы, переключение не подтверждено запросом, отказ в
+      наблюдении с возвратом и без, завершение старого по сроку, перезапуски кандидата после
+      записи маршрута, старого после паузы, обоих в наблюдении; фактическое состояние после
+      обрыва.
+    purpose: 'Блок 9, задание 3: порядок переключения слотов и пути отказа (уточнения Тэнка 09.11).'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-09
+
   - id: CHK-ROLLBACK-POLICY
     file: scripts/check-rollback-policy.mjs
     command: node scripts/check-rollback-policy.mjs
@@ -5456,6 +5478,7 @@ blocks:
         CHK-MIGRATE-INTERRUPT,
         CHK-MIGRATION-COMPAT,
         CHK-ROLLBACK-POLICY,
+        CHK-SLOT-SWITCH,
         CHK-ENV-ISOLATION,
         CHK-ENV-IMAGES,
         CHK-INSTALLER,
