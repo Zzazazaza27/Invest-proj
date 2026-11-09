@@ -1,5 +1,7 @@
+import { timingSafeEqual } from 'node:crypto';
 import { createServer, type Server } from 'node:http';
 import { getEnv } from '../config/env';
+import { readGrant } from './grant';
 import type { BackgroundJobsService } from './background-jobs.service';
 import { checkReadiness, type ReadinessProbes } from './readiness';
 
@@ -26,9 +28,23 @@ export interface InternalServer {
   close(): Promise<void>;
 }
 
+/** Сколько публичных HTTP-запросов процесс сейчас обслуживает (блок 09, задание 3). */
+export interface ProcessState {
+  activeRequests: () => number;
+}
+
+/** Токен служебных команд: сравнение за постоянное время. */
+function authorized(header: string | undefined, token: string | undefined): boolean {
+  if (!token || !header?.startsWith('Bearer ')) return false;
+  const given = Buffer.from(header.slice(7));
+  const want = Buffer.from(token);
+  return given.length === want.length && timingSafeEqual(given, want);
+}
+
 export async function startInternalServer(
   jobs: BackgroundJobsService,
   probes?: ReadinessProbes,
+  state?: ProcessState,
 ): Promise<InternalServer> {
   const env = getEnv();
   const port = env.CORE_INTERNAL_PORT ?? env.CORE_PORT + 100;
@@ -43,7 +59,52 @@ export async function startInternalServer(
       res.writeHead(status, { 'content-type': 'application/json; charset=utf-8' });
       res.end(JSON.stringify(body));
     };
+    // Команды изменения состояния фона (блок 09, задание 3): только POST, только с токеном
+    // установщика. Порт слушает петлю; токен — вторая граница, если порт окажется доступен.
+    const command = req.url === '/background/pause' || req.url === '/background/resume';
+    if (command && req.method !== 'POST') return send(405, { error: 'method not allowed' });
+    if (command) {
+      if (!authorized(req.headers.authorization, env.BACKGROUND_CONTROL_TOKEN)) {
+        process.stderr.write(
+          `${JSON.stringify({ t: new Date().toISOString(), level: 'warn', msg: 'служебная команда фона без полномочий отклонена', url: req.url })}\n`,
+        );
+        return send(env.BACKGROUND_CONTROL_TOKEN ? 403 : 404, { error: 'forbidden' });
+      }
+      if (req.url === '/background/pause') {
+        void jobs
+          .pause(env.BACKGROUND_PAUSE_WAIT_MS)
+          .then((mode) =>
+            send(mode === 'paused' ? 200 : 409, { mode, pending: jobs.pendingPasses }),
+          );
+        return;
+      }
+      // Продолжение в режиме слотов — только при действующем разрешении этому слоту.
+      if (env.BACKGROUND_START === 'grant') {
+        const grant = readGrant(env.BACKGROUND_GRANT_PATH!, env.CORE_SLOT!);
+        if (!grant.granted) return send(409, { mode: jobs.mode, error: grant.reason });
+      }
+      const mode = jobs.resume();
+      return send(mode === 'running' ? 200 : 409, { mode, pending: jobs.pendingPasses });
+    }
     if (req.method !== 'GET') return send(405, { error: 'method not allowed' });
+
+    if (req.url === '/background') {
+      return send(200, {
+        mode: jobs.mode,
+        pending: jobs.pendingPasses,
+        slot: env.CORE_SLOT ?? null,
+        start: env.BACKGROUND_START,
+        instance: jobs.instanceId,
+      });
+    }
+    if (req.url === '/state') {
+      return send(200, {
+        build: env.FIFTH_BUILD ?? null,
+        slot: env.CORE_SLOT ?? null,
+        activeRequests: state?.activeRequests() ?? null,
+        background: jobs.mode,
+      });
+    }
 
     if (req.url === '/live') {
       const ageMs = Date.now() - lastTick;

@@ -45,6 +45,24 @@ const RawEnvSchema = z.object({
   CORE_INTERNAL_BIND_HOST: z.string().default('127.0.0.1'),
   BACKGROUND_TICK_MS: z.coerce.number().int().min(500).max(60_000).default(5_000),
   /**
+   * Два ядра при выпуске (блок 09, задание 3; Тэнк 09.11). `immediate` — фон стартует сам,
+   * как было. `grant` — только по подтверждённому разрешению установщика в файле
+   * BACKGROUND_GRANT_PATH, где владельцем назван этот слот (CORE_SLOT). Файл маршрута nginx
+   * разрешением не является. Нет файла, не читается, владелец другой — фон не стартует.
+   */
+  BACKGROUND_START: z.enum(['immediate', 'grant']).default('immediate'),
+  CORE_SLOT: z
+    .string()
+    .regex(/^core-[a-z]$/)
+    .optional(),
+  BACKGROUND_GRANT_PATH: z.string().optional(),
+  /** Токен служебных команд фона (pause/resume) на внутреннем порту; нет — команды закрыты. */
+  BACKGROUND_CONTROL_TOKEN: z.string().min(32).optional(),
+  /** Предел ожидания идущих проходов при паузе фона. */
+  BACKGROUND_PAUSE_WAIT_MS: z.coerce.number().int().min(1_000).max(600_000).default(30_000),
+  /** Сборка процесса — в заголовке X-Fifth-Build: переключение подтверждается запросом. */
+  FIFTH_BUILD: z.string().optional(),
+  /**
    * Доступность групп функций (4.11): служебная проверка зависимостей раз в 30 с,
    * наблюдение актуально 90 с (Тэнк 08.11), у каждой проверки свой предел времени.
    */
@@ -438,6 +456,16 @@ export function isLoopbackUrl(url: string): boolean {
 
 const EnvSchema = RawEnvSchema.superRefine((env, ctx) => {
   const isProd = env.NODE_ENV === 'production';
+
+  // Режим слотов: без имени слота и файла разрешения фон некому разрешить — это ошибка
+  // настройки, а не «фон выключен по умолчанию» (блок 09, задание 3).
+  if (env.BACKGROUND_START === 'grant' && (!env.CORE_SLOT || !env.BACKGROUND_GRANT_PATH)) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['BACKGROUND_START'],
+      message: 'BACKGROUND_START=grant требует CORE_SLOT и BACKGROUND_GRANT_PATH',
+    });
+  }
 
   // ---- Аутентификация -----------------------------------------------------
   // Обычный вход по логину и паролю разрешён и в production (решение Томаса, блок 5): его ключ

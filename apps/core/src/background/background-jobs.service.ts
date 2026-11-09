@@ -71,6 +71,18 @@ interface Entry {
 
 const iso = (ms: number | null): string | null => (ms === null ? null : new Date(ms).toISOString());
 
+/**
+ * Состояние фона процесса (блок 09, задание 3; Тэнк 09.11).
+ *
+ *  - `idle` — фон не запускался (выключен, роль, нет разрешения);
+ *  - `running` — проходы планируются и идут;
+ *  - `pausing` — новые не захватываются, идущие ещё не закончились;
+ *  - `paused` — идущих нет: объявляется только после фактического окончания каждого
+ *    прохода. Отправленный сигнал прерывания окончания не доказывает;
+ *  - `stopping` — остановка процесса, навсегда.
+ */
+export type BackgroundMode = 'idle' | 'running' | 'pausing' | 'paused' | 'stopping';
+
 @Injectable()
 export class BackgroundJobsService {
   private readonly logger = new Logger(BackgroundJobsService.name);
@@ -78,6 +90,14 @@ export class BackgroundJobsService {
   private readonly jobs = new Map<string, Entry>();
   private readonly stopController = new AbortController();
   private started = false;
+  /**
+   * Эпоха работы: прерывается паузой, на продолжение заводится новая. Отдельно от
+   * `stopController` — тот прерывается только остановкой процесса и навсегда.
+   */
+  private epoch = new AbortController();
+  private paused = false;
+  /** Проходы, которых ждёт пауза: пока хоть один идёт — `pausing`, а не `paused`. */
+  private pausePending = new Set<Promise<void>>();
 
   /** Подменяется в тестах; в работе — блокировки PostgreSQL. */
   locks: AdvisoryLockProvider = pgAdvisoryLocks;
@@ -127,6 +147,88 @@ export class BackgroundJobsService {
 
   get isStopping(): boolean {
     return this.stopController.signal.aborted;
+  }
+
+  get mode(): BackgroundMode {
+    if (this.isStopping) return 'stopping';
+    if (!this.started) return 'idle';
+    if (this.paused) return this.pausePending.size > 0 ? 'pausing' : 'paused';
+    return 'running';
+  }
+
+  /** Имена задач, чьи проходы ещё идут во время паузы. */
+  get pendingPasses(): string[] {
+    return [...this.jobs.values()].filter((e) => e.current).map((e) => e.def.name);
+  }
+
+  /**
+   * Обратимая пауза (блок 09, задание 3). Новые проходы не планируются сразу. Идущим даём
+   * закончиться сами `graceMs`, затем шлём прерывание эпохи и ждём до `waitMs` всего.
+   * `paused` — только когда закончился каждый проход: advisory-блокировки к этому моменту
+   * освобождены (`finally` прохода), незавершённое осталось в прикладных записях и будет
+   * подхвачено по аренде там, где фон работает. Не дождались — остаётся `pausing` с именами
+   * идущих проходов; переход в `paused` произойдёт сам, когда они закончатся.
+   */
+  async pause(waitMs: number, graceMs = Math.floor(waitMs / 2)): Promise<BackgroundMode> {
+    if (this.isStopping) return this.mode;
+    if (!this.started) {
+      // Фон ещё не запускался: пауза означает «не запускать» — то же для продолжения.
+      this.paused = true;
+      this.started = true;
+      return this.mode;
+    }
+    if (!this.paused) {
+      this.paused = true;
+      for (const entry of this.jobs.values()) {
+        if (entry.timer) clearTimeout(entry.timer);
+        entry.timer = null;
+        entry.nextRunAt = null;
+      }
+      for (const entry of this.jobs.values()) {
+        if (!entry.current) continue;
+        const pass = entry.current;
+        this.pausePending.add(pass);
+        void pass.finally(() => this.pausePending.delete(pass));
+      }
+      this.logger.log({ msg: 'фон: пауза', pending: this.pendingPasses });
+    }
+    const wait = (ms: number) =>
+      new Promise<void>((resolve) => {
+        if (this.pausePending.size === 0) return resolve();
+        const timer = setTimeout(resolve, ms);
+        void Promise.allSettled([...this.pausePending]).then(() => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    await wait(graceMs);
+    if (this.pausePending.size > 0 && !this.epoch.signal.aborted) {
+      this.epoch.abort(new Error('пауза фона'));
+    }
+    await wait(Math.max(0, waitMs - graceMs));
+    if (this.pausePending.size > 0) {
+      this.logger.warn({
+        msg: 'фон: проходы не закончились к сроку паузы',
+        pending: this.pendingPasses,
+      });
+    } else {
+      this.logger.log({ msg: 'фон: на паузе' });
+    }
+    return this.mode;
+  }
+
+  /**
+   * Продолжение после паузы — только из `paused`: пока идёт хоть один прежний проход,
+   * второй тот же не запускается. Новая эпоха; задачи планируются через интервал, стартовые
+   * уборки (`runAtStart`) не повторяются.
+   */
+  resume(): BackgroundMode {
+    if (this.isStopping || !this.paused || this.pausePending.size > 0) return this.mode;
+    this.paused = false;
+    this.epoch = new AbortController();
+    for (const entry of this.jobs.values()) this.schedule(entry, entry.def.intervalMs);
+    this.logger.log({ msg: 'фон: продолжен', instance: this.instanceId });
+    return this.mode;
   }
 
   start(): void {
@@ -205,6 +307,7 @@ export class BackgroundJobsService {
       overdue:
         e.enabled &&
         this.started &&
+        !this.paused &&
         !this.isStopping &&
         ((e.runningSince !== null && now - e.runningSince > e.def.intervalMs) ||
           (e.runningSince === null &&
@@ -214,7 +317,7 @@ export class BackgroundJobsService {
   }
 
   private schedule(entry: Entry, delayMs: number): void {
-    if (!entry.enabled || this.isStopping) return;
+    if (!entry.enabled || this.isStopping || this.paused) return;
     entry.nextRunAt = Date.now() + delayMs;
     entry.timer = setTimeout(() => {
       entry.timer = null;
@@ -236,7 +339,8 @@ export class BackgroundJobsService {
       entry.lastStartedAt = started;
       entry.nextRunAt = null;
       entry.lastInterrupted = false;
-      let signal = this.stopController.signal;
+      // Прерывание — остановкой процесса или паузой (эпоха прохода фиксируется на старте).
+      let signal = AbortSignal.any([this.stopController.signal, this.epoch.signal]);
       let release: (() => Promise<void>) | null = null;
 
       try {
@@ -252,7 +356,7 @@ export class BackgroundJobsService {
             return;
           }
           release = () => lock.release();
-          signal = AbortSignal.any([this.stopController.signal, lock.lost]);
+          signal = AbortSignal.any([signal, lock.lost]);
         }
         // Остановка могла прийти, пока ждали блокировку, а блокировка — уже
         // потеряться. Задачу с прерванным сигналом не запускаем: часть задач

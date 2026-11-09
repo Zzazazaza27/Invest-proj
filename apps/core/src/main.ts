@@ -9,6 +9,7 @@ import rateLimit from '@fastify/rate-limit';
 import { randomUUID } from 'node:crypto';
 import { AppModule } from './app.module';
 import { BackgroundJobsService } from './background/background-jobs.service';
+import { readGrant } from './background/grant';
 import { startInternalServer } from './background/internal-server';
 import { checkReadiness, runControl, type ReadinessProbes } from './background/readiness';
 import { setPublicReadiness } from './health/public-readiness';
@@ -128,6 +129,22 @@ async function bootstrap(): Promise<void> {
     logger: env.isTest ? false : json,
     bufferLogs: true,
   });
+
+  // ---- Сборка и активные запросы (блок 09, задание 3) ---------------------
+  // Переключение слотов подтверждается запросом через nginx: ответ несёт сборку и слот. Счётчик
+  // начатых и ещё не закрытых ответов — для решения, когда старый слот можно останавливать.
+  let activeRequests = 0;
+  app
+    .getHttpAdapter()
+    .getInstance()
+    .addHook('onRequest', async (_request, reply) => {
+      activeRequests += 1;
+      reply.raw.once('close', () => {
+        activeRequests -= 1;
+      });
+      reply.header('X-Fifth-Build', env.FIFTH_BUILD ?? 'dev');
+      if (env.CORE_SLOT) reply.header('X-Fifth-Slot', env.CORE_SLOT);
+    });
 
   // ---- Ворота восстановленной среды (2.1.5, M167) ------------------------
   // До итоговой проверки журнала удалений восстановленная база людей не обслуживает:
@@ -423,8 +440,9 @@ async function bootstrap(): Promise<void> {
       : null,
     valkey: counters ? () => counters.ping() : null,
     nats: nats.enabled ? () => nats.ping() : null,
+    // В режиме слотов фоном распоряжается установщик: кандидат готов к трафику и без фона.
     background: () => ({
-      required: background.allowed,
+      required: background.allowed && env.BACKGROUND_START !== 'grant',
       running: jobs.isStarted && !jobs.isStopping,
     }),
     // Группы функций (4.11): эксплуатация видит состояние «Файлов»; готовность не снимается.
@@ -443,19 +461,35 @@ async function bootstrap(): Promise<void> {
         (key) => s3.getObjectDigest(key),
       ),
   };
-  const internal = await startInternalServer(jobs, readinessProbes);
+  const internal = await startInternalServer(jobs, readinessProbes, {
+    activeRequests: () => activeRequests,
+  });
   // Публичная готовность (2.3): тот же расчёт, наружу — только «готов / не готов».
   // Закрытые ворота восстановленной среды (2.1.5) — «не готов».
   setPublicReadiness(
     async () => (await restoreGateOpen()) && (await checkReadiness(readinessProbes)).ready,
   );
   logger.log(
-    `служебный порт ${env.CORE_INTERNAL_BIND_HOST}:${internal.port} (/live, /ready, /jobs, /queues, /control)`,
+    `служебный порт ${env.CORE_INTERNAL_BIND_HOST}:${internal.port} (/live, /ready, /jobs, /queues, /control, /state, /background)`,
   );
   // Фон запускается здесь, а не при инициализации модулей: решение о роли и
   // выключателе принимается до первого прохода, включая стартовые уборки.
-  if (background.allowed) jobs.start();
-  else logger.warn(`фоновые задачи не запускаются: ${background.reason}`);
+  if (!background.allowed) {
+    logger.warn(`фоновые задачи не запускаются: ${background.reason}`);
+  } else if (env.BACKGROUND_START === 'grant') {
+    // Слот (блок 09, задание 3): фон — только по подтверждённому разрешению установщика.
+    // Неоднозначно — пауза, которую снимает только команда при действующем разрешении.
+    const grant = readGrant(env.BACKGROUND_GRANT_PATH!, env.CORE_SLOT!);
+    if (grant.granted) {
+      jobs.start();
+      logger.log(`фон слота ${env.CORE_SLOT}: разрешён (выпуск ${grant.op ?? '—'})`);
+    } else {
+      await jobs.pause(0);
+      logger.warn(`фон слота ${env.CORE_SLOT}: на паузе — ${grant.reason}`);
+    }
+  } else {
+    jobs.start();
+  }
   lifecycle = 'running';
 
   // Общий предел на всё завершение, включая закрытие приложения и пулов.
