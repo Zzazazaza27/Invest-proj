@@ -3,6 +3,7 @@ import {
   AcceptedSchema,
   EmailVerificationStatusSchema,
   EmailVerifyRequestSchema,
+  LinkCheckSchema,
   PasswordForgotRequestSchema,
   PasswordResetCheckSchema,
   PasswordResetRequestSchema,
@@ -78,6 +79,20 @@ export class VerificationController {
     assertLocalAuthAvailable();
     const input = parseOrThrow(PasswordResetCheckSchema, rawBody);
     await this.verification.checkPasswordReset(ctx, input.token);
+    return { ok: true };
+  }
+
+  /**
+   * Действует ли ссылка из письма данного назначения — страница спрашивает при открытии.
+   * Одна проверка на все ссылки (M170); токен не расходуется.
+   */
+  @Public()
+  @Post('link/check')
+  @HttpCode(200)
+  async linkCheck(@Body() rawBody: unknown, @Ctx() ctx: RequestContext) {
+    const input = parseOrThrow(LinkCheckSchema, rawBody);
+    if (input.purpose === 'password_reset') assertLocalAuthAvailable();
+    await this.verification.checkLink(ctx, input.purpose, input.token);
     return { ok: true };
   }
 

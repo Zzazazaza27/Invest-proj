@@ -1,9 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ContextualImage } from './test-context';
 import { Badge, Button, Card, ErrorState, Field, Input, LoadingState, Stack } from '@fifth/ui';
-import type { Features, MyProfile } from '@fifth/contracts';
-import { FilesNotice, noteGroupError, useFilesAvailability } from './availability';
-import { AVATAR_LIMITS } from '@fifth/contracts';
+import type { EmailVerificationStatus, Features, MyProfile } from '@fifth/contracts';
+import {
+  FilesNotice,
+  GroupNotice,
+  noteGroupError,
+  useFilesAvailability,
+  useMailAvailability,
+} from './availability';
+import { AVATAR_LIMITS, uuidv7 } from '@fifth/contracts';
 
 /**
  * «Мой профиль» — один экран на все кабинеты.
@@ -37,6 +43,16 @@ export interface ProfilePort {
    * нет — решает только сервер. Сам профиль открывается в любом случае.
    */
   features?: () => Promise<Features>;
+  /**
+   * Подтверждение адреса почты. Есть — профиль показывает, подтверждён ли адрес, и даёт
+   * прислать письмо ещё раз: иначе человеку с устаревшей ссылкой новую взять негде.
+   * `key` — ключ повтора: после неизвестного исхода повтор идёт с тем же, второго письма
+   * сервер не отправит.
+   */
+  emailVerification?: {
+    status: () => Promise<EmailVerificationStatus>;
+    request: (key: string) => Promise<{ expiresAt: string; delivery: 'accepted' | 'unknown' }>;
+  };
 }
 
 export function ProfilePage({
@@ -97,6 +113,9 @@ export function ProfilePage({
         }}
       />
       <MainData profile={profile} />
+      {port.emailVerification ? (
+        <EmailVerification verification={port.emailVerification} features={port.features} />
+      ) : null}
       {kycSlot}
       <Security profile={profile} port={port} onDone={onPasswordChanged} />
     </Stack>
@@ -273,6 +292,114 @@ function MainData({ profile }: { profile: MyProfile }) {
             {STATUS_LABEL[profile.status] ?? profile.status}
           </Badge>
         </div>
+      </Stack>
+    </Card>
+  );
+}
+
+/**
+ * Подтверждение почты: пока адрес не подтверждён — строка об этом и повторное письмо.
+ *
+ * Отправка — прежний маршрут с его ограничением частоты и группой «Почта» (4.11): при
+ * закрытой отправке кнопка не нажимается, а предупреждение объясняет почему. Подтверждённый
+ * адрес блока не показывает — сообщать «всё в порядке» отдельной карточкой незачем.
+ */
+function EmailVerification({
+  verification,
+  features,
+}: {
+  verification: NonNullable<ProfilePort['emailVerification']>;
+  features?: ProfilePort['features'];
+}) {
+  const [status, setStatus] = useState<EmailVerificationStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const mail = useMailAvailability(features);
+  /** Ключ повтора: живёт, пока исход неизвестен; после ответа — новый на следующее письмо. */
+  const key = useRef<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    verification.status().then(
+      (next) => !cancelled && setStatus(next),
+      // Состояние не загрузилось — блок не показываем: профиль от него не зависит.
+      () => undefined,
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [verification]);
+
+  if (!status || status.verified) return null;
+
+  async function send() {
+    setBusy(true);
+    setNotice(null);
+    key.current ??= uuidv7();
+    try {
+      const result = await verification.request(key.current);
+      key.current = null;
+      const until = new Date(result.expiresAt).toLocaleString('ru-RU', {
+        day: 'numeric',
+        month: 'long',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+      setNotice({
+        tone: 'ok',
+        text:
+          result.delivery === 'accepted'
+            ? `Письмо отправлено. Ссылка действует до ${until}.`
+            : `Письмо, вероятно, отправлено — проверьте почту. Ссылка действует до ${until}.`,
+      });
+    } catch (cause) {
+      noteGroupError(cause);
+      // Исход неизвестен — ключ остаётся: повтор не отправит второго письма.
+      if (!(cause as { outcomeUnknown?: boolean })?.outcomeUnknown) key.current = null;
+      setNotice({
+        tone: 'error',
+        text: messageOf(cause, 'Письмо не отправлено. Попробуйте позже'),
+      });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <Stack gap="var(--u-space-3)">
+        <strong style={{ fontSize: 'var(--u-text-lg)' }}>Почта не подтверждена</strong>
+        <span style={{ color: 'var(--u-text-muted)', fontSize: 'var(--u-text-sm)' }}>
+          Пока адрес не подтверждён, часть уведомлений платформа отправлять не будет. Ссылка из
+          письма действует сутки и срабатывает один раз.
+        </span>
+        <GroupNotice group="mail" availability={mail} />
+        {!status.mailAvailable ? (
+          <span style={{ color: 'var(--u-text-muted)' }}>
+            Отправка писем на платформе пока не подключена.
+          </span>
+        ) : (
+          <div>
+            <Button
+              variant="secondary"
+              loading={busy}
+              disabled={busy || !mail.canWrite}
+              data-testid="email-verify-resend"
+              onClick={() => void send()}
+            >
+              Прислать письмо ещё раз
+            </Button>
+          </div>
+        )}
+        {notice ? (
+          <span
+            role="status"
+            data-testid="email-verify-notice"
+            style={{ color: notice.tone === 'ok' ? 'var(--u-success)' : 'var(--u-danger)' }}
+          >
+            {notice.text}
+          </span>
+        ) : null}
       </Stack>
     </Card>
   );

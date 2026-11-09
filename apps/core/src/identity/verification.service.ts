@@ -1,7 +1,7 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import * as argon2 from 'argon2';
 import { createHash, randomBytes } from 'node:crypto';
-import { uuidv7 } from '@fifth/contracts';
+import { uuidv7, type LinkPurpose } from '@fifth/contracts';
 import { AuditRepository } from '../audit/audit.repository';
 import { MailThrottleService } from '../auth/mail-throttle.service';
 import { SessionEpochService } from '../auth/session-epoch.service';
@@ -178,11 +178,22 @@ export class VerificationService {
    * просроченную, использованную и несуществующую.
    */
   async checkPasswordReset(ctx: RequestContext, token: string): Promise<void> {
-    this.assertMailAvailable();
+    await this.checkLink(ctx, 'password_reset', token);
+  }
+
+  /**
+   * Действует ли ссылка из письма данного назначения (M170). Одна проверка на все ссылки:
+   * ссылка подтверждения почты не годится для смены пароля и наоборот. Токен не
+   * расходуется — окончательное действие расходует его само, одним шагом в базе.
+   */
+  async checkLink(ctx: RequestContext, purpose: LinkPurpose, token: string): Promise<void> {
+    // Смена пароля без почты бессмысленна (ссылку не повторить); подтверждение уже
+    // отправленного адреса от почты не зависит.
+    if (purpose === 'password_reset') this.assertMailAvailable();
     const alive = await this.db.asServiceRole('app_auth', ctx, async (tx) => {
       const { rows } = await tx.query<{ alive: boolean }>(
-        'SELECT identity.password_reset_token_alive($1) AS alive',
-        [sha256Of(token)],
+        'SELECT identity.link_token_alive($1, $2) AS alive',
+        [sha256Of(token), purpose],
       );
       return rows[0]?.alive === true;
     });

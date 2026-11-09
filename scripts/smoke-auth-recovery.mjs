@@ -259,6 +259,54 @@ console.warn('\n[3] Смена пароля по ссылке');
       `статус ${r.response.status}`,
     );
   }
+  // Единая проверка ссылок (M170): назначение — часть вопроса.
+  {
+    const own = await req('/v1/auth/link/check', {
+      method: 'POST',
+      body: { purpose: 'password_reset', token: resetToken },
+    });
+    check(
+      'общая проверка: живая ссылка смены пароля действует',
+      own.response.status === 200,
+      `статус ${own.response.status}`,
+    );
+    const crossed = await req('/v1/auth/link/check', {
+      method: 'POST',
+      body: { purpose: 'email_verify', token: resetToken },
+    });
+    check(
+      'общая проверка: ссылка смены пароля не годится как подтверждение почты',
+      crossed.response.status === 400,
+      `статус ${crossed.response.status}`,
+    );
+    const confirmCrossed = await req('/v1/auth/email/verify/confirm', {
+      method: 'POST',
+      body: { token: resetToken },
+    });
+    check(
+      'подтверждение почты ссылкой смены пароля отвергнуто',
+      confirmCrossed.response.status === 400,
+      `статус ${confirmCrossed.response.status}`,
+    );
+    const unknownPurpose = await req('/v1/auth/link/check', {
+      method: 'POST',
+      body: { purpose: 'invite', token: resetToken },
+    });
+    check(
+      'общая проверка: неизвестное назначение отвергнуто',
+      unknownPurpose.response.status === 400,
+      `статус ${unknownPurpose.response.status}`,
+    );
+    const rows = await sql(
+      'SELECT used_at FROM identity.verification_tokens WHERE token_sha256 = $1',
+      [
+        createHash('sha256')
+          .update(resetToken ?? '', 'utf8')
+          .digest(),
+      ],
+    );
+    check('проверки ссылку не израсходовали', rows[0]?.used_at === null);
+  }
   const short = await req('/v1/auth/password/reset', {
     method: 'POST',
     body: { token: resetToken, password: 'short' },
@@ -275,10 +323,19 @@ console.warn('\n[3] Смена пароля по ссылке');
   });
   check('чужой токен отвергнут', wrong.response.status === 400, `статус ${wrong.response.status}`);
 
-  const ok = await req('/v1/auth/password/reset', {
-    method: 'POST',
-    body: { token: resetToken, password: NEW_PASSWORD },
-  });
+  // Две одновременные попытки по одной ссылке: успешна ровно одна (M060, один UPDATE).
+  const pair = await Promise.all(
+    [NEW_PASSWORD, NEW_PASSWORD].map((password) =>
+      req('/v1/auth/password/reset', { method: 'POST', body: { token: resetToken, password } }),
+    ),
+  );
+  const pairStatuses = pair.map((r) => r.response.status).sort();
+  check(
+    'две одновременные смены пароля: успешна одна',
+    pairStatuses[0] === 200 && pairStatuses[1] === 400,
+    `статусы ${pairStatuses.join(',')}`,
+  );
+  const ok = pair.find((r) => r.response.status === 200) ?? pair[0];
   check('пароль изменён', ok.response.status === 200, `статус ${ok.response.status}`);
   check(
     'сессия по ссылке из письма НЕ открывается',
@@ -404,15 +461,86 @@ console.warn('\n[5] Подтверждение адреса');
     `статус ${crossed.response.status}`,
   );
 
-  const confirmed = await req('/v1/auth/email/verify/confirm', {
-    method: 'POST',
-    body: { token: verifyToken },
-  });
+  // Открытие страницы — только проверка: ссылка не расходуется, сколько бы раз её ни
+  // открыли (почтовые сервисы открывают ссылки сами).
+  {
+    const statuses = [];
+    for (let i = 0; i < 2; i += 1) {
+      const r = await req('/v1/auth/link/check', {
+        method: 'POST',
+        body: { purpose: 'email_verify', token: verifyToken },
+      });
+      statuses.push(r.response.status);
+    }
+    check(
+      'открытие ссылки подтверждения (дважды) — ссылка действует',
+      statuses.every((s) => s === 200),
+      `статусы ${statuses.join(',')}`,
+    );
+    const rows = await sql(
+      'SELECT used_at FROM identity.verification_tokens WHERE token_sha256 = $1',
+      [
+        createHash('sha256')
+          .update(verifyToken ?? '', 'utf8')
+          .digest(),
+      ],
+    );
+    check('открытие страницы ссылку подтверждения не израсходовало', rows[0]?.used_at === null);
+    const notVerified = await req('/v1/auth/email/verify/status', { headers: authHeaders() });
+    check('после открытия адрес ещё не подтверждён', notVerified.json?.verified === false);
+    const crossedCheck = await req('/v1/auth/link/check', {
+      method: 'POST',
+      body: { purpose: 'password_reset', token: verifyToken },
+    });
+    check(
+      'общая проверка: ссылка подтверждения не годится для смены пароля',
+      crossedCheck.response.status === 400,
+      `статус ${crossedCheck.response.status}`,
+    );
+  }
+
+  // Нажатие — две одновременные попытки: подтверждение выполняется один раз.
+  const both = await Promise.all(
+    [0, 1].map(() =>
+      req('/v1/auth/email/verify/confirm', { method: 'POST', body: { token: verifyToken } }),
+    ),
+  );
+  const bothStatuses = both.map((r) => r.response.status).sort();
+  check(
+    'две одновременные попытки подтверждения: успешна одна',
+    bothStatuses[0] === 200 && bothStatuses[1] === 400,
+    `статусы ${bothStatuses.join(',')}`,
+  );
+  const confirmed = both.find((r) => r.response.status === 200) ?? both[0];
   check(
     'адрес подтверждён без сессии',
     confirmed.response.status === 200,
     `статус ${confirmed.response.status}`,
   );
+  {
+    const r = await req('/v1/auth/link/check', {
+      method: 'POST',
+      body: { purpose: 'email_verify', token: verifyToken },
+    });
+    check(
+      'использованная ссылка подтверждения недействительна',
+      r.response.status === 400,
+      `статус ${r.response.status}`,
+    );
+  }
+  {
+    const events = await sql(
+      `SELECT count(*)::int AS n FROM audit.events
+        WHERE verb = 'identity.email.verified' AND subject_id = (
+          SELECT user_id FROM identity.verification_tokens WHERE token_sha256 = $1)`,
+      [
+        createHash('sha256')
+          .update(verifyToken ?? '', 'utf8')
+          .digest(),
+      ],
+    );
+    check('событие подтверждения записано один раз', events[0]?.n === 1, `событий ${events[0]?.n}`);
+  }
 
   const after = await req('/v1/auth/email/verify/status', { headers: authHeaders() });
   check('состояние стало «подтверждён»', after.json?.verified === true);
@@ -444,6 +572,11 @@ console.warn('\n[5] Подтверждение адреса');
 
 // ------------------------------------------------------ 6. счётчик писем
 console.warn('\n[6] Счётчик писем на контакт');
+// Разделы 1–5 расходуют почти весь лимит класса auth на адрес (RATE_LIMIT_AUTH_PER_MIN,
+// 30/мин), а этот шлёт ещё limit+3 запросов: без паузы проверялся бы лимит адреса, а не
+// счётчик писем на контакт. Пауза — как в security-audit-full.
+console.warn('  (пауза 62 с — окно лимита запросов входа)');
+await new Promise((resolve) => setTimeout(resolve, 62_000));
 {
   const limit = Number(env.RATE_LIMIT_VERIFY_MAIL_PER_CONTACT ?? 5);
   const target = `flood-${suffix}@test.local`;
@@ -470,6 +603,25 @@ console.warn('\n[6] Счётчик писем на контакт');
     files.length === 0,
     `файлов ${files.length}`,
   );
+}
+
+// ------------------------------------------------- 7. токен не в журнале
+console.warn('\n[7] Токены из писем не попадают в журнал ядра');
+{
+  // Журнал ядра стенда — core.log в корне (stand-up). Его нет — проверка пропущена и
+  // считается проваленной: пропущенное не пройдено.
+  const logIndex = process.argv.indexOf('--core-log');
+  const logFile = logIndex >= 0 ? process.argv[logIndex + 1] : join(ROOT, 'core.log');
+  if (!existsSync(logFile)) {
+    check('журнал ядра найден', false, logFile);
+  } else {
+    const text = readFileSync(logFile, 'utf8');
+    const verifyTokenLater = tokenFor(EMAIL, 'verify', markRegister);
+    const leaked = [resetToken, verifyTokenLater]
+      .filter(Boolean)
+      .filter((t) => text.includes(t.slice(0, 24)));
+    check('токенов в журнале ядра нет', leaked.length === 0, `найдено ${leaked.length}`);
+  }
 }
 
 // --------------------------------------------------------------- уборка

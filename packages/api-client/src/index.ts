@@ -248,6 +248,18 @@ export class FifthApi {
       }),
 
     /**
+     * Действует ли ссылка из письма данного назначения. Токен не расходуется; ссылка
+     * другого назначения — «не действует» (422), как и просроченная.
+     */
+    linkCheck: (purpose: 'password_reset' | 'email_verify', token: string) =>
+      this.http.request({
+        method: 'POST',
+        path: '/auth/link/check',
+        body: { purpose, token },
+        schema: z.object({ ok: z.literal(true) }),
+      }),
+
+    /**
      * Письмо с подтверждением своего адреса. Нужна открытая сессия. `delivery`:
      * `accepted` — принято релеем (не доставка адресату), `unknown` — письмо могло уйти.
      */

@@ -16,7 +16,7 @@
  * Требуется: `npm run web:up`, ядро и собранные фронтенды.
  */
 import { chromium } from 'playwright';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -37,6 +37,22 @@ function standPassword() {
     return trimmed.slice('DEV_TEST_USER_PASSWORD='.length).trim();
   }
   return null;
+}
+
+/**
+ * Ссылка подтверждения из последнего письма адресату (MAIL_TRANSPORT=file, var/mail). Имя
+ * файла содержит адрес — как в smoke-auth-recovery.
+ */
+function verifyTokenFor(address) {
+  const dir = join(ROOT, 'var', 'mail');
+  if (!existsSync(dir)) return null;
+  const safe = address.replace(/[^a-zA-Z0-9._@-]/g, '_').slice(0, 64);
+  const last = readdirSync(dir)
+    .filter((name) => name.includes(safe))
+    .sort()
+    .at(-1);
+  if (!last) return null;
+  return /#verify=([A-Za-z0-9_-]+)/.exec(readFileSync(join(dir, last), 'utf8'))?.[1] ?? null;
 }
 
 let passed = 0;
@@ -311,36 +327,107 @@ if (mailOff) {
 await p3.goto(`${BASE}/login/#reset=${'z'.repeat(43)}`, { waitUntil: 'networkidle' });
 await p3.waitForTimeout(800);
 if (mailOff) {
+  // Без почты ссылку смены пароля проверить нечем: экран говорит об отключённой почте, а
+  // не «нет связи» и не «устарела».
+  const text = ((await p3.locator('[data-link="disabled"]').first().textContent()) ?? '').trim();
   check(
-    'ссылка из письма открывает форму нового пароля',
-    (await p3.locator('#new-password').count()) === 1,
-  );
-  await p3.locator('#new-password').fill('Some-long-passw0rd!');
-  await p3.locator('#repeat-password').fill('Other-long-passw0rd!');
-  await p3.getByRole('button', { name: 'Сменить пароль' }).click();
-  await p3.waitForTimeout(400);
-  check(
-    'несовпадение паролей ловится до отправки',
-    ((await p3.locator('[role="alert"]').first().textContent()) ?? '').includes('не совпадают'),
-  );
-  await p3.locator('#repeat-password').fill('Some-long-passw0rd!');
-  await p3.getByRole('button', { name: 'Сменить пароль' }).click();
-  await p3.waitForTimeout(1500);
-  const resetError = ((await p3.locator('[role="alert"]').first().textContent()) ?? '').trim();
-  check(
-    'без почты смена по ссылке тоже объяснена отключённой почтой',
-    resetError.includes('Восстановление пароля пока недоступно'),
-    resetError.slice(0, 70),
+    'без почты ссылка смены пароля объяснена отключённой почтой',
+    text.includes('Восстановление пароля пока недоступно') &&
+      (await p3.locator('#new-password').count()) === 0,
+    text.slice(0, 70),
   );
 } else {
   check(
     'устаревшая ссылка видна сразу, без формы нового пароля',
-    (await p3.locator('[data-reset-link="dead"]').count()) === 1 &&
+    (await p3.locator('[data-link="dead"][data-link-purpose="password_reset"]').count()) === 1 &&
       (await p3.locator('#new-password').count()) === 0,
   );
   await p3.getByRole('button', { name: 'Запросить новую ссылку' }).click();
   await p3.waitForTimeout(400);
   check('кнопка ведёт к запросу новой ссылки', (await p3.locator('#forgot-email').count()) === 1);
+}
+
+// ------------------------------------------ единый механизм ссылок (Тэнк, Томас 09.11)
+console.warn('\n[9] Ссылки из писем: открытие, кнопка, временный отказ');
+{
+  const ctx = await browser.newContext();
+  const p4 = await ctx.newPage();
+  p4.on('pageerror', (error) => pageErrors.push(String(error)));
+  // Диагностика браузера (8.4) и консоль: токен туда попадать не должен.
+  const diagnostics = [];
+  p4.on('console', (message) => diagnostics.push(message.text()));
+  p4.on('request', (request) => {
+    if (request.url().includes('/client-errors')) diagnostics.push(request.postData() ?? '');
+  });
+
+  // Временный отказ — не «ссылка устарела»: проверка не дошла до сервера.
+  const bogus = 'q'.repeat(43);
+  await p4.route('**/v1/auth/link/check', (route) => route.abort('connectionrefused'));
+  await p4.goto(`${BASE}/login/#verify=${bogus}`, { waitUntil: 'networkidle' });
+  await p4.waitForTimeout(800);
+  check(
+    'сбой связи при проверке — «не удалось проверить», не «устарела»',
+    (await p4.locator('[data-link="unknown"]').count()) === 1 &&
+      (await p4.getByText('устарела').count()) === 0,
+  );
+  await p4.unroute('**/v1/auth/link/check');
+  await p4.getByRole('button', { name: 'Проверить ещё раз' }).click();
+  await p4.waitForTimeout(1200);
+  check(
+    'повтор проверки работает: поддельная ссылка подтверждения — «устарела или уже использована»',
+    (await p4.locator('[data-link="dead"][data-link-purpose="email_verify"]').count()) === 1,
+  );
+  check(
+    'для ссылки подтверждения предложен вход (новое письмо — в профиле)',
+    (await p4.getByRole('button', { name: 'Войти' }).count()) === 1,
+  );
+
+  if (mailOn) {
+    // Настоящая ссылка из письма регистрации своего участника.
+    const person = await registerProbeUser(run, { role: 'founder', label: 'render-verify' });
+    const token = verifyTokenFor(person.email);
+    check('ссылка подтверждения получена из письма', Boolean(token));
+    const checkLink = () =>
+      p4.evaluate(
+        async ({ base, t }) =>
+          (
+            await fetch(`${base}/v1/auth/link/check`, {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ purpose: 'email_verify', token: t }),
+            })
+          ).status,
+        { base: BASE, t: token },
+      );
+    await p4.goto(`${BASE}/login/#verify=${token}`, { waitUntil: 'networkidle' });
+    await p4.waitForTimeout(800);
+    await p4.reload({ waitUntil: 'networkidle' });
+    await p4.waitForTimeout(800);
+    check(
+      'действующая ссылка — кнопка «Подтвердить почту», без автоматического подтверждения',
+      (await p4.locator('[data-link="alive"]').count()) === 1 &&
+        (await p4.getByRole('button', { name: 'Подтвердить почту' }).count()) === 1,
+    );
+    check('два открытия страницы ссылку не израсходовали', (await checkLink()) === 200);
+    await p4.getByRole('button', { name: 'Подтвердить почту' }).click();
+    await p4.waitForTimeout(1500);
+    const notice = ((await p4.locator('[role="status"]').first().textContent()) ?? '').trim();
+    check('нажатие подтверждает адрес', notice.includes('Адрес подтверждён'), notice.slice(0, 60));
+    check('после нажатия ссылка израсходована', (await checkLink()) === 400);
+    await p4.goto(`${BASE}/`, { waitUntil: 'networkidle' });
+    await p4.goto(`${BASE}/login/#verify=${token}`, { waitUntil: 'networkidle' });
+    await p4.waitForTimeout(800);
+    check(
+      'повторное открытие — общий экран «устарела или уже использована»',
+      (await p4.locator('[data-link="dead"][data-link-purpose="email_verify"]').count()) === 1,
+    );
+    check(
+      'токена нет в консоли и диагностике браузера',
+      diagnostics.every((text) => !text.includes(token.slice(0, 24))),
+      `записей ${diagnostics.length}`,
+    );
+  }
+  await ctx.close();
 }
 
 const inputsWithoutLabel = await p3.locator('input:not([id]):not([aria-label])').count();

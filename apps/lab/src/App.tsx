@@ -166,6 +166,10 @@ const profilePort: ProfilePort = {
   changePassword: async (input) => {
     await api.profile.changePassword(input);
   },
+  emailVerification: {
+    status: () => api.auth.emailVerificationStatus(),
+    request: (idempotencyKey) => api.auth.requestEmailVerification({ idempotencyKey }),
+  },
 };
 
 export default function App() {

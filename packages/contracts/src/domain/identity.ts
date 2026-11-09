@@ -130,6 +130,21 @@ export const PasswordResetCheckSchema = z.object({
 });
 export type PasswordResetCheck = z.infer<typeof PasswordResetCheckSchema>;
 
+/**
+ * Назначение ссылки из письма. Одно место для всех ссылок с токеном: новая ссылка
+ * добавляет сюда назначение, на сервере — условие в `identity.link_token_alive` (M170),
+ * на странице входа — экран действия и способ получить новую.
+ */
+export const LinkPurposeSchema = z.enum(['password_reset', 'email_verify']);
+export type LinkPurpose = z.infer<typeof LinkPurposeSchema>;
+
+/** Проверка ссылки при открытии страницы: токен не расходуется. */
+export const LinkCheckSchema = z.object({
+  purpose: LinkPurposeSchema,
+  token: boundedString(32, 128),
+});
+export type LinkCheck = z.infer<typeof LinkCheckSchema>;
+
 export const EmailVerifyRequestSchema = z.object({
   token: boundedString(32, 128),
 });

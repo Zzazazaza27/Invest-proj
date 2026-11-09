@@ -112,6 +112,19 @@ function isMailDisabled(err: unknown): boolean {
 }
 
 /**
+ * Сервер отверг саму ссылку: просрочена, использована, чужого назначения или не
+ * существует — ответ один (422 с полем `token`). Только это — «ссылка устарела»; сбой
+ * сети, 429 и 5xx — временная ошибка с повтором (Тэнк, 09.11).
+ */
+function isLinkRejected(err: unknown): boolean {
+  if (!(err instanceof ApiError) || (err.status !== 400 && err.status !== 422)) return false;
+  const fields = (err.problem as { errors?: unknown } | null)?.errors;
+  return Array.isArray(fields) && fields.some((f) => (f as { path?: unknown })?.path === 'token');
+}
+
+const TEMPORARY_FAILURE_TEXT = 'Не удалось связаться с сервером. Попробуйте ещё раз.';
+
+/**
  * Экран, названный фрагментом адреса: `#register` и `#login`.
  *
  * Витрина ведёт на это приложение двумя разными кнопками, и до Ф60 обе
@@ -191,10 +204,16 @@ export default function App() {
   const [consentGiven, setConsentGiven] = useState(false);
   const [passwordRepeat, setPasswordRepeat] = useState('');
   /**
-   * Действует ли ссылка смены пароля. Проверяется при открытии: просить новый пароль по
-   * устаревшей ссылке и отказывать после ввода — неудобно (Томас, 08.11).
+   * Действует ли ссылка из письма (смена пароля, подтверждение почты). Проверяется при
+   * открытии, токен при этом не расходуется (M170): просить новый пароль по устаревшей
+   * ссылке и отказывать после ввода — неудобно (Томас, 08.11). `unknown` — проверить не
+   * удалось (сеть, сервер): это не «устарела», человеку — повтор.
    */
-  const [resetLink, setResetLink] = useState<'checking' | 'alive' | 'dead' | 'unknown'>('checking');
+  const [link, setLink] = useState<'checking' | 'alive' | 'dead' | 'unknown' | 'disabled'>(
+    'checking',
+  );
+  /** Повтор проверки ссылки по нажатию: меняется — проверка идёт заново. */
+  const [linkAttempt, setLinkAttempt] = useState(0);
   /**
    * Страна обслуживания (этап 5.6.5, обеим ролям — владелец 2026-09-18): список
    * активных стран — публичный; язык от страны не зависит;
@@ -218,16 +237,6 @@ export default function App() {
       .catch(() => setCountries([]));
   }, [mode, countries]);
 
-  /**
-   * Токены подтверждения, уже отправленные на сервер.
-   *
-   * Ссылка из письма одноразовая, а обработчиков у неё два: подписка на
-   * `hashchange` и разбор адреса при открытии страницы. Когда срабатывали оба,
-   * второй запрос получал законный отказ по использованному токену — и человек
-   * видел «Адрес подтверждён» вместе с красной ошибкой валидации. Помним, что
-   * уже отправляли: повторный вызов по тому же токену просто не нужен.
-   */
-  const confirmedTokens = useRef<Set<string>>(new Set());
   /**
    * Ключ повтора «Забыли пароль» (4.11, M162): один на адрес, пока ответ не получен. Повтор
    * после обрыва связи идёт с тем же ключом — второго письма сервер не отправит.
@@ -257,8 +266,8 @@ export default function App() {
       setLinkToken(found.token);
       setError(null);
       setNotice(null);
-      if (found.mode === 'verify') void confirmEmailLink(found.token);
-      else setMode('reset');
+      // Подтверждение почты — по нажатию, не при открытии (Тэнк, Томас 09.11).
+      setMode(found.mode);
     }
     window.addEventListener('hashchange', onHashChange);
     return () => window.removeEventListener('hashchange', onHashChange);
@@ -268,23 +277,22 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (mode !== 'reset' || !linkToken) return;
+    if ((mode !== 'reset' && mode !== 'verify') || !linkToken) return;
     let cancelled = false;
-    setResetLink('checking');
-    api.auth.passwordResetCheck(linkToken).then(
-      () => !cancelled && setResetLink('alive'),
+    setLink('checking');
+    api.auth.linkCheck(mode === 'reset' ? 'password_reset' : 'email_verify', linkToken).then(
+      () => !cancelled && setLink('alive'),
       (err: unknown) => {
         if (cancelled) return;
-        // Отказ ссылки — 400/422. Сбой сети или сервера не повод объявлять ссылку мёртвой:
-        // форма остаётся, сервер ответит при отправке.
-        const dead = err instanceof ApiError && (err.status === 400 || err.status === 422);
-        setResetLink(dead ? 'dead' : 'unknown');
+        // Отказ ссылки — 400/422. Сбой сети или сервера не повод объявлять ссылку мёртвой.
+        // Почта выключена — смена пароля невозможна вовсе; это не сбой связи.
+        setLink(isLinkRejected(err) ? 'dead' : isMailDisabled(err) ? 'disabled' : 'unknown');
       },
     );
     return () => {
       cancelled = true;
     };
-  }, [mode, linkToken]);
+  }, [mode, linkToken, linkAttempt]);
 
   useEffect(() => {
     let cancelled = false;
@@ -295,7 +303,6 @@ export default function App() {
       // не дав закончить начатое, значило бы потерять ссылку.
       if (initial) {
         setChecking(false);
-        if (initial.mode === 'verify') await confirmEmailLink(initial.token);
         return;
       }
       try {
@@ -443,24 +450,30 @@ export default function App() {
   }
 
   /**
-   * Переход по ссылке подтверждения адреса.
+   * Подтверждение адреса — по нажатию человека, не при открытии страницы.
    *
-   * Сессия не нужна: письмо открывают в том браузере, где оно пришло, и это
-   * почти никогда не тот, где открыт кабинет.
+   * Почтовые сервисы открывают ссылки из писем для проверки и могли израсходовать её
+   * раньше человека (Тэнк, Томас 09.11). Сессия не нужна: письмо открывают в том
+   * браузере, где оно пришло, и это почти никогда не тот, где открыт кабинет.
    */
-  async function confirmEmailLink(token: string): Promise<void> {
-    if (confirmedTokens.current.has(token)) return;
-    confirmedTokens.current.add(token);
+  async function confirmEmailLink(): Promise<void> {
+    if (busy) return;
+    setError(null);
     setBusy(true);
     try {
-      await api.auth.confirmEmail(token);
+      await api.auth.confirmEmail(linkToken);
       setNotice('Адрес подтверждён. Теперь можно войти.');
       setMode('login');
-    } catch (err) {
-      setError(describe(err));
-      setMode('login');
-    } finally {
       forgetHash();
+    } catch (err) {
+      // Израсходована или устарела — общий экран. Сбой сети — повтор на месте: если
+      // подтверждение всё же прошло, повтор приведёт на тот же общий экран.
+      if (isLinkRejected(err)) setLink('dead');
+      else
+        setError(
+          err instanceof ApiError && err.status === 429 ? describe(err) : TEMPORARY_FAILURE_TEXT,
+        );
+    } finally {
       setBusy(false);
     }
   }
@@ -528,14 +541,10 @@ export default function App() {
       // и текст здесь тоже один. Разные формулировки подсказывали бы
       // подбирающему, что он близко, а человеку всё равно нужно одно и то же:
       // запросить письмо заново.
-      // Без почты сервер отказывает и здесь — тем же текстом, что при запросе.
-      setError(
-        isMailDisabled(err)
-          ? MAIL_DISABLED_TEXT
-          : err instanceof ApiError && (err.status === 400 || err.status === 422)
-            ? 'Ссылка недействительна или устарела. Запросите новую.'
-            : describe(err),
-      );
+      // Без почты сервер отказывает и здесь — тем же текстом, что при запросе. Отвергнутая
+      // ссылка — общий экран «устарела», как при открытии.
+      if (isLinkRejected(err)) setLink('dead');
+      else setError(isMailDisabled(err) ? MAIL_DISABLED_TEXT : describe(err));
     } finally {
       setBusy(false);
     }
@@ -657,53 +666,119 @@ export default function App() {
     );
   }
 
-  // Ссылка из письма: смена пароля. Экран отдельный, потому что здесь нет
-  // почты и нет входа — только новый пароль и подтверждение опечатки.
-  if (mode === 'reset' && resetLink !== 'alive' && resetLink !== 'unknown') {
+  // Ссылка из письма — общий экран для любого назначения, пока она не проверена или не
+  // действует: «проверяем», «устарела или уже использована» со способом получить новую,
+  // «проверить не удалось» с повтором. Действующая ссылка — экран своего действия ниже.
+  if ((mode === 'reset' || mode === 'verify') && link !== 'alive') {
+    const purpose = mode === 'reset' ? 'password_reset' : 'email_verify';
+    const backToLogin = (
+      <p className="auth-switch">
+        <button
+          type="button"
+          className="auth-link"
+          onClick={() => {
+            setMode('login');
+            setError(null);
+            forgetHash();
+          }}
+        >
+          Вернуться ко входу
+        </button>
+      </p>
+    );
     return (
       <Container>
         <div className="auth-shell">
           <Card>
             <Stack>
-              {resetLink === 'checking' ? (
-                <p className="auth-subtitle" data-reset-link="checking">
+              {link === 'checking' ? (
+                <p className="auth-subtitle" data-link="checking" data-link-purpose={purpose}>
                   Проверяем ссылку…
                 </p>
+              ) : link === 'disabled' ? (
+                <>
+                  <p className="auth-subtitle" data-link="disabled" data-link-purpose={purpose}>
+                    {MAIL_DISABLED_TEXT}
+                  </p>
+                  {backToLogin}
+                </>
+              ) : link === 'unknown' ? (
+                <>
+                  <div data-link="unknown" data-link-purpose={purpose}>
+                    <h1 className="auth-title">Не удалось проверить ссылку</h1>
+                    <p className="auth-subtitle">
+                      Нет связи с сервером. Ссылка, возможно, ещё действует — попробуйте ещё раз.
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="brand"
+                    onClick={() => setLinkAttempt((n) => n + 1)}
+                  >
+                    Проверить ещё раз
+                  </Button>
+                  {backToLogin}
+                </>
               ) : (
                 <>
-                  <div data-reset-link="dead">
-                    <h1 className="auth-title">Ссылка устарела</h1>
+                  <div data-link="dead" data-link-purpose={purpose}>
+                    <h1 className="auth-title">Ссылка устарела или уже использована</h1>
                     <p className="auth-subtitle">
-                      Ссылка из письма действует недолго и срабатывает один раз. Запросите новое
-                      письмо — пароль пока не менялся.
+                      {purpose === 'password_reset'
+                        ? 'Ссылка из письма действует недолго и срабатывает один раз. Запросите новое письмо — пароль пока не менялся.'
+                        : 'Ссылка из письма действует сутки и срабатывает один раз. Если адрес уже подтверждён, делать ничего не нужно. Иначе войдите — в профиле кабинета можно прислать письмо ещё раз.'}
                     </p>
                   </div>
                   <Button
                     type="button"
                     variant="brand"
                     onClick={() => {
-                      setMode('forgot');
+                      setMode(purpose === 'password_reset' ? 'forgot' : 'login');
                       setError(null);
                       forgetHash();
                     }}
                   >
-                    Запросить новую ссылку
+                    {purpose === 'password_reset' ? 'Запросить новую ссылку' : 'Войти'}
                   </Button>
-                  <p className="auth-switch">
-                    <button
-                      type="button"
-                      className="auth-link"
-                      onClick={() => {
-                        setMode('login');
-                        setError(null);
-                        forgetHash();
-                      }}
-                    >
-                      Вернуться ко входу
-                    </button>
-                  </p>
+                  {purpose === 'password_reset' ? backToLogin : null}
                 </>
               )}
+            </Stack>
+          </Card>
+        </div>
+      </Container>
+    );
+  }
+
+  // Действующая ссылка подтверждения: само открытие ничего не меняет, адрес
+  // подтверждается нажатием (Тэнк, Томас 09.11).
+  if (mode === 'verify') {
+    return (
+      <Container>
+        <div className="auth-shell">
+          <Card>
+            <Stack>
+              <div data-link="alive" data-link-purpose="email_verify">
+                <h1 className="auth-title">Подтверждение почты</h1>
+                <p className="auth-subtitle">
+                  Нажмите кнопку, чтобы подтвердить адрес почты вашего аккаунта.
+                </p>
+              </div>
+              {error ? (
+                <p className="auth-error" role="alert">
+                  {error}
+                </p>
+              ) : null}
+              <Button
+                type="button"
+                variant="brand"
+                loading={busy}
+                disabled={busy}
+                data-testid="confirm-email"
+                onClick={() => void confirmEmailLink()}
+              >
+                Подтвердить почту
+              </Button>
             </Stack>
           </Card>
         </div>
