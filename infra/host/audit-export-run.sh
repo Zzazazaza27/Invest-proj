@@ -5,7 +5,7 @@
 #
 # Роль — только app_archive_user (журнал на чтение, M052). Перехода на владельца нет: нет
 # адреса роли — выгрузка не идёт и сигнал audit-export-<среда> это показывает.
-#   prod   — адрес в /etc/fifth-audit-export/prod.db-url (готовит prod-audit-export-setup);
+#   prod   — секрет среды /run/fifth-secrets/DATABASE_URL_APP_ARCHIVE (база на узле 127.0.0.1:5433);
 #   test-2 — секрет среды DATABASE_URL_APP_ARCHIVE, хост — адрес контейнера базы среды.
 # Значения не печатаются.
 set -Eeuo pipefail
@@ -14,9 +14,9 @@ ROOT=/opt/fifth-element
 cd "$ROOT"
 case "$ENV_ID" in
   prod)
-    URL_FILE=/etc/fifth-audit-export/prod.db-url
-    [ -s "$URL_FILE" ] || { echo 'нет адреса роли app_archive_user для prod' >&2; exit 1; }
-    url="$(cat "$URL_FILE")"
+    secret=/run/fifth-secrets/DATABASE_URL_APP_ARCHIVE
+    [ -s "$secret" ] || { echo 'нет секрета DATABASE_URL_APP_ARCHIVE у prod' >&2; exit 1; }
+    url="$(cat "$secret")"
     ;;
   test-2)
     secret="$ROOT/.local/envs/test-2/secrets/DATABASE_URL_APP_ARCHIVE"

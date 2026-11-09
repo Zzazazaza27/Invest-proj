@@ -5,10 +5,13 @@
 #
 #   fifth-test op prod-audit-export-setup test-2 | prod
 #
-# Роль выгрузки — app_archive_user (журнал только на чтение, M052). Для prod шаг готовит её
-# вход: случайный пароль (только если адреса ещё нет), ALTER ROLE владельцем, адрес — в
-# /etc/fifth-audit-export/prod.db-url (только root). У test-2 адрес роли — в секретах
-# среды. Перехода на владельца нет.
+# Роль выгрузки — app_archive_user (журнал только на чтение, M052). Её адрес и пароль — в
+# секретах среды (prod: /run/fifth-secrets/DATABASE_URL_APP_ARCHIVE, test-2: секреты среды);
+# шаг пароль роли НЕ меняет. Перехода на владельца нет.
+#
+# Исправление 09.11: прежняя версия шага задала роли prod новый пароль и положила адрес в
+# /etc/fifth-audit-export/prod.db-url, не заметив готового секрета. Если этот файл есть,
+# шаг возвращает роли пароль из секрета среды и удаляет файл.
 #
 # Проверка: два прохода подряд — порция N и N+1, вторая продолжает первую (хеш прежней описи,
 # хвост цепочки), подпись описи — закреплённым открытым ключом, покрытие — время проверки.
@@ -27,19 +30,19 @@ fi
 chmod 600 "$KEYDIR/signing.key"
 
 if [ "$ENV_ID" = prod ]; then
-  URL_FILE="$KEYDIR/prod.db-url"
-  owner="$(sed -E 's#@[^/]*/#@127.0.0.1:5432/#' /run/fifth-secrets/DATABASE_URL_OWNER)"
-  psql_owner() { docker exec -e URL="$owner" fifth-postgres sh -c "psql \"\$URL\" -v ON_ERROR_STOP=1 -At -c \"$1\""; }
-  [ "$(psql_owner "SELECT count(*) FROM pg_roles WHERE rolname = 'app_archive_user'")" = 1 ] ||
-    { echo 'роли app_archive_user нет в рабочей базе' >&2; exit 1; }
-  if [ ! -s "$URL_FILE" ]; then
-    pw="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
-    psql_owner "ALTER ROLE app_archive_user WITH LOGIN PASSWORD '$pw'" >/dev/null
-    umask 077
-    printf 'postgres://app_archive_user:%s@127.0.0.1:5432/fifth_element\n' "$pw" >"$URL_FILE"
+  SECRET=/run/fifth-secrets/DATABASE_URL_APP_ARCHIVE
+  [ -s "$SECRET" ] || { echo 'нет секрета DATABASE_URL_APP_ARCHIVE у prod' >&2; exit 1; }
+  if [ -e "$KEYDIR/prod.db-url" ]; then
+    # Вернуть роли пароль из секрета среды (расхождение от прежней версии шага).
+    owner="$(sed -E 's#@[^/]*/#@127.0.0.1:5432/#' /run/fifth-secrets/DATABASE_URL_OWNER)"
+    pw="$(node -e "console.log(decodeURIComponent(new URL(require('fs').readFileSync('$SECRET','utf8').trim()).password))")"
+    docker exec -i -e URL="$owner" fifth-postgres sh -c 'psql "$URL" -v ON_ERROR_STOP=1 -q' <<SQL
+ALTER ROLE app_archive_user WITH PASSWORD '$pw';
+SQL
     unset pw
+    rm -f "$KEYDIR/prod.db-url"
+    echo '▸ пароль app_archive_user возвращён к секрету среды, прежний файл адреса удалён'
   fi
-  chmod 600 "$URL_FILE"
 fi
 
 install -o root -g root -m 755 infra/host/fifth-backup-read /usr/local/sbin/
@@ -68,7 +71,7 @@ for (const s of seqs) {
 console.log('▸ серия: порций ' + seqs.length + ', подписи и продолжение сошлись; покрыто до ' + point.checkedAt);
 "
 url_role() {
-  if [ "$ENV_ID" = prod ]; then sed -E 's#^postgres://([^:]+):.*#\1#' "$KEYDIR/prod.db-url"
+  if [ "$ENV_ID" = prod ]; then sed -E 's#^postgres://([^:]+):.*#\1#' /run/fifth-secrets/DATABASE_URL_APP_ARCHIVE
   else sed -E 's#^postgres://([^:]+):.*#\1#' "$ROOT/.local/envs/test-2/secrets/DATABASE_URL_APP_ARCHIVE"; fi
 }
 echo "▸ роль выгрузки: $(url_role)"

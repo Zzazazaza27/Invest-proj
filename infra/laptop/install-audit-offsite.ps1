@@ -14,15 +14,17 @@ $ErrorActionPreference = 'Stop'
 $repo = 'D:\Programming\fifth-element'
 $name = '5E audit offsite'
 $node = (Get-Command node).Source
+# Полное имя учётной записи «КОМПЬЮТЕР\имя»: без него планировщик отвергает пользователя.
+$user = "$env:USERDOMAIN\$env:USERNAME"
 if (-not (Test-Path "$repo\infra\audit\export-signing.pub")) { throw 'нет закреплённого ключа выгрузки' }
 if (-not (Test-Path "$env:USERPROFILE\.ssh\maus_5e")) { throw 'нет ключа SSH maus_5e' }
 $action = New-ScheduledTaskAction -Execute $node -Argument 'scripts/audit-offsite.mjs pull' -WorkingDirectory $repo
 $hourly = New-ScheduledTaskTrigger -Once -At (Get-Date).Date.AddMinutes(20) -RepetitionInterval (New-TimeSpan -Hours 1)
-$logon = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
+$logon = New-ScheduledTaskTrigger -AtLogOn -User $user
 $logon.Delay = 'PT5M'
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
   -RunOnlyIfNetworkAvailable -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Minutes 30)
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited
 Register-ScheduledTask -TaskName $name -Action $action -Trigger @($hourly, $logon) -Settings $settings `
   -Principal $principal -Description '5E: вынос выгрузки журнала аудита (2.1.5)' -Force | Out-Null
 Write-Output "задание «$name» установлено: раз в час и через 5 минут после входа"
