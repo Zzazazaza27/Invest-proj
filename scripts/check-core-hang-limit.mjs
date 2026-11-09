@@ -27,7 +27,7 @@
  * Контейнер и образ пробы удаляются.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync, copyFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -54,6 +54,13 @@ const lastHealth = () => {
   const log = inspect()?.State?.Health?.Log ?? [];
   return String(log.at(-1)?.Output ?? '').trim();
 };
+/** Проверка здоровья — из настоящего образа ядра, чтобы прогон шёл по действующим параметрам. */
+const HEALTHCHECK = /^HEALTHCHECK (.+?) \\$/m
+  .exec(readFileSync(join(ROOT, 'infra/images/core.Dockerfile'), 'utf8'))?.[0]
+  ?.replace(/ \\$/, '');
+if (!HEALTHCHECK) throw new Error('в core.Dockerfile нет HEALTHCHECK');
+const INTERVAL_MS = Number(/--interval=(\d+)s/.exec(HEALTHCHECK)?.[1] ?? 5) * 1000;
+
 async function waitFor(fn, ms) {
   const until = Date.now() + ms;
   while (Date.now() < until) {
@@ -101,28 +108,50 @@ COPY core-health.mjs core-health-policy.mjs core-start.mjs core-start-policy.mjs
 COPY main.js ./apps/core/dist/main.js
 ENV CORE_START_SLOW_MS=20000 CORE_STARTUP_DEADLINE_MS=20000
 USER node
-HEALTHCHECK --interval=5s --timeout=4s --start-period=30s --retries=3 CMD ["node", "core-health.mjs"]
+${HEALTHCHECK} CMD ["node", "core-health.mjs"]
 CMD ["node", "core-start.mjs"]
 `,
   );
+  console.warn(`  проверка здоровья как в образе ядра: ${HEALTHCHECK}`);
   execFileSync('docker', ['build', '-q', '-t', IMAGE, work], { env, stdio: 'ignore' });
   docker('rm', '-f', NAME);
   docker('run', '-d', '--name', NAME, '--init', '--restart', 'unless-stopped', IMAGE);
-  check('контейнер поднялся и здоров', await waitFor(healthy, 60_000));
+  check('контейнер поднялся и здоров', await waitFor(healthy, 120_000));
 
   console.warn('[1] Три зависания — три автоматических перезапуска');
+  // Фактическое время (Тэнк 10.11): от заморозки до перезапуска и до нового «здоров» —
+  // с фазой опроса, таймаутами и длительностью проверок, а не «три интервала».
+  const detect = [];
+  const recover = [];
   for (let n = 1; n <= 3; n += 1) {
     const before = restarts();
+    const t0 = Date.now();
     freeze();
-    const restarted = await waitFor(() => restarts() > before, 60_000);
-    const back = restarted && (await waitFor(healthy, 60_000));
+    const restarted = await waitFor(() => restarts() > before, 120_000);
+    detect.push(Date.now() - t0);
+    const t1 = Date.now();
+    const back = restarted && (await waitFor(healthy, 120_000));
+    recover.push(Date.now() - t1);
     check(`зависание ${n}: перезапущен и снова здоров`, back, `перезапусков ${restarts()}`);
   }
+  console.warn(
+    `  обнаружение зависания, мс: ${detect.join(', ')}; снова здоров через, мс: ${recover.join(', ')}`,
+  );
+  check(
+    'зависание обнаружено не позже 4 интервалов проверки',
+    Math.max(...detect) <= 4 * INTERVAL_MS + 3_000,
+    `максимум ${Math.max(...detect)} мс при интервале ${INTERVAL_MS} мс`,
+  );
+  check(
+    'после перезапуска «здоров» быстро (быстрый старт сохранён)',
+    Math.max(...recover) <= 15_000,
+    `максимум ${Math.max(...recover)} мс`,
+  );
 
   console.warn('[2] Четвёртое — остановка автовосстановления');
   const before4 = restarts();
   freeze();
-  const stopped = await waitFor(() => /recovery=stopped/.test(lastHealth()), 60_000);
+  const stopped = await waitFor(() => /recovery=stopped/.test(lastHealth()), 120_000);
   check('строка проверки — recovery=stopped', stopped, lastHealth());
   await sleep(20_000);
   check(
@@ -153,7 +182,7 @@ CMD ["node", "core-start.mjs"]
   docker('exec', NAME, 'sh', '-c', 'touch /tmp/slow-start');
   const before5 = restarts();
   docker('restart', NAME);
-  const up = await waitFor(healthy, 60_000);
+  const up = await waitFor(healthy, 120_000);
   check(
     'медленный старт — без убийства, затем здоров',
     up && restarts() === before5,
@@ -209,7 +238,7 @@ CMD ["node", "core-start.mjs"]
   check('история падений сохранена', crashes() === 3, `падений ${crashes()}`);
   check('выгрузка наблюдения: признака петли нет', containerRecord(inspect()).crashLoop === false);
   docker('restart', NAME);
-  await waitFor(healthy, 60_000);
+  await waitFor(healthy, 120_000);
   check('штатный перезапуск — не падение', crashes() === 3, `падений ${crashes()}`);
   docker(
     'exec',
@@ -218,7 +247,7 @@ CMD ["node", "core-start.mjs"]
     '-e',
     "const fs=require('fs');for(const p of fs.readdirSync('/proc').filter((d)=>/^\\d+$/.test(d)&&d!=='1')){try{if(fs.readFileSync('/proc/'+p+'/cmdline','utf8').startsWith('node\\0apps/core/dist/main.js'))process.kill(Number(p),'SIGTERM')}catch{}}",
   );
-  const again = await waitFor(() => /mode=slow/.test(lastHealth()) && crashes() === 4, 60_000);
+  const again = await waitFor(() => /mode=slow/.test(lastHealth()) && crashes() === 4, 120_000);
   check(
     'SIGTERM ядру мимо обёртки — падение, сразу снова редкий режим',
     again,
@@ -230,14 +259,14 @@ CMD ["node", "core-start.mjs"]
   docker('run', '-d', '--name', NAME, '--init', '--restart', 'unless-stopped', IMAGE);
   check(
     'свежий контейнер здоров, время запуска в строке',
-    await waitFor(() => healthy() && /startup=/.test(lastHealth()), 60_000),
+    await waitFor(() => healthy() && /startup=/.test(lastHealth()), 120_000),
     lastHealth(),
   );
   for (let n = 1; n <= 2; n += 1) {
     const before = restarts();
     freeze();
     const back =
-      (await waitFor(() => restarts() > before, 60_000)) && (await waitFor(healthy, 60_000));
+      (await waitFor(() => restarts() > before, 120_000)) && (await waitFor(healthy, 120_000));
     check(`зависание в работе ${n}: снят и снова здоров`, back, `перезапусков ${restarts()}`);
   }
   docker('exec', NAME, 'sh', '-c', 'touch /tmp/no-live');
