@@ -41,14 +41,14 @@ case "${1:-}" in
     grep -vE "^($(echo "$KEYS" | tr ' ' '|'))=" "$FILE" > "$tmp"
     for k in $KEYS; do echo "$k=${LOAD[$k]}" >> "$tmp"; done
     cat "$tmp" > "$FILE"; rm -f "$tmp"
-    echo "применено $(date -u +%Y-%m-%dT%H:%M:%SZ):"; show
     restart
+    echo "применено $(date -u +%Y-%m-%dT%H:%M:%SZ):"; show
     ;;
   restore)
     if [ -f "$MARK" ]; then
       cat "$MARK" > "$FILE" && rm -f "$MARK"
-      echo "возвращено $(date -u +%Y-%m-%dT%H:%M:%SZ):"; show
       restart
+      echo "возвращено $(date -u +%Y-%m-%dT%H:%M:%SZ):"; show
     else
       echo 'отметки нет — значения уже обычные:'; show
     fi
