@@ -31,6 +31,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildOrder } from './kit.mjs';
+import { rollbackVerdict } from './lib/rollback-policy.mjs';
 import { parseEnvFile } from './lib/backup.mjs';
 import { activateProdFiles, prodFileProblems } from './lib/prod-compose.mjs';
 
@@ -383,7 +384,7 @@ function compatReport(candidate, previous) {
   return same ? report : { ...report, result: 'stale' };
 }
 
-/** Точка возврата нового выпуска: прежняя сборка и проверена ли она на новой схеме. */
+/** Точка возврата нового выпуска: прежняя сборка и разрешён ли будет возврат на неё. */
 function rollbackPoint(build, current) {
   let previousKit;
   try {
@@ -391,14 +392,10 @@ function rollbackPoint(build, current) {
   } catch {
     return { build: current, checked: false, reason: `комплекта ${current} нет на узле` };
   }
-  const added = newMigrations(readKit(build), previousKit);
-  if (added.length === 0) return { build: current, checked: true, reason: 'миграций нет' };
-  const report = compatReport(build, current);
-  return {
-    build: current,
-    checked: report?.result === 'ok',
-    reason: report ? `прогон совместимости: ${report.result}` : 'прогона совместимости нет',
-  };
+  const candidate = readKit(build);
+  const unknown = newMigrations(candidate, previousKit).map((m) => m.id);
+  const verdict = rollbackVerdict(candidate, unknown, compatReport(build, current));
+  return { build: current, checked: verdict.allowed, reason: verdict.reason };
 }
 
 const newMigrations = (to, from) => {
@@ -406,38 +403,20 @@ const newMigrations = (to, from) => {
   return to.migrations.filter((m) => !known.has(m.id));
 };
 
-/**
- * Возврат на прежний комплект. Схема остаётся новой (старую копию БД поверх рабочей не
- * восстанавливаем), поэтому прежний код должен её понимать:
- *  - применённая contract-миграция, которой нет в целевом комплекте, — отказ: прежний код
- *    опирается на удалённое, только исправление вперёд;
- *  - иная незнакомая ему миграция — нужен пройденный прогон совместимости именно этой пары
- *    комплектов. Отсутствие признака contract совместимости не доказывает (Тэнк, 09.11).
- */
+/** Возврат на прежний комплект: незнакомые ему миграции берутся из фактической схемы. */
 function rollbackGuard(id, target, current) {
   const applied = psql(id, 'SELECT id FROM public.schema_migrations ORDER BY id;')
     .split('\n')
     .filter(Boolean);
   const known = new Set(target.migrations.map((m) => m.id));
   const unknown = applied.filter((m) => !known.has(m));
-  if (unknown.length === 0) return;
-  const currentKit = readKit(current);
-  const contract = currentKit.migrations.filter((m) => unknown.includes(m.id) && m.contract);
-  if (contract.length > 0) {
-    throw new Refused(
-      `возврат на ${target.build} невозможен: применены contract-миграции ` +
-        `${contract.map((m) => m.id).join(', ')} — только исправление вперёд (9.3)`,
-    );
-  }
-  const report = compatReport(current, target.build);
-  const covered = new Set(report?.newMigrations ?? []);
-  if (report?.result !== 'ok' || !unknown.every((m) => covered.has(m))) {
-    throw new Refused(
-      `возврат на ${target.build} не проверен: в базе ${unknown.length} незнакомых ему миграций ` +
-        `(${unknown.slice(0, 5).join(', ')}${unknown.length > 5 ? '…' : ''}), отчёт совместимости ` +
-        `${report ? `«${report.result}»` : 'отсутствует'} — остановить выпуск и решить с Томасом`,
-    );
-  }
+  const verdict = rollbackVerdict(readKit(current), unknown, compatReport(current, target.build));
+  if (verdict.allowed) return;
+  throw new Refused(
+    verdict.forbidden
+      ? `возврат на ${target.build} невозможен: применены ${verdict.reason}`
+      : `возврат на ${target.build} не проверен: ${verdict.reason} — остановить выпуск и решить с Томасом`,
+  );
 }
 
 async function install(id) {

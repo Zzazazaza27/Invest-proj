@@ -263,6 +263,77 @@ try {
     );
     check('индекс не тронут', (await indexState('foreign_ix'))?.valid === false);
     check('следующая миграция не применена', !(await applied()).includes('M007_next'));
+    await probe('DROP INDEX public.foreign_ix');
+    drop('M007_next');
+  }
+
+  // Тэнк 09.11: принадлежность определялась только именем — ожидающая миграция с тем же
+  // именем разрешала удалить непригодный индекс на другой таблице или с другим определением.
+  const sharedState = async () =>
+    (
+      await probe(
+        `SELECT i.indisvalid AS valid, t.relname AS "table", pg_get_indexdef(i.indexrelid) AS def
+           FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
+           JOIN pg_class t ON t.oid = i.indrelid WHERE c.relname = 'shared_idx'`,
+      )
+    )[0] ?? null;
+  put(
+    'M008_shared',
+    `-- migrate:no-transaction
+     CREATE INDEX CONCURRENTLY IF NOT EXISTS shared_idx ON public.items (v);`,
+  );
+
+  console.warn('\n[7] То же имя, другая таблица — индекс не тронут');
+  {
+    await probe('CREATE TABLE public.other_t (v int)');
+    await probe('INSERT INTO public.other_t VALUES (1), (1)');
+    await probe('CREATE UNIQUE INDEX CONCURRENTLY shared_idx ON public.other_t (v)').catch(
+      () => undefined,
+    );
+    const before = await sharedState();
+    check(
+      'подготовлен непригодный shared_idx на other_t',
+      before?.valid === false && before?.table === 'other_t',
+    );
+    const r = migrate();
+    check('прогон остановлен', !r.ok);
+    check(
+      'причина: не совпадает с тем, что строит миграция',
+      /не совпадает/.test(r.out),
+      r.out.match(/public\.shared_idx на [^\n]*/)?.[0]?.slice(0, 120) ?? r.out.slice(-160),
+    );
+    const after = await sharedState();
+    check(
+      'индекс на other_t не тронут',
+      after?.valid === false && after?.table === 'other_t' && after?.def === before?.def,
+      after?.def,
+    );
+    check('миграция не применена', !(await applied()).includes('M008_shared'));
+    await probe('DROP INDEX public.shared_idx');
+  }
+
+  console.warn('\n[8] То же имя и таблица, другое определение — индекс не тронут');
+  {
+    await probe('INSERT INTO public.items (v) VALUES (1)');
+    await probe('CREATE UNIQUE INDEX CONCURRENTLY shared_idx ON public.items (v)').catch(
+      () => undefined,
+    );
+    const before = await sharedState();
+    check(
+      'подготовлен непригодный уникальный shared_idx на items',
+      before?.valid === false && /UNIQUE/.test(before?.def ?? ''),
+    );
+    const r = migrate();
+    check('прогон остановлен', !r.ok && /не совпадает/.test(r.out));
+    const after = await sharedState();
+    check('индекс не тронут', after?.valid === false && after?.def === before?.def, after?.def);
+    await probe('DROP INDEX public.shared_idx');
+    const again = migrate();
+    check('после разбора миграция применена', again.ok, again.out.slice(-160));
+    check(
+      'построен ожидаемый индекс',
+      (await sharedState())?.valid === true && !/UNIQUE/.test((await sharedState())?.def ?? ''),
+    );
   }
 } finally {
   await admin(`DROP DATABASE IF EXISTS ${DB} WITH (FORCE)`).catch(() => undefined);

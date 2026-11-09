@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 250; требований: 41
+- Проверок: 251; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 98
+### Зарегистрированы, но ни в наборе, ни в CI — 99
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -270,6 +270,7 @@
 - `CHK-RELEASE-PINS` — Очистка не удаляет комплект, образы которого могут работать в среде.
 - `CHK-RELEASE` — Блок 9, задание 1: комплект, блокировка, реестр и сверка версий.
 - `CHK-MIGRATE-INTERRUPT` — Блок 9, задание 2: прерванная миграция безопасна, миграция не держит запросы бесконечно.
+- `CHK-ROLLBACK-POLICY` — Блок 9, задание 2: отметка точки возврата и решение о возврате — одно правило (Тэнк, 09.11).
 - `CHK-MIGRATION-COMPAT` — Блок 9, задание 2: несовместимый возврат выявлен до рабочей выкладки; отчёт — точка возврата для установщика.
 - `CHK-INSTALLER` — Границы автоматического выпуска: подпись, класс операций, возврат
 - `CHK-INSTALLER-SITE` — Рабочая ветка установщика: блокировка, файлы запуска, возврат
@@ -416,8 +417,9 @@
 | CHK-TRANSITION-KIT | `node scripts/check-transition-kit.mjs` | 22 | вручную | — |
 | CHK-PROD-COMPOSE | `node scripts/check-prod-compose.mjs` | 6 | вручную | — |
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
-| CHK-RELEASE | `node scripts/check-release.mjs` | 60 | вручную | — |
-| CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 25 | вручную | — |
+| CHK-RELEASE | `node scripts/check-release.mjs` | 61 | вручную | — |
+| CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 35 | вручную | — |
+| CHK-ROLLBACK-POLICY | `node scripts/check-rollback-policy.mjs` | 8 | вручную | — |
 | CHK-MIGRATION-COMPAT | `node scripts/check-migration-compat.mjs --previous <сборка> --candidate <сборка>` | 36 | вручную | — |
 | CHK-INSTALLER | `node scripts/check-installer.mjs` | 37 | вручную | — |
 | CHK-INSTALLER-SITE | `node scripts/check-installer-site.mjs` | 37 | вручную | — |

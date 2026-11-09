@@ -377,13 +377,22 @@ try {
     checked.code === 0,
     checked.out.slice(0, 120),
   );
-  const again2 = install(B, K2, K1);
-  check('снова на K2', again2.code === 0, again2.out.slice(0, 100));
+  // Кандидат K2 несёт contract-миграцию, отчёт совместимости пройден: отметка точки возврата
+  // при установке обязана совпасть с фактическим решением о возврате — «не проверена»
+  // (Тэнк 09.11: прежде отметка была «проверена», а возврат — отказ).
   const k2File = join(KITS, K2, 'kit.json');
   const k2Text = readFileSync(k2File, 'utf8');
   const k2 = JSON.parse(k2Text);
   k2.migrations.push({ id: 'M999_probe', sha256: '0', contract: true });
   writeFileSync(k2File, JSON.stringify(k2, null, 2));
+  const again2 = install(B, K2, K1);
+  check('снова на K2', again2.code === 0, again2.out.slice(0, 100));
+  check(
+    'contract-миграция и пройденный отчёт: точка возврата НЕ проверена',
+    again2.json?.rollbackPoint?.checked === false &&
+      /contract-миграции M999_probe/.test(again2.json?.rollbackPoint?.reason ?? ''),
+    JSON.stringify(again2.json?.rollbackPoint ?? '').slice(0, 140),
+  );
   const contract = install(B, K1, K2, '--rollback');
   check(
     'contract-миграция — отказ даже с пройденным отчётом',

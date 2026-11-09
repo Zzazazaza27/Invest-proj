@@ -92,27 +92,87 @@ export function timeoutsOf(sql: string): { lock: string; statement: string } {
  * NOT EXISTS имя ON [схема.]таблица`. Только для них есть предусмотренное продолжение после
  * обрыва: непригодный индекс удаляется и строится заново этой же миграцией.
  */
-export function concurrentIndexesOf(sql: string): { schema: string; name: string }[] {
+export interface ExpectedIndex {
+  schema: string;
+  name: string;
+  /** Таблица, на которой миграция строит индекс. */
+  table: string;
+  /** Определение из миграции, приведённое к сравнимому виду (normalizeIndexDef). */
+  definition: string;
+}
+
+export function concurrentIndexesOf(sql: string): ExpectedIndex[] {
   const re =
-    /CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+IF\s+NOT\s+EXISTS\s+"?(\w+)"?\s+ON\s+(?:ONLY\s+)?"?(\w+)"?(?:\."?(\w+)"?)?/gi;
-  const found: { schema: string; name: string }[] = [];
-  for (const m of sql.matchAll(re)) {
-    found.push({ name: m[1]!, schema: m[3] ? m[2]! : 'public' });
+    /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY\s+IF\s+NOT\s+EXISTS\s+"?(\w+)"?\s+ON\s+(?:ONLY\s+)?"?(\w+)"?(?:\."?(\w+)"?)?/i;
+  const found: ExpectedIndex[] = [];
+  for (const statement of splitStatements(sql)) {
+    const body = statement.replace(/^(?:\s*--[^\n]*\n)+/, '').trim();
+    const m = re.exec(body);
+    if (!m) continue;
+    found.push({
+      name: m[1]!,
+      schema: m[3] ? m[2]! : 'public',
+      table: m[3] ?? m[2]!,
+      definition: normalizeIndexDef(body),
+    });
   }
   return found;
 }
 
+/**
+ * Определение индекса в сравнимом виде: без CONCURRENTLY, IF NOT EXISTS, кавычек, метода по
+ * умолчанию (btree) и ссылки на таблицу (таблица сверяется отдельно), регистр и пробелы
+ * выровнены. Сравнивается с pg_get_indexdef. Не совпало — соответствие не доказано, и
+ * индекс не удаляется: лучше остановка, чем удаление чужого объекта (Тэнк, 09.11).
+ */
+export function normalizeIndexDef(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/;\s*$/, '')
+    .replace(/"/g, '')
+    .replace(/\bconcurrently\b/g, ' ')
+    .replace(/\bif\s+not\s+exists\b/g, ' ')
+    .replace(/\bon\s+(?:only\s+)?[\w.]+/g, ' on ')
+    .replace(/\busing\s+btree\b/g, ' ')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([(),])\s*/g, '$1')
+    .trim();
+}
+
+interface InvalidIndex {
+  schema: string;
+  name: string;
+  tableSchema: string;
+  table: string;
+  definition: string;
+}
+
 /** Непригодные индексы кластера: оборванный CREATE INDEX CONCURRENTLY оставляет такой. */
-async function invalidIndexes(client: pg.Client): Promise<{ schema: string; name: string }[]> {
-  const { rows } = await client.query<{ schema: string; name: string }>(
-    `SELECT n.nspname AS schema, c.relname AS name
+async function invalidIndexes(client: pg.Client): Promise<InvalidIndex[]> {
+  const { rows } = await client.query<InvalidIndex>(
+    `SELECT n.nspname AS schema, c.relname AS name,
+            tn.nspname AS "tableSchema", t.relname AS "table",
+            pg_get_indexdef(i.indexrelid) AS definition
        FROM pg_index i
        JOIN pg_class c ON c.oid = i.indexrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
+       JOIN pg_class t ON t.oid = i.indrelid
+       JOIN pg_namespace tn ON tn.oid = t.relnamespace
       WHERE NOT i.indisvalid OR NOT i.indisready
       ORDER BY 1, 2`,
   );
   return rows;
+}
+
+/** Совпадает ли непригодный индекс с тем, что строит миграция: имя, таблица, определение. */
+function sameIndex(found: InvalidIndex, expected: ExpectedIndex): boolean {
+  return (
+    found.schema === expected.schema &&
+    found.name === expected.name &&
+    found.tableSchema === expected.schema &&
+    found.table === expected.table &&
+    normalizeIndexDef(found.definition) === expected.definition
+  );
 }
 
 const qualified = (ix: { schema: string; name: string }) => `${ix.schema}.${ix.name}`;
@@ -161,12 +221,35 @@ async function main(): Promise<void> {
     // транзакции: его продолжение предусмотрено (удалить и построить заново). Чужой —
     // остановка с диагностикой: общая починка могла бы задеть не тот объект и скрыть
     // причину отказа (Тэнк, 09.11).
-    const owned = new Map<string, string>();
+    const owned = new Map<string, { file: string; expected: ExpectedIndex }>();
     for (const file of pending) {
       if (!/^\s*--\s*migrate:no-transaction\s*$/m.test(file.sql)) continue;
-      for (const ix of concurrentIndexesOf(file.sql)) owned.set(qualified(ix), file.id);
+      for (const ix of concurrentIndexesOf(file.sql)) {
+        owned.set(qualified(ix), { file: file.id, expected: ix });
+      }
     }
     const invalid = await invalidIndexes(client);
+    // Совпадение имени — не доказательство: таблица и определение сверяются с ожидаемой
+    // операцией. Не совпало или не разобрать — остановка без удаления (Тэнк, 09.11).
+    const mismatched = invalid.filter((ix) => {
+      const own = owned.get(qualified(ix));
+      return own && !sameIndex(ix, own.expected);
+    });
+    if (mismatched.length > 0) {
+      throw new Error(
+        'Непригодный индекс с именем из ожидающей миграции не совпадает с тем, что она строит:\n' +
+          mismatched
+            .map((ix) => {
+              const own = owned.get(qualified(ix))!;
+              return (
+                `  ${qualified(ix)} на ${ix.tableSchema}.${ix.table}: ${ix.definition}\n` +
+                `  ожидалось (${own.file}) на ${own.expected.schema}.${own.expected.table}: ${own.expected.definition}`
+              );
+            })
+            .join('\n') +
+          '\nПрогон остановлен, индекс не тронут: соответствие не доказано. Разобрать вручную.',
+      );
+    }
     const foreign = invalid.filter((ix) => !owned.has(qualified(ix)));
     if (foreign.length > 0) {
       throw new Error(
@@ -211,7 +294,8 @@ async function main(): Promise<void> {
           // Свой непригодный индекс от прошлого оборванного прогона — продолжение,
           // предусмотренное этой миграцией: удалить и построить заново. IF NOT EXISTS сам
           // по себе пропустил бы его и оставил непригодным.
-          for (const ix of invalid.filter((i) => owned.get(qualified(i)) === file.id)) {
+          // Сюда доходят только сверенные: несовпавший остановил прогон выше.
+          for (const ix of invalid.filter((i) => owned.get(qualified(i))?.file === file.id)) {
             console.warn(
               `  непригодный индекс ${qualified(ix)} от прошлого прогона — строится заново`,
             );
