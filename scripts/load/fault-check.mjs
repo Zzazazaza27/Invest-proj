@@ -37,11 +37,15 @@ if (!['core', 'postgres', 'valkey', 'nats'].includes(kind) || !collectId) {
 mkdirSync(out, { recursive: true });
 
 const data = JSON.parse(readFileSync(join(runDir(runId), 'users.json'), 'utf8'));
-// Последний участник и его первый проект — меньше всего пересечений с k6 по частоте.
+// Последний участник прогона; проект — свой на каждое испытание (ниже): список материалов
+// отдаёт только 100 последних, а в проекты участников ссылки добавляет и k6.
 const user = data.users[data.users.length - 1];
-const projectId = user.projects[0].id;
+let projectId = null;
 const tag = `${kind}-${Date.now()}`;
 const c = client();
+// Попытка во время отказа — раз в 5 с: за самый долгий отказ (NATS, ~6 мин с окном)
+// объектов меньше 100, и сверка видит их все.
+const DURING_EVERY_MS = 5000;
 
 async function call(path, opts = {}) {
   try {
@@ -91,6 +95,43 @@ if (!(await login())) {
   console.error('вход участника прогона не удался');
   process.exit(1);
 }
+// Свой проект испытания; учитывается в сессии прогона администратором цели — уборка прогона
+// удалит его вместе с остальным.
+{
+  const p = await call('/v1/projects', {
+    method: 'POST',
+    key: true,
+    body: {
+      title: `Нагрузка p1 ${runId} отказ ${kind}`,
+      tagline: 'Синтетический проект испытания отказа',
+      description: 'Создан испытанием отказа W32; уберётся вместе с прогоном.',
+      stage: 'idea',
+      taxonomyId: data.taxonomyIds[0],
+      investmentAsk: '1000000',
+      askCurrency: 'RUB',
+    },
+  });
+  projectId = p.json?.id;
+  if (!projectId) {
+    console.error(`проект испытания: HTTP ${p.status} ${p.json?.code ?? ''}`);
+    process.exit(1);
+  }
+  const host = new URL(BASE).hostname;
+  const adm = JSON.parse(readFileSync(join('.local', 'load', `${host}-admin.json`), 'utf8'));
+  const admin = client();
+  const al = await admin.call('/v1/auth/login', {
+    method: 'POST',
+    body: { email: adm.email, password: adm.password },
+  });
+  const reg = await admin.call(`/v1/admin/testing/sessions/${data.sessionId}/objects`, {
+    method: 'POST',
+    body: { table: 'lab.projects', id: projectId },
+  });
+  if (al.status >= 300 || reg.status >= 300) {
+    console.error(`учёт проекта испытания в сессии: вход ${al.status}, учёт ${reg.status}`);
+    process.exit(1);
+  }
+}
 const before = [];
 for (let i = 0; i < 5; i += 1) {
   const r = await addLink(`https://example.com/fault/${tag}/pre-${i}`, randomUUID());
@@ -129,7 +170,7 @@ let n = 0;
 while (finished === null) {
   during.push(await addLink(`https://example.com/fault/${tag}/during-${n}`, randomUUID()));
   n += 1;
-  await sleep(2000);
+  await sleep(DURING_EVERY_MS);
 }
 
 // ---------------------------------------------------------------- после
