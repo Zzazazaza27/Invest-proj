@@ -339,6 +339,38 @@ describe('Неизвестный результат изменяющего за�
     expect((error as ApiError).outcomeUnknown).toBe(false);
   });
 
+  it.each([
+    ['unknown', true],
+    ['not_started', false],
+    [undefined, false],
+  ] as const)(
+    '503 с outcome=%s — outcomeUnknown=%s (машинный признак, не текст и не заголовок)',
+    async (outcome, expected) => {
+      const fetchImpl = mockFetch(async () =>
+        jsonResponse(
+          {
+            type: 'https://x/problems/dependency_unavailable',
+            title: 'x',
+            status: 503,
+            code: 'dependency_unavailable',
+            detail: 'текст не важен',
+            ...(outcome ? { outcome } : {}),
+          },
+          503,
+        ),
+      );
+      const client = new ApiClient({
+        baseUrl: 'https://api.test/v1',
+        fetchImpl: fetchImpl as unknown as typeof fetch,
+      });
+      const error = await client
+        .request({ method: 'POST', path: '/projects', body: {} })
+        .catch((e: unknown) => e);
+      expect((error as ApiError).outcomeUnknown).toBe(expected);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('201 с ответом не по схеме на POST — результат неизвестен, а не отказ', async () => {
     const fetchImpl = mockFetch(async () => jsonResponse({}, 201));
     const client = new ApiClient({

@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 272; требований: 41
+- Проверок: 273; требований: 41
 
 ## Что защищено без участия человека
 
@@ -503,6 +503,7 @@
 | UNIT-CORE-OUTBOX-FAILURES | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
 | UNIT-CORE-DEPENDENCY-UNAVAILABLE | `npm run test -w apps/core` | 17 | CI | CI |
+| UNIT-CORE-UNKNOWN-OUTCOME-CHAIN | `npm run test -w apps/core` | 2 | CI | CI |
 | UNIT-CORE-BACKGROUND-IDLE | `npm run test -w apps/core` | 7 | CI | CI |
 | UNIT-CORE-BACKGROUND-SLOTS | `npm run test -w apps/core` | 16 | CI | CI |
 | UNIT-CORE-BACKGROUND | `npm run test -w apps/core` | 21 | CI | CI |

@@ -156,6 +156,14 @@ export class ProblemDetailsFilter implements ExceptionFilter {
             : 'Сервис временно недоступен, попробуйте позже',
           instance,
           traceId,
+          // Машинный признак исхода (контракт ProblemDetails.outcome): клиент опирается на
+          // него, а не на текст и не на отсутствие Retry-After. Чтение после обрыва ничего
+          // не меняло — поле не ставится.
+          ...(unknownOutcome
+            ? { outcome: 'unknown' as const }
+            : down.kind === 'refused'
+              ? { outcome: 'not_started' as const }
+              : {}),
         },
         internal: { connection: down.label, kind: down.kind, unknownOutcome },
         cause: exception,

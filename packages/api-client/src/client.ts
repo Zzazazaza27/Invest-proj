@@ -394,6 +394,9 @@ export class ApiClient {
       status: response.status,
       problem,
       retryAfterSeconds: parseRetryAfter(response.headers.get('Retry-After')),
+      // Машинный признак сервера (W32): связь прервалась во время изменения — исход
+      // неизвестен, форма держит операцию и ключ. `not_started` — подтверждённый отказ.
+      outcomeUnknown: problem?.outcome === 'unknown',
     });
   }
 }

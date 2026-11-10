@@ -2930,6 +2930,27 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-10
 
+  - id: UNIT-CORE-UNKNOWN-OUTCOME-CHAIN
+    file: apps/core/tests/unknown-outcome-chain.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 2
+    studied: code
+    studiedOn: 2026-11-10
+    needs: []
+    effects: []
+    note: >-
+      Вся цепочка неизвестного исхода (замечание Тэнка 10.11): настоящий фильтр ядра на обрыв
+      посреди POST — 503 с outcome=unknown; настоящий ApiClient — outcomeUnknown=true; настоящий
+      шаг защищённой формы (makeRun) — операция, снимок и прежний ключ сохранены; следующий шаг —
+      тем же ключом. Отдельно: отказ до начала работы (outcome=not_started) — первая отправка
+      окончательна. Чувствителен: на сборке контрактов без поля outcome клиент давал false.
+    purpose: 'Форма не начинает заново операцию с неизвестным исходом после 503'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-10
+
   - id: UNIT-CORE-BACKGROUND-IDLE
     file: apps/core/tests/background-idle.test.ts
     command: npm run test -w apps/core
@@ -5773,6 +5794,7 @@ blocks:
         UNIT-CORE-BACKGROUND-SLOTS,
         UNIT-CORE-BACKGROUND-IDLE,
         UNIT-CORE-DEPENDENCY-UNAVAILABLE,
+        UNIT-CORE-UNKNOWN-OUTCOME-CHAIN,
         CHK-QUEUE-WAKE,
         UNIT-CORE-EVENTS,
         CHK-DB-RECONNECT,
