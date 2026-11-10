@@ -29,6 +29,7 @@ const r = await fetch(`${BASE}/v1/auth/login`, {
     ...(auth ? { Authorization: auth } : {}),
   },
   body: JSON.stringify({ email: u0.email, password: u0.password }),
+  signal: AbortSignal.timeout(30_000),
 });
 const cookies = r.headers.getSetCookie?.() ?? [];
 const ages = cookies.map((c) => {
