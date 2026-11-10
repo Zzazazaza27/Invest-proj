@@ -9,6 +9,11 @@ set -u
 echo "== время $(date -u +%Y-%m-%dT%H:%M:%SZ); $(uptime)"
 echo '== таймеры fifth-* (следующий / последний запуск)'
 systemctl list-timers 'fifth-*' --all --no-legend 2>/dev/null | awk '{$1=$1; print "  " $0}'
+echo '== таймеры fifth-*: с какого момента действуют'
+for t in $(systemctl list-timers 'fifth-*' --all --no-legend 2>/dev/null | grep -oE 'fifth-[a-z0-9@.-]+\.timer' | sort -u); do
+  printf '  %-34s %s
+' "$t" "$(systemctl show "$t" -p ActiveEnterTimestamp --value)"
+done
 echo '== службы fifth-* активны сейчас'
 systemctl list-units 'fifth-*' --state=active,activating --no-legend 2>/dev/null | grep -v '\.timer' | awk '{print "  " $1, $3, $4}'
 echo '== службы fifth-*, запускавшиеся за последний час'
@@ -26,8 +31,8 @@ echo "== сеансы входа: $(who | wc -l)"
 echo "== контейнеров запущено: $(docker ps -q | wc -l)"
 echo '== данные test-1'
 docker exec -i fifth-test-1-postgres sh -c 'PGPASSWORD="$(cat /run/secrets/POSTGRES_PASSWORD)" psql -h 127.0.0.1 -U "$POSTGRES_USER" -d fifth_element -At -F" "' <<'SQL' | awk '{print "  " $0}'
-SELECT 'проектов', count(*) FROM lab.projects
-UNION ALL SELECT 'материалов', count(*) FROM lab.project_materials
-UNION ALL SELECT 'событий журнала', count(*) FROM audit.events
+SELECT 'проектов', count(*)::text FROM lab.projects
+UNION ALL SELECT 'материалов', count(*)::text FROM lab.project_materials
+UNION ALL SELECT 'событий журнала', count(*)::text FROM audit.events
 UNION ALL SELECT 'база', pg_size_pretty(pg_database_size('fifth_element'));
 SQL
