@@ -108,7 +108,10 @@ sealed="$(docker exec "$PROJECT-core" node -e "require('reflect-metadata');const
 account="$(pg "SELECT id FROM integration.service_accounts WHERE client_id = '$CLIENT_ID'")"
 endpoint="$(pg "INSERT INTO integration.webhook_endpoints (id, service_account_id, url, subscribed_verbs, secret_ciphertext, secret_kms_key_id, secret_fingerprint, status) VALUES (public.uuid_generate_v7(), '$account', 'https://$ID.5espace.com/hook-probe/$SUFFIX', ARRAY['$VERB'], decode('$sealed', 'hex'), 'probe', sha256('$hook_secret'::bytea), 'active') RETURNING id" | head -1)"
 [ -n "$endpoint" ]
-outbox="$(pg "INSERT INTO audit.outbox_events (id, aggregate_type, aggregate_id, aggregate_version, event_type, payload_jsonb, nats_subject, schema_version, message_key) VALUES (public.uuid_generate_v7(), 'project', public.uuid_generate_v7(), 1, '$VERB', '{\"check\":\"probe\"}'::jsonb, 'unicorn.$VERB', 1, 'probe-$SUFFIX') RETURNING id" | head -1)"
+# Событие — только носитель доставки вебхука: сразу отмечено опубликованным и разосланным,
+# иначе издатель тоже берёт его и шлёт в NATS (прежде — по теме `unicorn.*` вне потока:
+# 10 попыток и исчерпание, W32 10.11). Тема — как у ядра (`enqueue`: тема = тип события).
+outbox="$(pg "INSERT INTO audit.outbox_events (id, aggregate_type, aggregate_id, aggregate_version, event_type, payload_jsonb, nats_subject, schema_version, message_key, published_at, fanout_completed_at) VALUES (public.uuid_generate_v7(), 'project', public.uuid_generate_v7(), 1, '$VERB', '{\"check\":\"probe\"}'::jsonb, '$VERB', 1, 'probe-$SUFFIX', now(), now()) RETURNING id" | head -1)"
 pg "INSERT INTO integration.webhook_deliveries (id, endpoint_id, event_id, status) VALUES (public.uuid_generate_v7(), '$endpoint', '$outbox', 'queued')" >/dev/null
 for _ in $(seq 1 45); do
   [ -s "$M/hook.json" ] && break

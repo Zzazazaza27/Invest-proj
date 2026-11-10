@@ -117,12 +117,15 @@ try {
     ],
   );
 
+  // Событие — только носитель доставки: сразу опубликовано и разослано, иначе издатель шлёт
+  // его в NATS (прежде — по теме `unicorn.*` вне потока, до исчерпания попыток; W32 10.11).
   const { rows: outbox } = await client.query(
     `INSERT INTO audit.outbox_events
        (id, aggregate_type, aggregate_id, aggregate_version, event_type,
-        payload_jsonb, nats_subject, schema_version, message_key)
+        payload_jsonb, nats_subject, schema_version, message_key,
+        published_at, fanout_completed_at)
      VALUES (public.uuid_generate_v7(), 'project', public.uuid_generate_v7(), 1,
-             'project.published', $1::jsonb, 'unicorn.project.published', 1, $2)
+             'project.published', $1::jsonb, 'project.published', 1, $2, now(), now())
      RETURNING id`,
     [JSON.stringify({ check: 'outbound-boundaries', suffix }), `boundary-${suffix}`],
   );
