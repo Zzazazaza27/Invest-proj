@@ -58,8 +58,8 @@ const LOCAL_STORAGE_REWRITE =
 const args = parseArgs(process.argv.slice(2));
 const runId = String(args['run-id'] ?? '');
 const mode = String(args.mode ?? 'base');
-if (!['base', 'steps', 'soak'].includes(mode)) {
-  console.error('режим: --mode base | steps | soak');
+if (!['base', 'steps', 'soak', 'selftest-relogin'].includes(mode)) {
+  console.error('режим: --mode base | steps | soak | selftest-relogin');
   process.exit(2);
 }
 const profile = String(args.profile ?? 'p1');
@@ -84,7 +84,9 @@ if (!existsSync(join(dataDir, 'users.json'))) {
 const MATERIALS_LIMIT = 50;
 const MATERIALS_HEADROOM = 5;
 const usedMark = join(dataDir, 'used.json');
-if (existsSync(usedMark) && !args['reuse-data']) {
+// Узкая проверка повторного входа набор не расходует: одна ссылка, без нагрузки.
+const selftest = mode === 'selftest-relogin';
+if (!selftest && existsSync(usedMark) && !args['reuse-data']) {
   const prev = JSON.parse(readFileSync(usedMark, 'utf8'));
   console.error(
     `набор ${runId} уже использован прогоном ${prev.outDir ?? '?'} (${prev.at ?? '?'}): ` +
@@ -92,7 +94,7 @@ if (existsSync(usedMark) && !args['reuse-data']) {
   );
   process.exit(2);
 }
-{
+if (!selftest) {
   const users = JSON.parse(readFileSync(join(dataDir, 'users.json'), 'utf8'));
   const nProjects = users.users.reduce((s, u) => s + u.projects.length, 0);
   const seededPerProject = 2; // seed.mjs: две ссылки на проект
@@ -117,12 +119,15 @@ if (existsSync(usedMark) && !args['reuse-data']) {
   const maxUploads = profile === 'p1-api' || args['max-upload'] === '0' ? 0 : stages.length;
   const created = stages.reduce((s, [rate, sec]) => s + rate * sec * share, 0) + maxUploads;
   const mean = created / nProjects;
-  // Выбор проекта случаен: верхняя граница — среднее + 4 стандартных отклонения (Пуассон).
+  // Выбор проекта случаен: вероятностный запас — среднее + 4σ (приближение Пуассона).
+  // Это не гарантия: переполнение отдельного проекта маловероятно, но возможно.
   const worst = seededPerProject + mean + 4 * Math.sqrt(mean);
   const allowed = MATERIALS_LIMIT - MATERIALS_HEADROOM;
   console.log(
     `  материалы: прогон создаст ~${Math.round(created)} на ${nProjects} проектов — ` +
-      `в среднем ${mean.toFixed(1)}, с разбросом до ${worst.toFixed(1)} на проект (предел ${MATERIALS_LIMIT}, запас ${MATERIALS_HEADROOM})`,
+      `в среднем ${mean.toFixed(1)}, вероятностный запас (среднее + 4σ) — ${worst.toFixed(1)} на проект ` +
+      `(предел ${MATERIALS_LIMIT}, запас ${MATERIALS_HEADROOM}); это оценка, не гарантия: ` +
+      'переполнение отдельного проекта маловероятно, но не исключено',
   );
   if (worst > allowed) {
     const need = Math.ceil(created / (Math.sqrt(4 + allowed - seededPerProject) - 2) ** 2);
@@ -144,7 +149,9 @@ if (existsSync(outDir)) {
   process.exit(2);
 }
 mkdirSync(outDir, { recursive: true });
-writeFileSync(usedMark, JSON.stringify({ outDir, at: new Date().toISOString() }, null, 2));
+if (!selftest) {
+  writeFileSync(usedMark, JSON.stringify({ outDir, at: new Date().toISOString() }, null, 2));
+}
 
 // Адрес цели изнутри контейнера.
 const local = isLocalBase();

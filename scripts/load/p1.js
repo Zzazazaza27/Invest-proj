@@ -36,7 +36,7 @@
  */
 import http from 'k6/http';
 import exec from 'k6/execution';
-import { sleep } from 'k6';
+import { check, sleep } from 'k6';
 import { Counter, Trend } from 'k6/metrics';
 
 // ------------------------------------------------------------------ параметры
@@ -110,7 +110,9 @@ function stagesFor(mode) {
       },
     ];
   }
-  throw new Error(`неизвестный режим: ${mode} (base | steps | soak)`);
+  // Узкая проверка повторного входа (Тэнк 10.11): без нагрузки, одна итерация.
+  if (mode === 'selftest-relogin') return [];
+  throw new Error(`неизвестный режим: ${mode} (base | steps | soak | selftest-relogin)`);
 }
 
 const STAGES = stagesFor(MODE);
@@ -149,6 +151,16 @@ STATUSES.push('500', '502', '503', '504', 'other', 'upload_state');
 
 function buildScenarios() {
   const scenarios = {};
+  if (MODE === 'selftest-relogin') {
+    scenarios.selftest_relogin = {
+      executor: 'shared-iterations',
+      exec: 'reloginSelftest',
+      vus: 1,
+      iterations: 1,
+      maxDuration: '3m',
+    };
+    return scenarios;
+  }
   let start = 0;
   for (const st of STAGES) {
     const perMinute = Math.max(1, Math.round(st.rate * 60));
@@ -223,6 +235,8 @@ function buildThresholds() {
   }
   always('http_req_failed', 'rate>=0');
   always('dropped_iterations', 'count>=0');
+  // Проверка повторного входа: любой проваленный check — ненулевой код выхода k6.
+  if (MODE === 'selftest-relogin') t.checks = ['rate==1'];
   return t;
 }
 
@@ -290,6 +304,9 @@ function api(session, method, path, body, { action, route, idem = false, denied 
     }
     if (body !== undefined) headers['Content-Type'] = 'application/json';
     if (key) headers['Idempotency-Key'] = key;
+    if (session && session.trace) {
+      session.trace.push({ key, cookie: session.cookie, csrf: session.csrf });
+    }
     return http.request(
       method,
       `${BASE}${path}`,
@@ -304,12 +321,14 @@ function api(session, method, path, body, { action, route, idem = false, denied 
     );
   };
   let res = send();
+  if (session && session.trace) session.trace[session.trace.length - 1].status = res.status;
   actionRequests.add(1, { action });
   // Сеанс истёк (401) — повторный вход тем же участником и ОДИН повтор того же запроса.
   // 401 выдаётся проверкой сеанса до обработчика: операция не выполнялась, повтор безопасен;
   // защищённые операции идут с прежним ключом. Любой другой отказ не повторяется.
   if (res.status === 401 && session && relogin(session)) {
     res = send();
+    if (session.trace) session.trace[session.trace.length - 1].status = res.status;
     actionRequests.add(1, { action });
   }
   const ok = denied
@@ -561,7 +580,121 @@ function relogin(session) {
   if (!c.csrf) return false;
   session.cookie = c.cookie;
   session.csrf = c.csrf;
+  session.relogins = (session.relogins || 0) + 1;
+  // Только для узкой проверки: новый сеанс сразу отзывается, чтобы повтор получил второй 401.
+  if (session.revokeAfterRelogin) revoke(session);
   return true;
+}
+
+/** Выход сеанса: токен отзывается на сервере, следующий запрос с ним получает 401. */
+function revoke(session) {
+  const headers = {
+    'X-Fifth-Origin': 'render_check',
+    Cookie: session.cookie,
+    'X-CSRF-Token': session.csrf,
+  };
+  if (BASIC) headers.Authorization = BASIC;
+  return http.post(`${BASE}/v1/auth/logout`, null, {
+    headers,
+    tags: { action: 'selftest', name: 'POST /v1/auth/logout' },
+    jar: new http.CookieJar(),
+    timeout: '30s',
+  }).status;
+}
+
+function freshSession(user) {
+  const res = login(user, 'selftest');
+  const c = cookiesOf(res);
+  return { user: user.index, cookie: c.cookie, csrf: c.csrf, trace: [] };
+}
+
+/**
+ * Узкая проверка повторного входа (Тэнк 10.11), без ожидания часа:
+ *  А. сеанс отозван → первый запрос 401 → вход тем же участником → ОДИН повтор с прежним
+ *     ключом повтора и новыми cookie/CSRF → 201; объект создан один раз.
+ *  Б. новый сеанс тоже отзывается сразу после входа → повтор получает второй 401 →
+ *     действие прекращается: ровно два запроса, третьего нет, объекта нет.
+ */
+/** check с выводом имени проваленной проверки: код 99 без имени не разбирается. */
+function checkNamed(value, sets) {
+  for (const [name, fn] of Object.entries(sets)) {
+    let ok = false;
+    try {
+      ok = Boolean(fn(value));
+    } catch {
+      ok = false;
+    }
+    if (!ok) console.warn(`selftest: НЕ ПРОЙДЕНО — ${name}`);
+  }
+  return check(value, sets);
+}
+
+export function reloginSelftest() {
+  const user = DATA.users[0];
+  const id = user.projects[0].id;
+  const tag = `selftest-${RUN_ID}-${Date.now()}`;
+  const linkOf = (s, url) =>
+    api(
+      s,
+      'POST',
+      `/v1/projects/${id}/materials/link`,
+      { url },
+      {
+        action: 'material_link',
+        route: 'POST /v1/projects/:id/materials/link',
+        idem: true,
+      },
+    );
+
+  // --- А
+  const a = freshSession(user);
+  const revokedA = revoke(a);
+  const urlA = `https://example.com/${tag}/a`;
+  const ra = linkOf(a, urlA);
+  const ta = a.trace;
+  checkNamed(ta, {
+    'А: сеанс отозван (выход 2xx)': () => revokedA >= 200 && revokedA < 300,
+    'А: ровно два запроса': () => ta.length === 2,
+    'А: первый ответ 401': () => ta[0] && ta[0].status === 401,
+    'А: повтор успешен (2xx)': () => ta[1] && ta[1].status >= 200 && ta[1].status < 300,
+    'А: тот же ключ повтора': () => ta[1] && ta[0].key && ta[0].key === ta[1].key,
+    'А: новые cookie': () => ta[1] && ta[0].cookie !== ta[1].cookie,
+    'А: новый CSRF': () => ta[1] && ta[0].csrf !== ta[1].csrf,
+    'А: один повторный вход': () => a.relogins === 1,
+    'А: действие успешно': () => ra.ok === true,
+  });
+
+  // --- Б
+  const b = freshSession(user);
+  revoke(b);
+  b.revokeAfterRelogin = true;
+  const urlB = `https://example.com/${tag}/b`;
+  const rb = linkOf(b, urlB);
+  const tb = b.trace;
+  checkNamed(tb, {
+    'Б: ровно два запроса (третьего нет)': () => tb.length === 2,
+    'Б: оба ответа 401': () => tb.every((x) => x.status === 401),
+    'Б: тот же ключ повтора': () => tb.length === 2 && tb[0].key === tb[1].key,
+    'Б: один повторный вход': () => b.relogins === 1,
+    'Б: действие прекращено с отказом': () => rb.ok === false,
+  });
+
+  // --- объекты: А создан ровно один раз, Б не создан
+  const v = freshSession(user);
+  const list = api(v, 'GET', `/v1/projects/${id}/materials`, undefined, {
+    action: 'own_projects',
+    route: 'GET /v1/projects/:id/materials',
+  });
+  const items = (json(list.res) || {}).items || [];
+  const has = (url) => items.filter((m) => JSON.stringify(m).indexOf(url) >= 0).length;
+  checkNamed(items, {
+    'объект А создан ровно один раз': () => has(urlA) === 1,
+    'объекта Б нет': () => has(urlB) === 0,
+  });
+  console.log(
+    `selftest: А ${ta.map((x) => x.status).join('→')}, Б ${tb.map((x) => x.status).join('→')}, ` +
+      `объектов А ${has(urlA)}, Б ${has(urlB)}`,
+  );
 }
 
 /** Вход один раз на участника. На 429 ждём Retry-After: подготовка не должна падать на лимите. */
