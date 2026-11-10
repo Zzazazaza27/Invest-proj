@@ -6,6 +6,12 @@
  *   node scripts/load/run.mjs --run-id <id> --mode steps [--steps 2,4,8,16] [--step-duration 10m]
  *   node scripts/load/run.mjs --run-id <id> --mode soak  [--duration 60m]
  *   общие: [--burst 20] [--max-upload 1|0] [--max-vus N] [--samples]
+ *          [--profile p1|p1-api|p1-files] [--native]
+ *
+ * --profile: p1 — полная смесь; p1-api — без загрузок (само API); p1-files — только
+ * загрузки (W32: API и большие файлы мерить раздельно).
+ * --native: k6 без Docker — бинарь `.local/load/k6/k6.exe` версии 1.3.0, сверяется по
+ * SHA-256 (K6_NATIVE_SHA256); для удалённой цели. Снимает из тракта сеть Docker Desktop.
  *
  * Цель — FIFTH_LOAD_BASE (по умолчанию http://127.0.0.1); закрытая паролем —
  * FIFTH_LOAD_BASIC_AUTH_FILE (строка `user:password`). Данные — от seed.mjs:
@@ -23,6 +29,7 @@
  * Прежние запуски не затираются.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync, createWriteStream } from 'node:fs';
 import { cpus, homedir, hostname, release, totalmem, platform } from 'node:os';
 import { join } from 'node:path';
@@ -36,6 +43,9 @@ const K6_IMAGE =
  * Поэтому k6 подключается к сети стенда и ходит к nginx и Garage по именам
  * контейнеров. Значения можно переопределить окружением.
  */
+// k6 без Docker: тот же выпуск, что образ; бинарь сверяется по SHA-256 перед запуском.
+const K6_NATIVE = join(ROOT, '.local', 'load', 'k6', 'k6.exe');
+const K6_NATIVE_SHA256 = process.env.FIFTH_K6_NATIVE_SHA256 ?? '';
 const LOCAL_NETWORK = process.env.FIFTH_LOAD_DOCKER_NETWORK ?? 'fifth_default';
 const LOCAL_TARGET = process.env.FIFTH_LOAD_DOCKER_TARGET ?? 'http://fifth-web';
 const LOCAL_STORAGE_REWRITE =
@@ -49,6 +59,12 @@ if (!['base', 'steps', 'soak'].includes(mode)) {
   console.error('режим: --mode base | steps | soak');
   process.exit(2);
 }
+const profile = String(args.profile ?? 'p1');
+if (!['p1', 'p1-api', 'p1-files'].includes(profile)) {
+  console.error('профиль: --profile p1 | p1-api | p1-files');
+  process.exit(2);
+}
+const native = Boolean(args.native);
 const dataDir = runDir(runId);
 if (!existsSync(join(dataDir, 'users.json'))) {
   console.error(`нет данных прогона: ${join(dataDir, 'users.json')} — сначала seed.mjs seed`);
@@ -56,7 +72,13 @@ if (!existsSync(join(dataDir, 'users.json'))) {
 }
 
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
-const outDir = join(ROOT, 'out', 'suites', `load-${runId}`, `${mode}-${stamp}`);
+const outDir = join(
+  ROOT,
+  'out',
+  'suites',
+  `load-${runId}`,
+  `${profile === 'p1' ? '' : `${profile}-`}${mode}-${stamp}${native ? '-native' : ''}`,
+);
 if (existsSync(outDir)) {
   console.error(`каталог отчёта уже есть: ${outDir}`);
   process.exit(2);
@@ -65,14 +87,33 @@ mkdirSync(outDir, { recursive: true });
 
 // Адрес цели изнутри контейнера.
 const local = isLocalBase();
+if (native && local) {
+  console.error('--native — только для удалённой цели (стенд виден k6 лишь из сети Docker)');
+  process.exit(2);
+}
+if (native) {
+  if (!existsSync(K6_NATIVE)) {
+    console.error(`нет бинаря k6: ${K6_NATIVE}`);
+    process.exit(2);
+  }
+  const sum = createHash('sha256').update(readFileSync(K6_NATIVE)).digest('hex');
+  if (!K6_NATIVE_SHA256 || sum !== K6_NATIVE_SHA256) {
+    console.error(
+      `k6.exe: SHA-256 ${sum} не совпадает с закреплённым (${K6_NATIVE_SHA256 || 'не задан'})`,
+    );
+    process.exit(2);
+  }
+}
+const slash = (p) => p.split('\\').join('/');
 const target = local ? LOCAL_TARGET : BASE;
 
 const k6Env = {
   FIFTH_LOAD_BASE: target,
-  FIFTH_LOAD_USERS: '/load-data/users.json',
-  FIFTH_LOAD_OUT: '/out',
+  FIFTH_LOAD_USERS: native ? slash(join(dataDir, 'users.json')) : '/load-data/users.json',
+  FIFTH_LOAD_OUT: native ? slash(outDir) : '/out',
   FIFTH_LOAD_RUN_ID: runId,
   FIFTH_LOAD_MODE: mode,
+  FIFTH_LOAD_PROFILE: profile,
 };
 const passthrough = {
   rate: 'FIFTH_LOAD_RATE',
@@ -133,15 +174,27 @@ const dockerArgs = [
   '/scripts/p1.js',
 ];
 
+// k6 без Docker: параметры — окружением процесса, как и basic-auth.
+const nativeArgs = [
+  'run',
+  '--no-usage-report',
+  '--include-system-env-vars',
+  ...(args.samples ? ['--out', `csv=${slash(join(outDir, 'samples.csv.gz'))}`] : []),
+  join(ROOT, 'scripts', 'load', 'p1.js'),
+];
+if (native) Object.assign(childEnv, k6Env);
+
 const meta = {
-  profile: 'p1',
+  profile,
+  generatorKind: native ? 'k6 без Docker (Windows)' : 'k6 в Docker',
   runId,
   mode,
   target: BASE,
   targetInContainer: target,
   basicAuth: Boolean(basic),
   params: Object.fromEntries(Object.entries(k6Env).filter(([k]) => !/BASIC/.test(k))),
-  k6Image: K6_IMAGE,
+  k6Image: native ? null : K6_IMAGE,
+  k6Binary: native ? { path: K6_NATIVE, sha256: K6_NATIVE_SHA256 } : null,
   k6Version: null,
   commit: git('rev-parse', 'HEAD'),
   dirty: (git('status', '--porcelain') ?? '').length > 0,
@@ -156,14 +209,20 @@ const meta = {
   finishedAt: null,
   exitCode: null,
 };
-const version = spawnSync('docker', ['run', '--rm', '--pull', 'never', K6_IMAGE, 'version'], {
-  encoding: 'utf8',
-  timeout: 60_000,
-});
+const version = spawnSync(
+  native ? K6_NATIVE : 'docker',
+  native ? ['version'] : ['run', '--rm', '--pull', 'never', K6_IMAGE, 'version'],
+  {
+    encoding: 'utf8',
+    timeout: 60_000,
+  },
+);
 meta.k6Version = version.status === 0 ? version.stdout.trim() : null;
 writeFileSync(join(outDir, 'meta.json'), JSON.stringify(meta, null, 2));
 
-console.log(`\n=== НАГРУЗКА p1: ${mode}, прогон ${runId} → ${BASE} ===`);
+console.log(
+  `\n=== НАГРУЗКА ${profile}${native ? ' (k6 без Docker)' : ''}: ${mode}, прогон ${runId} → ${BASE} ===`,
+);
 console.log(`  отчёт: ${outDir}\n`);
 
 // Сборщик на сервере (infra/host/prod-load-collect.sh): ресурсы, пороги прекращения, журнал ядра.
@@ -202,8 +261,14 @@ if (collectSecs > 0) {
 }
 
 const log = createWriteStream(join(outDir, 'k6.log'));
-const child = spawn('docker', dockerArgs, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+const child = native
+  ? spawn(K6_NATIVE, nativeArgs, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+  : spawn('docker', dockerArgs, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
 const stop = () => {
+  if (native) {
+    child.kill();
+    return;
+  }
   spawnSync('docker', ['stop', '--time', '30', containerName], { stdio: 'ignore' });
 };
 

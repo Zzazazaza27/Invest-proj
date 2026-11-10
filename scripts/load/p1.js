@@ -19,6 +19,8 @@
  *   FIFTH_LOAD_SOAK_RATE / FIFTH_LOAD_SOAK_DURATION   soak: 2 и 60m
  *   FIFTH_LOAD_BURST       серия одновременных входов раз в ступень: размер (20; 0 — нет)
  *   FIFTH_LOAD_MAX_UPLOAD  одна загрузка максимального размера deck (50 МиБ) раз в ступень (1/0)
+ *   FIFTH_LOAD_PROFILE     p1 (полная смесь) | p1-api (без загрузок файлов: само API) |
+ *                          p1-files (только загрузки: 64 КиБ и 10 МиБ в долях p1, плюс 50 МиБ)
  *   FIFTH_LOAD_MAX_VUS     потолок VU на ступень (по умолчанию от частоты)
  *   FIFTH_LOAD_STORAGE_REWRITE  «откуда=>куда,…» — замена префикса адреса хранилища (Docker)
  *   FIFTH_LOAD_BASIC_AUTH  готовое значение `Basic …` для закрытой цели (только из окружения)
@@ -51,7 +53,11 @@ const STORAGE_REWRITE = (ENV.FIFTH_LOAD_STORAGE_REWRITE || '')
   .map((p) => p.split('=>').map((x) => x.trim()));
 const BASIC = ENV.FIFTH_LOAD_BASIC_AUTH || '';
 const BURST = num(ENV.FIFTH_LOAD_BURST, 20);
-const MAX_UPLOAD = (ENV.FIFTH_LOAD_MAX_UPLOAD || '1') !== '0';
+const PROFILE = ENV.FIFTH_LOAD_PROFILE || 'p1';
+if (!['p1', 'p1-api', 'p1-files'].includes(PROFILE))
+  throw new Error(`неизвестный профиль: ${PROFILE} (p1 | p1-api | p1-files)`);
+// p1-api — без загрузок вовсе, в том числе без 50 МиБ.
+const MAX_UPLOAD = PROFILE !== 'p1-api' && (ENV.FIFTH_LOAD_MAX_UPLOAD || '1') !== '0';
 const DATA = JSON.parse(open(ENV.FIFTH_LOAD_USERS || '/load-data/users.json'));
 
 function num(raw, fallback) {
@@ -110,7 +116,7 @@ function stagesFor(mode) {
 const STAGES = stagesFor(MODE);
 
 // Действия и доли — таблица §3 плана. Сумма — 100.
-const MIX = [
+const MIX_P1 = [
   ['catalog_filter', 20],
   ['card_allowed', 20],
   ['card_forbidden', 5],
@@ -122,6 +128,15 @@ const MIX = [
   ['upload_64k', 7],
   ['upload_10m', 3],
 ];
+// Отдельные профили (W32, Тэнк 10.11): API и большие файлы мерить раздельно — доли внутри
+// профиля те же, что в p1, и действия те же.
+const UPLOADS = ['upload_64k', 'upload_10m'];
+const MIX =
+  PROFILE === 'p1-api'
+    ? MIX_P1.filter(([a]) => !UPLOADS.includes(a))
+    : PROFILE === 'p1-files'
+      ? MIX_P1.filter(([a]) => UPLOADS.includes(a))
+      : MIX_P1;
 const MIX_TOTAL = MIX.reduce((s, [, w]) => s + w, 0);
 const EXTRA_ACTIONS = ['login_burst', 'upload_max'];
 const ALL_ACTIONS = MIX.map(([a]) => a).concat(EXTRA_ACTIONS);
@@ -625,7 +640,7 @@ export function handleSummary(data) {
   });
   const setupData = data.setup_data || {};
   const summary = {
-    profile: 'p1',
+    profile: PROFILE,
     runId: RUN_ID,
     mode: MODE,
     target: BASE.replace(/\/\/[^@/]*@/, '//'),
