@@ -17,7 +17,7 @@
  *     ложного успеха нет (2xx без объекта).
  * Итог — `<out>/fault-<kind>.json`; код выхода 0 только если все проверки прошли.
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -229,7 +229,19 @@ if (kind === 'nats') {
     .map(([, ts, phase, unpub]) => ({ ts, phase, unpub: Number(unpub) }));
   const base = rows.find((r) => r.phase === 'before')?.unpub ?? NaN;
   const peak = Math.max(...rows.filter((r) => r.phase === 'during').map((r) => r.unpub));
-  const last = rows.filter((r) => r.phase === 'after').at(-1)?.unpub ?? NaN;
+  // Последний срез сервера снят, пока переключения ещё шли; итог — отдельным запросом
+  // после их окончания: очередь должна вернуться к исходной не дольше чем за 2 мин.
+  let last = NaN;
+  for (let i = 0; i < 12; i += 1) {
+    const q = spawnSync(
+      'ssh',
+      [...SSH.slice(0, -1), 'sudo -n /usr/local/sbin/fifth-test op prod-load-fault queues'],
+      { encoding: 'utf8', timeout: 60_000 },
+    );
+    last = Number((q.stdout ?? '').trim().split('\n').at(-1)?.split(',')[0]);
+    if (last <= base) break;
+    await sleep(10_000);
+  }
   const okToggles = toggles.filter((t) => ok(t.status));
   const view = await call(`/v1/projects/${projectId}`);
   const lastVis = okToggles.at(-1)?.visibility ?? null;
