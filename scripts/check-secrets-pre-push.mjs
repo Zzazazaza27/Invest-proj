@@ -10,8 +10,8 @@
  * Сканирует только уходящие коммиты: для каждой строки ввода хука pre-push
  * (`<local ref> <local sha> <remote ref> <remote sha>`) — диапазон remote..local; новая
  * ветка — коммиты, которых нет в origin/main. Удаление ветки не сканируется.
- * Нет Docker — отправка остановлена: без скана секреты не проверены (обойти —
- * `git push --no-verify`, осознанно).
+ * Нет Docker — отправка остановлена: без скана секреты не проверены. Обход всего хука
+ * не предлагается: он держит и другие независимые проверки.
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -44,7 +44,7 @@ const docker = spawnSync('docker', ['info', '--format', '{{.ServerVersion}}'], {
 });
 if (docker.status !== 0) {
   console.error('pre-push: Docker не отвечает — скан секретов не выполнен, отправка остановлена.');
-  console.error('Подними Docker и повтори push (обойти осознанно: git push --no-verify).');
+  console.error('Подними Docker и повтори push.');
   process.exit(1);
 }
 
