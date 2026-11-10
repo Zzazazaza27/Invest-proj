@@ -166,9 +166,20 @@ void faultDone.then((code) => {
 });
 
 const during = [];
+// Ссылки и правки p1 событий в outbox не порождают (только журнал). Для NATS нужен поток
+// событий: смена видимости своего проекта пишет lab.listing.published/unpublished.
+const toggles = [];
 let n = 0;
 while (finished === null) {
   during.push(await addLink(`https://example.com/fault/${tag}/during-${n}`, randomUUID()));
+  if (kind === 'nats') {
+    const visibility = n % 2 === 0 ? 'public' : 'private';
+    const r = await call(`/v1/projects/${projectId}/visibility`, {
+      method: 'PUT',
+      body: { visibility },
+    });
+    toggles.push({ visibility, status: r.status, at: new Date().toISOString() });
+  }
   n += 1;
   await sleep(DURING_EVERY_MS);
 }
@@ -207,6 +218,30 @@ for (const r of retried)
 if (list.status !== 200) problems.push(`список материалов: HTTP ${list.status}`);
 if (finished !== 0) problems.push(`шаг отказа на сервере завершился с кодом ${finished}`);
 
+// NATS: события копились, пока брокера не было, и ушли после; видимость — как в последнем
+// подтверждённом переключении.
+let events = null;
+if (kind === 'nats') {
+  const rows = serverOut
+    .split('\n')
+    .filter((l) => l.startsWith('Q,'))
+    .map((l) => l.split(','))
+    .map(([, ts, phase, unpub]) => ({ ts, phase, unpub: Number(unpub) }));
+  const base = rows.find((r) => r.phase === 'before')?.unpub ?? NaN;
+  const peak = Math.max(...rows.filter((r) => r.phase === 'during').map((r) => r.unpub));
+  const last = rows.filter((r) => r.phase === 'after').at(-1)?.unpub ?? NaN;
+  const okToggles = toggles.filter((t) => ok(t.status));
+  const view = await call(`/v1/projects/${projectId}`);
+  const lastVis = okToggles.at(-1)?.visibility ?? null;
+  events = { base, peak, last, toggles: toggles.length, confirmed: okToggles.length };
+  events.finalVisibility = view.json?.visibility ?? null;
+  if (!(peak > base))
+    problems.push(`outbox не копился во время отказа NATS (до ${base}, максимум ${peak})`);
+  if (!(last <= base)) problems.push(`outbox не вернулся к исходному: до ${base}, после ${last}`);
+  if (lastVis && events.finalVisibility !== lastVis)
+    problems.push(`видимость ${events.finalVisibility}, ожидалась ${lastVis}`);
+}
+
 const counts = {};
 for (const d of during) counts[d.status] = (counts[d.status] ?? 0) + 1;
 const result = {
@@ -218,6 +253,8 @@ const result = {
   before: before.map(({ url, status, repeat }) => ({ url, status, repeat: repeat.status })),
   during: { attempts: during.length, byStatus: counts, items: during },
   retried,
+  events,
+  toggles,
   objectsFound: items.length,
   server: serverOut,
   problems,
