@@ -11,8 +11,7 @@ echo '== таймеры fifth-* (следующий / последний зап�
 systemctl list-timers 'fifth-*' --all --no-legend 2>/dev/null | awk '{$1=$1; print "  " $0}'
 echo '== таймеры fifth-*: с какого момента действуют'
 for t in $(systemctl list-timers 'fifth-*' --all --no-legend 2>/dev/null | grep -oE 'fifth-[a-z0-9@.-]+\.timer' | sort -u); do
-  printf '  %-34s %s
-' "$t" "$(systemctl show "$t" -p ActiveEnterTimestamp --value)"
+  printf '  %-34s %s\n' "$t" "$(systemctl show "$t" -p ActiveEnterTimestamp --value)"
 done
 echo '== службы fifth-* активны сейчас'
 systemctl list-units 'fifth-*' --state=active,activating --no-legend 2>/dev/null | grep -v '\.timer' | awk '{print "  " $1, $3, $4}'
