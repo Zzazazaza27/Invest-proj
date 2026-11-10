@@ -55,7 +55,8 @@ automation:
       поднятый стенд с базой, брокером и хранилищем, которого в CI нет.
       С 2026-11-05 ci.yml идёт по понедельникам и перед выпуском, не на push. Раньше не шёл на Markdown, docs/
       (кроме docs/testing/) и obsidian-notes/; секрет-скан вынесен в
-      secrets.yml и идёт на любой push.
+      secrets.yml. С 2026-11-10 secrets.yml — раз в неделю и вручную, а на каждый push
+      скан идёт локально в хуке pre-push (CHK-SECRETS-PRE-PUSH); pull_request у ci.yml снят.
   manual:
     note: >-
       Всё остальное запускает человек. Наборы `suite:handoff` и
@@ -672,6 +673,27 @@ checks:
       проверка кода случалась только в CI. Типы, сборку и тесты не заменяет.
     purpose: 'Быстрая проверка перед отправкой: только файлы, которые уходят в origin. До 2026-09-24 перед отправкой не проверялось ничего, кроме чужих коммитов в origin; форматирование, линтер и semgrep впервые запускались в CI.'
     confirmation: reviewed-in-code
+
+  - id: CHK-SECRETS-PRE-PUSH
+    file: scripts/check-secrets-pre-push.mjs
+    command: хук .githooks/pre-push (ввод хука — уходящие ссылки)
+    kind: check
+    level: статический
+    runner: manual
+    asserts: 0
+    studied: code
+    studiedOn: 2026-11-10
+    needs: [docker]
+    effects: ['читает историю git, запускает gitleaks в докере — ничего не меняет']
+    note: >-
+      Тот же gitleaks, образ по дайджесту и .gitleaks.toml, что CI-SECRETS, но на уходящих
+      коммитах и до отправки. Нет Docker — отправка остановлена. С 2026-11-10 (решение Томаса,
+      минуты Actions) это основной скан на каждый push; secrets.yml — раз в неделю по полной
+      истории. Проверен 10.11 на временной ветке с поддельным ключом: 2 находки, отправка
+      остановлена; на чистом диапазоне — «чисто», ~22 с.
+    purpose: 'Секреты в уходящих коммитах — до того, как они попадут в origin'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-10
 
   - id: TOOL-CLEAN-PROBE-DATA
     file: scripts/clean-probe-data.mjs
@@ -5814,6 +5836,7 @@ blocks:
         CHK-SAST-CONFIG,
         CHK-UPSTREAM-OWNER,
         CHK-PRE-PUSH,
+        CHK-SECRETS-PRE-PUSH,
         CHK-CONSOLE-PRIVATE,
         CHK-DEPLOY-RELEASE,
         UNIT-CORE-SECURITY,

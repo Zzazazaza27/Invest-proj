@@ -31,4 +31,17 @@ node scripts/check-upstream-owner.mjs || {
 # До неё первые проверки кода запускались только в CI (2026-09-24).
 printf '%s\n' "$refs" | node scripts/check-pre-push.mjs || exit 1
 
+# Скан секретов уходящих коммитов (gitleaks в Docker, тот же образ и правила, что workflow
+# «Секреты»). С 10.11.2026 на GitHub он идёт раз в неделю, а на каждый push — здесь
+# (решение Томаса: минуты Actions). Нет Docker — отправка остановлена.
+printf '%s\n' "$refs" | node scripts/check-secrets-pre-push.mjs || exit 1
+
+# Приватные SSH-ключи не покидают локальную папку `.ssh/` (Ф58) — раньше этот гейт на push
+# держал только workflow «Секреты».
+ssh_out=$(node scripts/check-ssh-keys.mjs 2>&1) || {
+  printf '%s\n' "$ssh_out" >&2
+  echo "pre-push: ОСТАНОВЛЕНО — гейт «ключи не покидают .ssh/»." >&2
+  exit 1
+}
+
 exit 0
