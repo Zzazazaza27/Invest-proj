@@ -203,17 +203,69 @@ if (collectSecs > 0) {
 
 const log = createWriteStream(join(outDir, 'k6.log'));
 const child = spawn('docker', dockerArgs, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
+const stop = () => {
+  spawnSync('docker', ['stop', '--time', '30', containerName], { stdio: 'ignore' });
+};
+
+// Здоровье генератора (W32): отказ тракта генератора — не отказ платформы. Признаки:
+//  - сетевые ошибки уровня соединения (dial, no route, i/o timeout) — сервер их не порождает,
+//    пока жив его вход; ≥ GEN_NET_ERRORS за 30 с;
+//  - k6 перестал продвигаться: число завершённых итераций не растёт GEN_STALL_SEC;
+//  - часы k6 отстали от настенных больше GEN_DRIFT_SEC (машина или VM генератора спала).
+// Сработал признак — прогон прекращается, причина в meta.generatorFailed, код выхода 3:
+// такой прогон не засчитывается ни как нагрузка, ни как проверка отказоустойчивости.
+const GEN_NET_ERRORS = Number(process.env.GEN_NET_ERRORS ?? 5);
+const GEN_STALL_SEC = Number(process.env.GEN_STALL_SEC ?? 60);
+const GEN_DRIFT_SEC = Number(process.env.GEN_DRIFT_SEC ?? 30);
+const NET_ERR = /dial: i\/o timeout|dial tcp[^"]*: connect:|no route to host|network is unreachable/;
+const gen = { netErrors: [], lastDone: -1, lastDoneAt: Date.now(), startedAt: Date.now() };
+const generatorFail = (reason) => {
+  if (meta.generatorFailed) return;
+  meta.generatorFailed = { reason, at: new Date().toISOString() };
+  console.error(`\n  ОТКАЗ ГЕНЕРАТОРА: ${reason} — прогон прекращается и не засчитывается`);
+  stop();
+};
+const watchGenerator = (text) => {
+  const now = Date.now();
+  for (const line of text.split('\n')) {
+    if (NET_ERR.test(line)) gen.netErrors.push(now);
+    const m = /running \((?:(\d+)h)?(\d+)m([\d.]+)s\), [^,]+, (\d+) complete/.exec(line);
+    if (m) {
+      const k6Sec = Number(m[1] ?? 0) * 3600 + Number(m[2]) * 60 + Number(m[3]);
+      const done = Number(m[4]);
+      if (done !== gen.lastDone) {
+        gen.lastDone = done;
+        gen.lastDoneAt = now;
+      }
+      gen.k6Sec = k6Sec;
+      gen.k6At = now;
+      if (gen.k6Origin === undefined) gen.k6Origin = now - k6Sec * 1000;
+      const drift = (now - gen.k6Origin) / 1000 - k6Sec;
+      if (drift > GEN_DRIFT_SEC) generatorFail(`часы k6 отстали на ${Math.round(drift)} с`);
+    }
+  }
+  gen.netErrors = gen.netErrors.filter((t) => now - t < 30_000);
+  if (gen.netErrors.length >= GEN_NET_ERRORS)
+    generatorFail(`${gen.netErrors.length} сетевых ошибок соединения за 30 с`);
+};
+const genTimer = setInterval(() => {
+  const now = Date.now();
+  if (gen.lastDone >= 0 && now - gen.lastDoneAt > GEN_STALL_SEC * 1000)
+    generatorFail(`итерации не продвигаются ${Math.round((now - gen.lastDoneAt) / 1000)} с`);
+  // Вывод k6 пропал совсем (контейнер или Docker завис): строки хода идут раз в секунду.
+  if (gen.k6At && now - gen.k6At > GEN_STALL_SEC * 1000)
+    generatorFail(`k6 молчит ${Math.round((now - gen.k6At) / 1000)} с`);
+}, 5_000);
 child.stdout.on('data', (d) => {
   process.stdout.write(d);
   log.write(d);
+  watchGenerator(d.toString());
 });
 child.stderr.on('data', (d) => {
   process.stderr.write(d);
   log.write(d);
+  watchGenerator(d.toString());
 });
-const stop = () => {
-  spawnSync('docker', ['stop', '--time', '30', containerName], { stdio: 'ignore' });
-};
 if (collectSecs > 0) {
   // Порог на сервере сработал — прогон прекращается, причина пишется в meta.json.
   watch = setInterval(() => {
@@ -230,6 +282,7 @@ process.on('SIGINT', stop);
 process.on('SIGTERM', stop);
 child.on('close', (code) => {
   log.end();
+  clearInterval(genTimer);
   if (watch) clearInterval(watch);
   if (collectSecs > 0) {
     onServer('stop', collectId);
@@ -250,6 +303,7 @@ child.on('close', (code) => {
   console.log(
     `\n  k6 завершился с кодом ${code}; сводка ${hasSummary ? 'записана' : 'НЕ записана'}`,
   );
+  if (meta.generatorFailed) process.exit(3);
   process.exit(hasSummary ? (code ?? 1) : 1);
 });
 
