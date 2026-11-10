@@ -3,12 +3,25 @@ import { pathToFileURL } from 'node:url';
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { ProblemDetailsFilter } from '../src/common/problem.filter';
 
-/*
- * Клиент и форма — настоящие исходники пакетов, подключаются при выполнении. Путь вычисляется,
- * чтобы проверка типов ядра (без DOM и JSX) их не разбирала; нужные типы описаны здесь.
+/**
+ * Неизвестный исход изменения — вся цепочка и переход для открытых вкладок (W32, Тэнк 10.11).
+ *
+ * Сервер — настоящий фильтр ядра. Клиенты — настоящий текущий ApiClient и ЗАМОРОЖЕННАЯ копия
+ * клиента из выпущенных сборок (tests/fixtures/legacy-api-client.ts: так работают вкладки,
+ * открытые до выпуска). Форма — настоящий шаг защищённой отправки (makeRun).
+ * Хранилище с ключом повтора — простая модель сервера: тот же ключ возвращает тот же объект.
+ *
+ *  1. прежний клиент удерживает ключ и снимок после нового ответа (504, outcome=unknown);
+ *  2. новый клиент сохраняет неизвестный исход, traceId и пояснение;
+ *  3. пустой 504 от прокси тоже удерживает операцию;
+ *  4. подтверждённый отказ 503 (outcome=not_started) остаётся окончательным для первой отправки;
+ *  5. повтор выясняет результат тем же ключом — второго объекта нет.
  */
+
 interface ApiErrorLike extends Error {
   outcomeUnknown: boolean;
+  status: number;
+  traceId: string | null;
 }
 interface ApiLike {
   request(o: {
@@ -25,10 +38,7 @@ interface Pending {
   at: number;
 }
 type RunFn = (mode: 'first' | 'check' | 'auto') => Promise<void>;
-interface ClientMod {
-  ApiClient: new (o: { baseUrl: string; fetchImpl: unknown }) => ApiLike;
-  ApiError: new (...a: never[]) => ApiErrorLike;
-}
+type ClientCtor = new (o: { baseUrl: string; fetchImpl: unknown }) => ApiLike;
 interface FormMod {
   guardedMemory: Map<string, Pending>;
   setGuardOwner: (id: string | null) => void;
@@ -42,33 +52,28 @@ interface FormMod {
     setNote: (n: string | null) => void;
   }) => RunFn;
 }
-type ApiError = ApiErrorLike;
-let ApiClient: ClientMod['ApiClient'];
-let ApiError: ClientMod['ApiError'];
+
+const clients: Record<'текущий' | 'прежний', ClientCtor> = {} as never;
 let guardedMemory: FormMod['guardedMemory'];
 let makeRun: FormMod['makeRun'];
 let setGuardOwner: FormMod['setGuardOwner'];
 beforeAll(async () => {
-  // Тесты ядра запускаются из apps/core: пакеты — двумя уровнями выше.
-  const pkg = (rel: string) => pathToFileURL(resolve(process.cwd(), '../../packages', rel)).href;
-  const c = (await import(pkg('api-client/src/client.ts'))) as ClientMod;
-  const f = (await import(pkg('cabinet/src/guarded-send.tsx'))) as FormMod;
-  ({ ApiClient, ApiError } = c);
-  ({ guardedMemory, makeRun, setGuardOwner } = f);
+  // Пути вычисляются: проверка типов ядра (без DOM и JSX) эти исходники не разбирает.
+  const here = (rel: string) => pathToFileURL(resolve(process.cwd(), rel)).href;
+  const current = (await import(here('../../packages/api-client/src/client.ts'))) as {
+    ApiClient: ClientCtor;
+  };
+  const legacy = (await import(here('tests/fixtures/legacy-api-client.ts'))) as {
+    ApiClient: ClientCtor;
+  };
+  const form = (await import(here('../../packages/cabinet/src/guarded-send.tsx'))) as FormMod;
+  clients['текущий'] = current.ApiClient;
+  clients['прежний'] = legacy.ApiClient;
+  ({ guardedMemory, makeRun, setGuardOwner } = form);
 });
 
-/**
- * Неизвестный исход изменения — вся цепочка (W32, замечание Тэнка 10.11):
- *  1. сервер: обрыв связи с базой посреди POST → 503 с машинным признаком outcome=unknown;
- *  2. API-клиент: этот ответ → ApiError.outcomeUnknown = true (не по тексту и не по заголовку);
- *  3. защищённая форма: операция, снимок и прежний ключ сохраняются;
- *  4. следующий шаг выясняет результат тем же ключом.
- * И различие: подтверждённый отказ до начала работы (outcome=not_started) остаётся
- * окончательным для первой отправки.
- */
-
 /** Настоящий фильтр ядра: ответ на исключение — статус, заголовки, тело. */
-function serverAnswer(exception: unknown, method: string): Response {
+function filterAnswer(exception: unknown, method: string): Response {
   const headers: Record<string, string> = {};
   let status = 0;
   let body: unknown = null;
@@ -93,25 +98,46 @@ function serverAnswer(exception: unknown, method: string): Response {
   } as never);
   return new Response(JSON.stringify(body), { status, headers });
 }
-
 const brokenMidWrite = () => new Error('Connection terminated unexpectedly');
 const refusedBeforeStart = () =>
   Object.assign(new Error('connect ECONNREFUSED 10.0.0.5:5432'), { code: 'ECONNREFUSED' });
 
-/** Клиент, у которого «сеть» — заранее заданные ответы сервера. */
-function clientAnswering(answers: Response[]) {
-  const seen: { key: string | null }[] = [];
-  const fetch = vi.fn(async (_url: string, init: RequestInit) => {
-    seen.push({ key: new Headers(init.headers).get('Idempotency-Key') });
-    const next = answers.shift();
-    if (!next) throw new Error('ответов больше нет');
-    return next;
+type Fault = 'обрыв после записи' | 'пустой 504 после записи' | 'отказ до начала';
+
+/**
+ * Модель сервера с ключом повтора: первая отправка с новым ключом встречает сбой; повтор с
+ * тем же ключом возвращает уже записанный объект (или записывает, если записи не было).
+ */
+function backend(fault: Fault) {
+  const objects = new Map<string, string>();
+  const keys: (string | null)[] = [];
+  let first = true;
+  const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+    const key = new Headers(init.headers).get('Idempotency-Key');
+    keys.push(key);
+    if (key && objects.has(key)) {
+      return new Response(JSON.stringify({ id: objects.get(key) }), {
+        status: 201,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (first) {
+      first = false;
+      if (fault === 'отказ до начала') return filterAnswer(refusedBeforeStart(), 'POST');
+      objects.set(String(key), `p-${objects.size + 1}`); // фиксация прошла, ответ потерян
+      if (fault === 'пустой 504 после записи') return new Response('', { status: 504 });
+      return filterAnswer(brokenMidWrite(), 'POST');
+    }
+    objects.set(String(key), `p-${objects.size + 1}`);
+    return new Response(JSON.stringify({ id: objects.get(String(key)) }), {
+      status: 201,
+      headers: { 'Content-Type': 'application/json' },
+    });
   });
-  const api = new ApiClient({ baseUrl: 'https://api.test/v1', fetchImpl: fetch as never });
-  return { api, seen };
+  return { fetchImpl, objects, keys };
 }
 
-function form(send: (p: unknown, key: string) => Promise<unknown>) {
+function form(api: ApiLike) {
   const name = 'A|lab.project.create';
   guardedMemory.set(name, { owner: 'A', key: 'key-1', payload: { title: 'проект' }, at: 0 });
   const phases: string[] = [];
@@ -123,7 +149,8 @@ function form(send: (p: unknown, key: string) => Promise<unknown>) {
       current: {
         scope: 'lab.project.create',
         operation: 'lab.project.create',
-        send: send as never,
+        send: (p: unknown, k: string) =>
+          api.request({ method: 'POST', path: '/projects', body: p, idempotencyKey: k }),
         state: vi.fn().mockResolvedValue({ state: 'absent' }),
         onDone,
         onResolved: vi.fn(),
@@ -144,65 +171,77 @@ afterEach(() => {
   setGuardOwner(null);
 });
 
-describe('неизвестный исход изменения — от сервера до формы', () => {
-  it('обрыв посреди POST: признак, клиент, форма держит ключ, проверка тем же ключом', async () => {
-    // 1. сервер
-    const answer = serverAnswer(brokenMidWrite(), 'POST');
-    expect(answer.status).toBe(503);
-    const body = (await answer.clone().json()) as { outcome?: string };
-    expect(body.outcome).toBe('unknown');
-    expect(answer.headers.get('retry-after')).toBeNull();
-
-    // 2. API-клиент; затем второй ответ — операция уже выполнена (повтор тем же ключом).
-    const done = new Response(JSON.stringify({ id: 'p-1' }), {
-      status: 201,
-      headers: { 'Content-Type': 'application/json' },
-    });
-    const { api, seen } = clientAnswering([answer, done]);
-    let caught: unknown = null;
-    try {
-      await api.request({ method: 'POST', path: '/projects', body: {}, idempotencyKey: 'probe' });
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(ApiError);
-    expect((caught as ApiError).outcomeUnknown).toBe(true);
-    seen.length = 0;
-
-    // 3. форма: тот же ответ сервера — операция, снимок и ключ сохраняются.
-    setGuardOwner('A');
-    const again = clientAnswering([serverAnswer(brokenMidWrite(), 'POST'), done]);
-    const f = form((p, k) =>
-      again.api.request({ method: 'POST', path: '/projects', body: p, idempotencyKey: k }),
-    );
-    await f.run('first');
-    const kept = guardedMemory.get(f.name);
-    expect(kept?.key).toBe('key-1');
-    expect(kept?.payload).toEqual({ title: 'проект' });
-    expect(f.phases.at(-1)).toBe('unknown');
-    expect(f.onFail).not.toHaveBeenCalled();
-
-    // 4. следующий шаг — тем же ключом, операция завершается её результатом.
-    await f.run('check');
-    expect(again.seen.map((s) => s.key)).toEqual(['key-1', 'key-1']);
-    expect(f.onDone).toHaveBeenCalledTimes(1);
-    expect(guardedMemory.has(f.name)).toBe(false);
+describe('сервер: граница статусов', () => {
+  it('обрыв посреди изменения — 504, outcome=unknown, без Retry-After', async () => {
+    const r = filterAnswer(brokenMidWrite(), 'POST');
+    expect(r.status).toBe(504);
+    expect(((await r.json()) as { outcome?: string }).outcome).toBe('unknown');
+    expect(r.headers.get('retry-after')).toBeNull();
   });
+  it('отказ до начала — 503, outcome=not_started, с Retry-After', async () => {
+    const r = filterAnswer(refusedBeforeStart(), 'POST');
+    expect(r.status).toBe(503);
+    expect(((await r.json()) as { outcome?: string }).outcome).toBe('not_started');
+    expect(r.headers.get('retry-after')).not.toBeNull();
+  });
+});
 
-  it('подтверждённый отказ до начала работы: not_started, первая отправка окончательна', async () => {
-    const answer = serverAnswer(refusedBeforeStart(), 'POST');
-    expect(answer.status).toBe(503);
-    expect(((await answer.clone().json()) as { outcome?: string }).outcome).toBe('not_started');
-    expect(answer.headers.get('retry-after')).not.toBeNull();
+describe.each(['прежний', 'текущий'] as const)('клиент: %s', (which) => {
+  const api = (fetchImpl: unknown) =>
+    new clients[which]({ baseUrl: 'https://api.test/v1', fetchImpl });
 
+  it.each(['обрыв после записи', 'пустой 504 после записи'] as const)(
+    '%s: форма держит ключ и снимок; повтор тем же ключом — один объект',
+    async (fault) => {
+      setGuardOwner('A');
+      const b = backend(fault);
+      const f = form(api(b.fetchImpl));
+      await f.run('first');
+      const kept = guardedMemory.get(f.name);
+      expect(kept?.key).toBe('key-1');
+      expect(kept?.payload).toEqual({ title: 'проект' });
+      expect(f.phases.at(-1)).toBe('unknown');
+      expect(f.onFail).not.toHaveBeenCalled();
+
+      await f.run('check');
+      expect(b.keys).toEqual(['key-1', 'key-1']);
+      expect(f.onDone).toHaveBeenCalledTimes(1);
+      expect(b.objects.size).toBe(1);
+      expect(guardedMemory.has(f.name)).toBe(false);
+    },
+  );
+
+  it('отказ до начала (503 not_started): первая отправка окончательна, объекта нет', async () => {
     setGuardOwner('A');
-    const c = clientAnswering([answer]);
-    const f = form((p, k) =>
-      c.api.request({ method: 'POST', path: '/projects', body: p, idempotencyKey: k }),
-    );
+    const b = backend('отказ до начала');
+    const f = form(api(b.fetchImpl));
     await f.run('first');
     expect(f.onFail).toHaveBeenCalledTimes(1);
-    expect((f.onFail.mock.calls[0]?.[0] as ApiError).outcomeUnknown).toBe(false);
+    expect((f.onFail.mock.calls[0]?.[0] as ApiErrorLike).outcomeUnknown).toBe(false);
     expect(guardedMemory.has(f.name)).toBe(false);
+    expect(b.objects.size).toBe(0);
+  });
+});
+
+describe('текущий клиент: что сохраняется в ошибке', () => {
+  it('504 от ядра: неизвестный исход, traceId и пояснение не теряются', async () => {
+    const b = backend('обрыв после записи');
+    const api = new clients['текущий']({ baseUrl: 'https://api.test/v1', fetchImpl: b.fetchImpl });
+    const e = (await api
+      .request({ method: 'POST', path: '/projects', body: {}, idempotencyKey: 'k' })
+      .catch((x: unknown) => x)) as ApiErrorLike;
+    expect(e.status).toBe(504);
+    expect(e.outcomeUnknown).toBe(true);
+    expect(e.traceId).toBe('t-1');
+    expect(e.message).toMatch(/результат неизвестен/);
+  });
+  it('пустой 504 от прокси: неизвестный исход по статусу', async () => {
+    const b = backend('пустой 504 после записи');
+    const api = new clients['текущий']({ baseUrl: 'https://api.test/v1', fetchImpl: b.fetchImpl });
+    const e = (await api
+      .request({ method: 'POST', path: '/projects', body: {}, idempotencyKey: 'k' })
+      .catch((x: unknown) => x)) as ApiErrorLike;
+    expect(e.outcomeUnknown).toBe(true);
+    expect(e.traceId).toBeNull();
   });
 });

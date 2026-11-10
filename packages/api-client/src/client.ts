@@ -249,11 +249,24 @@ export class ApiClient {
           await sleep(backoffMs(attempt));
           continue;
         }
-        // 502/504 на изменяющем запросе: прокси не дождался ядра, а оно могло записать.
+        // 502/504 на изменяющем запросе: исход неизвестен ВСЕГДА — прокси не дождался ядра,
+        // или ядро само сообщило об обрыве (504 + outcome=unknown, переходное решение W32).
+        // Корректный problem+json разбирается: traceId, detail и outcome не теряются. Пустое
+        // или нечитаемое тело (ответ прокси) — исход определяется по статусу, как прежде.
         if (
           !RETRYABLE_METHODS.has(method) &&
           (response.status === 502 || response.status === 504)
         ) {
+          const parsed = await this.#toApiError(response);
+          if (parsed.problem) {
+            throw new ApiError(parsed.message, {
+              code: parsed.code,
+              status: response.status,
+              problem: parsed.problem,
+              retryAfterSeconds: parsed.retryAfterSeconds,
+              outcomeUnknown: true,
+            });
+          }
           throw new ApiError('Не удалось получить ответ сервера', {
             code: ErrorCode.DEPENDENCY_UNAVAILABLE,
             status: response.status,

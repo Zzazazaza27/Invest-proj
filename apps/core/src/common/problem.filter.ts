@@ -140,8 +140,15 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     // на 60 с — все ответы 500). Ошибки SQL, схемы и прав сюда не попадают.
     // Повтор разрешается (Retry-After) только когда операция точно не выполнялась: соединения
     // не было, или запрос не изменяющий. Обрыв посреди изменяющего запроса — исход
-    // неизвестен (фиксация могла пройти): 503 без Retry-After, слепой повтор не предлагается;
+    // неизвестен (фиксация могла пройти): без Retry-After, слепой повтор не предлагается;
     // защищённые операции повторяются только с прежним ключом повтора.
+    //
+    // СТАТУС 504 для неизвестного исхода — ПЕРЕХОДНОЕ решение (согласовано Тэнком 10.11,
+    // docs/architecture/w32-unknown-outcome-transition.md). Причина — совместимость, а не
+    // смысл 504 по стандарту: клиенты, уже выпущенные в открытые вкладки, поля `outcome` не
+    // знают, но с 2.6 удерживают операцию и ключ на 502/504 изменяющего запроса. Признак для
+    // новых клиентов — `outcome: unknown`. Подтверждённый отказ — 503 с `not_started`.
+    // Возврат к 503 — по условию из того же документа.
     const down = connectionFailure(exception);
     if (down) {
       const unknownOutcome = down.kind === 'broken' && !SAFE_METHODS.has(method);
@@ -149,7 +156,7 @@ export class ProblemDetailsFilter implements ExceptionFilter {
         problem: {
           type: problemTypeUri(ErrorCode.DEPENDENCY_UNAVAILABLE),
           title: TITLES[ErrorCode.DEPENDENCY_UNAVAILABLE] ?? 'Сервис временно недоступен',
-          status: 503,
+          status: unknownOutcome ? UNKNOWN_OUTCOME_STATUS : 503,
           code: ErrorCode.DEPENDENCY_UNAVAILABLE,
           detail: unknownOutcome
             ? 'Связь прервалась во время операции, её результат неизвестен. Проверьте результат, прежде чем повторять'
@@ -190,6 +197,12 @@ export class ProblemDetailsFilter implements ExceptionFilter {
 
 /** Через сколько секунд повторить при недоступной зависимости: короткий отказ БД — секунды. */
 export const DEPENDENCY_RETRY_AFTER_SEC = 5;
+
+/**
+ * Статус неизвестного исхода изменения: 504 — переходный, ради клиентов в открытых вкладках
+ * (см. комментарий в toProblem и docs/architecture/w32-unknown-outcome-transition.md).
+ */
+export const UNKNOWN_OUTCOME_STATUS = 504;
 
 /** Методы без изменений: повтор после обрыва безопасен. */
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);

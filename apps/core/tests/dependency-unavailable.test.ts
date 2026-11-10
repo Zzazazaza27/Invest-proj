@@ -61,15 +61,17 @@ describe('недоступная зависимость — 503, а не 500 (W3
   it.each(REFUSED)('изменение, соединения не было: %s → 503 с Retry-After', (_n, exception) => {
     const r = run(exception, 'POST');
     expect(r.status).toBe(503);
+    expect(r.body?.outcome).toBe('not_started');
     expect(r.headers['retry-after']).toBe(String(DEPENDENCY_RETRY_AFTER_SEC));
   });
 
   it.each(BROKEN)(
-    'изменение, обрыв посреди операции: %s → 503 без Retry-After, исход неизвестен',
+    'изменение, обрыв посреди операции: %s → 504 (переходно), outcome=unknown, без Retry-After',
     (_n, exception) => {
       const r = run(exception, 'PATCH');
-      expect(r.status).toBe(503);
+      expect(r.status).toBe(504);
       expect(r.body?.code).toBe(ErrorCode.DEPENDENCY_UNAVAILABLE);
+      expect(r.body?.outcome).toBe('unknown');
       expect(r.headers['retry-after']).toBeUndefined();
       expect(String(r.body?.detail)).toMatch(/результат неизвестен/);
     },
