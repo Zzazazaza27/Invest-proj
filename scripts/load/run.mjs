@@ -217,7 +217,8 @@ const stop = () => {
 const GEN_NET_ERRORS = Number(process.env.GEN_NET_ERRORS ?? 5);
 const GEN_STALL_SEC = Number(process.env.GEN_STALL_SEC ?? 60);
 const GEN_DRIFT_SEC = Number(process.env.GEN_DRIFT_SEC ?? 30);
-const NET_ERR = /dial: i\/o timeout|dial tcp[^"]*: connect:|no route to host|network is unreachable/;
+const NET_ERR =
+  /dial: i\/o timeout|dial tcp[^"]*: connect:|no route to host|network is unreachable/;
 const gen = { netErrors: [], lastDone: -1, lastDoneAt: Date.now(), startedAt: Date.now() };
 const generatorFail = (reason) => {
   if (meta.generatorFailed) return;
