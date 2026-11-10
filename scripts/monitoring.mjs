@@ -409,6 +409,9 @@ async function configure() {
   });
   await queue('Outbox: возраст самой старой, с', 'outbox.oldestAgeSec');
   await queue('Outbox: исчерпали попытки', 'outbox.exhausted');
+  // M176: рабочая очередь (pending, oldestAgeSec) больше не включает исчерпанные — их число и
+  // возраст старейшего отдельно, сигнал — триггер «исчерпали попытки» ниже.
+  await queue('Outbox: возраст старейшего исчерпанного, с', 'outbox.exhaustedOldestAgeSec');
   await queue('Загрузки: ожидают', 'uploads.pending');
   await queue('Загрузки: возраст самой старой ожидающей, с', 'uploads.oldestPendingAgeSec');
   await queue('Загрузки: требуют вмешательства', 'uploads.needsAttention');
