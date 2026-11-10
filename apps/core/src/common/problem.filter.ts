@@ -41,7 +41,12 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     // журнал (SEC-15).
     const traceId = request.id;
 
-    const { problem, internal, cause } = this.toProblem(exception, request.url, traceId);
+    const { problem, internal, cause, retryAfter } = this.toProblem(
+      exception,
+      request.url,
+      traceId,
+      request.method,
+    );
     (request as FastifyRequest & { [PROBLEM_CODE]?: string })[PROBLEM_CODE] = problem.code;
 
     // В журнал — шаблон маршрута, а не адрес (в адресе query и
@@ -70,6 +75,9 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       });
     }
 
+    if (retryAfter && !reply.hasHeader('retry-after')) {
+      void reply.header('Retry-After', String(DEPENDENCY_RETRY_AFTER_SEC));
+    }
     void reply
       .status(problem.status)
       .header('Content-Type', 'application/problem+json; charset=utf-8')
@@ -80,7 +88,13 @@ export class ProblemDetailsFilter implements ExceptionFilter {
     exception: unknown,
     instance: string,
     traceId: string,
-  ): { problem: ProblemDetails; internal?: Record<string, unknown>; cause?: unknown } {
+    method: string,
+  ): {
+    problem: ProblemDetails;
+    internal?: Record<string, unknown>;
+    cause?: unknown;
+    retryAfter?: boolean;
+  } {
     if (exception instanceof AppError) {
       return {
         problem: {
@@ -121,6 +135,34 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       };
     }
 
+    // Связь с зависимостью (база, кэш) недоступна: это 503, а не ошибка кода. До 10.11 такие
+    // отказы уходили как 500 — клиент не отличал их от дефекта (W32: PostgreSQL остановлен
+    // на 60 с — все ответы 500). Ошибки SQL, схемы и прав сюда не попадают.
+    // Повтор разрешается (Retry-After) только когда операция точно не выполнялась: соединения
+    // не было, или запрос не изменяющий. Обрыв посреди изменяющего запроса — исход
+    // неизвестен (фиксация могла пройти): 503 без Retry-After, слепой повтор не предлагается;
+    // защищённые операции повторяются только с прежним ключом повтора.
+    const down = connectionFailure(exception);
+    if (down) {
+      const unknownOutcome = down.kind === 'broken' && !SAFE_METHODS.has(method);
+      return {
+        problem: {
+          type: problemTypeUri(ErrorCode.DEPENDENCY_UNAVAILABLE),
+          title: TITLES[ErrorCode.DEPENDENCY_UNAVAILABLE] ?? 'Сервис временно недоступен',
+          status: 503,
+          code: ErrorCode.DEPENDENCY_UNAVAILABLE,
+          detail: unknownOutcome
+            ? 'Связь прервалась во время операции, её результат неизвестен. Проверьте результат, прежде чем повторять'
+            : 'Сервис временно недоступен, попробуйте позже',
+          instance,
+          traceId,
+        },
+        internal: { connection: down.label, kind: down.kind, unknownOutcome },
+        cause: exception,
+        retryAfter: !unknownOutcome,
+      };
+    }
+
     // Неизвестное исключение: наружу — только общее сообщение. Всё остальное
     // (включая возможные значения полей) остаётся в логе.
     return {
@@ -136,6 +178,54 @@ export class ProblemDetailsFilter implements ExceptionFilter {
       cause: exception,
     };
   }
+}
+
+/** Через сколько секунд повторить при недоступной зависимости: короткий отказ БД — секунды. */
+export const DEPENDENCY_RETRY_AFTER_SEC = 5;
+
+/** Методы без изменений: повтор после обрыва безопасен. */
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Соединения не было — запрос до базы не дошёл: отказ в подключении, адрес недоступен,
+ * тайм-аут пула при подключении, 57P03 (сервер ещё не принимает), 08001/08004 (клиент не
+ * смог / сервер отклонил установку соединения).
+ */
+const REFUSED_CODES = new Set(['ECONNREFUSED', 'EHOSTUNREACH', 'ENETUNREACH', 'EAI_AGAIN']);
+const REFUSED_SQLSTATE = /^(57P03|08001|08004)$/;
+const REFUSED_TEXT = /timeout exceeded when trying to connect/i;
+/** Соединение было и оборвалось: исход операции, что успела дойти, неизвестен. */
+const BROKEN_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'EPIPE']);
+const BROKEN_SQLSTATE = /^(57P01|57P02|08[0-9A-Z]{3})$/;
+const BROKEN_TEXT =
+  /Connection terminated|Client has encountered a connection error|Connection ended unexpectedly/i;
+
+export interface ConnectionFailure {
+  /** refused — соединения не было; broken — оборвалось во время работы. */
+  kind: 'refused' | 'broken';
+  label: string;
+}
+
+/**
+ * Отказ СВЯЗИ с зависимостью, а не ошибка запроса. Ищется по цепочке `cause` (обёртки
+ * драйвера и пула). Ошибки SQL, схемы и прав (23505, 42501, 42P01 и т. п.) сюда не
+ * попадают — они остаются 4xx/500. null — не отказ связи.
+ */
+export function connectionFailure(exception: unknown): ConnectionFailure | null {
+  let current: unknown = exception;
+  for (let depth = 0; depth < 5 && current && typeof current === 'object'; depth += 1) {
+    const e = current as { code?: unknown; message?: unknown; cause?: unknown };
+    const code = typeof e.code === 'string' ? e.code : '';
+    const message = typeof e.message === 'string' ? e.message : '';
+    if (REFUSED_CODES.has(code)) return { kind: 'refused', label: code };
+    if (REFUSED_SQLSTATE.test(code)) return { kind: 'refused', label: `sqlstate ${code}` };
+    if (REFUSED_TEXT.test(message)) return { kind: 'refused', label: 'pg pool connect timeout' };
+    if (BROKEN_CODES.has(code)) return { kind: 'broken', label: code };
+    if (BROKEN_SQLSTATE.test(code)) return { kind: 'broken', label: `sqlstate ${code}` };
+    if (BROKEN_TEXT.test(message)) return { kind: 'broken', label: 'pg connection lost' };
+    current = e.cause;
+  }
+  return null;
 }
 
 /** Похоже ли исключение на готовый problem+json (payload плагина). */

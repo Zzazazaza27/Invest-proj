@@ -2910,6 +2910,26 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-29
 
+  - id: UNIT-CORE-DEPENDENCY-UNAVAILABLE
+    file: apps/core/tests/dependency-unavailable.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 17
+    studied: code
+    studiedOn: 2026-11-10
+    needs: []
+    effects: []
+    note: >-
+      Отказ связи с зависимостью — 503, а не 500 (W32: PostgreSQL остановлен — все ответы 500).
+      Соединения не было — 503 с Retry-After; обрыв посреди изменяющего запроса — 503 без
+      Retry-After, «результат неизвестен» (условие Тэнка 10.11: новый статус не разрешает
+      слепой повтор). Ошибки SQL, схемы и прав (23505, 42501, 42P01…) остаются прежними.
+    purpose: 'Клиент отличает «зависимость недоступна» от ошибки кода и не повторяет вслепую'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-10
+
   - id: UNIT-CORE-BACKGROUND-IDLE
     file: apps/core/tests/background-idle.test.ts
     command: npm run test -w apps/core
@@ -5749,6 +5769,7 @@ blocks:
         UNIT-CORE-BACKGROUND,
         UNIT-CORE-BACKGROUND-SLOTS,
         UNIT-CORE-BACKGROUND-IDLE,
+        UNIT-CORE-DEPENDENCY-UNAVAILABLE,
         CHK-QUEUE-WAKE,
         UNIT-CORE-EVENTS,
         CHK-DB-RECONNECT,
