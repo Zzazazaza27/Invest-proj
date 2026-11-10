@@ -256,6 +256,8 @@ const actionRequests = new Counter('action_requests');
 const actionErrors = new Counter('action_errors');
 const actionSkipped = new Counter('action_skipped');
 const actionCount = new Counter('action_count');
+// Повторные входы после истечения сеанса (срок 1 ч): тем же участником, в сводку отдельно.
+const relogins = new Counter('relogins');
 
 const CB_OK = http.expectedStatuses({ min: 200, max: 299 });
 const CB_DENIED = http.expectedStatuses(403, 404);
@@ -277,27 +279,39 @@ function statusTag(status) {
  * сеанс передаётся явно, и ответ одного участника не подменяет cookie другому.
  */
 function api(session, method, path, body, { action, route, idem = false, denied = false }) {
-  const headers = { 'X-Fifth-Origin': 'render_check' };
-  if (BASIC) headers.Authorization = BASIC;
-  if (session) {
-    headers.Cookie = session.cookie;
-    if (method !== 'GET') headers['X-CSRF-Token'] = session.csrf;
-  }
-  if (body !== undefined) headers['Content-Type'] = 'application/json';
-  if (idem) headers['Idempotency-Key'] = uuid();
-  const res = http.request(
-    method,
-    `${BASE}${path}`,
-    body === undefined ? null : JSON.stringify(body),
-    {
-      headers,
-      tags: { action, name: route },
-      jar: new http.CookieJar(),
-      responseCallback: denied ? CB_DENIED : CB_OK,
-      timeout: '120s',
-    },
-  );
+  // Ключ повтора — один на действие: повтор после повторного входа идёт с ТЕМ ЖЕ ключом.
+  const key = idem ? uuid() : null;
+  const send = () => {
+    const headers = { 'X-Fifth-Origin': 'render_check' };
+    if (BASIC) headers.Authorization = BASIC;
+    if (session) {
+      headers.Cookie = session.cookie;
+      if (method !== 'GET') headers['X-CSRF-Token'] = session.csrf;
+    }
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    if (key) headers['Idempotency-Key'] = key;
+    return http.request(
+      method,
+      `${BASE}${path}`,
+      body === undefined ? null : JSON.stringify(body),
+      {
+        headers,
+        tags: { action, name: route },
+        jar: new http.CookieJar(),
+        responseCallback: denied ? CB_DENIED : CB_OK,
+        timeout: '120s',
+      },
+    );
+  };
+  let res = send();
   actionRequests.add(1, { action });
+  // Сеанс истёк (401) — повторный вход тем же участником и ОДИН повтор того же запроса.
+  // 401 выдаётся проверкой сеанса до обработчика: операция не выполнялась, повтор безопасен;
+  // защищённые операции идут с прежним ключом. Любой другой отказ не повторяется.
+  if (res.status === 401 && session && relogin(session)) {
+    res = send();
+    actionRequests.add(1, { action });
+  }
   const ok = denied
     ? res.status === 403 || res.status === 404
     : res.status >= 200 && res.status < 300;
@@ -530,6 +544,26 @@ function login(user, action) {
   );
 }
 
+/**
+ * Повторный вход тем же участником (сеанс этого VU). Успех — новые cookie и CSRF в сеансе.
+ * Не чаще раза в минуту на сеанс: 401 по другой причине не превращается в поток входов.
+ */
+function relogin(session) {
+  const now = Date.now();
+  if (session.reloginAt && now - session.reloginAt < 60_000) return false;
+  session.reloginAt = now;
+  const user = DATA.users.find((u) => u.index === session.user);
+  if (!user) return false;
+  const res = login(user, 'relogin');
+  relogins.add(1, { status: statusTag(res.status) });
+  if (res.status !== 200 && res.status !== 201) return false;
+  const c = cookiesOf(res);
+  if (!c.csrf) return false;
+  session.cookie = c.cookie;
+  session.csrf = c.csrf;
+  return true;
+}
+
 /** Вход один раз на участника. На 429 ждём Retry-After: подготовка не должна падать на лимите. */
 export function setup() {
   const sessions = [];
@@ -646,7 +680,11 @@ export function handleSummary(data) {
     target: BASE.replace(/\/\/[^@/]*@/, '//'),
     finishedAt: new Date().toISOString(),
     testRunDurationMs: data.state ? data.state.testRunDurationMs : null,
-    participants: { inData: DATA.users.length, loggedIn: (setupData.sessions || []).length },
+    participants: {
+      inData: DATA.users.length,
+      loggedIn: (setupData.sessions || []).length,
+      relogins: (metric(data, 'relogins') || {}).count || 0,
+    },
     stages,
     actions,
     errorsByStatus,

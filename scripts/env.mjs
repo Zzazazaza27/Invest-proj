@@ -41,6 +41,8 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
 const PRODUCTION_OVERLAY = join(ROOT, 'infra', 'docker-compose.env-production.yml');
 const SLOTS_OVERLAY = join(ROOT, 'infra', 'docker-compose.env-slots.yml');
+// Журналы среды в journald (W32): включает флаг FIFTH_JOURNALD=1 в compose.env среды.
+const JOURNALD_OVERLAY = join(ROOT, 'infra', 'docker-compose.env-journald.yml');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
 const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
 // Пределы пилотной среды: бюджет узла считается по ним, а не по текущему расходу.
@@ -154,6 +156,7 @@ function overlays(id) {
     ...(/^FIFTH_AGENT_DIR=/m.test(text) ? ['-f', PRODUCTION_OVERLAY] : []),
     // Слоты ядра (блок 09, задание 3): включает `slots-enable`.
     ...(/^FIFTH_SLOTS=1$/m.test(text) ? ['-f', SLOTS_OVERLAY] : []),
+    ...(/^FIFTH_JOURNALD=1$/m.test(text) ? ['-f', JOURNALD_OVERLAY] : []),
   ];
 }
 

@@ -74,6 +74,63 @@ if (!existsSync(join(dataDir, 'users.json'))) {
   process.exit(2);
 }
 
+/*
+ * Набор данных — на один прогон (Тэнк 10.11): материалы прошлых прогонов копятся в проектах
+ * участников и упираются в предел 50 на проект (422 limit_exceeded в часовом прогоне).
+ * 1. Повторный запуск на использованном наборе — отказ (`--reuse-data` — только осознанно).
+ * 2. Расчёт: сколько материалов прогон создаст на проект за всю длительность; с запасом на
+ *    разброс случайного выбора проекта должно остаться ниже предела.
+ */
+const MATERIALS_LIMIT = 50;
+const MATERIALS_HEADROOM = 5;
+const usedMark = join(dataDir, 'used.json');
+if (existsSync(usedMark) && !args['reuse-data']) {
+  const prev = JSON.parse(readFileSync(usedMark, 'utf8'));
+  console.error(
+    `набор ${runId} уже использован прогоном ${prev.outDir ?? '?'} (${prev.at ?? '?'}): ` +
+      'нужен свежий набор (seed.mjs seed --run-id <новый>) или явно --reuse-data',
+  );
+  process.exit(2);
+}
+{
+  const users = JSON.parse(readFileSync(join(dataDir, 'users.json'), 'utf8'));
+  const nProjects = users.users.reduce((s, u) => s + u.projects.length, 0);
+  const seededPerProject = 2; // seed.mjs: две ссылки на проект
+  const dur = (raw, def) => {
+    const m = String(raw ?? def).match(/^(\d+(?:\.\d+)?)(h|m|s)?$/);
+    if (!m) throw new Error(`не длительность: ${raw}`);
+    return Number(m[1]) * { h: 3600, m: 60, s: 1 }[m[2] ?? 's'];
+  };
+  const stages =
+    mode === 'base'
+      ? [[Number(args.rate ?? 2), dur(args.duration, '15m')]]
+      : mode === 'soak'
+        ? [[Number(args['soak-rate'] ?? 2), dur(args.duration, '60m')]]
+        : [
+            ...String(args.steps ?? '2,4,8,16')
+              .split(',')
+              .map((r) => [Number(r), dur(args['step-duration'], '10m')]),
+            [Number(args['return-rate'] ?? 2), dur(args['return-duration'], '10m')],
+          ];
+  // Доля действий, создающих материал: ссылка 5 %, загрузки 10 % (p1); 50 МиБ — раз в ступень.
+  const share = { p1: 0.15, 'p1-api': 0.05, 'p1-files': 1 }[profile];
+  const maxUploads = profile === 'p1-api' || args['max-upload'] === '0' ? 0 : stages.length;
+  const created = stages.reduce((s, [rate, sec]) => s + rate * sec * share, 0) + maxUploads;
+  const mean = created / nProjects;
+  // Выбор проекта случаен: верхняя граница — среднее + 4 стандартных отклонения (Пуассон).
+  const worst = seededPerProject + mean + 4 * Math.sqrt(mean);
+  const allowed = MATERIALS_LIMIT - MATERIALS_HEADROOM;
+  console.log(
+    `  материалы: прогон создаст ~${Math.round(created)} на ${nProjects} проектов — ` +
+      `в среднем ${mean.toFixed(1)}, с разбросом до ${worst.toFixed(1)} на проект (предел ${MATERIALS_LIMIT}, запас ${MATERIALS_HEADROOM})`,
+  );
+  if (worst > allowed) {
+    const need = Math.ceil(created / (Math.sqrt(4 + allowed - seededPerProject) - 2) ** 2);
+    console.error(`  мало проектов: нужно не меньше ${need} (seed.mjs seed --projects ${need})`);
+    process.exit(2);
+  }
+}
+
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
 const outDir = join(
   ROOT,
@@ -87,6 +144,7 @@ if (existsSync(outDir)) {
   process.exit(2);
 }
 mkdirSync(outDir, { recursive: true });
+writeFileSync(usedMark, JSON.stringify({ outDir, at: new Date().toISOString() }, null, 2));
 
 // Адрес цели изнутри контейнера.
 const local = isLocalBase();
