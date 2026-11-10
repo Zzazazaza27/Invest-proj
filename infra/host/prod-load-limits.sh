@@ -39,9 +39,15 @@ show() {
 restart() {
   cd "$ROOT" && node scripts/env.mjs start test-1 --text
 }
+# Из самой службы возврата (expire) её не останавливаем — иначе она убьёт себя до проверки
+# защиты; таймер к этому моменту уже отработал.
 cancel_timer() {
-  systemctl stop "$UNIT.timer" "$UNIT.service" >/dev/null 2>&1 || true
-  systemctl reset-failed "$UNIT.timer" "$UNIT.service" >/dev/null 2>&1 || true
+  systemctl stop "$UNIT.timer" >/dev/null 2>&1 || true
+  if [ "${MODE:-}" != expire ]; then
+    systemctl stop "$UNIT.service" >/dev/null 2>&1 || true
+    systemctl reset-failed "$UNIT.service" >/dev/null 2>&1 || true
+  fi
+  systemctl reset-failed "$UNIT.timer" >/dev/null 2>&1 || true
 }
 # Срок истёк, а отметка на месте (например, сервер перезагружался и таймер пропал).
 check_expired() {
@@ -84,7 +90,8 @@ do_restore() {
 exec 9>"$DIR/.load-limits.lock"
 flock 9
 
-case "${1:-}" in
+MODE="${1:-}"
+case "$MODE" in
   status)
     if check_expired; then
       echo 'срок истёк, а отметка на месте — возвращаю'; do_restore 'просрочено, status'; exit $?
