@@ -162,6 +162,54 @@ function cleanup() {
 }
 
 console.log('=== ЗАЩИЩЁННЫЙ УСТАНОВЩИК ===');
+/*
+ * Ранний отказ на неподходящих образах (W31, Тэнк 10.11): до уборки и создания среды.
+ * Комплект собирается из миграций репозитория, а схему ставит образ ядра --from. Если в
+ * образе другой набор миграций (обычно — старый `dev`), прогон раньше доходил до сверки и
+ * падал 18 пунктами. Теперь — сразу, с несовпадением. Другая сборка сама не подтягивается.
+ */
+{
+  const inRepo = readdirSync(join(ROOT, 'database', 'migrations'))
+    .filter((f) => /^M\d+_.*\.sql$/.test(f))
+    .sort();
+  const ls = docker(
+    'run',
+    '--rm',
+    '--pull',
+    'never',
+    '--entrypoint',
+    'sh',
+    `fifth/core:${FROM}`,
+    '-c',
+    'ls /app/database/migrations',
+  );
+  if (ls.code !== 0) {
+    console.error(`образ fifth/core:${FROM} недоступен: ${ls.out.split('\n').pop()}`);
+    console.error('Укажи существующие образы: --from <метка>. Прогон сам их не скачивает.');
+    process.exit(2);
+  }
+  const inImage = ls.out
+    .split('\n')
+    .map((s) => s.trim())
+    .filter((f) => /^M\d+_.*\.sql$/.test(f))
+    .sort();
+  const missing = inRepo.filter((f) => !inImage.includes(f));
+  const extra = inImage.filter((f) => !inRepo.includes(f));
+  if (missing.length || extra.length) {
+    const span = (a) => (a.length > 3 ? `${a[0]} … ${a.at(-1)} (${a.length})` : a.join(', '));
+    console.error(`\nобраз fifth/core:${FROM} не подходит к репозиторию — среда не тронута:`);
+    if (missing.length) console.error(`  нет в образе: ${span(missing)}`);
+    if (extra.length) console.error(`  лишние в образе: ${span(extra)}`);
+    console.error(
+      `  в образе до ${inImage.at(-1) ?? '—'}, в репозитории до ${inRepo.at(-1)}. ` +
+        'Собери образы текущего кода и укажи их метку: --from <метка>. ' +
+        'Другая сборка автоматически не подтягивается.',
+    );
+    process.exit(2);
+  }
+  console.log(`  образы fifth/*:${FROM}: миграции совпадают с репозиторием (${inRepo.length})`);
+}
+
 cleanup();
 rmSync(WORK, { recursive: true, force: true });
 mkdirSync(KITS, { recursive: true });
