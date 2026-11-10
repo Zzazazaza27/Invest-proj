@@ -45,7 +45,10 @@ const K6_IMAGE =
  */
 // k6 без Docker: тот же выпуск, что образ; бинарь сверяется по SHA-256 перед запуском.
 const K6_NATIVE = join(ROOT, '.local', 'load', 'k6', 'k6.exe');
-const K6_NATIVE_SHA256 = process.env.FIFTH_K6_NATIVE_SHA256 ?? '';
+// k6-v1.3.0-windows-amd64.zip — SHA-256 06a15d69…17686d совпал с k6-v1.3.0-checksums.txt выпуска.
+const K6_NATIVE_SHA256 =
+  process.env.FIFTH_K6_NATIVE_SHA256 ??
+  'dad93bac6508f29b7355a9ec747f1c07484b396ded3e17b5553d788718bdb931';
 const LOCAL_NETWORK = process.env.FIFTH_LOAD_DOCKER_NETWORK ?? 'fifth_default';
 const LOCAL_TARGET = process.env.FIFTH_LOAD_DOCKER_TARGET ?? 'http://fifth-web';
 const LOCAL_STORAGE_REWRITE =
