@@ -618,7 +618,7 @@ function freshSession(user) {
 /** check с выводом имени проваленной проверки: код 99 без имени не разбирается. */
 function checkNamed(value, sets) {
   for (const [name, fn] of Object.entries(sets)) {
-    let ok = false;
+    let ok;
     try {
       ok = Boolean(fn(value));
     } catch {
