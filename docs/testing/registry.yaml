@@ -3099,7 +3099,8 @@ checks:
     runner: manual-tool
     asserts: 18
     needs: [ssh, network]
-    effects: ['запросы к адресам площадки без изменений; пишет out/release-w31/caddy-matrix-<метка>.json']
+    effects:
+      ['запросы к адресам площадки без изменений; пишет out/release-w31/caddy-matrix-<метка>.json']
     studied: code
     studiedOn: 2026-11-11
     note: >-
