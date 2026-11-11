@@ -33,6 +33,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { kitId } from './lib/compat-report.mjs';
 import { signCompat } from './lib/kit-sign.mjs';
 import { s3Object } from './lib/s3.mjs';
 
@@ -271,12 +272,12 @@ try {
     unsigned.code === 2 && /не проверен/.test(unsigned.json?.error ?? ''),
     unsigned.json?.error,
   );
-  const kitSha = (b) => JSON.parse(readFileSync(join(KITS, b, 'kit.json'), 'utf8')).tar.sha256;
+  const kitSha = (b) => kitId(JSON.parse(readFileSync(join(KITS, b, 'kit.json'), 'utf8')));
   const report = Buffer.from(
     JSON.stringify({
       result: 'ok',
-      previous: { build: B(1), kitSha256: kitSha(B(1)) },
-      candidate: { build: B(2), kitSha256: kitSha(B(2)) },
+      previous: { build: B(1), kitId: kitSha(B(1)) },
+      candidate: { build: B(2), kitId: kitSha(B(2)) },
       newMigrations: ['M900_compat_probe'],
     }),
   );

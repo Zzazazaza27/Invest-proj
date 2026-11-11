@@ -41,7 +41,7 @@ mkdirSync(join(kitsDir, 'b2'), { recursive: true });
 mkdirSync(etcDir);
 writeFileSync(join(etcDir, 'kit-signing.pub'), ci.pub);
 const sha = { b1: 'aaa', b2: 'bbb' };
-const kitSha = (b) => sha[b];
+const kitIdOf = (b) => sha[b];
 const file = join(kitsDir, 'b2', 'compat-b1.json');
 const write = (report, signer) => {
   const bytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
@@ -50,11 +50,11 @@ const write = (report, signer) => {
   if (signer) writeFileSync(`${file}.sig`, `${signer(bytes)}\n`);
   return bytes;
 };
-const read = () => readCompatReport({ kitsDir, etcDir, candidate: 'b2', previous: 'b1', kitSha });
+const read = () => readCompatReport({ kitsDir, etcDir, candidate: 'b2', previous: 'b1', kitIdOf });
 const good = {
   result: 'ok',
-  previous: { build: 'b1', kitSha256: 'aaa' },
-  candidate: { build: 'b2', kitSha256: 'bbb' },
+  previous: { build: 'b1', kitId: 'aaa' },
+  candidate: { build: 'b2', kitId: 'bbb' },
   newMigrations: ['M171_x'],
   tools: { commit: 'c0ffee' },
 };
@@ -77,7 +77,7 @@ try {
   write(good, (b) => signKit(b, ci.priv));
   check('подпись комплекта вместо подписи отчёта — отклонён', read()?.result === 'bad-signature');
 
-  write({ ...good, previous: { build: 'b1', kitSha256: 'другой' } }, (b) => signCompat(b, ci.priv));
+  write({ ...good, previous: { build: 'b1', kitId: 'другой' } }, (b) => signCompat(b, ci.priv));
   check('подписан, но о другой паре комплектов — stale', read()?.result === 'stale');
 
   // Доставка на узел: kit.mjs compat-put из каталога артефактов.
@@ -101,7 +101,7 @@ try {
   };
   mkdirSync(join(kitsDir, '2.1-b2.1'));
   writeFileSync(join(kitsDir, '2.1-b2.1', 'kit.json'), JSON.stringify({ build: '2.1-b2.1' }));
-  const forCand = { ...good, candidate: { build: '2.1-b2.1', kitSha256: 'bbb' } };
+  const forCand = { ...good, candidate: { build: '2.1-b2.1', kitId: 'bbb' } };
   check(
     'доставка: подписанный отчёт принят',
     put(forCand, (b) => signCompat(b, ci.priv)).code === 0,

@@ -24,6 +24,7 @@ import { generateKeyPairSync } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { kitId } from './lib/compat-report.mjs';
 import { signCompat } from './lib/kit-sign.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -361,14 +362,14 @@ try {
     unchecked.code === 2 && /не проверен/.test(unchecked.json?.error ?? ''),
     unchecked.json?.error?.slice(0, 120),
   );
-  const tarSha = (b) => JSON.parse(readFileSync(join(KITS, b, 'kit.json'), 'utf8')).tar.sha256;
+  const tarSha = (b) => kitId(JSON.parse(readFileSync(join(KITS, b, 'kit.json'), 'utf8')));
   const reportFile = join(KITS, K2, `compat-${K1}.json`);
   const report = (result, previousSha, { sign = true } = {}) => {
     const bytes = Buffer.from(
       JSON.stringify({
         result,
-        candidate: { build: K2, kitSha256: tarSha(K2) },
-        previous: { build: K1, kitSha256: previousSha },
+        candidate: { build: K2, kitId: tarSha(K2) },
+        previous: { build: K1, kitId: previousSha },
         newMigrations: ['M999_probe'],
       }),
     );

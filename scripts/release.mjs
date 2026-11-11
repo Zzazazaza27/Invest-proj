@@ -43,7 +43,7 @@ import { envLayout, extractStatic, prepareSlots, prodLayout, slotOps } from './l
 import { releaseState } from './lib/release-state.mjs';
 import { switchSlots } from './lib/slot-switch.mjs';
 import { formatProtocol } from './lib/release-report.mjs';
-import { readCompatReport } from './lib/compat-report.mjs';
+import { kitId, readCompatReport } from './lib/compat-report.mjs';
 import { rollbackVerdict } from './lib/rollback-policy.mjs';
 import { parseEnvFile } from './lib/backup.mjs';
 import { activateProdFiles, prodFileProblems } from './lib/prod-compose.mjs';
@@ -519,7 +519,7 @@ function compatReport(candidate, previous) {
     etcDir: process.env.FIFTH_INSTALL_ETC || '/etc/fifth-install',
     candidate,
     previous,
-    kitSha: (build) => readKit(build).tar.sha256,
+    kitIdOf: (build) => kitId(readKit(build)),
   });
 }
 

@@ -30,6 +30,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import sharp from 'sharp';
+import { kitId } from './lib/compat-report.mjs';
 import { signCompat } from './lib/kit-sign.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -415,11 +416,13 @@ if (kits[PREVIOUS] && kits[CANDIDATE]) {
     result,
     previous: {
       build: PREVIOUS,
+      kitId: kitId(kits[PREVIOUS]),
       kitSha256: kits[PREVIOUS].tar.sha256,
       coreDigest: kits[PREVIOUS].images.core.digest,
     },
     candidate: {
       build: CANDIDATE,
+      kitId: kitId(kits[CANDIDATE]),
       kitSha256: kits[CANDIDATE].tar.sha256,
       coreDigest: kits[CANDIDATE].images.core.digest,
     },
