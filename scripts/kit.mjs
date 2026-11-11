@@ -35,8 +35,9 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve, relative } from 'node:path';
+import { basename, dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { overlayManifest } from './lib/overlays.mjs';
 import { prodFileName, prodFileProblems } from './lib/prod-compose.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -163,6 +164,9 @@ function manifestOf({ build, commit, images, previous, sbom = null }) {
     prodCompose: Object.fromEntries(
       PROD_COMPOSE.map((f) => [f, sha256(readFileSync(join(ROOT, f)))]),
     ),
+    // Дополнения Compose сборки (работа № 1 раздела 01): среда берёт их из комплекта, а не из
+    // серверной копии репозитория.
+    overlays: overlayManifest(ROOT),
     settingsVersion: 1,
     postgresSource: postgresSource(),
     migrations,
@@ -235,7 +239,15 @@ function sbomProblems(dir, kit) {
 }
 
 /** Комплект только добавляется: занятый номер не заменяется. */
-function storeKit(build, kit, composeFile, tarOf, prodSource = ROOT, sbomSource = null) {
+function storeKit(
+  build,
+  kit,
+  composeFile,
+  tarOf,
+  prodSource = ROOT,
+  sbomSource = null,
+  overlaySource = ROOT,
+) {
   const dir = kitDir(build);
   if (existsSync(join(dir, 'kit.json'))) throw new Refused(`комплект ${build} уже есть`);
   const composeText = readFileSync(composeFile);
@@ -252,6 +264,18 @@ function storeKit(build, kit, composeFile, tarOf, prodSource = ROOT, sbomSource 
     const text = readFileSync(existsSync(source) ? source : join(ROOT, file));
     if (sha256(text) !== kit.prodCompose[file]) throw new Error(`${file} не совпал с манифестом`);
     writeFileSync(join(tmp, 'prod-compose', prodFileName(file)), text);
+  }
+  if (kit.overlays) {
+    mkdirSync(join(tmp, 'overlays'));
+    for (const [file, sum] of Object.entries(kit.overlays)) {
+      const source = join(overlaySource, basename(file));
+      const text = readFileSync(existsSync(source) ? source : join(ROOT, file));
+      if (sha256(text) !== sum) {
+        rmSync(tmp, { recursive: true, force: true });
+        throw new Error(`${file} не совпал с манифестом`);
+      }
+      writeFileSync(join(tmp, 'overlays', basename(file)), text);
+    }
   }
   if (kit.sbom) {
     // Опись переносится из артефакта и сверяется до сохранения: подписанный манифест не
@@ -343,6 +367,7 @@ async function fetchKit() {
     (tar) => run('docker', ['save', '-o', tar, ...tags]),
     join(staging, 'prod-compose'),
     join(staging, 'sbom'),
+    join(staging, 'overlays'),
   );
   rmSync(staging, { recursive: true, force: true });
   const sealed = await commitKit(staged);

@@ -4132,6 +4132,23 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-10
 
+  - id: CHK-KIT-HISTORY
+    file: scripts/kit-history.mjs
+    command: node scripts/kit-history.mjs check
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 2
+    needs: [git]
+    effects: ['только читает infra/kit-history и Git']
+    studied: code
+    studiedOn: 2026-11-11
+    note: >-
+      Закреплённые дополнения Compose выпущенных сборок без поля overlays (2.1-b132.1, 2.1-b136.1):
+      каждая копия совпадает с манифестом и с Git на коммите сборки, отсутствующие записаны верно,
+      лишних файлов нет. Связь с комплектом (коммит) проверяет scripts/lib/overlays.mjs при установке.
+      Число проверок — по закреплённым сборкам. Подкоманда pin закрепляет новую историческую сборку.
+
   - id: CHK-KIT-SBOM
     file: scripts/check-kit-sbom.mjs
     command: node scripts/check-kit-sbom.mjs
@@ -5938,6 +5955,7 @@ blocks:
         CHK-SLOTS-ENV,
         CHK-RELEASE-TRIALS,
         CHK-KIT-SBOM,
+        CHK-KIT-HISTORY,
         CHK-ENV-ISOLATION,
         CHK-ENV-IMAGES,
         CHK-INSTALLER,

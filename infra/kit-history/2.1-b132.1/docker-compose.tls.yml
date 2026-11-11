@@ -1,0 +1,67 @@
+# TLS внутренних служб рабочей среды (блок 5, задание 5). Подключает scripts/infra.mjs, когда в .env
+# задан FIFTH_TLS_DIR: каталог только с сертификатами служб и серверным ключом, ключей центров там нет.
+services:
+  valkey:
+    command: !override
+      - valkey-server
+      - --requirepass
+      - ${REDIS_PASSWORD:?}
+      - --appendonly
+      - 'yes'
+      - --maxmemory-policy
+      - noeviction
+      - --port
+      - '0'
+      - --tls-port
+      - '6379'
+      - --tls-cert-file
+      - /tls/server.crt
+      - --tls-key-file
+      - /tls/server.key
+      - --tls-ca-cert-file
+      - /tls/ca.crt
+      - --tls-auth-clients
+      - 'no'
+    volumes:
+      - ${FIFTH_TLS_DIR:?}:/tls:ro
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'valkey-cli --tls --cacert /tls/ca.crt -h 127.0.0.1 -a "$REDIS_PASSWORD" --no-auth-warning ping | grep -q PONG',
+        ]
+  nats:
+    command: !override
+      - '-js'
+      - '-sd'
+      - '/data'
+      - '-m'
+      - '8222'
+      - '--user'
+      - 'unicorn'
+      - '--pass'
+      - '${NATS_PASSWORD:?}'
+      - '--tls'
+      - '--tlscert'
+      - '/tls/server.crt'
+      - '--tlskey'
+      - '/tls/server.key'
+    volumes:
+      - ${FIFTH_TLS_DIR:?}:/tls:ro
+  zabbix-agent2-host:
+    volumes:
+      - ${FIFTH_TLS_DIR:?}/ca.crt:/tls/ca.crt:ro
+      - ./zabbix-agent-tls.conf:/etc/zabbix/zabbix_agent2.d/plugins.d/fifth-tls.conf:ro
+  zabbix-server-host:
+    environment:
+      ZBX_DBTLSCONNECT: verify_full
+      ZBX_DBTLSCAFILE: /tls/ca.crt
+    volumes:
+      - ${FIFTH_TLS_DIR:?}/ca.crt:/tls/ca.crt:ro
+  zabbix-web:
+    environment:
+      ZBX_DB_ENCRYPTION: 'true'
+      ZBX_DB_VERIFY_HOST: 'true'
+      ZBX_DB_CA_FILE: /tls/ca.crt
+    volumes:
+      - ${FIFTH_TLS_DIR:?}/ca.crt:/tls/ca.crt:ro

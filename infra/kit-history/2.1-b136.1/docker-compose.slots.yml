@@ -1,0 +1,67 @@
+# Слоты ядра рабочей среды (блок 09, задание 3) — дополнение к docker-compose.prod.yml.
+#
+# Подключает scripts/infra.mjs, когда в .env задан FIFTH_SLOTS=1 (переходный выпуск —
+# отдельно, с коротким перерывом и своим возвратом; рабочую выкладку запускает Томас).
+# Ядро в сети узла, поэтому у слотов свои порты; nginx web ведёт запросы и статику по файлу
+# маршрута, постоянный служебный адрес :4400 для наблюдения публикует web на шлюзе Docker.
+#
+#   слот    контейнер      API    служебный
+#   core-a  fifth-core     4300   4401
+#   core-b  fifth-core-b   4310   4411
+#
+# Каталог узла /opt/fifth-element/.local/release:
+#   grant/background-grant.json   разрешение фона — пишет только установщик
+#   token/token                   токен служебных команд
+#   nginx/route.conf              маршрут nginx
+#   core-route.json               маршрут для скриптов (infra/host/core-slot.sh)
+#   static/<сборка>/…              статика сборок
+x-slot-env: &slot-env
+  BACKGROUND_START: grant
+  BACKGROUND_GRANT_PATH: /run/fifth-release/background-grant.json
+  BACKGROUND_CONTROL_TOKEN_FILE: /run/fifth-release-token/token
+
+services:
+  core:
+    image: ${FIFTH_CORE_A_IMAGE:?}
+    environment:
+      <<: *slot-env
+      CORE_SLOT: core-a
+      CORE_PORT: '4300'
+      CORE_INTERNAL_PORT: '4401'
+      FIFTH_BUILD: ${FIFTH_CORE_A_BUILD:?}
+    volumes:
+      - ../.local/release/grant:/run/fifth-release:ro
+      - ../.local/release/token:/run/fifth-release-token:ro
+
+  core-b:
+    image: ${FIFTH_CORE_B_IMAGE:-${FIFTH_CORE_A_IMAGE:?}}
+    container_name: fifth-core-b
+    profiles: ['slot-b']
+    restart: unless-stopped
+    init: true
+    network_mode: host
+    env_file: ../.env
+    environment:
+      <<: *slot-env
+      CORE_SLOT: core-b
+      CORE_PORT: '4310'
+      CORE_INTERNAL_PORT: '4411'
+      FIFTH_BUILD: ${FIFTH_CORE_B_BUILD:-unknown}
+    stop_grace_period: 35s
+    logging:
+      driver: journald
+    volumes:
+      - ../.local/release/grant:/run/fifth-release:ro
+      - ../.local/release/token:/run/fifth-release-token:ro
+      # То же, что docker-compose.secrets.yml даёт core: файлы секретов и Agent OpenBao.
+      # Подключается только вместе с ним (scripts/infra.mjs): без секретов слоты не включают.
+      - ${FIFTH_SECRETS_DIR:?}:${FIFTH_SECRETS_DIR:?}:ro
+      - /run/fifth-secrets:/run/fifth-secrets:ro
+
+  web:
+    ports:
+      # Постоянный служебный адрес для Zabbix — только на шлюзе Docker, не наружу.
+      - '${CORE_HOST:?}:4400:4400'
+    volumes:
+      - ../.local/release/nginx:/etc/nginx/fifth-route:ro
+      - ../.local/release/static:/srv/static:ro

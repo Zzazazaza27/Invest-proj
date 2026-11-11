@@ -417,6 +417,11 @@ jobs:
           cp infra/docker-compose.env.yml compose.yml
           mkdir prod-compose
           cp infra/docker-compose.yml infra/docker-compose.prod.yml infra/docker-compose.journald.yml prod-compose/
+          # Дополнения Compose сборки (суммы в манифесте, поле overlays).
+          mkdir overlays
+          cp infra/docker-compose.env-production.yml infra/docker-compose.env-slots.yml \
+            infra/docker-compose.env-journald.yml infra/docker-compose.secrets.yml \
+            infra/docker-compose.tls.yml infra/docker-compose.slots.yml overlays/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: kit-${{ env.BUILD }}
@@ -424,6 +429,7 @@ jobs:
             kit.json
             compose.yml
             prod-compose/
+            overlays/
             sbom/
           retention-days: 90
 

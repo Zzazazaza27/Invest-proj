@@ -23,3 +23,6 @@ Dockerfile text eol=lf
 
 # Сгенерированные файлы не участвуют в статистике языков и сворачиваются в диффе.
 package-lock.json linguist-generated=true -diff
+
+# Закреплённые копии дополнений выпущенных сборок — байт в байт как на коммите сборки.
+infra/kit-history/** -text

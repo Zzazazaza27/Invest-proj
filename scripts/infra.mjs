@@ -40,6 +40,23 @@ const ACTIVE_DIR =
   process.env.FIFTH_PROD_COMPOSE_DIR || join(ROOT, '.local', 'envs', 'prod', 'compose');
 const ACTIVE = existsSync(join(ACTIVE_DIR, 'docker-compose.yml'));
 const composeFile = (path) => (ACTIVE ? join(ACTIVE_DIR, basename(path)) : path);
+/**
+ * Дополнения рабочей среды (секреты, TLS, слоты) — из действующего каталога сборки
+ * (`compose/overlays`, ставит установка или prod-pin-overlays), а не из серверной копии
+ * репозитория: синхронизация инструментов не меняет конфигурацию prod (работа № 1 раздела 01).
+ * Без комплекта (стенд) — файл репозитория.
+ */
+function overlayFile(path) {
+  if (!ACTIVE) return path;
+  const file = join(ACTIVE_DIR, 'overlays', basename(path));
+  if (!existsSync(file)) {
+    console.error(
+      `infra: дополнение ${basename(path)} рабочей среды не закреплено — fifth-test op prod-pin-overlays <текущая сборка>`,
+    );
+    process.exit(2);
+  }
+  return file;
+}
 
 /**
  * Боевое ли это окружение.
@@ -121,16 +138,15 @@ if (logDriver === 'journald') {
   console.error(`infra: DOCKER_LOG_DRIVER=${logDriver} — допустимо только journald или пусто`);
   process.exit(2);
 }
-// Секреты в файлах: значения для подстановки в Compose — только в памяти процесса. Файл с
-// каталогом берётся из репозитория: он работает и с файлами запуска прежнего комплекта.
+// Секреты в файлах: значения для подстановки в Compose — только в памяти процесса.
 if (existsSync(ENV_PATH) && /^FIFTH_SECRETS_DIR=./m.test(readFileSync(ENV_PATH, 'utf8'))) {
-  args.push('-f', SECRETS_PATH);
+  args.push('-f', overlayFile(SECRETS_PATH));
   for (const [k, v] of Object.entries(parseEnvFile(ENV_PATH))) process.env[k] ??= v;
 }
 
-// TLS внутренних служб рабочей среды: файл из репозитория, как и каталог секретов.
+// TLS внутренних служб рабочей среды.
 if (existsSync(ENV_PATH) && /^FIFTH_TLS_DIR=./m.test(readFileSync(ENV_PATH, 'utf8'))) {
-  args.push('-f', TLS_PATH);
+  args.push('-f', overlayFile(TLS_PATH));
 }
 
 // Слоты ядра (блок 09, задание 3): только рабочая среда из комплекта и только вместе с
@@ -141,7 +157,7 @@ if (existsSync(ENV_PATH) && /^FIFTH_SLOTS=1$/m.test(readFileSync(ENV_PATH, 'utf8
     console.error('infra: FIFTH_SLOTS=1 требует FIFTH_CORE_IMAGE и FIFTH_SECRETS_DIR');
     process.exit(2);
   }
-  args.push('-f', SLOTS_PATH);
+  args.push('-f', overlayFile(SLOTS_PATH));
 }
 
 // Файлы, которые Compose возьмёт на самом деле, с хешами: их закрепляет установщик.

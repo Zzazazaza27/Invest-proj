@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 274; требований: 41
+- Проверок: 275; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 110
+### Зарегистрированы, но ни в наборе, ни в CI — 111
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -276,6 +276,7 @@
 - `CHK-UPLOAD-PUBLISH-RIGHT` — Блок 10, вопрос 3 (Тэнк 09.11, M174): право автора на момент публикации загрузки.
 - `CHK-ACTOR-CONTEXT` — Блок 10: контекст автора на настоящем ядре и базе (параллельность, события до входа).
 - `CHK-QUEUE-WAKE` — 
+- `CHK-KIT-HISTORY` — 
 - `CHK-KIT-SBOM` — 
 - `CHK-RELEASE-TRIALS` — Блок 9, задание 4: условие приёмки Тэнка — установщик и три сквозных сценария.
 - `CHK-COMPAT-SIGNATURE` — Блок 9, задание 2: доверенное происхождение отчёта — основания точки возврата (Тэнк 09.11).
@@ -440,6 +441,7 @@
 | CHK-UPLOAD-PUBLISH-RIGHT | `node scripts/check-upload-publish-right.mjs` | 6 | вручную | — |
 | CHK-ACTOR-CONTEXT | `node scripts/check-actor-context.mjs` | 17 | вручную | — |
 | CHK-QUEUE-WAKE | `node scripts/check-queue-wake.mjs` | 11 | вручную | — |
+| CHK-KIT-HISTORY | `node scripts/kit-history.mjs check` | 2 | вручную | — |
 | CHK-KIT-SBOM | `node scripts/check-kit-sbom.mjs` | 7 | вручную | — |
 | CHK-RELEASE-TRIALS | `node scripts/check-release-trials.mjs` | 24 | вручную | — |
 | CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 11 | вручную | — |

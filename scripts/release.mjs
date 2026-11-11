@@ -47,6 +47,7 @@ import { kitId, readCompatReport } from './lib/compat-report.mjs';
 import { rollbackVerdict } from './lib/rollback-policy.mjs';
 import { parseEnvFile } from './lib/backup.mjs';
 import { activateProdFiles, prodFileProblems } from './lib/prod-compose.mjs';
+import { activateOverlays, hasOverlay, overlayProblems, overlaySource } from './lib/overlays.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // Закреплённая копия инструментов работает с площадкой по `FIFTH_ROOT`, код берёт из своей папки.
@@ -97,9 +98,47 @@ const prodEnv = (name) => parseEnvFile(join(HOME, '.env'))[name] ?? '';
  * Версия скриптов записывается в журнал операции: разные коммиты образов и скриптов
  * допустимы, их сочетание зафиксировано.
  */
+/**
+ * Дополнения рабочей среды (секреты в файлах, TLS, слоты) — из комплекта или закреплённой истории
+ * сборки, в каталог `compose/overlays` (работа № 1 раздела 01): синхронизация серверной копии
+ * репозитория их не меняет. Нет нужного — отказ до изменений.
+ */
+function prodOverlays(build) {
+  let src;
+  try {
+    src = overlaySource({
+      kitsDir: KITS,
+      historyDir: join(HOME, 'infra', 'kit-history'),
+      root: HOME,
+      label: build,
+    });
+  } catch (e) {
+    throw new Refused(e.message);
+  }
+  const text = readFileSync(join(HOME, '.env'), 'utf8');
+  const modes = [
+    ...(/^FIFTH_SECRETS_DIR=./m.test(text) ? ['secrets'] : []),
+    ...(/^FIFTH_TLS_DIR=./m.test(text) ? ['tls'] : []),
+    ...(/^FIFTH_SLOTS=1$/m.test(text) ? ['prod-slots'] : []),
+  ];
+  for (const m of modes)
+    if (!hasOverlay(src, m))
+      throw new Refused(`сборка ${build}: нет дополнения ${m} рабочей среды`);
+  const problems = overlayProblems(src, modes);
+  if (problems.length) throw new Refused(problems.join('; '));
+  return { src, modes };
+}
+
+function activateProd(build, kit) {
+  const { src, modes } = prodOverlays(build);
+  activateProdFiles(join(KITS, build), kit, join(dirOf(PROD), 'compose'));
+  activateOverlays(src, modes, join(dirOf(PROD), 'compose', 'overlays'));
+}
+
 function checkProdFiles(kit) {
   const problems = prodFileProblems(join(KITS, kit.build), kit);
   if (problems.length) throw new Refused(problems.join('; '));
+  prodOverlays(kit.build);
   return spawnSync('git', ['rev-parse', 'HEAD'], { cwd: HOME, encoding: 'utf8' }).stdout.trim();
 }
 
@@ -148,7 +187,7 @@ const passValues = (names) => names.flatMap((n) => (flag(n) ? [n, flag(n)] : [])
  * запись в журнал. Расширение схемы — до кандидата, его образом (9.2, задание 2).
  */
 async function prodSlotsUpdate(build, kit, op, imagesOnly = false) {
-  activateProdFiles(join(KITS, build), kit, join(dirOf(PROD), 'compose'));
+  activateProd(build, kit);
   const dir = join(HOME, '.local');
   const route = activeCore(HOME);
   if (!route.slot)
@@ -232,7 +271,7 @@ async function prodSlotsUpdate(build, kit, op, imagesOnly = false) {
 }
 
 function prodUpdate(build, kit, imagesOnly) {
-  activateProdFiles(join(KITS, build), kit, join(dirOf(PROD), 'compose'));
+  activateProd(build, kit);
   // База перезапускается только при новом образе, а не при смене метки.
   const running = spawnSync('docker', ['inspect', 'fifth-postgres', '--format', '{{.Image}}'], {
     encoding: 'utf8',
@@ -1157,8 +1196,23 @@ function report(id) {
   finish({ ok: true, env: id, op: installation.id, protocol: text }, 0);
 }
 
+/**
+ * Закрепить дополнения текущей сборки рабочей среды в её действующем каталоге — разово при
+ * переходе (работа № 1 раздела 01). Контейнеры не трогаются; сборка — только текущая.
+ */
+function pinOverlays(id) {
+  if (id !== PROD) throw new Refused('только рабочая среда; тестовые закрепляются установкой');
+  const build = flag('--build');
+  if (!build || build !== currentBuild(id))
+    throw new Refused(`нужна текущая сборка: --build ${currentBuild(id) ?? '?'}`);
+  const { src, modes } = prodOverlays(build);
+  const active = activateOverlays(src, modes, join(dirOf(PROD), 'compose', 'overlays'));
+  finish({ ok: true, env: id, build, origin: src.origin, active }, 0);
+}
+
 const COMMANDS = {
   watch,
+  'pin-overlays': pinOverlays,
   report,
   install,
   verify,

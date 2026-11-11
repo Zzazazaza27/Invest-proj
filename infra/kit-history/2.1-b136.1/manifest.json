@@ -1,0 +1,14 @@
+{
+  "format": 1,
+  "build": "2.1-b136.1",
+  "commit": "d445da074a240f9261d89be3eedcda8b5c06d9be",
+  "files": {
+    "infra/docker-compose.env-production.yml": "c89ba6274b828a3e07b762628d1798310595612395e531d999a49a9ce82f8735",
+    "infra/docker-compose.env-slots.yml": "1e984bb0f5cb30bb59c128f87179fbfe51c479086b577e5888c4e2c50d6939c1",
+    "infra/docker-compose.env-journald.yml": "434fac278cf4753a6b12c9e96432cabc32a79f923416bdb002e0a912bb31e858",
+    "infra/docker-compose.secrets.yml": "934d3b7b5c13fe30b3ddf70bb1fc2a3161b1f08cda5e1b3a70ac9c746ecb8070",
+    "infra/docker-compose.tls.yml": "2166ce7e1c8063b57fda3321a9cdeac4113af0d05eb36415fedb16311b90cdda",
+    "infra/docker-compose.slots.yml": "a518c00d91b106e18bd72b6f89c513b9f6fa4baa059a1e4360b14948d318833c"
+  },
+  "absent": []
+}

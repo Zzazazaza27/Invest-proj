@@ -36,6 +36,13 @@ import { parseEnvFile } from './lib/backup.mjs';
 import { envLayout, envSlotOps, extractStatic, prepareSlots } from './lib/env-slots.mjs';
 import { factualState, switchSlots } from './lib/slot-switch.mjs';
 import { contractRelease } from './lib/contract-release.mjs';
+import {
+  activateOverlays,
+  activeOverlay,
+  hasOverlay,
+  overlayProblems,
+  overlaySource,
+} from './lib/overlays.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const COMPOSE = join(ROOT, 'infra', 'docker-compose.env.yml');
@@ -44,6 +51,7 @@ const SLOTS_OVERLAY = join(ROOT, 'infra', 'docker-compose.env-slots.yml');
 // Журналы среды в journald (W32): включает флаг FIFTH_JOURNALD=1 в compose.env среды.
 const JOURNALD_OVERLAY = join(ROOT, 'infra', 'docker-compose.env-journald.yml');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
+const KIT_HISTORY = process.env.FIFTH_KIT_HISTORY_DIR || join(ROOT, 'infra', 'kit-history');
 const ENVS = process.env.FIFTH_ENVS_DIR || join(ROOT, '.local', 'envs');
 // Пределы пилотной среды: бюджет узла считается по ним, а не по текущему расходу.
 const PILOT_LIMITS = [
@@ -144,20 +152,68 @@ function composeEnv() {
 }
 
 /**
- * Боевой режим среды (test-2): TLS служб, файлы Agent, шифрованный вход к хранилищу. Дополнение
- * берётся из репозитория, как у рабочей среды в infra.mjs, и подключается, пока в compose.env
- * задан FIFTH_AGENT_DIR. Ставит его infra/host/prod-test2-production.sh.
+ * Режимы среды, включённые флагами compose.env: боевой (test-2: TLS служб, файлы Agent, вход к
+ * хранилищу; FIFTH_AGENT_DIR, ставит infra/host/prod-test2-production.sh), слоты ядра (блок 09,
+ * задание 3; FIFTH_SLOTS=1, ставит `slots-enable`), журналы в journald (W32; FIFTH_JOURNALD=1).
+ */
+function envModes(id, text = null) {
+  const file = join(names(id).dir, 'compose.env');
+  const env = text ?? (existsSync(file) ? readFileSync(file, 'utf8') : '');
+  return [
+    ...(/^FIFTH_AGENT_DIR=/m.test(env) ? ['production'] : []),
+    ...(/^FIFTH_SLOTS=1$/m.test(env) ? ['slots'] : []),
+    ...(/^FIFTH_JOURNALD=1$/m.test(env) ? ['journald'] : []),
+  ];
+}
+
+const overlayDir = (id) => join(names(id).dir, 'overlays');
+const REPO_OVERLAY = {
+  production: PRODUCTION_OVERLAY,
+  slots: SLOTS_OVERLAY,
+  journald: JOURNALD_OVERLAY,
+};
+
+/**
+ * Дополнения Compose среды — сверенные копии сборки в каталоге среды (работа № 1 раздела 01):
+ * синхронизация серверной копии репозитория их не меняет. Среда, ещё не переустановленная после
+ * перехода (нет каталога overlays/), работает по-прежнему с файлами репозитория.
  */
 function overlays(id) {
-  const file = join(names(id).dir, 'compose.env');
-  if (!existsSync(file)) return [];
-  const text = readFileSync(file, 'utf8');
-  return [
-    ...(/^FIFTH_AGENT_DIR=/m.test(text) ? ['-f', PRODUCTION_OVERLAY] : []),
-    // Слоты ядра (блок 09, задание 3): включает `slots-enable`.
-    ...(/^FIFTH_SLOTS=1$/m.test(text) ? ['-f', SLOTS_OVERLAY] : []),
-    ...(/^FIFTH_JOURNALD=1$/m.test(text) ? ['-f', JOURNALD_OVERLAY] : []),
-  ];
+  const modes = envModes(id);
+  if (!existsSync(overlayDir(id))) return modes.flatMap((m) => ['-f', REPO_OVERLAY[m]]);
+  return modes
+    .map((m) => activeOverlay(overlayDir(id), m))
+    .filter((p) => existsSync(p))
+    .flatMap((p) => ['-f', p]);
+}
+
+/**
+ * Дополнения сборки для режимов среды — до любых изменений. Боевого режима или слотов в сборке
+ * нет — отказ (вернуть на неё такую среду нельзя, слоты сначала выключить); журналов в journald
+ * нет — режим не действует на этой сборке, это записывается.
+ */
+function prepareOverlays(id, label, modes = envModes(id)) {
+  let src;
+  try {
+    src = overlaySource({ kitsDir: KITS, historyDir: KIT_HISTORY, root: ROOT, label });
+  } catch (e) {
+    throw new Refused(e.message);
+  }
+  if (modes.includes('production') && !hasOverlay(src, 'production'))
+    throw new Refused(
+      `сборка ${label} без боевого дополнения: среду в боевом режиме на неё не ставить`,
+    );
+  if (modes.includes('slots') && !hasOverlay(src, 'slots'))
+    throw new Refused(`сборка ${label} не знает слотов: сначала slots-disable`);
+  const problems = overlayProblems(src, modes);
+  if (problems.length) throw new Refused(problems.join('; '));
+  const skipped = modes.filter((m) => !hasOverlay(src, m));
+  return { src, modes, skipped };
+}
+
+function installOverlays(id, prep) {
+  const active = activateOverlays(prep.src, prep.modes, overlayDir(id));
+  return { origin: prep.src.origin, active, skipped: prep.skipped };
 }
 
 function compose(id, args, { allowFail = false, timeout = 300_000 } = {}) {
@@ -465,6 +521,7 @@ async function create(id) {
   mkdirSync(n.dir, { recursive: true });
   chmodSync(n.dir, 0o700);
   installCompose(id, kit);
+  installOverlays(id, prepareOverlays(id, kit, []));
   const keys = await createStorage(id);
   const pilot = process.argv.includes('--pilot');
   writeSettings(id, { address, keys, filesUrl: flag('--files-url'), pilot });
@@ -562,6 +619,8 @@ async function update(id) {
   const kit = flag('--kit');
   if (!kit) throw new Refused('нужен --kit <метка>');
   const install = loadInstall(id);
+  // Дополнения целевой сборки — до любых изменений: нет нужных — отказ (работа № 1 раздела 01).
+  const prep = prepareOverlays(id, kit);
   const images = {
     core: `fifth/core:${kit}`,
     web: `fifth/web:${kit}`,
@@ -585,6 +644,7 @@ async function update(id) {
     /^FIFTH_ENV_LABEL=/m.test(lines) ? lines : `${lines}FIFTH_ENV_LABEL=Тестовый режим\n`,
   );
   installCompose(id, kit);
+  const ov = installOverlays(id, prep);
   if (imagesOnly) compose(id, ['up', '-d', '--no-deps', 'core', 'web']);
   else {
     compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', '--wait']);
@@ -596,7 +656,7 @@ async function update(id) {
   install.schema = schemaVersion(id);
   saveInstall(id, install);
   const ok = Boolean(state?.ready);
-  finish({ ok, env: id, kit, schema: install.schema, ready: ok }, ok ? 0 : 1);
+  finish({ ok, env: id, kit, schema: install.schema, overlays: ov, ready: ok }, ok ? 0 : 1);
 }
 
 /** Данные людей: автоматика такую среду не останавливает и не удаляет. */
@@ -613,7 +673,11 @@ function stop(id) {
 }
 
 async function start(id) {
-  loadInstall(id);
+  const install = loadInstall(id);
+  // Флаг режима мог смениться (prod-env-journald, prod-test2-production): дополнения — из
+  // установленной сборки, не из репозитория.
+  if (existsSync(overlayDir(id)) && install.kit?.label)
+    installOverlays(id, prepareOverlays(id, install.kit.label));
   compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', 'core', 'web']);
   const state = await waitReady(id);
   const ok = Boolean(state?.ready);
@@ -756,8 +820,10 @@ async function slotsEnable(id) {
   if (install.slots) throw new Refused(`среда ${id} уже на слотах`);
   const label = install.kit?.label;
   if (!label) throw new Refused('у среды нет сборки');
+  const prep = prepareOverlays(id, label, [...new Set([...envModes(id), 'slots'])]);
   prepareSlots(names(id).dir, label, envLayout(names(id).project));
   setComposeEnv(id, 'FIFTH_SLOTS', '1');
+  installOverlays(id, prep);
   setComposeEnv(id, 'FIFTH_CORE_A_IMAGE', `fifth/core:${label}`);
   setComposeEnv(id, 'FIFTH_CORE_A_BUILD', label);
   compose(id, ['up', '-d', '--force-recreate', 'core', 'web']);
@@ -792,11 +858,17 @@ async function slotsDisable(id) {
   const envText = readFileSync(join(names(id).dir, 'compose.env'), 'utf8');
   if (!new RegExp(`^FIFTH_WEB_IMAGE=.*:${label.replace(/\./g, '\\.')}$`, 'm').test(envText))
     throw new Refused(`web среды не сборки ${label}: без слотов поднялась бы другая статика`);
+  const prep = prepareOverlays(
+    id,
+    label,
+    envModes(id).filter((m) => m !== 'slots'),
+  );
   // core-b известен Compose только с дополнением слотов — убрать до снятия флага.
   compose(id, ['--profile', 'slot-b', 'rm', '-sf', 'core-b'], { allowFail: true });
   const file = join(names(id).dir, 'compose.env');
   writeFileSync(file, readFileSync(file, 'utf8').replace(/^FIFTH_SLOTS=1\n?/m, ''));
   setComposeEnv(id, 'FIFTH_CORE_IMAGE', `fifth/core:${label}`);
+  installOverlays(id, prep);
   compose(id, ['up', '-d', '--force-recreate', 'core', 'web']);
   const state = await waitReady(id);
   delete install.slots;

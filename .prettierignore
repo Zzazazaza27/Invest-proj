@@ -49,3 +49,4 @@ apps/web-public/src
 # check:registry сверяет его С ГЕНЕРАТОРОМ — после автоформата сверка начнёт
 # краснеть на пустом месте.
 docs/testing/registry.md
+infra/kit-history
