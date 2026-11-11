@@ -28,6 +28,14 @@ export function kitId(kit) {
     prodCompose: kit.prodCompose ?? null,
     migrations: (kit.migrations ?? []).map((m) => `${m.id}:${m.sha256}`),
   };
+  // Дополнения Compose (поле `overlays` нового формата комплекта) — часть конфигурации сборки:
+  // другой файл дополнения даёт другой идентификатор, и прежний отчёт становится stale. У старых
+  // комплектов поля нет — ключ не добавляется, их идентификаторы и принятые отчёты не меняются.
+  if (kit.overlays && typeof kit.overlays === 'object') {
+    body.overlays = Object.fromEntries(
+      Object.entries(kit.overlays).sort(([a], [b]) => a.localeCompare(b)),
+    );
+  }
   return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 

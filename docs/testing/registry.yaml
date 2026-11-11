@@ -4202,7 +4202,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 11
+    asserts: 16
     needs: []
     effects: ['нет']
     studied: code

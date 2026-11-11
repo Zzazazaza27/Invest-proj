@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readCompatReport } from './lib/compat-report.mjs';
+import { kitId, readCompatReport } from './lib/compat-report.mjs';
 import { signCompat, signKit } from './lib/kit-sign.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -115,6 +115,53 @@ try {
     'доставка: отчёт о другом кандидате — отказ',
     put(good, (b) => signCompat(b, ci.priv)).code === 2,
   );
+
+  // Идентификатор комплекта и дополнения Compose (замечание Тэнка к работе № 1).
+  const oldKit = {
+    build: '2.1-b1.1',
+    commit: 'abc',
+    images: { core: { digest: 'sha256:1' }, web: { imageId: 'sha256:2' } },
+    compose: { sha256: 'c1' },
+    prodCompose: { 'p.yml': 'd1' },
+    migrations: [{ id: 'M1', sha256: 'm1' }],
+  };
+  // Значение посчитано кодом до добавления overlays: старый формат не должен его менять.
+  check(
+    'комплект без overlays: идентификатор прежний',
+    kitId(oldKit) === '02bc1b8ece50b0d8c1701ebd66ce58d0058e1b8cc915e10ef8fb8c9d87724285',
+    kitId(oldKit),
+  );
+  const kits = {
+    b1: oldKit,
+    b2: { ...oldKit, build: '2.1-b2.1', overlays: { 'infra/a.yml': 'o1', 'infra/b.yml': 'o2' } },
+  };
+  const realId = (b) => kitId(kits[b]);
+  const readReal = () =>
+    readCompatReport({ kitsDir, etcDir, candidate: 'b2', previous: 'b1', kitIdOf: realId });
+  write(
+    {
+      ...good,
+      previous: { build: 'b1', kitId: realId('b1') },
+      candidate: { build: 'b2', kitId: realId('b2') },
+    },
+    (b) => signCompat(b, ci.priv),
+  );
+  check(
+    'отчёт о паре со старым комплектом принят',
+    readReal()?.result === 'ok',
+    readReal()?.result,
+  );
+  const before = realId('b2');
+  kits.b2 = { ...kits.b2, overlays: { 'infra/a.yml': 'o1', 'infra/b.yml': 'ИНОЕ' } };
+  check('изменённое дополнение меняет идентификатор', realId('b2') !== before);
+  check(
+    'после смены дополнения прежний отчёт — stale',
+    readReal()?.result === 'stale',
+    readReal()?.result,
+  );
+  const changed = realId('b2');
+  kits.b2 = { ...kits.b2, overlays: { 'infra/b.yml': 'ИНОЕ', 'infra/a.yml': 'o1' } };
+  check('порядок ключей overlays на идентификатор не влияет', realId('b2') === changed);
 
   write(good, (b) => signCompat(b, ci.priv));
   rmSync(join(etcDir, 'kit-signing.pub'));

@@ -444,7 +444,7 @@
 | CHK-KIT-HISTORY | `node scripts/kit-history.mjs check` | 2 | вручную | — |
 | CHK-KIT-SBOM | `node scripts/check-kit-sbom.mjs` | 7 | вручную | — |
 | CHK-RELEASE-TRIALS | `node scripts/check-release-trials.mjs` | 24 | вручную | — |
-| CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 11 | вручную | — |
+| CHK-COMPAT-SIGNATURE | `node scripts/check-compat-signature.mjs` | 16 | вручную | — |
 | CHK-RELEASE-STATE | `node scripts/check-release-state.mjs` | 17 | вручную | — |
 | CHK-SLOT-SWITCH | `node scripts/check-slot-switch.mjs` | 36 | вручную | — |
 | CHK-ROLLBACK-POLICY | `node scripts/check-rollback-policy.mjs` | 8 | вручную | — |
