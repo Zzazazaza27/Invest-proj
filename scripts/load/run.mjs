@@ -343,6 +343,7 @@ const stop = () => {
     fetch(`http://${K6_API}/v1/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(10_000),
       body: JSON.stringify({
         data: { type: 'status', id: 'default', attributes: { stopped: true } },
       }),
