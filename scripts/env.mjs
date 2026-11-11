@@ -777,6 +777,43 @@ async function slotsEnable(id) {
 }
 
 /**
+ * Возврат тестовой среды с режима слотов к одному ядру (план выпуска W31–W33, раздел 5; то же,
+ * что `release.mjs slots-disable` для рабочей среды): core-b останавливается и удаляется, флаг
+ * снимается, ядро и web пересоздаются без дополнения слотов. Только когда активен core-a и web
+ * той же сборки — иначе одноядерная раскладка подняла бы другую сборку.
+ */
+async function slotsDisable(id) {
+  const install = loadInstall(id);
+  guardPilot(id, install);
+  if (!install.slots) throw new Refused(`среда ${id} не на слотах`);
+  const label = install.slots.build;
+  if (install.slots.active !== 'core-a')
+    throw new Refused(`активен ${install.slots.active}: выключение слотов — только с core-a`);
+  const envText = readFileSync(join(names(id).dir, 'compose.env'), 'utf8');
+  if (!new RegExp(`^FIFTH_WEB_IMAGE=.*:${label.replace(/\./g, '\\.')}$`, 'm').test(envText))
+    throw new Refused(`web среды не сборки ${label}: без слотов поднялась бы другая статика`);
+  // core-b известен Compose только с дополнением слотов — убрать до снятия флага.
+  compose(id, ['--profile', 'slot-b', 'rm', '-sf', 'core-b'], { allowFail: true });
+  const file = join(names(id).dir, 'compose.env');
+  writeFileSync(file, readFileSync(file, 'utf8').replace(/^FIFTH_SLOTS=1\n?/m, ''));
+  setComposeEnv(id, 'FIFTH_CORE_IMAGE', `fifth/core:${label}`);
+  compose(id, ['up', '-d', '--force-recreate', 'core', 'web']);
+  const state = await waitReady(id);
+  delete install.slots;
+  saveInstall(id, install);
+  const ok = Boolean(state?.ready);
+  finish(
+    {
+      ok,
+      env: id,
+      build: label,
+      message: `среда ${id}: слоты выключены, одно ядро ${label}${ok ? '' : ', ядро не готово'}`,
+    },
+    ok ? 0 : 1,
+  );
+}
+
+/**
  * Выпуск через переключение слотов (блок 09, задание 3): расширение схемы, кандидат в
  * свободном слоте, пауза фона старого, маршрут, подтверждение запросом, фон кандидату,
  * наблюдение, завершение старого. Возврат в наблюдении — только с --auto-rollback.
@@ -881,6 +918,7 @@ const COMMANDS = {
   images,
   'slots-enable': slotsEnable,
   'slots-update': slotsUpdate,
+  'slots-disable': slotsDisable,
   'slots-state': slotsState,
 };
 
