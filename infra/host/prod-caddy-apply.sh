@@ -24,7 +24,7 @@ trap 'rm -rf "$TMP"' EXIT
 chmod 700 "$TMP"
 
 # Файл из Git без заголовка-комментария (как его сравнивает scripts/caddy-drift.mjs).
-candidate() { sed '1,/^$/{/^#/d;/^$/d}' "$SRC" > "$TMP/Caddyfile"; }
+candidate() { awk 'h == 0 && /^#/ { next } h == 0 && /^$/ { h = 1; next } { h = 1; print }' "$SRC" > "$TMP/Caddyfile"; }
 # Хеши текущего файла заменены подстановками — для сравнения без секретов.
 masked_live() {
   perl -pe 's/^(\t+)([A-Za-z0-9_-]+)[ \t]+\$2[aby]\$\S+[ \t]*$/$1.$2." {\$CADDY_AUTH_".uc($2)."}"/e' "$LIVE"
