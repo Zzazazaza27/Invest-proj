@@ -50,6 +50,11 @@ export const ErrorCode = {
   // 429 / 5xx
   RATE_LIMITED: 'rate_limited',
   INTERNAL_ERROR: 'internal_error',
+  /**
+   * Запись файла видна и готова, а объекта в хранилище нет (3.2, работа № 7): техническая
+   * ошибка, не «не найдено». Повтор не поможет; утрата учтена и видна эксплуатации.
+   */
+  STORED_FILE_MISSING: 'stored_file_missing',
   DEPENDENCY_UNAVAILABLE: 'dependency_unavailable',
   FEATURE_DISABLED: 'feature_disabled',
   /** Группа функций сейчас недоступна (4.11): ответ несёт группу и безопасную причину. */
@@ -144,6 +149,7 @@ export const ERROR_STATUS: Record<ErrorCodeValue, number> = {
   [ErrorCode.RESIDENCY_VIOLATION]: 403,
   [ErrorCode.RATE_LIMITED]: 429,
   [ErrorCode.INTERNAL_ERROR]: 500,
+  [ErrorCode.STORED_FILE_MISSING]: 500,
   [ErrorCode.DEPENDENCY_UNAVAILABLE]: 503,
   [ErrorCode.FEATURE_DISABLED]: 503,
   [ErrorCode.GROUP_UNAVAILABLE]: 503,

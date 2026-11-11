@@ -360,6 +360,27 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-11
 
+  - id: CHK-LOST-FILE
+    file: scripts/check-lost-file.mjs
+    command: node scripts/check-lost-file.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 18
+    needs: [docker, stand]
+    effects:
+      [
+        'заводит двух участников seed.mjs и убирает их; удаляет объекты своих файлов (утрата для испытания), восстанавливает материал по работе № 6; строки ops.lost_files остаются историей',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 7 раздела 01 (3.2, M178). Серверные шаги — scripts/file-restore.mjs
+      (--trial).
+    purpose: 'Утрата готового файла: владельцу 500 stored_file_missing, утрата открыта и видна в /queues (files.lost), повтор объединяется; посторонний и несуществующая запись — 404 без учёта; учёт старого ключа во время смены ключа ждёт и ничего не открывает; восстановление № 6 закрывает утрату как restored, запоздавший учёт её не открывает; изображение проекта и аватар — замена закрывает как replaced, удаление — removed; история сохраняется, открытых утрат испытания не остаётся.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
   - id: CHK-FILES-ENDPOINT
     file: scripts/check-files-endpoint.mjs
     command: FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs
@@ -5000,6 +5021,22 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-08
 
+  - id: UNIT-CORE-LOST-FILE
+    file: apps/core/tests/lost-file.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 4
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 7 раздела 01 (3.2, M178). Заглушки базы и хранилища; настоящий
+      ProjectsService.getMaterialContent.
+    purpose: 'Утрата готового файла: отказ хранилища — не утрата (ошибка как есть, учёта нет); объекта нет — 500 stored_file_missing и учёт служебной ролью; ключ уже сменился (stale) — одно повторное чтение; учёт не записался — всё равно техническая ошибка, не 404.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
   - id: UNIT-PKG-API-CLIENT-CLIENT
     file: packages/api-client/tests/client.test.ts
     command: npm run test -w packages/api-client
@@ -5880,6 +5917,8 @@ blocks:
         CHK-DB-RESILIENCE,
         CHK-BACKUP-RESTORE,
         CHK-FILE-RESTORE,
+        CHK-LOST-FILE,
+        UNIT-CORE-LOST-FILE,
         CHK-BACKUP-LOGIC,
         UNIT-CORE-READINESS,
         UNIT-CORE-AVAILABILITY-RULES,

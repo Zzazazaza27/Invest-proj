@@ -19,6 +19,7 @@ import { getEnv } from '../config/env';
 import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service } from '../storage/s3.service';
+import { reportLostFile } from '../storage/lost-files';
 import { MAX_UPLOAD_BYTES } from './material-rules';
 import { MaterialUploadsService } from './material-uploads.service';
 
@@ -392,6 +393,7 @@ export class ProjectsService {
     ctx: RequestContext,
     projectId: string,
     materialId: string,
+    retried = false,
   ): Promise<{ body: Buffer; contentType: string; filename: string }> {
     const key = await this.db.readOnly(ctx, async (tx) => {
       const { rows } = await tx.query<{ s3_key: string | null; type: string }>(
@@ -411,7 +413,14 @@ export class ProjectsService {
     });
 
     const object = await this.s3.getObject(key.key);
-    if (!object) throw errors.notFound({ subject: 'material' });
+    if (!object) {
+      // Запись видна и готова, объекта нет — утрата (3.2, работа № 7), не «не найдено».
+      // stale: ключ уже сменился (восстановлен) — прочитать заново один раз.
+      const r = await reportLostFile(this.db, 'material', materialId, key.key, ctx.traceId);
+      if (r === 'stale' && !retried)
+        return this.getMaterialContent(ctx, projectId, materialId, true);
+      throw errors.storedFileMissing('material');
+    }
 
     // Тип берём из хранилища, но принимаем только то, что браузер показывает
     // сам. Чужой content-type здесь означал бы отдачу HTML с нашего адреса.

@@ -19,6 +19,7 @@ import { getEnv } from '../config/env';
 import { isKmsUnavailable, CryptoService } from '../crypto/crypto.service';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service, putObject } from '../storage/s3.service';
+import { reportLostFile } from '../storage/lost-files';
 import { ARGON2_OPTIONS, maskEmail, maskPhone } from './identity.service';
 
 /**
@@ -358,14 +359,17 @@ export class ProfileService {
     ctx: RequestContext,
     userId: string,
     size: AvatarSize,
+    retried = false,
   ): Promise<{ body: Buffer; contentType: string }> {
     const row = await this.db.readOnly(ctx, async (tx) => this.readAvatarRow(tx, userId));
     const variant = row?.variants?.[size];
     if (!variant) throw errors.notFound({ subject: 'avatar' });
     const object = await this.s3.getObject(variant.key);
     if (!object) {
-      this.logger.error({ msg: 'вариант аватара потерян', userId, size });
-      throw errors.notFound({ subject: 'avatar' });
+      // Утрата (3.2, работа № 7): учёт и сигнал; stale — аватар уже заменён.
+      const r = await reportLostFile(this.db, 'avatar', userId, variant.key, ctx.traceId);
+      if (r === 'stale' && !retried) return this.avatarBytes(ctx, userId, size, true);
+      throw errors.storedFileMissing('avatar');
     }
     return { body: object.body, contentType: 'image/webp' };
   }

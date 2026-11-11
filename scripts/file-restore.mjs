@@ -741,6 +741,130 @@ async function readySetsCheck(t) {
   return { filesSets: files.length, readySets: chosen };
 }
 
+// ------------------------------------------------------------ утрата файла (работа № 7)
+
+const KINDS = ['material', 'project_media', 'avatar'];
+
+/** Текущие ключи записи: материал — s3_key, изображение (проект + вид) и аватар — варианты. */
+function keys(t) {
+  trialOnly(t);
+  const kind = opt('kind');
+  const record = opt('record') ?? '';
+  if (!KINDS.includes(kind) || !UUID_RE.test(record)) throw new Refused('нужны --kind и --record');
+  const sql = {
+    material: `SELECT s3_key FROM lab.project_materials WHERE id = :'r' AND s3_key IS NOT NULL`,
+    project_media: `SELECT unnest(ops.variant_keys(variants)) FROM lab.project_media
+                     WHERE project_id = :'r' AND kind = :'mk' ORDER BY 1`,
+    avatar: `SELECT unnest(ops.variant_keys(variants)) FROM identity.user_avatars
+              WHERE user_id = :'r' ORDER BY 1`,
+  }[kind];
+  const list = psql(t, sql, { r: record, mk: opt('media-kind') ?? 'logo' })
+    .split('\n')
+    .filter(Boolean);
+  return { keys: list };
+}
+
+/** Утрата для испытания: удалить объект по ключу, на который ссылается запись. */
+function dropKey(t) {
+  trialOnly(t);
+  const key = opt('key') ?? '';
+  const known = psql(
+    t,
+    `SELECT count(*) FROM (
+       SELECT s3_key AS k FROM lab.project_materials
+       UNION ALL SELECT unnest(ops.variant_keys(variants)) FROM lab.project_media
+       UNION ALL SELECT unnest(ops.variant_keys(variants)) FROM identity.user_avatars) x
+      WHERE k = :'k'`,
+    { k: key },
+  );
+  if (known !== '1') throw new Refused('ключ не принадлежит ровно одной записи');
+  rclone(t, ['deletefile', `SRC:${t.s3.bucket}/${key}`]);
+  console.log('объект удалён (утрата для испытания)');
+  return { dropped: key };
+}
+
+/** Строки учёта утраты по ключу и открытые утраты всего (как в /queues). */
+function lost(t) {
+  trialOnly(t);
+  const key = opt('key') ?? '';
+  const rows = psql(
+    t,
+    `SELECT coalesce(json_agg(json_build_object('kind', kind, 'hits', hits,
+              'open', resolved_at IS NULL, 'resolution', resolution) ORDER BY first_seen), '[]')
+       FROM ops.lost_files WHERE object_key = :'k'`,
+    { k: key },
+  );
+  const files = JSON.parse(psql(t, `SELECT audit.queue_metrics() -> 'files'`));
+  return { rows: JSON.parse(rows), files };
+}
+
+/** Запоздавший результат чтения: учесть утрату ключа, как это сделало бы ядро. */
+function reportLate(t) {
+  trialOnly(t);
+  const r = psql(t, `SELECT ops.report_lost_file(:'kind', :'r'::uuid, :'k')`, {
+    kind: opt('kind'),
+    r: opt('record'),
+    k: opt('key'),
+  });
+  console.log(`учёт утраты: ${r}`);
+  return { result: r };
+}
+
+/**
+ * Гонка: запись ключа держит транзакция смены (блокировка строки), в это время приходит учёт
+ * утраты старого ключа. Он обязан дождаться и, увидев новый ключ, ничего не открыть.
+ */
+async function raceReport(t) {
+  trialOnly(t);
+  const id = opt('material') ?? '';
+  const m = readMaterial(t, id);
+  if (!m || m.state !== 'ready') throw new Refused('нужен готовый материал');
+  const moved = `${m.key}-race`;
+  const args = (sql) => {
+    const a = ['exec', '-i'];
+    if (t.pg.tcp) a.push('-e', 'PGPASSWORD');
+    a.push(t.pg.container, 'psql', '-X', '-At', '-v', 'ON_ERROR_STOP=1');
+    if (t.pg.tcp) a.push('-h', '127.0.0.1');
+    a.push('-U', t.pg.user, '-d', t.pg.db, '-c', sql);
+    return a;
+  };
+  const env = { ...process.env, ...(t.pg.tcp ? { PGPASSWORD: t.secret.pgPassword() } : {}) };
+  const { spawn } = await import('node:child_process');
+  const run = (sql) =>
+    new Promise((res) => {
+      const c = spawn('docker', args(sql), { env });
+      let out = '';
+      c.stdout.on('data', (d) => (out += d));
+      c.stderr.on('data', (d) => (out += d));
+      c.on('close', (code) => res({ code, out: out.trim(), at: Date.now() }));
+    });
+  // Смена ключа владельцем с отметкой восстановления (как в lab.restore_material_file),
+  // держит строку 4 с и фиксируется.
+  const holder = run(`BEGIN;
+SELECT set_config('lab.file_restore', '${id}', true);
+UPDATE lab.project_materials SET s3_key = '${moved}' WHERE id = '${id}';
+SELECT pg_sleep(4);
+COMMIT;`);
+  await new Promise((r) => setTimeout(r, 1500));
+  const t0 = Date.now();
+  const late = await run(`SELECT ops.report_lost_file('material', '${id}', '${m.key}')`);
+  const held = await holder;
+  // Вернуть прежний ключ тем же путём (объект по нему уже есть или утрачен — как было).
+  psql(
+    t,
+    `BEGIN; SELECT set_config('lab.file_restore', :'id', true);
+     UPDATE lab.project_materials SET s3_key = :'old' WHERE id = :'id'; COMMIT;`,
+    { id, old: m.key },
+  );
+  const result = {
+    waitedMs: late.at - t0,
+    holder: held.code,
+    late: late.out.split('\n').at(-1),
+  };
+  console.log(`гонка: учёт ждал ${result.waitedMs} мс, результат ${result.late}`);
+  return result;
+}
+
 // ------------------------------------------------------------ вход
 
 const commands = {
@@ -758,6 +882,11 @@ const commands = {
   state: (t) => (verifyTarget(t), state(t)),
   chain: (t) => chain(t),
   'ready-sets': (t) => readySetsCheck(t),
+  keys: (t) => keys(t),
+  'drop-key': (t) => (verifyTarget(t), dropKey(t)),
+  lost: (t) => lost(t),
+  'report-late': (t) => reportLate(t),
+  'race-report': (t) => raceReport(t),
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -148,6 +148,13 @@ export const errors = {
       internal: { flag },
     }),
 
+  /** Запись готова и видна, объекта нет (3.2, работа № 7): утрата учтена эксплуатацией. */
+  storedFileMissing: (subject: string) =>
+    new AppError(ErrorCode.STORED_FILE_MISSING, {
+      publicDetail: 'Файл временно недоступен. Мы уже знаем о проблеме',
+      internal: { subject },
+    }),
+
   internal: (internal?: Record<string, unknown>, cause?: unknown) =>
     new AppError(ErrorCode.INTERNAL_ERROR, {
       publicDetail: 'Внутренняя ошибка. Обратитесь в поддержку с идентификатором запроса',

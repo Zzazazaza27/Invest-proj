@@ -17,6 +17,7 @@ import { sha256Hex } from '../audit/deletion-record';
 import { claimRequestKey } from '../db/request-keys';
 import { Database, type RequestContext, type Tx } from '../db/unit-of-work';
 import { S3Service, putObject } from '../storage/s3.service';
+import { reportLostFile } from '../storage/lost-files';
 
 /**
  * Логотип и обложка проекта (7.2).
@@ -356,6 +357,7 @@ export class ProjectMediaService {
     projectId: string,
     kind: ProjectMediaKind,
     size: ProjectMediaSize,
+    retried = false,
   ): Promise<{ body: Buffer; contentType: string }> {
     const row = await this.db.readOnly(ctx, async (tx) => this.readRow(tx, projectId, kind));
     const variant = row?.variants?.[size];
@@ -363,8 +365,10 @@ export class ProjectMediaService {
 
     const object = await this.s3.getObject(variant.key);
     if (!object) {
-      this.logger.error({ msg: 'вариант изображения потерян', projectId, kind, size });
-      throw errors.notFound({ subject: 'project_media' });
+      // Утрата (3.2, работа № 7): учёт и сигнал; stale — изображение уже заменено.
+      const r = await reportLostFile(this.db, 'project_media', projectId, variant.key, ctx.traceId);
+      if (r === 'stale' && !retried) return this.variant(ctx, projectId, kind, size, true);
+      throw errors.storedFileMissing('project_media');
     }
     return { body: object.body, contentType: 'image/webp' };
   }
