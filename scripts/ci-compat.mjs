@@ -97,7 +97,8 @@ if (process.env.CI) {
     .map((p) => readFileSync(`${draft}-${p}.env`, 'utf8'))
     .join('\n')
     .replace(/^GARAGE_S3_PORT=.*\n?/gm, '');
-  const env = `${drafts}\nGARAGE_S3_PORT=9000\nS3_BUCKET=fifth-ci\n`;
+  // Регион — как в infra/garage/garage.toml: подпись запросов к Garage сверяет его.
+  const env = `${drafts}\nGARAGE_S3_PORT=9000\nS3_BUCKET=fifth-ci\nS3_REGION=ru-central1\n`;
   writeFileSync(join(ROOT, '.env'), env, { mode: 0o600 });
   run('docker', [
     'compose',
