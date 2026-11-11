@@ -91,7 +91,13 @@ if (process.env.CI) {
   const draft = join(tmpdir(), `ci-compat-${process.pid}`);
   run(process.execPath, ['scripts/garage-init.mjs', '--secrets-draft', draft]);
   // Порт S3 — как на стенде (9000): прогон кладёт файлы по этому адресу.
-  const env = `${readFileSync(`${draft}-pre.env`, 'utf8')}\n${readFileSync(`${draft}-window.env`, 'utf8')}\nGARAGE_S3_PORT=9000\nS3_BUCKET=fifth-ci\n`;
+  // GARAGE_S3_PORT в черновиках дважды (3900 и 9000): Compose берёт последнее значение, а
+  // scripts/lib/ports.mjs — первое. Оставляем одно, иначе init стучится не в тот порт.
+  const drafts = ['pre', 'window']
+    .map((p) => readFileSync(`${draft}-${p}.env`, 'utf8'))
+    .join('\n')
+    .replace(/^GARAGE_S3_PORT=.*\n?/gm, '');
+  const env = `${drafts}\nGARAGE_S3_PORT=9000\nS3_BUCKET=fifth-ci\n`;
   writeFileSync(join(ROOT, '.env'), env, { mode: 0o600 });
   run('docker', [
     'compose',
