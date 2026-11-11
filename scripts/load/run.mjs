@@ -243,9 +243,14 @@ const dockerArgs = [
 ];
 
 // k6 без Docker: параметры — окружением процесса, как и basic-auth.
+// Управляющий адрес k6 (REST, только 127.0.0.1): мягкая остановка по порогу сервера — k6
+// завершает итерации и пишет сводку. Убийство процесса на Windows сводку теряло (11.11).
+const K6_API = `127.0.0.1:${process.env.FIFTH_K6_API_PORT ?? 6565}`;
 const nativeArgs = [
   'run',
   '--no-usage-report',
+  '--address',
+  K6_API,
   '--include-system-env-vars',
   ...(args.samples ? ['--out', `csv=${slash(join(outDir, 'samples.csv.gz'))}`] : []),
   join(ROOT, 'scripts', 'load', 'p1.js'),
@@ -334,7 +339,17 @@ const child = native
   : spawn('docker', dockerArgs, { env: childEnv, stdio: ['ignore', 'pipe', 'pipe'] });
 const stop = () => {
   if (native) {
-    child.kill();
+    // Мягко: k6 останавливает тест и пишет сводку; если за 60 с не завершился — убить.
+    fetch(`http://${K6_API}/v1/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        data: { type: 'status', id: 'default', attributes: { stopped: true } },
+      }),
+    }).catch(() => child.kill());
+    setTimeout(() => {
+      if (child.exitCode === null) child.kill();
+    }, 60_000).unref();
     return;
   }
   spawnSync('docker', ['stop', '--time', '30', containerName], { stdio: 'ignore' });

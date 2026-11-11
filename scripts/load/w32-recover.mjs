@@ -189,6 +189,8 @@ const recovered = {
   server: rMeta?.serverSummary ?? null,
 };
 const problems = [];
+if (!sSum) problems.push('у ступеней нет сводки k6 — ступени не измерены');
+if (!baseline) problems.push(`нет исходной ступени ${NOMINAL}/с — возврат не с чем сравнить`);
 if (!back) problems.push('возврат к номиналу не измерен');
 else {
   if (backRate < NOMINAL * 0.95) problems.push(`номинал не держится: ${backRate.toFixed(2)}/с`);
