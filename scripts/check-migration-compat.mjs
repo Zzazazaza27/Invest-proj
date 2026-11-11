@@ -207,6 +207,23 @@ async function createProject(c, title) {
   return { id: r.json?.id ?? null, status: r.status };
 }
 
+/**
+ * Готовность через web после смены сборки: env.mjs update ждёт только ядро, а web в это время
+ * может пересоздаваться (на машине CI — дольше, чем на стенде).
+ */
+async function webReady(limitMs = 90_000) {
+  const until = Date.now() + limitMs;
+  while (Date.now() < until) {
+    const ok = await fetch(`${BASE}/v1/ready`, { signal: AbortSignal.timeout(5_000) }).then(
+      (r) => r.status === 200,
+      () => false,
+    );
+    if (ok) return true;
+    await new Promise((r) => setTimeout(r, 1_000));
+  }
+  return false;
+}
+
 /** Чтение участником: профиль (контакт расшифрован), свой файл, проект. */
 async function reads(phase, who, c, projects) {
   const me = await c.call('/v1/auth/me');
@@ -309,6 +326,7 @@ try {
   console.warn(`\n[2] Кандидат ${CANDIDATE}: миграции и новое ядро`);
   const up = tool('env.mjs', ['update', ENV, '--kit', CANDIDATE]);
   if (up.code !== 0) throw new Error(`кандидат не поднялся: ${up.out.slice(-300)}`);
+  if (!(await webReady())) throw new Error('кандидат: web не ответил /v1/ready за 90 с');
   const after = sql('SELECT id FROM public.schema_migrations ORDER BY id').split('\n');
   newIds = after.filter((m) => !before.includes(m));
   console.warn(
@@ -332,11 +350,12 @@ try {
   // --------------------------------------------- 3. прежний образ на новой схеме
   console.warn(`\n[3] Прежнее ядро ${PREVIOUS} на новой схеме и данных`);
   const back = tool('env.mjs', ['update', ENV, '--kit', PREVIOUS, '--images-only']);
+  const backWeb = back.code === 0 && (await webReady());
   check(
     'rollback',
     'прежнее ядро поднялось на новой схеме',
-    back.code === 0,
-    back.code === 0 ? '' : back.out.slice(-200),
+    backWeb,
+    back.code !== 0 ? back.out.slice(-200) : backWeb ? '' : 'web не ответил /v1/ready за 90 с',
   );
   if (back.code !== 0) throw new Error('прежнее ядро не готово — дальше проверять нечего');
   const aOld = await login(a);
@@ -365,6 +384,7 @@ try {
   console.warn(`\n[4] Кандидат читает запись прежнего ядра`);
   const again = tool('env.mjs', ['update', ENV, '--kit', CANDIDATE, '--images-only']);
   if (again.code !== 0) throw new Error(`кандидат не вернулся: ${again.out.slice(-300)}`);
+  if (!(await webReady())) throw new Error('кандидат снова: web не ответил /v1/ready за 90 с');
   const aNew = await login(a);
   await reads('forward', 'A', aNew.c, [
     ['A1', a1.id],
@@ -373,7 +393,12 @@ try {
   await migrationProbes('forward', newIds, { base: BASE, sql, client, login, people: { a, b } });
 } catch (e) {
   fatal = e.message;
-  check('run', 'прогон дошёл до конца', false, e.message);
+  check(
+    'run',
+    'прогон дошёл до конца',
+    false,
+    `${e.message}${e.cause?.code ? ` (${e.cause.code})` : ''}`,
+  );
 } finally {
   if (!process.argv.includes('--keep')) tool('env.mjs', ['destroy', ENV, '--confirm', ENV]);
 }
