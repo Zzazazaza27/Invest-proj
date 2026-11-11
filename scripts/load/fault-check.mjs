@@ -16,22 +16,34 @@
  *     каждое подтверждённое (2xx) изменение есть ровно один раз; повтор не создал второго;
  *     ложного успеха нет (2xx без объекта).
  * Итог — `<out>/fault-<kind>.json`; код выхода 0 только если все проверки прошли.
+ *
+ * --kind load --until <файл> (работа № 2 раздела 01): отказа нет — «окно» длится, пока идут
+ * повышенная нагрузка и возврат к номиналу (оркестратор `w32-recover.mjs` создаёт файл в конце).
+ * Попытка раз в 20 с (не больше 90: список материалов отдаёт 100 последних), переключение
+ * видимости — для потока событий outbox; после — та же сверка и разгрузка outbox до исходного.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { BASE, client, parseArgs, runDir } from './lib.mjs';
+import { BASE, adminLogin, client, isLocalBase, parseArgs, runDir } from './lib.mjs';
 
 const args = parseArgs(process.argv.slice(2));
 const runId = String(args['run-id'] ?? '');
 const kind = String(args.kind ?? '');
 const collectId = String(args['collect-id'] ?? '');
+const until = String(args.until ?? '');
 const out = String(args.out ?? join('out', 'suites', `load-${runId}`));
-if (!['core', 'postgres', 'valkey', 'nats'].includes(kind) || !collectId) {
-  console.error('нужны --run-id, --kind core|postgres|valkey|nats, --collect-id');
+const isLoad = kind === 'load';
+if (
+  !['core', 'postgres', 'valkey', 'nats', 'load'].includes(kind) ||
+  (isLoad ? !until : !collectId)
+) {
+  console.error(
+    'нужны --run-id и --kind core|postgres|valkey|nats --collect-id | --kind load --until <файл>',
+  );
   process.exit(2);
 }
 mkdirSync(out, { recursive: true });
@@ -45,7 +57,8 @@ const tag = `${kind}-${Date.now()}`;
 const c = client();
 // Попытка во время отказа — раз в 5 с: за самый долгий отказ (NATS, ~6 мин с окном)
 // объектов меньше 100, и сверка видит их все.
-const DURING_EVERY_MS = 5000;
+const DURING_EVERY_MS = isLoad ? 20_000 : 5000;
+const DURING_MAX = isLoad ? 90 : Infinity;
 
 async function call(path, opts = {}) {
   try {
@@ -116,13 +129,21 @@ if (!(await login())) {
     console.error(`проект испытания: HTTP ${p.status} ${p.json?.code ?? ''}`);
     process.exit(1);
   }
-  const host = new URL(BASE).hostname;
-  const adm = JSON.parse(readFileSync(join('.local', 'load', `${host}-admin.json`), 'utf8'));
-  const admin = client();
-  const al = await admin.call('/v1/auth/login', {
-    method: 'POST',
-    body: { email: adm.email, password: adm.password },
-  });
+  // Учётка администратора цели: файл `<узел>-admin.json` (test-1) или общий вход lib.mjs
+  // (локальный стенд — пароль из `.env`).
+  const admFile = join('.local', 'load', `${new URL(BASE).hostname}-admin.json`);
+  let admin;
+  let al = { status: 200 };
+  if (existsSync(admFile)) {
+    const adm = JSON.parse(readFileSync(admFile, 'utf8'));
+    admin = client();
+    al = await admin.call('/v1/auth/login', {
+      method: 'POST',
+      body: { email: adm.email, password: adm.password },
+    });
+  } else {
+    admin = await adminLogin();
+  }
   const reg = await admin.call(`/v1/admin/testing/sessions/${data.sessionId}/objects`, {
     method: 'POST',
     body: { table: 'lab.projects', id: projectId },
@@ -152,18 +173,38 @@ const SSH = [
   'maus@193.233.217.210',
   `sudo -n /usr/local/sbin/fifth-test op prod-load-fault run ${kind} ${collectId}`,
 ];
+// Очереди test-1 (шаг сервера); у локальной цели их нет — разгрузка не проверяется (сухой прогон).
+const queuesNow = () => {
+  if (isLocalBase()) return NaN;
+  const q = spawnSync(
+    'ssh',
+    [...SSH.slice(0, -1), 'sudo -n /usr/local/sbin/fifth-test op prod-load-fault queues'],
+    { encoding: 'utf8', timeout: 60_000 },
+  );
+  return Number((q.stdout ?? '').trim().split('\n').at(-1)?.split(',')[0]);
+};
 let serverOut = '';
-const fault = spawn('ssh', SSH, { stdio: ['ignore', 'pipe', 'pipe'] });
-fault.stdout.on('data', (d) => {
-  serverOut += d;
-  process.stdout.write(d);
-});
-fault.stderr.on('data', (d) => process.stderr.write(d));
-const faultDone = new Promise((res) => fault.on('close', (code) => res(code)));
 let finished = null;
-void faultDone.then((code) => {
-  finished = code;
-});
+let loadBase = NaN;
+if (isLoad) {
+  // Окно — до файла оркестратора; очередь outbox до начала — исходный уровень.
+  loadBase = queuesNow();
+  void (async () => {
+    while (!existsSync(until)) await sleep(2000);
+    finished = 0;
+  })();
+} else {
+  const fault = spawn('ssh', SSH, { stdio: ['ignore', 'pipe', 'pipe'] });
+  fault.stdout.on('data', (d) => {
+    serverOut += d;
+    process.stdout.write(d);
+  });
+  fault.stderr.on('data', (d) => process.stderr.write(d));
+  const faultDone = new Promise((res) => fault.on('close', (code) => res(code)));
+  void faultDone.then((code) => {
+    finished = code;
+  });
+}
 
 const during = [];
 // Ссылки и правки p1 событий в outbox не порождают (только журнал). Для NATS нужен поток
@@ -171,8 +212,12 @@ const during = [];
 const toggles = [];
 let n = 0;
 while (finished === null) {
+  if (during.length >= DURING_MAX) {
+    await sleep(2000);
+    continue;
+  }
   during.push(await addLink(`https://example.com/fault/${tag}/during-${n}`, randomUUID()));
-  if (kind === 'nats') {
+  if (kind === 'nats' || isLoad) {
     const visibility = n % 2 === 0 ? 'public' : 'private';
     const r = await call(`/v1/projects/${projectId}/visibility`, {
       method: 'PUT',
@@ -216,29 +261,27 @@ for (const b of before)
 for (const r of retried)
   if (!ok(r.status)) problems.push(`после восстановления повтор не прошёл: ${r.url} (${r.status})`);
 if (list.status !== 200) problems.push(`список материалов: HTTP ${list.status}`);
+if (isLoad && during.length === 0) problems.push('за окно нагрузки не было ни одной попытки');
 if (finished !== 0) problems.push(`шаг отказа на сервере завершился с кодом ${finished}`);
 
 // NATS: события копились, пока брокера не было, и ушли после; видимость — как в последнем
 // подтверждённом переключении.
 let events = null;
-if (kind === 'nats') {
+if (kind === 'nats' || isLoad) {
   const rows = serverOut
     .split('\n')
     .filter((l) => l.startsWith('Q,'))
     .map((l) => l.split(','))
     .map(([, ts, phase, unpub]) => ({ ts, phase, unpub: Number(unpub) }));
-  const base = rows.find((r) => r.phase === 'before')?.unpub ?? NaN;
-  const peak = Math.max(...rows.filter((r) => r.phase === 'during').map((r) => r.unpub));
+  const base = isLoad ? loadBase : (rows.find((r) => r.phase === 'before')?.unpub ?? NaN);
+  const peak = isLoad
+    ? null
+    : Math.max(...rows.filter((r) => r.phase === 'during').map((r) => r.unpub));
   // Последний срез сервера снят, пока переключения ещё шли; итог — отдельным запросом
   // после их окончания: очередь должна вернуться к исходной не дольше чем за 2 мин.
   let last = NaN;
   for (let i = 0; i < 12; i += 1) {
-    const q = spawnSync(
-      'ssh',
-      [...SSH.slice(0, -1), 'sudo -n /usr/local/sbin/fifth-test op prod-load-fault queues'],
-      { encoding: 'utf8', timeout: 60_000 },
-    );
-    last = Number((q.stdout ?? '').trim().split('\n').at(-1)?.split(',')[0]);
+    last = queuesNow();
     if (last <= base) break;
     await sleep(10_000);
   }
@@ -247,9 +290,10 @@ if (kind === 'nats') {
   const lastVis = okToggles.at(-1)?.visibility ?? null;
   events = { base, peak, last, toggles: toggles.length, confirmed: okToggles.length };
   events.finalVisibility = view.json?.visibility ?? null;
-  if (!(peak > base))
+  if (!isLoad && !(peak > base))
     problems.push(`outbox не копился во время отказа NATS (до ${base}, максимум ${peak})`);
-  if (!(last <= base)) problems.push(`outbox не вернулся к исходному: до ${base}, после ${last}`);
+  if (!(last <= base) && !(isLoad && isLocalBase()))
+    problems.push(`outbox не вернулся к исходному: до ${base}, после ${last}`);
   if (lastVis && events.finalVisibility !== lastVis)
     problems.push(`видимость ${events.finalVisibility}, ожидалась ${lastVis}`);
 }
