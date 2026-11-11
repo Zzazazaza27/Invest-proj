@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 275; требований: 41
+- Проверок: 277; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 111
+### Зарегистрированы, но ни в наборе, ни в CI — 112
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -185,6 +185,7 @@
 - `CHK-CONSOLE-PRIVATE` — Гейт «служебная консоль закрыта постороннему».
 - `CHK-BACKUP-LOGIC` — Пригодность копий и сигналы (2.1-W07): разрыв журнала в середине и пропавшая копия-основа не дают READY; подмена файла того же размера ловится описью; измене…
 - `CHK-BACKUP-RESTORE` — Восстановление из комплекта на момент T (блок 7, 7.7): комплект ключей открывается закрытым ключом; база восстанавливается pgBackRest на LSN T, транзакция T …
+- `CHK-FILE-RESTORE` — Восстановление одного файла готового материала (2.1.3): назначения сверены до работы; обычное изменение готового материала запрещено, роли приложения не обхо…
 - `CHK-FILES-ENDPOINT` — Вход файлов (2.1-W06): форма подписана на публичный адрес; CORS — разрешённому сайту разрешение, чужому нет, без разрешения на куки; право загрузки держит фо…
 - `CHK-FRONT-BUILDS` — Проверка перед выкатом: все фронты собраны в production-режиме.
 - `CHK-PORTS-CONSISTENCY` — Гейт согласованности портов стенда.
@@ -322,6 +323,7 @@
 | TOOL-CLEAN-PROBE-DATA | `npm run stand:clean-probes` | 0 | вручную, по поводу | — |
 | TOOL-CONTENT-SNAPSHOT | `npm run content:export` | 0 | вручную, по поводу | — |
 | TOOL-BACKUP | `node scripts/backup.mjs init-secrets|keys-init|db|set|check|status|pull` | 0 | вручную, по поводу | — |
+| TOOL-FILE-RESTORE | `node scripts/file-restore.mjs targets|files-set|restore --env test-1|local (на узле — fifth-test op prod-file-restore)` | 0 | вручную, по поводу | — |
 | TOOL-DB-BACKUP | `npm run db:backup` | 0 | вручную, по поводу | — |
 | TOOL-DEPLOY | `npm run deploy` | 0 | вручную, по поводу | — |
 | TOOL-DEV-CORE | `node scripts/dev-core.mjs` | 0 | вручную, по поводу | — |
@@ -397,6 +399,7 @@
 | CHK-DEFINER-PRIVILEGES | `node scripts/check-definer-privileges.mjs` | 0 | CI | CI |
 | CHK-BACKUP-LOGIC | `node scripts/check-backup-logic.mjs` | 33 | вручную | — |
 | CHK-BACKUP-RESTORE | `node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>] [--openbao-keys <аварийный комплект>]` | 21 | вручную | — |
+| CHK-FILE-RESTORE | `node scripts/check-file-restore.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)` | 27 | вручную | — |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |

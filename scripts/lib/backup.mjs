@@ -585,10 +585,15 @@ export function appendIndex(rows) {
 export function readySets() {
   const c = cfg();
   if (!existsSync(c.sets)) return [];
-  return readdirSync(c.sets)
-    .filter((id) => existsSync(join(c.sets, id, 'READY')))
-    .sort()
-    .reverse();
+  return (
+    readdirSync(c.sets)
+      .filter((id) => existsSync(join(c.sets, id, 'READY')))
+      // Файловая копия (`file-restore.mjs files-set`, работа № 6) — не комплект: без базы,
+      // журнала, ключей и конфигурации. Даже оказавшись в этом каталоге, она не выбирается.
+      .filter((id) => !existsSync(join(c.sets, id, 'TYPE')))
+      .sort()
+      .reverse()
+  );
 }
 
 // ------------------------------------------------------- объекты и версии

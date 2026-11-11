@@ -339,6 +339,27 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-30
 
+  - id: CHK-FILE-RESTORE
+    file: scripts/check-file-restore.mjs
+    command: node scripts/check-file-restore.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 27
+    needs: [docker, stand]
+    effects:
+      [
+        'заводит двух участников seed.mjs и убирает их; на test-1 — файловые копии в /var/backups/fifth-element/test-1-files и события material.file_restored в журнале',
+      ]
+    studied: code
+    studiedOn: 2026-11-11
+    note: >-
+      Работа № 6 раздела 01 (M177, scripts/file-restore.mjs). Файловая копия —
+      испытательная, не регулярное резервирование и не комплект восстановления.
+    purpose: 'Восстановление одного файла готового материала (2.1.3): назначения сверены до работы; обычное изменение готового материала запрещено, роли приложения не обходят защиту ни отметкой, ни вызовом функции; файловая копия не выбирается как комплект восстановления; повреждённая копия отвергается без изменений; восстановленный файл — под новым ключом с той же суммой, права и видимость прежние (конкурентная смена видимости не затёрта), посторонний — 404, другие материалы не тронуты; событие журнала — оператор, основание, операция, инцидент; повтор не создаёт объекта и события; конкурентное восстановление не переключает связь и убирает лишний объект; нет записи / не готов — отказ; цепочка журнала цела.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-11
+
   - id: CHK-FILES-ENDPOINT
     file: scripts/check-files-endpoint.mjs
     command: FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs
@@ -747,6 +768,28 @@ checks:
     purpose: 'Резервирование стенда (блок 7, 2.1-W07): копии базы и журнала, файлы, комплект ключей, комплект на момент T с проверкой частей, проверки по компонентам и сигналы, скачивание комплекта.'
     confirmation: confirmed-by-run
     confirmedOn: 2026-10-30
+
+  - id: TOOL-FILE-RESTORE
+    file: scripts/file-restore.mjs
+    command: node scripts/file-restore.mjs targets|files-set|restore --env test-1|local (на узле — fifth-test op prod-file-restore)
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db, storage, docker]
+    effects:
+      [
+        'files-set — файловая копия в свой каталог; restore — новый объект и переключение ключа одной записи с событием журнала; старые объекты не удаляет',
+      ]
+    studied: code
+    studiedOn: 2026-11-11
+    note: >-
+      Работа № 6 раздела 01, M177. Только test-1 и стенд разработчика; prod
+      и test-2 не принимаются. Конфигурация среды явная, общий .env узла не
+      читается. Испытание — CHK-FILE-RESTORE.
+    purpose: 'Восстановление одного файла готового материала из проверенной файловой копии под новым ключом (2.1.3): запись не создаётся, права и видимость не меняются, отказ — без изменений.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-11
 
   - id: TOOL-DB-BACKUP
     file: scripts/db-backup.mjs
@@ -5836,6 +5879,7 @@ blocks:
         CHK-DB-RECONNECT,
         CHK-DB-RESILIENCE,
         CHK-BACKUP-RESTORE,
+        CHK-FILE-RESTORE,
         CHK-BACKUP-LOGIC,
         UNIT-CORE-READINESS,
         UNIT-CORE-AVAILABILITY-RULES,
