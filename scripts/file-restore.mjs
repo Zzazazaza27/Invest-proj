@@ -865,6 +865,193 @@ COMMIT;`);
   return result;
 }
 
+// ------------------------------------------------------------ очистка служебных копий (№ 8)
+
+/** Запрет очистки для расследования (M179): материал, проект или вся среда. Не испытание. */
+function cleanupHold(t) {
+  const scope = opt('material')
+    ? 'material'
+    : opt('project')
+      ? 'project'
+      : flag('all')
+        ? 'all'
+        : null;
+  const target = opt('material') ?? opt('project') ?? null;
+  if (!scope || (scope !== 'all' && !UUID_RE.test(target ?? ''))) {
+    throw new Refused('нужен --material <id> | --project <id> | --all');
+  }
+  const reason = opt('reason');
+  if (!reason) throw new Refused('нужен --reason');
+  const id = psql(
+    t,
+    `INSERT INTO ops.cleanup_holds (scope, target_id, reason, incident, created_by)
+     VALUES (:'scope', NULLIF(:'target', '')::uuid, :'reason', NULLIF(:'incident', ''), :'by')
+     RETURNING id`,
+    {
+      scope,
+      target: target ?? '',
+      reason,
+      incident: opt('incident') ?? '',
+      by: process.env.SUDO_USER || userInfo().username,
+    },
+  );
+  // psql печатает после строк и тег команды (INSERT 0 1) — берётся первая строка.
+  const hold = id.split('\n')[0];
+  console.log(`запрет очистки ${hold}: ${scope}${target ? ` ${target}` : ''}`);
+  return { hold };
+}
+function cleanupRelease(t) {
+  const id = opt('hold') ?? '';
+  if (!UUID_RE.test(id)) throw new Refused('нужен --hold <id>');
+  const n = psql(
+    t,
+    `WITH u AS (UPDATE ops.cleanup_holds SET released_at = now(), released_by = :'by'
+                 WHERE id = :'id' AND released_at IS NULL RETURNING 1) SELECT count(*) FROM u`,
+    { id, by: process.env.SUDO_USER || userInfo().username },
+  );
+  console.log(n === '1' ? 'запрет снят' : 'открытого запрета с таким id нет');
+  return { released: n === '1' };
+}
+
+/** Испытание: служебный проход задачи очистки через команду фона (те же ограничения). */
+async function cleanupRun(t) {
+  trialOnly(t);
+  if (t.env !== 'local') {
+    throw new Refused('проход на test-1 — при общей приёмке (задача там выключена)');
+  }
+  const token = readEnvFile(join(ROOT, '.env')).BACKGROUND_CONTROL_TOKEN;
+  const r = await fetch('http://127.0.0.1:4400/background/run/uploads.copy-cleanup', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(300_000),
+  });
+  const body = await r.json();
+  const s = body.state ?? {};
+  console.log(
+    body.ran
+      ? `проход: ${s.lastStatus}, удалено ${s.lastProcessed ?? 0}${s.lastError ? `, ошибка ${s.lastError}` : ''}`
+      : `проход не выполнен: ${body.reason}`,
+  );
+  return {
+    ran: body.ran,
+    status: s.lastStatus ?? null,
+    error: s.lastError ?? null,
+    reason: body.reason,
+  };
+}
+
+/**
+ * Испытание: служебные копии материала — проигравшие попытки (failed, abandoned, copied) с
+ * объектами под каталогом попыток; опубликованная попытка и временный исходник — как есть.
+ */
+function cleanupFixture(t) {
+  trialOnly(t);
+  const id = opt('material') ?? '';
+  const m = readMaterial(t, id);
+  if (!m || m.state !== 'ready') throw new Refused('нужен готовый материал');
+  const dir = posix.dirname(m.key);
+  const work = workDir(t);
+  try {
+    writeFileSync(join(work, 'copy'), Buffer.from('%PDF-1.4\n% losing attempt copy\n%%EOF\n'));
+    const out = {};
+    for (const state of ['failed', 'abandoned', 'copied']) {
+      const attempt = randomUUID();
+      const key = `${dir}/${attempt}`;
+      rclone(t, ['copyto', '/work/copy', `SRC:${t.s3.bucket}/${key}`], { mount: work });
+      psql(
+        t,
+        `INSERT INTO lab.material_upload_attempts (id, material_id, final_key, lease_id, state)
+         VALUES (:'a', :'m', :'k', gen_random_uuid(), :'s')`,
+        { a: attempt, m: id, k: key, s: state },
+      );
+      out[state] = { attempt, key };
+    }
+    const upload = psql(
+      t,
+      `SELECT coalesce(upload_key, '') FROM lab.project_materials WHERE id = :'m'`,
+      {
+        m: id,
+      },
+    );
+    const published = psql(
+      t,
+      `SELECT coalesce(string_agg(final_key, ','), '') FROM lab.material_upload_attempts
+        WHERE material_id = :'m' AND state = 'published'`,
+      { m: id },
+    );
+    return { ...out, upload, published: published.split(',').filter(Boolean), final: m.key };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/** Испытание: какие ключи есть в хранилище. */
+function exists(t) {
+  trialOnly(t);
+  const keys = String(opt('keys') ?? '')
+    .split(',')
+    .filter(Boolean);
+  const work = workDir(t);
+  try {
+    const out = {};
+    for (const k of keys) out[k] = readObject(t, k, work) !== null;
+    return { exists: out };
+  } finally {
+    rmSync(work, { recursive: true, force: true });
+  }
+}
+
+/** Испытание: изменить условия очистки материала (возраст, разрешение, попытка, ссылка). */
+function cleanupSet(t) {
+  trialOnly(t);
+  const id = opt('material') ?? '';
+  const what = opt('what');
+  const sql = {
+    // Время перехода в «готово» и срок формы — на N дней назад.
+    age: `UPDATE lab.project_materials
+             SET upload_state_changed_at = now() - make_interval(days => :'n'::int),
+                 upload_expires_at = now() - make_interval(days => :'n'::int)
+           WHERE id = :'m'`,
+    'permit-open': `UPDATE lab.project_materials SET upload_expires_at = now() + interval '1 hour' WHERE id = :'m'`,
+    'permit-closed': `UPDATE lab.project_materials SET upload_expires_at = now() - interval '8 days' WHERE id = :'m'`,
+    'attempt-copying': `UPDATE lab.material_upload_attempts SET state = 'copying' WHERE id = :'a'`,
+    'attempt-failed': `UPDATE lab.material_upload_attempts SET state = 'failed' WHERE id = :'a'`,
+    // Ссылка на ключ из другой записи: временный исходник неготового материала.
+    'ref-on': `UPDATE lab.project_materials SET upload_key = :'k' WHERE id = :'other'`,
+    'ref-off': `UPDATE lab.project_materials SET upload_key = :'k' WHERE id = :'other'`,
+    'lost-open': `SELECT ops.report_lost_file('material', :'m', s3_key) FROM lab.project_materials WHERE id = :'m'`,
+    'lost-close': `UPDATE ops.lost_files SET resolved_at = now(), resolution = 'replaced'
+                    WHERE kind = 'material' AND record_id = :'m' AND resolved_at IS NULL`,
+  }[what];
+  if (!sql) throw new Refused('неизвестное --what');
+  psql(t, sql, {
+    m: id,
+    n: opt('days') ?? '8',
+    a: opt('attempt') ?? '00000000-0000-0000-0000-000000000000',
+    k: opt('key') ?? '',
+    other: opt('other') ?? '00000000-0000-0000-0000-000000000000',
+  });
+  return { set: what };
+}
+
+/** Испытание: отметки очистки материала и его попыток. */
+function cleanupState(t) {
+  trialOnly(t);
+  const id = opt('material') ?? '';
+  const r = psql(
+    t,
+    `SELECT json_build_object(
+       'upload', (SELECT upload_copy_cleaned_at IS NOT NULL FROM lab.project_materials WHERE id = :'m'),
+       'uploadKey', (SELECT upload_key FROM lab.project_materials WHERE id = :'m'),
+       'attempts', (SELECT coalesce(json_object_agg(id, json_build_object('state', state,
+                     'cleaned', cleaned_at IS NOT NULL, 'error', cleanup_error)), '{}')
+                      FROM lab.material_upload_attempts WHERE material_id = :'m'),
+       'queues', audit.queue_metrics() -> 'uploads')`,
+    { m: id },
+  );
+  return JSON.parse(r);
+}
+
 // ------------------------------------------------------------ вход
 
 const commands = {
@@ -887,6 +1074,13 @@ const commands = {
   lost: (t) => lost(t),
   'report-late': (t) => reportLate(t),
   'race-report': (t) => raceReport(t),
+  'cleanup-hold': (t) => (verifyTarget(t), cleanupHold(t)),
+  'cleanup-release': (t) => cleanupRelease(t),
+  'cleanup-run': (t) => cleanupRun(t),
+  'cleanup-fixture': (t) => (verifyTarget(t), cleanupFixture(t)),
+  'cleanup-set': (t) => cleanupSet(t),
+  'cleanup-state': (t) => cleanupState(t),
+  exists: (t) => (verifyTarget(t), exists(t)),
 };
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

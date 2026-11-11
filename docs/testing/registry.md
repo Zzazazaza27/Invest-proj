@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 279; требований: 41
+- Проверок: 281; требований: 41
 
 ## Что защищено без участия человека
 
@@ -176,7 +176,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 113
+### Зарегистрированы, но ни в наборе, ни в CI — 114
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -187,6 +187,7 @@
 - `CHK-BACKUP-RESTORE` — Восстановление из комплекта на момент T (блок 7, 7.7): комплект ключей открывается закрытым ключом; база восстанавливается pgBackRest на LSN T, транзакция T …
 - `CHK-FILE-RESTORE` — Восстановление одного файла готового материала (2.1.3): назначения сверены до работы; обычное изменение готового материала запрещено, роли приложения не обхо…
 - `CHK-LOST-FILE` — Утрата готового файла: владельцу 500 stored_file_missing, утрата открыта и видна в /queues (files.lost), повтор объединяется; посторонний и несуществующая за…
+- `CHK-UPLOAD-CLEANUP` — Очистка служебных копий завершённых загрузок: до срока копии остаются; после срока удаление запрещают запрет на материал, проект и всю среду, активная попытк…
 - `CHK-FILES-ENDPOINT` — Вход файлов (2.1-W06): форма подписана на публичный адрес; CORS — разрешённому сайту разрешение, чужому нет, без разрешения на куки; право загрузки держит фо…
 - `CHK-FRONT-BUILDS` — Проверка перед выкатом: все фронты собраны в production-режиме.
 - `CHK-PORTS-CONSISTENCY` — Гейт согласованности портов стенда.
@@ -402,6 +403,7 @@
 | CHK-BACKUP-RESTORE | `node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>] [--openbao-keys <аварийный комплект>]` | 21 | вручную | — |
 | CHK-FILE-RESTORE | `node scripts/check-file-restore.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)` | 27 | вручную | — |
 | CHK-LOST-FILE | `node scripts/check-lost-file.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)` | 18 | вручную | — |
+| CHK-UPLOAD-CLEANUP | `node scripts/check-upload-cleanup.mjs (стенд с UPLOAD_COPY_CLEANUP_ENABLED=true и BACKGROUND_CONTROL_TOKEN)` | 19 | вручную | — |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |
@@ -554,6 +556,7 @@
 | UNIT-CORE-MEDIA-FINALIZE | `npm run test -w apps/core` | 3 | CI | CI |
 | UNIT-CORE-STORAGE-BREAKER | `npm run test -w apps/core` | 15 | CI | CI |
 | UNIT-CORE-LOST-FILE | `npm run test -w apps/core` | 4 | CI | CI |
+| UNIT-CORE-UPLOAD-COPY-CLEANUP | `npm run test -w apps/core` | 3 | CI | CI |
 | UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 24 | CI | CI |
 | UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |
 | UNIT-PKG-CONTRACTS-VISIBILITY | `npm run test -w packages/contracts` | 10 | CI | CI |

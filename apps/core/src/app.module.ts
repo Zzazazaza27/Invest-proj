@@ -84,6 +84,7 @@ import { ProjectViewsService } from './lab/project-views.service';
 import { ProjectsController } from './lab/projects.controller';
 import { ProjectsService } from './lab/projects.service';
 import { MaterialUploadsService } from './lab/material-uploads.service';
+import { UploadCopyCleanupService } from './lab/upload-copy-cleanup.service';
 import { OperationsController } from './lab/operations.controller';
 import { RequestKeysController } from './lab/request-keys.controller';
 import { UploadOperationsService } from './lab/upload-operations.service';
@@ -169,6 +170,7 @@ import { S3Service } from './storage/s3.service';
     KycService,
     ProjectsService,
     MaterialUploadsService,
+    UploadCopyCleanupService,
     UploadOperationsService,
     CatalogService,
     ProjectAccessService,

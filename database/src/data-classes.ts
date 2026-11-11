@@ -92,6 +92,10 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   'ops.installation_targets': { kind: 'journal' },
   'ops.installations': { kind: 'journal' },
   'ops.instances': { kind: 'operational', note: 'подтверждённые версии экземпляров' },
+  // Учёт утрат готовых файлов (M178, 3.2) и запреты очистки служебных копий (M179, 3.3):
+  // история эксплуатации и расследований, уборка тестовых данных их не трогает.
+  'ops.lost_files': { kind: 'journal', note: 'утраты готовых файлов и их закрытие' },
+  'ops.cleanup_holds': { kind: 'operational', note: 'запреты очистки служебных копий' },
   'ops.restore_gate': {
     kind: 'system',
     note: 'ворота восстановленной среды (2.1.5): уборка не трогает — без строки среда закрыта; в копии pg_dump не входит',

@@ -434,6 +434,14 @@ const RawEnvSchema = z.object({
   /** Плановое обслуживание партиций журнала: интервал прогона. */
   PARTITION_MAINTENANCE_INTERVAL_HOURS: z.coerce.number().int().min(1).max(168).default(24),
   PARTITION_MONTHS_AHEAD: z.coerce.number().int().min(1).max(12).default(3),
+
+  /**
+   * Очистка служебных копий завершённых загрузок (3.3, работа № 8). Выключена по умолчанию:
+   * на серверных средах включается отдельным решением после общей приёмки (Тэнк 12.11).
+   */
+  UPLOAD_COPY_CLEANUP_ENABLED: z.enum(['true', 'false']).default('false'),
+  /** Срок после «готово»; меньше 7 дней не принимается (3.3). */
+  UPLOAD_COPY_CLEANUP_DAYS: z.coerce.number().int().min(7).max(365).default(7),
 });
 
 export type RawEnv = z.infer<typeof RawEnvSchema>;

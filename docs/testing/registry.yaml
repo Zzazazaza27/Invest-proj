@@ -381,6 +381,27 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-12
 
+  - id: CHK-UPLOAD-CLEANUP
+    file: scripts/check-upload-cleanup.mjs
+    command: node scripts/check-upload-cleanup.mjs (стенд с UPLOAD_COPY_CLEANUP_ENABLED=true и BACKGROUND_CONTROL_TOKEN)
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 19
+    needs: [docker, stand]
+    effects:
+      [
+        'заводит участника seed.mjs и убирает его; создаёт служебные копии попыток своего материала и удаляет их очисткой; ставит и снимает запреты очистки',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 8 раздела 01 (3.3, M179). Только стенд: на серверных средах задача
+      выключена до общей приёмки. Проход — служебная команда фона.
+    purpose: 'Очистка служебных копий завершённых загрузок: до срока копии остаются; после срока удаление запрещают запрет на материал, проект и всю среду, активная попытка, неистёкшее разрешение передачи, открытая утрата; ключ со ссылкой из другой записи сохраняется, остальные служебные копии удаляются; файл материала и опубликованная копия целы, владелец читает файл; отклонённая загрузка не тронута; повторный проход без ошибок.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
   - id: CHK-FILES-ENDPOINT
     file: scripts/check-files-endpoint.mjs
     command: FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs
@@ -5037,6 +5058,22 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-12
 
+  - id: UNIT-CORE-UPLOAD-COPY-CLEANUP
+    file: apps/core/tests/upload-copy-cleanup.test.ts
+    command: npm run test -w apps/core
+    kind: unit-test
+    level: модульный
+    runner: ci
+    asserts: 3
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 8 раздела 01 (3.3, M179). Заглушки базы и хранилища; настоящий
+      UploadCopyCleanupService.pass.
+    purpose: 'Очистка служебных копий: удаление идёт внутри транзакции, взявшей блокировку записи (claim → delete → done → commit); отложенный материал — ни удаления, ни отметки; ошибка хранилища отмечается ошибкой, а не удалением, остальные ключи обрабатываются.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
   - id: UNIT-PKG-API-CLIENT-CLIENT
     file: packages/api-client/tests/client.test.ts
     command: npm run test -w packages/api-client
@@ -5919,6 +5956,8 @@ blocks:
         CHK-FILE-RESTORE,
         CHK-LOST-FILE,
         UNIT-CORE-LOST-FILE,
+        CHK-UPLOAD-CLEANUP,
+        UNIT-CORE-UPLOAD-COPY-CLEANUP,
         CHK-BACKUP-LOGIC,
         UNIT-CORE-READINESS,
         UNIT-CORE-AVAILABILITY-RULES,

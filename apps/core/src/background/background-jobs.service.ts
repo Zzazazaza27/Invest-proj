@@ -308,6 +308,23 @@ export class BackgroundJobsService {
     return pending;
   }
 
+  /**
+   * Служебный запуск прохода (команда `/background/run/<задача>`): тот же проход и те же
+   * ограничения, что по расписанию, — фон запущен и не на паузе, задача включена, блокировка
+   * координации берётся проходом. Отказ — причина, прохода нет.
+   */
+  async runRequested(
+    name: string,
+  ): Promise<{ ran: true; state: JobState } | { ran: false; reason: string }> {
+    const entry = this.jobs.get(name);
+    if (!entry) return { ran: false, reason: 'задача не зарегистрирована' };
+    if (!entry.enabled) return { ran: false, reason: 'задача выключена' };
+    if (!this.started || this.isStopping) return { ran: false, reason: 'фон не запущен' };
+    if (this.paused) return { ran: false, reason: 'фон на паузе' };
+    await (entry.current ?? this.pass(entry));
+    return { ran: true, state: this.snapshot().find((s) => s.name === name)! };
+  }
+
   /** Выполнить проход немедленно и дождаться его — для прогонов и тестов. */
   async runNow(name: string): Promise<void> {
     const entry = this.jobs.get(name);

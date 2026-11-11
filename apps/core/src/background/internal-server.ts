@@ -61,7 +61,9 @@ export async function startInternalServer(
     };
     // Команды изменения состояния фона (блок 09, задание 3): только POST, только с токеном
     // установщика. Порт слушает петлю; токен — вторая граница, если порт окажется доступен.
-    const command = req.url === '/background/pause' || req.url === '/background/resume';
+    const runJob = /^\/background\/run\/([a-z0-9.-]{1,80})$/.exec(req.url ?? '');
+    const command =
+      req.url === '/background/pause' || req.url === '/background/resume' || runJob !== null;
     if (command && req.method !== 'POST') return send(405, { error: 'method not allowed' });
     if (command) {
       if (!authorized(req.headers.authorization, env.BACKGROUND_CONTROL_TOKEN)) {
@@ -69,6 +71,14 @@ export async function startInternalServer(
           `${JSON.stringify({ t: new Date().toISOString(), level: 'warn', msg: 'служебная команда фона без полномочий отклонена', url: req.url })}\n`,
         );
         return send(env.BACKGROUND_CONTROL_TOKEN ? 403 : 404, { error: 'forbidden' });
+      }
+      // Служебный проход задачи: тот же механизм и ограничения, что по расписанию.
+      if (runJob) {
+        void jobs
+          .runRequested(runJob[1]!)
+          .then((r) => send(r.ran ? 200 : 409, r))
+          .catch((error: unknown) => send(500, { ran: false, reason: String(error) }));
+        return;
       }
       if (req.url === '/background/pause') {
         void jobs
