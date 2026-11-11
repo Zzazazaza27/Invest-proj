@@ -27,7 +27,11 @@ afterEach(() => {
   resetEnvCache();
 });
 
-function setup(claims: Record<string, Array<Record<string, string | null>>>, fail: string[] = []) {
+function setup(
+  claims: Record<string, Array<Record<string, string | null>>>,
+  fail: string[] = [],
+  loseTxAfterDeletes = Infinity,
+) {
   const events: string[] = [];
   const done: Array<{ id: string; results: Array<{ ok: boolean; error?: string }> }> = [];
   const db = {
@@ -41,6 +45,18 @@ function setup(claims: Record<string, Array<Record<string, string | null>>>, fai
           if (sql.includes('upload_cleanup_claim')) {
             events.push(`claim ${params[0]}`);
             return { rows: claims[params[0] as string] };
+          }
+          if (sql.startsWith('SET LOCAL idle_in_transaction_session_timeout')) {
+            events.push('idle-timeout');
+            return { rows: [] };
+          }
+          if (sql === 'SELECT 1') {
+            // Транзакцию закрыл сервер (истёк простой): дальше запросы в ней не идут.
+            if (events.filter((e) => e.startsWith('delete ')).length >= loseTxAfterDeletes) {
+              throw new Error('terminating connection due to idle-in-transaction timeout');
+            }
+            events.push('ping');
+            return { rows: [{}] };
           }
           if (sql.includes('upload_cleanup_done')) {
             events.push(`done ${params[0]}`);
@@ -77,14 +93,38 @@ describe('очистка служебных копий (работа № 8)', ()
     const r = await service.pass(new AbortController().signal);
     expect(r).toEqual({ deleted: 2, deferred: 0, failed: 0 });
     const i = events.indexOf('claim m1');
-    expect(events.slice(i, i + 5)).toEqual([
+    expect(events.slice(i, i + 8)).toEqual([
       'claim m1',
+      'idle-timeout',
+      'ping',
       'delete p/m1/upload',
+      'ping',
       'delete p/m1/final/a1',
       'done m1',
       'commit',
     ]);
     expect(done[0]!.results.every((x) => x.ok)).toBe(true);
+  });
+
+  it('транзакция потеряна между удалениями — следующие удаления не начинаются', async () => {
+    const { service, s3, done, events } = setup(
+      {
+        m1: [
+          { target: 'attempt', ref: 'a1', object_key: 'k1', defer_reason: null },
+          { target: 'attempt', ref: 'a2', object_key: 'k2', defer_reason: null },
+          { target: 'attempt', ref: 'a3', object_key: 'k3', defer_reason: null },
+        ],
+      },
+      [],
+      1,
+    );
+    const r = await service.pass(new AbortController().signal);
+    expect(s3.deleteObject).toHaveBeenCalledTimes(1);
+    expect(events).not.toContain('delete k2');
+    expect(done).toHaveLength(0);
+    // Транзакция взятия не зафиксирована (фиксация была только у выборки кандидатов).
+    expect(events.slice(events.indexOf('claim m1'))).not.toContain('commit');
+    expect(r.failed).toBe(1);
   });
 
   it('отложенный материал: ни удаления, ни отметки', async () => {

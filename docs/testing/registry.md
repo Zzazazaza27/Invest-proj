@@ -403,7 +403,7 @@
 | CHK-BACKUP-RESTORE | `node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>] [--openbao-keys <аварийный комплект>]` | 21 | вручную | — |
 | CHK-FILE-RESTORE | `node scripts/check-file-restore.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)` | 27 | вручную | — |
 | CHK-LOST-FILE | `node scripts/check-lost-file.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)` | 18 | вручную | — |
-| CHK-UPLOAD-CLEANUP | `node scripts/check-upload-cleanup.mjs (стенд с UPLOAD_COPY_CLEANUP_ENABLED=true и BACKGROUND_CONTROL_TOKEN)` | 19 | вручную | — |
+| CHK-UPLOAD-CLEANUP | `node scripts/check-upload-cleanup.mjs (стенд с UPLOAD_COPY_CLEANUP_ENABLED=true и BACKGROUND_CONTROL_TOKEN)` | 22 | вручную | — |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |
@@ -556,7 +556,7 @@
 | UNIT-CORE-MEDIA-FINALIZE | `npm run test -w apps/core` | 3 | CI | CI |
 | UNIT-CORE-STORAGE-BREAKER | `npm run test -w apps/core` | 15 | CI | CI |
 | UNIT-CORE-LOST-FILE | `npm run test -w apps/core` | 4 | CI | CI |
-| UNIT-CORE-UPLOAD-COPY-CLEANUP | `npm run test -w apps/core` | 3 | CI | CI |
+| UNIT-CORE-UPLOAD-COPY-CLEANUP | `npm run test -w apps/core` | 4 | CI | CI |
 | UNIT-PKG-API-CLIENT-CLIENT | `npm run test -w packages/api-client` | 24 | CI | CI |
 | UNIT-PKG-CONTRACTS-CONTRACTS | `npm run test -w packages/contracts` | 25 | CI | CI |
 | UNIT-PKG-CONTRACTS-VISIBILITY | `npm run test -w packages/contracts` | 10 | CI | CI |

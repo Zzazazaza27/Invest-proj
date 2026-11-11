@@ -1,10 +1,12 @@
 #!/usr/bin/env node
 /**
  * Испытание очистки служебных копий завершённых загрузок (работа № 8 раздела 01, 3.3;
- * CHK-UPLOAD-CLEANUP). Только стенд разработчика: на серверных средах задача выключена до
- * общей приёмки.
+ * CHK-UPLOAD-CLEANUP). На серверных средах задача выключена до общей приёмки.
  *
- *   node scripts/check-upload-cleanup.mjs        (стенд с UPLOAD_COPY_CLEANUP_ENABLED=true)
+ *   стенд:   node scripts/check-upload-cleanup.mjs --target local
+ *            (UPLOAD_COPY_CLEANUP_ENABLED=true и BACKGROUND_CONTROL_TOKEN в .env)
+ *   test-1:  только при общей приёмке, между `fifth-test op prod-cleanup-trial on` и `off`:
+ *            FIFTH_LOAD_BASE=https://test-1.5espace.com … node scripts/check-upload-cleanup.mjs --target test-1
  *
  * Проход — служебная команда фона `/background/run/uploads.copy-cleanup` (тот же механизм и
  * ограничения). Шаги с базой и хранилищем — `scripts/file-restore.mjs --trial`.
@@ -16,20 +18,25 @@
  *      удаляются; снятие ссылки — удаляется и он;
  *   4. файл материала и опубликованная копия целы, владелец читает файл; отклонённая загрузка
  *      (брошенная, не завершённая) не тронута;
- *   5. повторный проход ничего не ломает; ошибок очистки нет.
+ *   5. повторный проход ничего не ломает; ошибок очистки нет;
+ *   6. протокол запрета (M180): запрет, поставленный во время идущей очистки, подтверждается
+ *      только после её окончания, а следующее взятие видит его; не дождавшийся запрет не
+ *      устанавливается вовсе.
  */
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { BASE, client, isLocalBase, runDir } from './load/lib.mjs';
+import { BASE, client, isLocalBase, parseArgs, runDir } from './load/lib.mjs';
 
-if (!isLocalBase()) {
-  console.error(`только стенд разработчика, а цель ${BASE}`);
+const TARGET = String(parseArgs(process.argv.slice(2)).target ?? 'local');
+if (!['test-1', 'local'].includes(TARGET) || (TARGET === 'local') !== isLocalBase()) {
+  console.error(`нужен --target test-1 | local, согласованный с адресом ${BASE}`);
   process.exit(2);
 }
 const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\..*$/, '').replace('T', '-');
-const out = join('out', 'suites', `upload-cleanup-local-${stamp}`);
+const out = join('out', 'suites', `upload-cleanup-${TARGET}-${stamp}`);
 mkdirSync(out, { recursive: true });
 
 let passed = 0;
@@ -46,12 +53,34 @@ const say = (s) => {
   log.push(`\n== ${s}`);
   console.log(`\n== ${s}`);
 };
+const SSH = [
+  '-i',
+  join(homedir(), '.ssh', 'maus_5e'),
+  '-o',
+  'IdentitiesOnly=yes',
+  '-o',
+  'BatchMode=yes',
+  'maus@193.233.217.210',
+];
+const shellQuote = (x) => (/^[\w@%+=:,./-]+$/.test(x) ? x : `'${x.replace(/'/g, "'\\''")}'`);
 function op(cmd, ...a) {
-  const r = spawnSync(
-    process.execPath,
-    ['scripts/file-restore.mjs', cmd, '--env', 'local', ...a, '--json'],
-    { encoding: 'utf8', env: { ...process.env, FIFTH_FILE_RESTORE_LOCAL: '1' }, timeout: 600_000 },
-  );
+  const [bin, argv] =
+    TARGET === 'local'
+      ? [process.execPath, ['scripts/file-restore.mjs', cmd, '--env', 'local', ...a, '--json']]
+      : [
+          'ssh',
+          [
+            ...SSH,
+            ['sudo -n /usr/local/sbin/fifth-test op prod-file-restore', cmd, ...a, '--json']
+              .map(shellQuote)
+              .join(' '),
+          ],
+        ];
+  const r = spawnSync(bin, argv, {
+    encoding: 'utf8',
+    env: { ...process.env, FIFTH_FILE_RESTORE_LOCAL: TARGET === 'local' ? '1' : '' },
+    timeout: 600_000,
+  });
   const text = `${r.stdout ?? ''}${r.stderr ?? ''}`.trim();
   log.push(text);
   for (const l of text.split('\n')) if (l && !l.startsWith('RESULT ')) console.log(`    ${l}`);
@@ -265,6 +294,43 @@ try {
     JSON.stringify({ upload: rs.upload }),
   );
   check('открытых запретов не осталось', st.queues.cleanupHolds === 0);
+
+  say('протокол запрета (M180)');
+  const race = trial(
+    'hold-race',
+    '--material',
+    m,
+    '--reason',
+    'испытание протокола',
+    '--busy-sec',
+    '5',
+    '--wait-sec',
+    '30',
+  );
+  check(
+    'запрет во время очистки подтверждён только после её окончания',
+    Boolean(race.hold) && race.confirmedAfterCleanup === true && race.waitedMs >= 2500,
+    JSON.stringify(race),
+  );
+  const c = trial('claim-now', '--material', m);
+  check('следующее взятие видит запрет', c.claim === 'запрет очистки', c.claim);
+  op('cleanup-release', '--hold', race.hold);
+  const late = trial(
+    'hold-race',
+    '--material',
+    m,
+    '--reason',
+    'испытание протокола',
+    '--busy-sec',
+    '6',
+    '--wait-sec',
+    '1',
+  );
+  check(
+    'не дождался очистки — запрет не установлен и об этом сказано',
+    !late.hold && /НЕ установлен/.test(late.refused ?? '') && late.holdsAdded === 0,
+    JSON.stringify(late),
+  );
 } catch (error) {
   check('испытание завершилось', false, error.message);
 } finally {
@@ -275,7 +341,7 @@ try {
       console.log(`  уборка участников: ${error.message}`);
     }
   }
-  const summary = `CHK-UPLOAD-CLEANUP (local): ${passed}/${passed + failed}`;
+  const summary = `CHK-UPLOAD-CLEANUP (${TARGET}): ${passed}/${passed + failed}`;
   log.push(`\n${summary}`);
   writeFileSync(join(out, 'report.txt'), `${log.join('\n')}\n`);
   console.log(`\n${summary}\nотчёт: ${out}/report.txt`);

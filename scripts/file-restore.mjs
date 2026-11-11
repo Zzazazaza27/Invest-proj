@@ -814,6 +814,78 @@ function reportLate(t) {
  * Гонка: запись ключа держит транзакция смены (блокировка строки), в это время приходит учёт
  * утраты старого ключа. Он обязан дождаться и, увидев новый ключ, ничего не открыть.
  */
+/** Запрос psql отдельным процессом (для испытаний конкурентности). */
+async function psqlAsync(t, sql) {
+  const a = ['exec', '-i'];
+  if (t.pg.tcp) a.push('-e', 'PGPASSWORD');
+  a.push(t.pg.container, 'psql', '-X', '-At', '-v', 'ON_ERROR_STOP=1');
+  if (t.pg.tcp) a.push('-h', '127.0.0.1');
+  a.push('-U', t.pg.user, '-d', t.pg.db, '-c', sql);
+  const env = { ...process.env, ...(t.pg.tcp ? { PGPASSWORD: t.secret.pgPassword() } : {}) };
+  const { spawn } = await import('node:child_process');
+  return new Promise((res) => {
+    const c = spawn('docker', a, { env });
+    let out = '';
+    c.stdout.on('data', (d) => (out += d));
+    c.stderr.on('data', (d) => (out += d));
+    c.on('close', (code) => res({ code, out: out.trim(), at: Date.now() }));
+  });
+}
+
+/**
+ * Испытание протокола запрета (M180): очистка материала идёт (транзакция взятия держится
+ * --busy-sec), в это время ставится запрет. Он обязан дождаться её конца — или, если ждать
+ * дольше --wait-sec, не устанавливаться вовсе.
+ */
+async function holdRace(t) {
+  trialOnly(t);
+  const id = opt('material') ?? '';
+  if (!UUID_RE.test(id)) throw new Refused('нужен --material');
+  const busy = Number(opt('busy-sec') ?? 4);
+  const before = Number(psql(t, 'SELECT count(*) FROM ops.cleanup_holds'));
+  const cleanup = psqlAsync(
+    t,
+    `BEGIN; SELECT count(*) FROM lab.upload_cleanup_claim('${id}', interval '7 days');
+SELECT pg_sleep(${busy}); COMMIT;`,
+  );
+  await new Promise((r) => setTimeout(r, 1500));
+  const t0 = Date.now();
+  let hold = null;
+  let refused = null;
+  try {
+    hold = cleanupHold(t).hold;
+  } catch (error) {
+    refused = error.message;
+  }
+  const holdAt = Date.now();
+  const done = await cleanup;
+  const after = Number(psql(t, 'SELECT count(*) FROM ops.cleanup_holds'));
+  const r = {
+    hold,
+    refused,
+    waitedMs: holdAt - t0,
+    confirmedAfterCleanup: hold ? holdAt >= done.at - 200 : null,
+    cleanupCode: done.code,
+    holdsAdded: after - before,
+  };
+  console.log(`запрет: ${hold ? 'подтверждён' : 'не установлен'} через ${r.waitedMs} мс`);
+  return r;
+}
+
+/** Испытание: что ответит взятие материала очисткой сейчас (транзакция откатывается). */
+function claimNow(t) {
+  trialOnly(t);
+  const id = opt('material') ?? '';
+  const r = psqlTry(
+    t,
+    `BEGIN; SELECT coalesce(string_agg(coalesce(defer_reason, target), ','), '')
+       FROM lab.upload_cleanup_claim('${id}', interval '7 days'); ROLLBACK;`,
+  );
+  // psql печатает и теги BEGIN/ROLLBACK — нужна строка результата.
+  const line = r.out.split('\n').find((l) => !/^(BEGIN|ROLLBACK|COMMIT)$/.test(l)) ?? '';
+  return { claim: r.ok ? line : `ошибка: ${r.err}` };
+}
+
 async function raceReport(t) {
   trialOnly(t);
   const id = opt('material') ?? '';
@@ -867,6 +939,9 @@ COMMIT;`);
 
 // ------------------------------------------------------------ очистка служебных копий (№ 8)
 
+/** Текстовый литерал SQL (для psqlTry без переменных psql). */
+const sqlText = (v) => `'${String(v).replace(/'/g, "''")}'`;
+
 /** Запрет очистки для расследования (M179): материал, проект или вся среда. Не испытание. */
 function cleanupHold(t) {
   const scope = opt('material')
@@ -882,22 +957,28 @@ function cleanupHold(t) {
   }
   const reason = opt('reason');
   if (!reason) throw new Refused('нужен --reason');
-  const id = psql(
+  // Протокол M180: строка запрета и ожидание начатых очисток — одна транзакция. Подтверждение
+  // только после ожидания; не дождались — запрета нет, так и сказано.
+  const wait = Number(opt('wait-sec') ?? 60);
+  if (!(wait >= 1 && wait <= 600)) throw new Refused('--wait-sec от 1 до 600');
+  const r = psqlTry(
     t,
-    `INSERT INTO ops.cleanup_holds (scope, target_id, reason, incident, created_by)
-     VALUES (:'scope', NULLIF(:'target', '')::uuid, :'reason', NULLIF(:'incident', ''), :'by')
-     RETURNING id`,
-    {
-      scope,
-      target: target ?? '',
-      reason,
-      incident: opt('incident') ?? '',
-      by: process.env.SUDO_USER || userInfo().username,
-    },
+    `SELECT ops.cleanup_hold_set('${scope}', ${target ? `'${target}'::uuid` : 'NULL'},
+       ${sqlText(reason)}, ${sqlText(opt('incident') ?? '')},
+       ${sqlText(process.env.SUDO_USER || userInfo().username)}, make_interval(secs => ${wait}));`,
   );
-  // psql печатает после строк и тег команды (INSERT 0 1) — берётся первая строка.
-  const hold = id.split('\n')[0];
-  console.log(`запрет очистки ${hold}: ${scope}${target ? ` ${target}` : ''}`);
+  if (!r.ok) {
+    if (/lock timeout/i.test(r.err)) {
+      throw new Refused(
+        `запрет НЕ установлен: за ${wait} с не завершилась идущая очистка — повтори`,
+      );
+    }
+    throw new Error(`запрет не установлен: ${r.err.split('\n').at(-1)}`);
+  }
+  const hold = r.out.split('\n')[0];
+  console.log(
+    `запрет очистки ${hold}: ${scope}${target ? ` ${target}` : ''} — начатых очисток нет`,
+  );
   return { hold };
 }
 function cleanupRelease(t) {
@@ -916,16 +997,28 @@ function cleanupRelease(t) {
 /** Испытание: служебный проход задачи очистки через команду фона (те же ограничения). */
 async function cleanupRun(t) {
   trialOnly(t);
-  if (t.env !== 'local') {
-    throw new Refused('проход на test-1 — при общей приёмке (задача там выключена)');
+  let body;
+  if (t.env === 'test-1') {
+    // Изнутри контейнера ядра (служебный порт наружу не публикуется). Задача и токен на test-1
+    // включаются только на время общей приёмки: `fifth-test op prod-cleanup-trial on|off`.
+    const r = sh('bash', [join(ROOT, 'infra', 'host', 'prod-cleanup-trial.sh'), 'run'], {
+      allowFail: true,
+    });
+    const line = r.stdout.trim().split('\n').at(-1) ?? '';
+    try {
+      body = JSON.parse(line);
+    } catch {
+      body = { ran: false, reason: line || r.stderr.trim().split('\n').at(-1) };
+    }
+  } else {
+    const token = readEnvFile(join(ROOT, '.env')).BACKGROUND_CONTROL_TOKEN;
+    const r = await fetch('http://127.0.0.1:4400/background/run/uploads.copy-cleanup', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(300_000),
+    });
+    body = await r.json();
   }
-  const token = readEnvFile(join(ROOT, '.env')).BACKGROUND_CONTROL_TOKEN;
-  const r = await fetch('http://127.0.0.1:4400/background/run/uploads.copy-cleanup', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}` },
-    signal: AbortSignal.timeout(300_000),
-  });
-  const body = await r.json();
   const s = body.state ?? {};
   console.log(
     body.ran
@@ -1075,6 +1168,8 @@ const commands = {
   'report-late': (t) => reportLate(t),
   'race-report': (t) => raceReport(t),
   'cleanup-hold': (t) => (verifyTarget(t), cleanupHold(t)),
+  'hold-race': (t) => holdRace(t),
+  'claim-now': (t) => claimNow(t),
   'cleanup-release': (t) => cleanupRelease(t),
   'cleanup-run': (t) => cleanupRun(t),
   'cleanup-fixture': (t) => (verifyTarget(t), cleanupFixture(t)),

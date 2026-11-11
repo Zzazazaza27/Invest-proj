@@ -8,6 +8,8 @@ import { S3Service } from '../storage/s3.service';
 
 /** Раз в сутки (3.3). */
 const INTERVAL_MS = 24 * 3_600_000;
+/** Простой транзакции под блокировкой: одно удаление (таймаут 10 с) с большим запасом. */
+const HOLD_IDLE_MS = 120_000;
 /** Материалов за проход: очередь копится медленно, проход не должен держать фон часами. */
 const BATCH = 200;
 
@@ -101,9 +103,16 @@ export class UploadCopyCleanupService implements OnModuleInit {
             return;
           }
           // Строка материала заблокирована до конца этой транзакции: удаление — под ней.
+          // Пул закрывает простаивающую транзакцию через 30 с, а между запросами идут
+          // удаления в хранилище: срок простоя этой транзакции — с запасом на одно удаление
+          // (у него свой таймаут), и перед КАЖДЫМ удалением транзакция подтверждается
+          // запросом. Не подтвердилась — блокировки больше нет: следующие удаления не
+          // начинаются, ошибка уходит наверх, отметок нет (повтор — следующим проходом).
+          await tx.query(`SET LOCAL idle_in_transaction_session_timeout = '${HOLD_IDLE_MS}'`);
           const results: { target: string; ref: string; ok: boolean; error?: string }[] = [];
           for (const r of rows) {
             if (signal.aborted) break;
+            await tx.query('SELECT 1');
             try {
               await this.s3.deleteObject(r.object_key!);
               results.push({ target: r.target!, ref: r.ref, ok: true });
