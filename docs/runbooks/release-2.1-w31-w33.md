@@ -242,3 +242,22 @@ b132. Если не подтвердился — слоты на test-2 и prod 
 
 **504 через прокси** — по чтению конфигураций проходит без подмены; фактическая проверка на
 test-1 через Caddy и nginx с сохранением `outcome` и `traceId` — в контроле этапа test-1.
+
+## Учёт выпуска — факт
+
+**11.11, до первого изменения (только чтение).**
+
+- Ночное окно `night-1110` на b132 завершено; сравнение с `day-1110` отдано Тэнку.
+- Снимок конфигурации контейнеров (`fifth-test op prod-config-snapshot`, итог —
+  `out/release-w31/config-snapshot-before.txt`): все контейнеры test-1, test-2, prod — образы
+  2.1-b132.1. test-1 поднят с `.local/envs/test-1/compose.yml` + `env-journald.yml` (10.11 12:14);
+  test-2 — с `compose.yml` + `env-production.yml` (09.11); prod — с файлами комплекта
+  `.local/envs/prod/compose/` + `secrets.yml`/`tls.yml` серверной копии. Расхождение файлов на диске
+  с b132 у запущенных сред: `env-production.yml` (проверка здоровья Agent: интервал 3 с → 30 с,
+  `start_period`) — действует только при пересоздании; `env-journald.yml` на test-1 — включён
+  10.11 намеренно.
+- Caddy: `caddy-drift` — расхождений нет; шаг `prod-caddy-apply.sh` (check/prepare/apply/restore)
+  и матрица `scripts/caddy-matrix.mjs` готовы, «до» — 18/18 (`out/release-w31/caddy-matrix-before.json`).
+  Применение — Томас.
+- Коммит заморозки — `36165c3`; серверная копия синхронизирована на него. Таблица раздела 2 на
+  `36165c3` совпала с приведённой выше без изменений.
