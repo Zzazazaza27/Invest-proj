@@ -3091,6 +3091,22 @@ checks:
       Сверка основного Caddyfile сервера с копией infra/caddy/Caddyfile (хеши basic_auth
       заменены подстановками окружения).
 
+  - id: TOOL-CADDY-MATRIX
+    file: scripts/caddy-matrix.mjs
+    command: node scripts/caddy-matrix.mjs <метка> | --compare <до> <после>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 18
+    needs: [ssh, network]
+    effects: ['запросы к адресам площадки без изменений; пишет out/release-w31/caddy-matrix-<метка>.json']
+    studied: code
+    studiedOn: 2026-11-11
+    note: >-
+      Матрица контроля Caddy до и после применения Caddyfile из Git (план выпуска W31–W33,
+      раздел 6): basic_auth, перенаправления, test-2 без пароля, файловый вход (CORS, чтение 404).
+      5espace.com с паролем — через веб-проверку Zabbix (открытые проблемы).
+
   - id: TOOL-RELEASE
     file: scripts/release.mjs
     command: node scripts/release.mjs install|verify|replay|recover <среда>

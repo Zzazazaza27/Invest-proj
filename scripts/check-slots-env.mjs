@@ -131,6 +131,7 @@ const bg = (slot) => {
   return r.status === 0 ? r.stdout.trim() : 'не работает';
 };
 const via = async () => {
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
   const r = await fetch(`${BASE}/v1/features`, { signal: AbortSignal.timeout(10_000) });
   await r.arrayBuffer();
   return {
@@ -241,8 +242,10 @@ try {
 
   // ---------------------------------------------------------------- [2]
   console.warn('\n[2] Выпуск slot2 под потоком запросов');
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
   const cons = await (await fetch(`${BASE}/v1/auth/consents/templates?locale=ru-RU`)).json();
   const email = `slots-${Date.now() % 1e9}@test.local`;
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
   const reg = await fetch(`${BASE}/v1/auth/register`, {
     signal: AbortSignal.timeout(30_000),
     method: 'POST',
@@ -268,6 +271,7 @@ try {
     while (!stop) {
       stats.total += 1;
       try {
+        // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
         const r = await fetch(`${BASE}/v1/me/profile`, {
           headers: { cookie },
           signal: AbortSignal.timeout(15_000),
@@ -288,6 +292,7 @@ try {
   })
     .png()
     .toBuffer();
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
   const ticketRes = await fetch(`${BASE}/v1/me/avatar/upload`, {
     signal: AbortSignal.timeout(30_000),
     method: 'POST',
@@ -301,6 +306,7 @@ try {
     `HTTP ${ticketRes.status}`,
   );
   // Долгий запрос на самом ядре: начат на старом до переключения.
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
   const slow = fetch(`${BASE}/v1/__test/slow?ms=40000`, {
     signal: AbortSignal.timeout(120_000),
   }).then(
@@ -387,19 +393,18 @@ try {
       body: form,
       signal: AbortSignal.timeout(30_000),
     });
+    // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
     const fin = await fetch(`${BASE}/v1/me/avatar/finalize`, {
       signal: AbortSignal.timeout(30_000),
       method: 'POST',
       headers: { cookie, 'x-csrf-token': csrf },
     });
-    const prof = await (
-      await fetch(`${BASE}/v1/me/profile`, {
-        headers: { cookie },
-        signal: AbortSignal.timeout(30_000),
-      })
-    )
-      .json()
-      .catch(() => null);
+    // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
+    const profRes = await fetch(`${BASE}/v1/me/profile`, {
+      headers: { cookie },
+      signal: AbortSignal.timeout(30_000),
+    });
+    const prof = await profRes.json().catch(() => null);
     check(
       'загрузка: файл принят, сборку завершило новое ядро',
       put.status < 400 &&
@@ -424,6 +429,7 @@ try {
     stats.builds.has('slot1') && stats.builds.has('slot2'),
     [...stats.builds].join(','),
   );
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
   const me = await fetch(`${BASE}/v1/me/profile`, {
     headers: { cookie },
     signal: AbortSignal.timeout(30_000),

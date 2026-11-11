@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 273; требований: 41
+- Проверок: 274; требований: 41
 
 ## Что защищено без участия человека
 
@@ -361,6 +361,7 @@
 | TOOL-KIT | `node scripts/kit.mjs manifest|fetch|pack|load|check --build <номер>` | 0 | вручную, по поводу | — |
 | TOOL-SBOM | `node scripts/sbom.mjs --out <каталог> [--commit <sha>]` | 0 | вручную, по поводу | — |
 | TOOL-CADDY-DRIFT | `node scripts/caddy-drift.mjs` | 0 | вручную, по поводу | — |
+| TOOL-CADDY-MATRIX | `node scripts/caddy-matrix.mjs <метка> | --compare <до> <после>` | 18 | вручную, по поводу | — |
 | TOOL-RELEASE | `node scripts/release.mjs install|verify|replay|recover <среда>` | 0 | вручную, по поводу | — |
 | TOOL-INSTALL-CI | `fifth-install (обёртка на узле), запрос в stdin` | 0 | вручную, по поводу | — |
 | TOOL-INSTALL-REQUEST | `node scripts/install-request.mjs --dir <артефакт> --expect <сборка> --sign-key-file <файл> --token-file <файл>` | 0 | вручную, по поводу | — |
