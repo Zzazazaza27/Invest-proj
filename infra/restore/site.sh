@@ -17,6 +17,18 @@ export LC_ALL=C.UTF-8
 NS=fifth
 PKGS='docker.io docker-compose-v2 caddy curl ca-certificates gnupg iproute2 tar gzip jq'
 
+# Docker после запуска дистрибутива иногда не стартует с первого раза (гонка с containerd).
+ensure_docker() {
+  for _ in 1 2 3 4 5; do
+    docker info >/dev/null 2>&1 && return 0
+    systemctl reset-failed docker docker.socket >/dev/null 2>&1 || true
+    systemctl start docker >/dev/null 2>&1 || true
+    sleep 3
+  done
+  echo 'Docker не запустился' >&2; return 1
+}
+case "${1:-}" in check|node) ensure_docker ;; esac
+
 case "${1:-}" in
 wslconf)
   host="${2:-fifth-restore}"

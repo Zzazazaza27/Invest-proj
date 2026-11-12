@@ -651,8 +651,8 @@ export function codeArchive(root, target) {
     'sh',
     [
       '-c',
-      'tar --null -T - --no-recursion --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner ' +
-        '--pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime -cf - | gzip -n -9',
+      'tar --null --no-recursion --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner ' +
+        '--pax-option=exthdr.name=%d/PaxHeaders/%f,delete=atime,delete=ctime -cf - -T - | gzip -n -9',
     ],
     { cwd: root, input: `${names.join('\0')}\0`, maxBuffer: 1024 * 1024 * 1024 },
   );

@@ -63,7 +63,9 @@ const siteFile = (name) => join(HOME, name);
 /** Каталог Windows → каталог площадки: поток tar через stdin wsl (диски Windows там не видны). */
 function push(from, to) {
   return new Promise((done, fail) => {
-    const tar = spawn('tar.exe', ['-cf', '-', '-C', from, '.'], {
+    // Каталог — рабочей папкой, не -C: tar из Git для Windows принимает «D:…» за адрес машины.
+    const tar = spawn('tar.exe', ['-cf', '-', '.'], {
+      cwd: from,
       stdio: ['ignore', 'pipe', 'inherit'],
     });
     const w = spawn(

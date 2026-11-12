@@ -15,7 +15,7 @@
  * записано в sources.json. Значения секретов не печатаются.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash, generateKeyPairSync } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync } from 'node:crypto';
 import {
   createReadStream,
   existsSync,
@@ -80,7 +80,8 @@ function pipeOut(dir, to) {
       ['-d', DISTRO, '-u', 'root', '--', 'tar', '-cf', '-', '-C', dir, '.'],
       { stdio: ['ignore', 'pipe', 'inherit'] },
     );
-    const b = spawn('tar.exe', ['-xf', '-', '-C', to], { stdio: ['pipe', 'inherit', 'inherit'] });
+    // Каталог — рабочей папкой, не -C: tar из Git для Windows принимает «D:…» за адрес машины.
+    const b = spawn('tar.exe', ['-xf', '-'], { cwd: to, stdio: ['pipe', 'inherit', 'inherit'] });
     a.stdout.pipe(b.stdin);
     let n = 0;
     const end = (code) =>
@@ -142,6 +143,14 @@ async function build() {
   if (!resume && distros().includes(DISTRO))
     throw new Error(`${DISTRO} уже есть — destroy или --resume`);
   const sources = [];
+  // WSL гасит дистрибутив без подключённых сеансов: держатель на всё время сборки.
+  let keeper = null;
+  const keep = () => {
+    keeper = spawn('wsl.exe', ['-d', DISTRO, '-u', 'root', '--', 'sleep', '86400'], {
+      stdio: 'ignore',
+    });
+  };
+  process.on('exit', () => keeper?.kill());
 
   step('образ ОС и дистрибутив');
   const site = readFileSync(join(ROOT, 'infra', 'restore', 'site.sh'), 'utf8').replace(
@@ -162,6 +171,7 @@ async function build() {
     inSrc(`bash ${SITE}/site.sh wslconf ${DISTRO}`);
     wsl(['--terminate', DISTRO]);
   }
+  keep();
   inSrc(`mkdir -p ${SITE} && cat > ${SITE}/source.sh && chmod 700 ${SITE}/source.sh`, {
     input: src,
   });
@@ -212,7 +222,7 @@ async function build() {
 
   step('службы, Caddy, юниты');
   say(inSrc(`bash ${SITE}/source.sh up`));
-  for (const r of ['valkey/valkey', 'zabbix/zabbix'])
+  for (const r of ['valkey/valkey', 'zabbix/zabbix', 'nats', 'dxflrs/garage'])
     sources.push({ what: `образы Docker Hub (источник): ${r}*`, url: 'registry-1.docker.io' });
 
   step('демонстрационные данные');
@@ -224,12 +234,21 @@ async function build() {
   step('выгрузка аудита (после T: покрывает комплект)');
   say(inSrc(`bash ${SITE}/source.sh audit`));
 
+  await exportSet(outDir, pub, sources);
+
+  step('источник выключен');
+  keeper?.kill();
+  wsl(['--terminate', DISTRO]);
+}
+
+/** Комплект и выгрузка аудита — с источника на ноутбук; вынос выгрузки как у Томаса. */
+async function exportSet(outDir, pub, sources) {
   step('комплект и выгрузка — на ноутбук');
   say(inSrc(`rm -rf ${SITE}/pull && bash ${SITE}/source.sh pull ${SITE}/pull`));
   rmSync(outDir, { recursive: true, force: true });
   const setId = inSrc(`ls ${SITE}/pull`).out.trim().split('\n').pop();
   await pipeOut(`${SITE}/pull/${setId}`, join(outDir, 'set'));
-  await pipeOut('/var/lib/fifth-audit-export', join(outDir, 'audit-source', 'prod', 'out'));
+  await pipeOut('/var/lib/fifth-audit-export/out', join(outDir, 'audit-source', 'prod', 'out'));
   writeFileSync(join(outDir, 'export-signing.pub'), pub);
   writeFileSync(join(outDir, 'sources.json'), JSON.stringify(sources, null, 2));
   // Вынос как на ноутбуке Томаса: подпись, продолжение серии, контрольная точка.
@@ -258,7 +277,68 @@ async function build() {
   console.log(
     `комплект ${setId}: ${join(outDir, 'set')}; выгрузка: ${join(outDir, 'audit', 'prod')}`,
   );
+}
 
+/** Новый код (HEAD) на источник, новые комплект и выгрузка, перенос — без пересборки узла. */
+async function refresh() {
+  const keeper = spawn('wsl.exe', ['-d', DISTRO, '-u', 'root', '--', 'sleep', '86400'], {
+    stdio: 'ignore',
+  });
+  try {
+    step('код источника — HEAD');
+    const bundle = join(HOME, 'head.bundle');
+    const b = spawnSync('git', ['-C', ROOT, 'bundle', 'create', bundle, 'HEAD', 'main'], {
+      encoding: 'utf8',
+    });
+    if (b.status !== 0) throw new Error(`git bundle: ${b.stderr}`);
+    inSrc('cat > /tmp/head.bundle', { input: readFileSync(bundle) });
+    say(
+      inSrc(
+        'git -C /opt/fifth-element pull -q --ff-only /tmp/head.bundle main && git -C /opt/fifth-element rev-parse --short HEAD',
+      ),
+    );
+    const src = readFileSync(join(ROOT, 'infra', 'restore', 'source.sh'), 'utf8').replace(
+      /\r\n/g,
+      '\n',
+    );
+    inSrc(`cat > ${SITE}/source.sh && chmod 700 ${SITE}/source.sh`, { input: src });
+    step('комплект на момент T');
+    say(inSrc(`bash ${SITE}/source.sh set`));
+    step('выгрузка аудита');
+    say(inSrc(`bash ${SITE}/source.sh audit`));
+  } finally {
+    keeper.kill();
+  }
+  await exportOnly();
+}
+
+/** Повтор переноса без новой сборки: комплект уже снят на источнике. */
+async function exportOnly() {
+  const outDir = resolve(opt('--out', join(ROOT, '.local', 'restore-trial')));
+  const keeper = spawn('wsl.exe', ['-d', DISTRO, '-u', 'root', '--', 'sleep', '86400'], {
+    stdio: 'ignore',
+  });
+  try {
+    const key = createPrivateKey(inSrc('cat /etc/fifth-audit-export/signing.key').out);
+    const pub = createPublicKey(key).export({ type: 'spki', format: 'pem' });
+    const sources = [
+      {
+        what: 'образ ОС источника',
+        url: opt('--source', '(см. сборку)'),
+        sha256: opt('--sha256', null),
+      },
+    ];
+    const aptList = inSrc(
+      "grep -rh '^URIs:\\|^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | sort -u",
+    );
+    for (const a of aptList.out.trim().split('\n'))
+      sources.push({ what: 'пакеты Ubuntu (источник)', url: a });
+    for (const r of ['valkey/valkey', 'zabbix/zabbix', 'nats', 'dxflrs/garage'])
+      sources.push({ what: `образы Docker Hub (источник): ${r}*`, url: 'registry-1.docker.io' });
+    await exportSet(outDir, pub, sources);
+  } finally {
+    keeper.kill();
+  }
   step('источник выключен');
   wsl(['--terminate', DISTRO]);
 }
@@ -269,9 +349,9 @@ function destroy() {
   console.log(`${DISTRO} удалён вместе с данными`);
 }
 
-const commands = { build, destroy };
+const commands = { build, refresh, export: exportOnly, destroy };
 if (!commands[argv[0]]) {
-  console.error('команды: build, destroy');
+  console.error('команды: build, refresh, export, destroy');
   process.exit(2);
 }
 try {

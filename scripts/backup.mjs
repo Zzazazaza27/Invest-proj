@@ -935,7 +935,7 @@ function hostParts(c, id, dir) {
 function spawnSyncTar(paths) {
   const r = spawnSyncRaw(
     'tar',
-    ['--null', '-T', '-', '--no-recursion', '--numeric-owner', '-cpf', '-'],
+    ['--null', '--no-recursion', '--numeric-owner', '-cpf', '-', '-T', '-'],
     {
       cwd: '/',
       input: `${paths.map((p) => p.replace(/^\//, '')).join('\0')}\0`,

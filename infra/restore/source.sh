@@ -19,6 +19,17 @@ SITE=/var/lib/fifth-restore
 PKGS='docker.io docker-compose-v2 caddy curl ca-certificates gnupg iproute2 tar gzip jq git'
 CORE_IMAGE=fifth/core:src
 cd /
+# Docker после запуска дистрибутива иногда не стартует с первого раза (гонка с containerd).
+ensure_docker() {
+  for _ in 1 2 3 4 5; do
+    docker info >/dev/null 2>&1 && return 0
+    systemctl reset-failed docker docker.socket >/dev/null 2>&1 || true
+    systemctl start docker >/dev/null 2>&1 || true
+    sleep 3
+  done
+  echo 'Docker не запустился' >&2; return 1
+}
+[ "${1:-}" = packages ] || ensure_docker
 
 case "${1:-}" in
 packages)
@@ -51,15 +62,26 @@ code)
 
 up)
   cd "$ROOT"
+  # Хранилище pgBackRest — владельцу postgres образа (uid 999), как на рабочем узле.
+  mkdir -p /var/backups/fifth-element/pgbackrest && chown 999:999 /var/backups/fifth-element/pgbackrest
   export COMPOSE_PROFILES=web,monitoring,monitoring-host
   node scripts/infra.mjs compose up -d postgres valkey nats garage-1 garage-2 garage-3
   for _ in $(seq 1 60); do
     [ "$(docker inspect -f '{{.State.Health.Status}}' fifth-postgres 2>/dev/null)" = healthy ] && break
     sleep 2
   done
-  # Миграции и роли — образом ядра (в нём pg), как при установке комплекта.
-  docker run --rm --network host --env-file .env -w /app/database "$CORE_IMAGE" sh -c \
-    'node --experimental-strip-types src/migrate.ts && node --experimental-strip-types src/bootstrap-roles.ts' | tail -3
+  # Миграции и роли — образом ядра (в нём pg), как при установке комплекта. Первый запуск
+  # PostgreSQL перезапускается после initdb (проверка здоровья проходит и на временном
+  # сервере) — поэтому повтор; миграции идемпотентны.
+  ok=''
+  for _ in 1 2 3 4 5; do
+    if docker run --rm --network host --env-file .env -w /app/database "$CORE_IMAGE" sh -c \
+      'node --experimental-strip-types src/migrate.ts && node --experimental-strip-types src/bootstrap-roles.ts' > /tmp/migrate.log 2>&1; then
+      ok=1; tail -3 /tmp/migrate.log; break
+    fi
+    tail -2 /tmp/migrate.log; sleep 5
+  done
+  [ -n "$ok" ] || { echo 'миграции не прошли' >&2; exit 1; }
   node scripts/garage-init.mjs | tail -3
   docker run --rm --network host --env-file .env "$CORE_IMAGE" node scripts/nats-init-stream.mjs | tail -2
   node scripts/infra.mjs compose up -d
