@@ -662,6 +662,45 @@ checks:
     purpose: 'Гейт согласованности KEK-доменов (Ф27). Карта «домен → таблица» в `rotate-kek.mjs` ведётся вручную, и до этого гейта ничто не мешало разъехаться четырём источникам правды: 1. тип `KekDomain` в `apps/core/src/crypto/crypt'
     confirmation: reviewed-in-code
 
+  - id: CHK-WEBHOOK-RECEIVER-LOCAL
+    file: scripts/check-webhook-receiver-local.mjs
+    command: npm run build -w apps/core && node scripts/check-webhook-receiver-local.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 15
+    needs: []
+    effects: ['получатель на петле ноутбука, случайный порт; в конце остановлен']
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 3 раздела 01: контролируемый получатель (scripts/lib/webhook-receiver.mjs). Подпись
+      и узел назначения — у собранного ядра (apps/core/dist): расхождение форматов ловится.
+    purpose: 'Режимы ответа получателя (200, 503, без ответа, обрыв), независимость адресов, 404 на чужой путь; подпись ядра верна, без подписи, устаревшая и чужим секретом — неверна; журнал по Fifth-Event-Id без тела и секрета; узел назначения сценария как у ядра.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
+  - id: CHK-WEBHOOK-RECEIVER
+    file: scripts/check-webhook-receiver.mjs
+    command: fifth-test op prod-webhook-receiver test-1 <https-адрес A> <https-адрес B> [fail|timeout|reset]
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 17
+    needs: [server]
+    effects:
+      [
+        'на узле тестовой среды: получатель на 127.0.0.1:18444 на время сценария; служебная учётная запись, две подписки, доставки и узлы назначения — удаляются в конце; события-носители остаются опубликованными',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 3 раздела 01 (W17). Адреса получателя — настройкой; подключение публичных адресов
+      к получателю на узле — отдельный шаг общей приёмки. SSRF-защита ядра не обходится. Не
+      запускался: нужен этот шаг. SQL заведения проверен на схеме стенда (транзакция с откатом).
+    purpose: 'Настоящая доставка ядра тестовой среды: отказ получателя A расходует попытку одной доставки, узел A на паузе, B получает свои; одна проба по истечении паузы, её отказ удваивает паузу; после восстановления проба проходит, пауза снята, всё доставлено; повтор несёт тот же Fifth-Event-Id, подпись верна, каждое событие принято один раз.'
+    confirmation: reviewed-in-code
+
   - id: CHK-OUTBOUND-BOUNDARIES
     file: scripts/check-outbound-boundaries.mjs
     command: npm run check:outbound
@@ -6092,6 +6131,8 @@ blocks:
         SMK-INTEGRATION,
         SMK-MAIL-SMTP,
         CHK-OUTBOUND-BOUNDARIES,
+        CHK-WEBHOOK-RECEIVER-LOCAL,
+        CHK-WEBHOOK-RECEIVER,
       ]
 
   надёжность:

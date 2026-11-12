@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 289; требований: 41
+- Проверок: 291; требований: 41
 
 ## Что защищено без участия человека
 
@@ -179,7 +179,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 115
+### Зарегистрированы, но ни в наборе, ни в CI — 117
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -194,6 +194,8 @@
 - `CHK-HOST-CONFIG` — Импорты Caddy (файлы, шаблоны, фрагменты), drop-in и EnvironmentFile юнитов, файлы и монтирования Compose по меткам, замыкание по ссылкам; секреты по пути и …
 - `CHK-FILES-ENDPOINT` — Вход файлов (2.1-W06): форма подписана на публичный адрес; CORS — разрешённому сайту разрешение, чужому нет, без разрешения на куки; право загрузки держит фо…
 - `CHK-FRONT-BUILDS` — Проверка перед выкатом: все фронты собраны в production-режиме.
+- `CHK-WEBHOOK-RECEIVER-LOCAL` — Режимы ответа получателя (200, 503, без ответа, обрыв), независимость адресов, 404 на чужой путь; подпись ядра верна, без подписи, устаревшая и чужим секрето…
+- `CHK-WEBHOOK-RECEIVER` — Настоящая доставка ядра тестовой среды: отказ получателя A расходует попытку одной доставки, узел A на паузе, B получает свои; одна проба по истечении паузы,…
 - `CHK-PORTS-CONSISTENCY` — Гейт согласованности портов стенда.
 - `CHK-UPSTREAM-OWNER` — Гейт «в репозиторий коммитит только владелец».
 - `CHK-PRE-PUSH` — Быстрая проверка перед отправкой: только файлы, которые уходят в origin.
@@ -421,6 +423,8 @@
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |
 | CHK-FRONTEND-BOUNDARY | `npm run gate:boundary` | 0 | CI | CI |
 | CHK-KEK-DOMAINS | `npm run gate:kek` | 0 | CI | CI |
+| CHK-WEBHOOK-RECEIVER-LOCAL | `npm run build -w apps/core && node scripts/check-webhook-receiver-local.mjs` | 15 | вручную | — |
+| CHK-WEBHOOK-RECEIVER | `fifth-test op prod-webhook-receiver test-1 <https-адрес A> <https-адрес B> [fail|timeout|reset]` | 17 | вручную | — |
 | CHK-OUTBOUND-BOUNDARIES | `npm run check:outbound` | 7 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-PORTS-CONSISTENCY | `npm run gate:ports` | 0 | вручную | — |
 | CHK-PROFILE-API | `node scripts/check-profile-api.mjs` | 30 | вручную | `suite:handoff`, `suite:regression` |
