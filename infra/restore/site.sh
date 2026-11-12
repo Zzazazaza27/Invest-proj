@@ -91,10 +91,15 @@ EOF
 check)
   j() { jq -n "$@"; }
   pid1=$(cat /proc/1/comm)
-  mnt=$( [ -e /mnt/c ] && echo yes || echo no )
+  # Диски Windows — по фактическим монтированиям (drvfs/9p); каталог драйверов GPU WSL
+  # (/usr/lib/wsl/drivers, только чтение) пользовательских данных не содержит.
+  mnt=$(awk '($3=="drvfs"||$3=="9p") && $2!="/usr/lib/wsl/drivers" {print $2}' /proc/mounts | tr '\n' ' ')
+  [ -n "$mnt" ] || mnt=no
   interop=$( [ -e /proc/sys/fs/binfmt_misc/WSLInterop ] && cat /proc/sys/fs/binfmt_misc/WSLInterop | head -1 || echo absent )
   route=$(ip -n $NS route show default 2>/dev/null | head -1)
-  links=$(ip -n $NS -o link show 2>/dev/null | awk -F': ' '{print $2}' | tr '\n' ' ')
+  # Внешних интерфейсов нет: только петля и мосты/пары Docker внутри пространства.
+  links=$(ip -n $NS -o link show 2>/dev/null | awk -F': ' '{print $2}' | sed 's/@.*//' \
+    | grep -vE '^(lo|docker0|br-[0-9a-f]+|veth[0-9a-f]+)$' | tr '\n' ' ' || true)
   outside=$( ip netns exec $NS timeout 6 bash -c 'exec 3<>/dev/tcp/1.1.1.1/443' 2>/dev/null && echo open || echo closed )
   dockerns=$(readlink /proc/$(pidof dockerd | awk '{print $1}')/ns/net 2>/dev/null || echo none)
   fifthns=$(ip netns exec $NS readlink /proc/self/ns/net)

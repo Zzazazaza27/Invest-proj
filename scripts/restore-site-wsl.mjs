@@ -148,7 +148,7 @@ function check() {
   }).stdout?.trim();
   const rules = [
     ['systemd — PID 1', s.pid1 === 'systemd'],
-    ['диски Windows не подключены', s.windowsDrives === 'no'],
+    ['диски Windows не смонтированы (drvfs/9p)', s.windowsDrives === 'no'],
     ['запуск программ Windows выключен', s.interop === 'absent' || /disabled/.test(s.interop)],
     [
       'свой Docker: идентификатор отличается от Docker ноутбука',
@@ -160,7 +160,7 @@ function check() {
     ],
     ['Docker площадки работает в пространстве fifth', s.dockerdNetns === s.fifthNetns],
     ['в пространстве fifth нет маршрута наружу', !s.nsDefaultRoute],
-    ['в пространстве fifth только петля', s.nsLinks.trim() === 'lo'],
+    ['в пространстве fifth нет внешних интерфейсов (только петля и мосты Docker)', s.nsLinks.trim() === ''],
     ['наружу из пространства fifth не выйти', s.outside === 'closed'],
     ['Docker площадки пуст', s.docker.containers === 0],
   ];
@@ -187,6 +187,9 @@ function check() {
 }
 
 async function run() {
+  // WSL гасит дистрибутив без подключённых сеансов: держатель на всё время прогона.
+  const keeper = spawn('wsl.exe', ['-d', DISTRO, '-u', 'root', '--', 'sleep', '86400'], { stdio: 'ignore' });
+  process.on('exit', () => keeper.kill());
   check();
   const set = resolve(opt('--set', ''));
   const key = resolve(opt('--secret-key', ''));
