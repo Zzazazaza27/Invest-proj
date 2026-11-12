@@ -91,7 +91,7 @@ try {
       const [row] = await q(
         `SELECT p.id, fp.user_id AS owner_user_id FROM lab.projects p
            JOIN lab.founders_projects fp ON fp.project_id = p.id AND fp.role = 'owner'
-          WHERE p.title = $1 AND p.deleted_at IS NULL`,
+          WHERE p.title = $1 AND p.deleted_at IS NULL AND p.listing_status = 'listed'`,
         [p.title],
       );
       if (person && row) {
@@ -103,25 +103,22 @@ try {
         break;
       }
     }
-    if (!picked) throw new Error('нет демонстрационного основателя с проектом');
+    if (!picked) throw new Error('нет опубликованного демонстрационного проекта');
     writeFileSync(STATE, JSON.stringify(picked));
     const c = await login(picked.userId, picked.email);
-    const [{ listing_status: st }] = await q(
-      'SELECT listing_status FROM lab.projects WHERE id = $1',
-      [picked.projectId],
-    );
-    if (st === 'listed') {
-      const u = await c.call(`/v1/projects/${picked.projectId}/listing`, { method: 'DELETE' });
-      if (u.status >= 300)
-        throw new Error(
-          `снятие публикации: HTTP ${u.status} ${JSON.stringify(u.json).slice(0, 200)}`,
-        );
-    }
-    const p = await c.call(`/v1/projects/${picked.projectId}/listing`, { method: 'POST' });
+    // Событие до T без снятия публикации (повторная публикация требует верификации — KYC).
+    const tagline = `Испытание восстановления ${new Date().toISOString().slice(0, 16)}`;
+    const p = await c.call(`/v1/projects/${picked.projectId}`, {
+      method: 'PATCH',
+      body: { tagline },
+    });
     if (p.status >= 300)
-      throw new Error(`публикация: HTTP ${p.status} ${JSON.stringify(p.json).slice(0, 200)}`);
+      throw new Error(`правка проекта: HTTP ${p.status} ${JSON.stringify(p.json).slice(0, 200)}`);
     const [{ n }] = await q('SELECT count(*)::int AS n FROM audit.events');
-    console.log(`до комплекта: проект ${picked.projectId} опубликован; событий в журнале ${n}`);
+    if (!n) throw new Error('журнал аудита пуст — событий до комплекта нет');
+    console.log(
+      `до комплекта: проект ${picked.projectId} опубликован, описание изменено; событий в журнале ${n}`,
+    );
   } else if (phase === 'after') {
     const s = JSON.parse(readFileSync(STATE, 'utf8'));
     const c = await login(s.userId, s.email);
