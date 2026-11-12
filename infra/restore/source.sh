@@ -31,6 +31,16 @@ ensure_docker() {
   echo 'Docker не запустился' >&2; return 1
 }
 [ "${1:-}" = packages ] || ensure_docker
+# После перезапуска дистрибутива службы поднимаются не сразу: база и ядро должны быть готовы.
+wait_ready() {
+  for _ in $(seq 1 90); do
+    [ "$(docker inspect -f "{{.State.Health.Status}}" fifth-postgres 2>/dev/null)" = healthy ] &&
+      [ "$(docker inspect -f "{{.State.Health.Status}}" fifth-core 2>/dev/null)" = healthy ] && return 0
+    sleep 2
+  done
+  echo "база или ядро не готовы" >&2; return 1
+}
+case "${1:-}" in seed|set|activity|audit) wait_ready ;; esac
 
 case "${1:-}" in
 packages)
