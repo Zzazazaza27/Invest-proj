@@ -238,6 +238,7 @@ let secretsTar = null;
 const state = {};
 try {
   protocol.marks.trialStart = now(); // начало нарушения на стенде — момент начала испытания
+  mkdirSync(outDir, { recursive: true });
   if (!host) throw new Error('в комплекте нет конфигурации узла (комплект до работы № 5)');
 
   // ------------------------------------------------------------ 1. условия
@@ -762,11 +763,28 @@ try {
     for (const n of nodes) composeCreate(n.project, [n.service]);
     for (const n of nodes) compose(n.project, ['start', n.service]);
     // Раскладка, бакеты и ключи — установщиком самой рабочей среды (его версия из комплекта).
-    const init = sh(process.execPath, [join(ROOT, 'scripts', 'garage-init.mjs')], {
-      cwd: ROOT,
-      allowFail: true,
-      timeout: 600_000,
-    });
+    // Узлы Garage только что запущены: сначала готовность, затем установщик (с повтором).
+    await waitFor(
+      () =>
+        nodes.every(
+          (n) =>
+            docker(['inspect', '-f', '{{.State.Health.Status}}', n.container], {
+              allowFail: true,
+            }).text.trim() === 'healthy',
+        ),
+      180,
+      'узлы Garage готовы',
+    );
+    let init;
+    for (let i = 0; i < 5; i++) {
+      init = sh(process.execPath, [join(ROOT, 'scripts', 'garage-init.mjs')], {
+        cwd: ROOT,
+        allowFail: true,
+        timeout: 600_000,
+      });
+      if (init.ok) break;
+      await sleep(10_000);
+    }
     check(
       'Garage настроен установщиком среды (garage-init)',
       init.ok,
@@ -952,59 +970,45 @@ try {
       );
       return false;
     }
-    const core = state.core;
-    const url = new URL(env.DATABASE_URL_OWNER);
-    url.hostname = '127.0.0.1';
-    url.port = '5432';
+    // Применение — на узле: расшифровка выгрузки идёт через gpg узла (в образе ядра его нет);
+    // pg и прочие зависимости инструмента — из образа ядра комплекта, без npm.
+    const mods = join(TOOLS, 'node_modules');
+    if (!existsSync(mods)) {
+      const c = docker(['create', state.core.tag]).text.trim();
+      docker(['cp', `${c}:/app/node_modules`, mods]);
+      docker(['rm', c]);
+    }
     const common = [
       '--db',
-      url.toString(),
+      env.DATABASE_URL_OWNER,
       '--restore-id',
       `restore-${setId}`,
       '--source-export',
-      '/audit/series',
+      join(resolve(auditDir), 'series'),
       '--checkpoint',
-      '/audit/checkpoint.json',
+      join(resolve(auditDir), 'checkpoint.json'),
       '--secret-key',
-      '/keys/secret.asc',
+      resolve(secretKey),
       '--passphrase-file',
-      '/keys/pass.txt',
+      resolve(passFile),
     ];
     const testExportKey = existsSync(join(resolve(auditDir), 'export-signing.pub'));
     if (testExportKey)
       limit('выгрузка аудита подписана испытательным ключом источника (не ключом рабочей среды)');
     const runApply = (cmd, extra = []) =>
-      docker(
-        [
-          'run',
-          '--rm',
-          '--network',
-          `container:${state.pg.container}`,
-          '--user',
-          'root',
+      sh(
+        process.execPath,
+        [join(TOOLS, 'scripts', 'deletions-apply.mjs'), cmd, ...common, ...extra],
+        {
+          allowFail: true,
+          timeout: 3_600_000,
           // Испытание на искусственном источнике: выгрузка подписана его ключом, не рабочим.
-          ...(testExportKey ? ['-e', 'AUDIT_EXPORT_PUBLIC_KEY=/audit/export-signing.pub'] : []),
-          '-v',
-          `${join(TOOLS, 'scripts')}:/app/rs:ro`,
-          '-v',
-          `${resolve(auditDir)}:/audit:ro`,
-          '-v',
-          `${resolve(secretKey)}:/keys/secret.asc:ro`,
-          '-v',
-          `${resolve(passFile)}:/keys/pass.txt:ro`,
-          '-v',
-          `${outDir}:/report`,
-          '--entrypoint',
-          'node',
-          core.tag,
-          '/app/rs/deletions-apply.mjs',
-          cmd,
-          ...common,
-          ...extra,
-        ],
-        { allowFail: true, timeout: 3_600_000 },
+          env: testExportKey
+            ? { AUDIT_EXPORT_PUBLIC_KEY: join(resolve(auditDir), 'export-signing.pub') }
+            : {},
+        },
       );
-    const a = runApply('apply', ['--report', '/report/deletions-apply.json']);
+    const a = runApply('apply', ['--report', join(outDir, 'deletions-apply.json')]);
     check('учёт удалений применён', a.ok, a.err.split('\n').slice(-2).join(' | '));
     const v = runApply('verify');
     check('учёт удалений проверен', v.ok, v.err.split('\n').slice(-2).join(' | '));
