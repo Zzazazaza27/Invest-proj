@@ -53,6 +53,11 @@ regexes = [
   # (gitleaks на Go/RE2), поэтому такие строки отсеиваются здесь. Настоящий
   # пароль под этот шаблон не подходит.
   '''\$\{[A-Za-z_][A-Za-z0-9_]*\}''',
+  # То же с обращением к полю: `postgres://u:${secrets.pg}@host` (scripts/lib/faults-env.mjs).
+  '''\$\{[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*\}''',
+  # Выдуманное значение в проверке check-host-config: она и проверяет, что такие строки
+  # уходят в зашифрованную часть комплекта, а не в открытую.
+  '''abcdefgh12345678''',
   '''local_dev_only_change_me''',
   '''test[-_]?fixture''',
   # ci_only_password — пароль service-контейнера PostgreSQL внутри GitHub
