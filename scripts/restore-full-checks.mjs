@@ -246,6 +246,8 @@ try {
   // 6. потоки NATS как в комплекте (сами потоки создаются пустыми — 7.1).
   const want = JSON.parse(E.RESTORE_NATS || '[]');
   if (want.length) {
+    // петля узла 127.0.0.1 (мониторинг NATS): TLS здесь ничего не защищает.
+    // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
     const r = await fetch('http://127.0.0.1:8222/jsz?streams=true&config=true', {
       signal: AbortSignal.timeout(10_000),
     })

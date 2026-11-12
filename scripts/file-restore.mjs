@@ -111,6 +111,8 @@ function target(env) {
       },
       backups: '/var/backups/fifth-element/test-1-files',
       secret: {
+        // пароль читается из файла среды, литерала нет.
+        // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
         pgPassword: () => readFileSync(join(dir, 'secrets', 'POSTGRES_PASSWORD'), 'utf8').trim(),
         s3Secret: () => keys.secretAccessKey,
       },
@@ -280,7 +282,7 @@ function open(key, sealed) {
   if (sealed.length < 32 || !sealed.subarray(0, 4).equals(MAGIC)) {
     throw new Refused('копия повреждена: неизвестный формат');
   }
-  const d = createDecipheriv('aes-256-gcm', key, sealed.subarray(4, 16));
+  const d = createDecipheriv('aes-256-gcm', key, sealed.subarray(4, 16), { authTagLength: 16 });
   d.setAuthTag(sealed.subarray(sealed.length - 16));
   try {
     return Buffer.concat([d.update(sealed.subarray(16, sealed.length - 16)), d.final()]);
@@ -1012,6 +1014,8 @@ async function cleanupRun(t) {
     }
   } else {
     const token = readEnvFile(join(ROOT, '.env')).BACKGROUND_CONTROL_TOKEN;
+    // петля узла 127.0.0.1: TLS здесь ничего не защищает.
+    // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
     const r = await fetch('http://127.0.0.1:4400/background/run/uploads.copy-cleanup', {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },

@@ -77,6 +77,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ------------------------------------------------------------- среда узла
 const ENV_DIR = join(ROOT, '.local', 'envs', envId);
+// пароль читается из файла среды, литерала нет.
+// nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
 const pgPassword = readFileSync(join(ENV_DIR, 'secrets', 'POSTGRES_PASSWORD'), 'utf8').trim();
 const routeFile = join(ENV_DIR, 'release', 'core-route.json');
 const CORE =

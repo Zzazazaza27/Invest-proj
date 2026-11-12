@@ -415,6 +415,8 @@ export async function waitCore(timeoutMs = 120_000) {
   const until = Date.now() + timeoutMs;
   while (Date.now() < until) {
     try {
+      // петля узла 127.0.0.1: TLS здесь ничего не защищает.
+      // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request
       const r = await fetch(`http://127.0.0.1:${CORE_INTERNAL_PORT}/ready`, {
         signal: AbortSignal.timeout(3000),
       });

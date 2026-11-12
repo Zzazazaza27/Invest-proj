@@ -179,6 +179,8 @@ function report(target, sql) {
     ];
   } else {
     if (!/^[a-z0-9-]{1,40}$/.test(target)) throw new Error(`неизвестная цель ${target}`);
+    // пароль читается из файла среды, литерала нет.
+    // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
     const pw = readFileSync(
       join(ROOT, '.local', 'envs', target, 'secrets', 'POSTGRES_PASSWORD'),
       'utf8',

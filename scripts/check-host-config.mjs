@@ -185,6 +185,8 @@ put(
 );
 put('etc/fifth-tls/services/key.pem', '-----BEGIN PRIVATE KEY-----\nBBB\n');
 put('etc/fifth-openbao/seal/static.key', 'SEAL-MUST-NOT-BE-TAKEN');
+// выдуманное значение проверки: съём не должен его взять.
+// nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
 put('etc/fifth-openbao/approle/prod-core/secret-id', 'APPROLE-SECRET');
 put(
   'etc/systemd/system/fifth-x.service',
