@@ -474,7 +474,10 @@ checks:
     runner: manual
     asserts: 32
     needs: [docker]
-    effects: ['контейнер из образа fifth/core:faults без сети; искусственный узел в нём, после прогона удаляется']
+    effects:
+      [
+        'контейнер из образа fifth/core:faults без сети; искусственный узел в нём, после прогона удаляется',
+      ]
     studied: code
     studiedOn: 2026-11-12
     note: >-
@@ -513,7 +516,10 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [docker]
-    effects: ['временный пароль одной учётной записи и контрольный материал её проекта — в восстановленной копии']
+    effects:
+      [
+        'временный пароль одной учётной записи и контрольный материал её проекта — в восстановленной копии',
+      ]
     studied: code
     studiedOn: 2026-11-12
     note: >-
@@ -551,7 +557,10 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [db]
-    effects: ['на источнике: временный пароль демонстрационного основателя, правка описания проекта до T, снятие публикации после T']
+    effects:
+      [
+        'на источнике: временный пароль демонстрационного основателя, правка описания проекта до T, снятие публикации после T',
+      ]
     studied: code
     studiedOn: 2026-11-12
     note: >-
@@ -567,7 +576,10 @@ checks:
     runner: manual-tool
     asserts: 0
     needs: [wsl]
-    effects: ['создаёт и удаляет дистрибутив WSL fifth-restore со своим Docker; пакеты Ubuntu на шаге prepare — единственный выход наружу']
+    effects:
+      [
+        'создаёт и удаляет дистрибутив WSL fifth-restore со своим Docker; пакеты Ubuntu на шаге prepare — единственный выход наружу',
+      ]
     studied: code
     studiedOn: 2026-11-12
     note: >-
