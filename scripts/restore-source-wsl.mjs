@@ -304,6 +304,10 @@ async function refresh() {
       '\n',
     );
     inSrc(`cat > ${SITE}/source.sh && chmod 700 ${SITE}/source.sh`, { input: src });
+    // Служба соединения узлов Garage — как на рабочем узле (и в конфигурацию комплекта).
+    inSrc(
+      'cp /opt/fifth-element/infra/systemd/fifth-garage-connect.service /etc/systemd/system/ && systemctl daemon-reload && systemctl enable fifth-garage-connect.service',
+    );
     step('Caddy источника');
     say(inSrc(`bash ${SITE}/source.sh caddy`));
     step('активность до комплекта');

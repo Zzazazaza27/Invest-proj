@@ -41,7 +41,9 @@ wait_ready() {
   done
   echo "база, ядро или Garage не готовы" >&2; return 1
 }
-case "${1:-}" in seed|set|activity|audit) wait_ready ;; esac
+# Узлы Garage после перезапуска теряют друг друга (новые адреса Docker): соединить, как
+# fifth-garage-connect на рабочем узле (служба стоит и здесь, но ждёт 45 с после загрузки).
+case "${1:-}" in seed|set|activity|audit) wait_ready && (cd "$ROOT" && node scripts/garage-init.mjs >/dev/null) ;; esac
 
 case "${1:-}" in
 packages)
@@ -102,7 +104,9 @@ up)
   for u in fifth-backup-db fifth-backup-set fifth-backup-check fifth-monitor-export fifth-disk-guard; do
     cp infra/systemd/$u.service infra/systemd/$u.timer /etc/systemd/system/
   done
+  cp infra/systemd/fifth-garage-connect.service /etc/systemd/system/
   systemctl daemon-reload
+  systemctl enable fifth-garage-connect.service >/dev/null 2>&1
   for u in fifth-backup-db fifth-backup-set fifth-backup-check fifth-monitor-export fifth-disk-guard; do
     systemctl enable --now $u.timer >/dev/null 2>&1
   done

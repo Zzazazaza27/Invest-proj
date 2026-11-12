@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 291; требований: 41
+- Проверок: 293; требований: 41
 
 ## Что защищено без участия человека
 
@@ -330,6 +330,8 @@
 | TOOL-PROBE-RESIDUE | `node scripts/probe-residue.mjs` | 0 | вручную, по поводу | — |
 | TOOL-RESTORE-FULL | `node scripts/restore-full.mjs --set <комплект> --secret-key <файл> --passphrase-file <файл> --openbao-keys <аварийный комплект> [--audit <выгрузка> --coverage-ack <покрыто до>]` | 0 | вручную, по поводу | — |
 | TOOL-RESTORE-FULL-CHECKS | `вызывается scripts/restore-full.mjs (переменные RESTORE_*)` | 0 | вручную, по поводу | — |
+| TOOL-RESTORE-SOURCE-WSL | `node scripts/restore-source-wsl.mjs build|refresh|export|destroy` | 0 | вручную, по поводу | — |
+| TOOL-RESTORE-SOURCE-ACTIVITY | `вызывается infra/restore/source.sh activity before|after` | 0 | вручную, по поводу | — |
 | TOOL-RESTORE-SITE-WSL | `node scripts/restore-site-wsl.mjs create|prepare|check|run|destroy` | 0 | вручную, по поводу | — |
 | TOOL-DISK-GUARD | `node scripts/disk-guard.mjs [--path /] [--container <имя>] [--targets auto|prod,test-1,…]` | 0 | вручную, по поводу | — |
 | TOOL-CLEAN-PROBE-DATA | `npm run stand:clean-probes` | 0 | вручную, по поводу | — |

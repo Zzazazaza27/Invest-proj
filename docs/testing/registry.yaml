@@ -522,6 +522,43 @@ checks:
     purpose: 'Страница кабинета, вход существующей учётной записи и свой профиль, чтение восстановленного файла, контрольная запись (загрузка, завершение, чтение), свежие данные Zabbix, потоки NATS, закрытый выход наружу из ядра.'
     confirmation: reviewed-in-code
 
+  - id: TOOL-RESTORE-SOURCE-WSL
+    file: scripts/restore-source-wsl.mjs
+    command: node scripts/restore-source-wsl.mjs build|refresh|export|destroy
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [wsl, docker]
+    effects:
+      [
+        'создаёт и удаляет дистрибутив WSL fifth-source с раскладкой рабочего узла и искусственными данными; комплект и выгрузка аудита — в .local/restore-trial; пакеты Ubuntu и образы Docker Hub — внешние источники источника',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 5 раздела 01: источник искусственного комплекта для первого сквозного испытания
+      (порядок Тэнка: сначала искусственный, затем prod). Ключи копий и подписи выгрузки —
+      испытательные. Использован в прогоне 12.11.
+    purpose: 'Узел с Compose, Caddy, юнитами копий и наблюдения, демонстрационными данными, живыми событиями до T и удалением после T; комплект и вынос выгрузки как на ноутбуке Томаса.'
+    confirmation: reviewed-in-code
+
+  - id: TOOL-RESTORE-SOURCE-ACTIVITY
+    file: scripts/restore-source-activity.mjs
+    command: вызывается infra/restore/source.sh activity before|after
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [db]
+    effects: ['на источнике: временный пароль демонстрационного основателя, правка описания проекта до T, снятие публикации после T']
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 5 раздела 01: делает проверку учёта удалений 2.1.5 содержательной.
+    purpose: 'События в журнале аудита до комплекта и удаление после него — восстановленная копия обязана его воспроизвести.'
+    confirmation: reviewed-in-code
+
   - id: TOOL-RESTORE-SITE-WSL
     file: scripts/restore-site-wsl.mjs
     command: node scripts/restore-site-wsl.mjs create|prepare|check|run|destroy
@@ -6148,6 +6185,8 @@ blocks:
         TOOL-RESTORE-FULL,
         TOOL-RESTORE-FULL-CHECKS,
         TOOL-RESTORE-SITE-WSL,
+        TOOL-RESTORE-SOURCE-WSL,
+        TOOL-RESTORE-SOURCE-ACTIVITY,
         PRB-OUTBOX-LEASE,
         PRB-BACKGROUND-JOBS,
         UNIT-CORE-BACKGROUND,
