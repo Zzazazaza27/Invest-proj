@@ -274,6 +274,8 @@ async function exportSet(outDir, pub, sources) {
   process.stdout.write(off.stdout.slice(-600));
   if (off.status !== 0) throw new Error(`вынос выгрузки: ${off.stderr.trim().slice(-400)}`);
   writeFileSync(join(outDir, 'audit', 'prod', 'export-signing.pub'), pub);
+  const act = inSrc('cat /var/lib/fifth-restore/activity.json', { allowFail: true });
+  if (act.ok) writeFileSync(join(outDir, 'audit', 'prod', 'activity.json'), act.out);
   console.log(
     `комплект ${setId}: ${join(outDir, 'set')}; выгрузка: ${join(outDir, 'audit', 'prod')}`,
   );
@@ -302,8 +304,12 @@ async function refresh() {
       '\n',
     );
     inSrc(`cat > ${SITE}/source.sh && chmod 700 ${SITE}/source.sh`, { input: src });
+    step('активность до комплекта');
+    say(inSrc(`bash ${SITE}/source.sh activity before`));
     step('комплект на момент T');
     say(inSrc(`bash ${SITE}/source.sh set`));
+    step('после комплекта: снятие публикации (учёт удалений должен его воспроизвести)');
+    say(inSrc(`bash ${SITE}/source.sh activity after`));
     step('выгрузка аудита');
     say(inSrc(`bash ${SITE}/source.sh audit`));
   } finally {

@@ -10,6 +10,7 @@
 #   source.sh up                  база, миграции, Garage, поток NATS, службы, Caddy, юниты
 #   source.sh seed                демонстрационные данные (из образа ядра: там pg и argon2)
 #   source.sh set                 полная копия базы и комплект на момент T
+#   source.sh activity before|after  живые действия через API до и после комплекта
 #   source.sh audit               порция выгрузки аудита (ключ подписи — испытательный)
 #   source.sh pull <каталог>      пригодный комплект — в каталог (сверка по описи)
 set -Eeuo pipefail
@@ -117,6 +118,11 @@ set)
   node scripts/backup.mjs db | tail -2
   systemctl start fifth-monitor-export.service || true
   node scripts/backup.mjs set | tail -4
+  ;;
+
+activity)
+  cd "$ROOT"
+  node scripts/restore-source-activity.mjs "$2"
   ;;
 
 audit)

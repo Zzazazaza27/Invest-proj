@@ -1013,6 +1013,21 @@ try {
     const v = runApply('verify');
     check('учёт удалений проверен', v.ok, v.err.split('\n').slice(-2).join(' | '));
     if (!a.ok || !v.ok) return false;
+    // Испытание на источнике: удаление после T (снята публикация) обязано воспроизвестись.
+    const actFile = join(resolve(auditDir), 'activity.json');
+    if (existsSync(actFile)) {
+      const act = JSON.parse(readFileSync(actFile, 'utf8'));
+      const st = psql(
+        state.pg.container,
+        state.db,
+        `SELECT listing_status FROM lab.projects WHERE id = '${act.projectId}'`,
+      ).text.trim();
+      check(
+        'удаление после момента T воспроизведено: публикация проекта снята',
+        st === act.afterT?.listing,
+        `${st}, ожидалось ${act.afterT?.listing}`,
+      );
+    }
     const o = runApply('open', ['--coverage-ack', coverageAck]);
     check('ворота открыты после проверки', o.ok, o.err.split('\n').slice(-2).join(' | '));
     return o.ok;
