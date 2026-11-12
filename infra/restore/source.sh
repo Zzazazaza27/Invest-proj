@@ -35,10 +35,11 @@ ensure_docker() {
 wait_ready() {
   for _ in $(seq 1 90); do
     [ "$(docker inspect -f "{{.State.Health.Status}}" fifth-postgres 2>/dev/null)" = healthy ] &&
-      [ "$(docker inspect -f "{{.State.Health.Status}}" fifth-core 2>/dev/null)" = healthy ] && return 0
+      [ "$(docker inspect -f "{{.State.Health.Status}}" fifth-core 2>/dev/null)" = healthy ] &&
+      [ "$(docker inspect -f "{{.State.Health.Status}}" fifth-garage-1 2>/dev/null)" = healthy ] && return 0
     sleep 2
   done
-  echo "база или ядро не готовы" >&2; return 1
+  echo "база, ядро или Garage не готовы" >&2; return 1
 }
 case "${1:-}" in seed|set|activity|audit) wait_ready ;; esac
 
