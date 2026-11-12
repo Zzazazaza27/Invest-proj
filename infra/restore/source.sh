@@ -97,17 +97,7 @@ up)
   node scripts/garage-init.mjs | tail -3
   docker run --rm --network host --env-file .env "$CORE_IMAGE" node scripts/nats-init-stream.mjs | tail -2
   node scripts/infra.mjs compose up -d
-  # Caddy на узле: сайт и хранилище — свой центр сертификатов (имя .test наружу не уходит).
-  cat > /etc/caddy/Caddyfile <<'EOF'
-# Узел-источник искусственного комплекта (fifth-source).
-src.5espace.test {
-	tls internal
-	reverse_proxy 127.0.0.1:80
-}
-EOF
-  grep -q 'src.5espace.test' /etc/hosts || echo '127.0.0.1 src.5espace.test' >> /etc/hosts
-  systemctl enable caddy >/dev/null 2>&1
-  systemctl restart caddy
+  bash "$0" caddy
   # Юниты копий и наблюдения — как на рабочем узле.
   for u in fifth-backup-db fifth-backup-set fifth-backup-check fifth-monitor-export fifth-disk-guard; do
     cp infra/systemd/$u.service infra/systemd/$u.timer /etc/systemd/system/
@@ -117,6 +107,20 @@ EOF
     systemctl enable --now $u.timer >/dev/null 2>&1
   done
   docker ps --format '{{.Names}} {{.Status}}' | sort
+  ;;
+
+caddy)
+  # Caddy на узле: сайт и хранилище — свой центр сертификатов (имя .test наружу не уходит).
+  cat > /etc/caddy/Caddyfile <<'EOF'
+# Узел-источник искусственного комплекта (fifth-source).
+src.5espace.test {
+	tls internal
+	reverse_proxy 127.0.0.1:8080
+}
+EOF
+  grep -q 'src.5espace.test' /etc/hosts || echo '127.0.0.1 src.5espace.test' >> /etc/hosts
+  systemctl enable caddy >/dev/null 2>&1
+  systemctl restart caddy
   ;;
 
 seed)

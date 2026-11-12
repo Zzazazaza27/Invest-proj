@@ -304,6 +304,8 @@ async function refresh() {
       '\n',
     );
     inSrc(`cat > ${SITE}/source.sh && chmod 700 ${SITE}/source.sh`, { input: src });
+    step('Caddy источника');
+    say(inSrc(`bash ${SITE}/source.sh caddy`));
     step('активность до комплекта');
     say(inSrc(`bash ${SITE}/source.sh activity before`));
     step('комплект на момент T');
