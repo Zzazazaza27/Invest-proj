@@ -8,6 +8,7 @@
 #   source.sh packages            пакеты Ubuntu (единственный выход наружу)
 #   source.sh code <bundle>       серверная копия из git bundle
 #   source.sh up                  база, миграции, Garage, поток NATS, службы, Caddy, юниты
+#   source.sh verify              вход, профиль, файл, запись через публичный вход (до комплекта)
 #   source.sh seed                демонстрационные данные (из образа ядра: там pg и argon2)
 #   source.sh set                 полная копия базы и комплект на момент T
 #   source.sh activity before|after  живые действия через API до и после комплекта
@@ -114,19 +115,52 @@ up)
   ;;
 
 caddy)
-  # Caddy на узле: сайт и хранилище — свой центр сертификатов (имя .test наружу не уходит).
-  cat > /etc/caddy/Caddyfile <<'EOF'
+  # Caddy на узле: сайт и вход файлов (как files.5espace.com: только POST подписанной формы в
+  # бакет), свой центр сертификатов (имена .test наружу не уходят).
+  bucket=$(sed -n 's/^S3_BUCKET=//p' "$ROOT/.env")
+  cat > /etc/caddy/Caddyfile <<CADDY
 # Узел-источник искусственного комплекта (fifth-source).
 src.5espace.test {
 	tls internal
 	reverse_proxy 127.0.0.1:8080
 }
-EOF
-  grep -q 'src.5espace.test' /etc/hosts || echo '127.0.0.1 src.5espace.test' >> /etc/hosts
+
+files-src.5espace.test {
+	tls internal
+	@upload {
+		method POST
+		path /$bucket
+	}
+	handle @upload {
+		reverse_proxy 127.0.0.1:9000 {
+			header_up Host {host}
+		}
+	}
+	respond 404
+}
+CADDY
+  for h in src.5espace.test files-src.5espace.test; do
+    grep -q " $h\$" /etc/hosts || echo "127.0.0.1 $h" >> /etc/hosts
+  done
   systemctl enable caddy >/dev/null 2>&1
   systemctl restart caddy
   ;;
-
+verify)
+  # Те же контрольные операции, что после восстановления (вход, профиль, файл, запись) — на
+  # источнике до комплекта: заведомо неисправная установка не тратит часы восстановления.
+  cd "$ROOT"
+  wait_ready
+  r=0
+  db=$(sed -n 's/^DATABASE_URL_OWNER=//p' .env | sed 's#.*/##; s#?.*##')
+  NODE_EXTRA_CA_CERTS=/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt \
+  RESTORE_ONLY_OPERATIONS=1 RESTORE_BASE=https://src.5espace.test \
+  RESTORE_CORE_CONTAINER=fifth-core RESTORE_PG_CONTAINER=fifth-postgres RESTORE_DB="$db" \
+  RESTORE_SESSION_COOKIE="$(sed -n 's/^SESSION_COOKIE_NAME=//p' .env)" \
+  RESTORE_CSRF_COOKIE="$(sed -n 's/^CSRF_COOKIE_NAME=//p' .env)" \
+    node scripts/restore-full-checks.mjs > /tmp/verify.log || r=$?
+  grep -v '^{' /tmp/verify.log
+  exit $r
+  ;;
 seed)
   cd "$ROOT"
   node scripts/seed-demo.mjs load | tail -5

@@ -112,6 +112,9 @@ function sourceEnv() {
     // серверах это CORE_BIND_HOST из env.mjs и route.conf слотов (аудит F58); без них — 502.
     CORE_BIND_HOST: '0.0.0.0',
     CORE_HOST: '172.17.0.1',
+    // Вход файлов как files.5espace.com: без публичного адреса ядро отключает загрузку из
+    // браузера (S3Service.uploadAddressProblem) — контрольная запись не проходит.
+    S3_PUBLIC_ENDPOINT: 'https://files-src.5espace.test',
     PUBLIC_BASE_URL: 'https://src.5espace.test',
     CORE_PUBLIC_URL: 'https://src.5espace.test',
     CORS_ALLOWED_ORIGINS: 'https://src.5espace.test',
@@ -233,17 +236,33 @@ async function build() {
   step('демонстрационные данные');
   say(inSrc(`bash ${SITE}/source.sh seed`));
 
-  step('копия базы и комплект на момент T');
-  say(inSrc(`bash ${SITE}/source.sh set`));
-
-  step('выгрузка аудита (после T: покрывает комплект)');
-  say(inSrc(`bash ${SITE}/source.sh audit`));
+  sourceToSet();
 
   await exportSet(outDir, pub, sources);
 
   step('источник выключен');
   keeper?.kill();
   wsl(['--terminate', DISTRO]);
+}
+
+/**
+ * От работающего источника до комплекта: сначала те же операции, что после восстановления
+ * (вход, профиль, файл, запись) — неисправный источник не тратит часы восстановления; затем
+ * активность до T, комплект, снятие публикации после T, выгрузка аудита.
+ */
+function sourceToSet() {
+  step('контрольные операции на источнике (до комплекта)');
+  const v = inSrc(`bash ${SITE}/source.sh verify`, { allowFail: true });
+  process.stdout.write(v.out);
+  if (!v.ok) throw new Error('контрольные операции на источнике не прошли — комплект не снимается');
+  step('активность до комплекта');
+  say(inSrc(`bash ${SITE}/source.sh activity before`));
+  step('копия базы и комплект на момент T');
+  say(inSrc(`bash ${SITE}/source.sh set`));
+  step('после комплекта: снятие публикации (учёт удалений должен его воспроизвести)');
+  say(inSrc(`bash ${SITE}/source.sh activity after`));
+  step('выгрузка аудита (после T: покрывает комплект)');
+  say(inSrc(`bash ${SITE}/source.sh audit`));
 }
 
 /** Комплект и выгрузка аудита — с источника на ноутбук; вынос выгрузки как у Томаса. */
@@ -315,14 +334,7 @@ async function refresh() {
     );
     step('Caddy источника');
     say(inSrc(`bash ${SITE}/source.sh caddy`));
-    step('активность до комплекта');
-    say(inSrc(`bash ${SITE}/source.sh activity before`));
-    step('комплект на момент T');
-    say(inSrc(`bash ${SITE}/source.sh set`));
-    step('после комплекта: снятие публикации (учёт удалений должен его воспроизвести)');
-    say(inSrc(`bash ${SITE}/source.sh activity after`));
-    step('выгрузка аудита');
-    say(inSrc(`bash ${SITE}/source.sh audit`));
+    sourceToSet();
   } finally {
     keeper.kill();
   }

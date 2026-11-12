@@ -229,6 +229,10 @@ try {
     }
   }
 
+  // RESTORE_ONLY_OPERATIONS — проверка источника до комплекта: только операции 1–4
+  // (свежесть Zabbix, потоки комплекта и закрытый выход к живому источнику не относятся).
+  if (E.RESTORE_ONLY_OPERATIONS) throw Object.assign(new Error('только операции'), { stop: true });
+
   // 5. Zabbix получает свежие данные (база восстановлена с историей до T).
   const since = Math.floor(new Date(E.RESTORE_SINCE).getTime() / 1000);
   let fresh = false;
@@ -269,6 +273,7 @@ try {
   );
   check('из ядра наружу закрыто', egress.text.trim() === 'closed', egress.text.trim());
 } catch (e) {
-  check('контрольные операции прерваны', false, String(e.message ?? e));
+  if (!e.stop) check('контрольные операции прерваны', false, String(e.message ?? e));
 }
 console.log(JSON.stringify({ checks, serviceReturn }));
+if (checks.some((c) => !c.ok)) process.exitCode = 1;
