@@ -64,7 +64,7 @@ export async function startReceiver({ host = '127.0.0.1', port = 18444, routes }
         eventId: req.headers['fifth-event-id'] ?? null,
         eventType: req.headers['fifth-event-type'] ?? null,
         mode: name ? state[name].mode : null,
-        signature: null,
+        signatureCheck: null,
         status: null,
       };
       log.push(rec);
@@ -74,7 +74,7 @@ export async function startReceiver({ host = '127.0.0.1', port = 18444, routes }
         return;
       }
       const sig = verifySignature(state[name].secret, req.headers['fifth-signature'], body);
-      rec.signature = sig.ok ? 'valid' : `invalid: ${sig.reason ?? 'не сошлась'}`;
+      rec.signatureCheck = sig.ok ? 'valid' : `invalid: ${sig.reason ?? 'не сошлась'}`;
       rec.signedAt = sig.ts ?? null;
       switch (state[name].mode) {
         case 'fail':

@@ -104,10 +104,10 @@ const log = r.log();
 const by = (id) => log.find((x) => x.eventId === id);
 check(
   'подпись ядра опознана верной',
-  by('e-ok')?.signature === 'valid' && by('e-fail')?.signature === 'valid',
+  by('e-ok')?.signatureCheck === 'valid' && by('e-fail')?.signatureCheck === 'valid',
 );
-check('без подписи — неверна', by('e-nosig')?.signature.startsWith('invalid'));
-check('устаревшая подпись — неверна', /устарела/.test(by('e-old')?.signature ?? ''));
+check('без подписи — неверна', by('e-nosig')?.signatureCheck.startsWith('invalid'));
+check('устаревшая подпись — неверна', /устарела/.test(by('e-old')?.signatureCheck ?? ''));
 check(
   'журнал: имя адреса, Fifth-Event-Id, режим и итог',
   by('e-fail')?.name === 'a' &&

@@ -45,6 +45,7 @@ function client() {
         method,
         headers,
         body: body && JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
       });
       for (const c of r.headers.getSetCookie?.() ?? []) {
         const [pair] = c.split(';');

@@ -343,10 +343,10 @@ try {
   );
   check(
     'подпись верна на всех запросах',
-    posted.every((x) => x.signature === 'valid'),
+    posted.every((x) => x.signatureCheck === 'valid'),
     posted
-      .filter((x) => x.signature !== 'valid')
-      .map((x) => x.signature)
+      .filter((x) => x.signatureCheck !== 'valid')
+      .map((x) => x.signatureCheck)
       .join('; '),
   );
   const dup = all.filter(
