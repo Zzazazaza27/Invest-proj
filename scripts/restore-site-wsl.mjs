@@ -32,7 +32,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const DISTRO = 'fifth-restore';
+const DISTRO = process.env.FIFTH_RESTORE_DISTRO || 'fifth-restore';
 const HOME = join(ROOT, '.local', 'wsl', DISTRO);
 const SITE = '/var/lib/fifth-restore';
 const argv = process.argv.slice(2);
@@ -189,8 +189,9 @@ async function run() {
   const set = resolve(opt('--set', ''));
   const key = resolve(opt('--secret-key', ''));
   const pass = resolve(opt('--passphrase-file', ''));
-  const kit = resolve(opt('--openbao-keys', ''));
-  for (const f of [set, key, pass, kit]) if (!existsSync(f)) throw new Error(`нет ${f}`);
+  const kit = opt('--openbao-keys') ? resolve(opt('--openbao-keys')) : null;
+  for (const f of [set, key, pass, ...(kit ? [kit] : [])])
+    if (!existsSync(f)) throw new Error(`нет ${f}`);
   const commit = spawnSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], {
     encoding: 'utf8',
   }).stdout.trim();
@@ -200,7 +201,7 @@ async function run() {
   const keys = '/dev/shm/fifth-restore-keys';
   inSite(`mkdir -m 700 -p ${keys} && cat > ${keys}/secret.asc`, { input: readFileSync(key) });
   inSite(`cat > ${keys}/pass.txt`, { input: readFileSync(pass) });
-  inSite(`cat > ${keys}/emergency.gpg`, { input: readFileSync(kit) });
+  if (kit) inSite(`cat > ${keys}/emergency.gpg`, { input: readFileSync(kit) });
   inSite(`cat > ${SITE}/site-info.json`, { input: readFileSync(siteFile('site-info.json')) });
   let auditArgs = '';
   if (opt('--audit')) {
@@ -231,7 +232,7 @@ async function run() {
         '-c',
         `cd ${SITE}/tools && RESTORE_TOOL_COMMIT=${commit} RESTORE_NETNS=fifth ip netns exec fifth node scripts/restore-full.mjs ` +
           `--set ${SITE}/set --secret-key ${keys}/secret.asc --passphrase-file ${keys}/pass.txt ` +
-          `--openbao-keys ${keys}/emergency.gpg ${auditArgs} --site-info ${SITE}/site-info.json --out ${report}`,
+          `${kit ? `--openbao-keys ${keys}/emergency.gpg ` : ''}${auditArgs} --site-info ${SITE}/site-info.json --out ${report}`,
       ],
       { stdio: 'inherit' },
     );

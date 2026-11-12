@@ -948,6 +948,9 @@ try {
       '--passphrase-file',
       '/keys/pass.txt',
     ];
+    const testExportKey = existsSync(join(resolve(auditDir), 'export-signing.pub'));
+    if (testExportKey)
+      limit('выгрузка аудита подписана испытательным ключом источника (не ключом рабочей среды)');
     const runApply = (cmd, extra = []) =>
       docker(
         [
@@ -957,6 +960,8 @@ try {
           `container:${state.pg.container}`,
           '--user',
           'root',
+          // Испытание на искусственном источнике: выгрузка подписана его ключом, не рабочим.
+          ...(testExportKey ? ['-e', 'AUDIT_EXPORT_PUBLIC_KEY=/audit/export-signing.pub'] : []),
           '-v',
           `${join(TOOLS, 'scripts')}:/app/rs:ro`,
           '-v',

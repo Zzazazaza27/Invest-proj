@@ -19,7 +19,8 @@ PKGS='docker.io docker-compose-v2 caddy curl ca-certificates gnupg iproute2 tar 
 
 case "${1:-}" in
 wslconf)
-  cat > /etc/wsl.conf <<'EOF'
+  host="${2:-fifth-restore}"
+  cat > /etc/wsl.conf <<EOF
 [boot]
 systemd=true
 [automount]
@@ -30,7 +31,7 @@ enabled=false
 appendWindowsPath=false
 [network]
 generateHosts=false
-hostname=fifth-restore
+hostname=$host
 [user]
 default=root
 EOF
