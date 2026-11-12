@@ -70,6 +70,7 @@ const protocol = {
   checks: [],
   held: [],
   limitations: [],
+  notes: [],
   site: siteInfo,
 };
 let failed = 0;
@@ -272,7 +273,10 @@ try {
     });
     check('выход наружу с узла закрыт', !out.ok);
     if (!out.ok)
-      hold('выход наружу', 'закрыт правилами площадки (nftables), проверено до запуска служб');
+      hold(
+        'выход наружу',
+        'площадка: службы в сетевом пространстве без маршрута наружу; проверено до запуска служб',
+      );
     const problems = verifyCatalog(catalog, setDir);
     check(
       'комплект сверен с описью (SHA-256 каждого файла)',
@@ -426,8 +430,13 @@ try {
         .join(', '),
     );
     sh('systemd-tmpfiles', ['--create'], { allowFail: true });
-    for (const s of host.skipped.filter((x) => x.kind === 'missing'))
-      limit(`на исходном узле не было: ${s.path} (${s.why})`);
+    // Нужное службам (монтирования, юниты, EnvironmentFile) и не найденное — ограничение; ссылки
+    // из текста настроек на пути, которых нет и на исходном узле, — только заметка протокола.
+    for (const s of host.skipped.filter((x) => x.kind === 'missing')) {
+      if (/^ссылка из|^import Caddy/.test(s.why))
+        protocol.notes.push(`нет и на исходном узле: ${s.path} (${s.why})`);
+      else limit(`на исходном узле не было: ${s.path} (${s.why})`);
+    }
   });
 
   // -------------------------------------------------------------- 4. образы
@@ -440,7 +449,8 @@ try {
       }).text.trim();
       if (id !== img.id)
         throw new Error(`образ ${img.tags[0] ?? img.id}: после загрузки другой идентификатор`);
-      for (const t of img.tags) docker(['tag', img.id, t]);
+      // Ссылку с дайджестом тегом не назначить: такие службы получают образ по идентификатору ниже.
+      for (const t of img.tags.filter((x) => !x.includes('@'))) docker(['tag', img.id, t]);
       loaded += 1;
     }
     check(
@@ -1112,6 +1122,7 @@ function markdown(p) {
     '## Ограничения',
     '',
     ...(p.limitations.length ? p.limitations.map((l) => `- ${l}`) : ['- нет']),
+    ...(p.notes?.length ? ['', '## Заметки', '', ...p.notes.map((n) => `- ${n}`)] : []),
     ...(p.error ? ['', `**Остановлено:** ${p.error}`] : []),
     '',
   ];

@@ -160,7 +160,10 @@ function check() {
     ],
     ['Docker площадки работает в пространстве fifth', s.dockerdNetns === s.fifthNetns],
     ['в пространстве fifth нет маршрута наружу', !s.nsDefaultRoute],
-    ['в пространстве fifth нет внешних интерфейсов (только петля и мосты Docker)', s.nsLinks.trim() === ''],
+    [
+      'в пространстве fifth нет внешних интерфейсов (только петля и мосты Docker)',
+      s.nsLinks.trim() === '',
+    ],
     ['наружу из пространства fifth не выйти', s.outside === 'closed'],
     ['Docker площадки пуст', s.docker.containers === 0],
   ];
@@ -188,7 +191,9 @@ function check() {
 
 async function run() {
   // WSL гасит дистрибутив без подключённых сеансов: держатель на всё время прогона.
-  const keeper = spawn('wsl.exe', ['-d', DISTRO, '-u', 'root', '--', 'sleep', '86400'], { stdio: 'ignore' });
+  const keeper = spawn('wsl.exe', ['-d', DISTRO, '-u', 'root', '--', 'sleep', '86400'], {
+    stdio: 'ignore',
+  });
   process.on('exit', () => keeper.kill());
   check();
   const set = resolve(opt('--set', ''));
@@ -258,13 +263,28 @@ async function run() {
   }
 }
 
+/** Снимок подготовленной площадки: каждый прогон — с одинакового чистого состояния. */
+function snapshot() {
+  wsl(['--terminate', DISTRO]);
+  wsl(['--export', DISTRO, siteFile('prepared.tar')]);
+  console.log(`снимок подготовленной площадки: ${siteFile('prepared.tar')}`);
+}
+
+/** Вернуть площадку к снимку (после прогона или отказа). */
+function reset() {
+  if (!existsSync(siteFile('prepared.tar'))) throw new Error('снимка нет — сначала snapshot');
+  if (distros().includes(DISTRO)) wsl(['--unregister', DISTRO]);
+  wsl(['--import', DISTRO, HOME, siteFile('prepared.tar'), '--version', '2']);
+  console.log(`площадка ${DISTRO} возвращена к снимку`);
+}
+
 function destroy() {
   if (!distros().includes(DISTRO)) return console.log('дистрибутива нет');
   wsl(['--unregister', DISTRO]);
   console.log(`дистрибутив ${DISTRO} удалён вместе с данными`);
 }
 
-const commands = { create, prepare, check, run, destroy };
+const commands = { create, prepare, snapshot, reset, check, run, destroy };
 if (!commands[cmd]) {
   console.error(`команды: ${Object.keys(commands).join(', ')}`);
   process.exit(2);

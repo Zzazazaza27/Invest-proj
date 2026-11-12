@@ -69,7 +69,11 @@ ExecStart=/bin/sh -c 'ip netns add $NS 2>/dev/null || true; ip -n $NS link set l
 [Install]
 WantedBy=multi-user.target
 EOF
-  for u in containerd docker caddy; do
+  # Docker и Caddy — в пространстве $NS. systemd даёт такой службе и своё пространство
+  # монтирований, поэтому containerd запускает сам dockerd (дочерним, в том же пространстве):
+  # отдельный containerd не увидел бы корневую ФС контейнера, смонтированную dockerd.
+  rm -f /etc/systemd/system/containerd.service.d/zz-restore-netns.conf
+  for u in docker caddy; do
     mkdir -p /etc/systemd/system/$u.service.d
     cat > /etc/systemd/system/$u.service.d/zz-restore-netns.conf <<EOF
 # Площадка восстановления: служба в сетевом пространстве $NS (только петля).
@@ -80,11 +84,19 @@ After=fifth-restore-netns.service
 NetworkNamespacePath=/run/netns/$NS
 EOF
   done
+  printf '[Service]
+ExecStart=
+ExecStart=/usr/bin/dockerd -H fd://
+' > /etc/systemd/system/docker.service.d/zz-restore-own-containerd.conf
   systemctl daemon-reload
   systemctl enable --now fifth-restore-netns.service
   systemctl stop caddy || true
   systemctl disable caddy || true
-  systemctl restart containerd docker
+  # Системный containerd не нужен: без маски dockerd подключился бы к его сокету.
+  systemctl disable --now containerd >/dev/null 2>&1 || true
+  systemctl mask containerd >/dev/null 2>&1 || true
+  rm -f /run/containerd/containerd.sock
+  systemctl restart docker
   echo 'площадка подготовлена'
   ;;
 
