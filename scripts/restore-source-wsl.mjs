@@ -121,10 +121,6 @@ function sourceEnv() {
     MAIL_TRANSPORT: 'file',
     MAIL_OUTBOX_DIR: '/tmp/fifth-mail',
     WEBHOOK_DELIVERY_MODE: 'capture',
-    AUDIT_EXPORT_DIR: '/var/lib/fifth-audit-export',
-    AUDIT_EXPORT_SIGNING_KEY: '/etc/fifth-audit-export/signing.key',
-    AUDIT_EXPORT_RECIPIENT: '/opt/fifth-element/.local/backup-keys/recipient.asc',
-    AUDIT_EXPORT_MONITOR_FILE: '/var/lib/fifth-monitor/audit-export.json',
   };
   let out = text;
   for (const [k, v] of Object.entries(set)) {
@@ -141,15 +137,13 @@ async function build() {
   const outDir = resolve(opt('--out', join(ROOT, '.local', 'restore-trial')));
   if (!existsSync(rootfs) || !want || !source)
     throw new Error('нужны --rootfs, --sha256, --source');
-  if (distros().includes(DISTRO)) throw new Error(`${DISTRO} уже есть — сначала destroy`);
+  // --resume: дистрибутив уже создан и пакеты стоят — продолжить с переноса образов.
+  const resume = argv.includes('--resume') && distros().includes(DISTRO);
+  if (!resume && distros().includes(DISTRO))
+    throw new Error(`${DISTRO} уже есть — destroy или --resume`);
   const sources = [];
 
   step('образ ОС и дистрибутив');
-  const got = await sha256File(rootfs);
-  if (got !== want.toLowerCase()) throw new Error(`SHA-256 образа ОС не совпал: ${got}`);
-  sources.push({ what: 'образ ОС источника', url: source, sha256: got });
-  mkdirSync(HOME, { recursive: true });
-  wsl(['--import', DISTRO, HOME, rootfs, '--version', '2']);
   const site = readFileSync(join(ROOT, 'infra', 'restore', 'site.sh'), 'utf8').replace(
     /\r\n/g,
     '\n',
@@ -158,13 +152,22 @@ async function build() {
     /\r\n/g,
     '\n',
   );
-  inSrc(`mkdir -p ${SITE} && cat > ${SITE}/site.sh`, { input: site });
-  inSrc(`cat > ${SITE}/source.sh && chmod 700 ${SITE}/*.sh`, { input: src });
-  inSrc(`bash ${SITE}/site.sh wslconf ${DISTRO}`);
-  wsl(['--terminate', DISTRO]);
+  const got = await sha256File(rootfs);
+  if (got !== want.toLowerCase()) throw new Error(`SHA-256 образа ОС не совпал: ${got}`);
+  sources.push({ what: 'образ ОС источника', url: source, sha256: got });
+  if (!resume) {
+    mkdirSync(HOME, { recursive: true });
+    wsl(['--import', DISTRO, HOME, rootfs, '--version', '2']);
+    inSrc(`mkdir -p ${SITE} && cat > ${SITE}/site.sh`, { input: site });
+    inSrc(`bash ${SITE}/site.sh wslconf ${DISTRO}`);
+    wsl(['--terminate', DISTRO]);
+  }
+  inSrc(`mkdir -p ${SITE} && cat > ${SITE}/source.sh && chmod 700 ${SITE}/source.sh`, {
+    input: src,
+  });
 
   step('пакеты Ubuntu');
-  say(inSrc(`bash ${SITE}/source.sh packages`));
+  if (!resume) say(inSrc(`bash ${SITE}/source.sh packages`));
   const apt = inSrc(
     "grep -rh '^URIs:\\|^deb ' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | sort -u",
   )
@@ -178,9 +181,7 @@ async function build() {
     ['save', 'fifth/core:src', 'fifth/web:src', 'fifth/postgres:16'],
     'docker load | tail -3',
   );
-  inSrc(
-    'c=$(docker create fifth/core:src) && docker cp $c:/usr/local/bin/node /usr/local/bin/node && docker rm $c >/dev/null && ln -sf /usr/local/bin/node /usr/bin/node && node --version',
-  );
+  say(inSrc(`bash ${SITE}/source.sh node`));
 
   step('код (git bundle HEAD)');
   const bundle = join(HOME, 'head.bundle');

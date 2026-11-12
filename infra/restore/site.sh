@@ -41,6 +41,8 @@ EOF
 prepare)
   [ "$(cat /proc/1/comm)" = systemd ] || { echo 'systemd не PID 1 — перезапусти дистрибутив' >&2; exit 1; }
   # Пакеты — до закрытия сети; источники записываются в info.
+  # DNS дистрибутива поднимается не сразу после запуска.
+  for _ in $(seq 1 30); do getent hosts archive.ubuntu.com >/dev/null && break; sleep 2; done
   apt-get update -q
   DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends $PKGS
   # Сетевое пространство без выхода наружу — постоянной службой (переживает перезапуск).

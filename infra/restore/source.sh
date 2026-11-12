@@ -22,14 +22,25 @@ cd /
 
 case "${1:-}" in
 packages)
+  # DNS дистрибутива поднимается не сразу после запуска.
+  for _ in $(seq 1 30); do getent hosts archive.ubuntu.com >/dev/null && break; sleep 2; done
   apt-get update -q
   DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends $PKGS
   systemctl enable --now docker
   echo 'пакеты источника установлены'
   ;;
 
+node)
+  # node — из образа ядра (тот же, что у рабочей среды), без внешнего источника.
+  c=$(docker create "$CORE_IMAGE")
+  docker cp "$c:/usr/local/bin/node" /usr/local/bin/node
+  docker rm "$c" >/dev/null
+  ln -sf /usr/local/bin/node /usr/bin/node
+  node --version
+  ;;
+
 code)
-  [ -d "$ROOT/.git" ] && { echo "$ROOT уже есть" >&2; exit 1; }
+  [ -d "$ROOT/.git" ] && { echo "код уже на месте: $(git -C "$ROOT" rev-parse --short HEAD)"; exit 0; }
   git clone -q "$2" "$ROOT"
   git -C "$ROOT" remote remove origin
   mkdir -p "$ROOT/.local" /var/backups/fifth-element /var/lib/fifth-monitor
@@ -89,8 +100,13 @@ set)
 audit)
   cd "$ROOT"
   mkdir -p /var/lib/fifth-audit-export
+  # Переменные выгрузки — только этой команде (имя *_FILE в .env загрузчик принял бы за секрет).
   set -a; . ./.env; set +a
-  node scripts/audit-export.mjs run | tail -3
+  AUDIT_EXPORT_DIR=/var/lib/fifth-audit-export \
+    AUDIT_EXPORT_SIGNING_KEY=/etc/fifth-audit-export/signing.key \
+    AUDIT_EXPORT_RECIPIENT="$ROOT/.local/backup-keys/recipient.asc" \
+    AUDIT_EXPORT_MONITOR_FILE=/var/lib/fifth-monitor/audit-export.json \
+    node scripts/audit-export.mjs run | tail -3
   ;;
 
 pull)

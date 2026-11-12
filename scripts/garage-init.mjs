@@ -225,7 +225,9 @@ const origins = (
     await api('AllowBucketKey', {
       bucketId: files.id,
       accessKeyId: tmp.accessKeyId,
-      permissions: { read: false, write: false, owner: true },
+      // Lifecycle Garage ставит только ключ с правом записи (CORS — владельцу достаточно);
+      // ключ временный и удаляется ниже. Найдено на источнике работы № 5 (12.11).
+      permissions: { read: false, write: true, owner: true },
     });
     const xml = Buffer.from(
       `<CORSConfiguration><CORSRule>${origins.map((o) => `<AllowedOrigin>${o}</AllowedOrigin>`).join('')}<AllowedMethod>POST</AllowedMethod><AllowedHeader>*</AllowedHeader><ExposeHeader>ETag</ExposeHeader><MaxAgeSeconds>600</MaxAgeSeconds></CORSRule></CORSConfiguration>`,
