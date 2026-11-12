@@ -691,6 +691,18 @@ try {
       { env: pgbr, allowFail: true },
     );
     check('pgBackRest восстановил копию на LSN T', r.ok, r.err.split('\n').pop());
+    // База дочитывает журнал до T через pgBackRest — из хранилища узла (монтирование службы).
+    // На новом узле оно пустое: хранилище комплекта ложится на его место, владельцу postgres
+    // образа; дальше копирование нового узла продолжает ту же цепочку.
+    const repoDir = env.BACKUP_PGBACKREST_DIR || '/var/backups/fifth-element/pgbackrest';
+    mkdirSync(repoDir, { recursive: true });
+    sh('cp', ['-a', `${repo}/.`, repoDir]);
+    sh('chown', ['-R', '999:999', repoDir]);
+    check(
+      'хранилище pgBackRest комплекта — на месте хранилища узла',
+      existsSync(join(repoDir, 'archive', 'main', 'archive.info')),
+      repoDir,
+    );
     compose(pg.project, ['start', pg.service]);
     await waitFor(
       () => psql(pg.container, 'postgres', 'SELECT pg_is_in_recovery()').text.trim() === 'f',
