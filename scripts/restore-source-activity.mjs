@@ -89,7 +89,9 @@ try {
     for (const p of projects) {
       const person = people.find((x) => x.key === p.founder);
       const [row] = await q(
-        'SELECT id, owner_user_id FROM lab.projects WHERE title = $1 AND deleted_at IS NULL',
+        `SELECT p.id, fp.user_id AS owner_user_id FROM lab.projects p
+           JOIN lab.founders_projects fp ON fp.project_id = p.id AND fp.role = 'owner'
+          WHERE p.title = $1 AND p.deleted_at IS NULL`,
         [p.title],
       );
       if (person && row) {

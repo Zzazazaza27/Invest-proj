@@ -100,7 +100,8 @@ try {
   // 2. учётная запись с проектом
   const row = psql(
     E.RESTORE_DB,
-    `SELECT u.id || '|' || p.id FROM identity.users u JOIN lab.projects p ON p.owner_user_id = u.id
+    `SELECT u.id || '|' || p.id FROM identity.users u JOIN lab.founders_projects fp ON fp.user_id = u.id AND fp.role = 'owner'
+       JOIN lab.projects p ON p.id = fp.project_id
       WHERE u.status = 'active' AND u.deleted_at IS NULL AND p.deleted_at IS NULL
       ORDER BY (SELECT count(*) FROM lab.project_materials m WHERE m.project_id = p.id AND m.upload_state = 'ready') DESC
       LIMIT 1`,
