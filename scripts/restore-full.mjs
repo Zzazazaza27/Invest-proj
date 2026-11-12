@@ -888,6 +888,34 @@ try {
     check(`службы исходного узла запущены (${running.length})`, true);
     const core = running.find((s) => s.role === 'core');
     state.core = core;
+    // Потоки JetStream в комплект не входят (события — в outbox базы): поток создаёт установщик
+    // самой среды из образа ядра комплекта, как при установке узла. Без него ядро отвечает 502.
+    if (running.some((s) => s.role === 'nats')) {
+      let ns;
+      for (let i = 0; i < 5; i++) {
+        ns = docker(
+          [
+            'run',
+            '--rm',
+            '--network',
+            'host',
+            '--env-file',
+            join(ROOT, '.env'),
+            core.tag,
+            'node',
+            'scripts/nats-init-stream.mjs',
+          ],
+          { allowFail: true },
+        );
+        if (ns.ok) break;
+        await sleep(5_000);
+      }
+      check(
+        'поток NATS создан установщиком среды (nats-init-stream)',
+        ns.ok,
+        (ns.ok ? ns.text : ns.err).trim().split('\n').slice(-1)[0],
+      );
+    }
     // Ворота закрыты: людям 503, /v1/ready — не готов.
     const ready = docker(
       [
