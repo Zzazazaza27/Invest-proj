@@ -107,6 +107,11 @@ function sourceEnv() {
     FIFTH_WEB_IMAGE: 'fifth/web:src',
     FIFTH_POSTGRES_IMAGE: 'fifth/postgres:16',
     WEB_PORT: '8080',
+    // Linux, не Docker Desktop: ядро (сеть узла) должно слушать мост Docker, а nginx в web —
+    // знать адрес ядра числом (его resolver имя host.docker.internal не разрешает). На
+    // серверах это CORE_BIND_HOST из env.mjs и route.conf слотов (аудит F58); без них — 502.
+    CORE_BIND_HOST: '0.0.0.0',
+    CORE_HOST: '172.17.0.1',
     PUBLIC_BASE_URL: 'https://src.5espace.test',
     CORE_PUBLIC_URL: 'https://src.5espace.test',
     CORS_ALLOWED_ORIGINS: 'https://src.5espace.test',
