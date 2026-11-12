@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 281; требований: 41
+- Проверок: 285; требований: 41
 
 ## Что защищено без участия человека
 
@@ -57,9 +57,12 @@
 
 ### `npm run suite:isolated` — Разрушительные проверки в изоляции
 
-Кто запускает: Маус вручную, отдельно от остальных наборов. Позиций: 1.
+Кто запускает: Маус вручную, отдельно от остальных наборов. Позиций: 4.
 
 - **CHK-DB-RESILIENCE** — Живучесть ядра при сбоях базы и брокера — на ОТДЕЛЬНОМ ядре.
+- **CHK-GARAGE-FAULTS** — Отказы Garage в рабочей конфигурации (3 копии, consistent): один узел вне строя — загрузка, готовность и чтение идут; без кворума — передача отклонена, матер…
+- **CHK-OPENBAO-FAULTS** — Отказы OpenBao: остановлен, запечатан, аудит не пишется (sys/health при этом в порядке), чужой удостоверяющий центр — ядро отказывает закрыто (503 dependency…
+- **CHK-RESOURCE-PRESSURE** — Диск: ниже 70 % — ничего; ≥ 85 % — «Файлы» только чтение (capacity_limit), загрузка отклонена, чтение идёт, событие с измерением; 80–85 % — держится; ниже 80…
 
 > Поднимает СВОЁ ядро на тестовой базе и своём брокере. Рвёт соединения и ограничивает подключения только своей базы; общий брокер стенда не трогает. Восстанавливает зависимости даже при собственном падении.
 
@@ -322,6 +325,7 @@
 | TOOL-BUILD-TEST-REGISTRY-DOC | `npm run docs:registry` | 0 | вручную, по поводу | — |
 | TOOL-BUILD-LOCAL-REDACTORS | `npm run secrets:redactors` | 0 | вручную, по поводу | — |
 | TOOL-PROBE-RESIDUE | `node scripts/probe-residue.mjs` | 0 | вручную, по поводу | — |
+| TOOL-DISK-GUARD | `node scripts/disk-guard.mjs [--path /] [--container <имя>] [--targets auto|prod,test-1,…]` | 0 | вручную, по поводу | — |
 | TOOL-CLEAN-PROBE-DATA | `npm run stand:clean-probes` | 0 | вручную, по поводу | — |
 | TOOL-CONTENT-SNAPSHOT | `npm run content:export` | 0 | вручную, по поводу | — |
 | TOOL-BACKUP | `node scripts/backup.mjs init-secrets|keys-init|db|set|check|status|pull` | 0 | вручную, по поводу | — |
@@ -404,6 +408,9 @@
 | CHK-FILE-RESTORE | `node scripts/check-file-restore.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)` | 27 | вручную | — |
 | CHK-LOST-FILE | `node scripts/check-lost-file.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)` | 18 | вручную | — |
 | CHK-UPLOAD-CLEANUP | `node scripts/check-upload-cleanup.mjs (стенд с UPLOAD_COPY_CLEANUP_ENABLED=true и BACKGROUND_CONTROL_TOKEN)` | 22 | вручную | — |
+| CHK-GARAGE-FAULTS | `node scripts/check-garage-faults.mjs [--keep]` | 39 | вручную | `suite:isolated` |
+| CHK-OPENBAO-FAULTS | `node scripts/check-openbao-faults.mjs [--keep]` | 23 | вручную | `suite:isolated` |
+| CHK-RESOURCE-PRESSURE | `node scripts/check-resource-pressure.mjs [--keep]` | 28 | вручную | `suite:isolated` |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |
@@ -509,7 +516,7 @@
 
 | Идентификатор | Команда | Утверждений | Кто запускает | Где запускается |
 | --- | --- | --- | --- | --- |
-| UNIT-CORE-AVAILABILITY-RULES | `npm run test -w apps/core` | 19 | CI | CI |
+| UNIT-CORE-AVAILABILITY-RULES | `npm run test -w apps/core` | 20 | CI | CI |
 | UNIT-CORE-OUTBOX-FAILURES | `npm run test -w apps/core` | 5 | CI | CI |
 | UNIT-CORE-PLATFORM-FLAGS | `npm run test -w apps/core` | 1 | CI | CI |
 | UNIT-CORE-DEPENDENCY-UNAVAILABLE | `npm run test -w apps/core` | 17 | CI | CI |

@@ -55,6 +55,28 @@ interface RestrictionRow {
   set_at: Date;
 }
 
+/** Автоматическое ограничение службы хоста (M181): мало места на диске. */
+interface AutoRestrictionRow {
+  source: 'disk';
+  mode: 'read_only';
+  used_pct: string;
+  forecast_h: string | null;
+  set_at: Date;
+  refreshed_at: Date;
+}
+
+interface Restrictions {
+  manual: RestrictionRow | null;
+  auto: AutoRestrictionRow | null;
+}
+
+/** Действующее ограничение: ручное (оно не мягче «только чтения») важнее автоматического. */
+function effective(r: Restrictions): Restriction | null {
+  if (r.manual) return { mode: r.manual.mode, source: 'manual' };
+  if (r.auto) return { mode: r.auto.mode, source: 'auto' };
+  return null;
+}
+
 /**
  * Доступность групп функций (блок 4, 4.11): «Файлы» и «Почта».
  *
@@ -79,7 +101,7 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     events: { read: null, write: null },
   };
   private readonly restriction: Partial<
-    Record<FunctionGroup, { value: RestrictionRow | null; at: number }>
+    Record<FunctionGroup, { value: Restrictions; at: number }>
   > = {};
 
   constructor(
@@ -93,9 +115,9 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
 
   private backlogGrowing = false;
 
-  /** Ручное ограничение группы (режим) или `null`. Кэш — те же 5 с. */
+  /** Действующее ограничение группы (ручное или автоматическое) или `null`. Кэш — 5 с. */
   async restrictionOf(group: FunctionGroup): Promise<'read_only' | 'unavailable' | null> {
-    return (await this.currentRestriction(group))?.mode ?? null;
+    return effective(await this.currentRestriction(group))?.mode ?? null;
   }
 
   get instance(): string {
@@ -282,7 +304,7 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     return dependencyState(own ? [own] : [], mode, now);
   }
 
-  private async currentRestriction(group: FunctionGroup): Promise<RestrictionRow | null> {
+  private async currentRestriction(group: FunctionGroup): Promise<Restrictions> {
     const cached = this.restriction[group];
     if (cached && Date.now() - cached.at < RESTRICTION_CACHE_MS) return cached.value;
     const value = await this.db.readOnly(SYSTEM('availability-restriction'), async (tx) => {
@@ -291,7 +313,12 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
           WHERE group_id = $1`,
         [group],
       );
-      return rows[0] ?? null;
+      const { rows: auto } = await tx.query<AutoRestrictionRow>(
+        `SELECT source, mode, used_pct, forecast_h, set_at, refreshed_at
+           FROM availability.auto_restrictions WHERE group_id = $1`,
+        [group],
+      );
+      return { manual: rows[0] ?? null, auto: auto[0] ?? null };
     });
     this.restriction[group] = { value, at: Date.now() };
     return value;
@@ -304,7 +331,7 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     return groupStatus({
       read: this.localDependency(group, 'read', now),
       write: this.localDependency(group, 'write', now),
-      restriction: restriction ? ({ mode: restriction.mode } satisfies Restriction) : null,
+      restriction: effective(restriction),
     });
   }
 
@@ -358,7 +385,7 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     return groupStatus({
       read: dependencyState(all, 'read', now),
       write: dependencyState(all, 'write', now),
-      restriction: restriction ? { mode: restriction.mode } : null,
+      restriction: effective(restriction),
     });
   }
 
@@ -373,23 +400,30 @@ export class AvailabilityService implements OnModuleInit, OnModuleDestroy {
     const now = new Date();
     const all = await this.observations(group);
     delete this.restriction[group];
-    const restriction = await this.currentRestriction(group);
+    const restrictions = await this.currentRestriction(group);
+    const { manual, auto } = restrictions;
     const read = dependencyState(all, 'read', now);
     const write = dependencyState(all, 'write', now);
     return {
       group,
-      status: groupStatus({
-        read,
-        write,
-        restriction: restriction ? { mode: restriction.mode } : null,
-      }),
+      status: groupStatus({ read, write, restriction: effective(restrictions) }),
       dependency: { read: read.health, write: write.health },
-      restriction: restriction
+      restriction: manual
         ? {
-            mode: restriction.mode,
-            reasonCode: restriction.reason_code,
-            note: restriction.note,
-            setAt: restriction.set_at.toISOString(),
+            mode: manual.mode,
+            reasonCode: manual.reason_code,
+            note: manual.note,
+            setAt: manual.set_at.toISOString(),
+          }
+        : null,
+      autoRestriction: auto
+        ? {
+            source: auto.source,
+            mode: auto.mode,
+            usedPct: Number(auto.used_pct),
+            forecastHours: auto.forecast_h === null ? null : Number(auto.forecast_h),
+            setAt: auto.set_at.toISOString(),
+            refreshedAt: auto.refreshed_at.toISOString(),
           }
         : null,
       instances: all.map((o) => ({

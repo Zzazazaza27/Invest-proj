@@ -402,6 +402,90 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-12
 
+  - id: CHK-GARAGE-FAULTS
+    file: scripts/check-garage-faults.mjs
+    command: node scripts/check-garage-faults.mjs [--keep]
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 39
+    needs: [docker]
+    effects:
+      [
+        'своя среда fifth-faults-* (сеть, PostgreSQL, три узла Garage, ядро из образа fifth/core:faults текущего кода); останавливает, отрезает от сети и стирает только свои узлы; в конце всё удаляется',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 4 раздела 01 (2.1.2, 2.1.6, 4.9). Образ ядра — `docker build -f
+      infra/images/core.Dockerfile -t fifth/core:faults .` из рабочего дерева. Стенд и серверы
+      не затрагиваются. Протокол — out/faults/garage-*.json.
+    purpose: 'Отказы Garage в рабочей конфигурации (3 копии, consistent): один узел вне строя — загрузка, готовность и чтение идут; без кворума — передача отклонена, материал не готов (и когда объект записан до отказа), запись «Файлов» закрыта, новая загрузка — group_unavailable, после возврата отложенное завершение доходит; разделение связи — до пометки узла отключённым запись ждёт без ложной готовности, затем идёт через большинство, после возврата и ремонта блоков у всех поровну, ошибок ресинхронизации нет; узел с новым пустым диском без шага оператора (data_layout) не запускается, после — копии восстанавливаются ремонтом; входной узел ядра — честный отказ «Файлов»; форма 60 с при передаче ~102 с — поведение Garage записано, передача после срока — отказ; lifecycle «незавершённые multipart — 1 день» ставится и читается, объекты не удаляет.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
+  - id: CHK-OPENBAO-FAULTS
+    file: scripts/check-openbao-faults.mjs
+    command: node scripts/check-openbao-faults.mjs [--keep]
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 23
+    needs: [docker]
+    effects:
+      [
+        'своя среда fifth-faults-* и свой OpenBao fifth-faults-openbao (TLS, Static seal, файловый аудит на томе 2 МБ), искусственные ключи; ядро в KMS_MODE=kms; в конце всё удаляется',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 4 раздела 01 (5.6, 4.9). Наблюдение — настоящий scripts/monitor-openbao.mjs против
+      этого OpenBao. Протокол — out/faults/openbao-*.json.
+    purpose: 'Отказы OpenBao: остановлен, запечатан, аудит не пишется (sys/health при этом в порядке), чужой удостоверяющий центр — ядро отказывает закрыто (503 dependency_unavailable, в журнале — kms), ключей в окружении нет; наблюдение различает down, sealed и «открыт, но отказывает в запросах» (тревога Zabbix); после возврата — работа без перезапуска ядра, Static seal открывает сам; в журнале аудита нет почты, пароля и ключа.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
+  - id: CHK-RESOURCE-PRESSURE
+    file: scripts/check-resource-pressure.mjs
+    command: node scripts/check-resource-pressure.mjs [--keep]
+    kind: check
+    level: сквозной
+    runner: manual
+    asserts: 28
+    needs: [docker]
+    effects:
+      [
+        'своя среда fifth-faults-*; «диск» узлов Garage — тома в памяти 64 МБ, заполняются балластом; ядро с пределом памяти 320 МБ под параллельным чтением; в конце всё удаляется',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 4 раздела 01 (06 Load «Место на диске», 6.4; M181). Служба места — настоящий
+      scripts/disk-guard.mjs против базы среды. Протокол — out/faults/pressure-*.json.
+    purpose: 'Диск: ниже 70 % — ничего; ≥ 85 % — «Файлы» только чтение (capacity_limit), загрузка отклонена, чтение идёт, событие с измерением; 80–85 % — держится; ниже 80 % — снято само с событием; полный диск без службы — материал не готов, прежнее читается, ничего не удалено, после освобождения работа продолжается; прогноз исчерпания по наклону. Память: ядро с пределом под нагрузкой выдерживает или перезапускается политикой; после — готово, данные целы, принятая загрузка завершается, дублей нет, память возвращается.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
+  - id: TOOL-DISK-GUARD
+    file: scripts/disk-guard.mjs
+    command: node scripts/disk-guard.mjs [--path /] [--container <имя>] [--targets auto|prod,test-1,…]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker, db]
+    effects:
+      [
+        'вводит и снимает автоматическое ограничение «Файлов» в базах сред узла (availability.report_disk_usage, M181); пишет MONITOR_STATE_DIR/disk-guard.json и образцы прогноза',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 4 раздела 01. Таймер fifth-disk-guard (раз в минуту); установка —
+      `fifth-test op prod-disk-guard-setup` в общей приёмке, по слову Томаса (затрагивает prod).
+    purpose: 'Место на диске узла: ≥ 85 % или прогноз < 24 ч — «Файлы» только чтение во всех средах узла, ниже 80 % — снимается; пользовательские данные не удаляются; состояние для Zabbix.'
+    confirmation: reviewed-in-code
+
   - id: CHK-FILES-ENDPOINT
     file: scripts/check-files-endpoint.mjs
     command: FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs
@@ -1098,7 +1182,7 @@ checks:
     kind: unit-test
     level: модульный
     runner: ci
-    asserts: 19
+    asserts: 20
     studied: code
     studiedOn: 2026-11-08
     note: >-
@@ -5941,6 +6025,10 @@ blocks:
     title: База, соединения, живучесть под сбоями
     members:
       [
+        CHK-GARAGE-FAULTS,
+        CHK-OPENBAO-FAULTS,
+        CHK-RESOURCE-PRESSURE,
+        TOOL-DISK-GUARD,
         PRB-OUTBOX-LEASE,
         PRB-BACKGROUND-JOBS,
         UNIT-CORE-BACKGROUND,
@@ -6140,6 +6228,9 @@ suites:
     command: npm run suite:isolated
     members:
       - CHK-DB-RESILIENCE
+      - CHK-GARAGE-FAULTS
+      - CHK-OPENBAO-FAULTS
+      - CHK-RESOURCE-PRESSURE
     note: >-
       Поднимает СВОЁ ядро на тестовой базе и своём брокере. Рвёт соединения
       и ограничивает подключения только своей базы; общий брокер стенда не

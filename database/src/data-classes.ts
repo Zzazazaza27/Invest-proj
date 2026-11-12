@@ -105,6 +105,10 @@ export const DATA_CLASSES: Readonly<Record<string, TableClass>> = {
   // ограничения ставит оператор на время работ — рабочее состояние среды, не содержимое.
   'availability.observations': { kind: 'operational', note: 'наблюдения экземпляров' },
   'availability.restrictions': { kind: 'operational', note: 'ограничения оператора' },
+  'availability.auto_restrictions': {
+    kind: 'operational',
+    note: 'автоограничения службы хоста (диск)',
+  },
 
   // --------------------------------------------------------------- requests
   // Ключи повтора (M159, 2.6): ссылка на результат операции, со сроком.

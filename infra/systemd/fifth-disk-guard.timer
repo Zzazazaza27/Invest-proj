@@ -1,0 +1,11 @@
+# Раз в минуту: заполнение диска закрывает выдачу новых загрузок до исчерпания места.
+[Unit]
+Description=5E disk guard timer
+
+[Timer]
+OnCalendar=*:*:45
+AccuracySec=5s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

@@ -78,3 +78,37 @@ export function applyKeysFile(argv, parseEnvFile) {
   Object.assign(process.env, vars);
   return path;
 }
+
+/**
+ * Lifecycle бакета файлов (2.1.2; работа № 4 раздела 01): незавершённые multipart-загрузки
+ * удаляются через сутки. Объекты правило НЕ удаляет (нет Expiration): готовые файлы, служебные
+ * копии (их чистит работа № 8 по своим проверкам) и всё прочее остаётся. Ядро грузит формой
+ * (один запрос), multipart может начать только клиент с ключом записи — правило убирает его
+ * брошенные части, чтобы они не копились на диске. Garage применяет правило раз в сутки.
+ */
+export const FILES_LIFECYCLE_XML =
+  '<?xml version="1.0" encoding="UTF-8"?>' +
+  '<LifecycleConfiguration xmlns="http://s3.amazonaws.com/doc/2006-03-01/">' +
+  '<Rule><ID>abort-incomplete-multipart</ID><Status>Enabled</Status><Filter><Prefix></Prefix></Filter>' +
+  '<AbortIncompleteMultipartUpload><DaysAfterInitiation>1</DaysAfterInitiation></AbortIncompleteMultipartUpload>' +
+  '</Rule></LifecycleConfiguration>';
+
+/** Поставить правило ключом с правом владельца бакета. */
+export async function applyFilesLifecycle(storage, bucket) {
+  const { s3Object } = await import('./s3.mjs');
+  const { createHash } = await import('node:crypto');
+  const body = Buffer.from(FILES_LIFECYCLE_XML);
+  const r = await s3Object(
+    { ...storage, bucket },
+    'PUT',
+    '',
+    body,
+    {
+      'content-md5': createHash('md5').update(body).digest('base64'),
+      'content-type': 'application/xml',
+    },
+    { lifecycle: '' },
+  );
+  if (!r.ok)
+    throw new Error(`lifecycle ${bucket}: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
+}

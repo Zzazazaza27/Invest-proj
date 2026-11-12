@@ -24,7 +24,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { loadEnv, parseEnvFile } from './lib/backup.mjs';
-import { applyKeysFile, garageApi } from './lib/garage-admin.mjs';
+import { applyFilesLifecycle, applyKeysFile, garageApi } from './lib/garage-admin.mjs';
 import { PORTS } from './lib/ports.mjs';
 import { s3Object } from './lib/s3.mjs';
 
@@ -248,6 +248,17 @@ const origins = (
     if (r.status !== 200)
       throw new Error(`PutBucketCors: HTTP ${r.status} ${(await r.text()).slice(0, 200)}`);
     say(`CORS ${files.globalAliases?.[0]}: POST с ${origins.join(', ')}`);
+    // Lifecycle (2.1.2, работа № 4): брошенные multipart — через сутки; объекты не трогает.
+    await applyFilesLifecycle(
+      {
+        endpoint: `http://127.0.0.1:${PORTS.garageS3}`,
+        region: env.S3_REGION || 'us-east-1',
+        accessKey: tmp.accessKeyId,
+        secretKey: tmp.secretAccessKey,
+      },
+      files.globalAliases?.[0],
+    );
+    say(`lifecycle ${files.globalAliases?.[0]}: незавершённые multipart — через 1 день`);
   } finally {
     await api('DeleteKey', {}, `?id=${tmp.accessKeyId}`);
   }

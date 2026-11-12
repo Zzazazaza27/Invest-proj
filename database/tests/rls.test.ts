@@ -547,7 +547,7 @@ describe('RLS: покрытие манифеста', () => {
     expect(rows).toEqual([]);
   });
 
-  it('схема соответствует спецификации: 11 схем и 58 таблиц', async () => {
+  it('схема соответствует спецификации: 11 схем и 59 таблиц', async () => {
     const schemas = await getPool().query<{ count: string }>(
       `SELECT count(*)::text AS count FROM information_schema.schemata
         WHERE schema_name IN ('identity','kyc','lab','comms','billing','audit','integration',
@@ -680,7 +680,9 @@ describe('RLS: покрытие манифеста', () => {
     //   без этого их таблицы оставались вне манифеста RLS (найдено при выпуске W13–W21).
     // + comms.mail_dispatches и comms.mail_queue (M162), integration.webhook_destinations
     //   (M163): почта и пауза доставки по получателю.
-    expect(Number(tables.rows[0]!.count)).toBe(58);
+    // + availability.auto_restrictions (M181, работа № 4 раздела 01): автоограничение
+    //   «Файлов» по месту на диске.
+    expect(Number(tables.rows[0]!.count)).toBe(59);
   });
 });
 

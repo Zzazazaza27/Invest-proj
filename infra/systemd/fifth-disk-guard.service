@@ -1,0 +1,12 @@
+# Место на диске (работа № 4 раздела 01, 6.4): ≥ 85 % — «Файлы» только чтение во всех средах
+# узла, ниже 80 % — снимается само. Пользовательские данные не удаляются.
+[Unit]
+Description=5E disk guard
+After=docker.service
+Wants=docker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fifth-element
+ExecStart=/usr/bin/node scripts/disk-guard.mjs --path / --targets auto
+TimeoutStartSec=50

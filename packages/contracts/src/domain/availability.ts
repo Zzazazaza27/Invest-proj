@@ -31,6 +31,8 @@ export const GROUP_REASONS = [
   'observations_stale',
   'manual_restriction',
   'not_configured',
+  /** Автоматическое ограничение: мало места на диске (M181). */
+  'capacity_limit',
 ] as const;
 export const GroupReasonSchema = z.enum(GROUP_REASONS);
 export type GroupReason = z.infer<typeof GroupReasonSchema>;
@@ -85,6 +87,21 @@ export const AdminGroupStatusSchema = z.object({
       setAt: IsoDateTimeSchema,
     })
     .nullable(),
+  /**
+   * Автоматическое ограничение службы хоста (M181): «Файлы» только чтение, пока занятость
+   * диска не вернётся ниже порога снятия. Ручным ограничением не является и им не снимается.
+   */
+  autoRestriction: z
+    .object({
+      source: z.literal('disk'),
+      mode: z.literal('read_only'),
+      usedPct: z.number(),
+      forecastHours: z.number().nullable(),
+      setAt: IsoDateTimeSchema,
+      refreshedAt: IsoDateTimeSchema,
+    })
+    .nullable()
+    .optional(),
   instances: z.array(
     z.object({
       instance: z.string(),

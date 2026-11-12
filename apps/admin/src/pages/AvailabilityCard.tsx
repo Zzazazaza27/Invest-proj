@@ -157,6 +157,17 @@ function GroupRow({
       ) : (
         <p className="small muted">Ручного ограничения нет.</p>
       )}
+      {group.autoRestriction ? (
+        <p data-availability-auto-restriction={group.autoRestriction.source}>
+          Автоматическое ограничение: только чтение — мало места на диске (занято{' '}
+          {group.autoRestriction.usedPct}%
+          {group.autoRestriction.forecastHours !== null
+            ? `, прогноз исчерпания ${Math.round(group.autoRestriction.forecastHours)} ч`
+            : ''}
+          , с {formatDate(group.autoRestriction.setAt)}). Снимется само, когда место вернётся ниже
+          порога; ручным снятием не управляется.
+        </p>
+      ) : null}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         {group.restriction ? null : (
           <>

@@ -56,6 +56,35 @@ export async function openbaoState() {
 }
 
 /**
+ * Обслуживает ли открытый OpenBao запросы (работа № 4 раздела 01): `sys/health` отвечает и
+ * при отказе аудита, а запросы с журналом — нет. Проба — вход служебной учёткой копий и отзыв
+ * своего токена: оба запроса пишутся в аудит. Ответ: `ok`, `refused` (5xx — например, аудит
+ * не пишется), `unknown` (нет учётки или OpenBao не открыт — это видно по состоянию).
+ */
+export async function openbaoRequestsState() {
+  if (!existsSync(join(BACKUP, 'role-id'))) return 'unknown';
+  try {
+    const res = await open('POST', 'auth/approle/login', {
+      body: {
+        role_id: readFileSync(join(BACKUP, 'role-id'), 'utf8').trim(),
+        // Значение читается из файла, в коде его нет.
+        // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
+        secret_id: readFileSync(join(BACKUP, 'secret-id'), 'utf8').trim(),
+      },
+    });
+    const login = await json(res);
+    if (res.statusCode >= 500) return 'refused';
+    const token = login.auth?.client_token;
+    if (!token) return 'unknown';
+    const revoke = await open('POST', 'auth/token/revoke-self', { token });
+    revoke.resume();
+    return revoke.statusCode >= 500 ? 'refused' : 'ok';
+  } catch {
+    return 'unknown';
+  }
+}
+
+/**
  * Снимок OpenBao в файл. Возвращает `null`, если OpenBao на узле нет.
  * Работающий OpenBao без входа для копий — ошибка: копия была бы неполной молча.
  */

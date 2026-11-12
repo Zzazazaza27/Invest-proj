@@ -38,8 +38,10 @@ const THRESHOLDS = {
   cpuWarn: 85, // % за 10 минут
   ramWarn: 15, // % доступной за 5 минут
   ramHigh: 5, // % доступной за 2 минуты
-  diskWarn: 20, // % свободного
-  diskHigh: 10,
+  // 06 Load «Место на диске»: занято 70 % — предупреждение, 85 % — критическое (тогда же
+  // служба хоста disk-guard закрывает выдачу новых загрузок, M181).
+  diskWarn: 30, // % свободного
+  diskHigh: 15,
   certWarnDays: 14,
   certHighDays: 3,
   outboxAgeWarnSec: 300,
@@ -606,6 +608,26 @@ async function configure() {
     value_type: 3,
     preprocessing: [step(JS, "return JSON.parse(value).agent === 'down' ? 0 : 1;", 2, '0')],
   });
+  await item({
+    name: 'OpenBao: открытый обслуживает запросы (аудит пишется)',
+    key_: 'openbao.requests.ok',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/openbao.json]'),
+    value_type: 3,
+    preprocessing: [step(JS, "return JSON.parse(value).requests === 'refused' ? 0 : 1;", 2, '0')],
+  });
+  await trigger(
+    'OpenBao открыт, но отказывает в запросах',
+    `count(/${H}/openbao.requests.ok,#3,"eq",0)=3`,
+    4,
+    {
+      recovery_mode: 1,
+      recovery_expression: `count(/${H}/openbao.requests.ok,#2,"eq",1)=2`,
+      comments:
+        'sys/health в порядке, а вход и операции получают 5xx — чаще всего не пишется аудит ' +
+        '(место на диске, права). Операции с ключами отказывают закрыто. docs/runbooks/openbao.md.',
+    },
+  );
   await trigger('OpenBao Agent не работает', `count(/${H}/openbao.agent.ok,#3,"eq",0)=3`, 4, {
     recovery_mode: 1,
     recovery_expression: `count(/${H}/openbao.agent.ok,#2,"eq",1)=2`,
@@ -617,6 +639,63 @@ async function configure() {
     recovery_expression: `count(/${H}/openbao.ok,#2,"eq",1)=2`,
     comments: 'Операции с ключами отказывают. Порядок восстановления — docs/runbooks/openbao.md.',
   });
+
+  // ---- Место на диске (работа № 4, M181): служба хоста disk-guard ----------
+  await item({
+    name: 'Место на диске: состояние службы, исходный файл',
+    key_: 'vfs.file.contents[/monitor/disk-guard.json]',
+    type: AGENT,
+    value_type: 4,
+    history: '0',
+  });
+  await item({
+    name: 'Место на диске: отчёт принят всеми средами',
+    key_: 'disk.guard.ok',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/disk-guard.json]'),
+    value_type: 3,
+    preprocessing: [step(JS, 'return JSON.parse(value).errors === 0 ? 1 : 0;', 2, '0')],
+  });
+  await item({
+    name: 'Место на диске: выдача загрузок закрыта (прогноз или ≥ 85 %)',
+    key_: 'disk.guard.critical',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/disk-guard.json]'),
+    value_type: 3,
+    preprocessing: [step(JS, "return JSON.parse(value).level === 'critical' ? 1 : 0;", 2, '0')],
+  });
+  await item({
+    name: 'Место на диске: возраст состояния службы, с',
+    key_: 'vfs.file.time[/monitor/disk-guard.json,modify]',
+    type: AGENT,
+    value_type: 3,
+    preprocessing: [
+      UNSUP('missing'),
+      step(
+        JS,
+        "if (value === 'missing') return 999999; return Math.floor(Date.now() / 1000) - Number(value);",
+      ),
+    ],
+  });
+  await trigger('Загрузки закрыты: мало места на диске', `last(/${H}/disk.guard.critical)=1`, 4, {
+    comments:
+      'Служба disk-guard перевела «Файлы» в «только чтение» (≥ 85 % или прогноз < 24 ч). ' +
+      'Снимется само ниже 80 %. Освободить место, не удаляя пользовательские данные.',
+  });
+  await trigger(
+    'Служба места на диске не доставила отчёт',
+    `count(/${H}/disk.guard.ok,#3,"eq",0)=3`,
+    3,
+    { comments: 'Хоть одна база среды не приняла отчёт: защита от заполнения не действует.' },
+  );
+  await trigger(
+    'Служба места на диске не работает',
+    `last(/${H}/vfs.file.time[/monitor/disk-guard.json,modify])>${THRESHOLDS.containersStaleSec}`,
+    3,
+    {
+      comments: 'disk-guard.json не обновлялся дольше 5 минут: защита от заполнения не действует.',
+    },
+  );
 
   // ---- Сайт снаружи, сертификат --------------------------------------------
   // Рабочая среда закрыта паролем: агент его не умеет, проверку ведёт сервер, элемент HTTP.

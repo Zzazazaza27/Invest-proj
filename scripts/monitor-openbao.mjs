@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
  * Состояние OpenBao для агента Zabbix (блок 5, задание 3): файл MONITOR_STATE_DIR/openbao.json.
+ * `requests` — обслуживает ли открытый OpenBao запросы с журналом (работа № 4: отказ аудита).
  * Без токенов и секретов. Zabbix от OpenBao не зависит.
  *
  *   node scripts/monitor-openbao.mjs
@@ -9,7 +10,7 @@ import { renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnvFile } from './lib/backup.mjs';
-import { openbaoState } from './lib/openbao.mjs';
+import { openbaoRequestsState, openbaoState } from './lib/openbao.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const env = { ...parseEnvFile(join(ROOT, '.env'), { secrets: false }), ...process.env };
@@ -24,5 +25,8 @@ function agentState() {
     return 'down';
   }
 }
-writeFileSync(`${file}.tmp`, JSON.stringify({ state: await openbaoState(), agent: agentState() }));
+const state = await openbaoState();
+// Открыт, но не обслуживает (отказ аудита и т. п.) — отдельный признак: `sys/health` его не видит.
+const requests = state === 'open' ? await openbaoRequestsState() : 'unknown';
+writeFileSync(`${file}.tmp`, JSON.stringify({ state, requests, agent: agentState() }));
 renameSync(`${file}.tmp`, file);

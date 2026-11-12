@@ -74,6 +74,8 @@ export function dependencyState(all: Observation[], mode: GroupMode, now: Date):
 
 export interface Restriction {
   mode: RestrictionMode;
+  /** Источник: ручное ограничение эксплуатации или автоматическое по месту на диске (M181). */
+  source?: 'manual' | 'auto';
 }
 
 /** Итоговое состояние группы для действий и показа. */
@@ -93,13 +95,15 @@ export function groupStatus(input: {
   const writeAllowed = enabled && !manualWrite && write.health === 'ok';
   const readAllowed = enabled && !manualRead && read.health !== 'fail';
 
+  const restrictedBy: GroupReason =
+    restriction?.source === 'auto' ? 'capacity_limit' : 'manual_restriction';
   const writeReason: GroupReason = manualWrite
-    ? 'manual_restriction'
+    ? restrictedBy
     : write.health === 'ok'
       ? 'ok'
       : write.reason;
   const readReason: GroupReason = manualRead
-    ? 'manual_restriction'
+    ? restrictedBy
     : read.health === 'fail'
       ? read.reason
       : read.health === 'unknown'

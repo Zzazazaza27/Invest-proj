@@ -139,6 +139,17 @@ describe('Итоговое состояние группы', () => {
     expect(s.read.allowed).toBe(true);
   });
 
+  it('автоограничение по диску (M181): запись закрыта с причиной capacity_limit, чтение открыто', () => {
+    const s = groupStatus({
+      read: ok,
+      write: ok,
+      restriction: { mode: 'read_only', source: 'auto' },
+    });
+    expect(s.state).toBe('read_only');
+    expect(s.write).toMatchObject({ allowed: false, reason: 'capacity_limit' });
+    expect(s.read).toMatchObject({ allowed: true, reason: 'ok' });
+  });
+
   it('ручной запрет закрывает и чтение; причина — безопасный код', () => {
     const s = groupStatus({ read: ok, write: ok, restriction: { mode: 'unavailable' } });
     expect(s.state).toBe('unavailable');
