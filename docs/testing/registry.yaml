@@ -466,6 +466,79 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-12
 
+  - id: CHK-HOST-CONFIG
+    file: scripts/check-host-config.mjs
+    command: node scripts/check-host-config.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 32
+    needs: [docker]
+    effects: ['контейнер из образа fifth/core:faults без сети; искусственный узел в нём, после прогона удаляется']
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 5 раздела 01: съём действующей конфигурации узла в комплект копий
+      (scripts/lib/host-config.mjs). systemctl и docker в контейнере — ответы-образцы.
+    purpose: 'Импорты Caddy (файлы, шаблоны, фрагменты), drop-in и EnvironmentFile юнитов, файлы и монтирования Compose по меткам, замыкание по ссылкам; секреты по пути и по содержимому — только в зашифрованную часть; Static seal key не берётся; /run и данные — не конфигурация.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
+  - id: TOOL-RESTORE-FULL
+    file: scripts/restore-full.mjs
+    command: node scripts/restore-full.mjs --set <комплект> --secret-key <файл> --passphrase-file <файл> --openbao-keys <аварийный комплект> [--audit <выгрузка> --coverage-ack <покрыто до>]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects:
+      [
+        'на чистом узле восстановления (root): учётные записи, код, конфигурация, секреты, образы, OpenBao, база, Garage, службы, юниты, Caddy; временный пароль одной учётной записи и контрольный материал — в восстановленной копии',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 5 раздела 01, протокол по 2.5 (out/restore-full/). Контрольные операции —
+      scripts/restore-full-checks.mjs. Площадка — scripts/restore-site-wsl.mjs. На площадке не
+      запускался: её создание и копия prod — этап общей приёмки по слову Томаса.
+    purpose: 'Полная конфигурация prod из комплекта без исходной площадки; внешние действия удержаны до первого запуска служб; ворота открываются только после сверки и учёта удалений 2.1.5; вход, запись и файл через публичный вход.'
+    confirmation: reviewed-in-code
+
+  - id: TOOL-RESTORE-FULL-CHECKS
+    file: scripts/restore-full-checks.mjs
+    command: вызывается scripts/restore-full.mjs (переменные RESTORE_*)
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects: ['временный пароль одной учётной записи и контрольный материал её проекта — в восстановленной копии']
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 5 раздела 01: контрольные операции восстановленного узла через публичный вход.
+      Не запускался (этап общей приёмки).
+    purpose: 'Страница кабинета, вход существующей учётной записи и свой профиль, чтение восстановленного файла, контрольная запись (загрузка, завершение, чтение), свежие данные Zabbix, потоки NATS, закрытый выход наружу из ядра.'
+    confirmation: reviewed-in-code
+
+  - id: TOOL-RESTORE-SITE-WSL
+    file: scripts/restore-site-wsl.mjs
+    command: node scripts/restore-site-wsl.mjs create|prepare|check|run|destroy
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [wsl]
+    effects: ['создаёт и удаляет дистрибутив WSL fifth-restore со своим Docker; пакеты Ubuntu на шаге prepare — единственный выход наружу']
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Работа № 5 раздела 01. Docker и Caddy площадки — в сетевом пространстве fifth с одной петлёй;
+      check проверяет назначения и изоляцию до восстановления. Не запускался (этап общей приёмки).
+    purpose: 'Испытательная площадка: свой systemd и свой Docker, без дисков и программ Windows, без выхода наружу после подготовки.'
+    confirmation: reviewed-in-code
+
   - id: TOOL-DISK-GUARD
     file: scripts/disk-guard.mjs
     command: node scripts/disk-guard.mjs [--path /] [--container <имя>] [--targets auto|prod,test-1,…]
@@ -6029,6 +6102,10 @@ blocks:
         CHK-OPENBAO-FAULTS,
         CHK-RESOURCE-PRESSURE,
         TOOL-DISK-GUARD,
+        CHK-HOST-CONFIG,
+        TOOL-RESTORE-FULL,
+        TOOL-RESTORE-FULL-CHECKS,
+        TOOL-RESTORE-SITE-WSL,
         PRB-OUTBOX-LEASE,
         PRB-BACKGROUND-JOBS,
         UNIT-CORE-BACKGROUND,

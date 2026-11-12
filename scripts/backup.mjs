@@ -17,15 +17,18 @@
  * Чего команда НЕ делает: не удаляет копии (срок хранения не согласован, 7.5),
  * не трогает рабочие данные, не выводит секреты.
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, spawnSync as spawnSyncRaw } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { openbaoSnapshot } from './lib/openbao.mjs';
+import { captureHost, codeArchive } from './lib/host-config.mjs';
 import {
   copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
+  renameSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -40,6 +43,7 @@ import {
   diskInfo,
   docker,
   ensureDirs,
+  encryptToRecipient,
   ensureKeyBundle,
   gb,
   loadEnv,
@@ -741,6 +745,9 @@ async function set() {
       // --- ключи и конфигурация.
       const fingerprint = ensureKeyBundle();
       const config = snapshotConfig(join(dir, 'config'));
+      // Действующая конфигурация узла, образы и код (работа № 5): отказ не лишает комплект
+      // данных, он отмечается ограничением.
+      const host = hostParts(c, id, dir);
       // Снимок OpenBao без Static seal key: тот хранится отдельно, у Томаса.
       // Отказ OpenBao не лишает комплект базы и файлов: он отмечается ограничением.
       let openbao = null;
@@ -774,6 +781,7 @@ async function set() {
           `keys/${fingerprint}.env.gpg`,
           `sets/${id}/config`,
           ...(openbao ? [`sets/${id}/openbao.snap`] : []),
+          ...host.paths,
         ],
         cache,
       );
@@ -806,6 +814,7 @@ async function set() {
         pendingUploads: JSON.parse(pending),
         keys: { fingerprint, file: `keys/${fingerprint}.env.gpg` },
         openbao: openbao ? { file: `sets/${id}/openbao.snap` } : { error: openbaoError },
+        host: host.catalog,
         config: {
           commit: config.commit,
           commitError: config.commitError,
@@ -848,6 +857,93 @@ async function set() {
       saveHashCache(cache);
     }
   });
+}
+
+/**
+ * Конфигурация узла для полного восстановления (работа № 5 раздела 01): открытая часть —
+ * `sets/<id>/config/host`, секретная — `sets/<id>/config/host-secrets.tar.gpg` (ключ Томаса);
+ * образы каждого контейнера — `images/<id>.tar`, код — `code/<sha256>.tar.gz`. Образы и код
+ * хранятся по содержимому: одинаковые не сохраняются второй раз.
+ */
+function hostParts(c, id, dir) {
+  if (process.platform !== 'linux') {
+    return { paths: [], catalog: { error: 'съём узла только на Linux-узле' } };
+  }
+  try {
+    const out = join(dir, 'config', 'host');
+    const { host, secretPaths } = captureHost({ root: ROOT, outDir: out });
+    const paths = [`sets/${id}/config/host`];
+    // Секретные файлы — архивом tar с правами и владельцами, сразу в шифрование.
+    let secrets = null;
+    if (secretPaths.length) {
+      const tar = spawnSyncTar(secretPaths);
+      encryptToRecipient(tar, join(dir, 'config', 'host-secrets.tar.gpg'));
+      paths.push(`sets/${id}/config/host-secrets.tar.gpg`);
+      secrets = { file: `sets/${id}/config/host-secrets.tar.gpg`, count: secretPaths.length };
+    }
+    // Образы: по идентификатору, один раз на образ.
+    mkdirSync(join(c.dir, 'images'), { recursive: true });
+    const images = [];
+    const imagesMissing = [];
+    const need = host.images
+      .filter((i) => !existsSync(join(c.dir, 'images', `${i.id.replace(/^sha256:/, '')}.tar`)))
+      .reduce((n, i) => n + (i.size || 0), 0);
+    if (need) assertSpace(need, 'образы узла');
+    for (const img of host.images) {
+      const name = `images/${img.id.replace(/^sha256:/, '')}.tar`;
+      const target = join(c.dir, name);
+      if (!existsSync(target)) {
+        const r = docker(['save', '-o', `${target}.tmp`, img.id], { allowFail: true });
+        if (r.status !== 0) {
+          rmSync(`${target}.tmp`, { force: true });
+          imagesMissing.push(`${img.tags[0] ?? img.id}: ${r.stderr.trim().split('\n').pop()}`);
+          continue;
+        }
+        renameSync(`${target}.tmp`, target);
+      }
+      images.push({ ...img, file: name });
+      paths.push(name);
+    }
+    // Код серверной копии.
+    mkdirSync(join(c.dir, 'code'), { recursive: true });
+    const tmp = join(c.dir, 'code', `.${id}.tmp`);
+    const code = codeArchive(ROOT, tmp);
+    const codeFile = `code/${code.sha256}.tar.gz`;
+    if (existsSync(join(c.dir, codeFile))) rmSync(tmp);
+    else renameSync(tmp, join(c.dir, codeFile));
+    paths.push(codeFile);
+    return {
+      paths,
+      catalog: {
+        file: `sets/${id}/config/host/host.json`,
+        secrets,
+        images,
+        imagesMissing,
+        code: { file: codeFile, files: code.files },
+        projects: Object.keys(host.projects),
+        units: host.units.length,
+        entries: host.entries.length,
+        skipped: host.skipped.length,
+      },
+    };
+  } catch (error) {
+    return { paths: [], catalog: { error: String(error.message ?? error).slice(0, 300) } };
+  }
+}
+
+/** tar секретных файлов: права, владельцы числом; путь без начального «/». */
+function spawnSyncTar(paths) {
+  const r = spawnSyncRaw(
+    'tar',
+    ['--null', '-T', '-', '--no-recursion', '--numeric-owner', '-cpf', '-'],
+    {
+      cwd: '/',
+      input: `${paths.map((p) => p.replace(/^\//, '')).join('\0')}\0`,
+      maxBuffer: 512 * 1024 * 1024,
+    },
+  );
+  if (r.status !== 0) throw new Error(`архив секретов узла: ${String(r.stderr).trim()}`);
+  return r.stdout;
 }
 
 /** LSN «X/Y» — сравнение как чисел. */

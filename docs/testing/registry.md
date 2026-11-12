@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 285; требований: 41
+- Проверок: 289; требований: 41
 
 ## Что защищено без участия человека
 
@@ -179,7 +179,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 114
+### Зарегистрированы, но ни в наборе, ни в CI — 115
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -191,6 +191,7 @@
 - `CHK-FILE-RESTORE` — Восстановление одного файла готового материала (2.1.3): назначения сверены до работы; обычное изменение готового материала запрещено, роли приложения не обхо…
 - `CHK-LOST-FILE` — Утрата готового файла: владельцу 500 stored_file_missing, утрата открыта и видна в /queues (files.lost), повтор объединяется; посторонний и несуществующая за…
 - `CHK-UPLOAD-CLEANUP` — Очистка служебных копий завершённых загрузок: до срока копии остаются; после срока удаление запрещают запрет на материал, проект и всю среду, активная попытк…
+- `CHK-HOST-CONFIG` — Импорты Caddy (файлы, шаблоны, фрагменты), drop-in и EnvironmentFile юнитов, файлы и монтирования Compose по меткам, замыкание по ссылкам; секреты по пути и …
 - `CHK-FILES-ENDPOINT` — Вход файлов (2.1-W06): форма подписана на публичный адрес; CORS — разрешённому сайту разрешение, чужому нет, без разрешения на куки; право загрузки держит фо…
 - `CHK-FRONT-BUILDS` — Проверка перед выкатом: все фронты собраны в production-режиме.
 - `CHK-PORTS-CONSISTENCY` — Гейт согласованности портов стенда.
@@ -325,6 +326,9 @@
 | TOOL-BUILD-TEST-REGISTRY-DOC | `npm run docs:registry` | 0 | вручную, по поводу | — |
 | TOOL-BUILD-LOCAL-REDACTORS | `npm run secrets:redactors` | 0 | вручную, по поводу | — |
 | TOOL-PROBE-RESIDUE | `node scripts/probe-residue.mjs` | 0 | вручную, по поводу | — |
+| TOOL-RESTORE-FULL | `node scripts/restore-full.mjs --set <комплект> --secret-key <файл> --passphrase-file <файл> --openbao-keys <аварийный комплект> [--audit <выгрузка> --coverage-ack <покрыто до>]` | 0 | вручную, по поводу | — |
+| TOOL-RESTORE-FULL-CHECKS | `вызывается scripts/restore-full.mjs (переменные RESTORE_*)` | 0 | вручную, по поводу | — |
+| TOOL-RESTORE-SITE-WSL | `node scripts/restore-site-wsl.mjs create|prepare|check|run|destroy` | 0 | вручную, по поводу | — |
 | TOOL-DISK-GUARD | `node scripts/disk-guard.mjs [--path /] [--container <имя>] [--targets auto|prod,test-1,…]` | 0 | вручную, по поводу | — |
 | TOOL-CLEAN-PROBE-DATA | `npm run stand:clean-probes` | 0 | вручную, по поводу | — |
 | TOOL-CONTENT-SNAPSHOT | `npm run content:export` | 0 | вручную, по поводу | — |
@@ -411,6 +415,7 @@
 | CHK-GARAGE-FAULTS | `node scripts/check-garage-faults.mjs [--keep]` | 39 | вручную | `suite:isolated` |
 | CHK-OPENBAO-FAULTS | `node scripts/check-openbao-faults.mjs [--keep]` | 23 | вручную | `suite:isolated` |
 | CHK-RESOURCE-PRESSURE | `node scripts/check-resource-pressure.mjs [--keep]` | 28 | вручную | `suite:isolated` |
+| CHK-HOST-CONFIG | `node scripts/check-host-config.mjs` | 32 | вручную | — |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |

@@ -407,6 +407,37 @@ export function ensureKeyBundle() {
   return fp;
 }
 
+/**
+ * Зашифровать произвольные байты на открытый ключ получателя комплекта (ключ Томаса).
+ * Открытое содержимое на диск не пишется: идёт через stdin контейнера gpg.
+ */
+export function encryptToRecipient(buf, target) {
+  const c = ensureDirs();
+  if (!existsSync(c.recipient)) throw new Error(`нет открытого ключа получателя (${c.recipient})`);
+  const r = docker(
+    [
+      'run',
+      '--rm',
+      '-i',
+      '--network',
+      'none',
+      '--entrypoint',
+      'sh',
+      '-v',
+      `${c.recipient}:/in/recipient.asc:ro`,
+      TOOL_IMAGE,
+      '-c',
+      'export GNUPGHOME=$(mktemp -d) && gpg -q --batch --import /in/recipient.asc 2>/dev/null && ' +
+        'gpg -q --batch --trust-model always --encrypt --armor ' +
+        '--recipient "$(gpg --batch --list-keys --with-colons | awk -F: \'/^fpr/{print $10; exit}\')" --output -',
+    ],
+    { input: buf },
+  );
+  if (!r.stdout.includes('BEGIN PGP MESSAGE')) throw new Error('gpg не зашифровал данные');
+  writeFileSync(`${target}.tmp`, r.stdout);
+  renameSync(`${target}.tmp`, target);
+}
+
 // ------------------------------------------------------------- конфигурация
 
 /** Несекретная конфигурация на момент комплекта; секреты — в комплекте ключей. */
@@ -773,6 +804,12 @@ export function setLimitations(catalog) {
     );
   }
   if (catalog.openbao?.error) out.push(`снимка OpenBao нет: ${catalog.openbao.error}`);
+  // Полная конфигурация узла (работа № 5 раздела 01): без неё комплект восстанавливает данные,
+  // но не узел целиком.
+  if (!catalog.host) out.push('конфигурации узла нет (комплект до работы № 5)');
+  else if (catalog.host.error) out.push(`конфигурация узла не снята: ${catalog.host.error}`);
+  else if (catalog.host.imagesMissing?.length)
+    out.push(`образы не сохранены: ${catalog.host.imagesMissing.join(', ')}`);
   return out;
 }
 
