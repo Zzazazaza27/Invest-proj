@@ -555,7 +555,8 @@ checks:
     studiedOn: 2026-11-12
     note: >-
       Работа № 4 раздела 01. Таймер fifth-disk-guard (раз в минуту); установка —
-      `fifth-test op prod-disk-guard-setup` в общей приёмке, по слову Томаса (затрагивает prod).
+      `fifth-test op prod-disk-guard-setup on test-1` в общей приёмке (цели — drop-in службы); `on`
+      для всех сред, включая prod, — вместе с выпуском prod (M181).
     purpose: 'Место на диске узла: ≥ 85 % или прогноз < 24 ч — «Файлы» только чтение во всех средах узла, ниже 80 % — снимается; пользовательские данные не удаляются; состояние для Zabbix.'
     confirmation: reviewed-in-code
 
