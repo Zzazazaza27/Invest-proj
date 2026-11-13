@@ -41,7 +41,11 @@ case "${1:-}" in
     echo 'разрешение снято'
     ;;
   logs)
-    exec docker logs --tail 40 fifth-test-1-core
+    # Активный слот ядра (core или core-b) — по файлу маршрута среды.
+    core=fifth-test-1-core
+    grep -q '"slot": *"core-b"' "$ROOT/.local/envs/test-1/release/core-route.json" 2>/dev/null &&
+      core=fifth-test-1-core-b
+    exec docker logs --tail 40 "$core"
     ;;
   *)
     fail 'команды: sync, probe, env, op, logs, revoke'
