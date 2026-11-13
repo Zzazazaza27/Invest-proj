@@ -31,7 +31,7 @@ try {
   await garageApi('AllowBucketKey', {
     bucketId: info.id,
     accessKeyId: tmp.accessKeyId,
-    permissions: { read: false, write: true, owner: true },
+    permissions: { read: true, write: true, owner: true },
   });
   const storage = {
     endpoint: `http://127.0.0.1:${PORTS.garageS3}`,
