@@ -27,7 +27,7 @@
  * Созданное (учётная запись, подписки, доставки, узлы) удаляется; события-носители остаются
  * опубликованными записями журнала.
  */
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -118,6 +118,18 @@ function inCore(args, input) {
   const r = spawnSync('docker', ['exec', '-i', CORE, ...args], { input, encoding: 'utf8' });
   return { ok: r.status === 0, out: (r.stdout || '').trim(), err: (r.stderr || '').trim() };
 }
+/**
+ * То же без блокировки: получатель работает в этом процессе, и вызов, который сам ждёт ответа
+ * получателя (проба адреса из ядра), через spawnSync замораживал его — тайм-аут (13.11, test-1).
+ */
+function inCoreAsync(args) {
+  return new Promise((done) => {
+    const p = spawn('docker', ['exec', '-i', CORE, ...args]);
+    let out = '';
+    p.stdout.on('data', (c) => (out += c));
+    p.on('close', (code) => done({ ok: code === 0, out: out.trim() }));
+  });
+}
 const coreEnv = (name, d) => {
   const v = inCore(['printenv', name]).out;
   return v === '' ? d : Number(v);
@@ -166,7 +178,7 @@ try {
     ['a', URL_A],
     ['b', URL_B],
   ]) {
-    const r = inCore([
+    const r = await inCoreAsync([
       'node',
       '-e',
       `fetch(${JSON.stringify(u)},{signal:AbortSignal.timeout(10000)}).then(r=>console.log(r.status)).catch(e=>console.log('ERR '+(e.cause?.code||e.name)))`,
