@@ -678,7 +678,11 @@ async function start(id) {
   // установленной сборки, не из репозитория.
   if (existsSync(overlayDir(id)) && install.kit?.label)
     installOverlays(id, prepareOverlays(id, install.kit.label));
-  compose(id, ['up', '-d', 'postgres', 'valkey', 'nats', 'core', 'web']);
+  // На слотах — активный слот (core или core-b): поднять core, когда работает core-b, значило бы
+  // применить настройки не к тому ядру (13.11, проба очистки на test-1).
+  const core = activeSlotService(id);
+  const slotB = core === 'core-b' ? ['--profile', 'slot-b'] : [];
+  compose(id, [...slotB, 'up', '-d', 'postgres', 'valkey', 'nats', core, 'web']);
   const state = await waitReady(id);
   const ok = Boolean(state?.ready);
   finish(
@@ -890,6 +894,34 @@ async function slotsDisable(id) {
  * свободном слоте, пауза фона старого, маршрут, подтверждение запросом, фон кандидату,
  * наблюдение, завершение старого. Возврат в наблюдении — только с --auto-rollback.
  */
+/** После переключения ядра: web и (если образ другой) postgres сборки kit. */
+function updateCompanions(id, kit) {
+  const images = {
+    core: imageId(`fifth/core:${kit}`),
+    web: imageId(`fifth/web:${kit}`),
+    postgres: imageId(`fifth/postgres:${kit}`),
+  };
+  const changed = [];
+  // По запущенным контейнерам, а не по учёту: учёт мог разойтись с фактом (test-1, 13.11).
+  // Пересоздание — только при другом образе: перезапуск nginx и базы — короткий перерыв.
+  const running = (svc) =>
+    spawnSync('docker', ['inspect', `${names(id).project}-${svc}`, '--format', '{{.Image}}'], {
+      encoding: 'utf8',
+      env: composeEnv(),
+    }).stdout.trim();
+  setComposeEnv(id, 'FIFTH_WEB_IMAGE', `fifth/web:${kit}`);
+  if (running('web') !== images.web) {
+    compose(id, ['up', '-d', '--no-deps', 'web']);
+    changed.push('web');
+  }
+  if (running('postgres') !== images.postgres) {
+    setComposeEnv(id, 'FIFTH_POSTGRES_IMAGE', `fifth/postgres:${kit}`);
+    compose(id, ['up', '-d', '--no-deps', '--wait', 'postgres']);
+    changed.push('postgres');
+  }
+  return { images, changed };
+}
+
 async function slotsUpdate(id) {
   const kit = flag('--kit');
   if (!kit) throw new Refused('нужен --kit <метка>');
@@ -951,13 +983,20 @@ async function slotsUpdate(id) {
       },
     });
   }
+  // Ядро переключено — web и база той же сборки (13.11: иначе среда смешанная, сверка установки
+  // «1 из 3»). Статику nginx уже берёт из release/static; образ web — его конфигурация. База
+  // перезапускается, только если образ другой: короткий обрыв соединений, ядро переподключается.
+  let companions = null;
+  if (result.ok && result.active === to) companions = updateCompanions(id, kit);
   if (result.active !== 'unknown' && result.active !== 'none') {
     install.slots = {
       active: result.active,
       build: result.active === to ? kit : prev,
       since: new Date().toISOString(),
     };
-    install.kit = { ...install.kit, label: install.slots.build };
+    install.kit = companions
+      ? { label: kit, images: companions.images }
+      : { ...install.kit, label: install.slots.build };
     install.schema = schemaVersion(id);
     saveInstall(id, install);
   }
@@ -966,6 +1005,7 @@ async function slotsUpdate(id) {
       ...result,
       env: id,
       op,
+      ...(companions ? { companions: companions.changed } : {}),
       message: `среда ${id}: ${result.ok ? 'переключена' : `отказ на шаге ${result.stage}`} — ${result.detail}`,
     },
     result.ok ? 0 : 1,
