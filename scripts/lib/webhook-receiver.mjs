@@ -96,6 +96,11 @@ export async function startReceiver({ host = '127.0.0.1', port = 18444, routes }
       }
     });
   });
+  // Простаивающее соединение держим дольше обратного прокси (Caddy — до 2 мин): по умолчанию
+  // Node закрывает его через 5 с, Caddy отправлял следующий POST в уже закрытое и отвечал 502 —
+  // до получателя запрос не доходил (испытание № 3 на test-1, 13.11).
+  server.keepAliveTimeout = 180_000;
+  server.headersTimeout = 181_000;
   await new Promise((done, fail) => {
     server.once('error', fail);
     server.listen(port, host, done);
