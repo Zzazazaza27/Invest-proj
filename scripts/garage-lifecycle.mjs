@@ -59,13 +59,14 @@ try {
   } else if (argv.includes('--list')) {
     const r = await s3('GET', '', { uploads: '' });
     const text = await r.text();
-    const rows = [
-      ...text.matchAll(
-        /<Upload>[\s\S]*?<Key>([^<]+)<\/Key>[\s\S]*?<Initiated>([^<]+)<\/Initiated>[\s\S]*?<\/Upload>/g,
-      ),
-    ];
+    // Порядок полей внутри <Upload> у Garage свой (Initiated раньше Key) — каждое ищем в блоке.
+    const field = (block, name) => block.match(new RegExp(`<${name}>([^<]+)</${name}>`))?.[1];
+    const rows = [...text.matchAll(/<Upload>([\s\S]*?)<\/Upload>/g)].map(([, block]) => [
+      field(block, 'Key'),
+      field(block, 'Initiated'),
+    ]);
     console.log(`незавершённых загрузок в ${bucket}: ${rows.length}`);
-    for (const [, key, at] of rows) console.log(`  ${at}  ${key}`);
+    for (const [key, at] of rows) console.log(`  ${at}  ${key}`);
     if (!r.ok) process.exitCode = 1;
   } else {
     await applyFilesLifecycle(storage, bucket);
