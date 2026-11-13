@@ -1,0 +1,28 @@
+; Зона 5espace.com — первичный DNS на VPS (Knot, scripts/dns-primary.mjs).
+; Перенесена с Beget 2026-11-13 (решение Томаса: NS домена — на свой сервер,
+; ns1/ns2.5espace.com с glue на 193.233.217.210). Значения сверены с NS Beget
+; через публичный резолвер в тот же день. Новые имена — сюда, затем dns-primary up.
+;
+; Ограничение, принятое Томасом 13.11: оба NS на одном VPS — при его отказе домен
+; не разрешается. До открытия добавить вторичные (docs/architecture/dns-independence-plan.md).
+$ORIGIN 5espace.com.
+$TTL 300
+@       SOA   ns1.5espace.com. hostmaster.5espace.com. {{SERIAL}} 3600 600 1209600 300
+@       NS    ns1.5espace.com.
+@       NS    ns2.5espace.com.
+ns1     A     193.233.217.210
+ns2     A     193.233.217.210
+
+@       600 A     193.233.217.210
+@       MX    10 mail.5espace.com.
+@       TXT   "v=spf1 ip4:193.233.217.210 ~all"
+www     600 A     193.233.217.210
+www     MX    10 mail.5espace.com.
+www     TXT   "v=spf1 ip4:193.233.217.210 ~all"
+panel   600 A     193.233.217.210
+files   A     193.233.217.210
+mail    A     193.233.217.210
+test-1  A     193.233.217.210
+test-2  A     193.233.217.210
+_dmarc  TXT   "v=DMARC1; p=none"
+mail._domainkey TXT "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnPjOFZsOyy87eODj+9+iL4hzKMUIVyvqgKDyj9Cs9nPfy2vleB7IT21GDxwogJ+qmilhocSECRZ1Hj2LwC5NtM3TjHLNjoPPyrax8okILIoCBrewbkdP7PdohGkFRT+FkzWw3Ogapa" "zB7Ixye3D358WKcFCsGKSoHPLcWG9JBQAbYUbNWLAuxRk+KOUlxJK/2pkK3YmR9FjobxyRDdIVeZWyL8rlyc5Va6Cqx8RR5zuASQpsXgQ3SFnuyWwIDwf6hXQaMWtjSA5PZGm4p95a/3GdraKdr6uTBiS1GxEN+rshPig4GcdvZn2qWdvBxNhJWGDtDWuJEe7P1hhmcl" "70kwIDAQAB"
