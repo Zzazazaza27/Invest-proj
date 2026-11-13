@@ -33,7 +33,10 @@ hook-a.test-1.5espace.com, hook-b.test-1.5espace.com {
 CADDY
     grep -qxF "$LINE" "$CONF" || { cp -p "$CONF" "$BACKUP" && printf '\n%s\n' "$LINE" >>"$CONF"; }
     apply
-    echo "подключено: hook-a/hook-b.test-1.5espace.com → 127.0.0.1:18444 ($CONF)"
+    # Ядро шлёт на публичный адрес узла из сети Docker: ufw пускает сети Docker к узлу только
+    # по отдельным правилам (как 4300, 10051). Временно — 443, снимается в `off`.
+    ufw allow proto tcp from 172.16.0.0/12 to any port 443 comment 'webhook trial (work 3)' >/dev/null
+    echo "подключено: hook-a/hook-b.test-1.5espace.com → 127.0.0.1:18444 ($CONF); ufw 443 из сетей Docker"
     ;;
   off)
     if grep -qxF "$LINE" "$CONF"; then
@@ -43,7 +46,8 @@ CADDY
     # Файл убирается после успешной проверки: при возврате прежнего Caddyfile его import цел.
     apply
     rm -f "$TRIAL"
-    echo 'подключение получателя снято'
+    ufw delete allow proto tcp from 172.16.0.0/12 to any port 443 >/dev/null 2>&1 || true
+    echo 'подключение получателя и правило ufw сняты'
     ;;
   *)
     echo 'команды: on, off' >&2
