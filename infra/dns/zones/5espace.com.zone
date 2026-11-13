@@ -24,5 +24,8 @@ files   A     193.233.217.210
 mail    A     193.233.217.210
 test-1  A     193.233.217.210
 test-2  A     193.233.217.210
+; Получатели вебхука для испытания работы № 3 на test-1 (временно; убрать после испытания).
+hook-a.test-1 A 193.233.217.210
+hook-b.test-1 A 193.233.217.210
 _dmarc  TXT   "v=DMARC1; p=none"
 mail._domainkey TXT "v=DKIM1; k=rsa; p=MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnPjOFZsOyy87eODj+9+iL4hzKMUIVyvqgKDyj9Cs9nPfy2vleB7IT21GDxwogJ+qmilhocSECRZ1Hj2LwC5NtM3TjHLNjoPPyrax8okILIoCBrewbkdP7PdohGkFRT+FkzWw3Ogapa" "zB7Ixye3D358WKcFCsGKSoHPLcWG9JBQAbYUbNWLAuxRk+KOUlxJK/2pkK3YmR9FjobxyRDdIVeZWyL8rlyc5Va6Cqx8RR5zuASQpsXgQ3SFnuyWwIDwf6hXQaMWtjSA5PZGm4p95a/3GdraKdr6uTBiS1GxEN+rshPig4GcdvZn2qWdvBxNhJWGDtDWuJEe7P1hhmcl" "70kwIDAQAB"
