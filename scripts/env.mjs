@@ -979,6 +979,29 @@ async function slotsState(id) {
   finish({ ok: state.consistent, env: id, ...state }, state.consistent ? 0 : 1);
 }
 
+/**
+ * Пересоздать работающее ядро после смены settings.env: активный слот по учёту установки
+ * (по файлу маршрута, core или core-b). `start` поднимает только core — на слотах это не то ядро.
+ */
+async function recreateCore(id) {
+  loadInstall(id);
+  const service = activeSlotService(id);
+  const args = service === 'core-b' ? ['--profile', 'slot-b'] : [];
+  compose(id, [...args, 'up', '-d', '--no-deps', '--force-recreate', service]);
+  const state = await waitReady(id);
+  const ok = Boolean(state?.ready);
+  finish(
+    {
+      ok,
+      env: id,
+      service,
+      ready: ok,
+      message: `среда ${id}: ${service} пересоздан, ${ok ? 'готова' : 'не готова'}`,
+    },
+    ok ? 0 : 1,
+  );
+}
+
 const COMMANDS = {
   create,
   status,
@@ -992,6 +1015,7 @@ const COMMANDS = {
   'slots-update': slotsUpdate,
   'slots-disable': slotsDisable,
   'slots-state': slotsState,
+  'recreate-core': recreateCore,
 };
 
 try {
