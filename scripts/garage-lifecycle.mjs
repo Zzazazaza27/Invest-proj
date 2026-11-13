@@ -5,7 +5,13 @@
  * рабочей среды по её .env (prod) и заодно перезаписывает их CORS — для бакета тестовой среды
  * он не годится (13.11, общая приёмка, шаг 1.5).
  *
- *   node scripts/garage-lifecycle.mjs <бакет> [--region <регион>]
+ *   node scripts/garage-lifecycle.mjs <бакет> [--region <регион>]          поставить и подтвердить
+ *   node scripts/garage-lifecycle.mjs <бакет> --probe [--region <регион>]  начать и бросить загрузку
+ *                                                                          lifecycle-probe/<время>
+ *   node scripts/garage-lifecycle.mjs <бакет> --list [--region <регион>]   незавершённые загрузки
+ *
+ * Наблюдение (общая приёмка 1.6): после --probe через сутки с лишним --list не должен
+ * показывать эту загрузку — Garage убрал её сам.
  *
  * Правило ставит временный ключ с правом записи и владельца бакета; ключ удаляется.
  * Токен админ-API — GARAGE_ADMIN_TOKEN. Секреты не печатаются.
@@ -39,14 +45,38 @@ try {
     accessKey: tmp.accessKeyId,
     secretKey: tmp.secretAccessKey,
   };
-  await applyFilesLifecycle(storage, bucket);
-  const back = await s3Object({ ...storage, bucket }, 'GET', '', null, {}, { lifecycle: '' });
-  const text = await back.text();
-  const same = text.replace(/\s+/g, '').includes('<DaysAfterInitiation>1</DaysAfterInitiation>');
-  console.log(
-    `lifecycle ${bucket}: ${same ? 'стоит — незавершённые multipart через 1 день' : `не подтверждён (HTTP ${back.status})`}`,
-  );
-  if (!same) process.exitCode = 1;
+  const s3 = (method, key, query) => s3Object({ ...storage, bucket }, method, key, null, {}, query);
+  if (argv.includes('--probe')) {
+    const key = `lifecycle-probe/${new Date().toISOString().replace(/[:.]/g, '-')}`;
+    const r = await s3('POST', key, { uploads: '' });
+    const id = (await r.text()).match(/<UploadId>([^<]+)<\/UploadId>/)?.[1];
+    console.log(
+      r.ok && id
+        ? `брошена загрузка ${key} (${new Date().toISOString()})`
+        : `не начата: HTTP ${r.status}`,
+    );
+    if (!(r.ok && id)) process.exitCode = 1;
+  } else if (argv.includes('--list')) {
+    const r = await s3('GET', '', { uploads: '' });
+    const text = await r.text();
+    const rows = [
+      ...text.matchAll(
+        /<Upload>[\s\S]*?<Key>([^<]+)<\/Key>[\s\S]*?<Initiated>([^<]+)<\/Initiated>[\s\S]*?<\/Upload>/g,
+      ),
+    ];
+    console.log(`незавершённых загрузок в ${bucket}: ${rows.length}`);
+    for (const [, key, at] of rows) console.log(`  ${at}  ${key}`);
+    if (!r.ok) process.exitCode = 1;
+  } else {
+    await applyFilesLifecycle(storage, bucket);
+    const back = await s3Object({ ...storage, bucket }, 'GET', '', null, {}, { lifecycle: '' });
+    const text = await back.text();
+    const same = text.replace(/\s+/g, '').includes('<DaysAfterInitiation>1</DaysAfterInitiation>');
+    console.log(
+      `lifecycle ${bucket}: ${same ? 'стоит — незавершённые multipart через 1 день' : `не подтверждён (HTTP ${back.status})`}`,
+    );
+    if (!same) process.exitCode = 1;
+  }
 } finally {
   await garageApi('DeleteKey', {}, `?id=${tmp.accessKeyId}`);
 }
