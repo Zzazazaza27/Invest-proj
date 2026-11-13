@@ -69,7 +69,16 @@ function op(cmd, ...a) {
           'ssh',
           [
             ...SSH,
-            ['sudo -n /usr/local/sbin/fifth-test op prod-file-restore', cmd, ...a, '--json']
+            [
+              'sudo',
+              '-n',
+              '/usr/local/sbin/fifth-test',
+              'op',
+              'prod-file-restore',
+              cmd,
+              ...a,
+              '--json',
+            ]
               .map((x) => (/^[\w@%+=:,./-]+$/.test(x) ? x : `'${x.replace(/'/g, "'\\''")}'`))
               .join(' '),
           ],
