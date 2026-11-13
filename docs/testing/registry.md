@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 293; требований: 41
+- Проверок: 297; требований: 41
 
 ## Что защищено без участия человека
 
@@ -179,7 +179,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 117
+### Зарегистрированы, но ни в наборе, ни в CI — 118
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -281,6 +281,7 @@
 - `CHK-RELEASE` — Блок 9, задание 1: комплект, блокировка, реестр и сверка версий.
 - `CHK-MIGRATE-INTERRUPT` — Блок 9, задание 2: прерванная миграция безопасна, миграция не держит запросы бесконечно.
 - `CHK-SLOTS-ENV` — Блок 9, задание 3: переключение слотов на Docker и nginx (уточнения Тэнка 09.11).
+- `CHK-RELEASE-COMPANIONS` — Тэнк 13.11: web и postgres не пересоздаются без изменения состава; журнал core-b.
 - `CHK-CONTRACT-RELEASE` — Блок 9, задание 4: несовместимая миграция не идёт поверх обслуживающего старого ядра (Тэнк 09.11).
 - `CHK-UPLOAD-PUBLISH-RIGHT` — Блок 10, вопрос 3 (Тэнк 09.11, M174): право автора на момент публикации загрузки.
 - `CHK-ACTOR-CONTEXT` — Блок 10: контекст автора на настоящем ядре и базе (параллельность, события до входа).
@@ -390,6 +391,9 @@
 | TOOL-ENV | `node scripts/env.mjs create|status|stop|start|seed|destroy <среда>` | 0 | вручную, по поводу | — |
 | TOOL-LOGS-ARCHIVE | `node scripts/logs-archive.mjs init|run|rebuild|status|verify|pack|pull --to <каталог>|verify-copy --to <каталог>|find --from <ISO> [...]|files|legacy-export|legacy-snapshot|legacy-gap|secrets-draft --to <файл>` | 0 | вручную, по поводу | — |
 | TOOL-GARAGE-INIT | `node scripts/garage-init.mjs [--status]` | 0 | вручную, по поводу | — |
+| TOOL-GARAGE-LIFECYCLE | `node scripts/garage-lifecycle.mjs <бакет> [--probe|--list] [--region <регион>]` | 0 | вручную, по поводу | — |
+| TOOL-ENV-CONTROL-INIT | `node scripts/env-control-init.mjs <среда>` | 0 | вручную, по поводу | — |
+| TOOL-IMAGE-INPUTS | `node scripts/image-inputs.mjs postgres|web-runtime` | 0 | вручную, по поводу | — |
 | TOOL-MONITORING | `node scripts/monitoring.mjs configure|status [--items]` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-PROBE-DISABLE | `node scripts/monitor-probe-disable.mjs` | 0 | вручную, по поводу | — |
 | TOOL-MONITOR-PULSE | `node scripts/monitor-pulse.mjs` | 0 | вручную, по поводу | — |
@@ -461,7 +465,8 @@
 | CHK-RELEASE-PINS | `node scripts/check-release-pins.mjs` | 21 | вручную | — |
 | CHK-RELEASE | `node scripts/check-release.mjs` | 62 | вручную | — |
 | CHK-MIGRATE-INTERRUPT | `node scripts/check-migrate-interrupt.mjs` | 43 | вручную | — |
-| CHK-SLOTS-ENV | `node scripts/check-slots-env.mjs` | 30 | вручную | — |
+| CHK-SLOTS-ENV | `node scripts/check-slots-env.mjs` | 41 | вручную | — |
+| CHK-RELEASE-COMPANIONS | `node scripts/check-release-companions.mjs` | 43 | вручную | — |
 | CHK-CONTRACT-RELEASE | `node scripts/check-contract-release.mjs` | 9 | вручную | — |
 | CHK-UPLOAD-PUBLISH-RIGHT | `node scripts/check-upload-publish-right.mjs` | 6 | вручную | — |
 | CHK-ACTOR-CONTEXT | `node scripts/check-actor-context.mjs` | 17 | вручную | — |

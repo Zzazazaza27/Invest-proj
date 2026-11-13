@@ -20,6 +20,10 @@ on:
         description: 'Ожидаемая текущая сборка рабочей среды'
         type: string
         default: ''
+      rebuild_postgres:
+        description: 'Собрать образ базы заново, не беря готовый (срочное исправление пакетов)'
+        type: boolean
+        default: false
 
 # Минимальные права токена по умолчанию (принцип least privilege).
 permissions:
@@ -331,17 +335,48 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
       # Сборка проверяется на каждом коммите, публикация — только при выпуске по команде.
       # Образы собираются один раз, здесь. Комплект берёт именно их по дайджесту:
       # задание kit ниже не пересобирает, а разрешает выпуск проверенного.
+      #
+      # Образ базы при выпуске не собирается заново без изменения входов (Тэнк 13.11): каждая
+      # сборка apt давала новый образ, и выпуск перезапускал базу. Ключ — сумма входов
+      # (контекст infra/postgres, платформа, метка, месяц): найден готовый образ в реестре — он
+      # и идёт в комплект по своему дайджесту. Первая разрешённая сборка месяца собирает заново —
+      # свежие пакеты без ручной правки и без отдельного запуска. rebuild_postgres — собрать
+      # заново немедленно (срочное исправление).
       - name: Сборка
         env:
           # Метка привязывает пакет GHCR к репозиторию: без неё токену CI отказано в записи.
           SOURCE: org.opencontainers.image.source=https://github.com/rebel-diesel/fifth-element
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+          REBUILD: ${{ inputs.rebuild_postgres == true }}
         run: |
+          # Метка постоянна и входит в сумму входов базы: расхождение — отказ.
+          node -e "import('./scripts/image-inputs.mjs').then(m=>process.exit(m.POSTGRES_BUILD.labels[0]===process.env.SOURCE?0:1))"
           docker build --label "$SOURCE" --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/core.Dockerfile -t fifth/core:ci .
-          docker build --label "$SOURCE" --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/web.Dockerfile -t fifth/web:ci .
-          docker build --label "$SOURCE" -t fifth/postgres:ci infra/postgres
+          # Серверная часть web (nginx без статики) — метка: на слотах выпуск сравнивает её.
+          WEB_RUNTIME=$(node scripts/image-inputs.mjs web-runtime)
+          docker build --label "$SOURCE" --label "fifth.web.runtime=$WEB_RUNTIME" \
+            --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/web.Dockerfile -t fifth/web:ci .
+          KEY=$(node scripts/image-inputs.mjs postgres --platform linux/amd64)
+          CACHE="ghcr.io/rebel-diesel/fifth-element/postgres:inputs-$KEY"
+          echo "POSTGRES_CACHE=$CACHE" >> "$GITHUB_ENV"
+          if [ "$RELEASE" = true ]; then
+            echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          fi
+          if [ "$RELEASE" = true ] && [ "$REBUILD" != true ] && docker pull -q "$CACHE"; then
+            docker tag "$CACHE" fifth/postgres:ci
+            echo "POSTGRES_REUSED=1" >> "$GITHUB_ENV"
+            echo "::notice::образ базы взят готовым: входы не менялись ($KEY)"
+          else
+            docker build --label "$SOURCE" -t fifth/postgres:ci infra/postgres
+            echo "POSTGRES_REUSED=0" >> "$GITHUB_ENV"
+          fi
       - name: Образ ядра содержит сборку
         run: docker run --rm fifth/core:ci test -f apps/core/dist/main.js
       - name: Кандидаты в GHCR
@@ -365,6 +400,11 @@ jobs:
               '.[$c] = {ref: $r, digest: $d, imageId: $i}' images.json > images.tmp
             mv images.tmp images.json
           done
+          # Собранный образ базы — в реестр под ключом входов: следующий выпуск возьмёт его.
+          if [ "$POSTGRES_REUSED" = 0 ]; then
+            docker tag fifth/postgres:ci "$POSTGRES_CACHE"
+            docker push -q "$POSTGRES_CACHE"
+          fi
       - name: Дайджесты кандидатов
         if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -420,7 +460,7 @@ jobs:
           # Дополнения Compose сборки (суммы в манифесте, поле overlays).
           mkdir overlays
           cp infra/docker-compose.env-production.yml infra/docker-compose.env-slots.yml \
-            infra/docker-compose.env-journald.yml infra/docker-compose.secrets.yml \
+            infra/docker-compose.env-journald.yml infra/docker-compose.env-journald-slots.yml             infra/docker-compose.secrets.yml \
             infra/docker-compose.tls.yml infra/docker-compose.slots.yml overlays/
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

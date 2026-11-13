@@ -15,15 +15,18 @@
  *  [5] отказ перезагрузки nginx после паузы старого фона — прежняя работа восстановлена;
  *  [6] перезапуск старого слота сразу после паузы — пауза сохраняется;
  *  [7] перезапуск кандидата после записи маршрута, до подтверждения — фон не стартует;
- *  [8] фактическое состояние согласовано.
+ *  [8] фактическое состояние согласовано;
+ *  [9] новая статика при прежнем web (та же серверная часть): web и база не пересоздаются;
+ *  [10] кандидат без метки серверной части — web пересоздан (Тэнк 13.11).
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createHash, randomBytes } from 'node:crypto';
 import { s3Object } from './lib/s3.mjs';
+import { webRuntimeSum } from './lib/web-runtime.mjs';
 import sharp from 'sharp';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -189,6 +192,8 @@ console.warn('▸ Образы из чистого снимка');
         file,
         '-t',
         `fifth/${image}:slot1`,
+        // Метка серверной части web — как в CI (Тэнк 13.11).
+        ...(image === 'web' ? ['--label', `fifth.web.runtime=${webRuntimeSum(src)}`] : []),
         '.',
       ],
       { cwd: src },
@@ -563,6 +568,117 @@ try {
     f7.code === 0 && bg('core-a') === 'running',
     f7.json?.message,
   );
+  check(
+    'тот же образ web и базы — без пересоздания, план «без простоя»',
+    f7.json?.web === 'same' && f7.json?.plan?.zeroDowntime === true && !f7.json?.companions?.length,
+    JSON.stringify({ web: f7.json?.web, plan: f7.json?.plan?.summary, c: f7.json?.companions }),
+  );
+
+  // ---------------------------------------------------------------- [9]
+  // Тэнк 13.11: web с той же серверной частью и новой статикой не пересоздаётся.
+  console.warn('\n[9] Новая статика при прежнем web');
+  const derive = (tag, from, lines) => {
+    const d = mkdtempSync(join(tmpdir(), 'fifth-slots-web-'));
+    writeFileSync(join(d, 'Dockerfile'), `FROM fifth/web:${from}\n${lines.join('\n')}\n`);
+    const b = run('docker', ['build', '-q', '-t', `fifth/web:${tag}`, d]);
+    rmSync(d, { recursive: true, force: true });
+    if (b.status !== 0) throw new Error(`образ web ${tag}: ${b.stderr.slice(-300)}`);
+    for (const c of ['core', 'postgres'])
+      run('docker', ['tag', `fifth/${c}:slot1`, `fifth/${c}:${tag}`]);
+  };
+  const started = (svc) =>
+    run('docker', [
+      'inspect',
+      `fifth-${ENV}-${svc}`,
+      '--format',
+      '{{.Id}} {{.State.StartedAt}}',
+    ]).stdout.trim();
+  derive('slot5', 'slot1', [
+    `RUN sed -i 's#</head>#<meta name="fifth-check" content="slot5"></head>#' /srv/lab/index.html`,
+  ]);
+  const web5 = started('web');
+  const pg5 = started('postgres');
+  const p5 = envTool(['slots-plan', ENV, '--kit', 'slot5']);
+  check(
+    'план: прежний web, без простоя',
+    p5.json?.zeroDowntime === true,
+    p5.json?.summary ?? p5.out.slice(-200),
+  );
+  const f9 = envTool([
+    'slots-update',
+    ENV,
+    '--kit',
+    'slot5',
+    '--observe-ms',
+    '5000',
+    '--drain-ms',
+    '20000',
+  ]);
+  check(
+    'выпуск slot5 прошёл',
+    f9.code === 0 && f9.json?.active === 'core-b',
+    f9.json?.message ?? f9.out.slice(-200),
+  );
+  check(
+    'web не пересоздан, работает прежний образ',
+    f9.json?.web === 'equivalent' && started('web') === web5,
+    JSON.stringify({ web: f9.json?.web, c: f9.json?.companions, after: f9.json?.after }),
+  );
+  check('база не перезапущена', started('postgres') === pg5);
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
+  const lab5 = await fetch(`${BASE}/lab/`, { signal: AbortSignal.timeout(15_000) }).then(
+    (r) => r.text(),
+    () => '',
+  );
+  check('новая статика подключена при прежнем web', /content="slot5"/.test(lab5));
+  const inst5 = JSON.parse(readFileSync(join(ROOT, '.local', 'envs', ENV, 'install.json'), 'utf8'));
+  check(
+    'учёт: прежний образ web и эквивалентность кандидату, а не совпадение',
+    inst5.kit?.label === 'slot5' &&
+      Boolean(inst5.kit?.webEquivalentTo) &&
+      inst5.kit.images?.web !== inst5.kit.webEquivalentTo,
+    JSON.stringify(inst5.kit ?? null).slice(0, 200),
+  );
+
+  // ---------------------------------------------------------------- [10]
+  console.warn('\n[10] Кандидат без метки — обычное сравнение и пересоздание');
+  derive('slot6', 'slot5', [
+    'LABEL fifth.web.runtime=""',
+    `RUN sed -i 's#content="slot5"#content="slot6"#' /srv/lab/index.html`,
+  ]);
+  const p6 = envTool(['slots-plan', ENV, '--kit', 'slot6']);
+  check(
+    'план: пересоздание web, НЕ без простоя',
+    p6.json?.zeroDowntime === false && /web/.test(p6.json?.summary ?? ''),
+    p6.json?.summary ?? p6.out.slice(-200),
+  );
+  const web6 = started('web');
+  const f10 = envTool([
+    'slots-update',
+    ENV,
+    '--kit',
+    'slot6',
+    '--observe-ms',
+    '5000',
+    '--drain-ms',
+    '20000',
+  ]);
+  check(
+    'выпуск slot6 прошёл',
+    f10.code === 0 && f10.json?.active === 'core-a',
+    f10.json?.message ?? f10.out.slice(-200),
+  );
+  check(
+    'web пересоздан на образе кандидата',
+    f10.json?.web === 'recreated' && started('web') !== web6,
+    JSON.stringify({ web: f10.json?.web, c: f10.json?.companions }),
+  );
+  // nosemgrep: typescript.react.security.react-insecure-request.react-insecure-request — локальная среда по http
+  const lab6 = await fetch(`${BASE}/lab/`, { signal: AbortSignal.timeout(15_000) }).then(
+    (r) => r.text(),
+    () => '',
+  );
+  check('статика slot6 отдаётся', /content="slot6"/.test(lab6));
 
   // ---------------------------------------------------------------- [8]
   console.warn('\n[8] Фактическое состояние');

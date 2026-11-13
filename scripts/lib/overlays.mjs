@@ -19,6 +19,7 @@ export const OVERLAYS = {
   production: 'infra/docker-compose.env-production.yml',
   slots: 'infra/docker-compose.env-slots.yml',
   journald: 'infra/docker-compose.env-journald.yml',
+  'journald-slots': 'infra/docker-compose.env-journald-slots.yml',
   secrets: 'infra/docker-compose.secrets.yml',
   tls: 'infra/docker-compose.tls.yml',
   'prod-slots': 'infra/docker-compose.slots.yml',

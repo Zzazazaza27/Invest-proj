@@ -3639,6 +3639,66 @@ checks:
     confirmation: confirmed-by-run
     confirmedOn: 2026-11-03
 
+  - id: TOOL-GARAGE-LIFECYCLE
+    file: scripts/garage-lifecycle.mjs
+    command: node scripts/garage-lifecycle.mjs <бакет> [--probe|--list] [--region <регион>]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [s3]
+    effects:
+      [
+        'правило lifecycle одного бакета (незавершённые multipart через сутки); --probe — начатая и брошенная загрузка lifecycle-probe/<время>; временный ключ удаляется',
+      ]
+    studied: code
+    studiedOn: 2026-11-13
+    note: >-
+      Отдельно от garage-init: тот настраивает бакеты рабочей среды по её .env и перезаписывает
+      CORS, для бакета тестовой среды не годится. На узле — шаг prod-env-lifecycle.
+    purpose: 'Общая приёмка 1.5–1.6 (13.11): lifecycle бакета тестовой среды и наблюдение, что Garage сам убрал брошенную загрузку.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-13
+
+  - id: TOOL-ENV-CONTROL-INIT
+    file: scripts/env-control-init.mjs
+    command: node scripts/env-control-init.mjs <среда>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker, s3]
+    effects:
+      [
+        'контрольный объект среды: запись audit.control_objects и объект control/probe-v1 в её бакете',
+      ]
+    studied: code
+    studiedOn: 2026-11-12
+    note: >-
+      Нужен, когда /control кандидата отвечает 503 из-за отсутствующего контрольного объекта. На
+      узле — шаг prod-env-control-init.
+    purpose: 'Общая приёмка 1.1 (12.11): восстановить контрольный объект тестовой среды для проверки кандидата.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-12
+
+  - id: TOOL-IMAGE-INPUTS
+    file: scripts/image-inputs.mjs
+    command: node scripts/image-inputs.mjs postgres|web-runtime
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    effects: ['нет']
+    studied: code
+    studiedOn: 2026-11-13
+    note: >-
+      Вызывается CI в задании images: ключ готового образа базы в реестре и метка
+      fifth.web.runtime образа web. Проверяется CHK-RELEASE-COMPANIONS.
+    purpose: 'Тэнк 13.11: web и postgres не пересоздаются при выпуске без изменения состава.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-13
+
   - id: TOOL-MONITORING
     file: scripts/monitoring.mjs
     command: node scripts/monitoring.mjs configure|status [--items]
@@ -4303,11 +4363,11 @@ checks:
     kind: check
     level: сквозной
     runner: manual
-    asserts: 30
+    asserts: 41
     needs: [docker, s3]
     effects:
       [
-        'образы fifth/{core,web,postgres}:slot1…slot4 из снимка кода; временная среда test-78, удаляется прогоном (--keep — оставить)',
+        'образы fifth/{core,web,postgres}:slot1…slot6 из снимка кода (slot5, slot6 — производные web); временная среда test-78, удаляется прогоном (--keep — оставить)',
       ]
     studied: code
     studiedOn: 2026-11-09
@@ -4315,10 +4375,34 @@ checks:
       Два ядра на настоящей временной среде: перевод на слоты, выпуск под потоком запросов с живой
       сессией, перезапуск неактивного слота, перезапуск обоих в наблюдении, отказ reload после
       паузы, перезапуск старого после паузы и кандидата после записи маршрута, фактическое
-      состояние; долгий запрос на старом ядре, загрузка через переключение, занятый фон. Раскладку рабочей среды (сеть узла, свои порты) не испытывает.
+      состояние; новая статика при прежнем web (web и база не пересоздаются, учёт — эквивалентность), кандидат без метки — web пересоздан; долгий запрос на старом ядре, загрузка через переключение, занятый фон. Раскладку рабочей среды (сеть узла, свои порты) не испытывает.
     purpose: 'Блок 9, задание 3: переключение слотов на Docker и nginx (уточнения Тэнка 09.11).'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-11-09
+    confirmedOn: 2026-11-13
+
+  - id: CHK-RELEASE-COMPANIONS
+    file: scripts/check-release-companions.mjs
+    command: node scripts/check-release-companions.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 43
+    needs: [docker]
+    effects:
+      [
+        'временные образы fifth-check/web:* и контейнер fifth-check-web-static (nginx); удаляются прогоном',
+      ]
+    studied: code
+    studiedOn: 2026-11-13
+    note: >-
+      Перезапуски web и базы при выпуске (Тэнк 13.11): сумма серверной части web меняется от
+      каждого значимого входа и не меняется от статики; сумма входов образа базы — от контекста,
+      платформы и месяца; эквивалентность образов web по метке и настройкам (без метки — нет);
+      подключённая статика; журнал core-b тем же способом, что core; план выпуска называет
+      возможный простой. Исполняемость файла в сумме базы на Windows пропускается.
+    purpose: 'Тэнк 13.11: web и postgres не пересоздаются без изменения состава; журнал core-b.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-13
 
   - id: CHK-CONTRACT-RELEASE
     file: scripts/check-contract-release.mjs
@@ -4525,7 +4609,7 @@ checks:
       за неё запрещён, исправление вперёд бесшовно. Раскладку рабочей среды не испытывает.
     purpose: 'Блок 9, задание 4: условие приёмки Тэнка — установщик и три сквозных сценария.'
     confirmation: confirmed-by-run
-    confirmedOn: 2026-11-09
+    confirmedOn: 2026-11-13
 
   - id: CHK-COMPAT-SIGNATURE
     file: scripts/check-compat-signature.mjs
@@ -6333,6 +6417,7 @@ blocks:
         CHK-CONTRACT-RELEASE,
         CHK-COMPAT-SIGNATURE,
         CHK-SLOTS-ENV,
+        CHK-RELEASE-COMPANIONS,
         CHK-RELEASE-TRIALS,
         CHK-KIT-SBOM,
         CHK-KIT-HISTORY,

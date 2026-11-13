@@ -33,13 +33,15 @@ import { fileURLToPath } from 'node:url';
 import { garageApi } from './lib/garage-admin.mjs';
 import { s3Object } from './lib/s3.mjs';
 import { parseEnvFile } from './lib/backup.mjs';
-import { envLayout, envSlotOps, extractStatic, prepareSlots } from './lib/env-slots.mjs';
+import { envLayout, envSlotOps, extractStatic, prepareSlots, slotDirs } from './lib/env-slots.mjs';
+import { companionPlan, staticConnected, webEquivalence } from './lib/web-runtime.mjs';
 import { factualState, switchSlots } from './lib/slot-switch.mjs';
 import { contractRelease } from './lib/contract-release.mjs';
 import {
   activateOverlays,
   activeOverlay,
   hasOverlay,
+  OVERLAYS,
   overlayProblems,
   overlaySource,
 } from './lib/overlays.mjs';
@@ -163,6 +165,8 @@ function envModes(id, text = null) {
     ...(/^FIFTH_AGENT_DIR=/m.test(env) ? ['production'] : []),
     ...(/^FIFTH_SLOTS=1$/m.test(env) ? ['slots'] : []),
     ...(/^FIFTH_JOURNALD=1$/m.test(env) ? ['journald'] : []),
+    // Второй слот ядра — тем же способом, что первый (Тэнк 13.11).
+    ...(/^FIFTH_SLOTS=1$/m.test(env) && /^FIFTH_JOURNALD=1$/m.test(env) ? ['journald-slots'] : []),
   ];
 }
 
@@ -171,6 +175,7 @@ const REPO_OVERLAY = {
   production: PRODUCTION_OVERLAY,
   slots: SLOTS_OVERLAY,
   journald: JOURNALD_OVERLAY,
+  'journald-slots': join(ROOT, 'infra', 'docker-compose.env-journald-slots.yml'),
 };
 
 /**
@@ -216,7 +221,7 @@ function installOverlays(id, prep) {
   return { origin: prep.src.origin, active, skipped: prep.skipped };
 }
 
-function compose(id, args, { allowFail = false, timeout = 300_000 } = {}) {
+function compose(id, args, { allowFail = false, timeout = 300_000, overlayFiles = null } = {}) {
   const r = spawnSync(
     'docker',
     [
@@ -225,7 +230,7 @@ function compose(id, args, { allowFail = false, timeout = 300_000 } = {}) {
       join(names(id).dir, 'compose.env'),
       '-f',
       composeOf(id),
-      ...overlays(id),
+      ...(overlayFiles ?? overlays(id)),
       ...args,
     ],
     { encoding: 'utf8', timeout, env: composeEnv() },
@@ -824,7 +829,9 @@ async function slotsEnable(id) {
   if (install.slots) throw new Refused(`среда ${id} уже на слотах`);
   const label = install.kit?.label;
   if (!label) throw new Refused('у среды нет сборки');
-  const prep = prepareOverlays(id, label, [...new Set([...envModes(id), 'slots'])]);
+  // Режимы с уже включёнными слотами: журнал core-b (journald-slots) — сразу (Тэнк 13.11).
+  const composeText = readFileSync(join(names(id).dir, 'compose.env'), 'utf8');
+  const prep = prepareOverlays(id, label, envModes(id, `${composeText}\nFIFTH_SLOTS=1\n`));
   prepareSlots(names(id).dir, label, envLayout(names(id).project));
   setComposeEnv(id, 'FIFTH_SLOTS', '1');
   installOverlays(id, prep);
@@ -859,19 +866,20 @@ async function slotsDisable(id) {
   const label = install.slots.build;
   if (install.slots.active !== 'core-a')
     throw new Refused(`активен ${install.slots.active}: выключение слотов — только с core-a`);
-  const envText = readFileSync(join(names(id).dir, 'compose.env'), 'utf8');
-  if (!new RegExp(`^FIFTH_WEB_IMAGE=.*:${label.replace(/\./g, '\\.')}$`, 'm').test(envText))
-    throw new Refused(`web среды не сборки ${label}: без слотов поднялась бы другая статика`);
+  // Без слотов статика — из образа web, поэтому web — образ этой сборки, даже если на слотах
+  // работал прежний эквивалентный (Тэнк 13.11). Нет образа — отказ до изменений.
+  imageId(`fifth/web:${label}`);
   const prep = prepareOverlays(
     id,
     label,
-    envModes(id).filter((m) => m !== 'slots'),
+    envModes(id).filter((m) => m !== 'slots' && m !== 'journald-slots'),
   );
   // core-b известен Compose только с дополнением слотов — убрать до снятия флага.
   compose(id, ['--profile', 'slot-b', 'rm', '-sf', 'core-b'], { allowFail: true });
   const file = join(names(id).dir, 'compose.env');
   writeFileSync(file, readFileSync(file, 'utf8').replace(/^FIFTH_SLOTS=1\n?/m, ''));
   setComposeEnv(id, 'FIFTH_CORE_IMAGE', `fifth/core:${label}`);
+  setComposeEnv(id, 'FIFTH_WEB_IMAGE', `fifth/web:${label}`);
   installOverlays(id, prep);
   compose(id, ['up', '-d', '--force-recreate', 'core', 'web']);
   const state = await waitReady(id);
@@ -903,23 +911,96 @@ function updateCompanions(id, kit) {
   };
   const changed = [];
   // По запущенным контейнерам, а не по учёту: учёт мог разойтись с фактом (test-1, 13.11).
-  // Пересоздание — только при другом образе: перезапуск nginx и базы — короткий перерыв.
-  const running = (svc) =>
-    spawnSync('docker', ['inspect', `${names(id).project}-${svc}`, '--format', '{{.Image}}'], {
-      encoding: 'utf8',
-      env: composeEnv(),
-    }).stdout.trim();
-  setComposeEnv(id, 'FIFTH_WEB_IMAGE', `fifth/web:${kit}`);
-  if (running('web') !== images.web) {
+  // Пересоздание — только при другом составе: перезапуск nginx и базы — перерыв (Тэнк 13.11).
+  const decision = companionDecision(id, kit);
+  if (decision.web.recreate) {
+    setComposeEnv(id, 'FIFTH_WEB_IMAGE', `fifth/web:${kit}`);
     compose(id, ['up', '-d', '--no-deps', 'web']);
     changed.push('web');
+  } else if (!decision.web.same) {
+    // Прежний образ остаётся работать: в учёте — он, а не образ кандидата.
+    images.web = decision.web.running;
   }
-  if (running('postgres') !== images.postgres) {
+  if (decision.postgres.restart) {
     setComposeEnv(id, 'FIFTH_POSTGRES_IMAGE', `fifth/postgres:${kit}`);
     compose(id, ['up', '-d', '--no-deps', '--wait', 'postgres']);
     changed.push('postgres');
   }
-  return { images, changed };
+  return {
+    images,
+    changed,
+    web: decision.web.same ? 'same' : decision.web.recreate ? 'recreated' : 'equivalent',
+    plan: decision.plan,
+  };
+}
+
+const runningImage = (id, svc) =>
+  spawnSync('docker', ['inspect', `${names(id).project}-${svc}`, '--format', '{{.Image}}'], {
+    encoding: 'utf8',
+    env: composeEnv(),
+  }).stdout.trim();
+
+/**
+ * Что выпуск на слотах сделает с web и базой (Тэнк 13.11). web остаётся, только если это тот же
+ * образ или серверная часть эквивалентна (метка и настройки образа), определение службы в
+ * Compose то же, а статика сборки подключена и web её отдаёт. Иначе — пересоздание.
+ * Вызывается и до выпуска (план), и после переключения ядра (статика уже подключена).
+ */
+function companionDecision(id, kit, { beforeSwitch = false } = {}) {
+  const n = names(id);
+  // Определение web — по дополнениям сборки kit: выпуск ставит именно их.
+  const prep = prepareOverlays(id, kit);
+  const kitOverlays = prep.modes
+    .filter((m) => hasOverlay(prep.src, m))
+    .flatMap((m) => ['-f', prep.src.at(OVERLAYS[m])]);
+  const webNow = runningImage(id, 'web');
+  const eq = webEquivalence(webNow, `fifth/web:${kit}`, composeEnv());
+  let web;
+  if (eq.same) web = { same: true, recreate: false };
+  else if (!eq.equivalent) web = { recreate: true, reason: eq.reason };
+  else {
+    const envText = readFileSync(join(n.dir, 'compose.env'), 'utf8');
+    const tag = /^FIFTH_WEB_IMAGE=(.*)$/m.exec(envText)?.[1] ?? '';
+    const label = spawnSync(
+      'docker',
+      [
+        'inspect',
+        `${n.project}-web`,
+        '--format',
+        '{{index .Config.Labels "com.docker.compose.config-hash"}}',
+      ],
+      { encoding: 'utf8', env: composeEnv() },
+    ).stdout.trim();
+    const hash = compose(id, ['config', '--hash', 'web'], {
+      allowFail: true,
+      overlayFiles: kitOverlays,
+    })
+      .stdout.trim()
+      .split(/\s+/)
+      .pop();
+    const st = beforeSwitch
+      ? { ok: true }
+      : staticConnected({
+          routeFile: slotDirs(n.dir).route,
+          staticDir: slotDirs(n.dir).static,
+          build: kit,
+          webContainer: `${n.project}-web`,
+          env: composeEnv(),
+        });
+    if (!tag || imageIdOrNull(tag) !== webNow)
+      web = { recreate: true, reason: 'метка запущенного web не указывает на его образ' };
+    else if (!label || label !== hash)
+      web = { recreate: true, reason: 'определение службы web в Compose изменилось' };
+    else if (!st.ok) web = { recreate: true, reason: st.reason };
+    else web = { same: false, recreate: false, running: webNow, candidate: eq.candidate };
+  }
+  const postgres = { restart: runningImage(id, 'postgres') !== imageId(`fifth/postgres:${kit}`) };
+  return { web, postgres, plan: companionPlan({ slots: true, web, postgres }) };
+}
+
+function imageIdOrNull(ref) {
+  const r = docker(['image', 'inspect', ref, '--format', '{{.Id}}']);
+  return r.status === 0 ? r.stdout.trim() : null;
 }
 
 async function slotsUpdate(id) {
@@ -942,7 +1023,12 @@ async function slotsUpdate(id) {
       `в кандидате contract-миграции ${contract.join(', ')}: бесшовный выпуск невозможен — порядок с остановкой только с --allow-contract`,
     );
   }
+  // Дополнения сборки (в т.ч. журнал core-b, Тэнк 13.11) — сверка до изменений, отказ ничего
+  // не трогает. План перезапусков — тоже до изменений: база и единственный web — возможный простой.
+  const prep = prepareOverlays(id, kit);
+  const plan = companionDecision(id, kit, { beforeSwitch: true }).plan;
   // Изменения среды — только после проверки на contract: отказ ничего не трогает.
+  activateOverlays(prep.src, prep.modes, overlayDir(id));
   extractStatic(names(id).dir, kit);
   setComposeEnv(id, 'FIFTH_CORE_IMAGE', `fifth/core:${kit}`);
   const ops = envSlotOps(slotEnv(id), op);
@@ -995,7 +1081,14 @@ async function slotsUpdate(id) {
       since: new Date().toISOString(),
     };
     install.kit = companions
-      ? { label: kit, images: companions.images }
+      ? {
+          label: kit,
+          images: companions.images,
+          // web не пересоздан: работает прежний образ, эквивалентный кандидату (Тэнк 13.11).
+          ...(companions.web === 'equivalent'
+            ? { webEquivalentTo: imageId(`fifth/web:${kit}`) }
+            : {}),
+        }
       : { ...install.kit, label: install.slots.build };
     install.schema = schemaVersion(id);
     saveInstall(id, install);
@@ -1005,11 +1098,23 @@ async function slotsUpdate(id) {
       ...result,
       env: id,
       op,
-      ...(companions ? { companions: companions.changed } : {}),
+      plan,
+      ...(companions
+        ? { companions: companions.changed, web: companions.web, after: companions.plan }
+        : {}),
       message: `среда ${id}: ${result.ok ? 'переключена' : `отказ на шаге ${result.stage}`} — ${result.detail}`,
     },
     result.ok ? 0 : 1,
   );
+}
+
+/** План выпуска на слотах без изменений: что перезапустится и без простоя ли выпуск. */
+function slotsPlan(id) {
+  const kit = flag('--kit');
+  if (!kit) throw new Refused('нужен --kit <метка>');
+  loadInstall(id);
+  const d = companionDecision(id, kit, { beforeSwitch: true });
+  finish({ ok: true, env: id, kit, ...d.plan, message: d.plan.summary }, 0);
 }
 
 /** Фактическое состояние слотов после обрыва: маршрут, разрешение, ответ через nginx, фон. */
@@ -1055,6 +1160,7 @@ const COMMANDS = {
   'slots-update': slotsUpdate,
   'slots-disable': slotsDisable,
   'slots-state': slotsState,
+  'slots-plan': slotsPlan,
   'recreate-core': recreateCore,
 };
 

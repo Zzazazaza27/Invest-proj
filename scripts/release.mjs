@@ -39,7 +39,15 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildOrder } from './kit.mjs';
 import { activeCore, routeJsonPath } from './lib/core-slot.mjs';
-import { envLayout, extractStatic, prepareSlots, prodLayout, slotOps } from './lib/env-slots.mjs';
+import {
+  envLayout,
+  extractStatic,
+  prepareSlots,
+  prodLayout,
+  slotDirs,
+  slotOps,
+} from './lib/env-slots.mjs';
+import { companionPlan, staticConnected, webEquivalence } from './lib/web-runtime.mjs';
 import { releaseState } from './lib/release-state.mjs';
 import { switchSlots } from './lib/slot-switch.mjs';
 import { formatProtocol } from './lib/release-report.mjs';
@@ -154,6 +162,7 @@ function prodCompose(args) {
       `compose ${args[0]}: ${`${r.stdout}\n${r.stderr}`.trim().split('\n').slice(-2).join(' | ')}`,
     );
   }
+  return r;
 }
 
 /** Перевод рабочей среды на комплект: миграции одним шагом, затем ядро и статика. */
@@ -177,14 +186,58 @@ const envSlots = (id) => {
   const file = join(dirOf(id), 'compose.env');
   return existsSync(file) && /^FIFTH_SLOTS=1$/m.test(readFileSync(file, 'utf8'));
 };
+const slotsOn = (id) => (id === PROD ? prodSlots() : envSlots(id));
 const passFlags = (names) => names.filter((n) => argv.includes(n));
 const passValues = (names) => names.flatMap((n) => (flag(n) ? [n, flag(n)] : []));
 
 /**
- * Выпуск рабочей среды переключением слотов ядра (блок 09, задание 3). Web не
- * пересоздаётся: статика сборки выкладывается в каталог, переключение — файлом маршрута.
- * Изменилась конфигурация nginx в образе web — это отдельный переходный шаг, здесь только
- * запись в журнал. Расширение схемы — до кандидата, его образом (9.2, задание 2).
+ * Что выпуск на слотах рабочей среды сделает с web и базой (Тэнк 13.11) — как env.mjs для
+ * тестовых сред. web остаётся, только если это тот же образ или серверная часть эквивалентна,
+ * определение службы в Compose то же и (после переключения) статика сборки подключена.
+ */
+function prodCompanions(build, kit, { beforeSwitch = false } = {}) {
+  const inspect = (ref, fmt) =>
+    spawnSync('docker', ['inspect', ref, '--format', fmt], { encoding: 'utf8', env: dockerEnv });
+  const webNow = inspect('fifth-web', '{{.Image}}').stdout.trim();
+  const eq = webEquivalence(webNow, `fifth/web:${build}`, dockerEnv);
+  let web;
+  if (eq.same) web = { same: true, recreate: false };
+  else if (!eq.equivalent) web = { recreate: true, reason: eq.reason };
+  else {
+    const tag = prodEnv('FIFTH_WEB_IMAGE');
+    const tagId = tag ? inspect(tag, '{{.Id}}').stdout.trim() : '';
+    const label = inspect(
+      'fifth-web',
+      '{{index .Config.Labels "com.docker.compose.config-hash"}}',
+    ).stdout.trim();
+    const hash = prodCompose(['config', '--hash', 'web']).stdout.trim().split(/\s+/).pop();
+    const dirs = slotDirs(join(HOME, '.local'));
+    const st = beforeSwitch
+      ? { ok: true }
+      : staticConnected({
+          routeFile: dirs.route,
+          staticDir: dirs.static,
+          build,
+          webContainer: 'fifth-web',
+          env: dockerEnv,
+        });
+    if (tagId !== webNow)
+      web = { recreate: true, reason: 'метка запущенного web не указывает на его образ' };
+    else if (!label || label !== hash)
+      web = { recreate: true, reason: 'определение службы web в Compose изменилось' };
+    else if (!st.ok) web = { recreate: true, reason: st.reason };
+    else web = { same: false, recreate: false };
+  }
+  const pgNow = inspect('fifth-postgres', '{{.Image}}').stdout.trim();
+  const postgres = { restart: pgNow !== kit.images.postgres.imageId };
+  return { web, postgres, plan: companionPlan({ slots: true, web, postgres }) };
+}
+
+/**
+ * Выпуск рабочей среды переключением слотов ядра (блок 09, задание 3): статика сборки
+ * выкладывается в каталог, переключение — файлом маршрута. После переключения web и база
+ * пересоздаются, только если их состав другой (Тэнк 13.11); план до изменений говорит, будет
+ * ли простой. Расширение схемы — до кандидата, его образом (9.2, задание 2).
  */
 async function prodSlotsUpdate(build, kit, op, imagesOnly = false) {
   activateProd(build, kit);
@@ -201,25 +254,10 @@ async function prodSlotsUpdate(build, kit, op, imagesOnly = false) {
     setProdEnv(`FIFTH_CORE_${key}_IMAGE`, `fifth/core:${label}`);
     setProdEnv(`FIFTH_CORE_${key}_BUILD`, label);
   };
+  // План перезапусков — до изменений (Тэнк 13.11): база и единственный web — возможный простой.
+  const plan = prodCompanions(build, kit, { beforeSwitch: true }).plan;
+  record(PROD, op, 'plan', plan.zeroDowntime ? 'ok' : 'warn', plan.summary);
   extractStatic(dir, build);
-  const webConf = (image) =>
-    spawnSync(
-      'docker',
-      ['run', '--rm', '--entrypoint', 'cat', image, '/etc/nginx/templates/default.conf.template'],
-      {
-        encoding: 'utf8',
-        env: dockerEnv,
-      },
-    ).stdout;
-  if (webConf(`fifth/web:${build}`) !== webConf(`fifth/web:${prev}`)) {
-    record(
-      PROD,
-      op,
-      'web',
-      'differs',
-      'конфигурация nginx в новой сборке изменилась — пересоздание web отдельным шагом',
-    );
-  }
   setImage(to, build);
   // «Только образы» — без миграций и ролей; переключение то же.
   if (!imagesOnly)
@@ -263,6 +301,23 @@ async function prodSlotsUpdate(build, kit, op, imagesOnly = false) {
     },
   );
   if (result.active === to) setProdEnv('FIFTH_CORE_IMAGE', `fifth/core:${build}`);
+  // Ядро переключено — web и база той же сборки, пересоздание только при другом составе.
+  if (result.ok && result.active === to) {
+    const d = prodCompanions(build, kit);
+    if (d.web.recreate) {
+      setProdEnv('FIFTH_WEB_IMAGE', `fifth/web:${build}`);
+      prodCompose(['up', '-d', '--no-deps', 'web']);
+    }
+    if (d.postgres.restart) {
+      // Инструменты копий берут образ базы по постоянной метке.
+      spawnSync('docker', ['tag', `fifth/postgres:${build}`, 'fifth/postgres:16'], {
+        env: dockerEnv,
+      });
+      setProdEnv('FIFTH_POSTGRES_IMAGE', `fifth/postgres:${build}`);
+      prodCompose(['up', '-d', '--no-deps', '--wait', 'postgres']);
+    }
+    record(PROD, op, 'companions', d.plan.zeroDowntime ? 'ok' : 'warn', d.plan.steps.join('; '));
+  }
   return {
     code: result.ok ? 0 : 1,
     out: `${result.stage}: ${result.detail}`.trim(),
@@ -486,10 +541,35 @@ function verifyAgainst(id, kit) {
   const seen = observe(id, kit);
   const status = readiness(id);
   const at = new Date().toISOString();
-  const rows = seen.map((s) => ({
-    ...s,
-    match: s.state === 'running' && s.image === s.expected,
-  }));
+  const rows = seen.map((s) => {
+    const row = { ...s, match: s.state === 'running' && s.image === s.expected };
+    if (row.match) return { ...row, basis: 'образ сборки' };
+    // На слотах web может остаться прежним (Тэнк 13.11): засчитывается, только если серверная
+    // часть эквивалентна кандидату и статика сборки подключена. Это не совпадение образов —
+    // так и пишется.
+    if (s.component === 'web' && s.state === 'running' && s.image && s.expected && slotsOn(id)) {
+      const eq = webEquivalence(s.image, s.expected, dockerEnv);
+      const dir = id === PROD ? join(HOME, '.local') : dirOf(id);
+      const st = eq.equivalent
+        ? staticConnected({
+            routeFile: slotDirs(dir).route,
+            staticDir: slotDirs(dir).static,
+            build: kit.build,
+            webContainer: containerOf(id, 'web'),
+            env: dockerEnv,
+          })
+        : { ok: false };
+      if (eq.equivalent && st.ok)
+        return {
+          ...row,
+          match: true,
+          basis:
+            'запущен прежний образ web; серверная часть эквивалентна кандидату; статика сборки подключена',
+        };
+      return { ...row, basis: eq.equivalent ? st.reason : eq.reason };
+    }
+    return row;
+  });
   let migrations;
   try {
     const applied = psql(id, 'SELECT id FROM public.schema_migrations ORDER BY id;').split('\n');
@@ -501,7 +581,21 @@ function verifyAgainst(id, kit) {
   }
   const confirmed = rows.filter((r) => r.match).length;
   const ok = confirmed === rows.length && status.ready === true && migrations?.missing.length === 0;
-  return { ok, at, confirmed, total: rows.length, rows, ready: status.ready === true, migrations };
+  // Подтверждённое не совпадением образов — отдельной строкой, а не «совпало» (Тэнк 13.11).
+  const notes = rows
+    .filter((r) => r.match && r.basis && r.basis !== 'образ сборки')
+    .map((r) => `${r.component}: ${r.basis}`);
+  const summary = `подтверждено ${confirmed} из ${rows.length}${notes.length ? ` (${notes.join('; ')})` : ''}`;
+  return {
+    ok,
+    at,
+    confirmed,
+    total: rows.length,
+    rows,
+    ready: status.ready === true,
+    migrations,
+    summary,
+  };
 }
 
 const upsertInstances = (id, v) =>
@@ -705,6 +799,24 @@ async function install(id) {
     record(id, op, 'load', 'ok');
     if (imagesOnly) keepRunningPostgres(id, build);
     const loaded = readKit(build);
+    // План перезапусков — в журнал до изменений (Тэнк 13.11). Рабочая среда на слотах пишет его
+    // сама (prodSlotsUpdate); без слотов выпуск идёт с остановкой ядра.
+    let plan = null;
+    if (id !== PROD && envSlots(id)) {
+      const p = envTool('slots-plan', id, '--kit', build);
+      try {
+        plan = JSON.parse(p.out.split('\n').pop());
+      } catch {
+        plan = { zeroDowntime: false, summary: `план не получен: ${p.out.slice(0, 200)}` };
+      }
+    } else if (!(id === PROD && prodSlots())) {
+      plan = companionPlan({
+        slots: false,
+        web: { recreate: true, reason: 'выпуск без слотов' },
+        postgres: { restart: false },
+      });
+    }
+    if (plan) record(id, op, 'plan', plan.zeroDowntime ? 'ok' : 'warn', plan.summary);
     psql(
       id,
       COMPONENTS.map(
@@ -741,7 +853,7 @@ async function install(id) {
     record(id, op, 'update', 'ok');
     const v = verifyAgainst(id, loaded);
     if (process.env.FIFTH_TEST_VERIFY_FAIL) v.ok = false;
-    record(id, op, 'verify', v.ok ? 'ok' : 'fail', `подтверждено ${v.confirmed} из ${v.total}`);
+    record(id, op, 'verify', v.ok ? 'ok' : 'fail', v.summary);
     psql(id, upsertInstances(id, v));
     if (!v.ok) throw new Error(`сверка: подтверждено ${v.confirmed} из ${v.total}`);
     if (hold) {
@@ -765,7 +877,7 @@ async function install(id) {
       ...(current ? ['--rollback', current] : []),
     );
     await testHold('FIFTH_TEST_HOLD_CLOSE');
-    close('succeeded', `подтверждено ${v.confirmed} из ${v.total}`);
+    close('succeeded', v.summary);
     finish(
       {
         ok: true,
@@ -774,6 +886,8 @@ async function install(id) {
         build,
         confirmed: v.confirmed,
         total: v.total,
+        verify: v.summary,
+        ...(plan ? { plan: plan.summary } : {}),
         rollbackPoint: point,
       },
       0,
@@ -848,6 +962,7 @@ function verify(id) {
       ready: v.ready,
       migrations: v.migrations,
       differ: v.rows.filter((r) => !r.match).map((r) => r.instance),
+      summary: v.summary,
     },
     v.ok ? 0 : 1,
   );
