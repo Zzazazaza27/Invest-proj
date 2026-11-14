@@ -56,6 +56,35 @@ try {
         : `не начата: HTTP ${r.status}`,
     );
     if (!(r.ok && id)) process.exitCode = 1;
+  } else if (argv.includes('--status')) {
+    // Только чтение (Тэнк 14.11): действующее правило, дата последнего обхода и состояние
+    // обработчика lifecycle на каждом узле. Обход — раз в сутки с полуночи (UTC, если в
+    // garage.toml нет use_local_tz); срок N дней Garage считает от СЛЕДУЮЩЕЙ полуночи после
+    // начала загрузки (lifecycle_worker.rs: next_date).
+    const rule = await s3Object({ ...storage, bucket }, 'GET', '', null, {}, { lifecycle: '' });
+    const xml = (await rule.text()).replace(/\s+/g, '');
+    const tag = (name) => xml.match(new RegExp(`<${name}>([^<]+)</${name}>`))?.[1] ?? '—';
+    console.log(
+      `правило ${bucket}: HTTP ${rule.status}, Status=${tag('Status')}, DaysAfterInitiation=${tag('DaysAfterInitiation')}, Prefix=${tag('Prefix')}`,
+    );
+    const last = await garageApi(
+      'GetWorkerVariable',
+      { variable: 'lifecycle-last-completed' },
+      '?node=*',
+    );
+    for (const [node, vars] of Object.entries(last?.success ?? {}))
+      console.log(
+        `узел ${node.slice(0, 16)}: lifecycle-last-completed=${vars['lifecycle-last-completed'] ?? '—'}`,
+      );
+    for (const [node, err] of Object.entries(last?.error ?? {}))
+      console.log(`узел ${node.slice(0, 16)}: ошибка ${String(err).slice(0, 120)}`);
+    const workers = await garageApi('ListWorkers', { busyOnly: false }, '?node=*');
+    for (const [node, list] of Object.entries(workers?.success ?? {}))
+      for (const w of list ?? [])
+        if (/lifecycle/i.test(w.name ?? ''))
+          console.log(
+            `узел ${node.slice(0, 16)}: ${w.name} state=${w.state} ошибок=${w.errors ?? 0}${w.lastError ? ` последняя=${String(w.lastError.message ?? w.lastError).slice(0, 120)}` : ''} ${(w.freeform ?? []).join('; ')}`,
+          );
   } else if (argv.includes('--list')) {
     const r = await s3('GET', '', { uploads: '' });
     const text = await r.text();
