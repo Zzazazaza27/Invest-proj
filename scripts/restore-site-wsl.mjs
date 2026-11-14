@@ -61,6 +61,15 @@ const distros = () =>
 const siteFile = (name) => join(HOME, name);
 
 /** Каталог Windows → каталог площадки: поток tar через stdin wsl (диски Windows там не видны). */
+/**
+ * Освободить память общей ВМ WSL в ТОМ ЖЕ сеансе (14.11): после распаковки комплекта кеш
+ * страниц занимал 3,3 из 3,9 ГБ, и следующий wsl.exe не мог открыть канал vmbus — нужен
+ * непрерывный блок 512 КБ (page allocation failure order:7, vmbus_alloc_ring); площадка
+ * останавливалась, служба WSL отвечала тайм-аутом (Wsl/Service/0x8007274c).
+ */
+const RELIEVE =
+  'sync; echo 3 > /proc/sys/vm/drop_caches; echo 1 > /proc/sys/vm/compact_memory 2>/dev/null || true';
+
 function push(from, to) {
   return new Promise((done, fail) => {
     // Каталог — рабочей папкой, не -C: tar из Git для Windows принимает «D:…» за адрес машины.
@@ -70,7 +79,16 @@ function push(from, to) {
     });
     const w = spawn(
       'wsl.exe',
-      ['-d', DISTRO, '-u', 'root', '--', 'sh', '-c', `mkdir -p '${to}' && tar -xf - -C '${to}'`],
+      [
+        '-d',
+        DISTRO,
+        '-u',
+        'root',
+        '--',
+        'sh',
+        '-c',
+        `mkdir -p '${to}' && tar -xf - -C '${to}' && { ${RELIEVE}; }`,
+      ],
       {
         stdio: ['pipe', 'inherit', 'inherit'],
       },
@@ -242,7 +260,8 @@ async function run() {
         '-c',
         `cd ${SITE}/tools && RESTORE_TOOL_COMMIT=${commit} RESTORE_NETNS=fifth ip netns exec fifth node scripts/restore-full.mjs ` +
           `--set ${SITE}/set --secret-key ${keys}/secret.asc --passphrase-file ${keys}/pass.txt ` +
-          `${kit ? `--openbao-keys ${keys}/emergency.gpg ` : ''}${auditArgs} --site-info ${SITE}/site-info.json --out ${report}`,
+          `${kit ? `--openbao-keys ${keys}/emergency.gpg ` : ''}${auditArgs} --site-info ${SITE}/site-info.json --out ${report}; ` +
+          `rc=$?; ${RELIEVE}; exit $rc`,
       ],
       { stdio: 'inherit' },
     );
