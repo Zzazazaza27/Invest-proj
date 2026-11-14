@@ -19,15 +19,18 @@ for img in "$@"; do
   id="$(docker image inspect "$img" --format '{{.Id}}' 2>/dev/null)" || { echo "$img: нет"; continue; }
   echo "== $img ($id)"
   docker image inspect "$img" --format 'размер {{.Size}}, слоёв {{len .RootFS.Layers}}'
-  for ref in "$img" "$id"; do
+  docker image inspect "$img" --format 'платформы: {{json .Descriptor}}' 2>/dev/null | cut -c1-200
+  for mode in plain platform; do
+    ref="$img"
     f="$T/x.tar"
-    if docker save -o "$f" "$ref" 2>"$T/err"; then
+    extra=(); [ "$mode" = platform ] && extra=(--platform linux/amd64)
+    if docker save "${extra[@]}" -o "$f" "$ref" 2>"$T/err"; then
       n="$(tar -tf "$f" | grep -c '^blobs/sha256/.')"
       cfg="$(tar -xOf "$f" manifest.json 2>/dev/null | grep -o '"Config":"[^"]*"' | head -1 | sed 's/.*sha256\///;s/"//')"
       has="нет"; tar -tf "$f" | grep -q "$cfg" && has="есть"
-      echo "save $ref: код 0, $(stat -c %s "$f") байт, блоков $n, config ${cfg:0:12} — $has"
+      echo "save [$mode] $ref: код 0, $(stat -c %s "$f") байт, блоков $n, config ${cfg:0:12} — $has"
     else
-      echo "save $ref: ошибка $(tail -1 "$T/err" | cut -c1-200)"
+      echo "save [$mode] $ref: ошибка $(tail -1 "$T/err" | cut -c1-200)"
     fi
     rm -f "$f"
   done
