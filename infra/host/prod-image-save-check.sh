@@ -8,6 +8,11 @@ set -uo pipefail
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 docker version --format 'docker {{.Server.Version}}, API {{.Server.APIVersion}}'
 docker info --format 'хранилище: {{.Driver}} {{json .DriverStatus}}' | cut -c1-200
+if [ "${1:-}" = --tree ]; then
+  # Какие платформы образа Docker считает доступными (Docker 28+).
+  for r in fifth/core fifth/web; do docker image ls --tree "$r" 2>&1 | head -30 | cut -c1-160; done
+  exit 0
+fi
 if [ "${1:-}" = --kit ]; then
   # Полнота images.tar комплекта: у каждого образа из manifest.json есть config и все слои.
   [[ "${2:-}" =~ ^[0-9]+\.[0-9]+-b[0-9]+\.[0-9]+$ ]] || { echo 'нужна сборка'; exit 2; }
