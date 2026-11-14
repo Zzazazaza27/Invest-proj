@@ -107,6 +107,12 @@ check)
   # (/usr/lib/wsl/drivers, только чтение) пользовательских данных не содержит.
   mnt=$(awk '($3=="drvfs"||$3=="9p") && $2!="/usr/lib/wsl/drivers" {print $2}' /proc/mounts | tr '\n' ' ')
   [ -n "$mnt" ] || mnt=no
+  # [interop] enabled=false в wsl.conf WSL соблюдает не всегда: 14.11 регистрация WSLInterop
+  # оказалась включённой. Снимаем её на эту загрузку и пишем, что снимали; замер — после.
+  interopRemoved=no
+  if [ -e /proc/sys/fs/binfmt_misc/WSLInterop ]; then
+    echo -1 > /proc/sys/fs/binfmt_misc/WSLInterop 2>/dev/null && interopRemoved=yes
+  fi
   interop=$( [ -e /proc/sys/fs/binfmt_misc/WSLInterop ] && cat /proc/sys/fs/binfmt_misc/WSLInterop | head -1 || echo absent )
   route=$(ip -n $NS route show default 2>/dev/null | head -1)
   # Внешних интерфейсов нет: только петля и мосты/пары Docker внутри пространства.
@@ -117,10 +123,10 @@ check)
   fifthns=$(ip netns exec $NS readlink /proc/self/ns/net)
   sock=$(readlink -f /var/run/docker.sock 2>/dev/null || echo none)
   info=$(docker info --format '{{json .}}' 2>/dev/null || echo '{}')
-  j --arg pid1 "$pid1" --arg mnt "$mnt" --arg interop "$interop" --arg route "$route" \
+  j --arg pid1 "$pid1" --arg mnt "$mnt" --arg interop "$interop" --arg interopRemoved "$interopRemoved" --arg route "$route" \
     --arg links "$links" --arg outside "$outside" --arg dockerns "$dockerns" --arg fifthns "$fifthns" \
     --arg sock "$sock" --arg dockerHost "${DOCKER_HOST:-}" --argjson info "$info" \
-    '{pid1:$pid1, windowsDrives:$mnt, interop:$interop, nsDefaultRoute:$route, nsLinks:$links,
+    '{pid1:$pid1, windowsDrives:$mnt, interop:$interop, interopRemoved:$interopRemoved, nsDefaultRoute:$route, nsLinks:$links,
       outside:$outside, dockerdNetns:$dockerns, fifthNetns:$fifthns, socket:$sock, dockerHost:$dockerHost,
       docker:{id:$info.ID, name:$info.Name, rootDir:$info.DockerRootDir, containers:$info.Containers,
               images:$info.Images, version:$info.ServerVersion}}'
