@@ -106,9 +106,18 @@ if [ ! -f "$ROOT/.local/kits/$BUILD/kit.json" ]; then
   unset DOCKER_CONFIG
   drop_credentials
 fi
+if [ "$(laptop stage)" = kit-repair ]; then
+  # images.tar уже скачанного комплекта — заново из реестра (14.11: docker save терял слои ядра).
+  mkdir -p "$WORK/docker"
+  export DOCKER_CONFIG="$WORK/docker"
+  laptop ghcr-token | docker login ghcr.io -u probe --password-stdin >/dev/null
+  node scripts/kit.mjs repair-images --build "$BUILD" | cut -c1-300
+  unset DOCKER_CONFIG
+  drop_credentials
+fi
 node scripts/kit.mjs load --build "$BUILD" | cut -c1-160
 # Ранний выход тоже убирает временный каталог: в нём учётные данные GHCR этого запуска.
-[ "$(laptop stage)" != kit ] || { report "комплект $BUILD на узле"; rm -rf "$WORK"; exit 0; }
+case "$(laptop stage)" in kit | kit-repair) report "комплект $BUILD на узле"; rm -rf "$WORK"; exit 0 ;; esac
 
 say 'среда test-1 в прежнем режиме'
 local_settings

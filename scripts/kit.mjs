@@ -6,6 +6,7 @@
  *   node scripts/kit.mjs fetch    --build <номер> [--run <запуск CI>] [--dir <артефакт>]
  *   node scripts/kit.mjs pack     --build <номер> --from <метка> [--sbom <каталог описи>]
  *   node scripts/kit.mjs load     --build <номер>
+ *   node scripts/kit.mjs repair-images --build <номер>   images.tar заново из реестра (14.11)
  *   node scripts/kit.mjs check    --build <номер>
  *   node scripts/kit.mjs pin      --env <среда> [--current <номер>] [--rollback <номер>] [--pending <номер|none>] [--partial <номер|none>]
  *
@@ -38,6 +39,7 @@ import {
 import { basename, dirname, join, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { overlayManifest } from './lib/overlays.mjs';
+import { registryArchive } from './lib/registry-archive.mjs';
 import { prodFileName, prodFileProblems } from './lib/prod-compose.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -354,17 +356,18 @@ async function fetchKit() {
   }
   const kit = JSON.parse(readFileSync(join(staging, 'kit.json'), 'utf8'));
   if (kit.build !== build) throw new Refused(`манифест от сборки ${kit.build}`);
-  const refs = COMPONENTS.map((c) => kit.images[c].digest);
-  for (const ref of refs) run('docker', ['pull', ref]);
   const stagedCompose = join(staging, 'compose.yml');
   if (!existsSync(stagedCompose))
     throw new Refused(`в артефакте сборки ${build} нет файла запуска`);
-  const tags = tagForKit(build, (c) => kit.images[c].digest);
+  // Образы — блоками из реестра, не `docker save` (lib/registry-archive.mjs: на Docker с
+  // хранилищем containerd save молча терял слои ядра).
+  const oci = join(staging, 'oci');
+  await registryArchive(kitImages(build, kit), oci);
   const staged = storeKit(
     build,
     kit,
     stagedCompose,
-    (tar) => run('docker', ['save', '-o', tar, ...tags]),
+    (tar) => run('tar', ['-cf', tar, '-C', oci, '.']),
     join(staging, 'prod-compose'),
     join(staging, 'sbom'),
     join(staging, 'overlays'),
@@ -372,6 +375,36 @@ async function fetchKit() {
   rmSync(staging, { recursive: true, force: true });
   const sealed = await commitKit(staged);
   finish({ ok: true, build, tar: sealed.tar }, 0);
+}
+
+const kitImages = (build, kit) =>
+  COMPONENTS.map((c) => ({ ref: kit.images[c].digest, name: `fifth/${c}:${build}` }));
+
+/**
+ * Пересобрать images.tar уже скачанного комплекта из реестра по дайджестам его манифеста
+ * (14.11: архивы, сделанные `docker save`, были без слоёв ядра). Манифест не меняется, кроме
+ * хеша и размера архива (их пишет узел, в kitId они не входят). Затем — `load`.
+ */
+async function repairImages() {
+  const build = needBuild();
+  const dir = kitDir(build);
+  const file = join(dir, 'kit.json');
+  if (!existsSync(file)) throw new Refused(`комплекта ${build} нет`);
+  const kit = JSON.parse(readFileSync(file, 'utf8'));
+  const work = join(dir, '.repair');
+  rmSync(work, { recursive: true, force: true });
+  await registryArchive(kitImages(build, kit), join(work, 'oci'));
+  const tar = join(work, 'images.tar');
+  run('tar', ['-cf', tar, '-C', join(work, 'oci'), '.']);
+  const sealed = { ...kit, tar: { sha256: await sha256File(tar), size: statSync(tar).size } };
+  renameSync(tar, join(dir, 'images.tar'));
+  writeFileSync(
+    file,
+    `${JSON.stringify(sealed, null, 2)}
+`,
+  );
+  rmSync(work, { recursive: true, force: true });
+  finish({ ok: true, build, tar: sealed.tar, before: kit.tar }, 0);
 }
 
 async function pack() {
@@ -521,6 +554,7 @@ const COMMANDS = {
   fetch: fetchKit,
   pack,
   load,
+  'repair-images': repairImages,
   check,
   pin,
   source,
