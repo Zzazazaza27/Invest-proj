@@ -343,7 +343,8 @@ try {
     '--format',
     'json',
   ]);
-  if (cfg.status !== 0) check('docker compose config', false, cfg.stderr.slice(-300));
+  if (cfg.error) skip('журнал core-b (docker compose config)', 'нет docker в окружении');
+  else if (cfg.status !== 0) check('docker compose config', false, cfg.stderr.slice(-300));
   else {
     const svc = JSON.parse(cfg.stdout).services;
     const pick = (s) => ({
@@ -377,10 +378,12 @@ try {
     '--format',
     'json',
   ]);
-  check(
-    'без дополнения core-b не в journald (проверка различает)',
-    bare.status === 0 && JSON.parse(bare.stdout).services['core-b']?.logging?.driver !== 'journald',
-  );
+  if (!bare.error)
+    check(
+      'без дополнения core-b не в journald (проверка различает)',
+      bare.status === 0 &&
+        JSON.parse(bare.stdout).services['core-b']?.logging?.driver !== 'journald',
+    );
   const envSrc = readFileSync(join(ROOT, 'scripts/env.mjs'), 'utf8');
   check(
     'env.mjs подключает журнал core-b при слотах и journald, снимает при выключении слотов',
