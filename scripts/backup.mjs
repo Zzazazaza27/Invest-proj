@@ -29,6 +29,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -907,31 +908,45 @@ function hostParts(c, id, dir) {
       .filter((i) => !existsSync(join(c.dir, 'images', `${i.id.replace(/^sha256:/, '')}.tar`)))
       .reduce((n, i) => n + (i.size || 0), 0);
     if (need) assertSpace(need, 'образы узла');
+    // Архив образа неизменяем после первой записи (реестр хешей). Неполный или разошедшийся с
+    // реестром архив остаётся как есть, полный пишется под следующим именем (.r1, .r2) —
+    // 14.11: docker save молча давал архивы ядра без config и слоёв.
+    const ledger = loadLedger();
     for (const img of host.images) {
-      const name = `images/${img.id.replace(/^sha256:/, '')}.tar`;
-      const target = join(c.dir, name);
-      // Сохранённый раньше архив проверяется один раз (метка .ok): неполный — пересохранить.
-      if (existsSync(target) && !existsSync(`${target}.ok`)) {
-        if (imageArchiveGap(target)) rmSync(target, { force: true });
-        else writeFileSync(`${target}.ok`, '');
-      }
-      if (!existsSync(target)) {
+      const base = `images/${img.id.replace(/^sha256:/, '')}`;
+      let name = null;
+      let failure = null;
+      for (const cand of [`${base}.tar`, `${base}.r1.tar`, `${base}.r2.tar`]) {
+        const target = join(c.dir, cand);
+        if (existsSync(target)) {
+          if (ledger[cand] && ledger[cand].size !== statSync(target).size) continue;
+          if (existsSync(`${target}.ok`) || !imageArchiveGap(target)) {
+            writeFileSync(`${target}.ok`, '');
+            name = cand;
+            break;
+          }
+          continue;
+        }
         const r = docker(['save', '-o', `${target}.tmp`, img.id], { allowFail: true });
         if (r.status !== 0) {
           rmSync(`${target}.tmp`, { force: true });
-          imagesMissing.push(`${img.tags[0] ?? img.id}: ${r.stderr.trim().split('\n').pop()}`);
-          continue;
+          failure = r.stderr.trim().split(/\r?\n/).pop();
+          break;
         }
-        // Полнота: docker save на хранилище containerd молча писал архив без config и слоёв,
-        // если их блоков нет в content store (14.11, образы ядра). Такой файл — не копия.
         const gap = imageArchiveGap(`${target}.tmp`);
         if (gap) {
           rmSync(`${target}.tmp`, { force: true });
-          imagesMissing.push(`${img.tags[0] ?? img.id}: архив неполон (${gap})`);
-          continue;
+          failure = `архив неполон (${gap})`;
+          break;
         }
         renameSync(`${target}.tmp`, target);
         writeFileSync(`${target}.ok`, '');
+        name = cand;
+        break;
+      }
+      if (!name) {
+        imagesMissing.push(`${img.tags[0] ?? img.id}: ${failure ?? 'нет свободного имени архива'}`);
+        continue;
       }
       images.push({ ...img, file: name });
       paths.push(name);
