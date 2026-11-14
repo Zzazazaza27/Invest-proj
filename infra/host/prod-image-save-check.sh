@@ -8,6 +8,20 @@ set -uo pipefail
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 docker version --format 'docker {{.Server.Version}}, API {{.Server.APIVersion}}'
 docker info --format 'хранилище: {{.Driver}} {{json .DriverStatus}}' | cut -c1-200
+if [ "${1:-}" = --kit ]; then
+  # Полнота images.tar комплекта: у каждого образа из manifest.json есть config и все слои.
+  [[ "${2:-}" =~ ^[0-9]+\.[0-9]+-b[0-9]+\.[0-9]+$ ]] || { echo 'нужна сборка'; exit 2; }
+  k="/opt/fifth-element/.local/kits/$2/images.tar"
+  [ -f "$k" ] || { echo "нет $k"; exit 1; }
+  echo "$k: $(stat -c %s "$k") байт"
+  tar -tf "$k" > /tmp/kit-list.$$
+  tar -xOf "$k" manifest.json | node -e '
+    const m=JSON.parse(require("fs").readFileSync(0));const have=new Set(require("fs").readFileSync(process.argv[1],"utf8").split("
+"));
+    for(const e of m){const miss=[e.Config,...e.Layers].filter(x=>!have.has(x));console.log((e.RepoTags||[]).join(","),"слоёв",e.Layers.length,miss.length?"НЕТ "+miss.length:"полный");}' /tmp/kit-list.$$
+  rm -f /tmp/kit-list.$$
+  exit 0
+fi
 if [ $# -eq 0 ]; then
   set -- "$(docker inspect fifth-core --format '{{.Config.Image}}')" \
     "$(docker inspect fifth-web --format '{{.Config.Image}}')"
