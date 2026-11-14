@@ -15,21 +15,47 @@
  *   node scripts/monitor-export.mjs        записать MONITOR_STATE_DIR/containers.json
  */
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { join, resolve } from 'node:path';
 import { ROOT, loadEnv } from './lib/backup.mjs';
-import { containerRecord } from './lib/monitor-containers.mjs';
+import { containerRecord, standbyContainers } from './lib/monitor-containers.mjs';
 
 loadEnv();
 const dir = resolve(process.env.MONITOR_STATE_DIR || join(ROOT, '.local', 'monitor-state'));
 mkdirSync(dir, { recursive: true });
 
+// Резервные слоты ядра (рабочая среда и тестовые) — по их файлам маршрута.
+const readRoute = (f) => {
+  try {
+    return existsSync(f) ? JSON.parse(readFileSync(f, 'utf8')) : null;
+  } catch {
+    return null;
+  }
+};
+const envsDir = join(ROOT, '.local', 'envs');
+const standby = standbyContainers([
+  { prefix: 'fifth', route: readRoute(join(ROOT, '.local', 'release', 'core-route.json')) },
+  ...(existsSync(envsDir) ? readdirSync(envsDir) : [])
+    .filter((id) => /^test-[0-9]+$/.test(id))
+    .map((id) => ({
+      prefix: `fifth-${id}`,
+      route: readRoute(join(envsDir, id, 'release', 'core-route.json')),
+    })),
+]);
+
 const ids = execFileSync('docker', ['ps', '-aq', '--filter', 'name=fifth-'], { encoding: 'utf8' })
   .split('\n')
   .filter(Boolean);
 const containers = ids.length
-  ? JSON.parse(execFileSync('docker', ['inspect', ...ids], { encoding: 'utf8' })).map(
-      containerRecord,
+  ? JSON.parse(execFileSync('docker', ['inspect', ...ids], { encoding: 'utf8' })).map((c) =>
+      containerRecord(c, standby),
     )
   : [];
 
