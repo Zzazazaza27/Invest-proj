@@ -355,19 +355,22 @@ jobs:
           TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
           REBUILD: ${{ inputs.rebuild_postgres == true }}
+          # Значения контекста — через окружение, не подстановкой в скрипт (semgrep run-shell-injection).
+          ACTOR: ${{ github.actor }}
+          SHA: ${{ github.sha }}
         run: |
           # Метка постоянна и входит в сумму входов базы: расхождение — отказ.
           node -e "import('./scripts/image-inputs.mjs').then(m=>process.exit(m.POSTGRES_BUILD.labels[0]===process.env.SOURCE?0:1))"
-          docker build --label "$SOURCE" --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/core.Dockerfile -t fifth/core:ci .
+          docker build --label "$SOURCE" --build-arg GIT_COMMIT="$SHA" -f infra/images/core.Dockerfile -t fifth/core:ci .
           # Серверная часть web (nginx без статики) — метка: на слотах выпуск сравнивает её.
           WEB_RUNTIME=$(node scripts/image-inputs.mjs web-runtime)
           docker build --label "$SOURCE" --label "fifth.web.runtime=$WEB_RUNTIME" \
-            --build-arg GIT_COMMIT=${{ github.sha }} -f infra/images/web.Dockerfile -t fifth/web:ci .
+            --build-arg GIT_COMMIT="$SHA" -f infra/images/web.Dockerfile -t fifth/web:ci .
           KEY=$(node scripts/image-inputs.mjs postgres --platform linux/amd64)
           CACHE="ghcr.io/rebel-diesel/fifth-element/postgres:inputs-$KEY"
           echo "POSTGRES_CACHE=$CACHE" >> "$GITHUB_ENV"
           if [ "$RELEASE" = true ]; then
-            echo "$TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+            echo "$TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           fi
           if [ "$RELEASE" = true ] && [ "$REBUILD" != true ] && docker pull -q "$CACHE"; then
             docker tag "$CACHE" fifth/postgres:ci

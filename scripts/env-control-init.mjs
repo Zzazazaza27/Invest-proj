@@ -50,6 +50,8 @@ const psql = (sql) => {
       // Пароль — из файла секретов среды, через окружение (не в командной строке).
       env: {
         ...process.env,
+        // пароль читается из файла среды, литерала нет.
+        // nosemgrep: ajinabraham.njsscan.generic.hardcoded_secrets.node_secret
         PGPASSWORD: readFileSync(join(DIR, 'secrets', 'POSTGRES_PASSWORD'), 'utf8').trim(),
       },
     },
