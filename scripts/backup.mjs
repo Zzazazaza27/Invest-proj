@@ -865,6 +865,24 @@ async function set() {
  * образы каждого контейнера — `images/<id>.tar`, код — `code/<sha256>.tar.gz`. Образы и код
  * хранятся по содержимому: одинаковые не сохраняются второй раз.
  */
+/** Чего не хватает в архиве образа по его manifest.json; null — полный. */
+function imageArchiveGap(file) {
+  const list = spawnSyncRaw('tar', ['-tf', file], { encoding: 'utf8', maxBuffer: 64 << 20 });
+  if (list.status !== 0) return 'архив не читается';
+  const have = new Set(list.stdout.split('\n').map((l) => l.replace(/^\.\//, '')));
+  const m = spawnSyncRaw('tar', ['-xOf', file, 'manifest.json'], { encoding: 'utf8' });
+  if (m.status !== 0) return 'нет manifest.json';
+  let entries;
+  try {
+    entries = JSON.parse(m.stdout);
+  } catch {
+    return 'manifest.json не читается';
+  }
+  if (!Array.isArray(entries) || !entries.length) return 'manifest.json пуст';
+  const miss = entries.flatMap((e) => [e.Config, ...(e.Layers ?? [])]).filter((p) => !have.has(p));
+  return miss.length ? `нет блоков: ${miss.length}` : null;
+}
+
 function hostParts(c, id, dir) {
   if (process.platform !== 'linux') {
     return { paths: [], catalog: { error: 'съём узла только на Linux-узле' } };
@@ -892,6 +910,11 @@ function hostParts(c, id, dir) {
     for (const img of host.images) {
       const name = `images/${img.id.replace(/^sha256:/, '')}.tar`;
       const target = join(c.dir, name);
+      // Сохранённый раньше архив проверяется один раз (метка .ok): неполный — пересохранить.
+      if (existsSync(target) && !existsSync(`${target}.ok`)) {
+        if (imageArchiveGap(target)) rmSync(target, { force: true });
+        else writeFileSync(`${target}.ok`, '');
+      }
       if (!existsSync(target)) {
         const r = docker(['save', '-o', `${target}.tmp`, img.id], { allowFail: true });
         if (r.status !== 0) {
@@ -899,7 +922,16 @@ function hostParts(c, id, dir) {
           imagesMissing.push(`${img.tags[0] ?? img.id}: ${r.stderr.trim().split('\n').pop()}`);
           continue;
         }
+        // Полнота: docker save на хранилище containerd молча писал архив без config и слоёв,
+        // если их блоков нет в content store (14.11, образы ядра). Такой файл — не копия.
+        const gap = imageArchiveGap(`${target}.tmp`);
+        if (gap) {
+          rmSync(`${target}.tmp`, { force: true });
+          imagesMissing.push(`${img.tags[0] ?? img.id}: архив неполон (${gap})`);
+          continue;
+        }
         renameSync(`${target}.tmp`, target);
+        writeFileSync(`${target}.ok`, '');
       }
       images.push({ ...img, file: name });
       paths.push(name);

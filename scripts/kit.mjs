@@ -367,7 +367,7 @@ async function fetchKit() {
     build,
     kit,
     stagedCompose,
-    (tar) => run('tar', ['-cf', tar, '-C', oci, '.']),
+    (tar) => run('tar', ['-cf', tar, '-C', oci, ...OCI_ENTRIES]),
     join(staging, 'prod-compose'),
     join(staging, 'sbom'),
     join(staging, 'overlays'),
@@ -376,6 +376,9 @@ async function fetchKit() {
   const sealed = await commitKit(staged);
   finish({ ok: true, build, tar: sealed.tar }, 0);
 }
+
+// Записи архива без «./»: так же, как пишет docker save (проверки ищут «manifest.json»).
+const OCI_ENTRIES = ['oci-layout', 'index.json', 'manifest.json', 'blobs'];
 
 const kitImages = (build, kit) =>
   COMPONENTS.map((c) => ({ ref: kit.images[c].digest, name: `fifth/${c}:${build}` }));
@@ -395,7 +398,7 @@ async function repairImages() {
   rmSync(work, { recursive: true, force: true });
   await registryArchive(kitImages(build, kit), join(work, 'oci'));
   const tar = join(work, 'images.tar');
-  run('tar', ['-cf', tar, '-C', join(work, 'oci'), '.']);
+  run('tar', ['-cf', tar, '-C', join(work, 'oci'), ...OCI_ENTRIES]);
   const sealed = { ...kit, tar: { sha256: await sha256File(tar), size: statSync(tar).size } };
   renameSync(tar, join(dir, 'images.tar'));
   writeFileSync(

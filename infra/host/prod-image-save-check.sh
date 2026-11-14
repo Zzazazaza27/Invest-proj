@@ -1,55 +1,57 @@
 #!/bin/bash
-# Почему `docker save` образа ядра даёт архив без слоёв (14.11, общая приёмка 4б). Только чтение:
-# сохраняет образ во временный файл, печатает число записей, размер и наличие config/слоёв,
-# затем удаляет файл. Без значений секретов.
+# Полнота архивов образов на узле (14.11, общая приёмка 4б: `docker save` давал архив ядра без
+# слоёв). Только чтение: архив проверяется по manifest.json — у каждого образа есть config и все
+# слои. Временные файлы удаляются. Без значений секретов.
 #
-#   fifth-test op prod-image-save-check [образ ...]   по умолчанию fifth/core и fifth/web сборки prod
+#   fifth-test op prod-image-save-check [образ ...]   docker save; по умолчанию ядро и web prod
+#   fifth-test op prod-image-save-check --kit <сборка> images.tar комплекта
+#   fifth-test op prod-image-save-check --tree         какие платформы Docker считает доступными
 set -uo pipefail
 export PATH=/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 docker version --format 'docker {{.Server.Version}}, API {{.Server.APIVersion}}'
 docker info --format 'хранилище: {{.Driver}} {{json .DriverStatus}}' | cut -c1-200
-if [ "${1:-}" = --tree ]; then
-  # Какие платформы образа Docker считает доступными (Docker 28+).
+T="$(mktemp -d)"
+trap 'rm -rf "$T"' EXIT
+
+# Полнота архива: записи могут идти с «./» (tar -C каталог .) — сравниваем без него.
+complete() {
+  local f="$1"
+  tar -tf "$f" | sed 's#^\./##' > "$T/list"
+  { tar -xOf "$f" manifest.json 2>/dev/null || tar -xOf "$f" ./manifest.json; } | node -e '
+    const fs=require("fs");const m=JSON.parse(fs.readFileSync(0));
+    const have=new Set(fs.readFileSync(process.argv[1],"utf8").split(/\r?\n/));
+    for(const e of m){const miss=[e.Config,...e.Layers].filter(x=>!have.has(x));
+      console.log("  "+((e.RepoTags||[]).join(",")||"(без тега)"),"слоёв",e.Layers.length,miss.length?"НЕТ "+miss.length:"полный");}' "$T/list"
+}
+
+case "${1:-}" in
+--tree)
   for r in fifth/core fifth/web; do docker image ls --tree "$r" 2>&1 | head -30 | cut -c1-160; done
   exit 0
-fi
-if [ "${1:-}" = --kit ]; then
-  # Полнота images.tar комплекта: у каждого образа из manifest.json есть config и все слои.
+  ;;
+--kit)
   [[ "${2:-}" =~ ^[0-9]+\.[0-9]+-b[0-9]+\.[0-9]+$ ]] || { echo 'нужна сборка'; exit 2; }
   k="/opt/fifth-element/.local/kits/$2/images.tar"
   [ -f "$k" ] || { echo "нет $k"; exit 1; }
   echo "$k: $(stat -c %s "$k") байт"
-  tar -tf "$k" > /tmp/kit-list.$$
-  tar -xOf "$k" manifest.json | node -e '
-    const m=JSON.parse(require("fs").readFileSync(0));const have=new Set(require("fs").readFileSync(process.argv[1],"utf8").split(/\r?\n/));
-    for(const e of m){const miss=[e.Config,...e.Layers].filter(x=>!have.has(x));console.log((e.RepoTags||[]).join(","),"слоёв",e.Layers.length,miss.length?"НЕТ "+miss.length:"полный");}' /tmp/kit-list.$$
-  rm -f /tmp/kit-list.$$
+  complete "$k"
   exit 0
-fi
+  ;;
+esac
+
 if [ $# -eq 0 ]; then
   set -- "$(docker inspect fifth-core --format '{{.Config.Image}}')" \
     "$(docker inspect fifth-web --format '{{.Config.Image}}')"
 fi
-T="$(mktemp -d)"
-trap 'rm -rf "$T"' EXIT
 for img in "$@"; do
   [[ "$img" =~ ^[A-Za-z0-9._/:@-]+$ ]] || { echo "образ: недопустимое имя"; continue; }
-  id="$(docker image inspect "$img" --format '{{.Id}}' 2>/dev/null)" || { echo "$img: нет"; continue; }
-  echo "== $img ($id)"
-  docker image inspect "$img" --format 'размер {{.Size}}, слоёв {{len .RootFS.Layers}}'
-  docker image inspect "$img" --format 'платформы: {{json .Descriptor}}' 2>/dev/null | cut -c1-200
-  for mode in plain platform; do
-    ref="$img"
-    f="$T/x.tar"
-    extra=(); [ "$mode" = platform ] && extra=(--platform linux/amd64)
-    if docker save "${extra[@]}" -o "$f" "$ref" 2>"$T/err"; then
-      n="$(tar -tf "$f" | grep -c '^blobs/sha256/.')"
-      cfg="$(tar -xOf "$f" manifest.json 2>/dev/null | grep -o '"Config":"[^"]*"' | head -1 | sed 's/.*sha256\///;s/"//')"
-      has="нет"; tar -tf "$f" | grep -q "$cfg" && has="есть"
-      echo "save [$mode] $ref: код 0, $(stat -c %s "$f") байт, блоков $n, config ${cfg:0:12} — $has"
-    else
-      echo "save [$mode] $ref: ошибка $(tail -1 "$T/err" | cut -c1-200)"
-    fi
-    rm -f "$f"
-  done
+  docker image inspect "$img" >/dev/null 2>&1 || { echo "$img: нет"; continue; }
+  f="$T/x.tar"
+  if docker save -o "$f" "$img" 2>"$T/err"; then
+    echo "save $img: $(stat -c %s "$f") байт"
+    complete "$f"
+  else
+    echo "save $img: ошибка $(tail -1 "$T/err" | cut -c1-200)"
+  fi
+  rm -f "$f"
 done
