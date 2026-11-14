@@ -16,8 +16,7 @@ if [ "${1:-}" = --kit ]; then
   echo "$k: $(stat -c %s "$k") байт"
   tar -tf "$k" > /tmp/kit-list.$$
   tar -xOf "$k" manifest.json | node -e '
-    const m=JSON.parse(require("fs").readFileSync(0));const have=new Set(require("fs").readFileSync(process.argv[1],"utf8").split("
-"));
+    const m=JSON.parse(require("fs").readFileSync(0));const have=new Set(require("fs").readFileSync(process.argv[1],"utf8").split(/\r?\n/));
     for(const e of m){const miss=[e.Config,...e.Layers].filter(x=>!have.has(x));console.log((e.RepoTags||[]).join(","),"слоёв",e.Layers.length,miss.length?"НЕТ "+miss.length:"полный");}' /tmp/kit-list.$$
   rm -f /tmp/kit-list.$$
   exit 0
