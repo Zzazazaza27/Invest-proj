@@ -11,8 +11,9 @@ SETS=/var/backups/fifth-element/sets
 ready_last() {
   for d in "$SETS"/*; do
     n="$(basename "$d")"
-    [[ "$n" =~ ^[0-9TZ]+-[0-9a-f]+$ && -f "$d/READY" ]] && echo "$n"
+    if [[ "$n" =~ ^[0-9TZ]+-[0-9a-f]+$ && -f "$d/READY" ]]; then echo "$n"; fi
   done | sort | tail -1
+  # Под set -e код функции — код последней команды конвейера (tail), не проверки имени.
 }
 last="$(ready_last)"
 systemctl start fifth-backup-set.service
