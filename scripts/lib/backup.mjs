@@ -772,10 +772,23 @@ export function buildManifest(dir, relPaths, cache) {
 }
 
 /** Расхождения с описью: нет файла, другой размер, другой SHA-256. */
+/**
+ * Путь файла описи на этой машине. В Windows символы `: * ? " < > |` в имени невозможны:
+ * tar из Git (MSYS) и WSL хранят их подменой U+F000 + код (так в комплекте prod лежат файлы
+ * Maildir с «:2,S», 14.11). На Linux путь не меняется.
+ */
+export const localPath = (dir, p, platform = process.platform) =>
+  join(
+    dir,
+    platform === 'win32'
+      ? p.replace(/[:*?"<>|]/g, (c) => String.fromCharCode(0xf000 + c.charCodeAt(0)))
+      : p,
+  );
+
 export function manifestProblems(dir, manifest, { cache } = {}) {
   const problems = [];
   for (const m of manifest) {
-    const abs = join(dir, m.path);
+    const abs = localPath(dir, m.path);
     if (!m.sha256 || !existsSync(abs)) {
       problems.push(`нет файла ${m.path}`);
       continue;

@@ -415,7 +415,7 @@
 | CHK-DB-RECONNECT | `npm run check:db-reconnect` | 8 | вручную | `suite:regression` |
 | CHK-DB-RESILIENCE | `npm run check:db-resilience` | 23 | вручную | `suite:isolated` |
 | CHK-DEFINER-PRIVILEGES | `node scripts/check-definer-privileges.mjs` | 0 | CI | CI |
-| CHK-BACKUP-LOGIC | `node scripts/check-backup-logic.mjs` | 33 | вручную | — |
+| CHK-BACKUP-LOGIC | `node scripts/check-backup-logic.mjs` | 35 | вручную | — |
 | CHK-BACKUP-RESTORE | `node scripts/check-backup-restore.mjs [--from <скачанный комплект>] [--secret-key <файл>] [--passphrase-file <файл>] [--openbao-keys <аварийный комплект>]` | 21 | вручную | — |
 | CHK-FILE-RESTORE | `node scripts/check-file-restore.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)` | 27 | вручную | — |
 | CHK-LOST-FILE | `node scripts/check-lost-file.mjs --target local | --target test-1 (FIFTH_LOAD_BASE и учётка администратора цели)` | 18 | вручную | — |

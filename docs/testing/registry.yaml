@@ -298,7 +298,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 33
+    asserts: 35
     needs: []
     effects: ['только временный каталог ОС']
     studied: code

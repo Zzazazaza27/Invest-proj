@@ -256,6 +256,14 @@ try {
 }
 check('снимок, не знающий основу комплекта, не принимается', refused);
 
+// Имена с «:» (Maildir «…:2,S») в Windows хранятся подменой U+F000+код (tar из Git, WSL) — 14.11.
+const mail = 'config/host/files/mail/cur/1.M1.host,S=2:2,S';
+check(
+  'Windows: путь описи с «:» — подменой U+F03A',
+  lib.localPath('/d', mail, 'win32').endsWith('1.M1.host,S=22,S'),
+);
+check('Linux: путь описи не меняется', lib.localPath('/d', mail, 'linux').endsWith('S=2:2,S'));
+
 rmSync(dir, { recursive: true, force: true });
 console.log(`\n=== ИТОГ: ${passed} OK, ${failed} FAIL ===`);
 process.exit(failed ? 1 : 0);

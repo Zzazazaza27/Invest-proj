@@ -6,13 +6,21 @@
 #   fifth-test op prod-backup-set
 set -Eeuo pipefail
 SETS=/var/backups/fifth-element/sets
-last="$(ls "$SETS" | sort | tail -1)"
+# Только готовые комплекты по имени, как в fifth-backup-read: в каталоге бывают и другие записи,
+# и «последний по ls» оказывался не комплектом (14.11: «нового комплекта нет» при новом READY).
+ready_last() {
+  for d in "$SETS"/*; do
+    n="$(basename "$d")"
+    [[ "$n" =~ ^[0-9TZ]+-[0-9a-f]+$ && -f "$d/READY" ]] && echo "$n"
+  done | sort | tail -1
+}
+last="$(ready_last)"
 systemctl start fifth-backup-set.service
 [ "$(systemctl show fifth-backup-set.service -p Result --value)" = success ] || {
   echo 'задание комплекта завершилось неуспешно' >&2
   exit 1
 }
-next="$(ls "$SETS" | sort | tail -1)"
+next="$(ready_last)"
 [ "$next" != "$last" ] || { echo 'нового комплекта нет' >&2; exit 1; }
 [ -f "$SETS/$next/READY" ] || { echo "комплект $next без READY" >&2; exit 1; }
 echo "комплект: $next, READY $(cat "$SETS/$next/READY"), сейчас $(date -u +%FT%TZ)"

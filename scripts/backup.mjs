@@ -1224,6 +1224,8 @@ async function pull() {
     const ssh = (cmd) =>
       execFileSync('ssh', ['-i', VPS_KEY, '-o', 'BatchMode=yes', VPS, `${READ} ${cmd}`], {
         encoding: 'utf8',
+        // Опись комплекта с образами — тысячи записей, больше 1 МБ по умолчанию (ENOBUFS, 14.11).
+        maxBuffer: 256 * 1024 * 1024,
       });
     const wanted = option('--set');
     if (wanted && !/^[0-9TZ]+-[0-9a-f]+$/.test(wanted)) throw new Error('неверный --set');
