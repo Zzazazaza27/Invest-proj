@@ -52,6 +52,13 @@ check(
 );
 check('класс: копии — данные', classifyPath('/var/backups/fifth-element/sets') === 'data');
 check('класс: Caddyfile — конфигурация', classifyPath('/etc/caddy/Caddyfile') === 'config');
+check(
+  'класс: ключи репозиториев apt — открытая часть, прочие .asc/.gpg — секрет (15.11)',
+  classifyPath('/etc/apt/keyrings/docker.asc') === 'config' &&
+    classifyPath('/usr/share/keyrings/caddy-stable-archive-keyring.gpg') === 'config' &&
+    classifyPath('/etc/fifth/thomas.asc') === 'secret' &&
+    classifyPath('/usr/share/keyrings/sub/x.gpg') === 'secret',
+);
 check('содержимое: закрытый ключ — секрет', looksSecret('x\n-----BEGIN PRIVATE KEY-----\nabc'));
 check(
   'содержимое: PASSWORD=значение — секрет',

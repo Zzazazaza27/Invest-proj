@@ -23,13 +23,17 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import {
+  copyFileSync,
   createReadStream,
   existsSync,
+  mkdtempSync,
   mkdirSync,
   readdirSync,
   readFileSync,
+  rmSync,
   writeFileSync,
 } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -164,19 +168,109 @@ function hostPackagesOfSet(dir) {
   return pkgs.join(' ');
 }
 
-function prepare() {
+/** Архив окружения копии (catalog.host.hostEnv): один — используется, нет — null. */
+function hostEnvOfSet(dir) {
+  const sets = join(dir, 'sets');
+  const id = readdirSync(sets)
+    .filter((d) => existsSync(join(sets, d, 'READY')))
+    .sort()
+    .pop();
+  const catalog = JSON.parse(readFileSync(join(sets, id, 'catalog.json'), 'utf8'));
+  const list = catalog.host?.hostEnv ?? [];
+  if (list.length > 1 && !opt('--hostenv-id'))
+    throw new Error(`в копии архивов окружения ${list.length} — укажи --hostenv-id`);
+  const h = opt('--hostenv-id') ? list.find((x) => x.id === opt('--hostenv-id')) : list[0];
+  if (!h) return null;
+  // Ключ комплектов: явный (--pub, известный вне копии) или из записи узла в копии — тогда это
+  // отмечается: подпись подтверждает целостность, но не происхождение независимо от копии.
+  const copyKey = join(dir, dirname(catalog.host.file), 'files/etc/fifth-install/kit-signing.pub');
+  return { ...h, file: join(dir, h.file), copyKey: existsSync(copyKey) ? copyKey : null };
+}
+
+async function prepare() {
   pushScript();
   const set = opt('--set', '');
-  const pkgs = set ? hostPackagesOfSet(resolve(set)) : '';
-  if (pkgs) console.log(`пакеты хоста — версии копии: ${pkgs}`);
-  const r = inSite(`HOST_PKGS='${pkgs}' bash ${SITE}/site.sh prepare`);
+  const env = set ? hostEnvOfSet(resolve(set)) : null;
+  const extra = [];
+  let pkgs = '';
+  if (env) {
+    const pub = opt('--pub') ? resolve(opt('--pub')) : env.copyKey;
+    if (!pub) throw new Error('нет ключа комплектов: укажи --pub');
+    await installHostEnv(env.file, pub, { expectSha256: env.sha256 });
+    extra.push({
+      what: 'архив окружения копии (без сети)',
+      id: env.id,
+      sha256: env.sha256,
+      key: opt('--pub') ? 'ключ комплектов, указанный явно' : 'ключ комплектов из копии',
+    });
+  } else {
+    pkgs = set ? hostPackagesOfSet(resolve(set)) : '';
+    if (pkgs) {
+      console.log(`пакеты хоста — версии копии: ${pkgs}`);
+      console.log('ограничение: в копии нет архива окружения — пакеты ставятся из сети');
+    }
+  }
+  const r = inSite(
+    `HOST_PKGS='${pkgs}' HOSTENV_INSTALLED='${env?.id ?? ''}' bash ${SITE}/site.sh prepare`,
+  );
   process.stdout.write(r.out);
   const info = JSON.parse(inSite(`bash ${SITE}/site.sh info`).out);
   const sources = JSON.parse(readFileSync(siteFile('sources.json'), 'utf8'));
+  sources.push(...extra);
   for (const s of info.aptSources) sources.push({ what: 'пакеты Ubuntu (prepare)', url: s });
   writeFileSync(siteFile('sources.json'), JSON.stringify(sources, null, 2));
   writeFileSync(siteFile('site-info.json'), JSON.stringify({ ...info, sources }, null, 2));
   console.log(`площадка подготовлена: ${info.os}, пакеты ${Object.keys(info.packages).length}`);
+}
+
+/**
+ * Окружение узла из архива окружения (Тэнк 15.11): архив проверяется здесь (подпись ключом
+ * комплектов, суммы), критичные пакеты ставятся на площадке без сети и источников apt, затем
+ * общая сверка (scripts/host-env.mjs check --live --holds) по описанию ИЗ архива.
+ */
+async function hostenv() {
+  const tar = resolve(opt('--archive', ''));
+  const pub = opt('--pub');
+  if (!existsSync(tar) || !pub)
+    throw new Error('нужны --archive <архив.tar> и --pub <ключ комплектов>');
+  await installHostEnv(tar, resolve(pub));
+}
+
+async function installHostEnv(tar, pub, { expectSha256 = null } = {}) {
+  const { verifyArchive } = await import('./lib/host-env-archive.mjs');
+  const v = verifyArchive(tar, { publicPem: readFileSync(pub, 'utf8'), expectSha256 });
+  for (const c of v.checks)
+    console.log(`  ${c.ok ? 'OK  ' : 'FAIL'}  ${c.name}${c.ok ? '' : ` — ${c.details}`}`);
+  if (!v.ok) throw new Error('архив окружения не прошёл проверку — на площадку не передаётся');
+  const stage = mkdtempSync(join(tmpdir(), 'hostenv-push-'));
+  try {
+    copyFileSync(tar, join(stage, 'hostenv.tar'));
+    for (const f of [
+      'scripts/host-env.mjs',
+      'scripts/lib/host-env.mjs',
+      'scripts/lib/host-env-archive.mjs',
+      'scripts/lib/host-config.mjs',
+      'scripts/lib/kit-sign.mjs',
+    ]) {
+      mkdirSync(dirname(join(stage, f)), { recursive: true });
+      copyFileSync(join(ROOT, f), join(stage, f));
+    }
+    pushScript();
+    await push(stage, `${SITE}/hostenv-in`);
+  } finally {
+    rmSync(stage, { recursive: true, force: true });
+  }
+  const r = inSite(`HOSTENV_TAR=${SITE}/hostenv-in/hostenv.tar bash ${SITE}/site.sh hostenv`);
+  process.stdout.write(r.out);
+  const envFile = `${SITE}/hostenv/x/hostenv/${v.id}/environment.json`;
+  const c = inSite(
+    `cd ${SITE}/hostenv-in && node scripts/host-env.mjs check --live --holds --from-archive ${v.id} --env ${envFile}`,
+    { allowFail: true },
+  );
+  process.stdout.write(c.out);
+  if (!c.ok) throw new Error('сверка окружения площадки не прошла (строки выше)');
+  console.log(`окружение площадки — по архиву ${v.id}`);
+  return v.id;
 }
 
 /** Назначения и изоляция: каждое условие — отказ, если не выполнено. */
@@ -330,7 +424,7 @@ function destroy() {
   console.log(`дистрибутив ${DISTRO} удалён вместе с данными`);
 }
 
-const commands = { create, prepare, snapshot, reset, check, run, destroy };
+const commands = { create, prepare, hostenv, snapshot, reset, check, run, destroy };
 if (!commands[cmd]) {
   console.error(`команды: ${Object.keys(commands).join(', ')}`);
   process.exit(2);

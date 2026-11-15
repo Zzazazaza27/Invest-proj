@@ -36,6 +36,10 @@ export function kitId(kit) {
       Object.entries(kit.overlays).sort(([a], [b]) => a.localeCompare(b)),
     );
   }
+  // Архив окружения узла (15.11) — то же правило: есть поле — входит в идентификатор.
+  if (kit.hostEnv && typeof kit.hostEnv === 'object') {
+    body.hostEnv = `${kit.hostEnv.id}:${kit.hostEnv.sha256}`;
+  }
   return createHash('sha256').update(JSON.stringify(body)).digest('hex');
 }
 

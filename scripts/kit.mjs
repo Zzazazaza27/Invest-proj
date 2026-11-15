@@ -139,6 +139,19 @@ function needBuild() {
   return build;
 }
 
+/** Закрепление архива окружения для манифеста: { hostEnv: {id, sha256, envSha256} } или {}. */
+function hostEnvPin() {
+  const file = join(ROOT, 'infra/host/environment.lock.json');
+  if (!existsSync(file)) return {};
+  const lock = JSON.parse(readFileSync(file, 'utf8'));
+  if (
+    !/^hostenv-[0-9a-z.-]+\.[0-9a-f]{12}$/.test(lock.id ?? '') ||
+    !/^[0-9a-f]{64}$/.test(lock.sha256 ?? '')
+  )
+    throw new Error('environment.lock.json: нужны id архива и sha256');
+  return { hostEnv: { id: lock.id, sha256: lock.sha256, envSha256: lock.envSha256 ?? null } };
+}
+
 function manifestOf({ build, commit, images, previous, sbom = null }) {
   const migrations = readdirSync(MIGRATIONS)
     .filter((f) => f.endsWith('.sql'))
@@ -176,6 +189,9 @@ function manifestOf({ build, commit, images, previous, sbom = null }) {
     // Опись компонентов и отчёт лицензий этой сборки (scripts/sbom.mjs): контрольные суммы
     // файлов, лежащих рядом с манифестом. Подпись манифеста покрывает и их.
     sbom,
+    // Окружение узла (15.11): идентификатор и сумма утверждённого архива окружения из
+    // infra/host/environment.lock.json. Нет файла — нет поля (комплекты до архива окружения).
+    ...hostEnvPin(),
     checks: ['status: /live и /ready', 'verify: дайджесты экземпляров и миграции'],
     stopConditions: [
       'нет блокировки',

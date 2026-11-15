@@ -359,12 +359,51 @@ try {
     check('выход наружу с узла закрыт', !out.ok);
     // Окружение — по копии, а не по сегодняшнему main: каждый пакет хоста из записи узла —
     // ровно той же версии (14.11: Caddy 2.6.2 Ubuntu против 2.11.4 узла всплыл на шестом прогоне).
-    // Расхождение любого — отказ до данных. Общий механизм окружения — отдельная работа (TODO).
+    // Расхождение любого — отказ до данных.
     protocol.versions = { runtime: host?.versions ?? null, packages: {} };
+    // Копия с архивом окружения (15.11): общая сверка по описанию ИЗ архива копии — тот же
+    // модуль, что у выпуска и периодической сверки узла; «не проверено» — не совпадение.
+    const envArchive = catalog.host?.hostEnv?.[0] ?? null;
+    if (envArchive) {
+      const envFile = `${WORK}/hostenv/x/hostenv/${envArchive.id}/environment.json`;
+      const r = sh(
+        process.execPath,
+        [
+          join(TOOLS, 'scripts', 'host-env.mjs'),
+          'check',
+          '--live',
+          '--holds',
+          '--from-archive',
+          envArchive.id,
+          '--env',
+          envFile,
+          '--json',
+        ],
+        { allowFail: true },
+      );
+      let res = null;
+      try {
+        res = JSON.parse(r.text.trim().split('\n').pop());
+      } catch {
+        /* нет вывода — отказ ниже */
+      }
+      protocol.versions.environment = res && { archive: envArchive.id, ...res, rows: undefined };
+      if (!res) check('окружение площадки сверено с архивом копии', false, r.err.slice(-300));
+      for (const row of res?.rows ?? [])
+        check(
+          `окружение: ${row.subject} — ожидается ${row.want ?? '—'}, есть ${row.have ?? '—'}`,
+          row.state === 'ok',
+          row.state === 'unverified' ? 'не проверено' : row.rule,
+        );
+    } else {
+      limit(
+        'в копии нет архива окружения (копия до 15.11 или комплект без hostEnv): пакеты хоста сверены по записи узла, площадка ставила их из сети',
+      );
+    }
     // Политика (Тэнк 14.11): пакеты поставщиков — ровно версия копии; пакеты Ubuntu (ревизия «2ubuntu17.4» в
     // версии) — та же версия программы, ревизия безопасности та же или новее.
     const upstream = (v) => v.replace(/^\d+:/, '').replace(/-[^-]*$/, '');
-    for (const [name, want] of Object.entries(host?.packages ?? {})) {
+    for (const [name, want] of envArchive ? [] : Object.entries(host?.packages ?? {})) {
       const r = sh('dpkg-query', ['-W', '-f', '${Version}', name], { allowFail: true });
       const have = (r.ok && r.text.trim()) || 'нет';
       const os = /[0-9]ubuntu[0-9]/.test(want);

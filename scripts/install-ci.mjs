@@ -244,6 +244,22 @@ if (compareBuilds(kit.build, kit.build) === null || kit.build !== request.build)
   refuse('сборка запроса не совпала с манифестом');
 }
 
+// Окружение узла (15.11): комплект, закрепивший архив окружения, ставится только при архиве на
+// узле с той же суммой и подписью ключа комплектов — иначе копия не сможет его сохранить.
+if (kit.hostEnv) {
+  const { verifyArchive } = await import('./lib/host-env-archive.mjs');
+  const file = join(dirname(KITS), 'host-env', `${kit.hostEnv.id}.tar`);
+  if (!existsSync(file)) refuse(`на узле нет архива окружения ${kit.hostEnv.id}`);
+  const v = verifyArchive(file, { publicPem: publicKey, expectSha256: kit.hostEnv.sha256 });
+  if (!v.ok)
+    refuse(
+      `архив окружения ${kit.hostEnv.id}: ${v.checks
+        .filter((c) => !c.ok)
+        .map((c) => c.name)
+        .join('; ')}`,
+    );
+}
+
 const state = tool('release.mjs', ['state', env]);
 if (state.code !== 0) refuse(`состояние среды не прочитано: ${state.json?.error ?? state.code}`);
 const { build: current, migrations: applied, running } = state.json;

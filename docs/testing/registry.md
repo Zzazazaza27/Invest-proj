@@ -6,7 +6,7 @@
 
 - Версия реестра: 1, дата 2026-09-22, код `ec550db`
 - Обстановка: локальный стенд, Windows, Node 22, PostgreSQL 16
-- Проверок: 297; требований: 41
+- Проверок: 301; требований: 41
 
 ## Что защищено без участия человека
 
@@ -179,7 +179,7 @@
 
 ### Требования без единой проверки — 0
 
-### Зарегистрированы, но ни в наборе, ни в CI — 118
+### Зарегистрированы, но ни в наборе, ни в CI — 119
 
 Эти прогоны существуют и работают, но их никто не запускает ни по набору,
 ни по расписанию. Зелёный набор о них ничего не говорит.
@@ -192,6 +192,7 @@
 - `CHK-LOST-FILE` — Утрата готового файла: владельцу 500 stored_file_missing, утрата открыта и видна в /queues (files.lost), повтор объединяется; посторонний и несуществующая за…
 - `CHK-UPLOAD-CLEANUP` — Очистка служебных копий завершённых загрузок: до срока копии остаются; после срока удаление запрещают запрет на материал, проект и всю среду, активная попытк…
 - `CHK-HOST-CONFIG` — Импорты Caddy (файлы, шаблоны, фрагменты), drop-in и EnvironmentFile юнитов, файлы и монтирования Compose по меткам, замыкание по ссылкам; секреты по пути и …
+- `CHK-HOST-ENV` — Сверка окружения узла и архив окружения: правила и отказы без сети и Docker.
 - `CHK-FILES-ENDPOINT` — Вход файлов (2.1-W06): форма подписана на публичный адрес; CORS — разрешённому сайту разрешение, чужому нет, без разрешения на куки; право загрузки держит фо…
 - `CHK-FRONT-BUILDS` — Проверка перед выкатом: все фронты собраны в production-режиме.
 - `CHK-WEBHOOK-RECEIVER-LOCAL` — Режимы ответа получателя (200, 503, без ответа, обрыв), независимость адресов, 404 на чужой путь; подпись ядра верна, без подписи, устаревшая и чужим секрето…
@@ -333,7 +334,10 @@
 | TOOL-RESTORE-FULL-CHECKS | `вызывается scripts/restore-full.mjs (переменные RESTORE_*)` | 0 | вручную, по поводу | — |
 | TOOL-RESTORE-SOURCE-WSL | `node scripts/restore-source-wsl.mjs build|refresh|export|destroy` | 0 | вручную, по поводу | — |
 | TOOL-RESTORE-SOURCE-ACTIVITY | `вызывается infra/restore/source.sh activity before|after` | 0 | вручную, по поводу | — |
-| TOOL-RESTORE-SITE-WSL | `node scripts/restore-site-wsl.mjs create|prepare|check|run|destroy` | 0 | вручную, по поводу | — |
+| TOOL-RESTORE-SITE-WSL | `node scripts/restore-site-wsl.mjs create|prepare|hostenv|check|run|destroy` | 0 | вручную, по поводу | — |
+| TOOL-HOST-ENV | `node scripts/host-env.mjs inventory|check|archive build|archive verify` | 0 | вручную, по поводу | — |
+| TOOL-HOST-ENV-APPLY | `node scripts/host-env-apply.mjs plan|apply --yes|rollback <отметка>` | 0 | вручную, по поводу | — |
+| TOOL-MONITOR-HOST-ENV | `node scripts/monitor-host-env.mjs [--print]` | 0 | вручную, по поводу | — |
 | TOOL-DISK-GUARD | `node scripts/disk-guard.mjs [--path /] [--container <имя>] [--targets auto|prod,test-1,…]` | 0 | вручную, по поводу | — |
 | TOOL-CLEAN-PROBE-DATA | `npm run stand:clean-probes` | 0 | вручную, по поводу | — |
 | TOOL-CONTENT-SNAPSHOT | `npm run content:export` | 0 | вручную, по поводу | — |
@@ -423,7 +427,8 @@
 | CHK-GARAGE-FAULTS | `node scripts/check-garage-faults.mjs [--keep]` | 39 | вручную | `suite:isolated` |
 | CHK-OPENBAO-FAULTS | `node scripts/check-openbao-faults.mjs [--keep]` | 23 | вручную | `suite:isolated` |
 | CHK-RESOURCE-PRESSURE | `node scripts/check-resource-pressure.mjs [--keep]` | 28 | вручную | `suite:isolated` |
-| CHK-HOST-CONFIG | `node scripts/check-host-config.mjs` | 32 | вручную | — |
+| CHK-HOST-CONFIG | `node scripts/check-host-config.mjs` | 34 | вручную | — |
+| CHK-HOST-ENV | `node scripts/check-host-env.mjs` | 35 | вручную | — |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |

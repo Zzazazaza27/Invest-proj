@@ -1,0 +1,99 @@
+{
+  "format": 1,
+  "id": "hostenv-20261114-1",
+  "status": "draft",
+  "approved": null,
+  "os": {
+    "id": "ubuntu",
+    "versionId": "24.04",
+    "arch": null
+  },
+  "kernel": {
+    "compare": false,
+    "recorded": "6.8.0-147-generic"
+  },
+  "sources": [
+    {
+      "name": "ubuntu",
+      "uri": "http://archive.ubuntu.com/ubuntu",
+      "suite": null,
+      "keyFile": null,
+      "keyFingerprint": null
+    },
+    {
+      "name": "docker",
+      "file": "/etc/apt/sources.list.d/docker.list",
+      "uri": "https://download.docker.com/linux/ubuntu",
+      "suite": "noble",
+      "components": ["stable"],
+      "keyFile": "/etc/apt/keyrings/docker.asc",
+      "keyUrl": "https://download.docker.com/linux/ubuntu/gpg",
+      "keyFingerprint": null
+    },
+    {
+      "name": "caddy",
+      "file": "/etc/apt/sources.list.d/caddy-stable.list",
+      "uri": "https://dl.cloudsmith.io/public/caddy/stable/deb/debian",
+      "suite": "any-version",
+      "components": ["main"],
+      "keyFile": "/usr/share/keyrings/caddy-stable-archive-keyring.gpg",
+      "keyUrl": "https://dl.cloudsmith.io/public/caddy/stable/gpg.key",
+      "keyFingerprint": null
+    },
+    {
+      "name": "nodesource",
+      "file": "/etc/apt/sources.list.d/nodesource.sources",
+      "uri": "https://deb.nodesource.com/node_22.x",
+      "suite": "nodistro",
+      "components": ["main"],
+      "keyFile": "/usr/share/keyrings/nodesource.gpg",
+      "keyUrl": "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key",
+      "keyFingerprint": null
+    }
+  ],
+  "components": [
+    {
+      "name": "Docker Engine",
+      "source": "docker",
+      "match": "exact",
+      "packages": {
+        "docker-ce": "5:29.7.2-1~ubuntu.24.04~noble",
+        "docker-ce-cli": null,
+        "containerd.io": "2.3.3-1~ubuntu.24.04~noble",
+        "docker-compose-plugin": "5.5.0-1~ubuntu.24.04~noble",
+        "docker-buildx-plugin": null
+      }
+    },
+    {
+      "name": "Caddy",
+      "source": "caddy",
+      "match": "exact",
+      "packages": {
+        "caddy": "2.11.4"
+      }
+    },
+    {
+      "name": "Node.js",
+      "source": "nodesource",
+      "match": "exact",
+      "packages": {
+        "nodejs": "22.23.2-1nodesource1"
+      }
+    },
+    {
+      "name": "Системные программы Ubuntu",
+      "source": "ubuntu",
+      "match": "ubuntu-security",
+      "packages": {
+        "git": "1:2.43.0-1ubuntu7.3",
+        "gnupg": "2.4.4-2ubuntu17.4",
+        "openssh-server": "1:9.6p1-3ubuntu13.18"
+      }
+    }
+  ],
+  "security": {
+    "autoUpdates": null,
+    "excludeManaged": true
+  },
+  "note": "Черновик описи по копии prod 20261114T122630Z (15.11). Не утверждено: пробелы — null, см. host-env inventory. Утверждает владелец (status: approved, approved: {by, at})."
+}

@@ -472,7 +472,7 @@ checks:
     kind: check
     level: модульный
     runner: manual
-    asserts: 32
+    asserts: 34
     needs: [docker]
     effects:
       [
@@ -570,7 +570,7 @@ checks:
 
   - id: TOOL-RESTORE-SITE-WSL
     file: scripts/restore-site-wsl.mjs
-    command: node scripts/restore-site-wsl.mjs create|prepare|check|run|destroy
+    command: node scripts/restore-site-wsl.mjs create|prepare|hostenv|check|run|destroy
     kind: tool
     level: инструмент
     runner: manual-tool
@@ -586,6 +586,90 @@ checks:
       Работа № 5 раздела 01. Docker и Caddy площадки — в сетевом пространстве fifth с одной петлёй;
       check проверяет назначения и изоляцию до восстановления. Не запускался (этап общей приёмки).
     purpose: 'Испытательная площадка: свой systemd и свой Docker, без дисков и программ Windows, без выхода наружу после подготовки.'
+    confirmation: reviewed-in-code
+
+  - id: CHK-HOST-ENV
+    file: scripts/check-host-env.mjs
+    command: node scripts/check-host-env.mjs
+    kind: check
+    level: модульный
+    runner: manual
+    asserts: 35
+    needs: []
+    effects: ['временный каталог с искусственными комплектами и архивами; удаляется']
+    studied: code
+    studiedOn: 2026-11-15
+    note: >-
+      Окружение узла (Тэнк 15.11): правила сверки (поставщик — точно, Ubuntu — ревизия ≥, ядро не
+      сравнивается), «не проверено» отдельно от совпадения, полнота утверждённого описания, опись
+      без догадок, подпись архива доменом fifth-hostenv-v1, архив в идентификаторе комплекта и в
+      копии, отказы проверки архива (подмена пакета, описания, лишний файл, чужой ключ, сумма).
+      Сборка архива и установка без репозиториев — TOOL-HOST-ENV и TOOL-RESTORE-SITE-WSL hostenv.
+    purpose: 'Сверка окружения узла и архив окружения: правила и отказы без сети и Docker.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-15
+
+  - id: TOOL-HOST-ENV
+    file: scripts/host-env.mjs
+    command: node scripts/host-env.mjs inventory|check|archive build|archive verify
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [docker]
+    effects:
+      [
+        'archive build: контейнер ubuntu той же версии, пакеты и ключи поставщиков из сети; архив пишется один раз (неизменяем)',
+      ]
+    studied: code
+    studiedOn: 2026-11-15
+    note: >-
+      Опись по копии (черновик и неполные сведения), сверка (ok / differ / unverified, код 0/1/3),
+      сборка и проверка архива окружения. Узел не меняет. Периодическая сверка на узле —
+      scripts/monitor-host-env.mjs (таймер fifth-monitor-host-env, Zabbix host.env.verdict).
+    purpose: 'Окружение узла: опись, общая сверка, архив окружения.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-15
+
+  - id: TOOL-HOST-ENV-APPLY
+    file: scripts/host-env-apply.mjs
+    command: node scripts/host-env-apply.mjs plan|apply --yes|rollback <отметка>
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: [root]
+    effects:
+      [
+        'apply: apt-mark hold управляемых пакетов, /etc/apt/apt.conf.d/52fifth-unattended-upgrades, таймер fifth-monitor-host-env; rollback возвращает прежнее',
+      ]
+    studied: code
+    studiedOn: 2026-11-15
+    note: >-
+      Окружение узла (15.11): применение описания на работающем узле — только по команде Томаса.
+      Проверено на площадке WSL с утверждённым тестовым описанием: plan, отказ без --yes (код 2),
+      apply (закреплены ровно недостающие), rollback (сняты только свои закрепления, политика и
+      таймер — как были). На узле не запускался.
+    purpose: 'Закрепление окружения на узле обратимо и без смены пакетов.'
+    confirmation: confirmed-by-run
+    confirmedOn: 2026-11-15
+
+  - id: TOOL-MONITOR-HOST-ENV
+    file: scripts/monitor-host-env.mjs
+    command: node scripts/monitor-host-env.mjs [--print]
+    kind: tool
+    level: инструмент
+    runner: manual-tool
+    asserts: 0
+    needs: []
+    effects: ['пишет итог сверки окружения узла для агента Zabbix (host-env.json); узел не меняет']
+    studied: code
+    studiedOn: 2026-11-15
+    note: >-
+      Окружение узла (15.11): таймер fifth-monitor-host-env раз в сутки; на узле не установлен —
+      план применения в docs/runbooks/host-environment.md. Локально проверен ветвью «архив не
+      закреплён» (unverified).
+    purpose: 'Расхождение окружения узла с описанием видно в Zabbix; «не проверено» — отдельно.'
     confirmation: reviewed-in-code
 
   - id: TOOL-DISK-GUARD
@@ -6278,6 +6362,10 @@ blocks:
         CHK-RESOURCE-PRESSURE,
         TOOL-DISK-GUARD,
         CHK-HOST-CONFIG,
+        CHK-HOST-ENV,
+        TOOL-HOST-ENV,
+        TOOL-HOST-ENV-APPLY,
+        TOOL-MONITOR-HOST-ENV,
         TOOL-RESTORE-FULL,
         TOOL-RESTORE-FULL-CHECKS,
         TOOL-RESTORE-SITE-WSL,

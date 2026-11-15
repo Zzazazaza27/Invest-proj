@@ -697,6 +697,58 @@ async function configure() {
     },
   );
 
+  // ---- Окружение узла (15.11): сверка с описанием из архива окружения -------
+  await item({
+    name: 'Окружение узла: итог сверки, исходный файл',
+    key_: 'vfs.file.contents[/monitor/host-env.json]',
+    type: AGENT,
+    value_type: 4,
+    history: '0',
+  });
+  await item({
+    name: 'Окружение узла: 0 совпадает, 1 расходится, 2 не проверено',
+    key_: 'host.env.verdict',
+    type: DEP,
+    master_itemid: items.get('vfs.file.contents[/monitor/host-env.json]'),
+    value_type: 3,
+    preprocessing: [
+      step(
+        JS,
+        "var v = JSON.parse(value).verdict; return v === 'ok' ? 0 : v === 'differ' ? 1 : 2;",
+        2,
+        '2',
+      ),
+    ],
+  });
+  await item({
+    name: 'Окружение узла: возраст сверки, с',
+    key_: 'vfs.file.time[/monitor/host-env.json,modify]',
+    type: AGENT,
+    value_type: 3,
+    preprocessing: [
+      UNSUP('missing'),
+      step(
+        JS,
+        "if (value === 'missing') return 999999; return Math.floor(Date.now() / 1000) - Number(value);",
+      ),
+    ],
+  });
+  await trigger('Окружение узла расходится с описанием', `last(/${H}/host.env.verdict)=1`, 2, {
+    comments:
+      'Пакет, источник или закрепление не как в утверждённом описании. Сверка ничего не исправляет: ' +
+      'node scripts/host-env.mjs check --live --holds — подробности; порядок — docs/runbooks/host-environment.md.',
+  });
+  await trigger('Окружение узла не проверено', `last(/${H}/host.env.verdict)=2`, 1, {
+    comments:
+      'Состояние не удалось определить (нет архива, закреплений, описания) — это не совпадение.',
+  });
+  await trigger(
+    'Сверка окружения узла не работает',
+    `last(/${H}/vfs.file.time[/monitor/host-env.json,modify])>${2 * 86400}`,
+    2,
+    { comments: 'host-env.json не обновлялся дольше двух суток: таймер fifth-monitor-host-env.' },
+  );
+
   // ---- Сайт снаружи, сертификат --------------------------------------------
   // Рабочая среда закрыта паролем: агент его не умеет, проверку ведёт сервер, элемент HTTP.
   const gateFile = process.env.MONITOR_GATE_CREDENTIALS_PATH;

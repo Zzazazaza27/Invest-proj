@@ -8,6 +8,7 @@
 #   site.sh check      — назначения и изоляция; JSON в stdout
 #   site.sh node <tar> — node из образа ядра комплекта (без внешнего источника)
 #   site.sh info       — ОС, пакеты, источники для протокола; JSON в stdout
+#   site.sh hostenv    — критичные пакеты из архива окружения (HOSTENV_TAR), без сети и источников
 #
 # Сетевое пространство fifth: только петля, маршрута наружу нет. Docker, containerd и Caddy
 # работают в нём (drop-in NetworkNamespacePath), восстановление запускается в нём же. Так
@@ -51,6 +52,55 @@ EOF
   echo 'wsl.conf записан'
   ;;
 
+hostenv)
+  # Окружение узла из архива окружения (Тэнк 15.11): критичные пакеты ставятся из архива БЕЗ
+  # обращения к репозиториям — без сети (unshare --net), с пустыми источниками и пустым кешем
+  # списков apt: apt видит только установленное и файлы архива. Не хватило пакета — отказ.
+  # Архив проверен на ноутбуке (подпись ключом комплектов, суммы) — HOSTENV_TAR, путь на площадке.
+  [ -f "${HOSTENV_TAR:-}" ] || { echo 'HOSTENV_TAR: нет архива' >&2; exit 2; }
+  hd=/var/lib/fifth-restore/hostenv
+  rm -rf "$hd/x" "$hd/sel" "$hd/lists"; mkdir -p "$hd/x" "$hd/sel" "$hd/lists/partial"
+  tar -xf "$HOSTENV_TAR" -C "$hd/x"
+  root=$(find "$hd/x/hostenv" -mindepth 1 -maxdepth 1 -type d | head -1)
+  [ -f "$root/archive.json" ] || { echo 'в архиве нет archive.json' >&2; exit 2; }
+  # Из зависимостей — только те, которых нет или которые старше: установленное новее (пакеты
+  # Ubuntu с обновлениями безопасности) не понижается.
+  total=0 picked=0
+  for f in "$root"/debs/*.deb; do
+    total=$((total + 1))
+    p=$(dpkg-deb -f "$f" Package) v=$(dpkg-deb -f "$f" Version)
+    st=$(dpkg-query -W -f '${db:Status-Abbrev}' "$p" 2>/dev/null || true)
+    have=$(dpkg-query -W -f '${Version}' "$p" 2>/dev/null || true)
+    if [[ "$st" != ii* ]] || dpkg --compare-versions "$have" lt "$v"; then
+      ln -f "$f" "$hd/sel/"; picked=$((picked + 1))
+    fi
+  done
+  # Пакеты Docker из Ubuntu конфликтуют с docker-ce (удаление сети не требует).
+  DEBIAN_FRONTEND=noninteractive apt-get remove -y -q docker.io docker-compose-v2 containerd runc >/dev/null 2>&1 || true
+  echo "архив $(basename "$root"): пакетов $total, нет на площадке или старше $picked; сеть и источники apt отключены"
+  # Единственный источник — локальный репозиторий из файлов архива (file:). Архив проверен по
+  # подписи до передачи, поэтому trusted=yes относится только к нему.
+  (cd "$hd/sel" && apt-ftparchive packages . > Packages)
+  echo "deb [trusted=yes] file:$hd/sel ./" > "$hd/local.list"
+  offline=(unshare --net -- env DEBIAN_FRONTEND=noninteractive apt-get -q
+    -o DPkg::Lock::Timeout=600 -o Dir::Etc::SourceList="$hd/local.list"
+    -o Dir::Etc::SourceParts=/dev/null -o Dir::State::Lists="$hd/lists")
+  "${offline[@]}" update >/dev/null
+  # Запрошенные при сборке пакеты — ровно их версии из архива; уже установленные не старше
+  # (выборка выше их пропустила) остаются — их проверит общая сверка.
+  in_repo=" $(awk '/^Package: /{print $2}' "$hd/sel/Packages" | tr '\n' ' ') "
+  want=''
+  for p in $(python3 -c 'import json,sys;print(" ".join(json.load(open(sys.argv[1]))["requested"]))' "$root/archive.json"); do
+    [[ "$in_repo" == *" ${p%%=*} "* ]] && want="$want $p"
+  done
+  # shellcheck disable=SC2086
+  [ -z "$want" ] || "${offline[@]}" install -y --no-install-recommends --allow-downgrades $want
+  # Управляемые пакеты поставщиков закрепляются; пакетам Ubuntu обновления безопасности остаются.
+  for p in $(node -e 'const e=require(process.argv[1]);for(const c of e.components) if(c.match==="exact") for(const n of Object.keys(c.packages)) console.log(n)' "$root/environment.json"); do
+    apt-mark hold "$p" >/dev/null
+  done
+  echo "закреплены: $(apt-mark showhold | tr '\n' ' ')"
+  ;;
 prepare)
   [ "$(cat /proc/1/comm)" = systemd ] || { echo 'systemd не PID 1 — перезапусти дистрибутив' >&2; exit 1; }
   # Пакеты — до закрытия сети; источники записываются в info.
@@ -70,7 +120,10 @@ prepare)
   # ровно этой версии, из того же поставщика, что на узле; затем закрепляется (apt-mark hold),
   # чтобы автообновления Ubuntu его не сдвинули. Без HOST_PKGS — пакеты Ubuntu, как раньше.
   HOST_PKGS="${HOST_PKGS:-}"
-  if [ -z "$HOST_PKGS" ]; then
+  if [ -n "${HOSTENV_INSTALLED:-}" ]; then
+    # Критичные пакеты уже поставлены из архива окружения копии (шаг hostenv, без сети).
+    echo "критичные пакеты — из архива окружения $HOSTENV_INSTALLED"
+  elif [ -z "$HOST_PKGS" ]; then
     # shellcheck disable=SC2086
     DEBIAN_FRONTEND=noninteractive apt-get install $APT docker.io docker-compose-v2 caddy
   else
@@ -233,7 +286,8 @@ node)
 
 info)
   . /etc/os-release
-  pk=$(dpkg-query -W -f '${Package}\t${Version}\n' $PKGS 2>/dev/null | jq -R 'split("\t") | {(.[0]): .[1]}' | jq -s add)
+  # Пакет, которого dpkg не знает (docker-compose-v2 на чистой площадке из архива), — не отказ.
+  pk=$( { dpkg-query -W -f '${Package}\t${Version}\n' $PKGS 2>/dev/null || true; } | jq -R 'split("\t") | {(.[0]): .[1]}' | jq -s add)
   src=$( (grep -rh '^deb \|^URIs:' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null || true) | sort -u | jq -R . | jq -s .)
   jq -n --arg os "$PRETTY_NAME" --arg kernel "$(uname -r)" --argjson packages "$pk" --argjson apt "$src" \
     '{os:$os, kernel:$kernel, packages:$packages, aptSources:$apt}'

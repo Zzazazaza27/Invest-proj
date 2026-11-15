@@ -1,0 +1,10 @@
+# Сверка окружения узла (15.11): описание из архива окружения против фактического состояния.
+# Только чтение — ничего не исправляет; итог — в Zabbix (host-env.json).
+[Unit]
+Description=5E monitor: host environment check
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/fifth-element
+ExecStart=/usr/bin/node scripts/monitor-host-env.mjs
+TimeoutStartSec=120

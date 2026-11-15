@@ -59,6 +59,12 @@ const SECRET_PATH = [
  */
 const SEPARATE_PATH = [/^\/etc\/fifth-openbao\/seal(\/|$)/, /^\/etc\/fifth-openbao\/auto(\/|$)/];
 
+const PUBLIC_KEYRING_PATH = [
+  /^\/etc\/apt\/keyrings\/[^/]+$/,
+  /^\/usr\/share\/keyrings\/[^/]+$/,
+  /^\/etc\/apt\/trusted\.gpg\.d\/[^/]+$/,
+];
+
 /** Состояние, которое восстанавливается не как конфигурация. */
 const RUNTIME_PATH = [/^\/run\//, /^\/var\/run\//, /^\/proc\//, /^\/sys\//, /^\/dev\//, /^\/tmp\//];
 const DATA_PATH = [
@@ -84,6 +90,10 @@ export function classifyPath(p) {
   if (SEPARATE_PATH.some((r) => r.test(path))) return 'separate';
   if (RUNTIME_PATH.some((r) => r.test(path))) return 'runtime';
   if (DATA_PATH.some((r) => r.test(path))) return 'data';
+  // Ключи репозиториев apt — открытые ключи поставщиков: открытая часть, чтобы опись окружения
+  // сверяла их отпечатки без расшифровки (15.11). Закрытый ключ здесь всё равно поймает
+  // проверка содержимого (looksSecret).
+  if (PUBLIC_KEYRING_PATH.some((r) => r.test(path))) return 'config';
   if (SECRET_PATH.some((r) => r.test(path))) return 'secret';
   return 'config';
 }
@@ -379,6 +389,12 @@ export function captureHost({ root, outDir }) {
     '/etc/apt/sources.list',
     '/etc/apt/sources.list.d',
     '/etc/apt/keyrings',
+    // Окружение узла (15.11): закрепления, политика автообновлений и ключи репозиториев —
+    // без них опись неполна (Caddy держит ключ в /usr/share/keyrings).
+    '/etc/apt/preferences',
+    '/etc/apt/preferences.d',
+    '/etc/apt/apt.conf.d',
+    '/usr/share/keyrings',
     '/etc/sysctl.d',
     '/etc/tmpfiles.d',
     '/etc/logrotate.d',
@@ -487,7 +503,15 @@ export function captureHost({ root, outDir }) {
     }
     const buf = readFileSync(path);
     const text = isText(buf) && buf.length <= LIMITS.textBytes;
-    const secret = kind === 'secret' || !text || looksSecret(buf.toString('utf8'));
+    // Двоичный файл — в секретную часть, кроме открытого ключа репозитория: пакет OpenPGP
+    // «открытый ключ» (0x98/0x99/0xc6), а не закрытый (0x94/0x95/0xc5).
+    const publicKeyring =
+      PUBLIC_KEYRING_PATH.some((r) => r.test(path)) &&
+      !text &&
+      buf.length <= 1024 * 1024 &&
+      [0x98, 0x99, 0xc6].includes(buf[0]);
+    const secret =
+      kind === 'secret' || (!text && !publicKeyring) || (text && looksSecret(buf.toString('utf8')));
     const entry = {
       path,
       type: 'file',
@@ -568,6 +592,8 @@ export function captureHost({ root, outDir }) {
     '-f',
     '${Package}\t${Version}\n',
     'docker-ce',
+    'docker-ce-cli',
+    'docker-buildx-plugin',
     'docker.io',
     'docker-compose-plugin',
     'docker-compose-v2',
@@ -585,6 +611,7 @@ export function captureHost({ root, outDir }) {
     const [name, version] = line.split('\t');
     if (name && version) packages[name] = version;
   }
+  const env = hostEnvironmentFacts(Object.keys(packages));
   const host = {
     format: 1,
     capturedAt: new Date().toISOString(),
@@ -598,6 +625,7 @@ export function captureHost({ root, outDir }) {
         .filter(([k]) => ['ID', 'VERSION_ID', 'PRETTY_NAME'].includes(k)),
     ),
     kernel: run('uname', ['-r']).out.trim(),
+    arch: env.arch,
     versions: {
       docker: run('docker', ['version', '--format', '{{.Server.Version}}']).out.trim() || null,
       compose: run('docker', ['compose', 'version', '--short']).out.trim() || null,
@@ -605,6 +633,9 @@ export function captureHost({ root, outDir }) {
       node: process.version,
     },
     packages,
+    // Окружение узла (15.11): полный список пакетов, закрепления и источник управляемых —
+    // для описи и сверки (scripts/lib/host-env.mjs). Не удалось получить — null, не пусто.
+    environment: env.facts,
     users,
     groups,
     projects,
@@ -625,6 +656,71 @@ export function captureHost({ root, outDir }) {
   };
   writeFileSync(join(outDir, 'host.json'), JSON.stringify(host, null, 2));
   return { host, secretPaths: [...secretPaths].sort() };
+}
+
+/**
+ * Факты этого хоста для сверки окружения (host-env check --live): та же форма, что запись узла
+ * в копии, но без съёма конфигурации. Только чтение.
+ */
+export function liveHostFacts(managed) {
+  const osRelease = existsSync('/etc/os-release') ? readFileSync('/etc/os-release', 'utf8') : '';
+  const env = hostEnvironmentFacts(managed);
+  return {
+    os: Object.fromEntries(
+      osRelease
+        .split('\n')
+        .map((l) => l.match(/^([A-Z_]+)="?(.*?)"?$/))
+        .filter(Boolean)
+        .map((m) => [m[1], m[2]]),
+    ),
+    kernel: run('uname', ['-r']).out.trim() || null,
+    arch: env.arch,
+    environment: env.facts,
+  };
+}
+
+/**
+ * Сведения об окружении хоста для описи (Тэнк 15.11: отсутствующее не угадывать). Каждое поле —
+ * значение или null с причиной в `unknown`: «не удалось определить» не равно «пусто».
+ */
+function hostEnvironmentFacts(managed) {
+  const unknown = {};
+  const arch = run('dpkg', ['--print-architecture']);
+  const all = run('dpkg-query', [
+    '-W',
+    '-f',
+    '${Package}\t${Version}\t${Architecture}\t${db:Status-Abbrev}\n',
+  ]);
+  let installed = null;
+  if (all.ok) {
+    installed = {};
+    for (const line of all.out.split('\n')) {
+      const [name, version, a, st] = line.split('\t');
+      if (name && version && (st ?? '')[1] === 'i') installed[name] = { version, arch: a };
+    }
+  } else unknown.installed = all.err || 'dpkg-query недоступен';
+  const hold = run('apt-mark', ['showhold']);
+  if (!hold.ok) unknown.holds = hold.err || 'apt-mark недоступен';
+  // Источник установленной версии управляемого пакета — из локального кеша apt, без сети.
+  const origins = {};
+  for (const name of managed) {
+    const r = run('apt-cache', ['policy', name]);
+    const lines = r.ok ? r.out.split('\n') : [];
+    const at = lines.findIndex((l) => /^\s*\*\*\*\s/.test(l));
+    const src = [];
+    for (let i = at + 1; at >= 0 && i < lines.length && /^\s{8,}\d+\s/.test(lines[i]); i++)
+      src.push(lines[i].trim().replace(/^\d+\s+/, ''));
+    origins[name] = src.length ? src : null;
+  }
+  return {
+    arch: arch.ok ? arch.out.trim() : null,
+    facts: {
+      installed,
+      holds: hold.ok ? hold.out.split('\n').filter(Boolean).sort() : null,
+      origins,
+      unknown,
+    },
+  };
 }
 
 function globFiles(pattern) {

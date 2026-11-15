@@ -21,6 +21,7 @@ import { execFileSync, spawn, spawnSync as spawnSyncRaw } from 'node:child_proce
 import { randomBytes } from 'node:crypto';
 import { openbaoSnapshot } from './lib/openbao.mjs';
 import { captureHost, codeArchive } from './lib/host-config.mjs';
+import { pinnedHostEnvs } from './lib/host-env-archive.mjs';
 import {
   copyFileSync,
   existsSync,
@@ -56,6 +57,7 @@ import {
   readIndex,
   readState,
   readySets,
+  sha256File as sha256OfFile,
   verifyCatalog,
   materializeMeta,
   snapshotMeta,
@@ -951,6 +953,32 @@ function hostParts(c, id, dir) {
       images.push({ ...img, file: name });
       paths.push(name);
     }
+    // Архивы окружения узла (15.11), закреплённые комплектами: по идентификатору, один раз —
+    // как образы. Архив только на VPS восстановления не даёт: он уезжает с копией на ноутбук.
+    const hostEnv = [];
+    const hostEnvMissing = [];
+    const kitsDir = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
+    for (const h of pinnedHostEnvs(kitsDir)) {
+      const name = `hostenv/${h.id}.tar`;
+      const target = join(c.dir, name);
+      const src = join(dirname(kitsDir), 'host-env', `${h.id}.tar`);
+      if (!existsSync(target)) {
+        if (!existsSync(src)) {
+          hostEnvMissing.push(`${h.id}: нет на узле (${h.builds.join(', ')})`);
+          continue;
+        }
+        assertSpace(statSync(src).size, 'архив окружения');
+        mkdirSync(join(c.dir, 'hostenv'), { recursive: true });
+        copyFileSync(src, `${target}.tmp`);
+        renameSync(`${target}.tmp`, target);
+      }
+      if (sha256OfFile(target) !== h.sha256) {
+        hostEnvMissing.push(`${h.id}: сумма не совпала с комплектом`);
+        continue;
+      }
+      hostEnv.push({ id: h.id, sha256: h.sha256, file: name, builds: h.builds });
+      paths.push(name);
+    }
     // Код серверной копии.
     mkdirSync(join(c.dir, 'code'), { recursive: true });
     const tmp = join(c.dir, 'code', `.${id}.tmp`);
@@ -966,6 +994,8 @@ function hostParts(c, id, dir) {
         secrets,
         images,
         imagesMissing,
+        hostEnv,
+        hostEnvMissing,
         code: { file: codeFile, files: code.files },
         projects: Object.keys(host.projects),
         units: host.units.length,

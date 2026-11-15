@@ -34,6 +34,29 @@ export function compatSignatureValid(bytes, signature, publicPem) {
   }
 }
 
+/**
+ * Подпись архива окружения узла (15.11): тот же ключ комплектов, своя метка домена —
+ * подпись архива нельзя выдать за подпись комплекта или отчёта. Подписывается archive.json.
+ */
+const HOSTENV_DOMAIN = Buffer.from('fifth-hostenv-v1\n');
+export const signHostEnv = (bytes, privatePem) =>
+  sign(null, Buffer.concat([HOSTENV_DOMAIN, bytes]), createPrivateKey(privatePem)).toString(
+    'base64',
+  );
+
+export function hostEnvSignatureValid(bytes, signature, publicPem) {
+  try {
+    return verify(
+      null,
+      Buffer.concat([HOSTENV_DOMAIN, bytes]),
+      createPublicKey(publicPem),
+      Buffer.from(String(signature).trim(), 'base64'),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function kitSignatureValid(bytes, signature, publicPem) {
   try {
     return verify(
