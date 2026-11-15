@@ -234,6 +234,8 @@ async function run() {
   const keeper = spawn('wsl.exe', ['-d', DISTRO, '-u', 'root', '--', 'sleep', '86400'], {
     stdio: 'ignore',
   });
+  // unref: живой держатель не должен удерживать сам процесс — иначе 'exit' не наступит и прогон «висит».
+  keeper.unref();
   process.on('exit', () => keeper.kill());
   check();
   const set = resolve(opt('--set', ''));
