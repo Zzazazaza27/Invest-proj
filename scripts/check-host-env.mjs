@@ -292,8 +292,9 @@ try {
   );
 
   // --- проверка архива: собранного вручную, без Docker.
+  let archives = 0;
   const build = (id, mutate) => {
-    const root = join(work, `a-${Math.random().toString(36).slice(2)}`);
+    const root = join(work, `a-${++archives}`);
     const envBytes = Buffer.from(JSON.stringify(env));
     const deb = Buffer.from('fake deb');
     const archive = {
