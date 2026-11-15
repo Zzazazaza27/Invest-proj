@@ -296,3 +296,26 @@ export function pinnedHostEnvs(kitsDir) {
   }
   return [...out.values()];
 }
+
+/**
+ * Каким ключом проверять подпись архива из копии (Тэнк 16.11). Доверенный — только известный
+ * независимо от копии: явный (`pub`) или закреплённый в Git (`pinned`). Ключ из самой копии
+ * (`copyKey`) подменяется вместе с архивом, поэтому его не берём никогда, кроме явного режима
+ * `allowUnconfirmed` — тогда происхождение «не подтверждено». Ничего нет — отказ.
+ */
+export function trustForArchive({
+  pub = null,
+  pinned = null,
+  copyKey = null,
+  allowUnconfirmed = false,
+}) {
+  if (pub) return { file: pub, provenance: 'confirmed', how: 'указан явно (--pub)' };
+  if (pinned) return { file: pinned, provenance: 'confirmed', how: 'закреплён в Git' };
+  if (allowUnconfirmed && copyKey)
+    return { file: copyKey, provenance: 'unconfirmed', how: 'ключ из самой копии' };
+  throw new Error(
+    'нет ключа комплектов, известного независимо от копии: укажи --pub <ключ> или закрепи его ' +
+      'в Git (infra/host/kit-signing.pub). Ключ из самой копии происхождения не подтверждает; ' +
+      'только явно — --origin-unconfirmed, и сверка даст «не проверено»',
+  );
+}

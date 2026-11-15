@@ -428,7 +428,7 @@
 | CHK-OPENBAO-FAULTS | `node scripts/check-openbao-faults.mjs [--keep]` | 23 | вручную | `suite:isolated` |
 | CHK-RESOURCE-PRESSURE | `node scripts/check-resource-pressure.mjs [--keep]` | 28 | вручную | `suite:isolated` |
 | CHK-HOST-CONFIG | `node scripts/check-host-config.mjs` | 34 | вручную | — |
-| CHK-HOST-ENV | `node scripts/check-host-env.mjs` | 35 | вручную | — |
+| CHK-HOST-ENV | `node scripts/check-host-env.mjs` | 45 | вручную | — |
 | CHK-FILES-ENDPOINT | `FILES_URL=<публичный адрес> ALLOWED_ORIGIN=<сайт кабинета> node scripts/check-files-endpoint.mjs` | 27 | вручную | — |
 | CHK-FILE-ACCESS | `npm run check:file-access` | 18 | вручную | `suite:handoff`, `suite:regression` |
 | CHK-FRONT-BUILDS | `npm run check:front-builds` | 0 | вручную | — |

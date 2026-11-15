@@ -8,6 +8,8 @@
  *   node scripts/host-env.mjs check [--env <описание>] (--set <копия> | --live) [--holds]
  *        [--from-archive <id>] [--json]
  *       сверка описания с фактами; итог ok / differ / unverified, код 0 / 1 / 3. Ничего не чинит.
+ *       Пакет поставщика из архива окружения — совпадение по метке происхождения узла
+ *       (/etc/fifth-install/host-env-origin.json); --from-archive — какой архив метка обязана назвать.
  *   node scripts/host-env.mjs archive build --env <описание> --out <каталог> [--sign-key <pem>]
  *   node scripts/host-env.mjs archive verify <архив.tar> [--pub <pem>]
  *       архив окружения — см. scripts/lib/host-env-archive.mjs.

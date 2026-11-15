@@ -12,7 +12,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { kitId } from './lib/compat-report.mjs';
-import { pinnedHostEnvs, verifyArchive } from './lib/host-env-archive.mjs';
+import { pinnedHostEnvs, trustForArchive, verifyArchive } from './lib/host-env-archive.mjs';
 import {
   compareDebVersions,
   compareEnvironment,
@@ -156,18 +156,71 @@ check(
   'источник не поставщика — расхождение',
   state(run(h7), 'Docker Engine: docker-ce (источник)') === 'differ',
 );
-const h8 = host();
-h8.environment.origins['docker-ce'] = ['/var/lib/dpkg/status'];
+// Узел из архива окружения (Тэнк 16.11): проверенный архив — допустимый источник; связь —
+// метка происхождения, сверяемая с описанием, суммой и версией.
+const SRC = 'Docker Engine: docker-ce (источник)';
+const DOCKER = '5:29.7.2-1~ubuntu.24.04~noble';
+const sha = 'c'.repeat(64);
+const mark = (over = {}) => ({
+  archive: `hostenv-chk-1.${sha.slice(0, 12)}`,
+  archiveSha256: sha,
+  provenance: 'confirmed',
+  packages: { 'docker-ce': DOCKER },
+  ...over,
+});
+const fromArchive = (m) => {
+  const h = host();
+  h.environment.origins['docker-ce'] = ['/var/lib/dpkg/status'];
+  h.environment.installedFrom = m;
+  return h;
+};
 check(
-  'площадка из архива: только установленное — ok в режиме архива',
-  state(
-    run(h8, { archive: 'hostenv-chk-1.0123456789ab' }),
-    'Docker Engine: docker-ce (источник)',
-  ) === 'ok',
+  'узел из архива без метки — расхождение (нет источника поставщика)',
+  state(run(fromArchive(null)), SRC) === 'differ',
 );
 check(
-  'без режима архива то же — расхождение (нет источника поставщика)',
-  state(run(h8), 'Docker Engine: docker-ce (источник)') === 'differ',
+  'метка подтверждённого архива — источник ok, итог ok',
+  state(run(fromArchive(mark())), SRC) === 'ok' &&
+    summarize(run(fromArchive(mark()), { holds: true })).verdict === 'ok',
+);
+check(
+  'метка без подтверждённого происхождения — «не проверено», не совпадение',
+  state(run(fromArchive(mark({ provenance: 'unconfirmed' }))), SRC) === 'unverified',
+);
+check(
+  'метка: идентификатор не сходится с суммой — расхождение',
+  state(run(fromArchive(mark({ archiveSha256: 'd'.repeat(64) }))), SRC) === 'differ',
+);
+check(
+  'метка другого описания — расхождение',
+  state(run(fromArchive(mark({ archive: `hostenv-other-1.${sha.slice(0, 12)}` }))), SRC) ===
+    'differ',
+);
+check(
+  'метка: архив ставил другую версию — расхождение',
+  state(
+    run(fromArchive(mark({ packages: { 'docker-ce': '5:29.7.1-1~ubuntu.24.04~noble' } }))),
+    SRC,
+  ) === 'differ',
+);
+check(
+  'сверка назвала другой архив — расхождение',
+  state(run(fromArchive(mark()), { archive: 'hostenv-chk-1.0123456789ab' }), SRC) === 'differ',
+);
+const back = fromArchive(mark());
+back.environment.origins['docker-ce'] = [
+  'https://download.docker.com/linux/ubuntu noble/stable amd64 Packages',
+  '/var/lib/dpkg/status',
+];
+check('источники поставщика подключены обратно — ok по поставщику', state(run(back), SRC) === 'ok');
+const foreign = fromArchive(mark());
+foreign.environment.origins['docker-ce'] = [
+  'http://mirror.example/ubuntu noble/stable amd64 Packages',
+  '/var/lib/dpkg/status',
+];
+check(
+  'метка есть, но версия и из постороннего источника — расхождение',
+  state(run(foreign), SRC) === 'differ',
 );
 const h9 = host();
 h9.environment.holds = [];
@@ -350,6 +403,27 @@ try {
 } finally {
   rmSync(work, { recursive: true, force: true });
 }
+
+// Доверие к подписи (Тэнк 16.11): ключ из копии не заменяет доверенный.
+const refuses = (o) => {
+  try {
+    trustForArchive(o);
+    return false;
+  } catch {
+    return true;
+  }
+};
+check('ключа вне копии нет — отказ, ключ копии сам не берётся', refuses({ copyKey: 'copy.pub' }));
+check(
+  'ключ из копии — только явно, происхождение «не подтверждено»',
+  trustForArchive({ copyKey: 'copy.pub', allowUnconfirmed: true }).provenance === 'unconfirmed',
+);
+check(
+  'явный или закреплённый ключ важнее ключа копии — подтверждено',
+  trustForArchive({ pub: 'a.pub', copyKey: 'copy.pub' }).file === 'a.pub' &&
+    trustForArchive({ pinned: 'g.pub', copyKey: 'copy.pub', allowUnconfirmed: true }).provenance ===
+      'confirmed',
+);
 
 console.log(`=== ИТОГ: ${ok} OK, ${fail} FAIL ===`);
 process.exit(fail ? 1 : 0);

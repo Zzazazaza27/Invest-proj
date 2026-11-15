@@ -132,7 +132,34 @@ export function factsOfHost(host) {
     versions,
     origins: host.environment?.origins ?? null,
     holds: host.environment?.holds ?? null,
+    installedFrom: host.environment?.installedFrom ?? null,
   };
+}
+
+/** Метка происхождения узла (`/etc/fifth-install/host-env-origin.json`), пишет установка из архива. */
+export const ORIGIN_MARK = '/etc/fifth-install/host-env-origin.json';
+
+/**
+ * Пакет поставлен из архива окружения? Метка сверяется: идентификатор = описание + 12 знаков
+ * суммы archive.json, описание — то же, версия пакета — та, что поставил архив; если сверка
+ * назвала архив (--from-archive) — он же. `confirmed` — подпись проверялась ключом, известным
+ * независимо от копии.
+ */
+export function archiveOrigin(env, mark, name, have, expectId = null) {
+  if (!mark) return { ok: false, why: 'источник не поставщика, метки архива окружения нет' };
+  const [envId, short] = String(mark.archive ?? '').split(/\.(?=[0-9a-f]{12}$)/);
+  if (!short || !String(mark.archiveSha256 ?? '').startsWith(short))
+    return { ok: false, why: `метка архива: идентификатор ${mark.archive} не сходится с суммой` };
+  if (envId !== env.id)
+    return { ok: false, why: `метка архива ${mark.archive} — другое описание, не ${env.id}` };
+  if (expectId && mark.archive !== expectId)
+    return { ok: false, why: `метка архива ${mark.archive}, ожидался ${expectId}` };
+  if (mark.packages?.[name] !== have)
+    return {
+      ok: false,
+      why: `архив ${mark.archive} ставил ${mark.packages?.[name] ?? 'не этот пакет'}`,
+    };
+  return { ok: true, id: mark.archive, confirmed: mark.provenance === 'confirmed' };
 }
 
 /**
@@ -200,27 +227,32 @@ export function compareEnvironment(env, facts, opts = {}) {
         const lines = facts.origins?.[name];
         if (!lines) {
           row(`${subject} (источник)`, 'unverified', src.uri, null, 'источник версии не определён');
-        } else if (opts.archive) {
-          // Площадка из архива окружения: происхождение подтверждено подписью архива до установки
-          // (restore-site-wsl hostenv). Совпадение — только если других источников этой версии
-          // нет (одна строка установленного /var/lib/dpkg/status).
-          const only = lines.every((l) => l.endsWith('/var/lib/dpkg/status'));
-          row(
-            `${subject} (источник)`,
-            only ? 'ok' : 'differ',
-            `архив ${opts.archive}`,
-            lines.join('; '),
-            'источник — подписанный архив окружения',
-          );
+        } else if (lines.some((l) => l.includes(src.uri))) {
+          row(`${subject} (источник)`, 'ok', src.uri, lines.join('; '), 'источник поставщика');
         } else {
-          const from = lines.some((l) => l.includes(src.uri));
-          row(
-            `${subject} (источник)`,
-            from ? 'ok' : 'differ',
-            src.uri,
-            lines.join('; '),
-            'источник поставщика',
-          );
+          // Узел, поставленный из архива окружения (Тэнк 16.11): проверенный подписанный архив —
+          // допустимый источник. Связь — метка происхождения (installedFrom), её идентификатор
+          // сверяется с описанием и суммой archive.json; версия — та, что поставил архив.
+          const from = archiveOrigin(env, facts.installedFrom, name, have, opts.archive);
+          const onlyLocal = lines.every((l) => l.endsWith('/var/lib/dpkg/status'));
+          if (from.ok && onlyLocal)
+            row(
+              `${subject} (источник)`,
+              from.confirmed ? 'ok' : 'unverified',
+              `${src.uri} или архив окружения`,
+              `архив ${from.id}`,
+              from.confirmed
+                ? 'подписанный архив окружения'
+                : 'архив окружения: происхождение не подтверждено',
+            );
+          else
+            row(
+              `${subject} (источник)`,
+              'differ',
+              `${src.uri} или архив окружения`,
+              lines.join('; '),
+              from.ok ? 'есть посторонний источник версии' : from.why,
+            );
         }
       }
       row(subject, 'ok', want, have, rule);

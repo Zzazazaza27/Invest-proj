@@ -100,6 +100,35 @@ hostenv)
     apt-mark hold "$p" >/dev/null
   done
   echo "закреплены: $(apt-mark showhold | tr '\n' ' ')"
+  # Метка происхождения (Тэнк 16.11): узел поставлен из этого архива — проверяемая связь с его
+  # идентификатором для последующей сверки. В метку — только пакеты, версия которых сейчас ровно
+  # та, что запрошена у архива. HOSTENV_PROVENANCE: confirmed — подпись проверена ключом,
+  # известным независимо от копии; unconfirmed — ключом из самой копии.
+  mkdir -p /etc/fifth-install
+  HOSTENV_ID=$(basename "$root") node -e '
+    const fs = require("fs"), cp = require("child_process"), crypto = require("crypto");
+    const [root, out] = process.argv.slice(1);
+    const bytes = fs.readFileSync(root + "/archive.json");
+    const a = JSON.parse(bytes);
+    const packages = {};
+    for (const r of a.requested) {
+      const [name, version] = r.split("=");
+      const have = cp.spawnSync("dpkg-query", ["-W", "-f", "${Version}", name], { encoding: "utf8" }).stdout;
+      if (have === version) packages[name] = version;
+    }
+    fs.writeFileSync(out, JSON.stringify({
+      format: 1,
+      archive: process.env.HOSTENV_ID,
+      archiveSha256: crypto.createHash("sha256").update(bytes).digest("hex"),
+      envId: a.envId,
+      provenance: process.env.HOSTENV_PROVENANCE === "confirmed" ? "confirmed" : "unconfirmed",
+      keySha256: process.env.HOSTENV_KEY || null,
+      installedAt: new Date().toISOString(),
+      packages,
+    }, null, 2) + "\n");
+  ' "$root" /etc/fifth-install/host-env-origin.json
+  chmod 644 /etc/fifth-install/host-env-origin.json
+  echo "метка происхождения: /etc/fifth-install/host-env-origin.json (${HOSTENV_PROVENANCE:-unconfirmed})"
   ;;
 prepare)
   [ "$(cat /proc/1/comm)" = systemd ] || { echo 'systemd не PID 1 — перезапусти дистрибутив' >&2; exit 1; }

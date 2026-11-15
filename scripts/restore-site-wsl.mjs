@@ -7,6 +7,10 @@
  *   node scripts/restore-site-wsl.mjs create --rootfs <файл .tar> --sha256 <hex> --source <адрес>
  *   node scripts/restore-site-wsl.mjs prepare [--set <комплект>]  пакеты (хоста — версии копии),
  *                                                  сетевое пространство без выхода наружу
+ *        [--pub <ключ комплектов> | --origin-unconfirmed]  архив окружения копии: подпись — ключом,
+ *        известным вне копии (--pub или infra/host/kit-signing.pub); ключ из копии — только явно,
+ *        итог «происхождение не подтверждено»
+ *   node scripts/restore-site-wsl.mjs hostenv --archive <архив.tar> --pub <ключ комплектов>
  *   node scripts/restore-site-wsl.mjs check        назначения и изоляция (до восстановления)
  *   node scripts/restore-site-wsl.mjs run --set <скачанный комплект> --secret-key <файл>
  *        --passphrase-file <файл> --openbao-keys <аварийный комплект>
@@ -21,7 +25,7 @@
  * (/dev/shm) и удаляются после прогона. Протокол — out/restore-full/<время>/.
  */
 import { spawn, spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey } from 'node:crypto';
 import {
   copyFileSync,
   createReadStream,
@@ -181,8 +185,8 @@ function hostEnvOfSet(dir) {
     throw new Error(`в копии архивов окружения ${list.length} — укажи --hostenv-id`);
   const h = opt('--hostenv-id') ? list.find((x) => x.id === opt('--hostenv-id')) : list[0];
   if (!h) return null;
-  // Ключ комплектов: явный (--pub, известный вне копии) или из записи узла в копии — тогда это
-  // отмечается: подпись подтверждает целостность, но не происхождение независимо от копии.
+  // Ключ из записи узла в копии — только для сравнения и явного режима «происхождение не
+  // подтверждено»: подменённые архив и ключ согласуются между собой (Тэнк 16.11).
   const copyKey = join(dir, dirname(catalog.host.file), 'files/etc/fifth-install/kit-signing.pub');
   return { ...h, file: join(dir, h.file), copyKey: existsSync(copyKey) ? copyKey : null };
 }
@@ -194,14 +198,25 @@ async function prepare() {
   const extra = [];
   let pkgs = '';
   if (env) {
-    const pub = opt('--pub') ? resolve(opt('--pub')) : env.copyKey;
-    if (!pub) throw new Error('нет ключа комплектов: укажи --pub');
-    await installHostEnv(env.file, pub, { expectSha256: env.sha256 });
+    const { trustForArchive } = await import('./lib/host-env-archive.mjs');
+    const t = trustedKey();
+    const trust = trustForArchive({
+      pub: t?.file,
+      copyKey: env.copyKey,
+      allowUnconfirmed: argv.includes('--origin-unconfirmed'),
+    });
+    const pub = trust.file;
+    if (trust.provenance !== 'confirmed')
+      console.log('ПРОИСХОЖДЕНИЕ НЕ ПОДТВЕРЖДЕНО: подпись проверяется ключом из самой копии');
+    else if (env.copyKey && keySha256(env.copyKey) !== keySha256(pub))
+      console.log(`внимание: ключ комплектов в копии отличается от доверенного (${t.how})`);
+    await installHostEnv(env.file, pub, { expectSha256: env.sha256, provenance: trust.provenance });
     extra.push({
       what: 'архив окружения копии (без сети)',
       id: env.id,
       sha256: env.sha256,
-      key: opt('--pub') ? 'ключ комплектов, указанный явно' : 'ключ комплектов из копии',
+      key: t ? `ключ комплектов: ${t.how}` : trust.how,
+      provenance: trust.provenance === 'confirmed' ? 'подтверждено' : 'не подтверждено',
     });
   } else {
     pkgs = set ? hostPackagesOfSet(resolve(set)) : '';
@@ -230,13 +245,29 @@ async function prepare() {
  */
 async function hostenv() {
   const tar = resolve(opt('--archive', ''));
-  const pub = opt('--pub');
-  if (!existsSync(tar) || !pub)
+  const trusted = trustedKey();
+  if (!existsSync(tar) || !trusted)
     throw new Error('нужны --archive <архив.tar> и --pub <ключ комплектов>');
-  await installHostEnv(tar, resolve(pub));
+  await installHostEnv(tar, trusted.file, { provenance: 'confirmed' });
 }
 
-async function installHostEnv(tar, pub, { expectSha256 = null } = {}) {
+/**
+ * Ключ комплектов, известный независимо от проверяемой копии: явный --pub или закреплённый в
+ * Git. Ключ из копии сюда не входит никогда.
+ */
+const PINNED_KEY = join(ROOT, 'infra', 'host', 'kit-signing.pub');
+function trustedKey() {
+  if (opt('--pub')) return { file: resolve(opt('--pub')), how: 'указан явно (--pub)' };
+  if (existsSync(PINNED_KEY))
+    return { file: PINNED_KEY, how: 'закреплён в Git (infra/host/kit-signing.pub)' };
+  return null;
+}
+const keySha256 = (file) =>
+  createHash('sha256')
+    .update(createPublicKey(readFileSync(file, 'utf8')).export({ type: 'spki', format: 'der' }))
+    .digest('hex');
+
+async function installHostEnv(tar, pub, { expectSha256 = null, provenance } = {}) {
   const { verifyArchive } = await import('./lib/host-env-archive.mjs');
   const v = verifyArchive(tar, { publicPem: readFileSync(pub, 'utf8'), expectSha256 });
   for (const c of v.checks)
@@ -260,7 +291,9 @@ async function installHostEnv(tar, pub, { expectSha256 = null } = {}) {
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }
-  const r = inSite(`HOSTENV_TAR=${SITE}/hostenv-in/hostenv.tar bash ${SITE}/site.sh hostenv`);
+  const r = inSite(
+    `HOSTENV_TAR=${SITE}/hostenv-in/hostenv.tar HOSTENV_PROVENANCE=${provenance} HOSTENV_KEY=${keySha256(pub)} bash ${SITE}/site.sh hostenv`,
+  );
   process.stdout.write(r.out);
   const envFile = `${SITE}/hostenv/x/hostenv/${v.id}/environment.json`;
   const c = inSite(
@@ -268,8 +301,18 @@ async function installHostEnv(tar, pub, { expectSha256 = null } = {}) {
     { allowFail: true },
   );
   process.stdout.write(c.out);
-  if (!c.ok) throw new Error('сверка окружения площадки не прошла (строки выше)');
-  console.log(`окружение площадки — по архиву ${v.id}`);
+  // Происхождение не подтверждено — сверка честно даёт «не проверено» (код 3): установка
+  // продолжается только в этом явно выбранном режиме, и протокол это несёт.
+  const unverified = c.out.split('\n').filter((l) => /^\s+\?\?/.test(l));
+  const unconfirmedOnly =
+    provenance !== 'confirmed' &&
+    /=== НЕ ПРОВЕРЕНО/.test(c.out) &&
+    unverified.every((l) => l.includes('происхождение не подтверждено'));
+  if (!c.ok && !unconfirmedOnly)
+    throw new Error('сверка окружения площадки не прошла (строки выше)');
+  console.log(
+    `окружение площадки — по архиву ${v.id}${provenance === 'confirmed' ? '' : ' (происхождение не подтверждено)'}`,
+  );
   return v.id;
 }
 

@@ -712,12 +712,23 @@ function hostEnvironmentFacts(managed) {
       src.push(lines[i].trim().replace(/^\d+\s+/, ''));
     origins[name] = src.length ? src : null;
   }
+  // Метка происхождения: узел поставлен из архива окружения (site.sh hostenv). Нет — null;
+  // нечитаема — null с причиной.
+  const markFile = process.env.FIFTH_HOSTENV_ORIGIN || '/etc/fifth-install/host-env-origin.json';
+  let installedFrom = null;
+  if (existsSync(markFile))
+    try {
+      installedFrom = JSON.parse(readFileSync(markFile, 'utf8'));
+    } catch (e) {
+      unknown.installedFrom = e.message;
+    }
   return {
     arch: arch.ok ? arch.out.trim() : null,
     facts: {
       installed,
       holds: hold.ok ? hold.out.split('\n').filter(Boolean).sort() : null,
       origins,
+      installedFrom,
       unknown,
     },
   };
