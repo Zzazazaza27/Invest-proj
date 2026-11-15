@@ -153,6 +153,13 @@ check(
     projects.fifth.services.core.binds[0] === '/etc/fifth-tls/services',
 );
 check(
+  'Compose: у службы свои файлы и переменные — проект может быть собран разными наборами (15.11)',
+  same(projects.fifth.services.core.configFiles, [
+    '/opt/fifth-element/infra/a.yml',
+    '/opt/x/b.yml',
+  ]) && same(projects.fifth.services.core.envFiles, ['/opt/fifth-element/.env']),
+);
+check(
   'ссылки: абсолютные — только из мест конфигурации, относительные — от каталога',
   same(absPathsIn('x /etc/a.conf y /home/u/z /opt/q/r.yml, /tmp/w'), [
     '/etc/a.conf',

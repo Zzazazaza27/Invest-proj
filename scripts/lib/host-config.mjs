@@ -227,8 +227,14 @@ export function composeProjects(containers) {
       if (f && !p.envFiles.includes(f)) p.envFiles.push(f);
     }
     const service = l['com.docker.compose.service'];
+    const list = (key) => (l[key] ?? '').split(',').filter(Boolean);
     p.services[service] = {
       container: c.Name.replace(/^\//, ''),
+      // Свои файлы у каждой службы: контейнеры одного проекта могут быть созданы разными
+      // наборами (14.11: ядро — файлами комплекта, Valkey — прежними infra/*). Объединение
+      // проекта для такого случая неверно: поздний базовый файл затирает дополнения (TLS).
+      configFiles: list('com.docker.compose.project.config_files'),
+      envFiles: list('com.docker.compose.project.environment_file'),
       image: c.Config?.Image ?? null,
       imageId: c.Image,
       status: c.State?.Status ?? null,

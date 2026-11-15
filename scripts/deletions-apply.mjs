@@ -60,10 +60,21 @@ const EVENT_SQL = `
          encode(prev_hash, 'hex') AS prev_hash, encode(row_hash, 'hex') AS row_hash
     FROM audit.events`;
 
+/**
+ * Клиент базы. TLS с проверкой сертификата — при RESTORE_DB_SSL=true, как у выгрузки аудита
+ * (AUDIT_EXPORT_DB_SSL): рабочая база принимает владельца с узла только по TLS; доверенный центр —
+ * NODE_EXTRA_CA_CERTS (14.11: на копии prod сверка удалений отказывала «no encryption»).
+ */
+const dbClient = (url) =>
+  new pg.Client({
+    connectionString: url,
+    ssl: process.env.RESTORE_DB_SSL === 'true' ? { rejectUnauthorized: true } : undefined,
+  });
+
 // ------------------------------------------------------------ источник событий
 
 async function sourceFromDb(url) {
-  const db = new pg.Client({ connectionString: url });
+  const db = dbClient(url);
   await db.connect();
   try {
     const coveredUntil = (
@@ -218,7 +229,7 @@ function storageChecker() {
 async function prepare() {
   const restoreId = arg('--restore-id');
   if (!/^[A-Za-z0-9._:-]{3,80}$/.test(restoreId ?? '')) throw new Error('нужен --restore-id');
-  const db = new pg.Client({ connectionString: arg('--db') });
+  const db = dbClient(arg('--db'));
   await db.connect();
   const gate = (await db.query('SELECT ops.restore_gate_state() AS s')).rows[0].s;
   if (gate !== 'closed') {
@@ -440,7 +451,7 @@ async function open() {
 async function close() {
   const restoreId = arg('--restore-id');
   if (!/^[A-Za-z0-9._:-]{3,80}$/.test(restoreId ?? '')) throw new Error('нужен --restore-id');
-  const db = new pg.Client({ connectionString: arg('--db') });
+  const db = dbClient(arg('--db'));
   await db.connect();
   try {
     await db.query(

@@ -15,6 +15,11 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 
 const E = process.env;
 const base = (E.RESTORE_BASE || '').replace(/\/$/, '');
+// Публичный вход prod до запуска закрыт basic_auth: разовая учётка площадки (её ставит и снимает
+// `restore-full`), только для запросов к самому сайту — не к адресам загрузки.
+const gate = E.RESTORE_BASIC
+  ? { Authorization: `Basic ${Buffer.from(E.RESTORE_BASIC).toString('base64')}` }
+  : {};
 const checks = [];
 const check = (name, ok, details = '') => {
   checks.push({ name, ok: Boolean(ok), details: String(details).slice(0, 500) });
@@ -46,12 +51,17 @@ const psql = (db, sql) =>
   );
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const sha = (b) => createHash('sha256').update(b).digest('hex');
+// Объекты, которых нет в копии (не было на источнике) — их отмечает `restore-full` отдельной
+// проверкой; «восстановленный файл» берётся из тех, что копия вернуть может.
+const missingKeys = `ARRAY[${JSON.parse(E.RESTORE_MISSING_KEYS || '[]')
+  .map((k) => `'${String(k).replace(/'/g, "''")}'`)
+  .join(',')}]::text[]`;
 
 function client() {
   const st = { session: null, csrf: null };
   return {
     async call(path, { method = 'GET', body, raw } = {}) {
-      const headers = { Cookie: [st.session, st.csrf].filter(Boolean).join('; ') };
+      const headers = { ...gate, Cookie: [st.session, st.csrf].filter(Boolean).join('; ') };
       if (body !== undefined) headers['Content-Type'] = 'application/json';
       if (method !== 'GET' && st.csrf)
         headers['X-CSRF-Token'] = st.csrf.split('=').slice(1).join('=');
@@ -90,7 +100,7 @@ function inCore(code) {
 let serviceReturn = null;
 try {
   // 1. страница кабинета через публичный вход
-  const page = await fetch(`${base}/`, { signal: AbortSignal.timeout(30_000) });
+  const page = await fetch(`${base}/`, { headers: gate, signal: AbortSignal.timeout(30_000) });
   check(
     'страница кабинета через публичный вход (Caddy, TLS)',
     page.status === 200,
@@ -103,7 +113,9 @@ try {
     `SELECT u.id || '|' || p.id FROM identity.users u JOIN lab.founders_projects fp ON fp.user_id = u.id AND fp.role = 'owner'
        JOIN lab.projects p ON p.id = fp.project_id
       WHERE u.status = 'active' AND u.deleted_at IS NULL AND p.deleted_at IS NULL
-      ORDER BY (SELECT count(*) FROM lab.project_materials m WHERE m.project_id = p.id AND m.upload_state = 'ready') DESC
+        AND NOT identity.is_monitoring_user(u.id) AND NOT lab.is_monitoring_project(p.id)
+      ORDER BY (SELECT count(*) FROM lab.project_materials m WHERE m.project_id = p.id AND m.upload_state = 'ready'
+        AND m.uploaded_at < '${E.RESTORE_SINCE}' AND m.s3_key IS NOT NULL AND NOT (m.s3_key = ANY(${missingKeys}))) DESC, u.id
       LIMIT 1`,
   ).text.trim();
   if (!check('есть активная учётная запись с проектом', row.includes('|')))
@@ -114,7 +126,7 @@ try {
     applySecretFiles(process.env);
     const pg = (await import('pg')).default;
     const { CryptoService } = await import('/app/apps/core/dist/crypto/crypto.service.js');
-    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER || process.env.DATABASE_URL, max: 1 });
+    const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL_OWNER || process.env.DATABASE_URL, max: 1, ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: true } : false });
     const { rows } = await pool.query('SELECT email_ciphertext, contact_wrapped_dek FROM identity.users WHERE id = $1', [${JSON.stringify(userId)}]);
     const email = (await new CryptoService().openField('passport_sensitive', rows[0].contact_wrapped_dek, rows[0].email_ciphertext, 'email')).toString('utf8');
     await pool.end();
@@ -164,7 +176,9 @@ try {
   const ready = psql(
     E.RESTORE_DB,
     `SELECT id || '|' || coalesce(content_hash, '') || '|' || size_bytes FROM lab.project_materials
-      WHERE project_id = '${projectId}' AND upload_state = 'ready' AND s3_key IS NOT NULL ORDER BY uploaded_at DESC NULLS LAST LIMIT 1`,
+      WHERE project_id = '${projectId}' AND upload_state = 'ready' AND s3_key IS NOT NULL
+        AND uploaded_at < '${E.RESTORE_SINCE}' AND NOT (s3_key = ANY(${missingKeys}))
+      ORDER BY uploaded_at DESC LIMIT 1`,
   ).text.trim();
   if (ready) {
     const [mid, want, size] = ready.split('|');

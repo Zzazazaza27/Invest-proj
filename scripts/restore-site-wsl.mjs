@@ -5,7 +5,8 @@
  * Создание площадки и работа с настоящей копией prod — этап общей приёмки, по слову Томаса.
  *
  *   node scripts/restore-site-wsl.mjs create --rootfs <файл .tar> --sha256 <hex> --source <адрес>
- *   node scripts/restore-site-wsl.mjs prepare      пакеты, сетевое пространство без выхода наружу
+ *   node scripts/restore-site-wsl.mjs prepare [--set <комплект>]  пакеты (хоста — версии копии),
+ *                                                  сетевое пространство без выхода наружу
  *   node scripts/restore-site-wsl.mjs check        назначения и изоляция (до восстановления)
  *   node scripts/restore-site-wsl.mjs run --set <скачанный комплект> --secret-key <файл>
  *        --passphrase-file <файл> --openbao-keys <аварийный комплект>
@@ -13,7 +14,8 @@
  *   node scripts/restore-site-wsl.mjs destroy      удалить дистрибутив целиком
  *
  * Внешние источники площадки — образ ОС (адрес и SHA-256 даёт Томас, файл скачивается
- * отдельно, с его согласия) и репозитории пакетов Ubuntu на шаге prepare; оба попадают в
+ * отдельно, с его согласия), репозитории пакетов Ubuntu и Caddy (caddy-stable, как на узле) на
+ * шаге prepare; все попадают в
  * протокол. После prepare у Docker и Caddy площадки нет выхода наружу: они в сетевом
  * пространстве `fifth` с одной петлёй. Ключи Томаса передаются в память дистрибутива
  * (/dev/shm) и удаляются после прогона. Протокол — out/restore-full/<время>/.
@@ -145,9 +147,29 @@ function pushScript() {
   inSite(`mkdir -p ${SITE} && cat > ${SITE}/site.sh && chmod 700 ${SITE}/site.sh`, { input: text });
 }
 
+/** Пакеты хоста из записи узла в комплекте: окружение — по копии, а не по сегодняшнему main. */
+function hostPackagesOfSet(dir) {
+  const sets = join(dir, 'sets');
+  const id = readdirSync(sets)
+    .filter((d) => existsSync(join(sets, d, 'READY')))
+    .sort()
+    .pop();
+  if (!id) throw new Error(`в ${dir} нет пригодного комплекта`);
+  const catalog = JSON.parse(readFileSync(join(sets, id, 'catalog.json'), 'utf8'));
+  const host = JSON.parse(readFileSync(join(dir, catalog.host.file), 'utf8'));
+  const pkgs = Object.entries(host.packages ?? {}).map(([n, v]) => `${n}=${v}`);
+  if (!pkgs.length) throw new Error('в записи узла нет пакетов хоста');
+  for (const p of pkgs)
+    if (!/^[a-z0-9][a-z0-9.+-]*=[A-Za-z0-9.+:~-]+$/.test(p)) throw new Error(`пакет: ${p}`);
+  return pkgs.join(' ');
+}
+
 function prepare() {
   pushScript();
-  const r = inSite(`bash ${SITE}/site.sh prepare`);
+  const set = opt('--set', '');
+  const pkgs = set ? hostPackagesOfSet(resolve(set)) : '';
+  if (pkgs) console.log(`пакеты хоста — версии копии: ${pkgs}`);
+  const r = inSite(`HOST_PKGS='${pkgs}' bash ${SITE}/site.sh prepare`);
   process.stdout.write(r.out);
   const info = JSON.parse(inSite(`bash ${SITE}/site.sh info`).out);
   const sources = JSON.parse(readFileSync(siteFile('sources.json'), 'utf8'));
@@ -226,6 +248,9 @@ async function run() {
   console.log('▸ передача комплекта и инструмента на площадку');
   await push(set, `${SITE}/set`);
   await push(join(ROOT, 'scripts'), `${SITE}/tools/scripts`);
+  // Закреплённый ключ подписи выгрузки аудита (deletions-apply): без него сверка удалений
+  // отказывала (14.11, прогон 9).
+  await push(join(ROOT, 'infra', 'audit'), `${SITE}/tools/infra/audit`);
   const keys = '/dev/shm/fifth-restore-keys';
   inSite(`mkdir -m 700 -p ${keys} && cat > ${keys}/secret.asc`, { input: readFileSync(key) });
   inSite(`cat > ${keys}/pass.txt`, { input: readFileSync(pass) });

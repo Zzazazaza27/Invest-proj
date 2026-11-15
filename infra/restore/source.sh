@@ -98,7 +98,9 @@ up)
   done
   [ -n "$ok" ] || { echo 'миграции не прошли' >&2; exit 1; }
   node scripts/garage-init.mjs | tail -3
-  docker run --rm --network host --env-file .env "$CORE_IMAGE" node scripts/nats-init-stream.mjs | tail -2
+  # Секреты .env — ссылками <ИМЯ>_FILE на /run/fifth-secrets (OpenBao Agent): каталог нужен и здесь.
+  docker run --rm --network host --env-file .env -v /run/fifth-secrets:/run/fifth-secrets:ro \
+    "$CORE_IMAGE" node scripts/nats-init-stream.mjs | tail -2
   node scripts/infra.mjs compose up -d
   bash "$0" caddy
   # Юниты копий и наблюдения — как на рабочем узле.

@@ -29,7 +29,7 @@
  * удержанное, ОС, пакеты и внешние источники площадки. Значения секретов не печатаются.
  */
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import {
   chmodSync,
   chownSync,
@@ -42,11 +42,12 @@ import {
   symlinkSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setLimitations, verifyCatalog } from './lib/backup.mjs';
 
 const TOOLS = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const INTERNAL_CA = '/run/fifth-secrets/internal-ca.crt';
 const argv = process.argv.slice(2);
 const opt = (n, d = null) => (argv.includes(n) ? argv[argv.indexOf(n) + 1] : d);
 const setDir = resolve(opt('--set', ''));
@@ -151,11 +152,20 @@ const host = catalog.host?.file
 protocol.set = { id: setId, T: catalog.at, commit: catalog.config?.commit ?? null };
 protocol.tool = { commit: process.env.RESTORE_TOOL_COMMIT ?? null };
 const ROOT = host?.root ?? '/opt/fifth-element';
+// Восстанавливается prod. Тестовые среды того же узла (.local/envs/<среда>) тоже записаны в
+// комплект, но их базы в нём нет — иначе первой «postgres» оказывалась служба test-1.
+const isEnvProject = (p) => p.workingDir.startsWith(`${ROOT}/.local/envs/`);
+const PROJECTS = host ? Object.values(host.projects).filter((p) => !isEnvProject(p)) : [];
+const ENV_PROJECTS = host
+  ? Object.values(host.projects)
+      .filter(isEnvProject)
+      .map((p) => p.name)
+  : [];
 
-/** Роли служб по записанным проектам Compose. */
+/** Роли служб по записанным проектам Compose (только prod). */
 function services() {
   const out = [];
-  for (const p of Object.values(host.projects)) {
+  for (const p of PROJECTS) {
     for (const [name, s] of Object.entries(p.services)) {
       const img = host.images.find((i) => i.id === s.imageId);
       const tags = img?.tags ?? [];
@@ -174,21 +184,95 @@ function services() {
 }
 
 /** Команда Compose проекта: его файлы, переменные и файл удержания. */
-function compose(project, args, o = {}) {
+/**
+ * Файлы Compose службы — те, которыми создан её контейнер на узле. Копии до 15.11 хранят только
+ * объединение по проекту: если в нём два набора базовых файлов (комплект и прежние infra/*),
+ * берётся первый по имени — иначе поздний базовый файл затирает дополнения (TLS Valkey).
+ */
+const legacyNoted = new Set();
+function composeFiles(project, service) {
   const p = host.projects[project];
-  const files = [...p.configFiles, join(HOLD_DIR, `${project}.yml`)].flatMap((f) => ['-f', f]);
-  const envs = p.envFiles.flatMap((f) => ['--env-file', f]);
+  const own = service ? p.services?.[service] : null;
+  if (own?.configFiles?.length) return { config: own.configFiles, env: own.envFiles ?? [] };
+  const seen = new Set();
+  const config = p.configFiles.filter((f) => {
+    const b = basename(f);
+    return seen.has(b) ? false : seen.add(b);
+  });
+  if (config.length < p.configFiles.length && !legacyNoted.has(project)) {
+    legacyNoted.add(project);
+    limit(
+      `${project}: в копии нет файлов Compose по службам, а в проекте ${p.configFiles.length - config.length} повторных базовых файла — службы создаются первым набором: ${config.map((f) => basename(dirname(f)) + '/' + basename(f)).join(', ')}`,
+    );
+  }
+  return { config, env: p.envFiles };
+}
+
+/** Службы проекта, сгруппированные по своему набору файлов Compose. */
+function byFiles(project, list) {
+  const groups = new Map();
+  for (const s of list) {
+    const key = JSON.stringify(composeFiles(project, s));
+    groups.set(key, [...(groups.get(key) ?? []), s]);
+  }
+  return [...groups.values()];
+}
+
+function compose(project, args, o = {}) {
+  const set = composeFiles(project, o.service);
+  const files = [...set.config, join(HOLD_DIR, `${project}.yml`)].flatMap((f) => ['-f', f]);
+  const envs = set.env.flatMap((f) => ['--env-file', f]);
+  // Значения секретов для подстановки в файлы Compose (`${REDIS_PASSWORD:?}` и т. п.): на узле их
+  // кладёт в окружение infra.mjs из `<ИМЯ>_FILE`, здесь — из комплекта ключей (Agent ещё не
+  // запущен). В файлы и протокол значения не пишутся.
   return docker(
-    ['compose', '-p', project, '--project-directory', p.workingDir, ...files, ...envs, ...args],
-    o,
+    [
+      'compose',
+      '-p',
+      project,
+      '--project-directory',
+      host.projects[project].workingDir,
+      ...files,
+      ...envs,
+      ...args,
+    ],
+    { ...o, env: { ...env, ...coreHostEnv(), ...o.env } },
   );
+}
+
+/**
+ * Адрес ядра для nginx (`CORE_HOST`) — как в infra.mjs на Linux: шлюз сети bridge. Без него
+ * в шаблоне остаётся host.docker.internal, которого DNS Docker на Linux не знает, и /v1/ — 502.
+ */
+let coreHost;
+function coreHostEnv() {
+  if (env.CORE_HOST) return {};
+  if (coreHost === undefined) {
+    const r = docker(
+      ['network', 'inspect', 'bridge', '--format', '{{(index .IPAM.Config 0).Gateway}}'],
+      { allowFail: true },
+    );
+    coreHost = r.ok && /^[0-9]+(\.[0-9]+){3}$/.test(r.text.trim()) ? r.text.trim() : '';
+  }
+  return coreHost ? { CORE_HOST: coreHost } : {};
 }
 
 /** Создание контейнеров проекта; внешняя сеть, которой ещё нет, — создаётся и повтор. */
 function composeCreate(project, list) {
+  for (const group of byFiles(project, list)) composeCreateGroup(project, group);
+}
+
+/** Запуск служб проекта — каждой своим набором файлов Compose. */
+function composeStart(project, list) {
+  for (const group of byFiles(project, list))
+    compose(project, ['start', ...group], { service: group[0] });
+}
+
+function composeCreateGroup(project, list) {
   for (let i = 0; i < 5; i++) {
     const r = compose(project, ['create', '--pull', 'never', '--no-build', ...list], {
       allowFail: true,
+      service: list[0],
     });
     if (r.ok) return;
     const m = r.err.match(/network (\S+) declared as external, but could not be found/);
@@ -273,6 +357,28 @@ try {
       timeout: 8000,
     });
     check('выход наружу с узла закрыт', !out.ok);
+    // Окружение — по копии, а не по сегодняшнему main: каждый пакет хоста из записи узла —
+    // ровно той же версии (14.11: Caddy 2.6.2 Ubuntu против 2.11.4 узла всплыл на шестом прогоне).
+    // Расхождение любого — отказ до данных. Общий механизм окружения — отдельная работа (TODO).
+    protocol.versions = { runtime: host?.versions ?? null, packages: {} };
+    // Политика (Тэнк 14.11): пакеты поставщиков — ровно версия копии; пакеты Ubuntu (ревизия «2ubuntu17.4» в
+    // версии) — та же версия программы, ревизия безопасности та же или новее.
+    const upstream = (v) => v.replace(/^\d+:/, '').replace(/-[^-]*$/, '');
+    for (const [name, want] of Object.entries(host?.packages ?? {})) {
+      const r = sh('dpkg-query', ['-W', '-f', '${Version}', name], { allowFail: true });
+      const have = (r.ok && r.text.trim()) || 'нет';
+      const os = /[0-9]ubuntu[0-9]/.test(want);
+      const ok = os
+        ? upstream(have) === upstream(want) &&
+          sh('dpkg', ['--compare-versions', have, 'ge', want], { allowFail: true }).ok
+        : have === want;
+      protocol.versions.packages[name] = { copy: want, site: have, policy: os ? 'os' : 'exact' };
+      check(
+        `пакет ${name}: в копии ${want}, на площадке ${have}${os ? ' (Ubuntu: та же версия, ревизия ≥)' : ''}`,
+        ok,
+        'restore-site-wsl prepare --set <комплект> ставит версии копии',
+      );
+    }
     if (!out.ok)
       hold(
         'выход наружу',
@@ -443,7 +549,12 @@ try {
   // -------------------------------------------------------------- 4. образы
   await stage('Образы из комплекта', () => {
     let loaded = 0;
-    for (const img of catalog.host.images) {
+    // Только образы служб prod: образы тестовых сред и ничьи (14.11: 7 из 19, ~800 МБ) не нужны.
+    const needed = new Set(services().map((s) => s.imageId));
+    const images = catalog.host.images.filter((img) => needed.has(img.id));
+    for (const img of catalog.host.images.filter((i) => !needed.has(i.id)))
+      limit(`образ ${img.tags[0] ?? img.id} не загружался: им не пользуется ни одна служба prod`);
+    for (const img of images) {
       docker(['load', '-i', join(setDir, img.file)]);
       const id = docker(['image', 'inspect', img.id, '--format', '{{.Id}}'], {
         allowFail: true,
@@ -456,7 +567,7 @@ try {
     }
     check(
       `образы загружены, идентификаторы как в комплекте (${loaded})`,
-      loaded === catalog.host.images.length,
+      loaded === images.length && needed.size === images.length,
     );
     for (const m of catalog.host.imagesMissing ?? []) limit(`образ не сохранён в комплекте: ${m}`);
     // Каждая служба — на своём образе по идентификатору: ссылки вида name@sha256 не
@@ -474,7 +585,7 @@ try {
   // ------------------------------------------------- 5. удержание до запуска
   await stage('Удержание внешних действий до первого запуска служб', () => {
     mkdirSync(HOLD_DIR, { recursive: true });
-    for (const p of Object.values(host.projects)) {
+    for (const p of PROJECTS) {
       const svc = {};
       for (const s of state.services.filter((x) => x.project === p.name)) {
         svc[s.service] = { image: s.tag, pull_policy: 'never' };
@@ -497,6 +608,8 @@ try {
     );
     hold('почта ядра', 'MAIL_TRANSPORT=none на всё испытание');
     hold('образы', 'pull_policy: never — только образы комплекта');
+    for (const name of ENV_PROJECTS)
+      limit(`тестовая среда ${name} узла не восстанавливается: её базы в комплекте нет`);
     // Имена сайтов — на этот узел.
     const names = [...new Set(host.caddy.sites)];
     const hosts = readFileSync('/etc/hosts', 'utf8').replace(
@@ -577,7 +690,27 @@ try {
     writeFileSync(join(sealDir, 'static.key'), Buffer.from(seal, 'base64'), { mode: 0o400 });
     chownSync(join(sealDir, 'static.key'), 1990, 1990);
     composeCreate(bao.project, [bao.service]);
-    compose(bao.project, ['start', bao.service]);
+    // Тома данных и журнала — владельцу службы, как при установке (infra/openbao/setup-vps.sh):
+    // новый том принадлежит root, и OpenBao не открывает vault.db (14.11, permission denied).
+    compose(
+      bao.project,
+      [
+        'run',
+        '--rm',
+        '--no-deps',
+        '--user',
+        '0',
+        '--entrypoint',
+        'chown',
+        bao.service,
+        '-R',
+        '1990:1990',
+        '/openbao/data',
+        '/openbao/audit',
+      ],
+      { service: bao.service },
+    );
+    composeStart(bao.project, [bao.service]);
     const addr = (env.OPENBAO_ADDR || 'https://127.0.0.1:8200').replace(/\/$/, '');
     const ca =
       bao.binds.map((b) => join(b, 'ca.crt')).find((f) => existsSync(f)) ??
@@ -704,12 +837,40 @@ try {
       existsSync(join(repoDir, 'archive', 'main', 'archive.info')),
       repoDir,
     );
-    compose(pg.project, ['start', pg.service]);
-    await waitFor(
-      () => psql(pg.container, 'postgres', 'SELECT pg_is_in_recovery()').text.trim() === 'f',
-      600,
-      'база вышла из восстановления',
-    );
+    composeStart(pg.project, [pg.service]);
+    // Длительность — по объёму журнала от полной копии до T (14.11: 558 файлов, ~12 мин на WSL;
+    // предел 10 мин оборвал ожидание за 29 с до открытия базы). Ждём, пока журнал читается;
+    // отказ — если 5 минут нет продвижения или база не поднимается.
+    {
+      let last = null;
+      let stalledSince = Date.now();
+      let printed = 0;
+      for (;;) {
+        const r = psql(
+          pg.container,
+          'postgres',
+          "SELECT pg_is_in_recovery() || ' ' || coalesce(pg_last_wal_replay_lsn()::text, '')",
+          { allowFail: true },
+        );
+        // bool || text даёт «true»/«false», не «t»/«f» (14.11, прогон 8: база открылась, а
+        // ожидание этого не увидело).
+        const [rec, lsn] = r.ok ? r.text.trim().split(' ') : [null, null];
+        if (rec === 'false') break;
+        if (lsn && lsn !== last) {
+          if (Date.now() - printed > 60_000) {
+            console.log(`        журнал читается: ${lsn} (цель ${catalog.target.lsn})`);
+            printed = Date.now();
+          }
+          last = lsn;
+          stalledSince = Date.now();
+        }
+        if (Date.now() - stalledSince > 300_000)
+          throw new Error(
+            `не дождались: база вышла из восстановления — 5 мин без продвижения (${last ?? 'база не отвечает'})`,
+          );
+        await sleep(5000);
+      }
+    }
     const tx = psql(
       pg.container,
       'postgres',
@@ -748,7 +909,7 @@ try {
     if (agent) {
       // Секреты служб (/run/fifth-secrets) выдаёт Agent из восстановленного OpenBao.
       composeCreate(agent.project, [agent.service]);
-      compose(agent.project, ['start', agent.service]);
+      composeStart(agent.project, [agent.service]);
       await waitFor(
         () => existsSync('/run/fifth-secrets') && readdirSync('/run/fifth-secrets').length > 0,
         120,
@@ -761,7 +922,7 @@ try {
       );
     }
     for (const n of nodes) composeCreate(n.project, [n.service]);
-    for (const n of nodes) compose(n.project, ['start', n.service]);
+    for (const n of nodes) composeStart(n.project, [n.service]);
     // Раскладка, бакеты и ключи — установщиком самой рабочей среды (его версия из комплекта).
     // Узлы Garage только что запущены: сначала готовность, затем установщик (с повтором).
     await waitFor(
@@ -854,19 +1015,39 @@ try {
         .join(', '),
     );
     protocol.files = { count: catalog.files.count, restored: got.size, mismatch: bad.length };
+    // Ссылки базы на объекты основного бакета — все ли есть в копии. Копия перечисляет весь
+    // бакет, поэтому нехватка здесь — объекта не было на источнике в момент копии, а не сбой
+    // восстановления; но и вернуть такой файл копия не может (15.11: материал от 04.11).
+    const refs = psql(
+      state.pg.container,
+      state.db,
+      `SELECT s3_key FROM lab.project_materials WHERE upload_state = 'ready' AND s3_key IS NOT NULL
+       UNION SELECT s3_key FROM identity.consent_templates WHERE s3_key IS NOT NULL`,
+      { allowFail: true },
+    );
+    const inCopy = new Set(catalog.files.objects.map((o) => o.key));
+    const missing = refs.text.split('\n').filter((k) => k && !inCopy.has(k));
+    check(
+      'файлы, на которые ссылается база, есть в копии',
+      refs.ok && missing.length === 0,
+      refs.ok
+        ? `нет в копии (не было на источнике): ${missing.length} — ${missing.slice(0, 3).join(', ')}`
+        : refs.err.split('\n').pop(),
+    );
+    protocol.files.missingRefs = missing;
   });
 
   // ----------------------------------------------- 9. остальные службы
   await stage('Службы: запуск под удержанием', async () => {
     const running = state.services.filter((s) => s.status === 'running');
     const order = ['openbao', 'openbao-agent', 'postgres', 'garage'];
-    for (const p of Object.keys(host.projects)) {
+    for (const p of PROJECTS.map((x) => x.name)) {
       const list = running
         .filter((s) => s.project === p && !order.includes(s.role))
         .map((s) => s.service);
       if (!list.length) continue;
       composeCreate(p, list);
-      compose(p, ['start', ...list]);
+      composeStart(p, list);
     }
     const notRunning = state.services.filter((s) => s.status !== 'running');
     for (const s of notRunning)
@@ -901,6 +1082,9 @@ try {
             'host',
             '--env-file',
             join(ROOT, '.env'),
+            // Секреты .env — ссылками <ИМЯ>_FILE на файлы Agent (найдено 14.11, прогон 4б).
+            '-v',
+            '/run/fifth-secrets:/run/fifth-secrets:ro',
             core.tag,
             'node',
             'scripts/nats-init-stream.mjs',
@@ -913,7 +1097,12 @@ try {
       check(
         'поток NATS создан установщиком среды (nats-init-stream)',
         ns.ok,
-        (ns.ok ? ns.text : ns.err).trim().split('\n').slice(-1)[0],
+        (ns.ok ? ns.text : ns.err)
+          .trim()
+          .split('\n')
+          .filter((l) => !/^Warning: Ignoring extra certs/.test(l))
+          .slice(-2)
+          .join(' | '),
       );
     }
     // Ворота закрыты: людям 503, /v1/ready — не готов.
@@ -1030,10 +1219,16 @@ try {
         {
           allowFail: true,
           timeout: 3_600_000,
-          // Испытание на искусственном источнике: выгрузка подписана его ключом, не рабочим.
-          env: testExportKey
-            ? { AUDIT_EXPORT_PUBLIC_KEY: join(resolve(auditDir), 'export-signing.pub') }
-            : {},
+          env: {
+            // Испытание на искусственном источнике: выгрузка подписана его ключом, не рабочим.
+            ...(testExportKey
+              ? { AUDIT_EXPORT_PUBLIC_KEY: join(resolve(auditDir), 'export-signing.pub') }
+              : {}),
+            // База prod принимает владельца с узла только по TLS (центр — от Agent).
+            ...(existsSync(INTERNAL_CA)
+              ? { RESTORE_DB_SSL: 'true', NODE_EXTRA_CA_CERTS: INTERNAL_CA }
+              : {}),
+          },
         },
       );
     const a = runApply('apply', ['--report', join(outDir, 'deletions-apply.json')]);
@@ -1063,7 +1258,7 @@ try {
 
   if (reconciled) {
     await stage('Снятие удержания ядра (почта и выход наружу остаются удержаны)', async () => {
-      for (const p of Object.values(host.projects)) {
+      for (const p of PROJECTS) {
         const f = join(HOLD_DIR, `${p.name}.yml`);
         const y = JSON.parse(readFileSync(f, 'utf8'));
         for (const s of Object.values(y.services))
@@ -1072,15 +1267,11 @@ try {
       }
       const cores = state.services.filter((s) => s.role === 'core' && s.status === 'running');
       for (const p of [...new Set(cores.map((c) => c.project))]) {
-        compose(p, [
-          'up',
-          '-d',
-          '--no-deps',
-          '--pull',
-          'never',
-          '--no-build',
-          ...cores.filter((c) => c.project === p).map((c) => c.service),
-        ]);
+        const list = cores.filter((c) => c.project === p).map((c) => c.service);
+        for (const group of byFiles(p, list))
+          compose(p, ['up', '-d', '--no-deps', '--pull', 'never', '--no-build', ...group], {
+            service: group[0],
+          });
       }
       hold(
         'после сверки',
@@ -1091,22 +1282,78 @@ try {
     // -------------------------------------------- 12. контрольные операции
     await stage('Контрольные операции через публичный вход', async () => {
       const caRoot = '/var/lib/caddy/.local/share/caddy/pki/authorities/local/root.crt';
-      const r = sh(process.execPath, [join(TOOLS, 'scripts', 'restore-full-checks.mjs')], {
-        env: {
-          NODE_EXTRA_CA_CERTS: caRoot,
-          RESTORE_BASE: env.PUBLIC_BASE_URL,
-          RESTORE_CORE_CONTAINER: state.core.container,
-          RESTORE_CORE_TAG: state.core.tag,
-          RESTORE_PG_CONTAINER: state.pg.container,
-          RESTORE_DB: state.db,
-          RESTORE_SESSION_COOKIE: env.SESSION_COOKIE_NAME || 'ul_session',
-          RESTORE_CSRF_COOKIE: env.CSRF_COOKIE_NAME || 'ul_csrf',
-          RESTORE_NATS: JSON.stringify(catalog.config?.natsStreams ?? []),
-          RESTORE_SINCE: protocol.marks.restoreStart,
-        },
-        allowFail: true,
-        timeout: 900_000,
-      });
+      // Публичный вход prod закрыт basic_auth (хеши в восстановленном Caddyfile, паролей у
+      // площадки нет). На время проверок — разовая учётка в рабочей копии площадки
+      // (`.restore-hold`; восстановленный файл не меняется), затем возврат и проверка закрытия.
+      const heldCf = `${host.caddy.config}.restore-hold`;
+      const heldText = existsSync(heldCf) ? readFileSync(heldCf, 'utf8') : '';
+      const authLine = /^[ \t]*basic_auth[ \t]*\{[ \t]*$/gm;
+      let basic = '';
+      if (authLine.test(heldText)) {
+        const pass = randomBytes(18).toString('base64url');
+        const hashed = sh('caddy', ['hash-password'], { input: `${pass}\n${pass}\n` });
+        const hash = hashed.text.trim().split('\n').pop();
+        if (!/^\$2[aby]\$/.test(hash)) throw new Error('caddy hash-password: нет хеша');
+        writeFileSync(
+          heldCf,
+          heldText.replace(authLine, (m) => `${m}\n\t\trestore-check ${hash}`),
+        );
+        sh('systemctl', ['reload', 'caddy']);
+        await sleep(2000);
+        basic = `restore-check:${pass}`;
+        hold(
+          'публичный вход',
+          'basic_auth как на prod; на время проверок — разовая учётка restore-check',
+        );
+      }
+      let r;
+      try {
+        r = sh(process.execPath, [join(TOOLS, 'scripts', 'restore-full-checks.mjs')], {
+          env: {
+            ...(basic ? { RESTORE_BASIC: basic } : {}),
+            NODE_EXTRA_CA_CERTS: caRoot,
+            RESTORE_BASE: env.PUBLIC_BASE_URL,
+            RESTORE_CORE_CONTAINER: state.core.container,
+            RESTORE_CORE_TAG: state.core.tag,
+            RESTORE_PG_CONTAINER: state.pg.container,
+            RESTORE_DB: state.db,
+            RESTORE_SESSION_COOKIE: env.SESSION_COOKIE_NAME || 'ul_session',
+            RESTORE_CSRF_COOKIE: env.CSRF_COOKIE_NAME || 'ul_csrf',
+            RESTORE_NATS: JSON.stringify(catalog.config?.natsStreams ?? []),
+            RESTORE_SINCE: protocol.marks.restoreStart,
+            RESTORE_MISSING_KEYS: JSON.stringify(protocol.files?.missingRefs ?? []),
+          },
+          allowFail: true,
+          timeout: 900_000,
+        });
+      } finally {
+        if (basic) {
+          writeFileSync(heldCf, heldText);
+          sh('systemctl', ['reload', 'caddy'], { allowFail: true });
+        }
+      }
+      if (basic) {
+        await sleep(2000);
+        const closed = sh(
+          'curl',
+          [
+            '-s',
+            '-o',
+            '/dev/null',
+            '-w',
+            '%{http_code}',
+            '--cacert',
+            caRoot,
+            `${env.PUBLIC_BASE_URL}/`,
+          ],
+          { allowFail: true },
+        ).text.trim();
+        check(
+          'публичный вход снова закрыт basic_auth, разовая учётка снята',
+          closed === '401' && !readFileSync(heldCf, 'utf8').includes('restore-check'),
+          `HTTP ${closed}`,
+        );
+      }
       process.stdout.write(r.text);
       const res = JSON.parse(r.text.trim().split('\n').pop());
       for (const c of res.checks) check(c.name, c.ok, c.details);
