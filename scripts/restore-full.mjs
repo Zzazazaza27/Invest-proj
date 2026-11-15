@@ -1018,11 +1018,12 @@ try {
     // Ссылки базы на объекты основного бакета — все ли есть в копии. Копия перечисляет весь
     // бакет, поэтому нехватка здесь — объекта не было на источнике в момент копии, а не сбой
     // восстановления; но и вернуть такой файл копия не может (15.11: материал от 04.11).
+    // Шаблоны согласий (`legal/*.md`) не сверяются: это заглушки сида M011, их объектов в бакете
+    // не бывает по замыслу.
     const refs = psql(
       state.pg.container,
       state.db,
-      `SELECT s3_key FROM lab.project_materials WHERE upload_state = 'ready' AND s3_key IS NOT NULL
-       UNION SELECT s3_key FROM identity.consent_templates WHERE s3_key IS NOT NULL`,
+      `SELECT s3_key FROM lab.project_materials WHERE upload_state = 'ready' AND s3_key IS NOT NULL`,
       { allowFail: true },
     );
     const inCopy = new Set(catalog.files.objects.map((o) => o.key));

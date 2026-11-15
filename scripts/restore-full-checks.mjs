@@ -197,22 +197,38 @@ try {
     Buffer.from(`%PDF-1.4 restore-control ${randomUUID()}\n`),
     randomBytes(4096),
   ]);
-  const ticket = await c.call(`/v1/projects/${projectId}/materials/upload`, {
-    method: 'POST',
-    body: {
-      type: 'deck',
-      fileName: 'restore-control.pdf',
-      contentType: 'application/pdf',
-      sizeBytes: bytes.length,
-    },
-  });
+  // Ядро решает о записи по СВОЕЙ пробе хранилища, а готовность её не ждёт: сразу после снятия
+  // удержания (ядро пересоздано) группа «Файлы» может быть ещё «неизвестна» (прогон 12, 15.11).
+  // Ждём до 2 мин; дольше — отказ с кодом причины.
+  const askTicket = () =>
+    c.call(`/v1/projects/${projectId}/materials/upload`, {
+      method: 'POST',
+      body: {
+        type: 'deck',
+        fileName: 'restore-control.pdf',
+        contentType: 'application/pdf',
+        sizeBytes: bytes.length,
+      },
+    });
+  const waitStart = Date.now();
+  let ticket = await askTicket();
+  while (ticket.json?.code === 'group_unavailable' && Date.now() - waitStart < 120_000) {
+    await new Promise((r) => setTimeout(r, 5_000));
+    ticket = await askTicket();
+  }
+  const waited = Math.round((Date.now() - waitStart) / 1000);
+  const why = ticket.json?.errors
+    ? ` причина: ${JSON.stringify(ticket.json.errors).slice(0, 160)}`
+    : ` ${JSON.stringify(ticket.json).slice(0, 200)}`;
   if (
     check(
       'контрольная запись: билет загрузки выдан',
       ticket.status === 201 || ticket.status === 200,
-      `HTTP ${ticket.status} ${JSON.stringify(ticket.json).slice(0, 200)}`,
+      `HTTP ${ticket.status}, ждали ${waited} с;${why}`,
     )
   ) {
+    if (waited > 0)
+      console.log(`        запись стала доступна через ${waited} с после первой попытки`);
     const form = new FormData();
     for (const [k, v] of Object.entries(ticket.json.formFields)) form.append(k, v);
     form.append('file', new Blob([bytes], { type: 'application/pdf' }), 'restore-control.pdf');
