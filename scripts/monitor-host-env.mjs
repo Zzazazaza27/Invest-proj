@@ -8,7 +8,7 @@
  *   node scripts/monitor-host-env.mjs [--print]
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnvFile } from './lib/backup.mjs';
@@ -82,8 +82,10 @@ function result() {
 /**
  * Обновления безопасности (Томас 16.11: «кто следить будет»): ставит их unattended-upgrades,
  * следит Zabbix. Независимо от архива окружения. Не удалось определить — null, а не «всё хорошо».
- *   enabled         — unattended-upgrades установлен;
- *   lastRunAt       — последнее изменение его журнала;
+ *   enabled         — unattended-upgrades установлен И таймер apt-daily-upgrade включён (16.11:
+ *                     на узле таймеры apt были выключены — пакет без них не запускается);
+ *   lastRunAt       — последний запуск службы apt-daily-upgrade (журнал пишет и пробный
+ *                     прогон, поэтому не по нему);
  *   lastResult      — итог службы apt-daily-upgrade (success | failed | …);
  *   pendingSecurity — сколько обновлений безопасности ждут установки (apt-check Ubuntu, по
  *                     кешу списков apt; нет счётчика — null);
@@ -92,11 +94,12 @@ function result() {
 function updates() {
   const sh = (cmd, args) => spawnSync(cmd, args, { encoding: 'utf8' });
   const q = sh('dpkg-query', ['-W', '-f', '${db:Status-Abbrev}', 'unattended-upgrades']);
-  const log = '/var/log/unattended-upgrades/unattended-upgrades.log';
   // Result у службы, которая ни разу не запускалась, тоже «success» — итог берётся только при
   // отметке запуска.
+  const timer = sh('systemctl', ['is-enabled', 'apt-daily-upgrade.timer']);
   const svc = sh('systemctl', [
     'show',
+    '--timestamp=unix',
     'apt-daily-upgrade.service',
     '-p',
     'ExecMainStartTimestamp',
@@ -112,8 +115,13 @@ function updates() {
   const counted = check.status === 0 && /(?:^|\n)\d+;(\d+)$/.exec(check.stderr.trim());
   const reboot = '/var/run/reboot-required';
   return {
-    enabled: q.error ? null : q.status === 0 && q.stdout.startsWith('ii'),
-    lastRunAt: existsSync(log) ? statSync(log).mtime.toISOString() : null,
+    enabled:
+      q.error || timer.error
+        ? null
+        : q.status === 0 && q.stdout.startsWith('ii') && timer.stdout.trim() === 'enabled',
+    lastRunAt: /^@\d+$/.test(startedAt?.trim() ?? '')
+      ? new Date(Number(startedAt.trim().slice(1)) * 1000).toISOString()
+      : null,
     lastResult: startedAt?.trim() ? result?.trim() || null : null,
     pendingSecurity: counted ? Number(counted[1]) : null,
     rebootRequired: existsSync(reboot),
