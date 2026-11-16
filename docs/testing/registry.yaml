@@ -645,7 +645,7 @@ checks:
     needs: [root]
     effects:
       [
-        'apply: apt-mark hold управляемых пакетов, /etc/apt/apt.conf.d/52fifth-unattended-upgrades, таймер fifth-monitor-host-env; rollback возвращает прежнее',
+        'apply: apt-mark hold управляемых пакетов, /etc/apt/apt.conf.d/90fifth-unattended-upgrades, пакет unattended-upgrades при security-only, таймер fifth-monitor-host-env; rollback возвращает прежнее',
       ]
     studied: code
     studiedOn: 2026-11-15

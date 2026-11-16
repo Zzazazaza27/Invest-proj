@@ -8,7 +8,7 @@
  *   node scripts/monitor-host-env.mjs [--print]
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnvFile } from './lib/backup.mjs';
@@ -79,7 +79,51 @@ function result() {
   };
 }
 
-const out = result();
+/**
+ * Обновления безопасности (Томас 16.11: «кто следить будет»): ставит их unattended-upgrades,
+ * следит Zabbix. Независимо от архива окружения. Не удалось определить — null, а не «всё хорошо».
+ *   enabled         — unattended-upgrades установлен;
+ *   lastRunAt       — последнее изменение его журнала;
+ *   lastResult      — итог службы apt-daily-upgrade (success | failed | …);
+ *   pendingSecurity — сколько обновлений безопасности ждут установки (apt-check Ubuntu, по
+ *                     кешу списков apt; нет счётчика — null);
+ *   rebootRequired  — система просит перезагрузку (ядро, libc); перезагружает владелец.
+ */
+function updates() {
+  const sh = (cmd, args) => spawnSync(cmd, args, { encoding: 'utf8' });
+  const q = sh('dpkg-query', ['-W', '-f', '${db:Status-Abbrev}', 'unattended-upgrades']);
+  const log = '/var/log/unattended-upgrades/unattended-upgrades.log';
+  // Result у службы, которая ни разу не запускалась, тоже «success» — итог берётся только при
+  // отметке запуска.
+  const svc = sh('systemctl', [
+    'show',
+    'apt-daily-upgrade.service',
+    '-p',
+    'ExecMainStartTimestamp',
+    '-p',
+    'Result',
+    '--value',
+  ]);
+  const [startedAt, result] = svc.status === 0 ? svc.stdout.split('\n') : [];
+  // Счётчик Ubuntu (update-notifier-common): stderr «все;безопасности». Строки apt-get -s
+  // называют один архив версии и обновление из -security часто показывают как -updates.
+  const check = sh('/usr/lib/update-notifier/apt-check', []);
+  // Перед итогом бывают предупреждения apt — итог в последней строке.
+  const counted = check.status === 0 && /(?:^|\n)\d+;(\d+)$/.exec(check.stderr.trim());
+  const reboot = '/var/run/reboot-required';
+  return {
+    enabled: q.error ? null : q.status === 0 && q.stdout.startsWith('ii'),
+    lastRunAt: existsSync(log) ? statSync(log).mtime.toISOString() : null,
+    lastResult: startedAt?.trim() ? result?.trim() || null : null,
+    pendingSecurity: counted ? Number(counted[1]) : null,
+    rebootRequired: existsSync(reboot),
+    rebootPackages: existsSync(`${reboot}.pkgs`)
+      ? [...new Set(readFileSync(`${reboot}.pkgs`, 'utf8').split('\n').filter(Boolean))]
+      : [],
+  };
+}
+
+const out = { ...result(), updates: updates() };
 if (process.argv.includes('--print')) console.log(JSON.stringify(out, null, 2));
 mkdirSync(dir, { recursive: true });
 const file = join(dir, 'host-env.json');

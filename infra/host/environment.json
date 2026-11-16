@@ -92,8 +92,8 @@
     }
   ],
   "security": {
-    "autoUpdates": null,
+    "autoUpdates": "security-only",
     "excludeManaged": true
   },
-  "note": "Черновик описи по копии prod 20261116T091726Z-579570 (16.11, съём узла 77851d1). Не утверждено: политика автообновлений (security.autoUpdates) — решение владельца; на узле пакета unattended-upgrades нет, автообновлений сейчас нет. Утверждает владелец (status: approved, approved: {by, at})."
+  "note": "Опись по копии prod 20261116T091726Z-579570 (16.11, съём узла 77851d1); пробелов нет. Политика автообновлений — решение Томаса 16.11: только обновления безопасности Ubuntu (на узле unattended-upgrades пока нет — ставит host-env-apply). Черновик до утверждения владельцем (status: approved, approved: {by, at})."
 }

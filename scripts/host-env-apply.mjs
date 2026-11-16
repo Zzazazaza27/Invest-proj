@@ -7,13 +7,17 @@
  *   node scripts/host-env-apply.mjs apply --yes        закрепить, политика, сверка по таймеру
  *   node scripts/host-env-apply.mjs rollback <отметка> вернуть состояние до apply
  *
- * Что делает apply — только три вещи, каждая обратима:
+ * Что делает apply — четыре вещи, каждая обратима:
  *   1. apt-mark hold — ТОЛЬКО управляемые пакеты поставщиков из описания (правило exact): не вся
  *      ОС и не ядро; пакетам Ubuntu обновления безопасности остаются;
- *   2. /etc/apt/apt.conf.d/52fifth-unattended-upgrades — автообновления: только источники
- *      безопасности Ubuntu, управляемые пакеты исключены; перезагрузка не трогается;
- *   3. таймер fifth-monitor-host-env — ежедневная сверка в Zabbix; она ничего не исправляет.
- * Пакеты не ставятся, не обновляются и не удаляются; службы не перезапускаются.
+ *   2. /etc/apt/apt.conf.d/90fifth-unattended-upgrades — политика описания (security.autoUpdates):
+ *      security-only — только источники безопасности Ubuntu, управляемые пакеты исключены,
+ *      шаблоны Hestia (60unattended-upgrades-hestia-*) сняты — файл идёт после них; без
+ *      автоматической перезагрузки; off — автообновления выключены;
+ *   3. при security-only — пакет unattended-upgrades из Ubuntu, если его нет (16.11: на узле его
+ *      не было, обновления безопасности не ставились вовсе);
+ *   4. таймер fifth-monitor-host-env — сверка и состояние обновлений в Zabbix; ничего не чинит.
+ * Другие пакеты не ставятся, не обновляются и не удаляются; службы не перезапускаются.
  * Прежнее состояние — /var/backups/fifth-element/host-env-apply/<отметка>.json.
  *
  * Описание — из архива окружения, закреплённого комплектами среды (как у сверки).
@@ -27,11 +31,21 @@ import { validateEnvironment } from './lib/host-env.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const KITS = process.env.FIFTH_KITS_DIR || join(ROOT, '.local', 'kits');
-const POLICY = '/etc/apt/apt.conf.d/52fifth-unattended-upgrades';
+const POLICY = '/etc/apt/apt.conf.d/90fifth-unattended-upgrades';
+const UU = 'unattended-upgrades';
+const MODES = ['security-only', 'off'];
 const UNITS = ['fifth-monitor-host-env.service', 'fifth-monitor-host-env.timer'];
 const STATE_DIR = '/var/backups/fifth-element/host-env-apply';
 const argv = process.argv.slice(2);
 
+const APT = [
+  'DEBIAN_FRONTEND=noninteractive',
+  'apt-get',
+  '-y',
+  '-q',
+  '-o',
+  'DPkg::Lock::Timeout=600',
+];
 const run = (cmd, args, { allowFail = false } = {}) => {
   const r = spawnSync(cmd, args, { encoding: 'utf8' });
   if (r.status !== 0 && !allowFail)
@@ -62,10 +76,28 @@ const managedOf = (env) =>
 
 function policyText(env, archive) {
   const q = (s) => `\t"${s}";`;
-  return [
+  const head = [
     `// 5Э, окружение узла: политика автообновлений по описанию ${env.id} (архив ${archive}).`,
-    '// Ставит и снимает scripts/host-env-apply.mjs. Автоматически — только обновления',
-    '// безопасности Ubuntu; управляемые компоненты меняются только новым архивом окружения.',
+    '// Ставит и снимает scripts/host-env-apply.mjs. Имя — после 60unattended-upgrades-hestia-*:',
+    '// их шаблоны источников здесь снимаются.',
+  ];
+  if (env.security.autoUpdates === 'off')
+    return [
+      ...head,
+      'APT::Periodic::Unattended-Upgrade "0";',
+      '#clear Unattended-Upgrade::Origins-Pattern;',
+      '#clear Unattended-Upgrade::Allowed-Origins;',
+      '',
+    ].join('\n');
+  return [
+    ...head,
+    '// Автоматически — только обновления безопасности Ubuntu; управляемые компоненты меняются',
+    '// только новым архивом окружения. Перезагрузка — решение владельца (тревога Zabbix).',
+    'APT::Periodic::Update-Package-Lists "1";',
+    'APT::Periodic::Unattended-Upgrade "1";',
+    'Unattended-Upgrade::Automatic-Reboot "false";',
+    '#clear Unattended-Upgrade::Origins-Pattern;',
+    '#clear Unattended-Upgrade::Package-Blacklist;',
     '#clear Unattended-Upgrade::Allowed-Origins;',
     'Unattended-Upgrade::Allowed-Origins {',
     q('${distro_id}:${distro_codename}-security'),
@@ -108,8 +140,16 @@ function plan() {
   const managed = managedOf(env);
   const missing = managed.filter((p) => !now.installed[p]);
   const toHold = managed.filter((p) => now.installed[p] && !now.holds.includes(p));
+  if (!MODES.includes(env.security?.autoUpdates))
+    throw new Error(
+      `security.autoUpdates: ${env.security?.autoUpdates} — ожидается ${MODES.join(' | ')}`,
+    );
   const text = policyText(env, id);
-  return { id, env, now, managed, missing, toHold, text, policyChanges: now.policy !== text };
+  const installUU = env.security.autoUpdates === 'security-only' && !now.installed[UU];
+  return {
+    ...{ id, env, now, managed, missing, toHold, text, installUU },
+    policyChanges: now.policy !== text,
+  };
 }
 
 function print(p) {
@@ -124,6 +164,9 @@ function print(p) {
   console.log(
     `  ${POLICY}: ${p.now.policy === null ? 'нет' : 'есть'} → ${p.policyChanges ? 'будет записан' : 'без изменений'}`,
   );
+  console.log(`  политика автообновлений описания: ${p.env.security.autoUpdates}`);
+  const uu = p.now.installed[UU] ? 'установлен' : p.installUU ? 'нет → поставить из Ubuntu' : 'нет';
+  console.log(`  ${UU}: ${uu}`);
   console.log(`  таймер сверки: ${p.now.timer} → enabled`);
 }
 
@@ -142,6 +185,7 @@ function apply() {
     held: p.toHold,
     policyBefore: p.now.policy,
     timerBefore: p.now.timer,
+    installedUU: p.installUU,
   };
   writeFileSync(join(STATE_DIR, `${stamp}.json`), `${JSON.stringify(saved, null, 2)}\n`, {
     mode: 0o600,
@@ -151,6 +195,9 @@ function apply() {
   run('apt-config', ['-c', `${POLICY}.tmp`, 'dump', 'Unattended-Upgrade']); // синтаксис до замены
   copyFileSync(`${POLICY}.tmp`, POLICY);
   rmSync(`${POLICY}.tmp`);
+  // Пакет — после политики: первый же запуск идёт уже по ней; закрепления выше не дают
+  // зависимостям сдвинуть управляемые пакеты.
+  if (p.installUU) run('env', [...APT, 'install', '--no-install-recommends', UU]);
   for (const u of UNITS)
     copyFileSync(join(ROOT, 'infra', 'systemd', u), join('/etc/systemd/system', u));
   run('systemctl', ['daemon-reload']);
@@ -168,6 +215,7 @@ function rollback() {
   // Снимаются только закрепления, поставленные этим apply; прежние остаются.
   const unhold = s.held.filter((p) => !s.holdsBefore.includes(p));
   if (unhold.length) run('apt-mark', ['unhold', ...unhold]);
+  if (s.installedUU) run('env', [...APT, 'remove', UU]);
   if (s.policyBefore === null) rmSync(POLICY, { force: true });
   else writeFileSync(POLICY, s.policyBefore, { mode: 0o644 });
   if (s.timerBefore !== 'enabled') {
@@ -177,7 +225,7 @@ function rollback() {
     run('systemctl', ['daemon-reload']);
   }
   console.log(
-    `возвращено к состоянию ${stamp}: сняты закрепления ${unhold.join(', ') || '—'}, политика ${s.policyBefore === null ? 'удалена' : 'прежняя'}, таймер ${s.timerBefore}`,
+    `возвращено к состоянию ${stamp}: сняты закрепления ${unhold.join(', ') || '—'}, ${s.installedUU ? `${UU} удалён, ` : ''}политика ${s.policyBefore === null ? 'удалена' : 'прежняя'}, таймер ${s.timerBefore}`,
   );
 }
 

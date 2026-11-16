@@ -749,6 +749,75 @@ async function configure() {
     { comments: 'host-env.json не обновлялся дольше двух суток: таймер fifth-monitor-host-env.' },
   );
 
+  // Обновления безопасности узла (Томас 16.11): ставит unattended-upgrades, следит Zabbix,
+  // перезагрузку общего узла решает владелец. Не определено — -1, тревоги на это нет: о
+  // неработающей сверке сообщает тревога выше.
+  const fromUpdates = (key, name, js) =>
+    item({
+      name,
+      key_: key,
+      type: DEP,
+      master_itemid: items.get('vfs.file.contents[/monitor/host-env.json]'),
+      value_type: 3,
+      preprocessing: [step(JS, `var u = JSON.parse(value).updates || {}; ${js}`, 2, '-1')],
+    });
+  await fromUpdates(
+    'host.updates.enabled',
+    'Обновления узла: автообновления установлены (1/0)',
+    'return u.enabled === true ? 1 : u.enabled === false ? 0 : -1;',
+  );
+  await fromUpdates(
+    'host.updates.pending',
+    'Обновления узла: ждут установки из источников безопасности',
+    'return typeof u.pendingSecurity === "number" ? u.pendingSecurity : -1;',
+  );
+  await fromUpdates(
+    'host.updates.reboot',
+    'Обновления узла: нужна перезагрузка (1/0)',
+    'return u.rebootRequired ? 1 : 0;',
+  );
+  await fromUpdates(
+    'host.updates.failed',
+    'Обновления узла: последний запуск неуспешен (1/0)',
+    'return u.lastResult && u.lastResult !== "success" ? 1 : 0;',
+  );
+  await fromUpdates(
+    'host.updates.age',
+    'Обновления узла: с последнего запуска, с',
+    'return u.lastRunAt ? Math.floor((Date.now() - Date.parse(u.lastRunAt)) / 1000) : -1;',
+  );
+  await trigger(
+    'Автообновления безопасности узла выключены',
+    `last(/${H}/host.updates.enabled)=0`,
+    2,
+    { comments: 'unattended-upgrades не установлен: node scripts/host-env-apply.mjs plan.' },
+  );
+  await trigger(
+    'Обновления безопасности узла не ставятся больше 3 суток',
+    `min(/${H}/host.updates.pending,3d)>0 and last(/${H}/host.updates.enabled)=1`,
+    2,
+    {
+      comments:
+        'Есть обновления из источников безопасности, а unattended-upgrades их не ставит: ' +
+        '/var/log/unattended-upgrades/unattended-upgrades.log.',
+    },
+  );
+  await trigger('Автообновления узла завершились ошибкой', `last(/${H}/host.updates.failed)=1`, 2, {
+    comments: 'systemctl status apt-daily-upgrade; журнал /var/log/unattended-upgrades/.',
+  });
+  await trigger(
+    'Автообновления узла не запускались больше 3 суток',
+    `last(/${H}/host.updates.age)>${3 * 86400} and last(/${H}/host.updates.enabled)=1`,
+    2,
+    { comments: 'Таймер apt-daily-upgrade.timer.' },
+  );
+  await trigger('Узел ждёт перезагрузки после обновлений', `last(/${H}/host.updates.reboot)=1`, 2, {
+    comments:
+      'Обновления безопасности ядра или системных библиотек вступят в силу после перезагрузки. ' +
+      'Узел общий (prod, test-1, test-2): время перезагрузки выбирает владелец. Пакеты — ' +
+      '/var/run/reboot-required.pkgs (host-env.json, updates.rebootPackages).',
+  });
+
   // ---- Сайт снаружи, сертификат --------------------------------------------
   // Рабочая среда закрыта паролем: агент его не умеет, проверку ведёт сервер, элемент HTTP.
   const gateFile = process.env.MONITOR_GATE_CREDENTIALS_PATH;
