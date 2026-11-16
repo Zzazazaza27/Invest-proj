@@ -771,6 +771,20 @@ async function configure() {
     'Обновления узла: ждут установки из источников безопасности',
     'return typeof u.pendingSecurity === "number" ? u.pendingSecurity : -1;',
   );
+  // Отсчёт ожидания — от сохранённого в host-env.json времени обнаружения (Тэнк 16.11), а не от
+  // истории Zabbix: успешный запуск, оставивший пакет неустановленным, его не сбрасывает.
+  await fromUpdates(
+    'host.updates.pending.age',
+    'Обновления узла: самое долгое ожидание обновления безопасности, с',
+    'if (u.pendingSecurity === 0) return 0; return u.pendingOldestAt ? ' +
+      'Math.max(0, Math.floor((Date.parse(JSON.parse(value).checkedAt) - ' +
+      'Date.parse(u.pendingOldestAt)) / 1000)) : -1;',
+  );
+  await fromUpdates(
+    'host.updates.excluded',
+    'Обновления узла: задержаны согласованно (hold, исключение, закрепление)',
+    'return Array.isArray(u.excluded) ? u.excluded.length : -1;',
+  );
   await fromUpdates(
     'host.updates.reboot',
     'Обновления узла: нужна перезагрузка (1/0)',
@@ -794,12 +808,25 @@ async function configure() {
   );
   await trigger(
     'Обновления безопасности узла не ставятся больше 3 суток',
-    `min(/${H}/host.updates.pending,3d)>0 and last(/${H}/host.updates.enabled)=1`,
+    `last(/${H}/host.updates.pending.age)>${3 * 86400} and last(/${H}/host.updates.enabled)=1`,
     2,
     {
       comments:
-        'Есть обновления из источников безопасности, а unattended-upgrades их не ставит: ' +
-        '/var/log/unattended-upgrades/unattended-upgrades.log.',
+        'Установленный пакет больше 72 часов ждёт версию из источника безопасности без ' +
+        'согласованной причины. Пакеты, версии и время обнаружения — host-env.json, ' +
+        'updates.pending и updates.pendingSince; разбор — /var/log/unattended-upgrades/. ' +
+        'Спорные пакеты вручную не ставятся без решения.',
+    },
+  );
+  await trigger(
+    'Обновления безопасности узла задержаны согласованно',
+    `last(/${H}/host.updates.excluded)>0`,
+    1,
+    {
+      comments:
+        'Пакет ждёт версию из источника безопасности, но задержан hold, исключением ' +
+        'unattended-upgrades или закреплением apt: host-env.json, updates.excluded (причина ' +
+        'в поле reason). Решение о задержке — по описанию окружения.',
     },
   );
   await trigger('Автообновления узла завершились ошибкой', `last(/${H}/host.updates.failed)=1`, 2, {

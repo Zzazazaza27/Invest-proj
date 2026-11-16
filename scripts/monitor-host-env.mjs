@@ -87,8 +87,14 @@ function result() {
  *   lastRunAt       — последний запуск службы apt-daily-upgrade (журнал пишет и пробный
  *                     прогон, поэтому не по нему);
  *   lastResult      — итог службы apt-daily-upgrade (success | failed | …);
- *   pendingSecurity — сколько обновлений безопасности ждут установки (apt-check Ubuntu, по
- *                     кешу списков apt; нет счётчика — null);
+ *   pendingSecurity — сколько установленных пакетов ждут версию из источника безопасности без
+ *                     согласованной причины (lib/apt_security_pending.py; не определено — null);
+ *   pendingSince    — когда каждый такой пакет впервые замечен (по имени): хранится в этом же
+ *                     файле, успешный запуск его не сбрасывает — только установка (Тэнк 16.11);
+ *   pendingOldestAt — самое раннее pendingSince среди ждущих без причины — от него тревога 72 ч;
+ *   pending         — ждущие без причины; excluded — задержанные hold / blacklist / pin;
+ *   aptCheck        — счётчик Ubuntu «все;безопасности» для справки: он засчитывает и новые
+ *                     пакеты-зависимости обновлений из -updates, поэтому тревога не по нему;
  *   rebootRequired  — система просит перезагрузку (ядро, libc); перезагружает владелец.
  */
 function updates() {
@@ -120,7 +126,21 @@ function updates() {
   // называют один архив версии и обновление из -security часто показывают как -updates.
   const check = sh('/usr/lib/update-notifier/apt-check', []);
   // Перед итогом бывают предупреждения apt — итог в последней строке.
-  const counted = check.status === 0 && /(?:^|\n)\d+;(\d+)$/.exec(check.stderr.trim());
+  const counted = check.status === 0 && /(?:^|\n)(\d+);(\d+)$/.exec(check.stderr.trim());
+  const sec = sh('python3', ['-I', join(ROOT, 'scripts', 'lib', 'apt_security_pending.py')]);
+  let list = null;
+  try {
+    if (sec.status === 0) list = JSON.parse(sec.stdout).pending;
+  } catch {
+    list = null;
+  }
+  const before = previous()?.updates?.pendingSince ?? {};
+  const now = new Date().toISOString();
+  // Не удалось определить — прежние отметки сохраняются как есть: отсчёт не сбрасывается.
+  const pendingSince = list
+    ? Object.fromEntries(list.map((x) => [x.name, before[x.name] ?? now]))
+    : before;
+  const waiting = list ? list.filter((x) => !x.reason) : null;
   const reboot = '/var/run/reboot-required';
   // После перезагрузки systemd не помнит прошлый запуск службы (16.11) — до первого запуска
   // берётся прежнее значение из своего файла, иначе наблюдение решит, что запусков не было.
@@ -143,7 +163,14 @@ function updates() {
       ? new Date(Number(startedAt.trim().slice(1)) * 1000).toISOString()
       : (prev?.lastRunAt ?? null),
     lastResult: ran ? result?.trim() || null : (prev?.lastResult ?? null),
-    pendingSecurity: counted ? Number(counted[1]) : null,
+    pendingSecurity: waiting ? waiting.length : null,
+    pendingOldestAt: waiting
+      ? waiting.map((x) => pendingSince[x.name]).sort()[0] || null
+      : (previous()?.updates?.pendingOldestAt ?? null),
+    pendingSince,
+    pending: waiting,
+    excluded: list ? list.filter((x) => x.reason) : null,
+    aptCheck: counted ? { all: Number(counted[1]), security: Number(counted[2]) } : null,
     rebootRequired: existsSync(reboot),
     rebootPackages: existsSync(`${reboot}.pkgs`)
       ? [...new Set(readFileSync(`${reboot}.pkgs`, 'utf8').split('\n').filter(Boolean))]
