@@ -15,7 +15,8 @@
  *      шаблоны Hestia (60unattended-upgrades-hestia-*) сняты — файл идёт после них; без
  *      автоматической перезагрузки; off — автообновления выключены;
  *   3. при security-only — пакет unattended-upgrades из Ubuntu, если его нет (16.11: на узле его
- *      не было, обновления безопасности не ставились вовсе);
+ *      не было, обновления безопасности не ставились вовсе), и таймеры apt-daily и
+ *      apt-daily-upgrade, если выключены (16.11: оба были выключены);
  *   4. таймер fifth-monitor-host-env — сверка и состояние обновлений в Zabbix; ничего не чинит.
  * Другие пакеты не ставятся, не обновляются и не удаляются; службы не перезапускаются.
  * Прежнее состояние — /var/backups/fifth-element/host-env-apply/<отметка>.json.
@@ -35,6 +36,8 @@ const POLICY = '/etc/apt/apt.conf.d/90fifth-unattended-upgrades';
 const UU = 'unattended-upgrades';
 const MODES = ['security-only', 'off'];
 const UNITS = ['fifth-monitor-host-env.service', 'fifth-monitor-host-env.timer'];
+// Таймеры apt, которые запускают автообновления; на узле 16.11 оба были выключены (Hestia).
+const APT_TIMERS = ['apt-daily.timer', 'apt-daily-upgrade.timer'];
 const STATE_DIR = '/var/backups/fifth-element/host-env-apply';
 const argv = process.argv.slice(2);
 
@@ -125,9 +128,16 @@ function current() {
   const origins = run('apt-config', ['dump', 'Unattended-Upgrade::Allowed-Origins'], {
     allowFail: true,
   }).out;
+  const aptTimers = Object.fromEntries(
+    APT_TIMERS.map((t) => [
+      t,
+      run('systemctl', ['is-enabled', t], { allowFail: true }).out || 'not-found',
+    ]),
+  );
   return {
     holds,
     installed,
+    aptTimers,
     policy: existsSync(POLICY) ? readFileSync(POLICY, 'utf8') : null,
     timer: timer || 'not-found',
     origins,
@@ -146,8 +156,12 @@ function plan() {
     );
   const text = policyText(env, id);
   const installUU = env.security.autoUpdates === 'security-only' && !now.installed[UU];
+  const enableTimers =
+    env.security.autoUpdates === 'security-only'
+      ? APT_TIMERS.filter((t) => now.aptTimers[t] !== 'enabled')
+      : [];
   return {
-    ...{ id, env, now, managed, missing, toHold, text, installUU },
+    ...{ id, env, now, managed, missing, toHold, text, installUU, enableTimers },
     policyChanges: now.policy !== text,
   };
 }
@@ -167,6 +181,9 @@ function print(p) {
   console.log(`  политика автообновлений описания: ${p.env.security.autoUpdates}`);
   const uu = p.now.installed[UU] ? 'установлен' : p.installUU ? 'нет → поставить из Ubuntu' : 'нет';
   console.log(`  ${UU}: ${uu}`);
+  console.log(
+    `  таймеры apt: ${APT_TIMERS.map((t) => `${t} ${p.now.aptTimers[t]}`).join(', ')}${p.enableTimers.length ? ` → включить ${p.enableTimers.join(', ')}` : ''}`,
+  );
   console.log(`  таймер сверки: ${p.now.timer} → enabled`);
 }
 
@@ -186,6 +203,7 @@ function apply() {
     policyBefore: p.now.policy,
     timerBefore: p.now.timer,
     installedUU: p.installUU,
+    enabledTimers: p.enableTimers,
   };
   writeFileSync(join(STATE_DIR, `${stamp}.json`), `${JSON.stringify(saved, null, 2)}\n`, {
     mode: 0o600,
@@ -198,6 +216,8 @@ function apply() {
   // Пакет — после политики: первый же запуск идёт уже по ней; закрепления выше не дают
   // зависимостям сдвинуть управляемые пакеты.
   if (p.installUU) run('env', [...APT, 'install', '--no-install-recommends', UU]);
+  // Без этих таймеров ни списки пакетов, ни unattended-upgrades сами не запускаются.
+  if (p.enableTimers.length) run('systemctl', ['enable', '--now', ...p.enableTimers]);
   for (const u of UNITS)
     copyFileSync(join(ROOT, 'infra', 'systemd', u), join('/etc/systemd/system', u));
   run('systemctl', ['daemon-reload']);
@@ -216,6 +236,7 @@ function rollback() {
   const unhold = s.held.filter((p) => !s.holdsBefore.includes(p));
   if (unhold.length) run('apt-mark', ['unhold', ...unhold]);
   if (s.installedUU) run('env', [...APT, 'remove', UU]);
+  if (s.enabledTimers?.length) run('systemctl', ['disable', '--now', ...s.enabledTimers]);
   if (s.policyBefore === null) rmSync(POLICY, { force: true });
   else writeFileSync(POLICY, s.policyBefore, { mode: 0o644 });
   if (s.timerBefore !== 'enabled') {
