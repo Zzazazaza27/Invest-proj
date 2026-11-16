@@ -16,7 +16,8 @@
  *      автоматической перезагрузки; off — автообновления выключены;
  *   3. при security-only — пакет unattended-upgrades из Ubuntu, если его нет (16.11: на узле его
  *      не было, обновления безопасности не ставились вовсе), и таймеры apt-daily и
- *      apt-daily-upgrade, если выключены (16.11: оба были выключены);
+ *      apt-daily-upgrade, если выключены, со снятием маски с их служб (16.11: таймеры выключены,
+ *      службы замаскированы с 02.11.2024); после — проверка, что таймеры активны;
  *   4. таймер fifth-monitor-host-env — сверка и состояние обновлений в Zabbix; ничего не чинит.
  * Другие пакеты не ставятся, не обновляются и не удаляются; службы не перезапускаются.
  * Прежнее состояние — /var/backups/fifth-element/host-env-apply/<отметка>.json.
@@ -38,6 +39,8 @@ const MODES = ['security-only', 'off'];
 const UNITS = ['fifth-monitor-host-env.service', 'fifth-monitor-host-env.timer'];
 // Таймеры apt, которые запускают автообновления; на узле 16.11 оба были выключены (Hestia).
 const APT_TIMERS = ['apt-daily.timer', 'apt-daily-upgrade.timer'];
+// Их службы на узле замаскированы (/dev/null, с 02.11.2024) — таймер без службы не стартует.
+const APT_SERVICES = ['apt-daily.service', 'apt-daily-upgrade.service'];
 const STATE_DIR = '/var/backups/fifth-element/host-env-apply';
 const argv = process.argv.slice(2);
 
@@ -134,10 +137,21 @@ function current() {
       run('systemctl', ['is-enabled', t], { allowFail: true }).out || 'not-found',
     ]),
   );
+  const aptServices = Object.fromEntries(
+    APT_SERVICES.map((u) => [
+      u,
+      run('systemctl', ['is-enabled', u], { allowFail: true }).out || 'not-found',
+    ]),
+  );
+  const aptActive = Object.fromEntries(
+    APT_TIMERS.map((t) => [t, run('systemctl', ['is-active', t], { allowFail: true }).out]),
+  );
   return {
     holds,
     installed,
     aptTimers,
+    aptServices,
+    aptActive,
     policy: existsSync(POLICY) ? readFileSync(POLICY, 'utf8') : null,
     timer: timer || 'not-found',
     origins,
@@ -158,10 +172,14 @@ function plan() {
   const installUU = env.security.autoUpdates === 'security-only' && !now.installed[UU];
   const enableTimers =
     env.security.autoUpdates === 'security-only'
-      ? APT_TIMERS.filter((t) => now.aptTimers[t] !== 'enabled')
+      ? APT_TIMERS.filter((t) => now.aptTimers[t] !== 'enabled' || now.aptActive[t] !== 'active')
+      : [];
+  const unmask =
+    env.security.autoUpdates === 'security-only'
+      ? APT_SERVICES.filter((u) => now.aptServices[u] === 'masked')
       : [];
   return {
-    ...{ id, env, now, managed, missing, toHold, text, installUU, enableTimers },
+    ...{ id, env, now, managed, missing, toHold, text, installUU, enableTimers, unmask },
     policyChanges: now.policy !== text,
   };
 }
@@ -182,7 +200,10 @@ function print(p) {
   const uu = p.now.installed[UU] ? 'установлен' : p.installUU ? 'нет → поставить из Ubuntu' : 'нет';
   console.log(`  ${UU}: ${uu}`);
   console.log(
-    `  таймеры apt: ${APT_TIMERS.map((t) => `${t} ${p.now.aptTimers[t]}`).join(', ')}${p.enableTimers.length ? ` → включить ${p.enableTimers.join(', ')}` : ''}`,
+    `  таймеры apt: ${APT_TIMERS.map((t) => `${t} ${p.now.aptTimers[t]}/${p.now.aptActive[t]}`).join(', ')}${p.enableTimers.length ? ` → включить ${p.enableTimers.join(', ')}` : ''}`,
+  );
+  console.log(
+    `  службы apt: ${APT_SERVICES.map((u) => `${u} ${p.now.aptServices[u]}`).join(', ')}${p.unmask.length ? ` → снять маску ${p.unmask.join(', ')}` : ''}`,
   );
   console.log(`  таймер сверки: ${p.now.timer} → enabled`);
 }
@@ -203,7 +224,8 @@ function apply() {
     policyBefore: p.now.policy,
     timerBefore: p.now.timer,
     installedUU: p.installUU,
-    enabledTimers: p.enableTimers,
+    enabledTimers: p.enableTimers.filter((t) => p.now.aptTimers[t] !== 'enabled'),
+    unmasked: p.unmask,
   };
   writeFileSync(join(STATE_DIR, `${stamp}.json`), `${JSON.stringify(saved, null, 2)}\n`, {
     mode: 0o600,
@@ -217,7 +239,16 @@ function apply() {
   // зависимостям сдвинуть управляемые пакеты.
   if (p.installUU) run('env', [...APT, 'install', '--no-install-recommends', UU]);
   // Без этих таймеров ни списки пакетов, ни unattended-upgrades сами не запускаются.
+  if (p.unmask.length) {
+    run('systemctl', ['unmask', ...p.unmask]);
+    run('systemctl', ['daemon-reload']);
+  }
   if (p.enableTimers.length) run('systemctl', ['enable', '--now', ...p.enableTimers]);
+  // «Включён» ещё не значит «работает»: таймер с незагруженной службой молча не стартует.
+  for (const t of p.env.security.autoUpdates === 'security-only' ? APT_TIMERS : []) {
+    const a = run('systemctl', ['is-active', t], { allowFail: true }).out;
+    if (a !== 'active') throw new Error(`${t}: ${a} после включения — см. systemctl status ${t}`);
+  }
   for (const u of UNITS)
     copyFileSync(join(ROOT, 'infra', 'systemd', u), join('/etc/systemd/system', u));
   run('systemctl', ['daemon-reload']);
@@ -237,6 +268,10 @@ function rollback() {
   if (unhold.length) run('apt-mark', ['unhold', ...unhold]);
   if (s.installedUU) run('env', [...APT, 'remove', UU]);
   if (s.enabledTimers?.length) run('systemctl', ['disable', '--now', ...s.enabledTimers]);
+  if (s.unmasked?.length) {
+    run('systemctl', ['mask', ...s.unmasked]);
+    run('systemctl', ['daemon-reload']);
+  }
   if (s.policyBefore === null) rmSync(POLICY, { force: true });
   else writeFileSync(POLICY, s.policyBefore, { mode: 0o644 });
   if (s.timerBefore !== 'enabled') {

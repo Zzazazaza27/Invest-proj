@@ -82,7 +82,7 @@ function result() {
 /**
  * Обновления безопасности (Томас 16.11: «кто следить будет»): ставит их unattended-upgrades,
  * следит Zabbix. Независимо от архива окружения. Не удалось определить — null, а не «всё хорошо».
- *   enabled         — unattended-upgrades установлен И таймер apt-daily-upgrade включён (16.11:
+ *   enabled         — unattended-upgrades установлен И таймер apt-daily-upgrade активен (16.11:
  *                     на узле таймеры apt были выключены — пакет без них не запускается);
  *   lastRunAt       — последний запуск службы apt-daily-upgrade (журнал пишет и пробный
  *                     прогон, поэтому не по нему);
@@ -96,7 +96,7 @@ function updates() {
   const q = sh('dpkg-query', ['-W', '-f', '${db:Status-Abbrev}', 'unattended-upgrades']);
   // Result у службы, которая ни разу не запускалась, тоже «success» — итог берётся только при
   // отметке запуска.
-  const timer = sh('systemctl', ['is-enabled', 'apt-daily-upgrade.timer']);
+  const timer = sh('systemctl', ['is-active', 'apt-daily-upgrade.timer']);
   const svc = sh('systemctl', [
     'show',
     '--timestamp=unix',
@@ -118,7 +118,7 @@ function updates() {
     enabled:
       q.error || timer.error
         ? null
-        : q.status === 0 && q.stdout.startsWith('ii') && timer.stdout.trim() === 'enabled',
+        : q.status === 0 && q.stdout.startsWith('ii') && timer.stdout.trim() === 'active',
     lastRunAt: /^@\d+$/.test(startedAt?.trim() ?? '')
       ? new Date(Number(startedAt.trim().slice(1)) * 1000).toISOString()
       : null,
