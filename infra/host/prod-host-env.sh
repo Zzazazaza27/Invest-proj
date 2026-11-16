@@ -22,14 +22,21 @@ case "${1:-}" in
   updates)
     echo '== автообновления: пробный прогон (ничего не ставит)'
     # Полный список — в журнале пробного прогона; здесь пакеты к установке и итог.
-    unattended-upgrade --dry-run -v 2>&1 | grep -E '^Packages that will be upgraded|^Allowed origins|^No packages|kernel|linux-image' |
-      cut -c1-2000 || true
+    unattended-upgrade --dry-run -v >/dev/null 2>&1 || true
+    # Список пакетов пишется в журнал, не в вывод; берём последний пробный прогон.
+    L=/var/log/unattended-upgrades/unattended-upgrades.log
+    [ -f "$L" ] && grep -E 'Packages that will be upgraded|No packages found|Allowed origins|blacklist|ERROR' "$L" |
+      tail -4 | cut -c1-3000 || echo "журнала $L нет"
     echo '== needrestart (перезапуск служб после обновления библиотек)'
     grep -hE '^\s*\$nrconf\{(restart|kernelhints|override_rc)\}|docker|containerd' \
       /etc/needrestart/needrestart.conf /etc/needrestart/conf.d/*.conf 2>/dev/null | grep -v '^\s*#' || echo 'настроек не найдено'
     dpkg-query -W -f '${Package} ${Version}\n' needrestart 2>/dev/null || echo 'needrestart не установлен'
     echo '== ближайший запуск'
-    systemctl list-timers apt-daily-upgrade.timer apt-daily.timer --no-pager | head -4
+    for t in apt-daily.timer apt-daily-upgrade.timer; do
+      echo "$t: $(systemctl is-enabled "$t" 2>&1), $(systemctl is-active "$t" 2>&1)"
+    done
+    systemctl list-timers --all --no-pager 'apt-daily*' | head -4
+    grep -h 'APT::Periodic' /etc/apt/apt.conf.d/* 2>/dev/null | grep -v '^\s*//' | sort -u
     ;;
   *)
     echo 'команды: plan, apply, rollback <отметка>, check, updates' >&2
