@@ -1,12 +1,12 @@
 {
   "format": 1,
-  "id": "hostenv-20261114-1",
+  "id": "hostenv-20261116-1",
   "status": "draft",
   "approved": null,
   "os": {
     "id": "ubuntu",
     "versionId": "24.04",
-    "arch": null
+    "arch": "amd64"
   },
   "kernel": {
     "compare": false,
@@ -28,7 +28,7 @@
       "components": ["stable"],
       "keyFile": "/etc/apt/keyrings/docker.asc",
       "keyUrl": "https://download.docker.com/linux/ubuntu/gpg",
-      "keyFingerprint": null
+      "keyFingerprint": "9DC858229FC7DD38854AE2D88D81803C0EBFCD88"
     },
     {
       "name": "caddy",
@@ -38,7 +38,7 @@
       "components": ["main"],
       "keyFile": "/usr/share/keyrings/caddy-stable-archive-keyring.gpg",
       "keyUrl": "https://dl.cloudsmith.io/public/caddy/stable/gpg.key",
-      "keyFingerprint": null
+      "keyFingerprint": "65760C51EDEA2017CEA2CA15155B6D79CA56EA34"
     },
     {
       "name": "nodesource",
@@ -48,7 +48,7 @@
       "components": ["main"],
       "keyFile": "/usr/share/keyrings/nodesource.gpg",
       "keyUrl": "https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key",
-      "keyFingerprint": null
+      "keyFingerprint": "6F71F525282841EEDAF851B42F59B5F99B1BE0B4"
     }
   ],
   "components": [
@@ -58,10 +58,10 @@
       "match": "exact",
       "packages": {
         "docker-ce": "5:29.7.2-1~ubuntu.24.04~noble",
-        "docker-ce-cli": null,
+        "docker-ce-cli": "5:29.7.2-1~ubuntu.24.04~noble",
         "containerd.io": "2.3.3-1~ubuntu.24.04~noble",
         "docker-compose-plugin": "5.5.0-1~ubuntu.24.04~noble",
-        "docker-buildx-plugin": null
+        "docker-buildx-plugin": "0.36.1-1~ubuntu.24.04~noble"
       }
     },
     {
@@ -95,5 +95,5 @@
     "autoUpdates": null,
     "excludeManaged": true
   },
-  "note": "Черновик описи по копии prod 20261114T122630Z (15.11). Не утверждено: пробелы — null, см. host-env inventory. Утверждает владелец (status: approved, approved: {by, at})."
+  "note": "Черновик описи по копии prod 20261116T091726Z-579570 (16.11, съём узла 77851d1). Не утверждено: политика автообновлений (security.autoUpdates) — решение владельца; на узле пакета unattended-upgrades нет, автообновлений сейчас нет. Утверждает владелец (status: approved, approved: {by, at})."
 }
