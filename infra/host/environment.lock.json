@@ -1,0 +1,8 @@
+{
+  "format": 1,
+  "id": "hostenv-20261116-1.085016025ac5",
+  "sha256": "3cf233b5474a90168464bd4bade83bd8925972b61c26006ec67a8958b0e0d808",
+  "envSha256": "83622eb286d8b8bf7590242ec8d1b050c12d8ea30d1178c6f71d82a4e6e8572d",
+  "builtBy": "CI hostenv.yml run 43861264977",
+  "builtAt": "2026-11-16T11:51:17.347Z"
+}
