@@ -8,7 +8,7 @@
  *   node scripts/monitor-host-env.mjs [--print]
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseEnvFile } from './lib/backup.mjs';
@@ -122,15 +122,27 @@ function updates() {
   // Перед итогом бывают предупреждения apt — итог в последней строке.
   const counted = check.status === 0 && /(?:^|\n)\d+;(\d+)$/.exec(check.stderr.trim());
   const reboot = '/var/run/reboot-required';
+  // После перезагрузки systemd не помнит прошлый запуск службы (16.11) — до первого запуска
+  // берётся прежнее значение из своего файла, иначе наблюдение решит, что запусков не было.
+  const ran = /^@\d+$/.test(startedAt?.trim() ?? '');
+  // Нет и в файле — отметка apt.systemd.daily, которую он ставит только после успешного прохода
+  // unattended-upgrade (время конца прохода, а не начала).
+  const stamp = '/var/lib/apt/periodic/unattended-upgrades-stamp';
+  const prev =
+    ran || previous()?.updates?.lastRunAt
+      ? previous()?.updates
+      : existsSync(stamp)
+        ? { lastRunAt: statSync(stamp).mtime.toISOString(), lastResult: 'success' }
+        : null;
   return {
     enabled:
       q.error || timer.error
         ? null
         : q.status === 0 && q.stdout.startsWith('ii') && timer.stdout.trim() === 'active',
-    lastRunAt: /^@\d+$/.test(startedAt?.trim() ?? '')
+    lastRunAt: ran
       ? new Date(Number(startedAt.trim().slice(1)) * 1000).toISOString()
-      : null,
-    lastResult: startedAt?.trim() ? result?.trim() || null : null,
+      : (prev?.lastRunAt ?? null),
+    lastResult: ran ? result?.trim() || null : (prev?.lastResult ?? null),
     pendingSecurity: counted ? Number(counted[1]) : null,
     rebootRequired: existsSync(reboot),
     rebootPackages: existsSync(`${reboot}.pkgs`)
@@ -139,9 +151,17 @@ function updates() {
   };
 }
 
+const file = join(dir, 'host-env.json');
+function previous() {
+  try {
+    return JSON.parse(readFileSync(file, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
 const out = { ...result(), updates: updates() };
 if (process.argv.includes('--print')) console.log(JSON.stringify(out, null, 2));
 mkdirSync(dir, { recursive: true });
-const file = join(dir, 'host-env.json');
 writeFileSync(`${file}.tmp`, JSON.stringify(out));
 renameSync(`${file}.tmp`, file);
