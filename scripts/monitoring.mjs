@@ -1420,7 +1420,10 @@ async function jobsDiscovery(hostid, masterid) {
       'core.job.missed[{#JOB}]',
       'Фоновая задача {#JOB}: пропущено интервалов',
       pick(
-        'if (!j.enabled || j.running || !j.lastStartedAt) return 0; var now = Date.parse(JSON.parse(value).now) || Date.now(); return Math.max(0, Math.floor((now - Date.parse(j.lastStartedAt)) / j.intervalMs) - 1);',
+        // Сон очереди (W33): пауза длиннее интервала, следующий проход запланирован — пропуски
+        // считаются от запланированного прохода, а не от последнего запуска (16.11: ложная
+        // тревога outbox.* на prod после выпуска b143). Без сна — как раньше.
+        'if (!j.enabled || j.running || !j.lastStartedAt) return 0; var now = Date.parse(JSON.parse(value).now) || Date.now(); var due = j.sleepMs > j.intervalMs && j.nextRunAt ? Date.parse(j.nextRunAt) : Date.parse(j.lastStartedAt) + j.intervalMs; return Math.max(0, Math.floor((now - due) / j.intervalMs));',
       ),
     ],
   ];
