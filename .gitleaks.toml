@@ -45,6 +45,10 @@ paths = [
   # SHA-256 файлов Compose. У docker-compose.secrets.yml имя содержит «secrets», и
   # generic-api-key принимает сумму за ключ. Сами копии дополнений под скан остаются.
   '''^infra/kit-history/[^/]+/manifest\.json$''',
+  # Описание окружения узла и его закрепление: версии пакетов, адреса источников, ОТКРЫТЫЕ
+  # отпечатки GPG-ключей поставщиков (keyFingerprint) и суммы архива. Секретов по устройству нет;
+  # generic-api-key принимает 40 знаков отпечатка рядом со словом «key» за ключ (16.11).
+  '''^infra/host/environment(\.lock)?\.json$''',
 ]
 regexes = [
   '''CHANGE_ME''',
