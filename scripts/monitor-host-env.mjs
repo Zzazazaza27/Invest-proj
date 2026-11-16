@@ -105,9 +105,17 @@ function updates() {
     'ExecMainStartTimestamp',
     '-p',
     'Result',
-    '--value',
   ]);
-  const [startedAt, result] = svc.status === 0 ? svc.stdout.split('\n') : [];
+  // Ключ=значение: systemctl печатает свойства в своём порядке, а не в порядке -p (16.11: с
+  // --value время запуска попало в итог).
+  const prop = Object.fromEntries(
+    (svc.status === 0 ? svc.stdout : '')
+      .split('\n')
+      .filter((l) => l.includes('='))
+      .map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1).trim()]),
+  );
+  const startedAt = prop.ExecMainStartTimestamp;
+  const result = prop.Result;
   // Счётчик Ubuntu (update-notifier-common): stderr «все;безопасности». Строки apt-get -s
   // называют один архив версии и обновление из -security часто показывают как -updates.
   const check = sh('/usr/lib/update-notifier/apt-check', []);
