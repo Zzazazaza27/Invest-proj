@@ -18,8 +18,10 @@ for f in /var/spool/cron/crontabs/hestiaweb /var/spool/cron/crontabs/admin /etc/
 done
 echo '== копии пользователя admin'
 grep -E '^(BACKUPS|BACKUP_EXCLUDE)' "$H/data/users/admin/user.conf" 2>/dev/null | sed -E 's/=.*/=…/' | head -3
-ls -la /backup 2>/dev/null | tail -6
-[ -f "$H/log/backup.log" ] && { echo '-- backup.log (хвост)'; tail -n 25 "$H/log/backup.log" | cut -c1-200; }
+echo "архивы: $(ls -1 /backup/*.tar 2>/dev/null | wc -l), последние: $(ls -1t /backup/*.tar 2>/dev/null | head -3 | xargs -r -n1 basename | tr '\n' ' ')"
+echo "брошенные tmp.*: $(ls -1d /backup/tmp.* 2>/dev/null | wc -l), $(du -sch /backup/tmp.* 2>/dev/null | tail -1 | cut -f1), самый ранний $(ls -1dtr --time-style=+%F -l /backup/tmp.* 2>/dev/null | head -1 | awk '{print $6}')"
+# Разделы последнего прохода: что попало в копию (почта, базы, веб) — по заголовкам журнала.
+[ -f "$H/log/backup.log" ] && { echo '-- backup.log: разделы последнего прохода'; tac "$H/log/backup.log" | sed '/^-- USER DIRECTORIES --$/,$!d' >/dev/null; grep -nE '^-- [A-Z ]+ --$|\*\*\* .* \*\*\*|Size:|Local:' "$H/log/backup.log" | tail -12 | cut -c1-160; }
 echo '== веб-домены admin'
 "$H/bin/v-list-web-domains" admin plain 2>&1 | awk '{print $1}' | head
 echo '== почтовые домены admin'
